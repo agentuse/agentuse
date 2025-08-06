@@ -1,43 +1,24 @@
-# Cloud package (private)
-packages/cloud/
-
-# Environment variables
-.env
-.env.*
-.env.local
-
 # Dependencies
 node_modules/
 
-# Build outputs
-dist/
-build/
-.next/
-out/
+# Environment variables
+.env
+.env.local
 
-# Logs
-logs/
-*.log
-npm-debug.log*
-pnpm-debug.log*
+# Bun
+bun.lockb
 
-# OS files
-.DS_Store
-Thumbs.db
+# Test files
+tmp/
+test-env.ts
+test-performance.ts
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# Testing
-coverage/
-.nyc_output/
+# OS
+.DS_Store
 
-# Temporary files
-tmp/
-temp/
-
-# Reference/internal files
+# Reference files
 .ref/

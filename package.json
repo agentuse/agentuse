@@ -1,0 +1,24 @@
+{
+  "name": "openagent",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "openagent": "./bin/openagent"
+  },
+  "scripts": {
+    "openagent": "bun run bin/openagent"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.0",
+    "@ai-sdk/openai": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ai": "^5.0.0",
+    "commander": "^12.0.0",
+    "gray-matter": "^4.0.3",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.19",
+    "typescript": "^5.9.2"
+  }
+}
