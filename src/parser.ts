@@ -8,7 +8,9 @@ const AgentSchema = z.object({
   model: z.string(),
   mcp_servers: z.record(z.object({
     command: z.string(),
-    args: z.array(z.string())
+    args: z.array(z.string()),
+    env: z.record(z.string()).optional(),
+    allowedEnvVars: z.array(z.string()).optional()
   })).optional()
 });
 

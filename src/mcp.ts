@@ -6,6 +6,7 @@ export interface MCPServerConfig {
   command: string;
   args: string[];
   env?: Record<string, string>; // Optional environment variables
+  allowedEnvVars?: string[]; // List of allowed environment variable names
 }
 
 export interface MCPServersConfig {
@@ -33,9 +34,30 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
   
   for (const [name, config] of Object.entries(servers)) {
     try {
-      // Prepare environment variables
+      if (debug) {
+        console.log(`[MCP] Configuring server: ${name}`, config);
+      }
+      
+      // Prepare environment variables - start with default environment only
       const env = getDefaultEnvironment();
-      Object.assign(env, process.env);
+      
+      // Only include explicitly allowed environment variables
+      if (config.allowedEnvVars && config.allowedEnvVars.length > 0) {
+        if (debug) {
+          console.log(`[MCP] Server ${name} allowed env vars:`, config.allowedEnvVars);
+        }
+        for (const varName of config.allowedEnvVars) {
+          if (process.env[varName] !== undefined) {
+            env[varName] = process.env[varName];
+            if (debug) {
+              console.log(`[MCP] Adding env var ${varName} to ${name}`);
+            }
+          } else if (debug) {
+            console.log(`[MCP] Warning: Env var ${varName} not found in process.env for ${name}`);
+          }
+        }
+      }
+      // If no allowedEnvVars specified, no process.env variables are passed
       
       // Override with any server-specific environment variables
       if (config.env) {
