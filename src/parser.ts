@@ -1,7 +1,7 @@
 import matter from 'gray-matter';
 import { z } from 'zod';
 import { readFile } from 'fs/promises';
-import { resolve } from 'path';
+import { resolve, basename } from 'path';
 
 // Schema for agent configuration as per spec
 const AgentSchema = z.object({
@@ -15,6 +15,7 @@ const AgentSchema = z.object({
 export type AgentConfig = z.infer<typeof AgentSchema>;
 
 export interface ParsedAgent {
+  name: string;
   config: AgentConfig;
   instructions: string;
 }
@@ -38,8 +39,12 @@ export async function parseAgent(filePath: string): Promise<ParsedAgent> {
     // Validate configuration with Zod
     const config = AgentSchema.parse(data);
     
+    // Extract agent name from filename (without .md extension)
+    const name = basename(filePath, '.md');
+    
     // Return parsed agent
     return {
+      name,
       config,
       instructions: instructions.trim()
     };
