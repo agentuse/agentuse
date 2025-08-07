@@ -284,6 +284,11 @@ Today's date: ${todayDate}`;
           logger.tool(chunk.toolName, undefined, resultStr);
           break;
           
+        case 'tool-error':
+          const errorMessage = (chunk as any).error?.message || (chunk as any).error || 'Unknown error';
+          logger.warn(`Tool call failed: ${chunk.toolName} - ${errorMessage}`);
+          break;
+          
         // Handle various text streaming events
         case 'text-start':
           break;
