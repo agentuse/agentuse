@@ -21,8 +21,11 @@ program
   .description('Run an AI agent from a markdown file')
   .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
   .option('-d, --debug', 'Enable verbose debug logging')
+  .option('-v, --verbose', 'Show detailed execution information')
   .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
-  .action(async (file: string, options: { quiet: boolean, debug: boolean, timeout: string }) => {
+  .action(async (file: string, options: { quiet: boolean, debug: boolean, verbose: boolean, timeout: string }) => {
+    const startTime = Date.now();
+    
     try {
       // Configure logger based on flags
       if (options.quiet && options.debug) {
@@ -33,6 +36,11 @@ program
         logger.configure({ level: LogLevel.WARN });
       } else if (options.debug) {
         logger.configure({ level: LogLevel.DEBUG, enableDebug: true });
+      }
+      
+      // Log startup time if verbose
+      if (options.verbose) {
+        logger.info(`Starting OpenAgent at ${new Date().toISOString()}`);
       }
       
       // Parse timeout value
@@ -55,7 +63,7 @@ program
       
       // Run the agent with timeout
       try {
-        await runAgent(agent, mcp, options.debug, abortController.signal);
+        await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.verbose);
       } catch (error: any) {
         if (abortController.signal.aborted || error.name === 'AbortError') {
           logger.error(`Agent execution timed out after ${options.timeout} seconds`);

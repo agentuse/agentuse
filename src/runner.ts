@@ -176,7 +176,7 @@ function parseToolResult(chunk: any): string {
  * @param debug Enable debug logging
  * @param abortSignal Optional abort signal for cancellation
  */
-export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], _debug: boolean = false, abortSignal?: AbortSignal): Promise<void> {
+export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], _debug: boolean = false, abortSignal?: AbortSignal, startTime?: number, verbose: boolean = false): Promise<void> {
   try {
     // Check if we're using OAuth (for system prompt modification)
     const isUsingOAuth = agent.config.model.includes('anthropic') && await AnthropicAuth.access();
@@ -192,6 +192,11 @@ export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], 
       logger.info(`Available tools: ${Object.keys(tools).join(', ')}`);
     }
     
+    // Log initialization time if verbose
+    if (verbose && startTime) {
+      const initTime = Date.now() - startTime;
+      logger.info(`Initialization completed in ${initTime}ms`);
+    }
     
     // Execute agent with streaming output and recursive tool handling
     let stepCount = 0;

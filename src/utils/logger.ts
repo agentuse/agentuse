@@ -68,7 +68,7 @@ class Logger {
 
   info(message: string) {
     if (this.level <= LogLevel.INFO) {
-      this.writeToStderr(`[INFO] ${message}`);
+      this.writeToStderr(`\n[INFO] ${message}`);
     }
   }
 
@@ -83,19 +83,23 @@ class Logger {
   }
 
   tool(name: string, args?: any, result?: any) {
-    if (this.enableDebug) {
-      this.writeToStderr(`[TOOL] ${name}`);
-      if (args !== undefined) {
-        this.writeToStderr(`  Args: ${JSON.stringify(args, null, 2)}`);
+    // Only show when tool is being called, not when returning results
+    if (args !== undefined) {
+      // Tool is being called - show concise message
+      this.info(`Calling tool: ${name}`);
+      
+      // Show full args in debug mode
+      if (this.enableDebug) {
+        this.writeToStderr(`[DEBUG] Parameters: ${JSON.stringify(args, null, 2)}`);
       }
-      if (result !== undefined) {
-        const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
-        const RESULT_PREVIEW_LENGTH = 200;
-        if (resultStr.length > RESULT_PREVIEW_LENGTH) {
-          this.writeToStderr(`  Result: ${resultStr.substring(0, RESULT_PREVIEW_LENGTH)}...`);
-        } else {
-          this.writeToStderr(`  Result: ${resultStr || 'No result'}`);
-        }
+    } else if (result !== undefined && this.enableDebug) {
+      // Only show results in debug mode
+      const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+      const RESULT_PREVIEW_LENGTH = 500;
+      if (resultStr.length > RESULT_PREVIEW_LENGTH) {
+        this.writeToStderr(`[DEBUG] Tool ${name} result: ${resultStr.substring(0, RESULT_PREVIEW_LENGTH)}...`);
+      } else {
+        this.writeToStderr(`[DEBUG] Tool ${name} result: ${resultStr}`);
       }
     }
   }
