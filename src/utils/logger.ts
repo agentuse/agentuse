@@ -5,14 +5,15 @@ export enum LogLevel {
   ERROR = 3,
 }
 
-export enum LogChannel {
-  RESPONSE = 'response',
-  ERROR = 'error',
-  WARNING = 'warning',
-  DEBUG = 'debug',
-  INFO = 'info',
-  SYSTEM = 'system',
-}
+// Log channels for future use
+// enum LogChannel {
+//   RESPONSE = 'response',
+//   ERROR = 'error',
+//   WARNING = 'warning',
+//   DEBUG = 'debug',
+//   INFO = 'info',
+//   SYSTEM = 'system',
+// }
 
 interface LoggerOptions {
   level?: LogLevel;
@@ -26,6 +27,15 @@ class Logger {
   constructor(options: LoggerOptions = {}) {
     this.level = options.level ?? LogLevel.INFO;
     this.enableDebug = options.enableDebug ?? (process.env.DEBUG === 'true' || process.env.DEBUG === '1');
+  }
+
+  configure(options: LoggerOptions) {
+    if (options.level !== undefined) {
+      this.level = options.level;
+    }
+    if (options.enableDebug !== undefined) {
+      this.enableDebug = options.enableDebug;
+    }
   }
 
   private writeToStderr(message: string) {

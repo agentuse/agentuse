@@ -35,26 +35,20 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
   
   for (const [name, config] of Object.entries(servers)) {
     try {
-      if (debug) {
-        logger.debug(`[MCP] Configuring server: ${name} - ${JSON.stringify(config)}`);
-      }
+      logger.debug(`[MCP] Configuring server: ${name} - ${JSON.stringify(config)}`);
       
       // Prepare environment variables - start with default environment only
       const env = getDefaultEnvironment();
       
       // Only include explicitly allowed environment variables
       if (config.allowedEnvVars && config.allowedEnvVars.length > 0) {
-        if (debug) {
-          logger.debug(`[MCP] Server ${name} allowed env vars: ${config.allowedEnvVars.join(', ')}`);
-        }
+        logger.debug(`[MCP] Server ${name} allowed env vars: ${config.allowedEnvVars.join(', ')}`);
         for (const varName of config.allowedEnvVars) {
           if (process.env[varName] !== undefined) {
             env[varName] = process.env[varName];
-            if (debug) {
-              logger.debug(`[MCP] Adding env var ${varName} to ${name}`);
-            }
-          } else if (debug) {
-            logger.warn(`[MCP] Env var ${varName} not found in process.env for ${name}`);
+            logger.debug(`[MCP] Adding env var ${varName} to ${name}`);
+          } else {
+            logger.debug(`[MCP] Env var ${varName} not found in process.env for ${name}`);
           }
         }
       }

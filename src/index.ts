@@ -4,7 +4,7 @@ import { connectMCP } from './mcp';
 import { runAgent } from './runner';
 import { Command } from 'commander';
 import { createAuthCommand } from './cli/auth';
-import { logger } from './utils/logger';
+import { logger, LogLevel } from './utils/logger';
 
 const program = new Command();
 
@@ -19,10 +19,22 @@ program.addCommand(createAuthCommand());
 program
   .command('run <file>')
   .description('Run an AI agent from a markdown file')
-  .option('--debug', 'Enable verbose debug logging')
+  .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
+  .option('-d, --debug', 'Enable verbose debug logging')
   .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
-  .action(async (file: string, options: { debug: boolean, timeout: string }) => {
+  .action(async (file: string, options: { quiet: boolean, debug: boolean, timeout: string }) => {
     try {
+      // Configure logger based on flags
+      if (options.quiet && options.debug) {
+        throw new Error('Cannot use --quiet and --debug together');
+      }
+      
+      if (options.quiet) {
+        logger.configure({ level: LogLevel.WARN });
+      } else if (options.debug) {
+        logger.configure({ level: LogLevel.DEBUG, enableDebug: true });
+      }
+      
       // Parse timeout value
       const timeoutMs = parseInt(options.timeout) * 1000;
       if (isNaN(timeoutMs) || timeoutMs <= 0) {

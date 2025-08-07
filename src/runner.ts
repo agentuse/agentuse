@@ -176,7 +176,7 @@ function parseToolResult(chunk: any): string {
  * @param debug Enable debug logging
  * @param abortSignal Optional abort signal for cancellation
  */
-export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], debug: boolean = false, abortSignal?: AbortSignal): Promise<void> {
+export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], _debug: boolean = false, abortSignal?: AbortSignal): Promise<void> {
   try {
     // Check if we're using OAuth (for system prompt modification)
     const isUsingOAuth = agent.config.model.includes('anthropic') && await AnthropicAuth.access();
@@ -217,11 +217,9 @@ export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], 
         content: 'You are Claude Code, Anthropic\'s official CLI for Claude.'  // Exact text, no changes
       });
       
-      if (debug) {
-        logger.debug("Using Anthropic system prompt: You are Claude Code...");
-        if (isUsingOAuth) {
-          logger.debug("Authentication: OAuth token");
-        }
+      logger.debug("Using Anthropic system prompt: You are Claude Code...");
+      if (isUsingOAuth) {
+        logger.debug("Authentication: OAuth token");
       }
     }
     
@@ -272,17 +270,13 @@ Today's date: ${todayDate}`;
           break;
           
         case 'tool-call':
-          if (debug) {
-            const input = (chunk as any).input || (chunk as any).args;
-            logger.tool(chunk.toolName, input);
-          }
+          const input = (chunk as any).input || (chunk as any).args;
+          logger.tool(chunk.toolName, input);
           break;
           
         case 'tool-result':
-          if (debug) {
-            const resultStr = parseToolResult(chunk);
-            logger.tool(chunk.toolName, undefined, resultStr);
-          }
+          const resultStr = parseToolResult(chunk);
+          logger.tool(chunk.toolName, undefined, resultStr);
           break;
           
         // Handle various text streaming events
@@ -354,9 +348,7 @@ Today's date: ${todayDate}`;
     for (const connection of mcpClients) {
       try {
         await connection.client.close();
-        if (debug) {
-          logger.debug(`Closed MCP client: ${connection.name}`);
-        }
+        logger.debug(`Closed MCP client: ${connection.name}`);
       } catch (error) {
         // Ignore errors when closing MCP clients
       }
