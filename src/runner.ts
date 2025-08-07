@@ -164,11 +164,26 @@ export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], 
     let finishReason = '';
     let usage: any = null;
 
+    // Add today's date and autonomous agent instructions to system prompt
+    const todayDate = new Date().toLocaleDateString('en-US', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+    
+    const systemPrompt = `You are an autonomous AI agent. When given a task:
+  - Break it down into clear steps
+  - Execute each step thoroughly
+  - Iterate until the task is fully complete
+
+Today's date: ${todayDate}`;
+
     const streamConfig: any = {
       model,
-      system: agent.instructions,
+      system: systemPrompt,
       messages: [
-        { role: 'user', content: 'Please follow the instructions provided in the system prompt.' }
+        { role: 'user', content: agent.instructions }
       ],
       tools: Object.keys(tools).length > 0 ? tools : undefined,
       maxRetries: MAX_RETRIES,
