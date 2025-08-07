@@ -4,6 +4,7 @@ import { connectMCP } from './mcp';
 import { runAgent } from './runner';
 import { Command } from 'commander';
 import { createAuthCommand } from './cli/auth';
+import { logger } from './utils/logger';
 
 const program = new Command();
 
@@ -45,7 +46,7 @@ program
         await runAgent(agent, mcp, options.debug, abortController.signal);
       } catch (error: any) {
         if (abortController.signal.aborted || error.name === 'AbortError') {
-          console.error(`\n⏱️ Agent execution timed out after ${options.timeout} seconds`);
+          logger.error(`Agent execution timed out after ${options.timeout} seconds`);
           process.exit(1);
         }
         throw error;
@@ -56,7 +57,7 @@ program
       // Exit successfully after agent completes
       process.exit(0);
     } catch (error) {
-      console.error('Error:', (error as Error).message);
+      logger.error('Error', error as Error);
       process.exit(1);
     }
   });

@@ -5,10 +5,10 @@ import type { ParsedAgent } from './parser';
 import type { MCPConnection } from './mcp';
 import { getMCPTools } from './mcp';
 import { AnthropicAuth } from './auth/anthropic';
+import { logger } from './utils/logger';
 
 // Constants
 const MAX_RETRIES = 3;
-const RESULT_PREVIEW_LENGTH = 200;
 
 interface ModelConfig {
   provider: string;
@@ -56,7 +56,7 @@ async function createModel(modelString: string) {
     // Check for OAuth token first (handles refresh automatically)
     const oauthToken = await AnthropicAuth.access();
     if (oauthToken) {
-      console.log('Using Anthropic OAuth token for authentication');
+      logger.info('Using Anthropic OAuth token for authentication');
       // For OAuth, we need to use a custom fetch to set Bearer token
       const anthropic = createAnthropic({ 
         apiKey: '', // Empty API key for OAuth
@@ -85,14 +85,14 @@ async function createModel(modelString: string) {
       if (!apiKey) {
         throw new Error(`Missing ${config.envVar} environment variable`);
       }
-      console.log(`Using ${config.envVar} for authentication`);
+      logger.info(`Using ${config.envVar} for authentication`);
     } else if (config.envSuffix) {
       const suffix = `_${config.envSuffix}`;
       apiKey = process.env[`ANTHROPIC_API_KEY${suffix}`];
       if (!apiKey) {
         throw new Error(`Missing ANTHROPIC_API_KEY${suffix} environment variable`);
       }
-      console.log(`Using ANTHROPIC_API_KEY${suffix} for authentication`);
+      logger.info(`Using ANTHROPIC_API_KEY${suffix} for authentication`);
     } else {
       apiKey = process.env.ANTHROPIC_API_KEY;
       if (!apiKey) {
@@ -114,14 +114,14 @@ async function createModel(modelString: string) {
       if (!apiKey) {
         throw new Error(`Missing ${config.envVar} environment variable`);
       }
-      console.log(`Using ${config.envVar} for authentication`);
+      logger.info(`Using ${config.envVar} for authentication`);
     } else if (config.envSuffix) {
       const suffix = `_${config.envSuffix}`;
       apiKey = process.env[`OPENAI_API_KEY${suffix}`];
       if (!apiKey) {
         throw new Error(`Missing OPENAI_API_KEY${suffix} environment variable`);
       }
-      console.log(`Using OPENAI_API_KEY${suffix} for authentication`);
+      logger.info(`Using OPENAI_API_KEY${suffix} for authentication`);
     } else {
       apiKey = process.env.OPENAI_API_KEY;
       if (!apiKey) {
@@ -187,9 +187,9 @@ export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], 
     // Convert MCP tools to AI SDK format
     const tools = await getMCPTools(mcpClients);
     
-    console.log(`Running agent with model: ${agent.config.model}`);
+    logger.info(`Running agent with model: ${agent.config.model}`);
     if (Object.keys(tools).length > 0) {
-      console.log(`Available tools: ${Object.keys(tools).join(', ')}`);
+      logger.info(`Available tools: ${Object.keys(tools).join(', ')}`);
     }
     
     
@@ -218,9 +218,9 @@ export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], 
       });
       
       if (debug) {
-        console.log("Using Anthropic system prompt: You are Claude Code...");
+        logger.debug("Using Anthropic system prompt: You are Claude Code...");
         if (isUsingOAuth) {
-          console.log("Authentication: OAuth token");
+          logger.debug("Authentication: OAuth token");
         }
       }
     }
@@ -273,22 +273,15 @@ Today's date: ${todayDate}`;
           
         case 'tool-call':
           if (debug) {
-            console.log(`\n🔧 [Step ${stepCount}] Tool: ${chunk.toolName}`);
             const input = (chunk as any).input || (chunk as any).args;
-            if (input !== undefined && input !== null) {
-              console.log(`   Args: ${JSON.stringify(input, null, 2)}`);
-            }
+            logger.tool(chunk.toolName, input);
           }
           break;
           
         case 'tool-result':
           if (debug) {
             const resultStr = parseToolResult(chunk);
-            if (resultStr && resultStr.length > RESULT_PREVIEW_LENGTH) {
-              console.log(`   ✓ Result: ${resultStr.substring(0, RESULT_PREVIEW_LENGTH)}...`);
-            } else {
-              console.log(`   ✓ Result: ${resultStr || 'No result'}`);
-            }
+            logger.tool(chunk.toolName, undefined, resultStr);
           }
           break;
           
@@ -302,7 +295,7 @@ Today's date: ${todayDate}`;
           
           if (textContent && typeof textContent === 'string') {
             finalText += textContent;
-            process.stdout.write(textContent);
+            logger.response(textContent);
           }
           break;
           
@@ -311,7 +304,8 @@ Today's date: ${todayDate}`;
           finishReason = chunk.finishReason;
           usage = (chunk as any).totalUsage || (chunk as any).usage;
           if (finalText && finalText.trim()) {
-            console.log(); // New line after streaming text
+            // Add newline after complete response
+            logger.responseComplete();
           }
           break;
           
@@ -336,17 +330,16 @@ Today's date: ${todayDate}`;
     
     // Final output handling - no need for diagnostic logs since streaming shows everything
     if (!result.text || !result.text.trim()) {
-      console.log('\n⚠️  No final response generated by the model');
+      logger.warn('No final response generated by the model');
       if (stepCount > 0) {
-        console.log(`Model completed ${stepCount} steps but did not generate a final summary.`);
+        logger.warn(`Model completed ${stepCount} steps but did not generate a final summary.`);
       }
     }
     
     
     // Show usage stats
     if (result.usage) {
-      console.log('\n---');
-      console.log(`Tokens used: ${result.usage.totalTokens}`);
+      logger.info(`Tokens used: ${result.usage.totalTokens}`);
     }
   } catch (error: any) {
     // Check if it's an abort error from timeout
@@ -354,7 +347,7 @@ Today's date: ${todayDate}`;
       // Timeout already handled by caller
       throw error;
     }
-    console.error('Agent execution failed:', error);
+    logger.error('Agent execution failed', error);
     throw error;
   } finally {
     // Clean up MCP clients (like opencode does)
@@ -362,7 +355,7 @@ Today's date: ${todayDate}`;
       try {
         await connection.client.close();
         if (debug) {
-          console.log(`[DEBUG] Closed MCP client: ${connection.name}`);
+          logger.debug(`Closed MCP client: ${connection.name}`);
         }
       } catch (error) {
         // Ignore errors when closing MCP clients

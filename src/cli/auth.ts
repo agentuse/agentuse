@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { AnthropicAuth, AuthStorage } from "../auth/index.js";
 import readline from "readline";
+import { logger } from "../utils/logger";
 
 function createReadlineInterface() {
   return readline.createInterface({
@@ -30,14 +31,14 @@ export function createAuthCommand(): Command {
     .argument("[provider]", "Provider to login to")
     .action(async (provider?: string) => {
       try {
-        console.log("🔐 OpenAgent Authentication\n");
+        process.stdout.write("🔐 OpenAgent Authentication\n\n");
 
         if (!provider) {
-          console.log("Available providers:");
-          console.log("  • anthropic    - Anthropic Claude (supports OAuth for Claude Max)");
-          console.log("  • openai       - OpenAI GPT models");
-          console.log("  • custom       - Custom provider");
-          console.log("");
+          process.stdout.write("Available providers:\n");
+          process.stdout.write("  • anthropic    - Anthropic Claude (supports OAuth for Claude Max)\n");
+          process.stdout.write("  • openai       - OpenAI GPT models\n");
+          process.stdout.write("  • custom       - Custom provider\n");
+          process.stdout.write("\n");
           
           provider = await promptInput("Select provider: ");
         }
@@ -56,7 +57,7 @@ export function createAuthCommand(): Command {
             await handleGenericLogin(provider, `${provider} API Key`);
         }
       } catch (error) {
-        console.error("❌ Login failed:", error);
+        logger.error("Login failed", error as Error);
         process.exit(1);
       }
     });
@@ -70,17 +71,17 @@ export function createAuthCommand(): Command {
       const providers = Object.keys(credentials);
 
       if (providers.length === 0) {
-        console.log("❌ No stored credentials found");
+        logger.warn("No stored credentials found");
         return;
       }
 
       if (!provider) {
-        console.log("Stored credentials:");
+        process.stdout.write("Stored credentials:\n");
         providers.forEach((p, i) => {
           const auth = credentials[p];
-          console.log(`  ${i + 1}. ${p} (${auth.type})`);
+          process.stdout.write(`  ${i + 1}. ${p} (${auth.type})\n`);
         });
-        console.log("");
+        process.stdout.write("\n");
         
         const selection = await promptInput("Select provider to logout from: ");
         const index = parseInt(selection) - 1;
@@ -94,9 +95,9 @@ export function createAuthCommand(): Command {
 
       if (providers.includes(provider)) {
         await AuthStorage.remove(provider);
-        console.log(`✅ Logged out from ${provider}`);
+        process.stdout.write(`✅ Logged out from ${provider}\n`);
       } else {
-        console.log(`❌ No credentials found for ${provider}`);
+        logger.warn(`No credentials found for ${provider}`);
       }
     });
 
@@ -112,17 +113,17 @@ export function createAuthCommand(): Command {
         ? authPath.replace(homedir, "~") 
         : authPath;
 
-      console.log(`📁 Credentials stored in: ${displayPath}\n`);
+      process.stdout.write(`📁 Credentials stored in: ${displayPath}\n\n`);
 
       if (Object.keys(credentials).length === 0) {
-        console.log("No stored credentials");
+        process.stdout.write("No stored credentials\n");
         return;
       }
 
-      console.log("Stored credentials:");
+      process.stdout.write("Stored credentials:\n");
       for (const [provider, auth] of Object.entries(credentials)) {
         const typeIcon = auth.type === "oauth" ? "🔑" : auth.type === "api" ? "🎫" : "🔧";
-        console.log(`  ${typeIcon} ${provider} (${auth.type})`);
+        process.stdout.write(`  ${typeIcon} ${provider} (${auth.type})\n`);
       }
 
       // Show environment variables
@@ -133,9 +134,9 @@ export function createAuthCommand(): Command {
 
       const activeEnvVars = envVars.filter(({ name }) => process.env[name]);
       if (activeEnvVars.length > 0) {
-        console.log("\nEnvironment variables:");
+        process.stdout.write("\nEnvironment variables:\n");
         activeEnvVars.forEach(({ name, provider }) => {
-          console.log(`  🌍 ${provider} (${name})`);
+          process.stdout.write(`  🌍 ${provider} (${name})\n`);
         });
       }
     });
@@ -144,11 +145,11 @@ export function createAuthCommand(): Command {
 }
 
 async function handleAnthropicLogin() {
-  console.log("Anthropic login methods:");
-  console.log("  1. Claude Pro/Max Plan (OAuth) (Experimental)");
-  console.log("  2. Anthropic Console (OAuth)");
-  console.log("  3. Manual API Key");
-  console.log("");
+  process.stdout.write("Anthropic login methods:\n");
+  process.stdout.write("  1. Claude Pro/Max Plan (OAuth) (Experimental)\n");
+  process.stdout.write("  2. Anthropic Console (OAuth)\n");
+  process.stdout.write("  3. Manual API Key\n");
+  process.stdout.write("\n");
 
   const method = await promptInput("Select method (1-3): ");
 
@@ -163,7 +164,7 @@ async function handleAnthropicLogin() {
       await handleGenericLogin("anthropic", "Anthropic API Key");
       break;
     default:
-      console.log("❌ Invalid selection");
+      logger.warn("Invalid selection");
   }
 }
 
@@ -171,31 +172,31 @@ async function handleAnthropicOAuth(mode: "max" | "console") {
   // Some weird bug where program exits without this delay (from OpenCode)
   await new Promise((resolve) => setTimeout(resolve, 10));
   
-  console.log(`\n🔄 Starting ${mode === "max" ? "Claude Pro/Max" : "Console"} OAuth flow...\n`);
+  process.stdout.write(`\n🔄 Starting ${mode === "max" ? "Claude Pro/Max" : "Console"} OAuth flow...\n\n`);
 
   try {
     const { url, verifier } = await AnthropicAuth.authorize(mode);
     
     // Always show the URL prominently  
-    console.log(`\n${"=".repeat(80)}`);
-    console.log(`📋 AUTHORIZATION URL:`);
-    console.log(`${url}`);
-    console.log(`${"=".repeat(80)}\n`);
+    process.stdout.write(`\n${"=".repeat(80)}\n`);
+    process.stdout.write(`📋 AUTHORIZATION URL:\n`);
+    process.stdout.write(`${url}\n`);
+    process.stdout.write(`${"=".repeat(80)}\n\n`);
 
-    console.log("📝 Steps:");
-    console.log("   1. Visit the URL above in your browser");
-    console.log("   2. Sign in to Claude and authorize the application");
-    console.log("   3. Copy the authorization code you receive");
-    console.log("   4. Paste it below\n");
+    process.stdout.write("📝 Steps:\n");
+    process.stdout.write("   1. Visit the URL above in your browser\n");
+    process.stdout.write("   2. Sign in to Claude and authorize the application\n");
+    process.stdout.write("   3. Copy the authorization code you receive\n");
+    process.stdout.write("   4. Paste it below\n\n");
 
     const code = await promptInput("📝 Paste the authorization code here: ");
     
     if (!code || code.length === 0) {
-      console.log("❌ No code provided");
+      logger.warn("No code provided");
       return;
     }
 
-    console.log("🔄 Exchanging code for tokens...");
+    process.stdout.write("🔄 Exchanging code for tokens...\n");
     
     try {
       const credentials = await AnthropicAuth.exchange(code, verifier);
@@ -205,29 +206,28 @@ async function handleAnthropicOAuth(mode: "max" | "console") {
         access: credentials.access,
         expires: credentials.expires,
       });
-      console.log("✅ Login successful");
+      process.stdout.write("✅ Login successful\n");
       
       if (mode === "max") {
-        console.log("🎉 Successfully authenticated with Claude Max!");
+        process.stdout.write("🎉 Successfully authenticated with Claude Max!\n");
       }
     } catch {
-      console.log("❌ Invalid code");
+      logger.warn("Invalid code");
     }
 
   } catch (error) {
-    console.log("❌ Authentication failed");
-    console.log(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    logger.error("Authentication failed", error as Error);
   }
 }
 
 async function handleGenericLogin(provider: string, keyName: string) {
-  console.log(`\n🔑 Please enter your ${keyName}:`);
+  process.stdout.write(`\n🔑 Please enter your ${keyName}:\n`);
   
   // Use simple input instead of password masking for easier debugging
   const key = await promptInput("API Key: ");
   
   if (!key || key.length === 0) {
-    console.log("❌ No API key provided");
+    logger.warn("No API key provided");
     return;
   }
 
@@ -237,9 +237,9 @@ async function handleGenericLogin(provider: string, keyName: string) {
       key,
     });
 
-    console.log(`✅ Successfully stored ${keyName}!`);
+    process.stdout.write(`✅ Successfully stored ${keyName}!\n`);
   } catch (error) {
-    console.log(`❌ Failed to store API key: ${error}`);
+    logger.error("Failed to store API key", error as Error);
   }
 }
 

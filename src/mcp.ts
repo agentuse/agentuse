@@ -1,6 +1,7 @@
 import { experimental_createMCPClient, type Tool } from 'ai';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import * as dotenv from 'dotenv';
+import { logger } from './utils/logger';
 
 export interface MCPServerConfig {
   command: string;
@@ -35,7 +36,7 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
   for (const [name, config] of Object.entries(servers)) {
     try {
       if (debug) {
-        console.log(`[MCP] Configuring server: ${name}`, config);
+        logger.debug(`[MCP] Configuring server: ${name} - ${JSON.stringify(config)}`);
       }
       
       // Prepare environment variables - start with default environment only
@@ -44,16 +45,16 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       // Only include explicitly allowed environment variables
       if (config.allowedEnvVars && config.allowedEnvVars.length > 0) {
         if (debug) {
-          console.log(`[MCP] Server ${name} allowed env vars:`, config.allowedEnvVars);
+          logger.debug(`[MCP] Server ${name} allowed env vars: ${config.allowedEnvVars.join(', ')}`);
         }
         for (const varName of config.allowedEnvVars) {
           if (process.env[varName] !== undefined) {
             env[varName] = process.env[varName];
             if (debug) {
-              console.log(`[MCP] Adding env var ${varName} to ${name}`);
+              logger.debug(`[MCP] Adding env var ${varName} to ${name}`);
             }
           } else if (debug) {
-            console.log(`[MCP] Warning: Env var ${varName} not found in process.env for ${name}`);
+            logger.warn(`[MCP] Env var ${varName} not found in process.env for ${name}`);
           }
         }
       }
@@ -80,9 +81,9 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
         client
       });
       
-      console.log(`Connected to MCP server: ${name}`);
+      logger.info(`Connected to MCP server: ${name}`);
     } catch (error) {
-      console.error(`Failed to connect to MCP server ${name}:`, error);
+      logger.error(`Failed to connect to MCP server ${name}`, error as Error);
       throw new Error(`Failed to connect to MCP server: ${name}`);
     }
   }
@@ -155,7 +156,7 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
         tools[prefixedName] = wrappedTool;
       }
     } catch (error) {
-      console.error(`Failed to get tools from ${connection.name}:`, error);
+      logger.error(`Failed to get tools from ${connection.name}`, error as Error);
       // Continue with other connections even if one fails
     }
   }
