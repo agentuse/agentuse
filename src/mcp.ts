@@ -31,9 +31,8 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
   // Load environment variables from .env file silently
   dotenv.config({ quiet: true } as any);
   
-  const connections: MCPConnection[] = [];
-  
-  for (const [name, config] of Object.entries(servers)) {
+  // Create promises for all server connections in parallel
+  const connectionPromises = Object.entries(servers).map(async ([name, config]) => {
     try {
       logger.debug(`[MCP] Configuring server: ${name} - ${JSON.stringify(config)}`);
       
@@ -70,16 +69,45 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
         }),
       });
       
-      connections.push({
+      logger.info(`Connected to MCP server: ${name}`);
+      
+      return {
         name,
         client
-      });
-      
-      logger.info(`Connected to MCP server: ${name}`);
+      };
     } catch (error) {
       logger.error(`Failed to connect to MCP server ${name}`, error as Error);
       throw new Error(`Failed to connect to MCP server: ${name}`);
     }
+  });
+  
+  // Execute all connections in parallel and wait for all to complete
+  // Using Promise.allSettled to handle partial failures gracefully
+  const results = await Promise.allSettled(connectionPromises);
+  
+  const connections: MCPConnection[] = [];
+  const failedServers: string[] = [];
+  
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      connections.push(result.value);
+    } else {
+      // Extract server name from error message
+      const errorMessage = result.reason?.message || '';
+      const serverMatch = errorMessage.match(/Failed to connect to MCP server: (.+)/);
+      const serverName = serverMatch ? serverMatch[1] : 'unknown';
+      failedServers.push(serverName);
+    }
+  }
+  
+  // If some servers failed, log a warning but continue with successful connections
+  if (failedServers.length > 0) {
+    logger.warn(`Some MCP servers failed to connect: ${failedServers.join(', ')}`);
+  }
+  
+  // If all servers failed, throw an error
+  if (connections.length === 0 && Object.keys(servers).length > 0) {
+    throw new Error('All MCP servers failed to connect');
   }
   
   return connections;
@@ -92,12 +120,13 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
  * @returns Tools in AI SDK format
  */
 export async function getMCPTools(connections: MCPConnection[]): Promise<Record<string, Tool>> {
-  const tools: Record<string, Tool> = {};
-  
-  for (const connection of connections) {
+  // Process all connections in parallel to fetch their tools
+  const toolPromises = connections.map(async (connection) => {
     try {
       // Use AI SDK's built-in tools() method - this handles all the complexity
       const clientTools = await connection.client.tools();
+      
+      const connectionTools: Record<string, Tool> = {};
       
       // Add tools with prefixed names to avoid conflicts and wrap execution (like opencode)
       for (const [toolName, tool] of Object.entries(clientTools)) {
@@ -147,12 +176,24 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
           }
         };
         
-        tools[prefixedName] = wrappedTool;
+        connectionTools[prefixedName] = wrappedTool;
       }
+      
+      return connectionTools;
     } catch (error) {
       logger.error(`Failed to get tools from ${connection.name}`, error as Error);
-      // Continue with other connections even if one fails
+      // Return empty object for this connection if it fails
+      return {};
     }
+  });
+  
+  // Wait for all tools to be fetched in parallel
+  const toolsArrays = await Promise.all(toolPromises);
+  
+  // Merge all tools into a single object
+  const tools: Record<string, Tool> = {};
+  for (const connectionTools of toolsArrays) {
+    Object.assign(tools, connectionTools);
   }
   
   return tools;
