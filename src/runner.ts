@@ -9,6 +9,7 @@ import { logger } from './utils/logger';
 
 // Constants
 const MAX_RETRIES = 3;
+const DEFAULT_MAX_STEPS = 1000;
 
 interface ModelConfig {
   provider: string;
@@ -275,7 +276,7 @@ Today's date: ${todayDate}`;
       tools: Object.keys(tools).length > 0 ? tools : undefined,
       maxRetries: MAX_RETRIES,
       toolChoice: 'auto',
-      stopWhen: stepCountIs(1000),
+      stopWhen: stepCountIs(parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS))),
     };
     
     if (abortSignal) {
