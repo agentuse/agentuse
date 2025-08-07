@@ -166,7 +166,31 @@ function parseToolResult(chunk: any): string {
     }
   }
   
-  return typeof output === 'string' ? output : JSON.stringify(output);
+  const resultStr = typeof output === 'string' ? output : JSON.stringify(output);
+  
+  // Detect if the result looks like an error message
+  if (resultStr && typeof resultStr === 'string') {
+    const errorPatterns = [
+      /^Error:/i,
+      /^Error executing/i,
+      /^Failed to/i,
+      /authentication.*failed/i,
+      /unauthorized/i,
+      /permission denied/i,
+      /not found/i,
+      /invalid.*token/i,
+      /invalid.*api.*key/i
+    ];
+    
+    for (const pattern of errorPatterns) {
+      if (pattern.test(resultStr)) {
+        logger.warn(`Tool result appears to be an error: ${chunk.toolName}`);
+        break;
+      }
+    }
+  }
+  
+  return resultStr;
 }
 
 /**

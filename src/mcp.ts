@@ -310,9 +310,12 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
                 output,
               };
             } catch (error) {
-              return {
-                output: `Error executing ${prefixedName}: ${error instanceof Error ? error.message : String(error)}`,
-              };
+              // Log the error first
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              console.error(`[WARNING] Tool call failed: ${prefixedName} - ${errorMessage}`);
+              
+              // Re-throw the error so it properly triggers tool-error event
+              throw error;
             }
           },
           toModelOutput: (result: any) => {
