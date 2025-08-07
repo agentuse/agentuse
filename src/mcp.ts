@@ -8,6 +8,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import * as dotenv from 'dotenv';
 import { logger } from './utils/logger';
+import { parseJsonEnvVar } from './utils/env';
 import { z } from 'zod';
 
 export interface MCPServerConfig {
@@ -57,8 +58,21 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
         logger.debug(`[MCP] Server ${name} allowed env vars: ${config.allowedEnvVars.join(', ')}`);
         for (const varName of config.allowedEnvVars) {
           if (process.env[varName] !== undefined) {
-            env[varName] = process.env[varName];
-            logger.debug(`[MCP] Adding env var ${varName} to ${name}`);
+            const rawValue = process.env[varName];
+            
+            // Try to parse as JSON if it looks like JSON
+            const parsedValue = parseJsonEnvVar(rawValue);
+            
+            // If parseJsonEnvVar returns an object/array, stringify it back
+            // because environment variables must be strings
+            if (parsedValue !== null && typeof parsedValue === 'object') {
+              env[varName] = JSON.stringify(parsedValue);
+              logger.debug(`[MCP] Adding JSON env var ${varName} to ${name}`);
+            } else {
+              // Use the original value if not JSON or parsing failed
+              env[varName] = rawValue;
+              logger.debug(`[MCP] Adding env var ${varName} to ${name}`);
+            }
           } else {
             logger.debug(`[MCP] Env var ${varName} not found in process.env for ${name}`);
           }
