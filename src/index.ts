@@ -3,6 +3,7 @@ import { parseAgent } from './parser';
 import { connectMCP } from './mcp';
 import { runAgent } from './runner';
 import { Command } from 'commander';
+import { createAuthCommand } from './cli/auth';
 
 const program = new Command();
 
@@ -10,6 +11,9 @@ program
   .name('openagent')
   .description('Zero-configuration CLI for AI agents')
   .version('1.0.0');
+
+// Add auth command
+program.addCommand(createAuthCommand());
 
 program
   .command('run <file>')
@@ -28,7 +32,7 @@ program
       const agent = await parseAgent(file);
       
       // Connect to MCP servers if configured
-      const mcp = await connectMCP(agent.config.mcp_servers, options.debug);
+      const mcp = await connectMCP(agent.config.mcp_servers as any, options.debug);
       
       // Create abort controller for timeout
       const abortController = new AbortController();

@@ -4,6 +4,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import type { ParsedAgent } from './parser';
 import type { MCPConnection } from './mcp';
 import { getMCPTools } from './mcp';
+import { AnthropicAuth } from './auth/anthropic';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -52,8 +53,33 @@ async function createModel(modelString: string) {
   const config = parseModelConfig(modelString);
   
   if (config.provider === 'anthropic') {
-    let apiKey: string | undefined;
+    // Check for OAuth token first (handles refresh automatically)
+    const oauthToken = await AnthropicAuth.access();
+    if (oauthToken) {
+      console.log('Using Anthropic OAuth token for authentication');
+      // For OAuth, we need to use a custom fetch to set Bearer token
+      const anthropic = createAnthropic({ 
+        apiKey: '', // Empty API key for OAuth
+        fetch: async (input: any, init: any) => {
+          const access = await AnthropicAuth.access();
+          const headers = {
+            ...init.headers,
+            'authorization': `Bearer ${access}`,
+            'anthropic-beta': 'oauth-2025-04-20',
+          };
+          // Remove x-api-key header since we're using Bearer auth
+          delete headers['x-api-key'];
+          return fetch(input, {
+            ...init,
+            headers,
+          });
+        },
+      } as any);
+      return anthropic.chat(config.modelName);
+    }
     
+    // Fall back to API key authentication
+    let apiKey: string | undefined;
     if (config.envVar) {
       apiKey = process.env[config.envVar];
       if (!apiKey) {
@@ -70,10 +96,13 @@ async function createModel(modelString: string) {
     } else {
       apiKey = process.env.ANTHROPIC_API_KEY;
       if (!apiKey) {
-        throw new Error('Missing ANTHROPIC_API_KEY environment variable');
+        throw new Error('Missing ANTHROPIC_API_KEY environment variable and no OAuth token found');
       }
     }
     
+    if (!apiKey) {
+      throw new Error('Failed to obtain API key for Anthropic');
+    }
     const anthropic = createAnthropic({ apiKey });
     return anthropic.chat(config.modelName);
     
@@ -100,6 +129,9 @@ async function createModel(modelString: string) {
       }
     }
     
+    if (!apiKey) {
+      throw new Error('Failed to obtain API key for OpenAI');
+    }
     const openai = createOpenAI({ apiKey });
     return openai.chat(config.modelName);
     
@@ -146,6 +178,9 @@ function parseToolResult(chunk: any): string {
  */
 export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], debug: boolean = false, abortSignal?: AbortSignal): Promise<void> {
   try {
+    // Check if we're using OAuth (for system prompt modification)
+    const isUsingOAuth = agent.config.model.includes('anthropic') && await AnthropicAuth.access();
+    
     // Create model instance
     const model = await createModel(agent.config.model);
     
@@ -172,17 +207,42 @@ export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], 
       day: 'numeric' 
     });
     
-    const systemPrompt = `You are an autonomous AI agent. When given a task:
+    // Build system messages array (like OpenCode does)
+    const systemMessages: Array<{role: string, content: string}> = [];
+    
+    // For Anthropic, add the Claude Code prompt as FIRST system message (exact text from OpenCode)
+    if (agent.config.model.includes('anthropic')) {
+      systemMessages.push({
+        role: 'system',
+        content: 'You are Claude Code, Anthropic\'s official CLI for Claude.'  // Exact text, no changes
+      });
+      
+      if (debug) {
+        console.log("Using Anthropic system prompt: You are Claude Code...");
+        if (isUsingOAuth) {
+          console.log("Authentication: OAuth token");
+        }
+      }
+    }
+    
+    // Add main system prompt as second message
+    const mainSystemPrompt = `You are an autonomous AI agent. When given a task:
   - Break it down into clear steps
   - Execute each step thoroughly
   - Iterate until the task is fully complete
 
 Today's date: ${todayDate}`;
+    
+    systemMessages.push({
+      role: 'system', 
+      content: mainSystemPrompt
+    });
 
     const streamConfig: any = {
       model,
-      system: systemPrompt,
+      // No separate 'system' parameter - system messages are in the messages array
       messages: [
+        ...systemMessages,
         { role: 'user', content: agent.instructions }
       ],
       tools: Object.keys(tools).length > 0 ? tools : undefined,
