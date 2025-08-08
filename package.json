@@ -6,7 +6,8 @@
     "openagent": "./bin/openagent"
   },
   "scripts": {
-    "openagent": "bun run bin/openagent"
+    "openagent": "bun run bin/openagent",
+    "test": "bun test"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.0",
@@ -14,6 +15,7 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@openauthjs/openauth": "^0.4.3",
     "ai": "^5.0.0",
+    "chalk": "^5.5.0",
     "commander": "^12.0.0",
     "dotenv": "^17.2.1",
     "gray-matter": "^4.0.3",

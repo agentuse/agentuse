@@ -1,3 +1,5 @@
+import chalk from 'chalk';
+
 export enum LogLevel {
   DEBUG = 0,
   INFO = 1,
@@ -54,52 +56,52 @@ class Logger {
 
   error(message: string, error?: Error) {
     const errorMessage = error ? `${message}: ${error.message}` : message;
-    this.writeToStderr(`[ERROR] ${errorMessage}`);
+    this.writeToStderr(chalk.red(`[ERROR] ${errorMessage}`));
     if (error?.stack && this.enableDebug) {
-      this.writeToStderr(error.stack);
+      this.writeToStderr(chalk.gray(error.stack));
     }
   }
 
   warn(message: string) {
     if (this.level <= LogLevel.WARN) {
-      this.writeToStderr(`[WARN] ${message}`);
+      this.writeToStderr(chalk.yellow(`[WARN] ${message}`));
     }
   }
 
   info(message: string) {
     if (this.level <= LogLevel.INFO) {
-      this.writeToStderr(`\n[INFO] ${message}`);
+      this.writeToStderr(chalk.blue(`\n[INFO] ${message}`));
     }
   }
 
   debug(message: string) {
     if (this.enableDebug && this.level <= LogLevel.DEBUG) {
-      this.writeToStderr(`[DEBUG] ${message}`);
+      this.writeToStderr(chalk.gray(`[DEBUG] ${message}`));
     }
   }
 
   system(message: string) {
-    this.writeToStderr(`[SYSTEM] ${message}`);
+    this.writeToStderr(chalk.magenta(`[SYSTEM] ${message}`));
   }
 
   tool(name: string, args?: unknown, result?: unknown) {
     // Only show when tool is being called, not when returning results
     if (args !== undefined) {
       // Tool is being called - show concise message
-      this.info(`Calling tool: ${name}`);
+      this.info(`Calling tool: ${chalk.cyan(name)}`);
       
       // Show full args in debug mode
       if (this.enableDebug) {
-        this.writeToStderr(`[DEBUG] Parameters: ${JSON.stringify(args, null, 2)}`);
+        this.writeToStderr(chalk.gray(`[DEBUG] Parameters: ${JSON.stringify(args, null, 2)}`));
       }
     } else if (result !== undefined && this.enableDebug) {
       // Only show results in debug mode
       const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
       const RESULT_PREVIEW_LENGTH = 500;
       if (resultStr.length > RESULT_PREVIEW_LENGTH) {
-        this.writeToStderr(`[DEBUG] Tool ${name} result: ${resultStr.substring(0, RESULT_PREVIEW_LENGTH)}...`);
+        this.writeToStderr(chalk.gray(`[DEBUG] Tool ${name} result: ${resultStr.substring(0, RESULT_PREVIEW_LENGTH)}...`));
       } else {
-        this.writeToStderr(`[DEBUG] Tool ${name} result: ${resultStr}`);
+        this.writeToStderr(chalk.gray(`[DEBUG] Tool ${name} result: ${resultStr}`));
       }
     }
   }
