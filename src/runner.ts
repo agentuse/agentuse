@@ -363,6 +363,9 @@ export async function runAgent(
     for (const connection of mcpClients) {
       try {
         await connection.client.close();
+        if (connection.rawClient) {
+          await connection.rawClient.close();
+        }
         logger.debug(`Closed MCP client: ${connection.name}`);
       } catch (error) {
         // Ignore errors when closing MCP clients
