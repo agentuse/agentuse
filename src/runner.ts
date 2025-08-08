@@ -85,6 +85,8 @@ export async function processAgentStream(
         break;
         
       case 'tool-error':
+        // Tool errors are now passed as tool-result in executeAgentCore
+        // This case shouldn't occur but keep for safety
         const prefix = options?.logPrefix || '';
         logger.warn(`${prefix}Tool call failed: ${chunk.toolName} - ${chunk.error}`);
         break;
@@ -162,10 +164,21 @@ export async function* executeAgentCore(
         break;
         
       case 'tool-error':
+        // Pass tool errors as structured results to let AI decide on retry
+        const errorMessage = (chunk as any).error?.message || (chunk as any).error || 'Unknown error';
         yield {
-          type: 'tool-error',
+          type: 'tool-result',  // Treat as result so AI sees it
           toolName: chunk.toolName,
-          error: (chunk as any).error?.message || (chunk as any).error || 'Unknown error'
+          toolResult: JSON.stringify({
+            success: false,
+            error: {
+              type: classifyError(errorMessage),
+              message: errorMessage,
+              retryable: isRetryable(errorMessage),
+              suggestions: getSuggestions(errorMessage)
+            }
+          }),
+          toolResultRaw: { error: errorMessage }
         };
         break;
         
@@ -188,6 +201,63 @@ export async function* executeAgentCore(
         yield { type: 'error', error: chunk.error };
         break;
     }
+  }
+}
+
+/**
+ * Classify error type for intelligent retry decisions
+ */
+function classifyError(error: string): string {
+  const errorLower = error.toLowerCase();
+  if (errorLower.includes('500') || errorLower.includes('502') || errorLower.includes('503') || errorLower.includes('service unavailable')) {
+    return 'server_error';
+  }
+  if (errorLower.includes('429') || errorLower.includes('rate limit')) {
+    return 'rate_limit';
+  }
+  if (errorLower.includes('timeout') || errorLower.includes('timed out')) {
+    return 'timeout';
+  }
+  if (errorLower.includes('401') || errorLower.includes('403') || errorLower.includes('unauthorized') || errorLower.includes('forbidden')) {
+    return 'auth_error';
+  }
+  if (errorLower.includes('404') || errorLower.includes('not found')) {
+    return 'not_found';
+  }
+  if (errorLower.includes('network') || errorLower.includes('connection')) {
+    return 'network_error';
+  }
+  return 'unknown';
+}
+
+/**
+ * Determine if error is retryable
+ */
+function isRetryable(error: string): boolean {
+  const type = classifyError(error);
+  return ['server_error', 'rate_limit', 'timeout', 'network_error'].includes(type);
+}
+
+/**
+ * Get recovery suggestions based on error type
+ */
+function getSuggestions(error: string): string[] {
+  const type = classifyError(error);
+  switch (type) {
+    case 'server_error':
+      return ['Wait a moment and retry', 'Try alternative approach', 'Proceed with available information'];
+    case 'rate_limit':
+      return ['Wait before retrying', 'Use different tool', 'Reduce request frequency'];
+    case 'timeout':
+      return ['Retry with simpler request', 'Break into smaller tasks', 'Try alternative tool'];
+    case 'auth_error':
+      return ['Check credentials', 'Use different service', 'Proceed without this data'];
+    case 'not_found':
+      return ['Verify parameters', 'Try different search terms', 'Resource may not exist'];
+    case 'network_error':
+      return ['Check connection and retry', 'Try alternative service', 'Wait and retry'];
+    default:
+      return ['Review error details', 'Try alternative approach', 'Proceed with caution'];
   }
 }
 
