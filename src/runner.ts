@@ -1,9 +1,9 @@
 import { streamText, stepCountIs } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createAnthropic } from '@ai-sdk/anthropic';
 import type { ParsedAgent } from './parser';
 import type { MCPConnection } from './mcp';
 import { getMCPTools } from './mcp';
+import { createSubAgentTools } from './subagent';
+import { createModel } from './models';
 import { AnthropicAuth } from './auth/anthropic';
 import { logger } from './utils/logger';
 
@@ -11,133 +11,183 @@ import { logger } from './utils/logger';
 const MAX_RETRIES = 3;
 const DEFAULT_MAX_STEPS = 1000;
 
-interface ModelConfig {
-  provider: string;
-  modelName: string;
-  envVar?: string;
-  envSuffix?: string;
+/**
+ * Build autonomous agent system prompt
+ */
+export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolean = false): string {
+  const basePrompt = `You are an autonomous AI agent. When given a task:
+- Break it down into clear steps
+- Execute each step thoroughly
+- Keep responses concise and focused on outcomes
+- Iterate until the task is fully complete`;
+
+  const subAgentAddition = isSubAgent ? '\n- Provide a clear summary when complete' : '';
+  
+  return `${basePrompt}${subAgentAddition}
+
+Today's date: ${todayDate}`;
+}
+
+export interface AgentChunk {
+  type: 'text' | 'tool-call' | 'tool-result' | 'tool-error' | 'finish' | 'error';
+  text?: string;
+  toolName?: string;
+  toolInput?: any;
+  toolResult?: string;
+  toolResultRaw?: any;
+  error?: any;
+  finishReason?: string;
+  usage?: any;
 }
 
 /**
- * Parse model string to extract provider, model name, and optional env suffix
- * Format: "provider:model[:env]"
- * Examples:
- * - "openai:gpt-4-turbo" -> default env vars
- * - "openai:gpt-4-turbo:dev" -> use _DEV suffix
- * - "openai:gpt-4-turbo:OPENAI_API_KEY_PERSONAL" -> use specific env var
+ * Process agent stream chunks and handle output/logging
  */
-function parseModelConfig(modelString: string): ModelConfig {
-  const parts = modelString.split(':');
-  const [provider, modelName, envPart] = parts.length >= 2 
-    ? parts 
-    : ['openai', modelString, undefined];
+export async function processAgentStream(
+  generator: AsyncGenerator<AgentChunk>,
+  options?: {
+    collectToolCalls?: boolean;
+    logPrefix?: string;
+  }
+): Promise<{
+  text: string;
+  usage?: any;
+  toolCalls?: Array<{ tool: string; args: any }>;
+  subAgentTokens?: number;
+}> {
+  let finalText = '';
+  let usage: any = null;
+  const toolCalls: Array<{ tool: string; args: any }> = [];
+  let subAgentTokens = 0;
   
-  if (!envPart) {
-    return { provider, modelName };
+  for await (const chunk of generator) {
+    switch (chunk.type) {
+      case 'text':
+        finalText += chunk.text!;
+        logger.response(chunk.text!);
+        break;
+        
+      case 'tool-call':
+        logger.tool(chunk.toolName!, chunk.toolInput);
+        if (options?.collectToolCalls) {
+          toolCalls.push({ tool: chunk.toolName!, args: chunk.toolInput });
+        }
+        break;
+        
+      case 'tool-result':
+        logger.tool(chunk.toolName!, undefined, chunk.toolResult);
+        // Extract sub-agent token usage from metadata if present
+        if (chunk.toolResultRaw && typeof chunk.toolResultRaw === 'object') {
+          if (chunk.toolResultRaw.metadata?.tokensUsed) {
+            subAgentTokens += chunk.toolResultRaw.metadata.tokensUsed;
+          }
+        }
+        break;
+        
+      case 'tool-error':
+        const prefix = options?.logPrefix || '';
+        logger.warn(`${prefix}Tool call failed: ${chunk.toolName} - ${chunk.error}`);
+        break;
+        
+      case 'finish':
+        usage = chunk.usage;
+        if (finalText.trim()) {
+          logger.responseComplete();
+        }
+        break;
+        
+      case 'error':
+        throw chunk.error;
+    }
   }
   
-  // Determine if envPart is a full env var or just a suffix
-  const isFullEnvVar = envPart.includes('_KEY');
   return {
-    provider,
-    modelName,
-    ...(isFullEnvVar 
-      ? { envVar: envPart }
-      : { envSuffix: envPart.toUpperCase() })
+    text: finalText,
+    usage,
+    ...(options?.collectToolCalls && { toolCalls }),
+    ...(subAgentTokens > 0 && { subAgentTokens })
   };
 }
 
 /**
- * Create AI model instance based on configuration
+ * Core agent execution as an async generator
  */
-async function createModel(modelString: string) {
-  const config = parseModelConfig(modelString);
+export async function* executeAgentCore(
+  agent: ParsedAgent,
+  tools: Record<string, any>,
+  options: {
+    userMessage: string;
+    systemMessages: Array<{role: string, content: string}>;
+    maxSteps: number;
+    abortSignal?: AbortSignal;
+  }
+): AsyncGenerator<AgentChunk> {
+  const model = await createModel(agent.config.model);
   
-  if (config.provider === 'anthropic') {
-    // Check for OAuth token first (handles refresh automatically)
-    const oauthToken = await AnthropicAuth.access();
-    if (oauthToken) {
-      logger.info('Using Anthropic OAuth token for authentication');
-      // For OAuth, we need to use a custom fetch to set Bearer token
-      const anthropic = createAnthropic({ 
-        apiKey: '', // Empty API key for OAuth
-        fetch: async (input: any, init: any) => {
-          const access = await AnthropicAuth.access();
-          const headers = {
-            ...init.headers,
-            'authorization': `Bearer ${access}`,
-            'anthropic-beta': 'oauth-2025-04-20',
-          };
-          // Remove x-api-key header since we're using Bearer auth
-          delete headers['x-api-key'];
-          return fetch(input, {
-            ...init,
-            headers,
-          });
-        },
-      } as any);
-      return anthropic.chat(config.modelName);
+  const streamConfig: any = {
+    model,
+    messages: [
+      ...options.systemMessages,
+      { role: 'user', content: options.userMessage }
+    ],
+    tools: Object.keys(tools).length > 0 ? tools : undefined,
+    maxRetries: MAX_RETRIES,
+    toolChoice: 'auto',
+    stopWhen: stepCountIs(options.maxSteps),
+  };
+  
+  if (options.abortSignal) {
+    streamConfig.abortSignal = options.abortSignal;
+  }
+  
+  const stream = streamText(streamConfig);
+  
+  for await (const chunk of stream.fullStream) {
+    switch (chunk.type) {
+      case 'tool-call':
+        yield {
+          type: 'tool-call',
+          toolName: chunk.toolName,
+          toolInput: (chunk as any).input || (chunk as any).args
+        };
+        break;
+        
+      case 'tool-result':
+        yield {
+          type: 'tool-result',
+          toolName: chunk.toolName,
+          toolResult: parseToolResult(chunk),
+          toolResultRaw: (chunk as any).result || (chunk as any).output  // Keep raw result for metadata
+        };
+        break;
+        
+      case 'tool-error':
+        yield {
+          type: 'tool-error',
+          toolName: chunk.toolName,
+          error: (chunk as any).error?.message || (chunk as any).error || 'Unknown error'
+        };
+        break;
+        
+      case 'text-delta':
+        const textContent = (chunk as any).text || (chunk as any).textDelta || (chunk as any).delta || (chunk as any).content;
+        if (textContent && typeof textContent === 'string') {
+          yield { type: 'text', text: textContent };
+        }
+        break;
+        
+      case 'finish':
+        yield {
+          type: 'finish',
+          finishReason: chunk.finishReason,
+          usage: (chunk as any).totalUsage || (chunk as any).usage
+        };
+        break;
+        
+      case 'error':
+        yield { type: 'error', error: chunk.error };
+        break;
     }
-    
-    // Fall back to API key authentication
-    let apiKey: string | undefined;
-    if (config.envVar) {
-      apiKey = process.env[config.envVar];
-      if (!apiKey) {
-        throw new Error(`Missing ${config.envVar} environment variable`);
-      }
-      logger.info(`Using ${config.envVar} for authentication`);
-    } else if (config.envSuffix) {
-      const suffix = `_${config.envSuffix}`;
-      apiKey = process.env[`ANTHROPIC_API_KEY${suffix}`];
-      if (!apiKey) {
-        throw new Error(`Missing ANTHROPIC_API_KEY${suffix} environment variable`);
-      }
-      logger.info(`Using ANTHROPIC_API_KEY${suffix} for authentication`);
-    } else {
-      apiKey = process.env.ANTHROPIC_API_KEY;
-      if (!apiKey) {
-        throw new Error('Missing ANTHROPIC_API_KEY environment variable and no OAuth token found');
-      }
-    }
-    
-    if (!apiKey) {
-      throw new Error('Failed to obtain API key for Anthropic');
-    }
-    const anthropic = createAnthropic({ apiKey });
-    return anthropic.chat(config.modelName);
-    
-  } else if (config.provider === 'openai') {
-    let apiKey: string | undefined;
-    
-    if (config.envVar) {
-      apiKey = process.env[config.envVar];
-      if (!apiKey) {
-        throw new Error(`Missing ${config.envVar} environment variable`);
-      }
-      logger.info(`Using ${config.envVar} for authentication`);
-    } else if (config.envSuffix) {
-      const suffix = `_${config.envSuffix}`;
-      apiKey = process.env[`OPENAI_API_KEY${suffix}`];
-      if (!apiKey) {
-        throw new Error(`Missing OPENAI_API_KEY${suffix} environment variable`);
-      }
-      logger.info(`Using OPENAI_API_KEY${suffix} for authentication`);
-    } else {
-      apiKey = process.env.OPENAI_API_KEY;
-      if (!apiKey) {
-        throw new Error('Missing OPENAI_API_KEY environment variable');
-      }
-    }
-    
-    if (!apiKey) {
-      throw new Error('Failed to obtain API key for OpenAI');
-    }
-    const openai = createOpenAI({ apiKey });
-    return openai.chat(config.modelName);
-    
-  } else {
-    throw new Error(`Unsupported provider: ${config.provider}`);
   }
 }
 
@@ -200,17 +250,33 @@ function parseToolResult(chunk: any): string {
  * @param mcpClients Connected MCP clients
  * @param debug Enable debug logging
  * @param abortSignal Optional abort signal for cancellation
+ * @param startTime Optional start time for timing
+ * @param verbose Enable verbose logging
+ * @param agentFilePath Optional path to the agent file for resolving sub-agent paths
  */
-export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], _debug: boolean = false, abortSignal?: AbortSignal, startTime?: number, verbose: boolean = false): Promise<void> {
+export async function runAgent(
+  agent: ParsedAgent, 
+  mcpClients: MCPConnection[], 
+  _debug: boolean = false, 
+  abortSignal?: AbortSignal, 
+  startTime?: number, 
+  verbose: boolean = false,
+  agentFilePath?: string
+): Promise<void> {
   try {
     // Check if we're using OAuth (for system prompt modification)
     const isUsingOAuth = agent.config.model.includes('anthropic') && await AnthropicAuth.access();
     
-    // Create model instance
-    const model = await createModel(agent.config.model);
-    
     // Convert MCP tools to AI SDK format
-    const tools = await getMCPTools(mcpClients);
+    const mcpTools = await getMCPTools(mcpClients);
+    
+    // Load sub-agent tools if configured
+    // If we have an agent file path, use its directory as the base path for sub-agents
+    const basePath = agentFilePath ? require('path').dirname(agentFilePath) : undefined;
+    const subAgentTools = await createSubAgentTools(agent.config.subagents as any, basePath);
+    
+    // Merge all tools
+    const tools = { ...mcpTools, ...subAgentTools };
     
     logger.info(`Running agent with model: ${agent.config.model}`);
     if (Object.keys(tools).length > 0) {
@@ -223,12 +289,6 @@ export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], 
       logger.info(`Initialization completed in ${initTime}ms`);
     }
     
-    // Execute agent with streaming output and recursive tool handling
-    let stepCount = 0;
-    let finalText = '';
-    let finishReason = '';
-    let usage: any = null;
-
     // Add today's date and autonomous agent instructions to system prompt
     const todayDate = new Date().toLocaleDateString('en-US', { 
       weekday: 'long', 
@@ -254,121 +314,41 @@ export async function runAgent(agent: ParsedAgent, mcpClients: MCPConnection[], 
     }
     
     // Add main system prompt as second message
-    const mainSystemPrompt = `You are an autonomous AI agent. When given a task:
-  - Break it down into clear steps
-  - Execute each step thoroughly
-  - Iterate until the task is fully complete
-
-Today's date: ${todayDate}`;
-    
     systemMessages.push({
       role: 'system', 
-      content: mainSystemPrompt
+      content: buildAutonomousAgentPrompt(todayDate, false)
     });
 
-    const streamConfig: any = {
-      model,
-      // No separate 'system' parameter - system messages are in the messages array
-      messages: [
-        ...systemMessages,
-        { role: 'user', content: agent.instructions }
-      ],
-      tools: Object.keys(tools).length > 0 ? tools : undefined,
-      maxRetries: MAX_RETRIES,
-      toolChoice: 'auto',
-      stopWhen: stepCountIs(parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS))),
+    // Execute using the core generator
+    const coreOptions: any = {
+      userMessage: agent.instructions,
+      systemMessages,
+      maxSteps: parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS))
     };
     
     if (abortSignal) {
-      streamConfig.abortSignal = abortSignal;
+      coreOptions.abortSignal = abortSignal;
     }
     
-    const stream = streamText(streamConfig);
-
-    // Process the stream to capture all events
-    for await (const chunk of stream.fullStream) {
-      
-      switch (chunk.type) {
-        case 'start':
-          stepCount++;
-          break;
-          
-        case 'tool-input-start':
-        case 'tool-input-delta':
-        case 'tool-input-end':
-          // Handle tool input streaming
-          break;
-          
-        case 'tool-call':
-          const input = (chunk as any).input || (chunk as any).args;
-          logger.tool(chunk.toolName, input);
-          break;
-          
-        case 'tool-result':
-          const resultStr = parseToolResult(chunk);
-          logger.tool(chunk.toolName, undefined, resultStr);
-          break;
-          
-        case 'tool-error':
-          const errorMessage = (chunk as any).error?.message || (chunk as any).error || 'Unknown error';
-          logger.warn(`Tool call failed: ${chunk.toolName} - ${errorMessage}`);
-          break;
-          
-        // Handle various text streaming events
-        case 'text-start':
-          break;
-          
-        case 'text-delta':
-          // Try different possible property names for the text content
-          const textContent = (chunk as any).text || (chunk as any).textDelta || (chunk as any).delta || (chunk as any).content;
-          
-          if (textContent && typeof textContent === 'string') {
-            finalText += textContent;
-            logger.response(textContent);
-          }
-          break;
-          
-        // Handle completion
-        case 'finish':
-          finishReason = chunk.finishReason;
-          usage = (chunk as any).totalUsage || (chunk as any).usage;
-          if (finalText && finalText.trim()) {
-            // Add newline after complete response
-            logger.responseComplete();
-          }
-          break;
-          
-        case 'error':
-          throw chunk.error;
-          
-        default:
-          // Unhandled stream events are ignored
-          break;
-      }
-    }
-
-    // Create a result object similar to generateText
-    const result = {
-      text: finalText.trim() || null,
-      finishReason,
-      usage,
-      toolCalls: [], // We handled these in the stream
-      toolResults: [], // We handled these in the stream
-      response: { messages: [] } // Simplified for compatibility
-    };
+    const result = await processAgentStream(
+      executeAgentCore(agent, tools, coreOptions)
+    );
     
-    // Final output handling - no need for diagnostic logs since streaming shows everything
-    if (!result.text || !result.text.trim()) {
+    if (!result.text.trim()) {
       logger.warn('No final response generated by the model');
-      if (stepCount > 0) {
-        logger.warn(`Model completed ${stepCount} steps but did not generate a final summary.`);
-      }
     }
     
-    
-    // Show usage stats
-    if (result.usage) {
-      logger.info(`Tokens used: ${result.usage.totalTokens}`);
+    // Display token usage
+    if (result.usage || result.subAgentTokens) {
+      const mainTokens = result.usage?.totalTokens || 0;
+      const subTokens = result.subAgentTokens || 0;
+      const totalTokens = mainTokens + subTokens;
+      
+      if (subTokens > 0) {
+        logger.info(`Tokens used: ${totalTokens} (main: ${mainTokens}, sub-agents: ${subTokens})`);
+      } else if (mainTokens > 0) {
+        logger.info(`Tokens used: ${mainTokens}`);
+      }
     }
   } catch (error: any) {
     // Check if it's an abort error from timeout

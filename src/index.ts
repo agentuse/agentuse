@@ -159,7 +159,9 @@ program
       
       // Run the agent with timeout
       try {
-        await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.verbose);
+        // Pass the file path for sub-agent resolution (if it's a local file)
+        const agentFilePath = !isURL(file) ? file : undefined;
+        await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.verbose, agentFilePath);
       } catch (error: any) {
         if (abortController.signal.aborted || error.name === 'AbortError') {
           logger.error(`Agent execution timed out after ${options.timeout} seconds`);
