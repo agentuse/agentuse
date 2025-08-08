@@ -10,22 +10,17 @@ import * as dotenv from 'dotenv';
 import { logger } from './utils/logger';
 import { parseJsonEnvVar } from './utils/env';
 import { z } from 'zod';
+import type { AgentConfig } from './parser';
 
-export interface MCPServerConfig {
-  command: string;
-  args: string[];
-  env?: Record<string, string>; // Optional environment variables
-  allowedEnvVars?: string[]; // List of allowed environment variable names
-}
-
-export interface MCPServersConfig {
-  [name: string]: MCPServerConfig;
-}
+// Use the actual type from the parser to avoid mismatches
+export type MCPServerConfig = NonNullable<AgentConfig['mcp_servers']>[string];
+export type MCPServersConfig = AgentConfig['mcp_servers'];
 
 export interface MCPConnection {
   name: string;
   client: Awaited<ReturnType<typeof experimental_createMCPClient>>;
   rawClient?: Client; // Raw MCP SDK client for resource access
+  disallowedTools?: string[]; // List of disallowed tool names/patterns for this connection
 }
 
 /**
@@ -123,7 +118,8 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       return {
         name,
         client,
-        rawClient
+        rawClient,
+        ...(config.disallowedTools && { disallowedTools: config.disallowedTools })
       };
     } catch (error) {
       logger.error(`Failed to connect to MCP server ${name}: ${error instanceof Error ? error.message : String(error)}`);
@@ -275,6 +271,40 @@ function createResourceTools(connection: MCPConnection, resources: Resource[]): 
 }
 
 /**
+ * Check if a tool name matches any disallowed patterns
+ * @param toolName The tool name to check
+ * @param disallowedPatterns Array of disallowed patterns (supports wildcards)
+ * @returns True if the tool should be disallowed
+ */
+function isToolDisallowed(toolName: string, disallowedPatterns?: string[]): boolean {
+  if (!disallowedPatterns || disallowedPatterns.length === 0) {
+    return false;
+  }
+  
+  for (const pattern of disallowedPatterns) {
+    // Support wildcard patterns
+    if (pattern.includes('*')) {
+      // Escape regex special chars except * (wildcard)
+      const regexPattern = pattern
+        .split('*')
+        .map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+        .join('.*');
+      const regex = new RegExp(`^${regexPattern}$`);
+      if (regex.test(toolName)) {
+        return true;
+      }
+    } else {
+      // Exact match
+      if (toolName === pattern) {
+        return true;
+      }
+    }
+  }
+  
+  return false;
+}
+
+/**
  * Get available tools from MCP connections using AI SDK approach
  * @param connections Array of MCP connections
  * @param debug Enable debug logging
@@ -292,6 +322,12 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
       
       // Add tools with prefixed names to avoid conflicts and wrap execution (like opencode)
       for (const [toolName, tool] of Object.entries(clientTools)) {
+        // Check if this tool is disallowed
+        if (isToolDisallowed(toolName, connection.disallowedTools)) {
+          logger.info(`[MCP] Tool '${toolName}' is disallowed for server ${connection.name}`);
+          continue;
+        }
+        
         const prefixedName = `${connection.name}_${toolName}`;
         
         // Wrap the tool execution like opencode does

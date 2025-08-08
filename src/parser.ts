@@ -10,7 +10,8 @@ const AgentSchema = z.object({
     command: z.string(),
     args: z.array(z.string()),
     env: z.record(z.string()).optional(),
-    allowedEnvVars: z.array(z.string()).optional()
+    allowedEnvVars: z.array(z.string()).optional(),
+    disallowedTools: z.array(z.string()).optional()
   })).optional(),
   subagents: z.array(z.object({
     path: z.string(),
