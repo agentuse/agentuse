@@ -47,19 +47,19 @@ export function unescapeJsonEnvVar(value: string): string {
  * @param value The environment variable value
  * @returns Parsed JSON object or null if parsing fails
  */
-export function parseJsonEnvVar(value: string | undefined): any {
+export function parseJsonEnvVar<T = unknown>(value: string | undefined): T | null {
   if (!value) {
     return null;
   }
 
   try {
     // First try parsing as-is
-    return JSON.parse(value);
+    return JSON.parse(value) as T;
   } catch (e) {
     // If that fails, try unescaping first
     try {
       const unescaped = unescapeJsonEnvVar(value);
-      return JSON.parse(unescaped);
+      return JSON.parse(unescaped) as T;
     } catch (e2) {
       // If both fail, return null
       return null;
@@ -73,6 +73,6 @@ export function parseJsonEnvVar(value: string | undefined): any {
  * @param name The environment variable name
  * @returns Parsed JSON object or null if not found or parsing fails
  */
-export function getJsonEnvVar(name: string): any {
-  return parseJsonEnvVar(process.env[name]);
+export function getJsonEnvVar<T = unknown>(name: string): T | null {
+  return parseJsonEnvVar<T>(process.env[name]);
 }

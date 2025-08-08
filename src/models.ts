@@ -53,21 +53,23 @@ export async function createModel(modelString: string) {
       // For OAuth, we need to use a custom fetch to set Bearer token
       const anthropic = createAnthropic({ 
         apiKey: '', // Empty API key for OAuth
-        fetch: async (input: any, init: any) => {
+        fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
           const access = await AnthropicAuth.access();
-          const headers = {
-            ...init.headers,
+          const headers: Record<string, string> = {
+            ...((init?.headers || {}) as Record<string, string>),
             'authorization': `Bearer ${access}`,
             'anthropic-beta': 'oauth-2025-04-20',
           };
           // Remove x-api-key header since we're using Bearer auth
-          delete headers['x-api-key'];
+          if ('x-api-key' in headers) {
+            delete headers['x-api-key'];
+          }
           return fetch(input, {
             ...init,
             headers,
           });
         },
-      } as any);
+      });
       return anthropic.chat(config.modelName);
     }
     

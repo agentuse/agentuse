@@ -28,7 +28,7 @@ async function prompt(question: string): Promise<string> {
 // Helper function to fetch remote agent
 async function fetchRemoteAgent(url: string): Promise<string> {
   // For localhost testing, allow self-signed certificates
-  const fetchOptions: any = {};
+  const fetchOptions: RequestInit = {};
   if (url.includes('localhost') || url.includes('127.0.0.1')) {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
   }
@@ -149,7 +149,7 @@ program
       }
       
       // Connect to MCP servers if configured
-      const mcp = await connectMCP(agent.config.mcp_servers as any, options.debug);
+      const mcp = await connectMCP(agent.config.mcp_servers, options.debug);
       
       // Create abort controller for timeout
       const abortController = new AbortController();
@@ -162,8 +162,8 @@ program
         // Pass the file path for sub-agent resolution (if it's a local file)
         const agentFilePath = !isURL(file) ? file : undefined;
         await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.verbose, agentFilePath);
-      } catch (error: any) {
-        if (abortController.signal.aborted || error.name === 'AbortError') {
+      } catch (error: unknown) {
+        if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
           logger.error(`Agent execution timed out after ${options.timeout} seconds`);
           process.exit(1);
         }

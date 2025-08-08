@@ -1,4 +1,4 @@
-import { streamText, stepCountIs } from 'ai';
+import { streamText, stepCountIs, type ToolSet, type LanguageModelUsage } from 'ai';
 import type { ParsedAgent } from './parser';
 import type { MCPConnection } from './mcp';
 import { getMCPTools } from './mcp';
@@ -32,12 +32,12 @@ export interface AgentChunk {
   type: 'text' | 'tool-call' | 'tool-result' | 'tool-error' | 'finish' | 'error';
   text?: string;
   toolName?: string;
-  toolInput?: any;
+  toolInput?: unknown;
   toolResult?: string;
-  toolResultRaw?: any;
-  error?: any;
+  toolResultRaw?: unknown;
+  error?: unknown;
   finishReason?: string;
-  usage?: any;
+  usage?: LanguageModelUsage;
 }
 
 /**
@@ -51,13 +51,13 @@ export async function processAgentStream(
   }
 ): Promise<{
   text: string;
-  usage?: any;
-  toolCalls?: Array<{ tool: string; args: any }>;
+  usage?: LanguageModelUsage;
+  toolCalls?: Array<{ tool: string; args: unknown }>;
   subAgentTokens?: number;
 }> {
   let finalText = '';
-  let usage: any = null;
-  const toolCalls: Array<{ tool: string; args: any }> = [];
+  let usage: LanguageModelUsage | null = null;
+  const toolCalls: Array<{ tool: string; args: unknown }> = [];
   let subAgentTokens = 0;
   
   for await (const chunk of generator) {
@@ -78,8 +78,12 @@ export async function processAgentStream(
         logger.tool(chunk.toolName!, undefined, chunk.toolResult);
         // Extract sub-agent token usage from metadata if present
         if (chunk.toolResultRaw && typeof chunk.toolResultRaw === 'object') {
-          if (chunk.toolResultRaw.metadata?.tokensUsed) {
-            subAgentTokens += chunk.toolResultRaw.metadata.tokensUsed;
+          const rawResult = chunk.toolResultRaw as Record<string, unknown>;
+          if (rawResult.metadata && typeof rawResult.metadata === 'object') {
+            const metadata = rawResult.metadata as Record<string, unknown>;
+            if (typeof metadata.tokensUsed === 'number') {
+              subAgentTokens += metadata.tokensUsed;
+            }
           }
         }
         break;
@@ -92,7 +96,7 @@ export async function processAgentStream(
         break;
         
       case 'finish':
-        usage = chunk.usage;
+        usage = chunk.usage || null;
         if (finalText.trim()) {
           logger.responseComplete();
         }
@@ -105,7 +109,7 @@ export async function processAgentStream(
   
   return {
     text: finalText,
-    usage,
+    ...(usage && { usage }),
     ...(options?.collectToolCalls && { toolCalls }),
     ...(subAgentTokens > 0 && { subAgentTokens })
   };
@@ -116,7 +120,7 @@ export async function processAgentStream(
  */
 export async function* executeAgentCore(
   agent: ParsedAgent,
-  tools: Record<string, any>,
+  tools: ToolSet,
   options: {
     userMessage: string;
     systemMessages: Array<{role: string, content: string}>;
@@ -126,21 +130,18 @@ export async function* executeAgentCore(
 ): AsyncGenerator<AgentChunk> {
   const model = await createModel(agent.config.model);
   
-  const streamConfig: any = {
+  const streamConfig = {
     model,
     messages: [
       ...options.systemMessages,
-      { role: 'user', content: options.userMessage }
+      { role: 'user' as const, content: options.userMessage }
     ],
     tools: Object.keys(tools).length > 0 ? tools : undefined,
     maxRetries: MAX_RETRIES,
-    toolChoice: 'auto',
+    toolChoice: 'auto' as const,
     stopWhen: stepCountIs(options.maxSteps),
+    ...(options.abortSignal && { abortSignal: options.abortSignal })
   };
-  
-  if (options.abortSignal) {
-    streamConfig.abortSignal = options.abortSignal;
-  }
   
   const stream = streamText(streamConfig);
   
@@ -343,7 +344,7 @@ export async function runAgent(
     // Load sub-agent tools if configured
     // If we have an agent file path, use its directory as the base path for sub-agents
     const basePath = agentFilePath ? require('path').dirname(agentFilePath) : undefined;
-    const subAgentTools = await createSubAgentTools(agent.config.subagents as any, basePath);
+    const subAgentTools = await createSubAgentTools(agent.config.subagents, basePath);
     
     // Merge all tools
     const tools = { ...mcpTools, ...subAgentTools };
@@ -390,15 +391,12 @@ export async function runAgent(
     });
 
     // Execute using the core generator
-    const coreOptions: any = {
+    const coreOptions = {
       userMessage: agent.instructions,
       systemMessages,
-      maxSteps: parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS))
+      maxSteps: parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS)),
+      ...(abortSignal && { abortSignal })
     };
-    
-    if (abortSignal) {
-      coreOptions.abortSignal = abortSignal;
-    }
     
     const result = await processAgentStream(
       executeAgentCore(agent, tools, coreOptions)
@@ -420,13 +418,13 @@ export async function runAgent(
         logger.info(`Tokens used: ${mainTokens}`);
       }
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Check if it's an abort error from timeout
-    if (error.name === 'AbortError' || (abortSignal && abortSignal.aborted)) {
+    if ((error instanceof Error && error.name === 'AbortError') || (abortSignal && abortSignal.aborted)) {
       // Timeout already handled by caller
       throw error;
     }
-    logger.error('Agent execution failed', error);
+    logger.error('Agent execution failed', error as Error);
     throw error;
   } finally {
     // Clean up MCP clients (like opencode does)

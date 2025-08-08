@@ -74,7 +74,7 @@ export async function parseAgent(filePath: string): Promise<ParsedAgent> {
     // Parse using the content parser
     return parseAgentContent(content, name);
   } catch (error) {
-    if ((error as any).code === 'ENOENT') {
+    if ((error as unknown as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new Error(`File not found: ${filePath}`);
     }
     throw error;

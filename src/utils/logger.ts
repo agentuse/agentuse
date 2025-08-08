@@ -82,7 +82,7 @@ class Logger {
     this.writeToStderr(`[SYSTEM] ${message}`);
   }
 
-  tool(name: string, args?: any, result?: any) {
+  tool(name: string, args?: unknown, result?: unknown) {
     // Only show when tool is being called, not when returning results
     if (args !== undefined) {
       // Tool is being called - show concise message

@@ -43,7 +43,8 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
   logger.info(`[MCP] Connecting to ${Object.keys(servers).length} MCP server(s): ${Object.keys(servers).join(', ')}`);
   
   // Load environment variables from .env file silently
-  dotenv.config({ quiet: true } as any);
+  // @ts-ignore - quiet option exists but may not be in types
+  dotenv.config({ quiet: true });
   
   // Create promises for all server connections in parallel
   const connectionPromises = Object.entries(servers).map(async ([name, config]) => {
