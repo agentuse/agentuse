@@ -90,18 +90,58 @@ function formatAgentMd(agent: any): string {
     for (const [name, config] of Object.entries(agent.mcpServers)) {
       const mcpConfig = config as any;
       frontmatter.push(`  ${name}:`);
-      frontmatter.push(`    command: ${mcpConfig.command}`);
-      if (mcpConfig.args && mcpConfig.args.length > 0) {
-        frontmatter.push(`    args:`);
-        mcpConfig.args.forEach((arg: string) => {
-          frontmatter.push(`      - "${arg}"`);
+      
+      // Handle HTTP servers
+      if (mcpConfig.url) {
+        frontmatter.push(`    url: ${mcpConfig.url}`);
+        if (mcpConfig.sessionId) {
+          frontmatter.push(`    sessionId: ${mcpConfig.sessionId}`);
+        }
+        if (mcpConfig.auth) {
+          frontmatter.push(`    auth:`);
+          if (mcpConfig.auth.type) {
+            frontmatter.push(`      type: ${mcpConfig.auth.type}`);
+          }
+          if (mcpConfig.auth.token) {
+            frontmatter.push(`      token: ${mcpConfig.auth.token}`);
+          }
+        }
+        if (mcpConfig.headers) {
+          frontmatter.push(`    headers:`);
+          for (const [key, value] of Object.entries(mcpConfig.headers)) {
+            frontmatter.push(`      ${key}: "${value}"`);
+          }
+        }
+      } 
+      // Handle stdio servers
+      else if (mcpConfig.command) {
+        frontmatter.push(`    command: ${mcpConfig.command}`);
+        if (mcpConfig.args && mcpConfig.args.length > 0) {
+          frontmatter.push(`    args:`);
+          mcpConfig.args.forEach((arg: string) => {
+            frontmatter.push(`      - "${arg}"`);
+          });
+        }
+        if (mcpConfig.env) {
+          frontmatter.push(`    env:`);
+          for (const [key, value] of Object.entries(mcpConfig.env)) {
+            frontmatter.push(`      ${key}: "${value}"`);
+          }
+        }
+      }
+      
+      // Common fields
+      if (mcpConfig.allowedEnvVars && mcpConfig.allowedEnvVars.length > 0) {
+        frontmatter.push(`    allowedEnvVars:`);
+        mcpConfig.allowedEnvVars.forEach((varName: string) => {
+          frontmatter.push(`      - ${varName}`);
         });
       }
-      if (mcpConfig.env) {
-        frontmatter.push(`    env:`);
-        for (const [key, value] of Object.entries(mcpConfig.env)) {
-          frontmatter.push(`      ${key}: "${value}"`);
-        }
+      if (mcpConfig.disallowedTools && mcpConfig.disallowedTools.length > 0) {
+        frontmatter.push(`    disallowedTools:`);
+        mcpConfig.disallowedTools.forEach((tool: string) => {
+          frontmatter.push(`      - ${tool}`);
+        });
       }
     }
   }
