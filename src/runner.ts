@@ -15,13 +15,18 @@ const DEFAULT_MAX_STEPS = 1000;
  * Build autonomous agent system prompt
  */
 export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolean = false): string {
-  const basePrompt = `You are an autonomous AI agent. When given a task:
+  const basePrompt = `You are an autonomous AI agent outputting to CLI/terminal. When given a task:
 - Break it down into clear steps
 - Execute each step thoroughly
-- Keep responses concise and focused on outcomes
+- Be extremely concise - use minimal words, focus only on essential information
+- Skip explanations unless specifically requested
+- Show results, not process
+- Don't announce tool usage - just use them
+- Format output for terminal readability: use bullets (•), arrows (→), moderate emojis, and 2-space indentation for hierarchy
+- Keep lines short for terminal display
 - Iterate until the task is fully complete`;
 
-  const subAgentAddition = isSubAgent ? '\n- Provide a clear summary when complete' : '';
+  const subAgentAddition = isSubAgent ? '\n- Provide only essential summary when complete' : '';
   
   return `${basePrompt}${subAgentAddition}
 
