@@ -1,6 +1,7 @@
 import { experimental_createMCPClient, type Tool } from 'ai';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { 
   ListResourcesResultSchema,
   ReadResourceResultSchema,
@@ -21,6 +22,80 @@ export interface MCPConnection {
   client: Awaited<ReturnType<typeof experimental_createMCPClient>>;
   rawClient?: Client; // Raw MCP SDK client for resource access
   disallowedTools?: string[]; // List of disallowed tool names/patterns for this connection
+}
+
+/**
+ * Create transport based on configuration (stdio or HTTP)
+ */
+function createTransport(name: string, config: MCPServerConfig, debug: boolean = false): any {
+  // HTTP transport with SSE streaming
+  if ('url' in config) {
+    const options: any = {};
+    
+    if (config.sessionId) {
+      options.sessionId = config.sessionId;
+    }
+    
+    if (config.auth?.token) {
+      options.authProvider = {
+        getToken: async () => config.auth!.token!
+      };
+    }
+    
+    if (config.headers) {
+      options.requestInit = {
+        headers: config.headers
+      };
+    }
+    
+    return new StreamableHTTPClientTransport(new URL(config.url), options);
+  }
+  
+  // Stdio transport
+  if ('command' in config) {
+    // Prepare environment variables
+    const env = getDefaultEnvironment();
+    
+    // Only include explicitly allowed environment variables
+    if (config.allowedEnvVars && config.allowedEnvVars.length > 0) {
+      logger.debug(`[MCP] Server ${name} allowed env vars: ${config.allowedEnvVars.join(', ')}`);
+      for (const varName of config.allowedEnvVars) {
+        if (process.env[varName] !== undefined) {
+          const rawValue = process.env[varName];
+          
+          // Try to parse as JSON if it looks like JSON
+          const parsedValue = parseJsonEnvVar(rawValue);
+          
+          // If parseJsonEnvVar returns an object/array, stringify it back
+          // because environment variables must be strings
+          if (parsedValue !== null && typeof parsedValue === 'object') {
+            env[varName] = JSON.stringify(parsedValue);
+            logger.debug(`[MCP] Adding JSON env var ${varName} to ${name}`);
+          } else {
+            // Use the original value if not JSON or parsing failed
+            env[varName] = rawValue;
+            logger.debug(`[MCP] Adding env var ${varName} to ${name}`);
+          }
+        } else {
+          logger.debug(`[MCP] Env var ${varName} not found in process.env for ${name}`);
+        }
+      }
+    }
+    
+    // Override with any server-specific environment variables
+    if ('env' in config && config.env) {
+      Object.assign(env, config.env);
+    }
+    
+    return new StdioClientTransport({
+      command: config.command,
+      args: config.args || [],
+      env: env,
+      stderr: debug ? 'inherit' : 'ignore'
+    });
+  }
+  
+  throw new Error('MCP server must have either url or command');
 }
 
 /**
@@ -46,50 +121,10 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
     try {
       logger.debug(`[MCP] Configuring server: ${name} - ${JSON.stringify(config)}`);
       
-      // Prepare environment variables - start with default environment only
-      const env = getDefaultEnvironment();
+      // Create transport based on config type
+      const transport = createTransport(name, config, debug);
       
-      // Only include explicitly allowed environment variables
-      if (config.allowedEnvVars && config.allowedEnvVars.length > 0) {
-        logger.debug(`[MCP] Server ${name} allowed env vars: ${config.allowedEnvVars.join(', ')}`);
-        for (const varName of config.allowedEnvVars) {
-          if (process.env[varName] !== undefined) {
-            const rawValue = process.env[varName];
-            
-            // Try to parse as JSON if it looks like JSON
-            const parsedValue = parseJsonEnvVar(rawValue);
-            
-            // If parseJsonEnvVar returns an object/array, stringify it back
-            // because environment variables must be strings
-            if (parsedValue !== null && typeof parsedValue === 'object') {
-              env[varName] = JSON.stringify(parsedValue);
-              logger.debug(`[MCP] Adding JSON env var ${varName} to ${name}`);
-            } else {
-              // Use the original value if not JSON or parsing failed
-              env[varName] = rawValue;
-              logger.debug(`[MCP] Adding env var ${varName} to ${name}`);
-            }
-          } else {
-            logger.debug(`[MCP] Env var ${varName} not found in process.env for ${name}`);
-          }
-        }
-      }
-      // If no allowedEnvVars specified, no process.env variables are passed
-      
-      // Override with any server-specific environment variables
-      if (config.env) {
-        Object.assign(env, config.env);
-      }
-      
-      // Create transport for both clients
-      const transport = new StdioClientTransport({
-        command: config.command,
-        args: config.args,
-        env: env,
-        stderr: debug ? 'inherit' : 'ignore'
-      });
-      
-      // Create MCP client using AI SDK's built-in method (like opencode does)
+      // Create MCP client using AI SDK's built-in method
       const client = await experimental_createMCPClient({
         name,
         transport: transport,
@@ -97,12 +132,7 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       
       // Also create a raw MCP SDK client for resource access
       // We need a separate transport instance for the raw client
-      const rawTransport = new StdioClientTransport({
-        command: config.command,
-        args: config.args,
-        env: env,
-        stderr: debug ? 'inherit' : 'ignore'
-      });
+      const rawTransport = createTransport(name, config, debug);
       
       const rawClient = new Client({
         name: `${name}-raw`,

@@ -3,16 +3,37 @@ import { z } from 'zod';
 import { readFile } from 'fs/promises';
 import { resolve, basename } from 'path';
 
-// Schema for agent configuration as per spec
-const AgentSchema = z.object({
-  model: z.string(),
-  mcp_servers: z.record(z.object({
+// Schema for MCP server configuration
+const MCPServerSchema = z.union([
+  // Stdio configuration (has command)
+  z.object({
     command: z.string(),
-    args: z.array(z.string()),
+    args: z.array(z.string()).optional(),
     env: z.record(z.string()).optional(),
     allowedEnvVars: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional()
-  })).optional(),
+  }),
+  // HTTP configuration (has url)
+  z.object({
+    url: z.string().url().refine(
+      (url) => url.startsWith('http://') || url.startsWith('https://'),
+      { message: 'URL must use http:// or https:// protocol' }
+    ),
+    sessionId: z.string().optional(),
+    auth: z.object({
+      type: z.enum(['bearer']).optional(),
+      token: z.string().optional()
+    }).optional(),
+    headers: z.record(z.string()).optional(),
+    allowedEnvVars: z.array(z.string()).optional(),
+    disallowedTools: z.array(z.string()).optional()
+  })
+]);
+
+// Schema for agent configuration as per spec
+const AgentSchema = z.object({
+  model: z.string(),
+  mcp_servers: z.record(MCPServerSchema).optional(),
   subagents: z.array(z.object({
     path: z.string(),
     name: z.string().optional(),
