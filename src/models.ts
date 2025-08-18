@@ -130,6 +130,40 @@ export async function createModel(modelString: string) {
     const openai = createOpenAI({ apiKey });
     return openai.chat(config.modelName);
     
+  } else if (config.provider === 'openrouter') {
+    let apiKey: string | undefined;
+    
+    if (config.envVar) {
+      apiKey = process.env[config.envVar];
+      if (!apiKey) {
+        throw new Error(`Missing ${config.envVar} environment variable`);
+      }
+      logger.info(`Using ${config.envVar} for authentication`);
+    } else if (config.envSuffix) {
+      const suffix = `_${config.envSuffix}`;
+      apiKey = process.env[`OPENROUTER_API_KEY${suffix}`];
+      if (!apiKey) {
+        throw new Error(`Missing OPENROUTER_API_KEY${suffix} environment variable`);
+      }
+      logger.info(`Using OPENROUTER_API_KEY${suffix} for authentication`);
+    } else {
+      apiKey = process.env.OPENROUTER_API_KEY;
+      if (!apiKey) {
+        throw new Error('Missing OPENROUTER_API_KEY environment variable');
+      }
+    }
+    
+    if (!apiKey) {
+      throw new Error('Failed to obtain API key for OpenRouter');
+    }
+    
+    // OpenRouter uses OpenAI SDK with custom baseURL
+    const openrouter = createOpenAI({
+      apiKey,
+      baseURL: 'https://openrouter.ai/api/v1',
+    });
+    return openrouter.chat(config.modelName);
+    
   } else {
     throw new Error(`Unsupported provider: ${config.provider}`);
   }

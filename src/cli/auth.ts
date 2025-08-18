@@ -26,6 +26,66 @@ export function createAuthCommand(): Command {
     .description("Manage authentication credentials");
 
   authCmd
+    .command("help")
+    .description("Show authentication help and configuration options")
+    .action(() => {
+      process.stdout.write("🔐 OpenAgent Authentication Help\n");
+      process.stdout.write(`${"=".repeat(60)}\n\n`);
+      
+      process.stdout.write("AUTHENTICATION METHODS:\n");
+      process.stdout.write("─".repeat(40) + "\n");
+      process.stdout.write("1. Login Command (Recommended):\n");
+      process.stdout.write("   openagent auth login\n\n");
+      
+      process.stdout.write("2. Environment Variables:\n");
+      process.stdout.write("   Set API keys directly in your environment:\n");
+      process.stdout.write("   • ANTHROPIC_API_KEY     - For Anthropic Claude models\n");
+      process.stdout.write("   • OPENAI_API_KEY        - For OpenAI GPT models\n");
+      process.stdout.write("   • OPENROUTER_API_KEY    - For OpenRouter (multiple models)\n\n");
+      
+      process.stdout.write("ENVIRONMENT VARIABLE SETUP:\n");
+      process.stdout.write("─".repeat(40) + "\n");
+      process.stdout.write("Bash/Zsh (~/.bashrc or ~/.zshrc):\n");
+      process.stdout.write("  export ANTHROPIC_API_KEY=\"your-api-key\"\n");
+      process.stdout.write("  export OPENAI_API_KEY=\"your-api-key\"\n");
+      process.stdout.write("  export OPENROUTER_API_KEY=\"your-api-key\"\n\n");
+      
+      process.stdout.write("Fish (~/.config/fish/config.fish):\n");
+      process.stdout.write("  set -x ANTHROPIC_API_KEY \"your-api-key\"\n");
+      process.stdout.write("  set -x OPENAI_API_KEY \"your-api-key\"\n");
+      process.stdout.write("  set -x OPENROUTER_API_KEY \"your-api-key\"\n\n");
+      
+      process.stdout.write("Windows (PowerShell):\n");
+      process.stdout.write("  $env:ANTHROPIC_API_KEY=\"your-api-key\"\n");
+      process.stdout.write("  $env:OPENAI_API_KEY=\"your-api-key\"\n");
+      process.stdout.write("  $env:OPENROUTER_API_KEY=\"your-api-key\"\n\n");
+      
+      process.stdout.write("Windows (Command Prompt):\n");
+      process.stdout.write("  set ANTHROPIC_API_KEY=your-api-key\n");
+      process.stdout.write("  set OPENAI_API_KEY=your-api-key\n");
+      process.stdout.write("  set OPENROUTER_API_KEY=your-api-key\n\n");
+      
+      process.stdout.write("PRIORITY ORDER:\n");
+      process.stdout.write("─".repeat(40) + "\n");
+      process.stdout.write("1. OAuth tokens (for Anthropic)\n");
+      process.stdout.write("2. Stored API keys (via auth login)\n");
+      process.stdout.write("3. Environment variables\n\n");
+      
+      process.stdout.write("COMMANDS:\n");
+      process.stdout.write("─".repeat(40) + "\n");
+      process.stdout.write("  auth login [provider]  - Store API credentials\n");
+      process.stdout.write("  auth logout [provider] - Remove stored credentials\n");
+      process.stdout.write("  auth list             - Show stored credentials\n");
+      process.stdout.write("  auth help             - Show this help message\n\n");
+      
+      process.stdout.write("GETTING API KEYS:\n");
+      process.stdout.write("─".repeat(40) + "\n");
+      process.stdout.write("• Anthropic:   https://console.anthropic.com/account/keys\n");
+      process.stdout.write("• OpenAI:      https://platform.openai.com/api-keys\n");
+      process.stdout.write("• OpenRouter:  https://openrouter.ai/keys\n");
+    });
+
+  authCmd
     .command("login")
     .description("Login to a provider")
     .argument("[provider]", "Provider to login to")
@@ -35,12 +95,27 @@ export function createAuthCommand(): Command {
 
         if (!provider) {
           process.stdout.write("Available providers:\n");
-          process.stdout.write("  • anthropic    - Anthropic Claude (supports OAuth for Claude Max)\n");
-          process.stdout.write("  • openai       - OpenAI GPT models\n");
-          process.stdout.write("  • custom       - Custom provider\n");
+          process.stdout.write("  1. anthropic    - Anthropic Claude (supports OAuth for Claude Max)\n");
+          process.stdout.write("  2. openai       - OpenAI GPT models\n");
+          process.stdout.write("  3. openrouter   - OpenRouter (access to multiple models)\n");
           process.stdout.write("\n");
           
-          provider = await promptInput("Select provider: ");
+          const selection = await promptInput("Select provider (1-3 or name): ");
+          
+          // Handle numbered selection
+          switch (selection) {
+            case "1":
+              provider = "anthropic";
+              break;
+            case "2":
+              provider = "openai";
+              break;
+            case "3":
+              provider = "openrouter";
+              break;
+            default:
+              provider = selection;
+          }
         }
 
         switch (provider.toLowerCase()) {
@@ -50,11 +125,12 @@ export function createAuthCommand(): Command {
           case "openai":
             await handleGenericLogin("openai", "OpenAI API Key");
             break;
-          case "custom":
-            await handleCustomLogin();
+          case "openrouter":
+            await handleGenericLogin("openrouter", "OpenRouter API Key");
             break;
           default:
-            await handleGenericLogin(provider, `${provider} API Key`);
+            logger.warn(`Unknown provider: ${provider}`);
+            process.exit(1);
         }
       } catch (error) {
         logger.error("Login failed", error as Error);
@@ -123,22 +199,52 @@ export function createAuthCommand(): Command {
       process.stdout.write("Stored credentials:\n");
       for (const [provider, auth] of Object.entries(credentials)) {
         const typeIcon = auth.type === "oauth" ? "🔑" : auth.type === "api" ? "🎫" : "🔧";
-        process.stdout.write(`  ${typeIcon} ${provider} (${auth.type})\n`);
+        let modelExample = "";
+        switch (provider) {
+          case "anthropic":
+            modelExample = " → Use as: anthropic:claude-3-5-sonnet-latest";
+            break;
+          case "openai":
+            modelExample = " → Use as: openai:gpt-4o";
+            break;
+          case "openrouter":
+            modelExample = " → Use as: openrouter:anthropic/claude-3.5-sonnet";
+            break;
+        }
+        process.stdout.write(`  ${typeIcon} ${provider} (${auth.type})${modelExample}\n`);
       }
 
       // Show environment variables
       const envVars = [
         { name: "ANTHROPIC_API_KEY", provider: "anthropic" },
         { name: "OPENAI_API_KEY", provider: "openai" },
+        { name: "OPENROUTER_API_KEY", provider: "openrouter" },
       ];
 
       const activeEnvVars = envVars.filter(({ name }) => process.env[name]);
       if (activeEnvVars.length > 0) {
         process.stdout.write("\nEnvironment variables:\n");
         activeEnvVars.forEach(({ name, provider }) => {
-          process.stdout.write(`  🌍 ${provider} (${name})\n`);
+          let modelExample = "";
+          switch (provider) {
+            case "anthropic":
+              modelExample = " → Use as: anthropic:claude-3-5-sonnet-latest";
+              break;
+            case "openai":
+              modelExample = " → Use as: openai:gpt-4o";
+              break;
+            case "openrouter":
+              modelExample = " → Use as: openrouter:anthropic/claude-3.5-sonnet";
+              break;
+          }
+          process.stdout.write(`  🌍 ${provider} (${name})${modelExample}\n`);
         });
       }
+      
+      process.stdout.write("\nModel usage examples:\n");
+      process.stdout.write("  openagent run agent.md --model anthropic:claude-3-5-sonnet-latest\n");
+      process.stdout.write("  openagent run agent.md --model openai:gpt-4o\n");
+      process.stdout.write("  openagent run agent.md --model openrouter:google/gemini-pro-1.5\n");
     });
 
   return authCmd;
@@ -243,9 +349,3 @@ async function handleGenericLogin(provider: string, keyName: string) {
   }
 }
 
-async function handleCustomLogin() {
-  const provider = await promptInput("Custom provider ID: ");
-  const keyName = await promptInput(`Display name for ${provider} (optional): `);
-  
-  await handleGenericLogin(provider, keyName || `${provider} API Key`);
-}
