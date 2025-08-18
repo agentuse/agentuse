@@ -25,6 +25,8 @@ interface LoggerOptions {
 class Logger {
   private level: LogLevel;
   private enableDebug: boolean;
+  private captureBuffer: string[] = [];
+  private isCapturing: boolean = false;
 
   constructor(options: LoggerOptions = {}) {
     this.level = options.level ?? LogLevel.INFO;
@@ -40,18 +42,41 @@ class Logger {
     }
   }
 
+  startCapture() {
+    this.isCapturing = true;
+    this.captureBuffer = [];
+  }
+
+  stopCapture(): string {
+    this.isCapturing = false;
+    const output = this.captureBuffer.join('');
+    this.captureBuffer = [];
+    return output;
+  }
+
+  private capture(text: string) {
+    if (this.isCapturing) {
+      this.captureBuffer.push(text);
+    }
+  }
+
   private writeToStderr(message: string) {
-    process.stderr.write(message + '\n');
+    const output = message + '\n';
+    this.capture(output);
+    process.stderr.write(output);
   }
 
   response(message: string) {
     // For streaming responses, don't add newline
+    this.capture(message);
     process.stdout.write(message);
   }
   
   responseComplete() {
     // Add newline after complete response
-    process.stdout.write('\n');
+    const newline = '\n';
+    this.capture(newline);
+    process.stdout.write(newline);
   }
 
   error(message: string, error?: Error) {

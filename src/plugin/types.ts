@@ -15,6 +15,7 @@ export interface AgentCompleteEvent {
     toolCalls: number;     // count of tool calls
   };
   isSubAgent: boolean;
+  consoleOutput: string;    // Full console output including logs and results
 }
 
 // Plugin returns handlers for events

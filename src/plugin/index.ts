@@ -57,9 +57,12 @@ export class PluginManager {
   async emitAgentComplete(event: AgentCompleteEvent): Promise<void> {
     for (const { path, handlers } of this.plugins) {
       if (handlers['agent:complete']) {
+        const pluginName = path.split('/').pop() || path;
         try {
           await handlers['agent:complete'](event);
+          logger.info(`Plugin '${pluginName}' executed successfully`);
         } catch (error) {
+          logger.info(`Plugin '${pluginName}' failed: ${(error as Error).message}`);
           logger.warn(`Plugin error in ${path}: ${(error as Error).message}`);
         }
       }

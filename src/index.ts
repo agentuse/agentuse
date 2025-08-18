@@ -172,6 +172,9 @@ program
       //   await pluginManager.emitAgentStart({ ... });
       // }
       
+      // Start capturing console output for plugins
+      logger.startCapture();
+      
       // Run the agent with timeout
       let result: any;
       try {
@@ -187,6 +190,9 @@ program
       } finally {
         clearTimeout(timeoutId);
       }
+      
+      // Stop capturing and get console output
+      const consoleOutput = logger.stopCapture();
       
       // Emit plugin event for agent completion
       if (pluginManager) {
@@ -206,7 +212,8 @@ program
               tokens: result.usage?.totalTokens,
               toolCalls: result.toolCallCount || 0
             },
-            isSubAgent: false
+            isSubAgent: false,
+            consoleOutput
           });
         } catch (pluginError) {
           // Don't fail the agent execution if plugins fail
