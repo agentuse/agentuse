@@ -458,7 +458,7 @@ export async function runAgent(
   startTime?: number, 
   verbose: boolean = false,
   agentFilePath?: string
-): Promise<void> {
+): Promise<{ text: string; usage?: LanguageModelUsage; toolCallCount: number }> {
   try {
     // Check if we're using OAuth (for system prompt modification)
     const isUsingOAuth = agent.config.model.includes('anthropic') && await AnthropicAuth.access();
@@ -524,7 +524,8 @@ export async function runAgent(
     };
     
     const result = await processAgentStream(
-      executeAgentCore(agent, tools, coreOptions)
+      executeAgentCore(agent, tools, coreOptions),
+      { collectToolCalls: true }
     );
     
     if (!result.text.trim()) {
@@ -543,6 +544,13 @@ export async function runAgent(
         logger.info(`Tokens used: ${mainTokens}`);
       }
     }
+    
+    // Return metrics for plugin system
+    return {
+      text: result.text,
+      ...(result.usage && { usage: result.usage }),
+      toolCallCount: result.toolCalls?.length || 0
+    };
   } catch (error: unknown) {
     // Check if it's an abort error from timeout
     if ((error instanceof Error && error.name === 'AbortError') || (abortSignal && abortSignal.aborted)) {

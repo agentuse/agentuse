@@ -14,10 +14,12 @@
     "@ai-sdk/openai": "^2.0.15",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@openauthjs/openauth": "^0.4.3",
+    "@types/glob": "^9.0.0",
     "ai": "^5.0.0",
     "chalk": "^5.5.0",
     "commander": "^12.0.0",
     "dotenv": "^17.2.1",
+    "glob": "^11.0.3",
     "gray-matter": "^4.0.3",
     "zod": "^3.25.76"
   },

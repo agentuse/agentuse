@@ -7,6 +7,7 @@ import { createAuthCommand } from './cli/auth';
 import { logger, LogLevel } from './utils/logger';
 import { basename } from 'path';
 import * as readline from 'readline';
+import { PluginManager } from './plugin';
 
 const program = new Command();
 
@@ -157,11 +158,26 @@ program
         abortController.abort();
       }, timeoutMs);
       
+      // Initialize plugin manager before running agent
+      let pluginManager: PluginManager | null = null;
+      try {
+        pluginManager = new PluginManager();
+        await pluginManager.loadPlugins();
+      } catch (pluginError) {
+        logger.warn(`Failed to initialize plugins: ${(pluginError as Error).message}`);
+      }
+      
+      // TODO: Future - emit agent:start event here
+      // if (pluginManager) {
+      //   await pluginManager.emitAgentStart({ ... });
+      // }
+      
       // Run the agent with timeout
+      let result: any;
       try {
         // Pass the file path for sub-agent resolution (if it's a local file)
         const agentFilePath = !isURL(file) ? file : undefined;
-        await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.verbose, agentFilePath);
+        result = await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.verbose, agentFilePath);
       } catch (error: unknown) {
         if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
           logger.error(`Agent execution timed out after ${options.timeout} seconds`);
@@ -170,6 +186,32 @@ program
         throw error;
       } finally {
         clearTimeout(timeoutId);
+      }
+      
+      // Emit plugin event for agent completion
+      if (pluginManager) {
+        try {
+          const duration = startTime ? (Date.now() - startTime) / 1000 : 0;
+          const agentFilePath = !isURL(file) ? file : undefined;
+          
+          await pluginManager.emitAgentComplete({
+            agent: {
+              name: agent.name,
+              model: agent.config.model,
+              ...(agentFilePath && { filePath: agentFilePath })
+            },
+            result: {
+              text: result.text || '',
+              duration,
+              tokens: result.usage?.totalTokens,
+              toolCalls: result.toolCallCount || 0
+            },
+            isSubAgent: false
+          });
+        } catch (pluginError) {
+          // Don't fail the agent execution if plugins fail
+          logger.warn(`Plugin event error: ${(pluginError as Error).message}`);
+        }
       }
       
       // Exit successfully after agent completes
