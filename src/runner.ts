@@ -6,6 +6,8 @@ import { createSubAgentTools } from './subagent';
 import { createModel } from './models';
 import { AnthropicAuth } from './auth/anthropic';
 import { logger } from './utils/logger';
+import { ContextManager } from './context-manager';
+import { compactMessages } from './compactor';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -135,20 +137,53 @@ export async function* executeAgentCore(
 ): AsyncGenerator<AgentChunk> {
   const model = await createModel(agent.config.model);
   
-  const streamConfig = {
-    model,
-    messages: [
-      ...options.systemMessages,
-      { role: 'user' as const, content: options.userMessage }
-    ],
-    tools: Object.keys(tools).length > 0 ? tools : undefined,
-    maxRetries: MAX_RETRIES,
-    toolChoice: 'auto' as const,
-    stopWhen: stepCountIs(options.maxSteps),
-    ...(options.abortSignal && { abortSignal: options.abortSignal })
+  // Initialize context manager if enabled
+  let contextManager: ContextManager | null = null;
+  const initialMessages: any[] = [
+    ...options.systemMessages,
+    { role: 'user', content: options.userMessage }
+  ];
+  let messages = initialMessages;
+  
+  if (ContextManager.isEnabled()) {
+    contextManager = new ContextManager(
+      agent.config.model,
+      async (messagesToCompact) => compactMessages(messagesToCompact, agent.config.model)
+    );
+    await contextManager.initialize();
+    
+    // Track initial messages
+    for (const msg of messages) {
+      contextManager.addMessage(msg);
+    }
+  }
+  
+  // Function to create stream with current messages
+  const createStream = async () => {
+    // Check if we need to compact before creating stream
+    if (contextManager?.shouldCompact()) {
+      messages = await contextManager.compact();
+    }
+    
+    const streamConfig: any = {
+      model,
+      messages,
+      maxRetries: MAX_RETRIES,
+      toolChoice: 'auto' as const,
+      stopWhen: stepCountIs(options.maxSteps),
+      ...(options.abortSignal && { abortSignal: options.abortSignal })
+    };
+    
+    // Only add tools if there are any
+    if (Object.keys(tools).length > 0) {
+      streamConfig.tools = tools;
+    }
+    
+    return streamText(streamConfig);
   };
   
-  const stream = streamText(streamConfig);
+  const stream = await createStream();
+  let accumulatedText = '';
   
   for await (const chunk of stream.fullStream) {
     switch (chunk.type) {
@@ -161,11 +196,26 @@ export async function* executeAgentCore(
         break;
         
       case 'tool-result':
+        // Track tool results in context
+        if (contextManager) {
+          // Use simple format for tool message
+          const toolResultMessage: any = {
+            role: 'tool',
+            content: [{
+              type: 'tool-result',
+              toolCallId: (chunk as any).toolCallId || 'unknown',
+              toolName: chunk.toolName,
+              output: parseToolResult(chunk)
+            }]
+          };
+          contextManager.addMessage(toolResultMessage);
+        }
+        
         yield {
           type: 'tool-result',
           toolName: chunk.toolName,
           toolResult: parseToolResult(chunk),
-          toolResultRaw: (chunk as any).result || (chunk as any).output  // Keep raw result for metadata
+          toolResultRaw: (chunk as any).result || (chunk as any).output
         };
         break;
         
@@ -191,15 +241,32 @@ export async function* executeAgentCore(
       case 'text-delta':
         const textContent = (chunk as any).text || (chunk as any).textDelta || (chunk as any).delta || (chunk as any).content;
         if (textContent && typeof textContent === 'string') {
+          accumulatedText += textContent;
           yield { type: 'text', text: textContent };
         }
         break;
         
       case 'finish':
+        // Track the assistant's message
+        if (contextManager && accumulatedText) {
+          const assistantMessage: any = {
+            role: 'assistant',
+            content: accumulatedText
+          };
+          contextManager.addMessage(assistantMessage);
+          accumulatedText = '';
+        }
+        
+        // Update usage if available
+        const usage = (chunk as any).totalUsage || (chunk as any).usage;
+        if (contextManager && usage) {
+          contextManager.updateUsage(usage);
+        }
+        
         yield {
           type: 'finish',
           finishReason: chunk.finishReason,
-          usage: (chunk as any).totalUsage || (chunk as any).usage
+          usage
         };
         break;
         

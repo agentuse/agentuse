@@ -8,6 +8,10 @@ interface Model {
     input?: string[];
     output?: string[];
   };
+  limit?: {
+    context?: number;
+    output?: number;
+  };
 }
 
 interface Provider {
@@ -24,6 +28,14 @@ interface ModelSuggestion {
   provider: string;
   modelId: string;
   displayName: string;
+}
+
+export interface ModelInfo {
+  provider: string;
+  modelId: string;
+  name: string;
+  contextLimit: number;
+  outputLimit: number;
 }
 
 let cachedData: { data: ModelsApiResponse; timestamp: number } | null = null;
@@ -157,4 +169,68 @@ export async function getModelSuggestions(): Promise<ModelSuggestion[] | null> {
   }
 
   return suggestions;
+}
+
+// Default context limits for unknown models
+const DEFAULT_FALLBACK_CONTEXT_LIMIT = 32000;
+const DEFAULT_FALLBACK_OUTPUT_LIMIT = 4000;
+
+/**
+ * Get model information including context limits from models.dev API
+ * @param modelString - Model string in format "provider:model-id"
+ * @returns ModelInfo with context and output limits
+ */
+export async function getModelInfo(modelString: string): Promise<ModelInfo> {
+  // Parse model string
+  const parts = modelString.split(':');
+  const [provider, modelId] = parts.length >= 2 
+    ? parts 
+    : ['openai', modelString];
+
+  // Fetch data from models.dev
+  const data = await fetchModelsData();
+  
+  if (data) {
+    // Map our provider names to models.dev provider IDs
+    const providerMapping: Record<string, string> = {
+      'anthropic': 'anthropic',
+      'openai': 'openai',
+      'openrouter': 'openai', // Will need special handling
+      'groq': 'groq',
+      'google': 'google',
+      'cohere': 'cohere',
+      'mistral': 'mistral'
+    };
+
+    const apiProvider = providerMapping[provider];
+    if (apiProvider && data[apiProvider]) {
+      const providerData = data[apiProvider];
+      
+      // Find the specific model
+      const model = Object.values(providerData.models).find(m => 
+        m.id === modelId || 
+        m.id.endsWith(`/${modelId}`) ||
+        modelId.includes(m.id)
+      );
+
+      if (model) {
+        return {
+          provider,
+          modelId,
+          name: model.name,
+          contextLimit: model.limit?.context || DEFAULT_FALLBACK_CONTEXT_LIMIT,
+          outputLimit: model.limit?.output || DEFAULT_FALLBACK_OUTPUT_LIMIT
+        };
+      }
+    }
+  }
+
+  // Fallback for unknown models - use conservative estimates
+  return {
+    provider,
+    modelId,
+    name: modelId,
+    contextLimit: DEFAULT_FALLBACK_CONTEXT_LIMIT,
+    outputLimit: DEFAULT_FALLBACK_OUTPUT_LIMIT
+  };
 }
