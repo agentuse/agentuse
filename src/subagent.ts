@@ -130,7 +130,7 @@ export async function createSubAgentTool(
  * @returns Map of sub-agent tools
  */
 export async function createSubAgentTools(
-  subAgents?: Array<{ path: string; name?: string; maxSteps?: number }>,
+  subAgents?: Array<{ path: string; name?: string | undefined; maxSteps?: number | undefined }>,
   basePath?: string
 ): Promise<Record<string, Tool>> {
   if (!subAgents || subAgents.length === 0) {

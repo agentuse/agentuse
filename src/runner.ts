@@ -182,97 +182,145 @@ export async function* executeAgentCore(
     return streamText(streamConfig);
   };
   
-  const stream = await createStream();
+  let stream;
+  try {
+    stream = await createStream();
+  } catch (error: any) {
+    // Handle initial stream creation errors
+    logger.error('Failed to create stream:', error);
+    yield { type: 'error', error };
+    return;
+  }
+  
   let accumulatedText = '';
   
-  for await (const chunk of stream.fullStream) {
-    switch (chunk.type) {
-      case 'tool-call':
-        yield {
-          type: 'tool-call',
-          toolName: chunk.toolName,
-          toolInput: (chunk as any).input || (chunk as any).args
-        };
-        break;
-        
-      case 'tool-result':
-        // Track tool results in context
-        if (contextManager) {
-          // Use simple format for tool message
-          const toolResultMessage: any = {
-            role: 'tool',
-            content: [{
-              type: 'tool-result',
-              toolCallId: (chunk as any).toolCallId || 'unknown',
-              toolName: chunk.toolName,
-              output: parseToolResult(chunk)
-            }]
+  try {
+    for await (const chunk of stream.fullStream) {
+      switch (chunk.type) {
+        case 'tool-call':
+          yield {
+            type: 'tool-call',
+            toolName: chunk.toolName,
+            toolInput: (chunk as any).input || (chunk as any).args
           };
-          contextManager.addMessage(toolResultMessage);
-        }
-        
-        yield {
-          type: 'tool-result',
-          toolName: chunk.toolName,
-          toolResult: parseToolResult(chunk),
-          toolResultRaw: (chunk as any).result || (chunk as any).output
-        };
-        break;
-        
-      case 'tool-error':
-        // Pass tool errors as structured results to let AI decide on retry
-        const errorMessage = (chunk as any).error?.message || (chunk as any).error || 'Unknown error';
-        yield {
-          type: 'tool-result',  // Treat as result so AI sees it
-          toolName: chunk.toolName,
-          toolResult: JSON.stringify({
-            success: false,
-            error: {
-              type: classifyError(errorMessage),
-              message: errorMessage,
-              retryable: isRetryable(errorMessage),
-              suggestions: getSuggestions(errorMessage)
-            }
-          }),
-          toolResultRaw: { error: errorMessage }
-        };
-        break;
-        
-      case 'text-delta':
-        const textContent = (chunk as any).text || (chunk as any).textDelta || (chunk as any).delta || (chunk as any).content;
-        if (textContent && typeof textContent === 'string') {
-          accumulatedText += textContent;
-          yield { type: 'text', text: textContent };
-        }
-        break;
-        
-      case 'finish':
-        // Track the assistant's message
-        if (contextManager && accumulatedText) {
-          const assistantMessage: any = {
-            role: 'assistant',
-            content: accumulatedText
+          break;
+          
+        case 'tool-result':
+          // Track tool results in context
+          if (contextManager) {
+            // Use simple format for tool message
+            const toolResultMessage: any = {
+              role: 'tool',
+              content: [{
+                type: 'tool-result',
+                toolCallId: (chunk as any).toolCallId || 'unknown',
+                toolName: chunk.toolName,
+                output: parseToolResult(chunk)
+              }]
+            };
+            contextManager.addMessage(toolResultMessage);
+          }
+          
+          yield {
+            type: 'tool-result',
+            toolName: chunk.toolName,
+            toolResult: parseToolResult(chunk),
+            toolResultRaw: (chunk as any).result || (chunk as any).output
           };
-          contextManager.addMessage(assistantMessage);
-          accumulatedText = '';
-        }
-        
-        // Update usage if available
-        const usage = (chunk as any).totalUsage || (chunk as any).usage;
-        if (contextManager && usage) {
-          contextManager.updateUsage(usage);
-        }
-        
-        yield {
-          type: 'finish',
-          finishReason: chunk.finishReason,
-          usage
-        };
-        break;
-        
-      case 'error':
-        yield { type: 'error', error: chunk.error };
-        break;
+          break;
+          
+        case 'tool-error':
+          // Pass tool errors as structured results to let AI decide on retry
+          const errorMessage = (chunk as any).error?.message || (chunk as any).error || 'Unknown error';
+          yield {
+            type: 'tool-result',  // Treat as result so AI sees it
+            toolName: chunk.toolName,
+            toolResult: JSON.stringify({
+              success: false,
+              error: {
+                type: classifyError(errorMessage),
+                message: errorMessage,
+                retryable: isRetryable(errorMessage),
+                suggestions: getSuggestions(errorMessage)
+              }
+            }),
+            toolResultRaw: { error: errorMessage }
+          };
+          break;
+          
+        case 'text-delta':
+          const textContent = (chunk as any).text || (chunk as any).textDelta || (chunk as any).delta || (chunk as any).content;
+          if (textContent && typeof textContent === 'string') {
+            accumulatedText += textContent;
+            yield { type: 'text', text: textContent };
+          }
+          break;
+          
+        case 'finish':
+          // Track the assistant's message
+          if (contextManager && accumulatedText) {
+            const assistantMessage: any = {
+              role: 'assistant',
+              content: accumulatedText
+            };
+            contextManager.addMessage(assistantMessage);
+            accumulatedText = '';
+          }
+          
+          // Update usage if available
+          const usage = (chunk as any).totalUsage || (chunk as any).usage;
+          if (contextManager && usage) {
+            contextManager.updateUsage(usage);
+          }
+          
+          yield {
+            type: 'finish',
+            finishReason: chunk.finishReason,
+            usage
+          };
+          break;
+          
+        case 'error':
+          yield { type: 'error', error: chunk.error };
+          break;
+      }
+    }
+  } catch (error: any) {
+    // Handle AI SDK errors gracefully
+    if (error.name === 'AI_NoSuchToolError' || error.message?.includes('unavailable tool')) {
+      // Extract tool name from the error message
+      const toolNameMatch = error.message?.match(/tool '([^']+)'/);
+      const toolName = toolNameMatch ? toolNameMatch[1] : 'unknown';
+      
+      logger.warn(`AI tried to call non-existent tool: ${toolName}`);
+      
+      // Return this as a tool result so the AI can adapt
+      yield {
+        type: 'tool-result',
+        toolName: toolName,
+        toolResult: JSON.stringify({
+          success: false,
+          error: {
+            type: 'tool_not_found',
+            message: `The tool '${toolName}' does not exist. Available tools: ${Object.keys(tools).join(', ')}`,
+            retryable: false,
+            suggestions: [
+              'Check the available tools list',
+              'Use a different tool with similar functionality',
+              'Proceed without this tool'
+            ]
+          }
+        }),
+        toolResultRaw: { error: error.message }
+      };
+      
+      // Continue execution - don't terminate the agent
+      // The AI will receive the error as a tool result and can adapt
+      
+    } else {
+      // For other errors, still try to handle gracefully
+      logger.error('Stream processing error:', error);
+      yield { type: 'error', error };
     }
   }
 }
@@ -282,6 +330,9 @@ export async function* executeAgentCore(
  */
 function classifyError(error: string): string {
   const errorLower = error.toLowerCase();
+  if (errorLower.includes('no such tool') || errorLower.includes('unavailable tool') || errorLower.includes('tool not found')) {
+    return 'tool_not_found';
+  }
   if (errorLower.includes('500') || errorLower.includes('502') || errorLower.includes('503') || errorLower.includes('service unavailable')) {
     return 'server_error';
   }
@@ -317,6 +368,8 @@ function isRetryable(error: string): boolean {
 function getSuggestions(error: string): string[] {
   const type = classifyError(error);
   switch (type) {
+    case 'tool_not_found':
+      return ['Check the available tools list', 'Use a different tool with similar functionality', 'Proceed without this tool'];
     case 'server_error':
       return ['Wait a moment and retry', 'Try alternative approach', 'Proceed with available information'];
     case 'rate_limit':
