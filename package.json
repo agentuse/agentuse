@@ -1,0 +1,64 @@
+{
+  "name": "agentuse",
+  "version": "0.1.0",
+  "description": "Zero-configuration CLI for AI agents with MCP tools support",
+  "type": "module",
+  "author": "",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentuse/agentuse.git"
+  },
+  "bugs": {
+    "url": "https://github.com/agentuse/agentuse/issues"
+  },
+  "homepage": "https://github.com/agentuse/agentuse#readme",
+  "keywords": [
+    "ai",
+    "agent",
+    "mcp",
+    "anthropic",
+    "openai",
+    "cli",
+    "llm"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "bin": {
+    "agentuse": "./bin/cli.js"
+  },
+  "files": [
+    "bin/cli.js",
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build:js": "bun build ./src/index.ts --outdir ./dist --target node --format esm --splitting --sourcemap --external @ai-sdk/* --external @modelcontextprotocol/* --external @openauthjs/* --external ai --external chalk --external commander --external dotenv --external glob --external gray-matter --external zod",
+    "build": "bun run clean && bun run build:js && chmod +x bin/cli.js",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build && bun test",
+    "pack-dry": "bun run build && npm pack --dry-run"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.0",
+    "@ai-sdk/openai": "^2.0.15",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@openauthjs/openauth": "^0.4.3",
+    "@types/glob": "^9.0.0",
+    "ai": "^5.0.0",
+    "chalk": "^5.5.0",
+    "commander": "^12.0.0",
+    "dotenv": "^17.2.1",
+    "glob": "^11.0.3",
+    "gray-matter": "^4.0.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.19",
+    "typescript": "^5.9.2"
+  }
+}
