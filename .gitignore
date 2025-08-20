@@ -22,3 +22,7 @@ test-performance.ts
 
 # Reference files
 .ref/
+
+# Build output
+dist/
+*.tgz
