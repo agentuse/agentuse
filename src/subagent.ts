@@ -8,7 +8,7 @@ import { resolve } from 'path';
 
 /**
  * Create a tool that runs another agent as a sub-agent
- * @param agentPath Path to the agent file (.agentmd)
+ * @param agentPath Path to the agent file (.agentuse)
  * @param maxSteps Maximum steps the sub-agent can take
  * @param basePath Optional base path for resolving relative paths
  * @returns Tool that executes the sub-agent
@@ -145,8 +145,8 @@ export async function createSubAgentTools(
       // Use custom name if provided, otherwise extract from filename
       let name = config.name;
       if (!name) {
-        // Extract agent name from path (e.g., "./code-reviewer.agentmd" -> "code_reviewer")
-        const filename = config.path.split('/').pop()?.replace(/\.(agentmd|md)$/, '') || 'agent';
+        // Extract agent name from path (e.g., "./code-reviewer.agentuse" -> "code_reviewer")
+        const filename = config.path.split('/').pop()?.replace(/\.agentuse$/, '') || 'agent';
         // Replace all non-alphanumeric characters (except underscore and hyphen) with underscore
         name = filename.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/-/g, '_');
       }

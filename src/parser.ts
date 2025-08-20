@@ -84,14 +84,19 @@ export function parseAgentContent(content: string, name: string): ParsedAgent {
  */
 export async function parseAgent(filePath: string): Promise<ParsedAgent> {
   try {
+    // Validate file extension
+    if (!filePath.endsWith('.agentuse')) {
+      throw new Error(`Invalid file extension. Agent files must use .agentuse extension (got: ${filePath})`);
+    }
+    
     // Resolve to absolute path
     const absolutePath = resolve(filePath);
     
     // Read file content
     const content = await readFile(absolutePath, 'utf-8');
     
-    // Extract agent name from filename (without .md or .agentmd extension)
-    const name = basename(filePath).replace(/\.(agentmd|md)$/, '');
+    // Extract agent name from filename (without .agentuse extension)
+    const name = basename(filePath).replace(/\.agentuse$/, '');
     
     // Parse using the content parser
     return parseAgentContent(content, name);

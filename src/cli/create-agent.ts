@@ -25,7 +25,7 @@ export function createAgentCommand(): Command {
   return new Command("create-agent")
     .description("Create an AI agent from a natural language description")
     .argument("<description>", "Natural language description of what the agent should do")
-    .option("-o, --output <path>", "Output file path (default: ./agents/<agent-name>.agentmd)")
+    .option("-o, --output <path>", "Output file path (default: ./agents/<agent-name>.agentuse)")
     .option("-f, --force", "Overwrite existing file without prompting")
     .option("-d, --dry-run", "Preview the generated agent without creating a file")
     .option("-m, --model <model>", "Override the default model for the agent")
@@ -36,7 +36,7 @@ export function createAgentCommand(): Command {
         // Generate agent configuration from description
         const agent = await generateAgent(description, options.model);
         
-        // Format as .agentmd
+        // Format as .agentuse
         const agentContent = formatAgentMd(agent);
         
         if (options.dryRun) {
@@ -48,7 +48,7 @@ export function createAgentCommand(): Command {
         }
         
         // Determine output path
-        const outputPath = options.output || `./agents/${agent.name}.agentmd`;
+        const outputPath = options.output || `./agents/${agent.name}.agentuse`;
         const absolutePath = resolve(outputPath);
         
         // Check if file exists

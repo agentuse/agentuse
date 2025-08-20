@@ -20,10 +20,10 @@ Zero-configuration CLI for running AI agents with built-in Model Context Protoco
 npm install -g agentuse
 
 # Or run directly without installation
-npx agentuse run your-agent.md
+npx agentuse run your-agent.agentuse
 
 # Or use Bun for faster execution
-bunx agentuse run your-agent.md
+bunx agentuse run your-agent.agentuse
 ```
 
 ### Development Setup
@@ -44,7 +44,7 @@ bun link
 
 ### 1. Create Your First Agent
 
-Create a file `hello.agentmd`:
+Create a file `hello.agentuse`:
 
 ```markdown
 ---
@@ -57,7 +57,7 @@ Write a friendly greeting and share an interesting tech fact!
 ### 2. Run the Agent
 
 ```bash
-agentuse run hello.agentmd
+agentuse run hello.agentuse
 ```
 
 ## Agent Definition Format
@@ -72,7 +72,7 @@ mcp_servers:                                # Optional: MCP servers
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
 subagents:                                  # Optional: sub-agents
-  - path: ./reviewer.agentmd
+  - path: ./reviewer.agentuse
     name: code_reviewer
     maxSteps: 30
 ---
@@ -158,14 +158,14 @@ mcp_servers:
 Agents can invoke other agents as tools:
 
 ```yaml
-# main.agentmd
+# main.agentuse
 ---
 model: openai:gpt-4o
 subagents:
-  - path: ./analyzer.agentmd
+  - path: ./analyzer.agentuse
     name: code_analyzer
     maxSteps: 50
-  - path: ./writer.agentmd
+  - path: ./writer.agentuse
     name: doc_writer
 ---
 
@@ -258,12 +258,12 @@ Run agents from HTTPS URLs with security prompts:
 
 ```bash
 # Prompts for preview/confirmation
-agentuse run https://example.com/agents/analyzer.agentmd
+agentuse run https://example.com/agents/analyzer.agentuse
 ```
 
 Security features:
 - HTTPS-only URLs
-- Mandatory `.agentmd` extension
+- Mandatory `.agentuse` extension
 - Preview option before execution
 - Clear security warnings
 
@@ -395,7 +395,7 @@ mcp_servers:
     allowedEnvVars: ["POSTGRES_URL"]
     
 subagents:
-  - path: ./sql-expert.agentmd
+  - path: ./sql-expert.agentuse
     name: sql_expert
 ---
 

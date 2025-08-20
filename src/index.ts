@@ -103,9 +103,9 @@ program
           throw new Error('Only HTTPS URLs are allowed for security reasons');
         }
         
-        // Validate .agentmd extension
-        if (!file.endsWith('.agentmd')) {
-          throw new Error('Remote agents must have .agentmd extension');
+        // Validate .agentuse extension
+        if (!file.endsWith('.agentuse')) {
+          throw new Error('Remote agents must have .agentuse extension');
         }
         
         // Show warning and prompt
@@ -142,7 +142,7 @@ program
         }
         
         // Parse agent from content
-        const agentName = basename(file).replace(/\.agentmd$/, '');
+        const agentName = basename(file).replace(/\.agentuse$/, '');
         agent = parseAgentContent(content!, agentName);
       } else {
         // Parse agent specification from local markdown file
