@@ -1,12 +1,12 @@
 {
-  "name": "openagent",
+  "name": "agentuse",
   "version": "1.0.0",
   "type": "module",
   "bin": {
-    "openagent": "./bin/openagent"
+    "agentuse": "./bin/agentuse"
   },
   "scripts": {
-    "openagent": "bun run bin/openagent",
+    "agentuse": "bun run bin/agentuse",
     "test": "bun test"
   },
   "dependencies": {

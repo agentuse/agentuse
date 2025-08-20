@@ -30,13 +30,13 @@ export function createAuthCommand(): Command {
     .command("help")
     .description("Show authentication help and configuration options")
     .action(() => {
-      process.stdout.write("🔐 OpenAgent Authentication Help\n");
+      process.stdout.write("🔐 AgentUse Authentication Help\n");
       process.stdout.write(`${"=".repeat(60)}\n\n`);
       
       process.stdout.write("AUTHENTICATION METHODS:\n");
       process.stdout.write("─".repeat(40) + "\n");
       process.stdout.write("1. Login Command (Recommended):\n");
-      process.stdout.write("   openagent auth login\n\n");
+      process.stdout.write("   agentuse auth login\n\n");
       
       process.stdout.write("2. Environment Variables:\n");
       process.stdout.write("   Set API keys directly in your environment:\n");
@@ -92,7 +92,7 @@ export function createAuthCommand(): Command {
     .argument("[provider]", "Provider to login to")
     .action(async (provider?: string) => {
       try {
-        process.stdout.write("🔐 OpenAgent Authentication\n\n");
+        process.stdout.write("🔐 AgentUse Authentication\n\n");
 
         if (!provider) {
           process.stdout.write("Available providers:\n");
@@ -245,7 +245,7 @@ export function createAuthCommand(): Command {
       if (modelSuggestions && modelSuggestions.length > 0) {
         process.stdout.write("\nModel usage examples:\n");
         modelSuggestions.forEach(suggestion => {
-          process.stdout.write(`  openagent run agent.md --model ${suggestion.provider}:${suggestion.modelId}\n`);
+          process.stdout.write(`  agentuse run agent.md --model ${suggestion.provider}:${suggestion.modelId}\n`);
         });
       }
     });

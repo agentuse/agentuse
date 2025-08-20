@@ -8,7 +8,7 @@ export class AuthStorage {
     os.homedir(),
     ".local",
     "share",
-    "openagent",
+    "agentuse",
     "auth.json"
   );
 

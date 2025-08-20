@@ -54,7 +54,7 @@ function isURL(input: string): boolean {
 }
 
 program
-  .name('openagent')
+  .name('agentuse')
   .description('Zero-configuration CLI for AI agents')
   .version('1.0.0');
 
@@ -85,7 +85,7 @@ program
       
       // Log startup time if verbose
       if (options.verbose) {
-        logger.info(`Starting OpenAgent at ${new Date().toISOString()}`);
+        logger.info(`Starting AgentUse at ${new Date().toISOString()}`);
       }
       
       // Parse timeout value

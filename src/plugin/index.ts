@@ -10,8 +10,8 @@ export class PluginManager {
   async loadPlugins(): Promise<void> {
     // Define plugin search paths
     const pluginPaths = [
-      './.openagent/plugins/*.{ts,js}',
-      join(homedir(), '.openagent/plugins/*.{ts,js}')
+      './.agentuse/plugins/*.{ts,js}',
+      join(homedir(), '.agentuse/plugins/*.{ts,js}')
     ];
     
     for (const pattern of pluginPaths) {

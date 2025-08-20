@@ -108,11 +108,11 @@ describe('PluginManager', () => {
       await pluginManager.loadPlugins();
 
       expect(mockGlob).toHaveBeenCalledWith(
-        expect.stringContaining('./.openagent/plugins/*.{ts,js}'),
+        expect.stringContaining('./.agentuse/plugins/*.{ts,js}'),
         expect.any(Object)
       );
       expect(mockGlob).toHaveBeenCalledWith(
-        expect.stringContaining(join(homedir(), '.openagent/plugins/*.{ts,js}')),
+        expect.stringContaining(join(homedir(), '.agentuse/plugins/*.{ts,js}')),
         expect.any(Object)
       );
     });
