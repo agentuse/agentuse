@@ -69,7 +69,7 @@ export function createAgentCommand(): Command {
         
         logger.info(`✅ Agent created successfully: ${absolutePath}`);
         logger.info(`\nRun your agent with:`);
-        logger.info(`  openagent run ${outputPath}`);
+        logger.info(`  agentuse run ${outputPath}`);
         
       } catch (error) {
         logger.error("Failed to create agent", error as Error);
