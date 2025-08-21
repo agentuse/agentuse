@@ -8,6 +8,7 @@ import { logger, LogLevel } from './utils/logger';
 import { basename } from 'path';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
+import { version } from '../package.json';
 
 const program = new Command();
 
@@ -55,8 +56,8 @@ function isURL(input: string): boolean {
 
 program
   .name('agentuse')
-  .description('Zero-configuration CLI for AI agents')
-  .version('1.0.0');
+  .description('Run AI agents from natural language markdown files')
+  .version(version);
 
 // Add auth command
 program.addCommand(createAuthCommand());
