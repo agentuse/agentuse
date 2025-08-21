@@ -1,11 +1,35 @@
-# AgentUse
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./static/agentuse-logo-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="./static/agentuse-logo.png">
+  <img alt="AgentUse Logo" src="./static/agentuse-logo.png"  width="full">
+</picture>
 
-Zero-configuration CLI for running AI agents with built-in Model Context Protocol (MCP) support, multi-provider compatibility, and extensible plugin system.
+<h1 align="center">🤖 AI Agents as Simple as Markdown</h1>
+
+**Build production AI agents with just markdown files.** Inspired by Claude Code's elegant markdown-based configuration, AgentUse takes this philosophy further - your entire agent *is* a markdown file. No drag-and-drop UIs that break version control. No 500-line Python classes. Just readable, shareable, git-friendly markdown that works everywhere.
+
+While visual workflow builders trap your logic in proprietary interfaces and enterprise frameworks require hundreds of lines of boilerplate, AgentUse proves there's a better way. Define agents as naturally as writing documentation, then run them instantly anywhere - CI/CD pipelines, cron jobs, serverless functions, or your terminal. With sub-second startup times and built-in production patterns (retries, streaming, error recovery), it's Infrastructure-as-Code for the AI era.
+
+## Why AgentUse?
+
+**The Problem**: Current agent frameworks force an impossible choice. Visual workflow tools give you drag-and-drop simplicity but create version control nightmares and vendor lock-in. Traditional code frameworks offer power and flexibility but require hundreds of lines of boilerplate just to say "hello world."
+
+**The Insight**: Claude Code proved that markdown configuration is incredibly powerful for AI interactions. But Claude Code is an interactive CLI tool, not a framework for building deployable agents. What if we took that brilliant markdown-first philosophy and built a proper agent development framework around it?
+
+**The Solution**: AgentUse makes your agents *just markdown files*. Not configuration files that generate code. Not visual flows that compile to JSON. The markdown IS the agent. This means:
+- **Version control just works** - diff, review, and merge agents like any other code
+- **Share agents with a URL** - as easy as sharing a gist
+- **Zero learning curve** - if you can write a README, you can build an agent
+- **Production-ready** - built-in retries, streaming, error recovery, and MCP support
+
+AgentUse is Infrastructure-as-Code philosophy applied to AI agents. Your agents are text files that can be versioned, reviewed, tested, and deployed like any other code artifact.
 
 ## Features
 
-- 🚀 **Zero Configuration** - Run agents from simple markdown files with YAML frontmatter
-- 🤖 **Multi-Provider Support** - OpenAI, Anthropic (with OAuth), OpenRouter
+- 🚀 **Sub-Second Startup** - Run agents instantly with minimal overhead
+- 🎯 **Non-Interactive Design** - Zero interactive prompts, perfect for automation
+- 📝 **Natural Language Definition** - Write agents in plain English markdown
+- 🤖 **Multi-Provider Support** - Anthropic, OpenAI, OpenRouter
 - 🔌 **MCP Integration** - Connect to any Model Context Protocol server
 - 🧩 **Plugin System** - Extend functionality with custom plugins
 - 🔄 **Sub-Agent Composition** - Agents can invoke other agents as tools
@@ -25,6 +49,46 @@ npx agentuse run your-agent.agentuse
 # Or use Bun for faster execution
 bunx agentuse run your-agent.agentuse
 ```
+
+### Authentication Setup
+
+Before running agents, you need to configure authentication for your AI providers:
+
+#### Option 1: Interactive Login (Recommended)
+```bash
+# Login to a provider interactively
+agentuse auth login
+
+# Or login to a specific provider
+agentuse auth login anthropic  # Supports OAuth for Claude Max
+agentuse auth login openai
+agentuse auth login openrouter
+```
+
+#### Option 2: Environment Variables
+```bash
+# Set API keys in your environment
+export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."
+export OPENROUTER_API_KEY="sk-or-..."
+```
+
+#### Authentication Commands
+```bash
+# Check stored credentials
+agentuse auth list
+
+# Remove stored credentials
+agentuse auth logout [provider]
+
+# Show authentication help
+agentuse auth help
+```
+
+#### Getting API Keys
+- **Anthropic**: https://console.anthropic.com/account/keys
+- **OpenAI**: https://platform.openai.com/api-keys
+- **OpenRouter**: https://openrouter.ai/keys
 
 ### Development Setup
 
@@ -48,7 +112,7 @@ Create a file `hello.agentuse`:
 
 ```markdown
 ---
-model: openai:gpt-4o-mini
+model: openai:gpt-5-mini
 ---
 
 Write a friendly greeting and share an interesting tech fact!
@@ -88,8 +152,8 @@ Your task is to analyze the codebase and provide insights...
 
 ```yaml
 # OpenAI models
-model: openai:gpt-4o
-model: openai:gpt-4o-mini
+model: openai:gpt-5
+model: openai:gpt-5-mini
 
 # Anthropic models (supports OAuth)
 model: anthropic:claude-3-haiku-20240307
@@ -103,13 +167,13 @@ model: openrouter:meta-llama/llama-3.2-11b-vision-instruct
 
 ```yaml
 # Default API keys
-model: openai:gpt-4o              # Uses OPENAI_API_KEY
+model: openai:gpt-5              # Uses OPENAI_API_KEY
 
 # Custom environment variable suffix
-model: openai:gpt-4o:dev          # Uses OPENAI_API_KEY_DEV
+model: openai:gpt-5:dev          # Uses OPENAI_API_KEY_DEV
 
 # Specific environment variable
-model: openai:gpt-4o:MY_CUSTOM_KEY # Uses MY_CUSTOM_KEY
+model: openai:gpt-5:MY_CUSTOM_KEY # Uses MY_CUSTOM_KEY
 ```
 
 ## MCP Server Configuration
@@ -160,7 +224,7 @@ Agents can invoke other agents as tools:
 ```yaml
 # main.agentuse
 ---
-model: openai:gpt-4o
+model: openai:gpt-5
 subagents:
   - path: ./analyzer.agentuse
     name: code_analyzer
@@ -239,18 +303,6 @@ Options:
   --timeout <seconds>      Max execution time (default: 300)
 ```
 
-### Authentication
-
-```bash
-# Set up OAuth for Anthropic
-agentuse auth anthropic login
-
-# Check auth status
-agentuse auth anthropic status
-
-# Log out
-agentuse auth anthropic logout
-```
 
 ## Remote Agent Execution
 
@@ -352,7 +404,7 @@ npx tsc --noEmit
 
 ```yaml
 ---
-model: openai:gpt-4o-mini
+model: openai:gpt-5-mini
 ---
 
 You are a helpful AI assistant. Answer questions concisely and accurately.
@@ -382,7 +434,7 @@ Review the code in the src/ directory and provide feedback on:
 
 ```yaml
 ---
-model: openai:gpt-4o
+model: openai:gpt-5
 mcp_servers:
   github:
     command: npx
