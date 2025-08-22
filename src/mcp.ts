@@ -56,10 +56,44 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
     // Prepare environment variables
     const env = getDefaultEnvironment();
     
+    // Check required environment variables first (fail fast)
+    if (config.requiredEnvVars && config.requiredEnvVars.length > 0) {
+      const missingRequired: string[] = [];
+      for (const varName of config.requiredEnvVars) {
+        if (process.env[varName] === undefined) {
+          missingRequired.push(varName);
+        } else {
+          const rawValue = process.env[varName];
+          // Try to parse as JSON if it looks like JSON
+          const parsedValue = parseJsonEnvVar(rawValue);
+          
+          if (parsedValue !== null && typeof parsedValue === 'object') {
+            env[varName] = JSON.stringify(parsedValue);
+            logger.debug(`[MCP] Adding required JSON env var ${varName} to ${name}`);
+          } else {
+            env[varName] = rawValue;
+            logger.debug(`[MCP] Adding required env var ${varName} to ${name}`);
+          }
+        }
+      }
+      
+      if (missingRequired.length > 0) {
+        throw new Error(
+          `Missing required environment variables for MCP server '${name}': ${missingRequired.join(', ')}\n` +
+          `Please set these in your .env file or export them in your shell.`
+        );
+      }
+    }
+    
     // Only include explicitly allowed environment variables
     if (config.allowedEnvVars && config.allowedEnvVars.length > 0) {
       logger.debug(`[MCP] Server ${name} allowed env vars: ${config.allowedEnvVars.join(', ')}`);
       for (const varName of config.allowedEnvVars) {
+        // Skip if already added as required
+        if (config.requiredEnvVars?.includes(varName)) {
+          continue;
+        }
+        
         if (process.env[varName] !== undefined) {
           const rawValue = process.env[varName];
           
@@ -77,7 +111,7 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
             logger.debug(`[MCP] Adding env var ${varName} to ${name}`);
           }
         } else {
-          logger.debug(`[MCP] Env var ${varName} not found in process.env for ${name}`);
+          logger.warn(`[MCP] Optional environment variable '${varName}' not set for server '${name}'`);
         }
       }
     }
@@ -152,8 +186,18 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
         ...(config.disallowedTools && { disallowedTools: config.disallowedTools })
       };
     } catch (error) {
-      logger.error(`Failed to connect to MCP server ${name}: ${error instanceof Error ? error.message : String(error)}`);
-      throw new Error(`Failed to connect to MCP server: ${name}`);
+      // Smart error detection: check if allowed env vars are missing
+      const missingAllowed = config.allowedEnvVars?.filter(v => !process.env[v]) || [];
+      
+      let errorMessage = `Failed to connect to MCP server ${name}: ${error instanceof Error ? error.message : String(error)}`;
+      
+      if (missingAllowed.length > 0) {
+        errorMessage += `\n\nNote: The following optional environment variables are not set: ${missingAllowed.join(', ')}`;
+        errorMessage += `\nIf this server requires these variables, please set them in your .env file or export them in your shell.`;
+      }
+      
+      logger.error(errorMessage);
+      throw new Error(errorMessage);
     }
   });
   
