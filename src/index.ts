@@ -9,6 +9,7 @@ import { basename } from 'path';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
 import { version } from '../package.json';
+import { AuthenticationError } from './models';
 
 const program = new Command();
 
@@ -225,6 +226,20 @@ program
       // Exit successfully after agent completes
       process.exit(0);
     } catch (error) {
+      // Check if it's an authentication error
+      if (error instanceof AuthenticationError) {
+        console.error(`\n[ERROR] ${error.message}`);
+        console.error('');
+        console.error('To authenticate, run:');
+        console.error('  agentuse auth login');
+        console.error('');
+        console.error('Or set your API key:');
+        console.error(`  export ${error.envVar}='your-key-here'`);
+        console.error('');
+        console.error('For more options: agentuse auth --help');
+        process.exit(1);
+      }
+      
       logger.error('Error', error as Error);
       process.exit(1);
     }

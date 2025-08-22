@@ -3,7 +3,7 @@ import type { ParsedAgent } from './parser';
 import type { MCPConnection } from './mcp';
 import { getMCPTools } from './mcp';
 import { createSubAgentTools } from './subagent';
-import { createModel } from './models';
+import { createModel, AuthenticationError } from './models';
 import { AnthropicAuth } from './auth/anthropic';
 import { logger } from './utils/logger';
 import { ContextManager } from './context-manager';
@@ -135,7 +135,16 @@ export async function* executeAgentCore(
     abortSignal?: AbortSignal;
   }
 ): AsyncGenerator<AgentChunk> {
-  const model = await createModel(agent.config.model);
+  let model;
+  try {
+    model = await createModel(agent.config.model);
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      // Re-throw with better message for the CLI to catch
+      throw error;
+    }
+    throw error;
+  }
   
   // Initialize context manager if enabled
   let contextManager: ContextManager | null = null;
