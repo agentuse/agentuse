@@ -47,7 +47,7 @@ npm install -g agentuse
 npx agentuse run your-agent.agentuse
 
 # Or use Bun for faster execution
-bunx agentuse run your-agent.agentuse
+bunx --bun agentuse run your-agent.agentuse
 ```
 
 ### Authentication Setup
