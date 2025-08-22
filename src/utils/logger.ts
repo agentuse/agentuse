@@ -7,6 +7,22 @@ export enum LogLevel {
   ERROR = 3,
 }
 
+/**
+ * Format a warning message with tool context and shortened error details
+ */
+export function formatWarning(tool: string, operation: string, error: string): string {
+  // Take first line, remove common "Error:" prefix, trim whitespace, cap at 80 chars
+  const cleanError = error
+    .split('\n')[0]
+    .replace(/^Error:\s*/i, '')
+    .trim()
+    .substring(0, 80);
+  
+  const reason = cleanError.length === 80 ? cleanError + '...' : cleanError;
+  
+  return `${tool}: ${operation} failed - ${reason}`;
+}
+
 // Log channels for future use
 // enum LogChannel {
 //   RESPONSE = 'response',

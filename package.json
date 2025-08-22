@@ -41,7 +41,10 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build && bun test",
-    "pack-dry": "bun run build && npm pack --dry-run"
+    "pack-dry": "bun run build && npm pack --dry-run",
+    "release": "np",
+    "release:preview": "np --preview",
+    "release:dry": "np --preview --any-branch"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.0",
@@ -59,6 +62,8 @@
   },
   "devDependencies": {
     "@types/bun": "^1.2.19",
+    "np": "^10.2.0",
     "typescript": "^5.9.2"
-  }
+  },
+  "packageManager": "pnpm@10.11.1+sha512.e519b9f7639869dc8d5c3c5dfef73b3f091094b0a006d7317353c72b124e80e1afd429732e28705ad6bfa1ee879c1fce46c128ccebd3192101f43dd67c667912"
 }

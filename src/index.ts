@@ -9,6 +9,7 @@ import { basename } from 'path';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
 import { version } from '../package.json';
+import { AuthenticationError } from './models';
 
 const program = new Command();
 
@@ -63,13 +64,13 @@ program
 program.addCommand(createAuthCommand());
 
 program
-  .command('run <file>')
-  .description('Run an AI agent from a markdown file or URL')
+  .command('run <file> [prompt...]')
+  .description('Run an AI agent from a markdown file or URL, optionally appending a prompt')
   .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
   .option('-d, --debug', 'Enable verbose debug logging')
   .option('-v, --verbose', 'Show detailed execution information')
   .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
-  .action(async (file: string, options: { quiet: boolean, debug: boolean, verbose: boolean, timeout: string }) => {
+  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, verbose: boolean, timeout: string }) => {
     const startTime = Date.now();
     
     try {
@@ -94,6 +95,9 @@ program
       if (isNaN(timeoutMs) || timeoutMs <= 0) {
         throw new Error('Invalid timeout value. Must be a positive number of seconds.');
       }
+      
+      // Join additional prompt arguments if provided
+      const additionalPrompt = promptArgs.length > 0 ? promptArgs.join(' ') : null;
       
       let agent;
       
@@ -148,6 +152,14 @@ program
       } else {
         // Parse agent specification from local markdown file
         agent = await parseAgent(file);
+      }
+      
+      // Append additional prompt if provided
+      if (additionalPrompt) {
+        agent.instructions = agent.instructions + '\n\n' + additionalPrompt;
+        if (options.verbose) {
+          logger.info(`Appended prompt: ${additionalPrompt}`);
+        }
       }
       
       // Connect to MCP servers if configured
@@ -225,6 +237,20 @@ program
       // Exit successfully after agent completes
       process.exit(0);
     } catch (error) {
+      // Check if it's an authentication error
+      if (error instanceof AuthenticationError) {
+        console.error(`\n[ERROR] ${error.message}`);
+        console.error('');
+        console.error('To authenticate, run:');
+        console.error('  agentuse auth login');
+        console.error('');
+        console.error('Or set your API key:');
+        console.error(`  export ${error.envVar}='your-key-here'`);
+        console.error('');
+        console.error('For more options: agentuse auth --help');
+        process.exit(1);
+      }
+      
       logger.error('Error', error as Error);
       process.exit(1);
     }

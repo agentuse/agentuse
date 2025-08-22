@@ -10,6 +10,7 @@ const MCPServerSchema = z.union([
     command: z.string(),
     args: z.array(z.string()).optional(),
     env: z.record(z.string()).optional(),
+    requiredEnvVars: z.array(z.string()).optional(),
     allowedEnvVars: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional()
   }),
@@ -25,6 +26,7 @@ const MCPServerSchema = z.union([
       token: z.string().optional()
     }).optional(),
     headers: z.record(z.string()).optional(),
+    requiredEnvVars: z.array(z.string()).optional(),
     allowedEnvVars: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional()
   })

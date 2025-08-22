@@ -1,0 +1,19 @@
+{
+  "yarn": false,
+  "cleanup": false,
+  "tests": true,
+  "2fa": true,
+  "publish": true,
+  "preview": false,
+  "tag": "latest",
+  "branch": "main",
+  "releaseDraft": false,
+  "testScript": "test",
+  "buildScript": "build",
+  "message": "v%s",
+  "git": {
+    "commitMessage": "Release v%s",
+    "tagName": "v%s",
+    "requireBranch": "main"
+  }
+}

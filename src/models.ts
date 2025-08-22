@@ -3,6 +3,17 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { AnthropicAuth } from './auth/anthropic';
 import { logger } from './utils/logger';
 
+export class AuthenticationError extends Error {
+  constructor(
+    public provider: string,
+    public envVar: string,
+    message: string
+  ) {
+    super(message);
+    this.name = 'AuthenticationError';
+  }
+}
+
 interface ModelConfig {
   provider: string;
   modelName: string;
@@ -78,20 +89,32 @@ export async function createModel(modelString: string) {
     if (config.envVar) {
       apiKey = process.env[config.envVar];
       if (!apiKey) {
-        throw new Error(`Missing ${config.envVar} environment variable`);
+        throw new AuthenticationError(
+          'anthropic',
+          config.envVar,
+          `No authentication found for Anthropic (missing ${config.envVar})`
+        );
       }
       logger.info(`Using ${config.envVar} for authentication`);
     } else if (config.envSuffix) {
       const suffix = `_${config.envSuffix}`;
       apiKey = process.env[`ANTHROPIC_API_KEY${suffix}`];
       if (!apiKey) {
-        throw new Error(`Missing ANTHROPIC_API_KEY${suffix} environment variable`);
+        throw new AuthenticationError(
+          'anthropic',
+          `ANTHROPIC_API_KEY${suffix}`,
+          `No authentication found for Anthropic (missing ANTHROPIC_API_KEY${suffix})`
+        );
       }
       logger.info(`Using ANTHROPIC_API_KEY${suffix} for authentication`);
     } else {
       apiKey = process.env.ANTHROPIC_API_KEY;
       if (!apiKey) {
-        throw new Error('Missing ANTHROPIC_API_KEY environment variable and no OAuth token found');
+        throw new AuthenticationError(
+          'anthropic',
+          'ANTHROPIC_API_KEY',
+          'No authentication found for Anthropic'
+        );
       }
     }
     
@@ -107,20 +130,32 @@ export async function createModel(modelString: string) {
     if (config.envVar) {
       apiKey = process.env[config.envVar];
       if (!apiKey) {
-        throw new Error(`Missing ${config.envVar} environment variable`);
+        throw new AuthenticationError(
+          'openai',
+          config.envVar,
+          `No authentication found for OpenAI (missing ${config.envVar})`
+        );
       }
       logger.info(`Using ${config.envVar} for authentication`);
     } else if (config.envSuffix) {
       const suffix = `_${config.envSuffix}`;
       apiKey = process.env[`OPENAI_API_KEY${suffix}`];
       if (!apiKey) {
-        throw new Error(`Missing OPENAI_API_KEY${suffix} environment variable`);
+        throw new AuthenticationError(
+          'openai',
+          `OPENAI_API_KEY${suffix}`,
+          `No authentication found for OpenAI (missing OPENAI_API_KEY${suffix})`
+        );
       }
       logger.info(`Using OPENAI_API_KEY${suffix} for authentication`);
     } else {
       apiKey = process.env.OPENAI_API_KEY;
       if (!apiKey) {
-        throw new Error('Missing OPENAI_API_KEY environment variable');
+        throw new AuthenticationError(
+          'openai', 
+          'OPENAI_API_KEY',
+          'No authentication found for OpenAI'
+        );
       }
     }
     
@@ -136,20 +171,32 @@ export async function createModel(modelString: string) {
     if (config.envVar) {
       apiKey = process.env[config.envVar];
       if (!apiKey) {
-        throw new Error(`Missing ${config.envVar} environment variable`);
+        throw new AuthenticationError(
+          'openrouter',
+          config.envVar,
+          `No authentication found for OpenRouter (missing ${config.envVar})`
+        );
       }
       logger.info(`Using ${config.envVar} for authentication`);
     } else if (config.envSuffix) {
       const suffix = `_${config.envSuffix}`;
       apiKey = process.env[`OPENROUTER_API_KEY${suffix}`];
       if (!apiKey) {
-        throw new Error(`Missing OPENROUTER_API_KEY${suffix} environment variable`);
+        throw new AuthenticationError(
+          'openrouter',
+          `OPENROUTER_API_KEY${suffix}`,
+          `No authentication found for OpenRouter (missing OPENROUTER_API_KEY${suffix})`
+        );
       }
       logger.info(`Using OPENROUTER_API_KEY${suffix} for authentication`);
     } else {
       apiKey = process.env.OPENROUTER_API_KEY;
       if (!apiKey) {
-        throw new Error('Missing OPENROUTER_API_KEY environment variable');
+        throw new AuthenticationError(
+          'openrouter',
+          'OPENROUTER_API_KEY', 
+          'No authentication found for OpenRouter'
+        );
       }
     }
     

@@ -3,9 +3,9 @@ import type { ParsedAgent } from './parser';
 import type { MCPConnection } from './mcp';
 import { getMCPTools } from './mcp';
 import { createSubAgentTools } from './subagent';
-import { createModel } from './models';
+import { createModel, AuthenticationError } from './models';
 import { AnthropicAuth } from './auth/anthropic';
-import { logger } from './utils/logger';
+import { logger, formatWarning } from './utils/logger';
 import { ContextManager } from './context-manager';
 import { compactMessages } from './compactor';
 
@@ -99,7 +99,10 @@ export async function processAgentStream(
         // Tool errors are now passed as tool-result in executeAgentCore
         // This case shouldn't occur but keep for safety
         const prefix = options?.logPrefix || '';
-        logger.warn(`${prefix}Tool call failed: ${chunk.toolName} - ${chunk.error}`);
+        const errorStr = typeof chunk.error === 'string' 
+          ? chunk.error 
+          : ((chunk.error as any)?.message || 'Unknown error');
+        logger.warn(`${prefix}${formatWarning(chunk.toolName || 'unknown', 'call', errorStr)}`);
         break;
         
       case 'finish':
@@ -135,7 +138,16 @@ export async function* executeAgentCore(
     abortSignal?: AbortSignal;
   }
 ): AsyncGenerator<AgentChunk> {
-  const model = await createModel(agent.config.model);
+  let model;
+  try {
+    model = await createModel(agent.config.model);
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      // Re-throw with better message for the CLI to catch
+      throw error;
+    }
+    throw error;
+  }
   
   // Initialize context manager if enabled
   let contextManager: ContextManager | null = null;
@@ -431,7 +443,23 @@ function parseToolResult(chunk: any): string {
     
     for (const pattern of errorPatterns) {
       if (pattern.test(resultStr)) {
-        logger.warn(`Tool result appears to be an error: ${chunk.toolName}`);
+        // Extract operation from error message or use generic "operation"
+        let operation = 'operation';
+        
+        // Try to extract operation context from error message
+        const commandMatch = resultStr.match(/['"`]([^'"`]+)['"`]/);
+        const fileMatch = resultStr.match(/(?:file|path|directory)\s+['"`]?([^\s'"`]+)/i);
+        const actionMatch = resultStr.match(/(?:failed to|cannot|unable to)\s+(\w+)/i);
+        
+        if (commandMatch) {
+          operation = commandMatch[1];
+        } else if (fileMatch) {
+          operation = fileMatch[1];
+        } else if (actionMatch) {
+          operation = actionMatch[1];
+        }
+        
+        logger.warn(formatWarning(chunk.toolName || 'unknown', operation, resultStr));
         break;
       }
     }
