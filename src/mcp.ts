@@ -135,10 +135,9 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
  * Connect to MCP servers using AI SDK experimental_createMCPClient
  * @param servers Optional server configurations
  * @param debug Enable debug logging
- * @param envFile Optional path to custom .env file
  * @returns Array of MCP client connections
  */
-export async function connectMCP(servers?: MCPServersConfig, debug: boolean = false, envFile?: string): Promise<MCPConnection[]> {
+export async function connectMCP(servers?: MCPServersConfig, debug: boolean = false): Promise<MCPConnection[]> {
   if (!servers) {
     logger.debug('[MCP] No MCP servers configured');
     return [];
@@ -417,7 +416,7 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
               const result = await originalExecute(args, opts);
               
               // Handle MCP result format (like opencode does)
-              if (result && result.content && Array.isArray(result.content)) {
+              if (result && typeof result === 'object' && 'content' in result && Array.isArray(result.content)) {
                 const output = result.content
                   .filter((x: any) => x.type === "text")
                   .map((x: any) => x.text)

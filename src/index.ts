@@ -198,7 +198,7 @@ program
       }
       
       // Connect to MCP servers if configured
-      const mcp = await connectMCP(agent.config.mcp_servers, options.debug, options.envFile);
+      const mcp = await connectMCP(agent.config.mcp_servers, options.debug);
       
       // Create abort controller for timeout
       const abortController = new AbortController();
