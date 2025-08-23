@@ -7,7 +7,6 @@ import {
   ReadResourceResultSchema,
   type Resource 
 } from '@modelcontextprotocol/sdk/types.js';
-import * as dotenv from 'dotenv';
 import { logger } from './utils/logger';
 import { parseJsonEnvVar } from './utils/env';
 import { z } from 'zod';
@@ -136,9 +135,10 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
  * Connect to MCP servers using AI SDK experimental_createMCPClient
  * @param servers Optional server configurations
  * @param debug Enable debug logging
+ * @param envFile Optional path to custom .env file
  * @returns Array of MCP client connections
  */
-export async function connectMCP(servers?: MCPServersConfig, debug: boolean = false): Promise<MCPConnection[]> {
+export async function connectMCP(servers?: MCPServersConfig, debug: boolean = false, envFile?: string): Promise<MCPConnection[]> {
   if (!servers) {
     logger.debug('[MCP] No MCP servers configured');
     return [];
@@ -146,9 +146,8 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
   
   logger.info(`[MCP] Connecting to ${Object.keys(servers).length} MCP server(s): ${Object.keys(servers).join(', ')}`);
   
-  // Load environment variables from .env file silently
-  // @ts-ignore - quiet option exists but may not be in types
-  dotenv.config({ quiet: true });
+  // Note: Environment variables are already loaded in index.ts before this is called
+  // The envFile parameter is kept for backwards compatibility but is no longer used here
   
   // Create promises for all server connections in parallel
   const connectionPromises = Object.entries(servers).map(async ([name, config]) => {
