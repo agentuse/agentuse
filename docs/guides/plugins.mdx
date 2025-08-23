@@ -1,6 +1,16 @@
 # Plugin System
 
-AgentUse supports a simple plugin system that allows you to extend functionality by hooking into agent lifecycle events.
+## Why Plugins?
+
+The plugin system is the only way to programmatically extend agent functionality beyond the built-in capabilities. While agents themselves are markdown-based and declarative, plugins provide a JavaScript/TypeScript interface for:
+
+- **Custom integrations**: Connect agents to your existing systems, databases, or APIs
+- **Observability**: Add monitoring, logging, or analytics to track agent performance
+- **Automation workflows**: Trigger actions based on agent completion or failure
+- **Development tools**: Build debugging utilities or testing frameworks
+- **Cross-agent functionality**: Share logic across all agents without modifying each one
+
+Without plugins, you would be limited to the tools and capabilities built into AgentUse. Plugins bridge the gap between AgentUse's declarative agent definitions and your custom programmatic needs.
 
 ## Quick Start
 
@@ -122,20 +132,11 @@ const plugin: PluginHandlers = {
 export default plugin;
 ```
 
-## Example Plugins
-
-Example plugins can be found in the test fixtures:
-- Basic console logging plugin
-- Slack notification plugin (see example above)
-
-Create your own plugins by following the structure shown in the examples above.
-
 ## Error Handling
 
 - Plugin loading errors are caught and logged as warnings, but don't prevent the agent from running
 - Invalid plugin formats (non-object default exports) are skipped with a warning message
 - Plugin execution errors are caught and logged but don't fail agent execution
-- Plugin require cache is cleared for hot-reloading during development
 - Missing plugin directories are handled gracefully
 - Plugins can be disabled by removing/renaming the file
 
@@ -150,16 +151,8 @@ Create your own plugins by following the structure shown in the examples above.
 ## Implementation Details
 
 - Plugins are loaded using dynamic imports with absolute paths
-- The system supports both TypeScript (`.ts`) and JavaScript (`.js`) files
 - Plugin handlers are executed asynchronously in parallel
 - Multiple plugins can handle the same event
 - Console output is captured during agent execution and made available to plugins
+- Plugin require cache is cleared for hot-reloading during development
 
-## Future Enhancements
-
-The plugin system is designed to be extensible. Future events may include:
-- `agent:start` - When agent begins execution (currently commented out in code)
-- `tool:execute` - Before/after tool execution
-- `message:sent` - When messages are sent to the model
-
-Current implementation focuses on the most useful event: `agent:complete`.
