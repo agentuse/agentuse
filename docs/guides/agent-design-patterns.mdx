@@ -1,0 +1,560 @@
+---
+title: Agent Design Patterns
+description: Best practices for building production-ready AgentUse agents
+---
+
+## Overview
+
+Learn how to design effective AI agents using AgentUse's markdown-first approach. These patterns help you build maintainable, composable agents that integrate with external systems.
+
+<CardGroup cols={2}>
+  <Card title="Modular Composition" icon="cubes">
+    Build complex systems using sub-agents
+  </Card>
+  <Card title="External Integration" icon="plug">
+    Connect to external services via MCP
+  </Card>
+  <Card title="Workflow Patterns" icon="diagram-project">
+    Design multi-step agent workflows
+  </Card>
+  <Card title="Production Deployment" icon="rocket">
+    Deploy agents in CI/CD and automation
+  </Card>
+</CardGroup>
+
+## Core Design Principles
+
+### 1. Non-Interactive by Design
+
+<Note>
+  AgentUse agents run without interactive prompts, making them perfect for automation, CI/CD pipelines, and cron jobs.
+</Note>
+
+Agents are designed to:
+- Run autonomously from start to finish
+- Complete tasks without user intervention
+- Work in headless environments
+- Integrate into automated workflows
+
+### 2. External Result Delivery
+
+While AgentUse agents run synchronously, they can push results to external systems through MCP servers:
+
+<Tabs>
+  <Tab title="Via MCP Server">
+    ```yaml
+    ---
+    model: anthropic:claude-sonnet-4-20250514
+    mcp_servers:
+      slack:
+        command: "pnpx"
+        args: ["-y", "@modelcontextprotocol/server-slack"]
+        requiredEnvVars: ["SLACK_TOKEN"]
+    ---
+    
+    You send task results to Slack.
+    
+    ## Task
+    1. Complete the requested work
+    2. Send summary to #agent-results channel
+    ```
+  </Tab>
+  <Tab title="Via HTTP MCP">
+    ```yaml
+    ---
+    model: anthropic:claude-sonnet-4-20250514
+    mcp_servers:
+      webhook:
+        url: https://api.example.com/mcp
+        headers:
+          Authorization: "Bearer ${API_TOKEN}"
+    ---
+    
+    You post results to external webhook.
+    ```
+  </Tab>
+</Tabs>
+
+### 3. Separation of Concerns
+
+<Info>
+  Use sub-agents to separate different responsibilities, keeping each agent focused on a single task.
+</Info>
+
+Each agent should:
+- Have a single, clear purpose
+- Delegate complex subtasks to sub-agents
+- Use appropriate models for the task (Haiku for simple tasks, Sonnet for complex reasoning)
+- Maintain clear boundaries between concerns
+
+### Supported Providers
+
+AgentUse supports multiple AI providers:
+
+- **Anthropic**: `anthropic:claude-sonnet-4-20250514`, `anthropic:claude-3-5-haiku-latest`
+- **OpenAI**: `openai:gpt-4-turbo`, `openai:gpt-3.5-turbo`
+- **OpenRouter**: `openrouter:anthropic/claude-3-sonnet`, `openrouter:openai/gpt-4-turbo`
+
+You can also use custom API key suffixes for multi-account management:
+```yaml
+model: anthropic:claude-sonnet-4-20250514:work  # Uses ANTHROPIC_API_KEY_WORK
+model: openai:gpt-4-turbo:personal             # Uses OPENAI_API_KEY_PERSONAL
+```
+
+<Note>
+  Anthropic models automatically receive a "Claude Code" system prompt for optimal CLI behavior.
+</Note>
+
+## Multi-Agent Workflow Pattern
+
+Complex tasks can be decomposed into specialized agents that work together through sub-agent composition.
+
+### Example: Content Pipeline
+
+<Steps>
+  <Step title="Research Agent">
+    Gathers information using web search or MCP tools
+    
+    ```markdown research.agentuse
+    ---
+    model: anthropic:claude-3-5-haiku-latest
+    mcp_servers:
+      filesystem:
+        command: "pnpx"
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "./research"]
+    ---
+    
+    You are a research specialist. Find and save relevant information.
+    
+    ## Task
+    1. Research the given topic thoroughly
+    2. Save findings to research folder
+    3. Return key insights summary
+    ```
+  </Step>
+  
+  <Step title="Writer Agent">
+    Creates content based on research
+    
+    ```markdown writer.agentuse
+    ---
+    model: anthropic:claude-sonnet-4-20250514
+    ---
+    
+    You are a content writer. Create engaging, accurate content.
+    
+    ## Task
+    1. Review provided research
+    2. Create well-structured content
+    3. Ensure factual accuracy
+    ```
+  </Step>
+  
+  <Step title="Orchestrator Agent">
+    Coordinates the workflow
+    
+    ```markdown orchestrator.agentuse
+    ---
+    model: anthropic:claude-sonnet-4-20250514
+    subagents:
+      - path: ./research.agentuse
+        maxSteps: 50
+      - path: ./writer.agentuse
+        maxSteps: 100
+    ---
+    
+    You coordinate content creation workflow.
+    
+    ## Task
+    1. Use research agent to gather information
+    2. Pass findings to writer agent
+    3. Review and finalize output
+    ```
+  </Step>
+</Steps>
+
+## Implementation Patterns
+
+### Running Agents in Production
+
+<AccordionGroup>
+  <Accordion title="CI/CD Pipeline Integration">
+    ```bash
+    # In GitHub Actions
+    - name: Run validation agent
+      run: |
+        agentuse run validation.agentuse \
+          "Check PR #${{ github.event.pull_request.number }}"
+    ```
+  </Accordion>
+  
+  <Accordion title="Scheduled Tasks (Cron)">
+    ```bash
+    # Daily report generation
+    0 9 * * * agentuse run daily-report.agentuse \
+      "Generate report for $(date -I)"
+    ```
+  </Accordion>
+  
+  <Accordion title="Webhook Triggered">
+    ```javascript
+    // Express endpoint
+    app.post('/webhook', async (req, res) => {
+      const { exec } = require('child_process');
+      exec(`agentuse run handler.agentuse "${req.body.event}"`, 
+        (error, stdout) => {
+          res.json({ output: stdout });
+        });
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### State Management with External Systems
+
+Since AgentUse agents are stateless between runs, use MCP servers to manage state:
+
+<CodeGroup>
+```yaml notion-state.agentuse
+---
+model: anthropic:claude-sonnet-4-20250514
+mcp_servers:
+  notion:
+    command: "pnpx"
+    args: ["-y", "@modelcontextprotocol/server-notion"]
+    requiredEnvVars: ["NOTION_TOKEN"]
+---
+
+You track workflow state in Notion.
+
+## Task
+1. Check current state in Notion database
+2. Process next pending item
+3. Update state after completion
+```
+
+```yaml file-state.agentuse
+---
+model: anthropic:claude-sonnet-4-20250514
+mcp_servers:
+  filesystem:
+    command: "pnpx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "./state"]
+---
+
+You manage state using local files.
+
+## Task
+1. Read state from state/current.json
+2. Process based on current state
+3. Write updated state back
+```
+</CodeGroup>
+
+### Error Handling
+
+Build resilient agents with proper error handling:
+
+```markdown robust-agent.agentuse
+---
+model: anthropic:claude-sonnet-4-20250514
+subagents:
+  - path: ./validator.agentuse
+  - path: ./processor.agentuse
+  - path: ./error-handler.agentuse
+---
+
+You execute tasks with comprehensive error handling.
+
+## Error Handling Strategy
+1. Validate input with validator agent
+2. If validation fails, use error-handler to log and notify
+3. Process with processor agent
+4. If processing fails, use error-handler for recovery
+5. Always provide clear status at completion
+```
+
+## Working with MCP Servers
+
+<Info>
+  MCP (Model Context Protocol) servers provide standardized access to external tools and services.
+</Info>
+
+### MCP Configuration Options
+
+AgentUse supports multiple ways to configure MCP servers:
+
+- **`requiredEnvVars`**: Environment variables that must be set (agent fails if missing)
+- **`allowedEnvVars`**: Optional environment variables to pass to the server
+- **`env`**: Hardcoded environment variables (overrides system environment)
+- **`disallowedTools`**: Array of tool names/patterns to exclude from the server (supports wildcards)
+
+<CodeGroup>
+```yaml Required Environment Variables
+---
+model: anthropic:claude-sonnet-4-20250514
+mcp_servers:
+  github:
+    command: "pnpx"
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    requiredEnvVars: ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+---
+```
+
+```yaml Optional Environment Variables
+---
+model: anthropic:claude-sonnet-4-20250514
+mcp_servers:
+  filesystem:
+    command: "pnpx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "./workspace"]
+    allowedEnvVars: ["DEBUG", "VERBOSE"]
+---
+```
+
+```yaml Hardcoded Values
+---
+model: anthropic:claude-sonnet-4-20250514
+mcp_servers:
+  custom:
+    command: "python"
+    args: ["server.py"]
+    env:
+      MODE: "production"
+      TIMEOUT: "30"
+---
+```
+
+```yaml Tool Filtering
+---
+model: anthropic:claude-sonnet-4-20250514
+mcp_servers:
+  filesystem:
+    command: "pnpx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "./workspace"]
+    disallowedTools: ["rm", "delete*", "write_dangerous*"]
+---
+```
+</CodeGroup>
+
+### Available MCP Servers
+
+<Table>
+  <TableHeader>
+    <TableRow>
+      <TableHead>Server</TableHead>
+      <TableHead>Purpose</TableHead>
+      <TableHead>Package</TableHead>
+    </TableRow>
+  </TableHeader>
+  <TableBody>
+    <TableRow>
+      <TableCell>Filesystem</TableCell>
+      <TableCell>File operations</TableCell>
+      <TableCell>@modelcontextprotocol/server-filesystem</TableCell>
+    </TableRow>
+    <TableRow>
+      <TableCell>GitHub</TableCell>
+      <TableCell>GitHub API access</TableCell>
+      <TableCell>@modelcontextprotocol/server-github</TableCell>
+    </TableRow>
+    <TableRow>
+      <TableCell>Slack</TableCell>
+      <TableCell>Slack messaging</TableCell>
+      <TableCell>@modelcontextprotocol/server-slack</TableCell>
+    </TableRow>
+    <TableRow>
+      <TableCell>PostgreSQL</TableCell>
+      <TableCell>Database operations</TableCell>
+      <TableCell>@modelcontextprotocol/server-postgres</TableCell>
+    </TableRow>
+  </TableBody>
+</Table>
+
+### Custom MCP Integration
+
+```yaml custom-mcp.agentuse
+---
+model: anthropic:claude-sonnet-4-20250514
+mcp_servers:
+  custom_api:
+    url: https://your-api.com/mcp
+    headers:
+      Authorization: "Bearer ${API_KEY}"
+      Content-Type: "application/json"
+---
+
+You interact with custom API via MCP.
+```
+
+## Step Limits and Resource Management
+
+<Info>
+  AgentUse agents have a default step limit of 1000 to prevent infinite loops and control resource usage.
+</Info>
+
+### Configuring Step Limits
+
+- **Main Agent**: Use `MAX_STEPS` environment variable to override the default 1000 steps
+- **Sub-Agents**: Use `maxSteps` parameter in sub-agent configuration (defaults to 50)
+
+```bash
+# Run agent with custom step limit
+MAX_STEPS=2500 agentuse run complex-agent.agentuse "Process large dataset"
+```
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-20250514
+subagents:
+  - path: ./data-processor.agentuse
+    maxSteps: 200  # Allow more steps for complex processing
+  - path: ./validator.agentuse
+    maxSteps: 25   # Quick validation only needs few steps
+---
+```
+
+## Best Practices Checklist
+
+<CheckList>
+  <Check>Keep agents focused on a single responsibility</Check>
+  <Check>Use sub-agents for complex multi-step workflows</Check>
+  <Check>Choose appropriate models (Haiku for simple tasks, Sonnet for complex reasoning)</Check>
+  <Check>Leverage MCP servers for external integrations</Check>
+  <Check>Design for non-interactive execution</Check>
+  <Check>Use environment variables for sensitive configuration</Check>
+  <Check>Test agents in isolation before composing</Check>
+  <Check>Document agent purpose and usage clearly</Check>
+  <Check>Version control agents like code</Check>
+  <Check>Set appropriate maxSteps limits for sub-agents</Check>
+  <Check>Monitor step usage and adjust limits as needed</Check>
+</CheckList>
+
+## Common Patterns
+
+<AccordionGroup>
+  <Accordion title="Chain of Responsibility" icon="link">
+    ```yaml
+    ---
+    model: anthropic:claude-sonnet-4-20250514
+    subagents:
+      - path: ./validator.agentuse
+      - path: ./transformer.agentuse
+      - path: ./publisher.agentuse
+    ---
+    
+    Process data through validation → transformation → publishing pipeline.
+    ```
+  </Accordion>
+  
+  <Accordion title="Conditional Routing" icon="route">
+    ```markdown
+    ---
+    model: anthropic:claude-sonnet-4-20250514
+    subagents:
+      - path: ./simple-handler.agentuse
+      - path: ./complex-handler.agentuse
+    ---
+    
+    ## Task
+    Analyze request complexity:
+    - Simple requests → simple-handler
+    - Complex requests → complex-handler
+    ```
+  </Accordion>
+  
+  <Accordion title="Retry with Fallback" icon="refresh">
+    ```markdown
+    ---
+    model: anthropic:claude-sonnet-4-20250514
+    subagents:
+      - path: ./primary-agent.agentuse
+      - path: ./fallback-agent.agentuse
+    ---
+    
+    ## Task
+    1. Try primary-agent first
+    2. If it fails or times out, use fallback-agent
+    3. Report which path succeeded
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Deployment Strategies
+
+### Docker Container
+
+```dockerfile
+FROM node:20-slim
+RUN npm install -g agentuse
+COPY agents/ /app/agents/
+WORKDIR /app
+CMD ["agentuse", "run", "agents/main.agentuse"]
+```
+
+### Serverless Function
+
+```javascript
+// AWS Lambda handler
+exports.handler = async (event) => {
+  const { execSync } = require('child_process');
+  const output = execSync(
+    `agentuse run agent.agentuse "${event.body}"`
+  );
+  return {
+    statusCode: 200,
+    body: output.toString()
+  };
+};
+```
+
+### GitHub Action
+
+```yaml
+name: Agent Workflow
+on:
+  issues:
+    types: [opened]
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: npm install -g agentuse
+      - run: |
+          agentuse run issue-handler.agentuse \
+            "${{ github.event.issue.title }}"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card 
+    title="Creating Agents" 
+    icon="file-plus" 
+    href="/guides/creating-agents"
+  >
+    Learn the basics of agent creation
+  </Card>
+  <Card 
+    title="Using MCP Tools" 
+    icon="tools" 
+    href="/reference/agent-syntax#mcp-servers"
+  >
+    Integrate MCP servers with agents
+  </Card>
+  <Card 
+    title="Sub-Agents" 
+    icon="sitemap" 
+    href="/guides/subagents"
+  >
+    Build modular agent systems
+  </Card>
+  <Card 
+    title="Remote Agents" 
+    icon="cloud" 
+    href="/guides/remote-agents"
+  >
+    Use agents from remote URLs
+  </Card>
+</CardGroup>

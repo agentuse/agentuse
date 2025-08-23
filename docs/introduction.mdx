@@ -1,0 +1,112 @@
+---
+title: Introduction
+description: Build production AI agents with just markdown files
+---
+
+<img
+  className="block dark:hidden"
+  src="/static/agentuse-logo.png"
+  alt="AgentUse Logo"
+/>
+<img
+  className="hidden dark:block"
+  src="/static/agentuse-logo-dark.png"
+  alt="AgentUse Logo Dark"
+/>
+
+## AI Agents as Simple as Markdown
+
+**AgentUse** is a minimal-configuration CLI that lets you build production AI agents with just markdown files. Inspired by Claude Code's elegant markdown-based configuration, AgentUse takes this philosophy further - your entire agent *is* a markdown file. Just set your API key and start building.
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get up and running with your first agent in under 5 minutes
+  </Card>
+  <Card
+    title="Examples"
+    icon="code"
+    href="https://github.com/agentuse/agentuse/tree/main/cookbook/agents"
+  >
+    Browse ready-to-use agent examples
+  </Card>
+</CardGroup>
+
+## Why AgentUse?
+
+### The Problem
+
+Current agent frameworks force an impossible choice:
+- **Visual workflow tools** give you drag-and-drop simplicity but create version control nightmares and vendor lock-in
+- **Traditional code frameworks** offer power and flexibility but require hundreds of lines of boilerplate just to say "hello world"
+
+### The Solution
+
+AgentUse makes your agents *just markdown files*. Not configuration files that generate code. Not visual flows that compile to JSON. The markdown IS the agent.
+
+<AccordionGroup>
+  <Accordion title="Version Control Just Works">
+    Diff, review, and merge agents like any other code. Your agents are text files that integrate seamlessly with Git.
+  </Accordion>
+  <Accordion title="Share Agents with a URL">
+    As easy as sharing a gist. Agents can even be run directly from HTTPS URLs.
+  </Accordion>
+  <Accordion title="Zero Learning Curve">
+    If you can write a README, you can build an agent. No new syntax to learn.
+  </Accordion>
+  <Accordion title="Production Ready">
+    Built-in retries, streaming, error recovery, and MCP support. Sub-second startup times.
+  </Accordion>
+</AccordionGroup>
+
+## Key Features
+
+<Steps>
+  <Step title="Fast Startup">
+    Run agents quickly with minimal overhead. Sub-second startup times for rapid deployment.
+  </Step>
+  <Step title="Multi-Provider Support">
+    Works with Anthropic Claude (including OAuth), OpenAI GPT, and OpenRouter with flexible API key management.
+  </Step>
+  <Step title="MCP Integration">
+    Connect to any Model Context Protocol server for database, filesystem, and API access.
+  </Step>
+  <Step title="Sub-Agent Support">
+    Build complex workflows by composing multiple specialized agents.
+  </Step>
+</Steps>
+
+## How It Works
+
+AgentUse agents are defined using a simple markdown format with minimal configuration:
+
+```yaml
+---
+model: anthropic:claude-3-5-haiku-latest
+---
+
+You are a helpful assistant.
+
+## Task
+Say hello to the user and ask how you can help them today.
+```
+
+That's it! Save this as `hello.agentuse` and run:
+
+```bash
+agentuse run hello.agentuse
+```
+
+The agent name is automatically derived from the filename, keeping configuration minimal.
+
+## What Can You Build?
+
+- **MCP-Powered Tools** - Access databases, filesystems, and APIs through MCP servers
+- **Multi-Agent Systems** - Compose specialized agents for complex workflows
+- **Automation Scripts** - Replace complex bash scripts with intelligent agents
+- **Data Processing** - Transform and analyze data with natural language
+- **Content Generation** - Create content with consistent voice and style
+- **Integration Workflows** - Connect multiple services through MCP protocols

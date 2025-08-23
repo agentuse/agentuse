@@ -1,0 +1,403 @@
+---
+title: Agent Syntax Reference
+description: Complete syntax guide for AgentUse agent files
+---
+
+## File Format
+
+AgentUse agents are markdown files with YAML frontmatter.
+
+```markdown
+---
+# YAML configuration
+name: agent-name
+model: provider:model
+---
+
+# Markdown content (system prompt)
+You are an AI assistant.
+
+## Optional sections
+Additional instructions or context.
+```
+
+## Frontmatter Reference
+
+### Required Fields
+
+<ParamField path="model" type="string" required>
+  AI model to use for the agent.
+  
+  Format: `provider:model-name`
+  
+  Supported providers:
+  - `anthropic` - Anthropic Claude models
+  - `openai` - OpenAI GPT models  
+  - `openrouter` - OpenRouter models
+  
+  ```yaml
+  model: anthropic:claude-sonnet-4-20250514
+  model: openai:gpt-5-mini
+  model: openrouter:meta/llama-3-70b
+  ```
+  
+  You can also specify a custom environment variable suffix:
+  ```yaml
+  model: anthropic:claude-sonnet-4-20250514:dev  # Uses ANTHROPIC_API_KEY_DEV
+  ```
+</ParamField>
+
+### Optional Fields
+
+<ParamField path="mcp_servers" type="object" required={false}>
+  Configuration for Model Context Protocol (MCP) servers that provide tools and resources to the agent.
+  
+  Each server is defined as a key-value pair where the key is the server name and the value is the server configuration.
+</ParamField>
+
+<ParamField path="subagents" type="array" required={false}>
+  Array of sub-agent configurations that this agent can delegate tasks to.
+  
+  Each sub-agent must specify a `path` to the `.agentuse` file, with optional `name` and `maxSteps` parameters.
+</ParamField>
+
+## Tools Configuration
+
+<Note>
+  AgentUse currently supports tools through MCP servers and sub-agents only. 
+  Direct tool definitions are not yet implemented.
+</Note>
+
+Tools are available to agents through:
+1. **MCP Servers** - Connect to any Model Context Protocol server
+2. **Sub-Agents** - Delegate tasks to other agents
+
+## MCP Servers
+
+### Stdio MCP Configuration
+
+```yaml
+mcp_servers:
+  filesystem:
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/directory", "--read-only"]
+    requiredEnvVars:      # Variables that must exist
+      - API_KEY
+    allowedEnvVars:       # Optional variables
+      - DEBUG_MODE
+    disallowedTools:      # Optional: tools to exclude
+      - write_file
+      - delete_file
+```
+
+### HTTP MCP Configuration
+
+```yaml
+mcp_servers:
+  remote_server:
+    url: https://api.example.com/mcp
+    sessionId: my-session-123           # Optional session ID
+    auth:                               # Optional authentication
+      type: bearer
+      token: ${API_TOKEN}
+    headers:                            # Optional custom headers
+      X-Custom-Header: custom-value
+    requiredEnvVars:                    # Variables that must exist
+      - API_TOKEN
+    allowedEnvVars:                     # Optional variables  
+      - DEBUG_MODE
+    disallowedTools:                    # Optional: tools to exclude
+      - dangerous_operation
+```
+
+### Multiple MCP Servers
+
+```yaml
+mcp_servers:
+  filesystem:
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "./data"]
+  database:
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-postgresql"]
+    requiredEnvVars:
+      - DATABASE_URL      # Must be set in .env or shell
+  custom:
+    command: node
+    args: ["./custom-mcp-server.js"]
+    allowedEnvVars:
+      - CUSTOM_CONFIG     # Optional configuration
+  http_api:
+    url: https://api.example.com/mcp
+    sessionId: unique-session-id
+    auth:
+      type: bearer
+      token: ${API_TOKEN}
+    requiredEnvVars:
+      - API_TOKEN
+```
+
+<Warning>
+  Note: The `mcp_servers` field uses a map format where each server has a name as the key.
+</Warning>
+
+## Sub-Agents
+
+### Sub-Agent Configuration
+
+```yaml
+subagents:
+  - path: ./agents/researcher.agentuse
+    name: researcher  # Optional custom name
+    maxSteps: 100    # Optional step limit (default: 50)
+  - path: ./agents/writer.agentuse
+  - path: ../shared/validator.agentuse
+```
+
+### Remote Sub-Agents
+
+```yaml
+subagents:
+  - path: https://example.com/agents/helper.agentuse
+  - path: https://raw.githubusercontent.com/user/repo/main/agent.agentuse
+```
+
+<Info>
+  Sub-agents can call the main agent or other sub-agents, enabling complex multi-agent workflows.
+</Info>
+
+## Environment Variables in MCP Configuration
+
+<Info>
+  **Security by Design**: AgentUse prevents hardcoding secrets in agent files. Use `requiredEnvVars` and `allowedEnvVars` to control which environment variables are passed to MCP servers.
+</Info>
+
+```yaml
+mcp_servers:
+  github:
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    requiredEnvVars:
+      - GITHUB_TOKEN      # Fails if not set
+    allowedEnvVars:
+      - GITHUB_DEBUG      # Optional, warns if missing
+  
+  http_server:
+    url: https://api.example.com/mcp
+    auth:
+      type: bearer
+      token: ${API_TOKEN}
+    requiredEnvVars:
+      - API_TOKEN         # Required for auth.token reference
+```
+
+### MCP Server Configuration Fields
+
+#### Common Fields (All Server Types)
+- **`requiredEnvVars`**: Array of environment variables that MUST exist. Agent fails immediately if any are missing.
+- **`allowedEnvVars`**: Array of environment variables to pass through if they exist. Warns if missing but continues.
+- **`disallowedTools`**: Array of tool names or patterns to exclude from this server. Supports wildcards (e.g., `delete_*`).
+
+#### Stdio Server Fields
+- **`command`**: Executable command to start the MCP server (required)
+- **`args`**: Array of command-line arguments (optional)
+- **`env`**: Object of additional environment variables to set (optional)
+
+#### HTTP Server Fields  
+- **`url`**: HTTPS URL of the MCP server (required, must use HTTPS)
+- **`sessionId`**: Optional session identifier for the connection
+- **`auth`**: Authentication configuration object (optional)
+  - **`type`**: Currently only `"bearer"` is supported
+  - **`token`**: Bearer token value, can reference environment variables with `${VAR_NAME}`
+- **`headers`**: Object of custom HTTP headers to send (optional)
+
+<Warning>
+  Direct value assignment (e.g., `GITHUB_TOKEN: "abc123"`) is intentionally not supported to prevent secrets in code.
+</Warning>
+
+## System Prompt Sections
+
+### Basic Structure
+
+```markdown
+---
+name: agent
+model: anthropic:claude-sonnet-4-0
+---
+
+You are a helpful assistant.
+
+## Your Role
+Detailed description of the agent's role.
+
+## Guidelines
+- Guideline 1
+- Guideline 2
+- Guideline 3
+
+## Task
+What the agent should do.
+```
+
+### Using Context in Prompts
+
+```markdown
+---
+name: personalized
+model: anthropic:claude-sonnet-4-0
+---
+
+You are a helpful AI assistant.
+
+## Context
+Provide assistance based on the user's specific needs and context.
+```
+
+<Note>
+  Direct variable interpolation in prompts is not currently supported. Context should be provided through conversation or MCP tools.
+</Note>
+
+### Conditional Sections
+
+```markdown
+---
+name: adaptive
+model: anthropic:claude-sonnet-4-0
+---
+
+You adapt based on user needs.
+
+## For Technical Users
+Provide detailed technical explanations.
+
+## For Non-Technical Users
+Use simple language and analogies.
+
+## Task
+Determine user level and respond appropriately.
+```
+
+## Special Syntax
+
+### Commands
+
+```markdown
+## Available Commands
+!help - Show help
+!reset - Reset context
+!compact - Compact context
+!status - Show status
+```
+
+### Structured Output
+
+```markdown
+## Output Format
+Return responses as JSON:
+```json
+{
+  "status": "success",
+  "data": "...",
+  "metadata": {}
+}
+```
+```
+
+### Examples in Prompt
+
+```markdown
+## Examples
+
+### Example 1
+Input: "Translate hello to Spanish"
+Output: "Hola"
+
+### Example 2
+Input: "What's 2+2?"
+Output: "4"
+```
+
+## Complete Example
+
+```markdown
+---
+model: anthropic:claude-sonnet-4-20250514
+mcp_servers:
+  filesystem:
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "./data", "--read-only"]
+  github:
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    requiredEnvVars:
+      - GITHUB_TOKEN      # Must be set in .env or shell
+    allowedEnvVars:
+      - GITHUB_DEBUG      # Optional debug flag
+    disallowedTools:
+      - delete_*          # Prevent deletion operations
+  api_server:
+    url: https://api.example.com/mcp
+    sessionId: agent-session-123
+    auth:
+      type: bearer
+      token: ${API_TOKEN}
+    requiredEnvVars:
+      - API_TOKEN
+subagents:
+  - path: ./helpers/researcher.agentuse
+    name: researcher    # Optional custom name
+    maxSteps: 100       # Optional step limit
+  - path: ./helpers/writer.agentuse
+---
+
+# Multi-Capability Agent
+
+You are an advanced AI assistant with multiple capabilities.
+
+## Your Capabilities
+1. **File Access**: Read and write files via the filesystem MCP server
+2. **GitHub Access**: Interact with GitHub repositories
+3. **Research**: Delegate research tasks to the researcher sub-agent
+4. **Writing**: Delegate writing tasks to the writer sub-agent
+
+## Guidelines
+- Use the appropriate tool for each task
+- Delegate complex tasks to specialized sub-agents
+- Handle errors gracefully
+- Provide clear, concise responses
+
+## Task
+Assist the user with their request using all available capabilities.
+```
+
+## Validation Rules
+
+1. **File Extension**: Agent files must use `.agentuse` extension
+2. **Model**: Must be a non-empty string (required field)
+3. **MCP Server Configuration**:
+   - Stdio servers: Must have `command` field
+   - HTTP servers: Must have `url` field with `http://` or `https://` protocol
+   - Cannot have both `command` and `url` in the same server config
+4. **Environment Variables**: 
+   - `requiredEnvVars` and `allowedEnvVars` must be arrays of strings
+   - Environment variable names in `${VAR_NAME}` format are validated at runtime
+5. **Sub-agents**:
+   - Must be an array of objects
+   - Each object must have a `path` field (string)
+   - Optional `name` (string) and `maxSteps` (number) fields
+6. **Authentication**: Only `bearer` type is supported for HTTP MCP servers
+7. **Tool Restrictions**: `disallowedTools` must be an array of strings (supports wildcards)
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Sub-Agents" icon="users" href="/guides/subagents">
+    Learn about sub-agents
+  </Card>
+  <Card title="Environment Variables" icon="gear" href="/reference/environment-variables">
+    Configure environment
+  </Card>
+  <Card title="Examples" icon="code" href="https://github.com/agentuse/agentuse/tree/main/cookbook/agents">
+    See it in action
+  </Card>
+</CardGroup>

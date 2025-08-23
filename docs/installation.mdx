@@ -1,0 +1,283 @@
+---
+title: Installation
+description: Detailed installation and setup instructions for AgentUse
+---
+
+## System Requirements
+
+<CardGroup cols={2}>
+  <Card title="Node.js" icon="node">
+    Version 18.0.0 or higher required
+  </Card>
+  <Card title="Operating System" icon="desktop">
+    macOS, Linux, or Windows with WSL
+  </Card>
+</CardGroup>
+
+## Installation Methods
+
+### Global Installation (Recommended)
+
+<Tabs>
+  <Tab title="pnpm">
+    ```bash
+    pnpm install -g agentuse
+    
+    # Verify installation
+    agentuse --version
+    ```
+  </Tab>
+  <Tab title="npm">
+    ```bash
+    npm install -g agentuse
+    
+    # Verify installation
+    agentuse --version
+    ```
+  </Tab>
+  <Tab title="bun">
+    ```bash
+    bun add -g agentuse
+    
+    # Verify installation
+    agentuse --version
+    ```
+  </Tab>
+  <Tab title="yarn">
+    ```bash
+    yarn global add agentuse
+    
+    # Verify installation
+    agentuse --version
+    ```
+  </Tab>
+</Tabs>
+
+### Run Without Installation
+
+Use `pnpx` or `bunx` to run AgentUse without installing:
+
+```bash
+# Using pnpx
+pnpx agentuse run your-agent.agentuse
+
+# Using npx
+npx agentuse run your-agent.agentuse
+
+# Using bunx with Bun runtime (faster)
+bunx --bun agentuse run your-agent.agentuse
+```
+
+### Development Setup
+
+Clone and build from source:
+
+```bash
+# Clone the repository
+git clone https://github.com/agentuse/agentuse.git
+cd agentuse
+
+# Enable corepack if pnpm is not available
+corepack enable
+
+# Install dependencies with pnpm
+pnpm install
+
+# Build the project
+pnpm run build
+
+# Link for local development
+pnpm link
+
+# Now you can use 'agentuse' command globally
+agentuse --version
+```
+
+## Authentication Setup
+
+AgentUse supports multiple AI providers. You'll need to authenticate with at least one:
+
+### Interactive Authentication (Recommended)
+
+The easiest way to set up authentication:
+
+```bash
+# Interactive prompt for all providers
+agentuse auth login
+
+# Or login to specific provider
+agentuse auth login anthropic
+agentuse auth login openai
+agentuse auth login openrouter
+```
+
+### Environment Variables
+
+Alternatively, set API keys as environment variables:
+
+```bash
+# Add to your ~/.bashrc, ~/.zshrc, or ~/.profile
+export ANTHROPIC_API_KEY="sk-ant-api03-..."
+export OPENAI_API_KEY="sk-proj-..."
+export OPENROUTER_API_KEY="sk-or-v1-..."
+```
+
+### Configuration File
+
+Create a `.env` file in your project root:
+
+```bash
+# .env
+ANTHROPIC_API_KEY=sk-ant-api03-...
+OPENAI_API_KEY=sk-proj-...
+OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+<Warning>
+  Never commit `.env` files to version control. Add `.env` to your `.gitignore`.
+</Warning>
+
+## Verify Installation
+
+Check that everything is working:
+
+<Steps>
+  <Step title="Check Version">
+    ```bash
+    agentuse --version
+    ```
+  </Step>
+  <Step title="Check Authentication">
+    ```bash
+    agentuse auth list
+    # or use the short alias
+    agentuse auth ls
+    ```
+  </Step>
+  <Step title="Run Test Agent">
+    ```bash
+    echo '---
+    name: test
+    model: anthropic:claude-3-5-haiku-latest
+    ---
+    Say "Installation successful!"' > test.agentuse
+    
+    agentuse run test.agentuse
+    ```
+  </Step>
+</Steps>
+
+## Docker Installation
+
+Docker is useful for isolated environments, CI/CD pipelines, or when you want to avoid installing Node.js locally.
+
+### Development Setup
+
+For local development, mount your project directory to access `.agentuse` files from the host:
+
+```dockerfile
+# Dockerfile.dev
+FROM node:20-slim
+RUN corepack enable && pnpm install -g agentuse
+WORKDIR /app
+CMD ["agentuse"]
+```
+
+Build and run with mounted volume:
+
+```bash
+# Build the development image
+docker build -f Dockerfile.dev -t agentuse-dev .
+
+# Run with your local files mounted
+docker run -it --rm \
+  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -e OPENAI_API_KEY=$OPENAI_API_KEY \
+  -v $(pwd):/app \
+  agentuse-dev run your-agent.agentuse
+```
+
+### Production Setup
+
+Include agent files in the image for distribution:
+
+```dockerfile
+# Dockerfile.prod
+FROM node:20-slim
+RUN corepack enable && pnpm install -g agentuse
+WORKDIR /app
+
+# Copy your agent files into the container
+COPY *.agentuse ./
+COPY agents/ ./agents/
+
+# Set default command
+ENTRYPOINT ["agentuse", "run"]
+CMD ["main.agentuse"]
+```
+
+Build and run:
+
+```bash
+# Build with agents included
+docker build -f Dockerfile.prod -t my-agent:latest .
+
+# Run without mounting (agents are in the image)
+docker run -it --rm \
+  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  my-agent:latest
+```
+
+### Docker Compose Example
+
+For complex setups with multiple services:
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  agentuse:
+    build: .
+    environment:
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+      - OPENROUTER_API_KEY
+    volumes:
+      - ./:/app
+    command: run main.agentuse
+```
+
+Run with: `docker-compose run --rm agentuse`
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Command not found">
+    If `agentuse` command is not found after installation:
+    
+    1. Check your PATH:
+    ```bash
+    echo $PATH
+    ```
+    
+    2. Find where pnpm installs global packages:
+    ```bash
+    pnpm config get prefix
+    ```
+    
+    3. Add to PATH if needed:
+    ```bash
+    export PATH="$PATH:$(pnpm config get prefix)/bin"
+    ```
+  </Accordion>
+  <Accordion title="Node version issues">
+    Check your Node.js version:
+    ```bash
+    node --version
+    ```
+    
+    If below v18, update Node.js:
+    - Use [nvm](https://github.com/nvm-sh/nvm): `nvm install 20`
+    - Or download from [nodejs.org](https://nodejs.org)
+  </Accordion>
+</AccordionGroup>

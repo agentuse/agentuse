@@ -1,0 +1,272 @@
+---
+title: Remote Agents
+description: Run agents directly from URLs
+---
+
+## Overview
+
+AgentUse can execute agents directly from HTTPS URLs, enabling:
+- Shared agent libraries
+- Version-controlled agents
+- Community agent repositories
+- Dynamic agent loading
+
+<Warning>
+  Remote agents must use HTTPS and have the `.agentuse` file extension for security.
+</Warning>
+
+## Running Remote Agents
+
+### Basic Usage
+
+```bash
+# Run from GitHub
+agentuse run https://raw.githubusercontent.com/user/repo/main/agent.agentuse
+
+# Run from your server
+agentuse run https://example.com/agents/helper.agentuse
+
+# Run from Gist
+agentuse run https://gist.githubusercontent.com/user/id/raw/agent.agentuse
+```
+
+### With Arguments
+
+```bash
+agentuse run https://example.com/agent.agentuse "Process this data"
+```
+
+## Security
+
+<Warning>
+  Remote agents run with the same permissions as local agents. Only run agents from trusted sources!
+</Warning>
+
+### Security Prompt
+
+When running a remote agent, you'll see a security prompt:
+
+```
+⚠️  WARNING: You are about to execute an agent from:
+https://example.com/agent.agentuse
+
+Only continue if you trust the source and have audited the agent.
+[p]review / [y]es / [N]o: 
+```
+
+**Options:**
+- `p` or `preview` - Show the agent content before deciding
+- `y` or `yes` - Execute the agent immediately  
+- `N` or `no` - Abort execution (default)
+
+## Performance
+
+Remote agents are downloaded and executed directly without caching. Each run fetches the latest version from the URL, ensuring you always run the most up-to-date agent code.
+
+## Publishing Agents
+
+### GitHub Repository
+
+1. Create a repository for your agents:
+```
+my-agents/
+├── README.md
+├── data-processor.agentuse
+├── text-analyzer.agentuse
+└── api-caller.agentuse
+```
+
+2. Access raw files:
+```bash
+agentuse run https://raw.githubusercontent.com/username/my-agents/main/data-processor.agentuse
+```
+
+### GitHub Gist
+
+1. Create a Gist with your agent
+2. Get the raw URL
+3. Share the URL for others to use
+
+### Self-Hosted
+
+Serve agents from your server:
+
+```javascript
+// Express example
+app.get('/agents/:name', (req, res) => {
+  const agentContent = getAgent(req.params.name);
+  res.type('text/plain').send(agentContent);
+});
+```
+
+<Info>
+  For local development, AgentUse allows HTTPS URLs with localhost or 127.0.0.1 and will accept self-signed certificates for these addresses only.
+</Info>
+
+## Versioning
+
+### Using Git Tags
+
+```bash
+# Specific version
+agentuse run https://raw.githubusercontent.com/user/repo/v1.0.0/agent.agentuse
+
+# Latest stable
+agentuse run https://raw.githubusercontent.com/user/repo/stable/agent.agentuse
+
+# Development version
+agentuse run https://raw.githubusercontent.com/user/repo/dev/agent.agentuse
+```
+
+### Version in URL
+
+```bash
+# Semantic versioning in path
+agentuse run https://example.com/agents/v2/processor.agentuse
+agentuse run https://example.com/agents/v1/processor.agentuse
+```
+
+## Advanced Usage
+
+### Dynamic Loading
+
+Load agents based on conditions:
+
+```javascript
+// Dynamic agent loader
+const agentUrl = process.env.PROD 
+  ? 'https://prod.example.com/agent.agentuse'
+  : 'https://dev.example.com/agent.agentuse';
+
+execSync(`agentuse run ${agentUrl}`);
+```
+
+### Agent Composition
+
+Remote agents as sub-agents:
+
+```yaml
+---
+name: orchestrator
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: https://example.com/agents/analyzer.agentuse
+  - path: https://example.com/agents/reporter.agentuse
+---
+```
+
+### CI/CD Integration
+
+For automation, you can use expect or other tools to handle the security prompt:
+
+```yaml
+# GitHub Actions
+name: Run Remote Agent
+on: [push]
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm install -g agentuse
+      - run: |
+          echo "y" | agentuse run https://example.com/agents/ci-checker.agentuse \
+            "Check PR #${{ github.event.pull_request.number }}"
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use HTTPS Only">
+    AgentUse enforces HTTPS URLs to prevent man-in-the-middle attacks. HTTP URLs will be rejected.
+  </Accordion>
+  <Accordion title="Required .agentuse Extension">
+    Remote agents must have the `.agentuse` file extension for security validation.
+  </Accordion>
+  <Accordion title="Preview Before Running">
+    Use the preview option to review agent code before execution in untrusted environments.
+  </Accordion>
+  <Accordion title="Version Your Agents">
+    Include version information in URLs or use Git tags for reproducible deployments.
+  </Accordion>
+  <Accordion title="Document Dependencies">
+    Clearly document what MCP tools and environment variables your agent needs.
+  </Accordion>
+</AccordionGroup>
+
+## Example: Shared Team Agents
+
+### Repository Structure
+
+```
+team-agents/
+├── README.md
+├── daily/
+│   ├── standup.agentuse
+│   └── report.agentuse
+├── development/
+│   ├── code-review.agentuse
+│   └── test-runner.agentuse
+└── deployment/
+    ├── pre-deploy.agentuse
+    └── post-deploy.agentuse
+```
+
+### Team Usage
+
+```bash
+# Daily standup
+agentuse run https://raw.githubusercontent.com/team/agents/main/daily/standup.agentuse
+
+# Code review
+agentuse run https://raw.githubusercontent.com/team/agents/main/development/code-review.agentuse
+
+# Deployment  
+agentuse run https://raw.githubusercontent.com/team/agents/main/deployment/pre-deploy.agentuse
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="HTTPS Required Error">
+    - AgentUse only accepts HTTPS URLs for security
+    - Ensure your URL starts with `https://`
+    - HTTP URLs will be rejected with an error
+  </Accordion>
+  <Accordion title="Extension Validation Error">
+    - Remote agents must have the `.agentuse` file extension
+    - Ensure your URL ends with `.agentuse`
+  </Accordion>
+  <Accordion title="404 Not Found">
+    - Ensure you're using the raw file URL, not the GitHub page URL
+    - For GitHub: use `https://raw.githubusercontent.com/...`
+    - Check if the repository is public
+    - Verify the branch/tag name
+  </Accordion>
+  <Accordion title="SSL Certificate Errors">
+    - Verify the URL is correct and accessible
+    - Check if corporate proxy or firewall is interfering
+    - Ensure the remote server has valid SSL certificates
+  </Accordion>
+</AccordionGroup>
+
+## Security Checklist
+
+- [ ] Only run agents from trusted sources
+- [ ] Use the preview option to review agent code before running
+- [ ] Ensure remote URLs use HTTPS and have `.agentuse` extension
+- [ ] Implement access controls on agent servers
+- [ ] Monitor agent execution logs
+- [ ] Rotate API keys regularly
+- [ ] Use environment-specific agents
+- [ ] Verify server SSL certificates are valid
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Sub-Agents" icon="layer-group" href="/guides/subagents">
+    Compose agents together
+  </Card>
+  <Card title="Examples" icon="code" href="https://github.com/agentuse/agentuse/tree/main/cookbook/agents">
+    See remote agent examples
+  </Card>
+</CardGroup>

@@ -1,0 +1,165 @@
+# Plugin System
+
+AgentUse supports a simple plugin system that allows you to extend functionality by hooking into agent lifecycle events.
+
+## Quick Start
+
+1. Create a plugin directory:
+```bash
+mkdir -p .agentuse/plugins
+```
+
+2. Add a plugin file (`.js` or `.ts`):
+```javascript
+// .agentuse/plugins/my-plugin.js
+export default {
+  'agent:complete': async (event) => {
+    console.log(`Agent ${event.agent.name} completed!`);
+  }
+};
+```
+
+3. Run your agent normally - plugins auto-load!
+
+## Plugin Locations
+
+Plugins are automatically loaded from:
+- `./.agentuse/plugins/*.{ts,js}` - Project-specific plugins (loaded first)
+- `~/.agentuse/plugins/*.{ts,js}` - User-global plugins (loaded second)
+
+**Note:** Project-specific plugins take precedence and are loaded before global plugins. All plugins with the same event handler will execute in the order they are loaded.
+
+## Plugin Structure
+
+Each plugin must export a default object with event handlers:
+
+```typescript
+export default {
+  'agent:complete': async (event) => {
+    // Handle agent completion
+  }
+};
+```
+
+## Available Events
+
+### `agent:complete`
+
+Fired when an agent successfully completes execution.
+
+Event data:
+```typescript
+{
+  agent: {
+    name: string;         // Agent name
+    model: string;        // Model used (e.g., "anthropic:claude-sonnet-4-0")
+    filePath?: string;    // Path to agent file
+  };
+  result: {
+    text: string;         // Final output text
+    duration: number;     // Execution time in seconds
+    tokens?: number;      // Total tokens used
+    toolCalls: number;    // Number of tool calls made
+  };
+  isSubAgent: boolean;    // True if this is a sub-agent
+  consoleOutput: string;  // Full console output including logs and results
+}
+```
+
+## Example: Slack Notifications
+
+```javascript
+// .agentuse/plugins/slack.js
+export default {
+  'agent:complete': async (event) => {
+    const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+    
+    // Skip if no webhook or if sub-agent
+    if (!webhookUrl || event.isSubAgent) {
+      return;
+    }
+    
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: `✅ Agent "${event.agent.name}" completed`,
+        attachments: [{
+          color: 'good',
+          fields: [
+            { title: 'Duration', value: `${event.result.duration.toFixed(1)}s`, short: true },
+            { title: 'Tokens', value: event.result.tokens?.toString() || 'N/A', short: true },
+            { title: 'Tool Calls', value: event.result.toolCalls.toString(), short: true }
+          ]
+        }]
+      })
+    });
+  }
+};
+```
+
+Set your webhook URL:
+```bash
+export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+```
+
+## TypeScript Support
+
+For TypeScript plugins, import the types:
+
+```typescript
+// .agentuse/plugins/my-plugin.ts
+import type { PluginHandlers } from 'agentuse/plugin/types';
+
+const plugin: PluginHandlers = {
+  'agent:complete': async (event) => {
+    // Full type safety and intellisense
+    console.log(`Agent ${event.agent.name} completed!`);
+    console.log(`Console output: ${event.consoleOutput}`);
+  }
+};
+
+export default plugin;
+```
+
+## Example Plugins
+
+Example plugins can be found in the test fixtures:
+- Basic console logging plugin
+- Slack notification plugin (see example above)
+
+Create your own plugins by following the structure shown in the examples above.
+
+## Error Handling
+
+- Plugin loading errors are caught and logged as warnings, but don't prevent the agent from running
+- Invalid plugin formats (non-object default exports) are skipped with a warning message
+- Plugin execution errors are caught and logged but don't fail agent execution
+- Plugin require cache is cleared for hot-reloading during development
+- Missing plugin directories are handled gracefully
+- Plugins can be disabled by removing/renaming the file
+
+## Best Practices
+
+1. Check `event.isSubAgent` to avoid duplicate notifications
+2. Use environment variables for configuration
+3. Keep plugins focused on a single responsibility
+4. Handle errors gracefully within your plugin
+5. Use TypeScript for better type safety
+
+## Implementation Details
+
+- Plugins are loaded using dynamic imports with absolute paths
+- The system supports both TypeScript (`.ts`) and JavaScript (`.js`) files
+- Plugin handlers are executed asynchronously in parallel
+- Multiple plugins can handle the same event
+- Console output is captured during agent execution and made available to plugins
+
+## Future Enhancements
+
+The plugin system is designed to be extensible. Future events may include:
+- `agent:start` - When agent begins execution (currently commented out in code)
+- `tool:execute` - Before/after tool execution
+- `message:sent` - When messages are sent to the model
+
+Current implementation focuses on the most useful event: `agent:complete`.

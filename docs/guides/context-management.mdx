@@ -1,0 +1,255 @@
+---
+title: Context Management  
+description: How AgentUse manages conversation context efficiently
+---
+
+## Overview
+
+AgentUse automatically manages conversation context to keep your agents running efficiently within token limits. This ensures long-running agents don't hit token limits while preserving important information.
+
+## Automatic Compaction
+
+When conversations approach token limits, AgentUse automatically:
+1. Detects when context usage exceeds the threshold
+2. Compacts older messages into a concise summary
+3. Preserves recent messages for continuity
+4. Continues the conversation seamlessly
+
+<Info>
+  Compaction happens transparently - your agent continues working without interruption.
+</Info>
+
+## How It Works
+
+### Token Tracking
+
+AgentUse tracks token usage throughout the conversation and compacts when approaching limits. The system uses character-based estimation (approximately 4 characters per token) and updates with actual usage data from the AI models.
+
+### Compaction Strategy
+
+AgentUse uses a **summarization-based** approach:
+- Older messages are summarized using the same model as the agent
+- Recent messages are preserved intact for continuity
+- The summary captures key decisions, tool results, and progress
+- System prompts and tool definitions are always preserved
+
+## Configuration
+
+### Environment Variables
+
+Control context management globally using environment variables:
+
+```bash
+# Enable/disable context compaction (default: enabled)
+CONTEXT_COMPACTION=true
+
+# Set compaction threshold as percentage (default: 0.7 = 70%)
+COMPACTION_THRESHOLD=0.8
+
+# Number of recent messages to preserve (default: 3)
+COMPACTION_KEEP_RECENT=5
+
+# Maximum agent steps before stopping (default: 1000)
+MAX_STEPS=2000
+```
+
+## What Gets Preserved
+
+### Always Preserved
+
+- System prompts
+- Recent messages (last 3 by default, configurable)
+- Tool definitions remain available
+
+### What Gets Compacted
+
+- Older conversation history
+- Previous tool calls and results
+- Assistant responses from earlier in the conversation
+
+The compaction creates a summary that preserves:
+- Key decisions and outcomes
+- Important tool results and errors
+- Current state and progress
+- Critical information needed for continuation
+
+## Compaction Details
+
+### Compaction Process
+
+When compaction is triggered:
+1. Older messages are separated from recent ones
+2. A summarization request is sent to the same model
+3. The summary is created with a specialized system prompt
+4. Recent messages are kept intact for continuity
+5. The conversation continues with the compacted context
+
+### Compaction Prompt
+
+The system uses this prompt for summarization:
+```
+You are a conversation summarizer. Summarize the following agent context concisely, preserving:
+1. Key decisions and outcomes
+2. Important tool results and errors
+3. Current state and progress
+4. Any critical information needed for continuation
+
+Be concise but comprehensive.
+```
+
+## Monitoring
+
+### Token Usage
+
+AgentUse displays token usage at the end of each run:
+```
+Tokens used: 12,450
+```
+
+For agents with sub-agents:
+```
+Tokens used: 18,750 (main: 12,450, sub-agents: 6,300)
+```
+
+### Compaction Events
+
+When compaction occurs, you'll see:
+```
+Context approaching limit (85% used). Compacting agent context...
+Context compacted successfully. Continuing...
+```
+
+## Context Limits by Model
+
+AgentUse automatically detects context limits for different models:
+
+- **Anthropic models**: Retrieved from models.dev API
+- **OpenAI models**: Retrieved from models.dev API  
+- **Unknown models**: Default to 32,000 tokens (conservative)
+
+The system updates context limits dynamically based on the latest model information.
+
+## Performance Considerations
+
+<AccordionGroup>
+  <Accordion title="Compaction Overhead">
+    Compaction requires an additional API call to summarize context, adding 1-3 seconds to processing time
+  </Accordion>
+  <Accordion title="Token Usage">
+    Compaction itself uses tokens (up to 2000 for the summary), but saves significantly more in long conversations
+  </Accordion>
+  <Accordion title="Context Quality">
+    Summaries preserve key information but some nuance may be lost. Recent messages remain fully intact
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+### 1. Set Appropriate Thresholds
+
+```bash
+# Conservative (compact early, better context preservation)
+COMPACTION_THRESHOLD=0.6
+
+# Aggressive (compact late, more context before compaction)
+COMPACTION_THRESHOLD=0.9
+
+# Balanced (recommended default)
+COMPACTION_THRESHOLD=0.7
+```
+
+### 2. Adjust Recent Messages
+
+```bash
+# Keep more recent messages (better continuity, more tokens used)
+COMPACTION_KEEP_RECENT=5
+
+# Keep fewer recent messages (more aggressive compaction)
+COMPACTION_KEEP_RECENT=2
+```
+
+### 3. Disable if Not Needed
+
+```bash
+# Disable for short conversations
+CONTEXT_COMPACTION=false
+```
+
+## Technical Details
+
+### Token Estimation
+
+- Uses character-based estimation: ~4 characters per token
+- Updates with actual token usage from AI models
+- Tracks both input and output tokens
+
+### Model Integration
+
+- Context limits are fetched from models.dev API
+- Falls back to conservative 32,000 token limit for unknown models
+- Caches model information for 24 hours
+
+### Error Handling
+
+- If compaction fails, creates a fallback summary
+- Continues execution even if compaction encounters errors
+- Logs compaction failures for debugging
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Context Lost After Compaction">
+    - Increase `COMPACTION_KEEP_RECENT` for more preserved messages
+    - Lower `COMPACTION_THRESHOLD` to compact earlier with more context
+    - The same model is used for summarization, so quality should be consistent
+  </Accordion>
+  <Accordion title="Hitting Token Limits">
+    - Lower `COMPACTION_THRESHOLD` to compact earlier
+    - Reduce `COMPACTION_KEEP_RECENT` for more aggressive compaction
+    - Consider the model's actual context limit vs your usage
+  </Accordion>
+  <Accordion title="Compaction Not Working">
+    - Check that `CONTEXT_COMPACTION` is not set to 'false'
+    - Verify the model supports the context limits being used
+    - Check logs for compaction errors
+  </Accordion>
+</AccordionGroup>
+
+## Example: Long-Running Agent
+
+```yaml
+---
+name: data-analyzer
+model: anthropic:claude-sonnet-4-0
+---
+
+You analyze large datasets over extended periods.
+Process data systematically and maintain detailed progress tracking.
+```
+
+```bash
+# Configure for long-running analysis
+export MAX_STEPS=2000
+export COMPACTION_THRESHOLD=0.8
+export COMPACTION_KEEP_RECENT=5
+
+# Run the agent
+agentuse run data-analyzer.agentuse
+```
+
+The agent will automatically:
+- Track token usage throughout the analysis
+- Compact context when approaching 80% of the model's limit
+- Preserve the last 5 messages for continuity
+- Continue analysis without interruption
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Agents" icon="file-pen" href="/guides/creating-agents">
+    Build efficient agents
+  </Card>
+  <Card title="Environment Variables" icon="gear" href="/reference/environment-variables">
+    Configuration options
+  </Card>
+</CardGroup>

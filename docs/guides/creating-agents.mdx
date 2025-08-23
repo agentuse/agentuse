@@ -1,0 +1,225 @@
+---
+title: Creating Agents
+description: Complete guide to creating AgentUse agents
+---
+
+## Agent File Format
+
+AgentUse agents are markdown files with a `.agentuse` extension. They consist of:
+1. **Frontmatter** - YAML configuration
+2. **System Prompt** - Agent instructions
+3. **Optional Sections** - Task, tools, examples
+
+## Basic Structure
+
+```markdown
+---
+model: anthropic:claude-sonnet-4-0
+---
+
+You are a helpful assistant.
+
+## Task
+Help the user with their request.
+```
+
+<Note>
+  The agent name is automatically derived from the filename. You don't need to specify it in the frontmatter.
+</Note>
+
+## Frontmatter Configuration
+
+### Required Field
+
+<ParamField path="model" type="string" required>
+  The AI model to use. Format: `provider:model-name`
+  
+  Examples:
+  - `anthropic:claude-opus-4-1`
+  - `anthropic:claude-sonnet-4-0`
+  - `anthropic:claude-3-5-haiku-latest`
+  - `openai:gpt-5`
+  - `openai:gpt-5-mini`
+  - `openai:gpt-5-nano`
+  - `openrouter:meta/llama-3-70b`
+  
+  You can also specify environment variable suffixes:
+  - `anthropic:claude-sonnet-4-0:dev` (uses ANTHROPIC_API_KEY_DEV)
+  - `openai:gpt-5:prod` (uses OPENAI_API_KEY_PROD)
+  - `openai:gpt-5:OPENAI_API_KEY_PERSONAL` (uses specific env var)
+</ParamField>
+
+### Optional Fields
+
+<ParamField path="mcp_servers" type="object">
+  MCP server configurations. Each server can have:
+  - `command` + `args`: For stdio-based servers
+  - `url`: For HTTP-based servers
+  - `env`: Environment variables for the server
+  - `requiredEnvVars`: Required environment variables (fail if missing)
+  - `allowedEnvVars`: Optional environment variables to pass
+  - `disallowedTools`: Array of tool names/patterns to exclude
+  - `auth`: Authentication for HTTP servers
+  - `headers`: HTTP headers for HTTP servers
+</ParamField>
+
+<ParamField path="subagents" type="array">
+  List of sub-agent configurations. Each sub-agent can have:
+  - `path`: Path to the agent file (required)
+  - `name`: Optional custom name for the sub-agent
+  - `maxSteps`: Optional maximum number of steps the sub-agent can take
+</ParamField>
+
+## Adding Tools
+
+<Note>
+  Direct tool definitions are not yet implemented. Tools are currently available through:
+  1. **MCP Servers** - For external tool access
+  2. **Sub-Agents** - For delegating complex tasks
+</Note>
+
+Tools functionality is provided through MCP servers and sub-agents (see sections below).
+
+## MCP Server Integration
+
+Connect to Model Context Protocol servers:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-0
+mcp_servers:
+  filesystem:
+    command: "pnpx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/documents"]
+    disallowedTools: ["*delete*"]  # Exclude dangerous operations
+  github:
+    command: "pnpx"
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    requiredEnvVars: ["GITHUB_TOKEN"]  # Will fail if missing
+    env:
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+---
+```
+
+<Info>
+  MCP servers provide standardized access to external tools and data sources. Each server needs a unique name (key) in the `mcp_servers` object.
+</Info>
+
+### HTTP MCP Servers
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-0
+mcp_servers:
+  remote_api:
+    url: https://api.example.com/mcp
+    sessionId: "unique-session-id"
+    auth:
+      type: bearer
+      token: ${API_TOKEN}
+    headers:
+      X-Custom-Header: "custom-value"
+    allowedEnvVars: ["API_TOKEN", "API_REGION"]
+---
+```
+
+## Using Sub-Agents
+
+Agents can delegate to other agents:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: ./research-agent.agentuse
+    name: "research_specialist"  # Optional custom name
+    maxSteps: 100  # Optional: limit sub-agent steps
+  - path: ./writer-agent.agentuse
+  - path: https://example.com/public-agent.agentuse
+---
+
+You coordinate between research and writing agents.
+
+## Task
+When asked to create content:
+1. Use the research agent to gather information
+2. Use the writer agent to create the content
+```
+
+<Info>
+  Sub-agents can be local files or HTTPS URLs. Remote agents must end with `.agentuse` extension.
+</Info>
+
+## Environment Variables
+
+<Note>
+  Environment variables are used in MCP server configurations, not directly in the agent frontmatter.
+</Note>
+
+### Using Environment Variables in MCP
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-0
+mcp_servers:
+  api_server:
+    command: ./api-server
+    requiredEnvVars: ["API_KEY"]
+    allowedEnvVars: ["API_URL", "DEBUG"]
+    env:
+      API_URL: ${API_URL:-https://api.example.com}  # With default
+---
+```
+
+### System Environment Variables
+
+The following environment variables affect agent behavior:
+- `MAX_STEPS` - Maximum conversation turns (default: 1000)
+- `ANTHROPIC_API_KEY` - For Anthropic models
+- `OPENAI_API_KEY` - For OpenAI models
+- `OPENROUTER_API_KEY` - For OpenRouter models
+- `CONTEXT_COMPACTION` - Enable/disable context compaction (default: enabled, set to 'false' to disable)
+- `COMPACTION_THRESHOLD` - Token threshold for compaction (default: varies by model)
+- `COMPACTION_KEEP_RECENT` - Number of recent messages to keep during compaction (default: varies)
+
+## Runtime Customization
+
+You can append additional prompts when running agents without modifying the agent file:
+
+```bash
+# Run with base instructions
+agentuse run code-review.agentuse
+
+# Add specific focus areas
+agentuse run code-review.agentuse "focus on security and performance"
+
+# Customize behavior temporarily
+agentuse run assistant.agentuse "respond in a formal tone"
+
+# Provide additional context
+agentuse run analyzer.agentuse "use production database settings"
+```
+
+This is useful for:
+- Testing different approaches without editing files
+- Providing context-specific instructions
+- Reusing agents with slight variations
+- Quick experimentation
+
+## Examples
+
+For a comprehensive collection of agent examples, including data analysis, code review, API integration, and more, visit the [AgentUse Cookbook](https://github.com/agentuse/agentuse/tree/main/cookbook/agents).
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Sub-Agents" icon="users" href="/guides/subagents">
+    Learn about delegating tasks to other agents
+  </Card>
+  <Card title="Agent Design Patterns" icon="diagram-project" href="/guides/agent-design-patterns">
+    Best practices and patterns for building agents
+  </Card>
+  <Card title="Examples" icon="code" href="https://github.com/agentuse/agentuse/tree/main/cookbook/agents">
+    See more agent examples
+  </Card>
+</CardGroup>

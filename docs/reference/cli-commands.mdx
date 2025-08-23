@@ -1,0 +1,392 @@
+---
+title: CLI Commands
+description: Complete reference for all AgentUse CLI commands
+---
+
+## agentuse run
+
+Execute an agent file.
+
+### Syntax
+
+```bash
+agentuse run <agent-file> [prompt...] [options]
+```
+
+### Arguments
+
+<ParamField path="agent-file" type="string" required>
+  Path to agent file (.agentuse or .md extension) or HTTPS URL
+</ParamField>
+
+<ParamField path="prompt" type="string">
+  Optional additional prompt to append to the agent's instructions
+</ParamField>
+
+### Options
+
+```bash
+-q, --quiet             Suppress info messages (only show warnings/errors)
+-d, --debug             Enable verbose debug logging
+-v, --verbose           Show detailed execution information
+--timeout <seconds>     Maximum execution time in seconds (default: 300)
+```
+
+<Note>
+  The `--quiet` and `--debug` options cannot be used together.
+</Note>
+
+### Remote Agent Security
+
+When running agents from remote URLs:
+
+1. **HTTPS Only**: Only HTTPS URLs are allowed for security
+2. **File Extension**: Remote agents must have `.agentuse` extension
+3. **Interactive Confirmation**: AgentUse will show a security warning with options:
+   - `[p]review` - Fetch and display the agent content before running
+   - `[y]es` - Execute the agent directly
+   - `[N]o` - Abort execution (default)
+
+Example security prompt:
+```
+⚠️  WARNING: You are about to execute an agent from:
+https://example.com/agent.agentuse
+
+Only continue if you trust the source and have audited the agent.
+
+[p]review / [y]es / [N]o:
+```
+
+### Examples
+
+```bash
+# Run local agent
+agentuse run hello.agentuse
+
+# Run with additional prompt
+agentuse run assistant.agentuse "Help me write an email"
+
+# Run with multi-word prompt
+agentuse run code-review.agentuse "focus on security and performance issues"
+
+# Run remote agent (requires HTTPS and .agentuse extension)
+# Shows security warning and requires confirmation
+agentuse run https://example.com/agent.agentuse
+
+# Run remote agent with additional prompt
+agentuse run https://example.com/agent.agentuse "use production settings"
+
+# Run with debug output
+agentuse run agent.agentuse --debug
+
+# Run with additional prompt and verbose output
+agentuse run agent.agentuse "be thorough" --verbose
+
+# Run with custom timeout
+agentuse run agent.agentuse --timeout 600
+
+# Run quietly (only warnings/errors)
+agentuse run agent.agentuse --quiet
+```
+
+## agentuse auth
+
+Manage authentication for AI providers.
+
+### Subcommands
+
+#### auth login
+
+Authenticate with a provider.
+
+```bash
+agentuse auth login [provider]
+```
+
+Providers:
+- `anthropic` - Anthropic Claude (supports OAuth)
+- `openai` - OpenAI GPT
+- `openrouter` - OpenRouter
+
+Examples:
+```bash
+# Interactive login (shows provider selection)
+agentuse auth login
+
+# Login to specific provider
+agentuse auth login anthropic
+agentuse auth login openai
+agentuse auth login openrouter
+```
+
+#### auth logout
+
+Remove stored credentials.
+
+```bash
+agentuse auth logout [provider]
+```
+
+Examples:
+```bash
+# Logout from all providers
+agentuse auth logout
+
+# Logout from specific provider
+agentuse auth logout openai
+```
+
+#### auth list
+
+Show authentication status and stored credentials.
+
+```bash
+agentuse auth list
+# or
+agentuse auth ls
+```
+
+Output:
+```
+📁 Credentials stored in: ~/.agentuse/auth.json
+
+Stored credentials:
+  🔑 anthropic (oauth) → Use as: anthropic:claude-3-5-sonnet-20241022
+  🎫 openai (api) → Use as: openai:gpt-4o
+  🎫 openrouter (api) → Use as: openrouter:qwen/qwen-2.5-72b-instruct
+
+Environment variables:
+  🌍 openai (OPENAI_API_KEY) → Use as: openai:gpt-4o
+
+Model usage examples:
+  agentuse run agent.agentuse --model anthropic:claude-3-5-sonnet-20241022
+  agentuse run agent.agentuse --model openai:gpt-4o
+  agentuse run agent.agentuse --model openrouter:qwen/qwen-2.5-72b-instruct
+```
+
+#### auth help
+
+Show detailed authentication help and configuration options.
+
+```bash
+agentuse auth help
+```
+
+Displays comprehensive help including:
+- Authentication methods (login command vs environment variables)
+- Provider-specific setup instructions
+- Environment variable configuration for different shells
+- Priority order for credential resolution
+- Links to get API keys
+
+<Note>
+  The `agentuse create` command is not yet implemented. 
+  Please create agent files manually using the .agentuse extension.
+</Note>
+
+## agentuse version
+
+Show version information.
+
+### Syntax
+
+```bash
+agentuse --version
+```
+
+### Output
+
+```bash
+$ agentuse --version
+0.1.1
+```
+
+## agentuse help
+
+Show help information.
+
+### Syntax
+
+```bash
+agentuse --help
+agentuse -h
+# Command-specific help
+agentuse run --help
+agentuse auth --help
+```
+
+### Examples
+
+```bash
+# General help
+agentuse --help
+
+# Command-specific help
+agentuse run --help
+agentuse auth --help
+
+# Show help when no arguments provided
+agentuse
+```
+
+<Note>
+  The `agentuse config` command is not yet implemented.
+  Configuration is currently managed through environment variables only.
+</Note>
+
+<Note>
+  The `agentuse test` command is not yet implemented.
+</Note>
+
+## Global Options
+
+```bash
+--version              Show version number
+--help, -h            Show help for command
+```
+
+## Environment Variables
+
+Control AgentUse behavior with environment variables:
+
+```bash
+# API Keys (required for respective providers)
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+OPENROUTER_API_KEY=sk-or-...
+
+# Custom API Key Suffixes (for different environments)
+ANTHROPIC_API_KEY_DEV=sk-ant-...  # For model: anthropic:claude:dev
+OPENAI_API_KEY_PROD=sk-...        # For model: openai:gpt-4:prod
+
+# Behavior Control
+MAX_STEPS=1000            # Override max steps (default: 1000)
+
+# Development/Testing
+NODE_TLS_REJECT_UNAUTHORIZED=0    # Allow self-signed certs (localhost only)
+```
+
+## Exit Codes
+
+AgentUse uses standard exit codes:
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error |
+| 2 | Authentication error |
+| 3 | File not found |
+| 4 | Model error |
+| 5 | Tool error |
+| 6 | MCP error |
+| 7 | Network error |
+| 130 | User interrupted (Ctrl+C) |
+
+## Available Commands
+
+AgentUse currently supports these commands:
+
+```bash
+agentuse run <file> [prompt...]   # Run an agent with optional prompt
+agentuse auth login [provider]    # Authenticate with a provider
+agentuse auth logout [provider]   # Remove stored credentials
+agentuse auth list                # Show authentication status
+agentuse auth help                # Show detailed auth help
+agentuse --version                # Show version
+agentuse --help                   # Show help
+```
+
+## Advanced Usage
+
+### Piping
+
+```bash
+# Pipe input to agent
+echo "Translate this to Spanish" | agentuse run translator.agentuse
+
+# Pipe agent output
+agentuse run generator.agentuse | tee output.txt
+
+# Chain agents
+agentuse run analyzer.agentuse < data.txt | agentuse run summarizer.agentuse
+```
+
+### Shell Integration
+
+```bash
+# Bash function
+agent() {
+  agentuse run "$1.agentuse" "${@:2}"
+}
+
+# Usage
+agent translator "Hello world"
+```
+
+### Batch Processing
+
+```bash
+# Process multiple files
+for file in *.txt; do
+  agentuse run processor.agentuse < "$file" > "processed_$file"
+done
+
+# Parallel processing
+find . -name "*.md" | parallel agentuse run formatter.agentuse {}
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Command not found">
+    Ensure AgentUse is installed globally:
+    ```bash
+    pnpm install -g agentuse
+    ```
+  </Accordion>
+  <Accordion title="Permission denied">
+    On Unix systems, you may need sudo:
+    ```bash
+    sudo pnpm install -g agentuse
+    ```
+  </Accordion>
+  <Accordion title="Authentication errors">
+    If you see authentication errors, AgentUse will show specific guidance:
+    ```bash
+    [ERROR] No API key found for anthropic
+    
+    To authenticate, run:
+      agentuse auth login
+    
+    Or set your API key:
+      export ANTHROPIC_API_KEY='your-key-here'
+    
+    For more options: agentuse auth --help
+    ```
+  </Accordion>
+  <Accordion title="Timeout issues">
+    Increase timeout for long-running agents:
+    ```bash
+    agentuse run agent.agentuse --timeout 600
+    # or via environment
+    MAX_STEPS=2000 agentuse run agent.agentuse
+    ```
+  </Accordion>
+  <Accordion title="Debugging issues">
+    Enable debug output:
+    ```bash
+    agentuse run agent.agentuse --debug
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agent Syntax" icon="code" href="/reference/agent-syntax">
+    Learn agent file format
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Create your first agent
+  </Card>
+</CardGroup>
