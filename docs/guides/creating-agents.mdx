@@ -7,8 +7,7 @@ description: Complete guide to creating AgentUse agents
 
 AgentUse agents are markdown files with a `.agentuse` extension. They consist of:
 1. **Frontmatter** - YAML configuration
-2. **System Prompt** - Agent instructions
-3. **Optional Sections** - Task, tools, examples
+2. **Agent Prompt** - Agent instructions
 
 ## Basic Structure
 
@@ -69,16 +68,6 @@ Help the user with their request.
   - `name`: Optional custom name for the sub-agent
   - `maxSteps`: Optional maximum number of steps the sub-agent can take
 </ParamField>
-
-## Adding Tools
-
-<Note>
-  Direct tool definitions are not yet implemented. Tools are currently available through:
-  1. **MCP Servers** - For external tool access
-  2. **Sub-Agents** - For delegating complex tasks
-</Note>
-
-Tools functionality is provided through MCP servers and sub-agents (see sections below).
 
 ## MCP Server Integration
 
