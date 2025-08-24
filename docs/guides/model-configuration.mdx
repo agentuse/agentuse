@@ -15,7 +15,7 @@ AgentUse supports multiple AI providers. You need to authenticate with at least 
     Supports OAuth and API keys
   </Card>
   <Card title="OpenAI">
-    GPT models including GPT-4, GPT-4o, GPT-3.5
+    GPT models including GPT-5, GPT-4, GPT-4o, GPT-3.5
     API key authentication
   </Card>
   <Card title="OpenRouter">
@@ -250,7 +250,10 @@ model: anthropic:claude-3-5-haiku-20241022  # Uses Anthropic
 ```markdown
 ---
 name: powerful-agent
-model: openai:gpt-4o  # Uses OpenAI
+model: openai:gpt-5  # Uses OpenAI GPT-5
+openai:
+  reasoningEffort: high    # More thorough reasoning
+  textVerbosity: medium    # Balanced response length
 ---
 ```
 
@@ -260,6 +263,40 @@ name: specialized-agent
 model: openrouter:qwen/qwen-2.5-coder-32b-instruct  # Uses OpenRouter
 ---
 ```
+
+## Provider Options
+
+Configure provider-specific settings for fine-tuned model behavior:
+
+### OpenAI Provider Options
+
+For OpenAI models (especially GPT-5), you can control reasoning and verbosity:
+
+```yaml
+---
+model: openai:gpt-5
+openai:
+  reasoningEffort: high  # Options: 'low', 'medium', 'high'
+  textVerbosity: low     # Options: 'low', 'medium', 'high'
+---
+```
+
+<Info>
+  **reasoningEffort**: Controls computational effort for reasoning
+  - `low`: Faster responses with less thorough reasoning
+  - `medium`: Balanced performance (default)
+  - `high`: More comprehensive reasoning, slower responses
+
+  **textVerbosity**: Controls response length and detail
+  - `low`: Concise, minimal prose
+  - `medium`: Balanced detail (default)  
+  - `high`: Verbose, detailed explanations
+</Info>
+
+These options help you optimize for:
+- **Speed vs Quality**: Lower reasoning effort for faster responses
+- **Conciseness vs Detail**: Lower verbosity for more direct answers
+- **Cost Optimization**: Lower settings reduce token usage
 
 ## Troubleshooting
 

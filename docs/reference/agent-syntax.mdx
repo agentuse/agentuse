@@ -61,6 +61,24 @@ Additional instructions or context.
   Each sub-agent must specify a `path` to the `.agentuse` file, with optional `name` and `maxSteps` parameters.
 </ParamField>
 
+<ParamField path="openai" type="object" required={false}>
+  OpenAI-specific options for GPT-5 and other OpenAI models.
+  
+  **Supported Options:**
+  - `reasoningEffort`: Controls the computational effort for reasoning models (`'low'`, `'medium'`, `'high'`)
+  - `textVerbosity`: Controls response length and detail (`'low'`, `'medium'`, `'high'`)
+  
+  ```yaml
+  openai:
+    reasoningEffort: high  # More thorough reasoning
+    textVerbosity: low     # Concise responses
+  ```
+  
+  <Note>
+    These options are particularly useful with GPT-5 models to balance between response quality, speed, and cost.
+  </Note>
+</ParamField>
+
 ## Tools Configuration
 
 <Note>
@@ -321,7 +339,10 @@ Output: "4"
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-20250514
+model: openai:gpt-5
+openai:
+  reasoningEffort: high
+  textVerbosity: medium
 mcp_servers:
   filesystem:
     command: "npx"
@@ -387,6 +408,11 @@ Assist the user with their request using all available capabilities.
    - Optional `name` (string) and `maxSteps` (number) fields
 6. **Authentication**: Only `bearer` type is supported for HTTP MCP servers
 7. **Tool Restrictions**: `disallowedTools` must be an array of strings (supports wildcards)
+8. **OpenAI Options**:
+   - `openai` field is only valid for OpenAI models
+   - `reasoningEffort` must be one of: `'low'`, `'medium'`, `'high'`
+   - `textVerbosity` must be one of: `'low'`, `'medium'`, `'high'`
+   - No other options are allowed under `openai`
 
 ## Next Steps
 
