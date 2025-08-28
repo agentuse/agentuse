@@ -81,11 +81,10 @@ program
   .command('run <file> [prompt...]')
   .description('Run an AI agent from a markdown file or URL, optionally appending a prompt')
   .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
-  .option('-d, --debug', 'Enable verbose debug logging')
-  .option('-v, --verbose', 'Show detailed execution information')
+  .option('-d, --debug', 'Enable debug mode with detailed logging and full error messages')
   .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
   .option('--env-file <path>', 'Path to custom .env file')
-  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, verbose: boolean, timeout: string, envFile?: string }) => {
+  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, timeout: string, envFile?: string }) => {
     const startTime = Date.now();
     
     try {
@@ -100,8 +99,8 @@ program
         logger.configure({ level: LogLevel.DEBUG, enableDebug: true });
       }
       
-      // Log startup time if verbose
-      if (options.verbose) {
+      // Log startup time if debug
+      if (options.debug) {
         logger.info(`Starting AgentUse at ${new Date().toISOString()}`);
       }
       
@@ -192,13 +191,22 @@ program
       // Append additional prompt if provided
       if (additionalPrompt) {
         agent.instructions = agent.instructions + '\n\n' + additionalPrompt;
-        if (options.verbose) {
+        if (options.debug) {
           logger.info(`Appended prompt: ${additionalPrompt}`);
         }
       }
       
       // Connect to MCP servers if configured
-      const mcp = await connectMCP(agent.config.mcp_servers, options.debug);
+      let mcp;
+      try {
+        mcp = await connectMCP(agent.config.mcp_servers, options.debug);
+      } catch (mcpError: any) {
+        // Exit immediately on MCP connection errors (especially missing required env vars)
+        if (mcpError.fatal || mcpError.message?.includes('Missing required environment variables')) {
+          process.exit(1);
+        }
+        throw mcpError;
+      }
       
       // Create abort controller for timeout
       const abortController = new AbortController();
@@ -228,7 +236,7 @@ program
       try {
         // Pass the file path for sub-agent resolution (if it's a local file)
         const agentFilePath = !isURL(file) ? file : undefined;
-        result = await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.verbose, agentFilePath);
+        result = await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.debug, agentFilePath);
       } catch (error: unknown) {
         if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
           logger.error(`Agent execution timed out after ${options.timeout} seconds`);

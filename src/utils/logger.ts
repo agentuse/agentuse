@@ -8,19 +8,43 @@ export enum LogLevel {
 }
 
 /**
- * Format a warning message with tool context and shortened error details
+ * Format a warning message with tool context and error details
+ * In debug mode, shows full error; otherwise shows shortened version
  */
-export function formatWarning(tool: string, operation: string, error: string): string {
-  // Take first line, remove common "Error:" prefix, trim whitespace, cap at 80 chars
-  const cleanError = error
-    .split('\n')[0]
-    .replace(/^Error:\s*/i, '')
-    .trim()
-    .substring(0, 80);
-  
-  const reason = cleanError.length === 80 ? cleanError + '...' : cleanError;
-  
-  return `${tool}: ${operation} failed - ${reason}`;
+export function formatWarning(tool: string, operation: string, error: string, enableDebug: boolean = false): string {
+  if (enableDebug) {
+    // In debug mode, show full error with additional context
+    const lines = error.split('\n');
+    const mainError = lines[0].replace(/^Error:\s*/i, '').trim();
+    
+    let formatted = `${tool}: ${operation} failed - ${mainError}`;
+    
+    // Add additional lines if they exist and are meaningful
+    if (lines.length > 1) {
+      const additionalInfo = lines.slice(1)
+        .map(line => line.trim())
+        .filter(line => line.length > 0 && !line.match(/^\s*at\s+/)) // Skip stack trace lines
+        .slice(0, 3) // Limit to first 3 meaningful lines
+        .join(' | ');
+      
+      if (additionalInfo) {
+        formatted += ` (${additionalInfo})`;
+      }
+    }
+    
+    return formatted;
+  } else {
+    // Normal mode: Take first line, remove common "Error:" prefix, trim whitespace, cap at 80 chars
+    const cleanError = error
+      .split('\n')[0]
+      .replace(/^Error:\s*/i, '')
+      .trim()
+      .substring(0, 80);
+    
+    const reason = cleanError.length === 80 ? cleanError + '...' : cleanError;
+    
+    return `${tool}: ${operation} failed - ${reason}`;
+  }
 }
 
 // Log channels for future use
@@ -119,6 +143,15 @@ class Logger {
     if (this.enableDebug && this.level <= LogLevel.DEBUG) {
       this.writeToStderr(chalk.gray(`[DEBUG] ${message}`));
     }
+  }
+
+  /**
+   * Format and log a warning with tool context
+   * Automatically uses debug mode based on logger configuration
+   */
+  warnWithTool(tool: string, operation: string, error: string) {
+    const formatted = formatWarning(tool, operation, error, this.enableDebug);
+    this.warn(formatted);
   }
 
   system(message: string) {

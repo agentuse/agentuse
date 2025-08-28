@@ -5,7 +5,7 @@ import { getMCPTools } from './mcp';
 import { createSubAgentTools } from './subagent';
 import { createModel, AuthenticationError } from './models';
 import { AnthropicAuth } from './auth/anthropic';
-import { logger, formatWarning } from './utils/logger';
+import { logger } from './utils/logger';
 import { ContextManager } from './context-manager';
 import { compactMessages } from './compactor';
 
@@ -102,7 +102,8 @@ export async function processAgentStream(
         const errorStr = typeof chunk.error === 'string' 
           ? chunk.error 
           : ((chunk.error as any)?.message || 'Unknown error');
-        logger.warn(`${prefix}${formatWarning(chunk.toolName || 'unknown', 'call', errorStr)}`);
+        logger.warnWithTool(chunk.toolName || 'unknown', 'call', errorStr);
+        if (prefix) logger.warn(prefix.trim()); // Show any prefix separately
         break;
         
       case 'finish':
@@ -473,7 +474,7 @@ function parseToolResult(chunk: any): string {
           operation = actionMatch[1];
         }
         
-        logger.warn(formatWarning(chunk.toolName || 'unknown', operation, resultStr));
+        logger.warnWithTool(chunk.toolName || 'unknown', operation, resultStr);
         break;
       }
     }

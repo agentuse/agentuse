@@ -77,10 +77,13 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
       }
       
       if (missingRequired.length > 0) {
-        throw new Error(
+        const error = new Error(
           `Missing required environment variables for MCP server '${name}': ${missingRequired.join(', ')}\n` +
           `Please set these in your .env file or export them in your shell.`
         );
+        // Mark this as a fatal error that should exit immediately
+        (error as any).fatal = true;
+        throw error;
       }
     }
     
@@ -184,6 +187,13 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
         ...(config.disallowedTools && { disallowedTools: config.disallowedTools })
       };
     } catch (error) {
+      // Check if this is a fatal error (missing required env vars)
+      if ((error as any).fatal) {
+        logger.error(`[ERROR] ${error instanceof Error ? error.message : String(error)}`);
+        // Re-throw fatal errors immediately
+        throw error;
+      }
+      
       // Smart error detection: check if allowed env vars are missing
       const missingAllowed = config.allowedEnvVars?.filter(v => !process.env[v]) || [];
       
@@ -210,6 +220,12 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
     if (result.status === 'fulfilled') {
       connections.push(result.value);
     } else {
+      // Check if this is a fatal error (missing required env vars)
+      if (result.reason?.fatal) {
+        // Re-throw fatal errors immediately to exit the CLI
+        throw result.reason;
+      }
+      
       // Extract server name from error message
       const errorMessage = result.reason?.message || '';
       const serverMatch = errorMessage.match(/Failed to connect to MCP server: (.+)/);
