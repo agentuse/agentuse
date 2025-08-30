@@ -35,6 +35,10 @@ const MCPServerSchema = z.union([
 // Schema for agent configuration as per spec
 const AgentSchema = z.object({
   model: z.string(),
+  openai: z.object({
+    reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
+    textVerbosity: z.enum(['low', 'medium', 'high']).optional()
+  }).strict().optional(),
   mcp_servers: z.record(MCPServerSchema).optional(),
   subagents: z.array(z.object({
     path: z.string(),

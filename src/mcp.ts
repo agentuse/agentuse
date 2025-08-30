@@ -7,7 +7,6 @@ import {
   ReadResourceResultSchema,
   type Resource 
 } from '@modelcontextprotocol/sdk/types.js';
-import * as dotenv from 'dotenv';
 import { logger } from './utils/logger';
 import { parseJsonEnvVar } from './utils/env';
 import { z } from 'zod';
@@ -78,10 +77,13 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
       }
       
       if (missingRequired.length > 0) {
-        throw new Error(
+        const error = new Error(
           `Missing required environment variables for MCP server '${name}': ${missingRequired.join(', ')}\n` +
           `Please set these in your .env file or export them in your shell.`
         );
+        // Mark this as a fatal error that should exit immediately
+        (error as any).fatal = true;
+        throw error;
       }
     }
     
@@ -146,9 +148,8 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
   
   logger.info(`[MCP] Connecting to ${Object.keys(servers).length} MCP server(s): ${Object.keys(servers).join(', ')}`);
   
-  // Load environment variables from .env file silently
-  // @ts-ignore - quiet option exists but may not be in types
-  dotenv.config({ quiet: true });
+  // Note: Environment variables are already loaded in index.ts before this is called
+  // The envFile parameter is kept for backwards compatibility but is no longer used here
   
   // Create promises for all server connections in parallel
   const connectionPromises = Object.entries(servers).map(async ([name, config]) => {
@@ -186,6 +187,13 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
         ...(config.disallowedTools && { disallowedTools: config.disallowedTools })
       };
     } catch (error) {
+      // Check if this is a fatal error (missing required env vars)
+      if ((error as any).fatal) {
+        logger.error(`[ERROR] ${error instanceof Error ? error.message : String(error)}`);
+        // Re-throw fatal errors immediately
+        throw error;
+      }
+      
       // Smart error detection: check if allowed env vars are missing
       const missingAllowed = config.allowedEnvVars?.filter(v => !process.env[v]) || [];
       
@@ -212,6 +220,12 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
     if (result.status === 'fulfilled') {
       connections.push(result.value);
     } else {
+      // Check if this is a fatal error (missing required env vars)
+      if (result.reason?.fatal) {
+        // Re-throw fatal errors immediately to exit the CLI
+        throw result.reason;
+      }
+      
       // Extract server name from error message
       const errorMessage = result.reason?.message || '';
       const serverMatch = errorMessage.match(/Failed to connect to MCP server: (.+)/);
@@ -418,7 +432,7 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
               const result = await originalExecute(args, opts);
               
               // Handle MCP result format (like opencode does)
-              if (result && result.content && Array.isArray(result.content)) {
+              if (result && typeof result === 'object' && 'content' in result && Array.isArray(result.content)) {
                 const output = result.content
                   .filter((x: any) => x.type === "text")
                   .map((x: any) => x.text)

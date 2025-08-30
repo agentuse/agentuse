@@ -5,7 +5,7 @@ import { getMCPTools } from './mcp';
 import { createSubAgentTools } from './subagent';
 import { createModel, AuthenticationError } from './models';
 import { AnthropicAuth } from './auth/anthropic';
-import { logger, formatWarning } from './utils/logger';
+import { logger } from './utils/logger';
 import { ContextManager } from './context-manager';
 import { compactMessages } from './compactor';
 
@@ -102,7 +102,8 @@ export async function processAgentStream(
         const errorStr = typeof chunk.error === 'string' 
           ? chunk.error 
           : ((chunk.error as any)?.message || 'Unknown error');
-        logger.warn(`${prefix}${formatWarning(chunk.toolName || 'unknown', 'call', errorStr)}`);
+        logger.warnWithTool(chunk.toolName || 'unknown', 'call', errorStr);
+        if (prefix) logger.warn(prefix.trim()); // Show any prefix separately
         break;
         
       case 'finish':
@@ -177,13 +178,27 @@ export async function* executeAgentCore(
       messages = await contextManager.compact();
     }
     
+    // Extract provider options based on model provider
+    const provider = agent.config.model.split(':')[0];
+    
+    // Only include provider options if they exist and match the model provider
+    let providerOptions: any = undefined;
+    if (provider === 'openai' && agent.config.openai) {
+      providerOptions = { openai: agent.config.openai };
+    }
+    // Future: Add other providers here
+    // if (provider === 'anthropic' && agent.config.anthropic) {
+    //   providerOptions = { anthropic: agent.config.anthropic };
+    // }
+
     const streamConfig: any = {
       model,
       messages,
       maxRetries: MAX_RETRIES,
       toolChoice: 'auto' as const,
       stopWhen: stepCountIs(options.maxSteps),
-      ...(options.abortSignal && { abortSignal: options.abortSignal })
+      ...(options.abortSignal && { abortSignal: options.abortSignal }),
+      ...(providerOptions && { providerOptions })
     };
     
     // Only add tools if there are any
@@ -459,7 +474,7 @@ function parseToolResult(chunk: any): string {
           operation = actionMatch[1];
         }
         
-        logger.warn(formatWarning(chunk.toolName || 'unknown', operation, resultStr));
+        logger.warnWithTool(chunk.toolName || 'unknown', operation, resultStr);
         break;
       }
     }

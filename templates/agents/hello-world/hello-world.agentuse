@@ -1,0 +1,4 @@
+---
+model: anthropic:claude-sonnet-4-0
+---
+Write a hello world poem in Markdown format but without the code block
