@@ -40,11 +40,11 @@ AgentUse is Infrastructure-as-Code philosophy applied to AI agents. Your agents 
 ## Installation
 
 ```bash
-# Install globally via npm
-npm install -g agentuse
+# Install globally via pnpm
+pnpm install -g agentuse
 
 # Or run directly without installation
-npx agentuse run your-agent.agentuse
+pnpx agentuse@latest run your-agent.agentuse
 
 # Or use Bun for faster execution
 bunx --bun agentuse run your-agent.agentuse
@@ -97,11 +97,11 @@ agentuse auth help
 git clone https://github.com/agentuse/agentuse.git
 cd agentuse
 
-# Install dependencies with Bun
-bun install
+# Install dependencies with pnpm
+pnpm install
 
 # Make the CLI available globally for development
-bun link
+pnpm link
 ```
 
 ## Quick Start
@@ -297,9 +297,8 @@ Plugins load automatically from:
 agentuse run <file> [options]
 
 Options:
-  -q, --quiet              Suppress info messages
-  -d, --debug              Enable debug logging
-  -v, --verbose            Show detailed execution info
+  -q, --quiet              Suppress info messages (only show warnings and errors)
+  -d, --debug              Enable debug mode with detailed logging and full error messages
   --timeout <seconds>      Max execution time (default: 300)
 ```
 
@@ -378,17 +377,17 @@ agentuse/
 
 ### Requirements
 
-- [Bun](https://bun.sh) 1.0+
-- Node.js 18+ (for some MCP servers)
+- Node.js 18+ (for runtime and MCP servers)
+- pnpm 8+ (for package management)
 
 ### Testing
 
 ```bash
 # Run tests
-bun test
+pnpm test
 
 # Type checking
-npx tsc --noEmit
+pnpm exec tsc --noEmit
 ```
 
 ### Code Style

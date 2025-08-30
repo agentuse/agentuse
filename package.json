@@ -44,7 +44,9 @@
     "pack-dry": "bun run build && npm pack --dry-run",
     "release": "np",
     "release:preview": "np --preview",
-    "release:dry": "np --preview --any-branch"
+    "release:dry": "np --preview --any-branch",
+    "docs:dev": "cd docs && mintlify dev",
+    "docs:preview": "cd docs && mintlify preview"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.0",

@@ -1,0 +1,446 @@
+---
+title: Environment Variables
+description: Environment variables used by AgentUse
+---
+
+## API Configuration
+
+These environment variables are required for authenticating with AI providers.
+
+<ParamField path="ANTHROPIC_API_KEY" type="string">
+  API key for Anthropic Claude models.
+  
+  ```bash
+  export ANTHROPIC_API_KEY="sk-ant-api03-..."
+  ```
+  
+  You can also use the OAuth configuration flow:
+  ```bash
+  agentuse auth login anthropic
+  ```
+</ParamField>
+
+<ParamField path="OPENAI_API_KEY" type="string">
+  API key for OpenAI GPT models.
+  
+  ```bash
+  export OPENAI_API_KEY="sk-proj-..."
+  ```
+</ParamField>
+
+<ParamField path="OPENROUTER_API_KEY" type="string">
+  API key for OpenRouter service.
+  
+  ```bash
+  export OPENROUTER_API_KEY="sk-or-v1-..."
+  ```
+</ParamField>
+
+## Custom API Key Suffixes
+
+You can use multiple API keys by adding suffixes:
+
+```bash
+# For development environment
+export ANTHROPIC_API_KEY_DEV="sk-ant-api03-dev..."
+export OPENAI_API_KEY_DEV="sk-proj-dev..."
+
+# For production environment  
+export ANTHROPIC_API_KEY_PROD="sk-ant-api03-prod..."
+export OPENAI_API_KEY_PROD="sk-proj-prod..."
+```
+
+Then reference them in your agent:
+```yaml
+---
+model: anthropic:claude-sonnet-4-0:dev  # Uses ANTHROPIC_API_KEY_DEV
+---
+```
+
+## Behavior Control
+
+<ParamField path="MAX_STEPS" type="number">
+  Override the maximum number of conversation steps an agent can take.
+  Default: 1000
+  
+  ```bash
+  export MAX_STEPS="2000"
+  ```
+  
+  This prevents infinite loops and controls agent execution time.
+</ParamField>
+
+## Context Management
+
+<ParamField path="CONTEXT_COMPACTION" type="boolean">
+  Enable or disable automatic context compaction when approaching model limits.
+  Default: true (enabled)
+  
+  ```bash
+  # Disable context compaction
+  export CONTEXT_COMPACTION="false"
+  ```
+  
+  When enabled, AgentUse automatically compacts older messages when context approaches the model's token limit.
+</ParamField>
+
+<ParamField path="COMPACTION_THRESHOLD" type="number">
+  Percentage of context limit to trigger compaction.
+  Default: 0.7 (70%)
+  
+  ```bash
+  export COMPACTION_THRESHOLD="0.8"  # Trigger at 80%
+  ```
+  
+  Must be a decimal between 0 and 1.
+</ParamField>
+
+<ParamField path="COMPACTION_KEEP_RECENT" type="number">
+  Number of recent messages to preserve during compaction.
+  Default: 3
+  
+  ```bash
+  export COMPACTION_KEEP_RECENT="5"  # Keep last 5 messages
+  ```
+  
+  These messages are never compacted to maintain conversation flow.
+</ParamField>
+
+## Logging and Debug
+
+<ParamField path="LOG_LEVEL" type="string">
+  Set the logging level for AgentUse output.
+  Default: INFO
+  
+  ```bash
+  export LOG_LEVEL="DEBUG"  # Available: DEBUG, INFO, WARN, ERROR
+  ```
+  
+  Controls which messages are displayed during execution.
+</ParamField>
+
+<ParamField path="DEBUG" type="boolean">
+  Enable debug logging and verbose output.
+  Default: false
+  
+  ```bash
+  export DEBUG="true"   # or DEBUG="1"
+  ```
+  
+  Shows detailed execution information, tool calls, and internal state.
+</ParamField>
+
+## Development Variables
+
+<ParamField path="NODE_TLS_REJECT_UNAUTHORIZED" type="string">
+  For local development with self-signed certificates (HTTPS testing).
+  
+  ```bash
+  # Only for development - allows self-signed certs
+  export NODE_TLS_REJECT_UNAUTHORIZED="0"
+  ```
+  
+  <Warning>
+    Never use this in production. It disables SSL certificate verification.
+  </Warning>
+</ParamField>
+
+## MCP Server Environment Variables
+
+<Info>
+  **Security by Design**: AgentUse intentionally prevents hardcoding secrets in `.agentuse` files. All sensitive values must come from environment variables, keeping your secrets secure and out of version control.
+</Info>
+
+### The Security Model
+
+MCP servers can access environment variables through two fields:
+
+- **`requiredEnvVars`**: Variables that MUST exist or the agent fails immediately
+- **`allowedEnvVars`**: Variables that are passed through if they exist (optional)
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-0
+mcp_servers:
+  notion:
+    command: "pnpx"
+    args: ["-y", "@notionhq/notion-mcp-server"]
+    requiredEnvVars:
+      - NOTION_API_KEY        # Fails immediately if missing
+    allowedEnvVars:
+      - NOTION_DEBUG_MODE     # Optional, warns if missing
+      - NOTION_WORKSPACE_ID   # Optional, warns if missing
+---
+```
+
+### Why This Design?
+
+1. **No Secrets in Code**: `.agentuse` files are often committed to version control
+2. **Clear Requirements**: Developers know exactly what env vars are needed
+3. **Early Failure**: Missing required vars fail fast with clear error messages
+4. **Security Allowlist**: Only explicitly allowed vars are passed to MCP servers
+
+### Setting Environment Variables
+
+<Tabs>
+  <Tab title="Option 1: .env File (Recommended)">
+    Create a `.env` file in your project root:
+    
+    ```bash
+    # .env
+    NOTION_API_KEY=secret_abc123
+    GITHUB_TOKEN=ghp_xyz789
+    OPENAI_API_KEY=sk-proj-...
+    ```
+    
+    AgentUse automatically loads this file when running agents.
+    
+    <Warning>
+      Add `.env` to your `.gitignore` to prevent committing secrets!
+    </Warning>
+  </Tab>
+  
+  <Tab title="Option 2: Shell Export">
+    Export variables in your shell session:
+    
+    ```bash
+    export NOTION_API_KEY="secret_abc123"
+    export GITHUB_TOKEN="ghp_xyz789"
+    
+    # Then run your agent
+    agentuse run my-agent.agentuse
+    ```
+    
+    For permanent setup, add to `~/.zshrc` or `~/.bashrc`:
+    
+    ```bash
+    # ~/.zshrc
+    export NOTION_API_KEY="secret_abc123"
+    export GITHUB_TOKEN="ghp_xyz789"
+    ```
+  </Tab>
+  
+  <Tab title="Option 3: Inline Command">
+    Pass variables directly when running:
+    
+    ```bash
+    NOTION_API_KEY="secret_abc123" agentuse run my-agent.agentuse
+    ```
+    
+    Useful for CI/CD or one-time runs.
+  </Tab>
+  
+  <Tab title="Option 4: Secret Managers">
+    For production, use secret managers:
+    
+    ```bash
+    # AWS Secrets Manager
+    export NOTION_API_KEY=$(aws secretsmanager get-secret-value \
+      --secret-id notion-api-key --query SecretString --output text)
+    
+    # 1Password CLI
+    export NOTION_API_KEY=$(op read "op://vault/notion/api-key")
+    
+    # HashiCorp Vault
+    export NOTION_API_KEY=$(vault kv get -field=api_key secret/notion)
+    ```
+  </Tab>
+</Tabs>
+
+### Error Messages
+
+AgentUse provides clear, actionable error messages:
+
+```bash
+# Missing required variable
+Error: Missing required environment variables for MCP server 'notion': NOTION_API_KEY
+Please set these in your .env file or export them in your shell.
+
+# Missing optional variable (warning only)
+[WARN] Optional environment variable 'NOTION_DEBUG_MODE' not set for server 'notion'
+
+# Connection failure with hint
+Failed to connect to MCP server 'github'
+Note: The following optional environment variables are not set: GITHUB_TOKEN
+If this server requires these variables, please set them in your .env file.
+```
+
+### Complete Example
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-0
+mcp_servers:
+  # API-based service requiring authentication
+  notion:
+    command: "pnpx"
+    args: ["-y", "@notionhq/notion-mcp-server"]
+    requiredEnvVars:
+      - NOTION_API_KEY    # Must be set or fails
+    allowedEnvVars:
+      - NOTION_DEBUG      # Optional debug flag
+      
+  # Database connection
+  postgres:
+    command: "pnpx"
+    args: ["-y", "@modelcontextprotocol/server-postgresql"]
+    requiredEnvVars:
+      - DATABASE_URL      # Required connection string
+    allowedEnvVars:
+      - PG_STATEMENT_TIMEOUT  # Optional timeout
+      - PG_POOL_SIZE          # Optional pool config
+      
+  # Local filesystem (no auth needed)
+  filesystem:
+    command: "pnpx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "./data"]
+    # No env vars needed for local filesystem
+---
+```
+
+With `.env` file:
+```bash
+# Required vars (agent won't start without these)
+NOTION_API_KEY=secret_abc123
+DATABASE_URL=postgresql://user:pass@localhost/mydb
+
+# Optional vars (agent works without these)
+NOTION_DEBUG=true
+PG_POOL_SIZE=20
+```
+
+## Using .env Files
+
+AgentUse automatically loads `.env` files if present in your project directory:
+
+```bash
+# .env
+ANTHROPIC_API_KEY=sk-ant-api03-...
+OPENAI_API_KEY=sk-proj-...
+OPENROUTER_API_KEY=sk-or-v1-...
+GITHUB_TOKEN=ghp_...
+DATABASE_URL=postgresql://user:pass@localhost/db
+
+# Behavior control
+MAX_STEPS=500
+
+# Context management
+CONTEXT_COMPACTION=true
+COMPACTION_THRESHOLD=0.7
+COMPACTION_KEEP_RECENT=3
+
+# Logging and debug
+LOG_LEVEL=INFO
+DEBUG=false
+```
+
+<Note>
+  Never commit `.env` files to version control. Add them to `.gitignore`.
+</Note>
+
+## Priority Order
+
+Environment variables are loaded in this order (later overrides earlier):
+
+1. System environment variables
+2. `.env` file in current directory
+3. Command-line environment variables
+
+Example:
+```bash
+# This overrides any existing MAX_STEPS value
+MAX_STEPS=100 agentuse run agent.agentuse
+```
+
+## Security Best Practices
+
+### Store Secrets Securely
+
+Never hardcode API keys in agent files:
+
+```yaml
+# ❌ Bad - Would be insecure (but AgentUse doesn't allow this)
+mcp_servers:
+  github:
+    env:
+      GITHUB_TOKEN: "ghp_actualTokenHere"  # Not supported by design!
+
+# ✅ Good - Use environment variable allowlist
+mcp_servers:
+  github:
+    command: "pnpx"
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    requiredEnvVars:
+      - GITHUB_TOKEN  # Must be in .env or shell environment
+```
+
+### Use .gitignore
+
+Always exclude sensitive files:
+
+```gitignore
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# API keys
+*.key
+*.pem
+```
+
+### Validate Required Variables
+
+For MCP servers that require specific environment variables, they will fail with clear error messages if the variables are not set.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="API key not found">
+    Verify the environment variable is set:
+    ```bash
+    echo $ANTHROPIC_API_KEY
+    ```
+    
+    If empty, set it:
+    ```bash
+    export ANTHROPIC_API_KEY="your-key-here"
+    ```
+    
+    Or use the auth command:
+    ```bash
+    agentuse auth login
+    ```
+  </Accordion>
+  
+  <Accordion title="Wrong API key being used">
+    Check which key is being used:
+    ```bash
+    agentuse auth list
+    ```
+    
+    The tool prioritizes OAuth tokens over API keys for Anthropic.
+  </Accordion>
+  
+  <Accordion title="MAX_STEPS not working">
+    Ensure you're setting it before running the agent:
+    ```bash
+    export MAX_STEPS=100
+    agentuse run agent.agentuse
+    
+    # Or inline:
+    MAX_STEPS=100 agentuse run agent.agentuse
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Model Configuration" icon="key" href="/guides/model-configuration">
+    Set up model providers and API keys
+  </Card>
+  <Card title="MCP Configuration" icon="plug" href="/reference/agent-syntax#mcp-servers">
+    Configure MCP servers
+  </Card>
+</CardGroup>

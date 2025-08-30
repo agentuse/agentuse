@@ -1,0 +1,368 @@
+---
+title: Model Configuration
+description: Configure AI providers and models for your agents
+---
+
+## Overview
+
+AgentUse supports multiple AI providers. You need to authenticate with at least one provider to run agents.
+
+## Supported Providers
+
+<CardGroup cols={3}>
+  <Card title="Anthropic">
+    Claude models (Opus, Sonnet, Haiku)
+    Supports OAuth and API keys
+  </Card>
+  <Card title="OpenAI">
+    GPT models including GPT-5, GPT-4, GPT-4o, GPT-3.5
+    API key authentication
+  </Card>
+  <Card title="OpenRouter">
+    Access to 100+ models via unified API
+    API key authentication
+  </Card>
+</CardGroup>
+
+## Authentication Methods
+
+### 1. Interactive Login (Recommended)
+
+The simplest way to authenticate:
+
+```bash
+# Interactive menu
+agentuse auth login
+
+# Or login to specific provider
+agentuse auth login anthropic
+agentuse auth login openai
+agentuse auth login openrouter
+```
+
+<Info>
+  Anthropic supports OAuth login for both Claude Max and Console users - no API key needed!
+</Info>
+
+### 2. Environment Variables
+
+Set API keys as environment variables:
+
+```bash
+# Add to ~/.bashrc, ~/.zshrc, or ~/.profile
+export ANTHROPIC_API_KEY="sk-ant-api03-..."
+export OPENAI_API_KEY="sk-proj-..."
+export OPENROUTER_API_KEY="sk-or-v1-..."
+```
+
+### 3. Configuration File
+
+Create a `.env` file in your project:
+
+```bash
+# .env
+ANTHROPIC_API_KEY=sk-ant-api03-...
+OPENAI_API_KEY=sk-proj-...
+OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+### Advanced Environment Variable Configuration
+
+AgentUse supports flexible environment variable patterns for multiple API keys:
+
+```bash
+# Using environment suffixes for different keys
+export ANTHROPIC_API_KEY_DEV=sk-ant-api03-dev-key
+export ANTHROPIC_API_KEY_PROD=sk-ant-api03-prod-key
+export OPENAI_API_KEY_PERSONAL=sk-proj-personal-key
+
+# Then specify in model string
+agentuse run agent.md --model anthropic:claude-3-sonnet:dev
+agentuse run agent.md --model openai:gpt-4:OPENAI_API_KEY_PERSONAL
+```
+
+<Warning>
+  Never commit `.env` files to version control! Add to `.gitignore`:
+  ```
+  .env
+  .env.local
+  .env.*.local
+  ```
+</Warning>
+
+## Managing Credentials
+
+### List Stored Credentials
+
+```bash
+agentuse auth list
+```
+
+Output:
+```
+📁 Credentials stored in: ~/.local/share/agentuse/auth.json
+
+Stored credentials:
+  🔑 anthropic (oauth) → Use as: anthropic:claude-3-5-sonnet-20241022
+  🎫 openai (api) → Use as: openai:gpt-4-turbo
+
+Environment variables:
+  🌍 openrouter (OPENROUTER_API_KEY) → Use as: openrouter:qwen/qwen-2.5-72b-instruct
+```
+
+### Remove Credentials
+
+```bash
+# Remove specific provider
+agentuse auth logout anthropic
+
+# Remove all credentials
+agentuse auth logout
+```
+
+### Rotate API Keys
+
+```bash
+# Logout and login again
+agentuse auth logout openai
+agentuse auth login openai
+```
+
+## OAuth Authentication (Anthropic)
+
+Both Claude Max and Console users can use OAuth for seamless authentication:
+
+<Steps>
+  <Step title="Run OAuth Login">
+    ```bash
+    agentuse auth login anthropic
+    ```
+    Select from:
+    - **Claude Pro/Max Plan** (OAuth) - For claude.ai users
+    - **Anthropic Console** (OAuth) - For console.anthropic.com users  
+    - **Manual API Key** - Traditional API key method
+  </Step>
+  <Step title="Authorization URL">
+    Copy the authorization URL shown in terminal and visit in your browser
+  </Step>
+  <Step title="Authorize">
+    Sign in and click "Authorize" to grant AgentUse access
+  </Step>
+  <Step title="Copy Code">
+    Copy the authorization code from the browser
+  </Step>
+  <Step title="Paste Code">
+    Paste the code in terminal - you're authenticated!
+  </Step>
+</Steps>
+
+### OAuth Benefits
+
+- No API key management required
+- Automatic token refresh
+- Secure PKCE authentication flow  
+- Works with both Claude Max and Console accounts
+- Tokens stored securely in `~/.local/share/agentuse/auth.json` with restricted permissions
+
+## API Key Authentication
+
+### Getting API Keys
+
+<Tabs>
+  <Tab title="Anthropic">
+    1. Go to [console.anthropic.com](https://console.anthropic.com)
+    2. Navigate to **API Keys**
+    3. Click **Create Key**
+    4. Name your key (e.g., "AgentUse")
+    5. Copy the key (starts with `sk-ant-api03-`)
+    
+    <Note>
+      Keys are shown only once. Store them securely!
+    </Note>
+  </Tab>
+  <Tab title="OpenAI">
+    1. Visit [platform.openai.com](https://platform.openai.com)
+    2. Go to **API keys** section
+    3. Click **Create new secret key**
+    4. Name your key
+    5. Copy the key (starts with `sk-proj-` for project keys)
+    
+    <Warning>
+      OpenAI keys have usage limits. Monitor your usage!
+    </Warning>
+  </Tab>
+  <Tab title="OpenRouter">
+    1. Go to [openrouter.ai](https://openrouter.ai)
+    2. Sign in or create account
+    3. Navigate to **Keys**
+    4. Click **Create Key**
+    5. Copy the key (starts with `sk-or-v1-`)
+    
+    <Info>
+      OpenRouter provides access to many models with one key
+    </Info>
+  </Tab>
+</Tabs>
+
+## Authentication Priority Order
+
+AgentUse checks authentication sources in this order:
+
+1. **OAuth tokens** (Anthropic only) - Checked first and refreshed automatically
+2. **Stored API keys** (via `agentuse auth login`) - Stored in `~/.local/share/agentuse/auth.json`
+3. **Environment variables** - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`
+4. **Custom environment variables** - Using suffix patterns (e.g., `ANTHROPIC_API_KEY_DEV`) or full variable names
+
+## Security Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use OAuth When Possible">
+    OAuth is more secure than API keys as tokens can be revoked and rotated automatically. AgentUse uses PKCE flow for enhanced security.
+  </Accordion>
+  <Accordion title="Secure File Storage">
+    Stored credentials in `~/.local/share/agentuse/auth.json` are automatically set to user read/write only (`0600` permissions).
+  </Accordion>
+  <Accordion title="Rotate Keys Regularly">
+    Change API keys every 90 days or immediately if compromised.
+  </Accordion>
+  <Accordion title="Limit Key Permissions">
+    Create keys with minimal required permissions.
+  </Accordion>
+  <Accordion title="Use Environment Variables">
+    Never hardcode keys in your agent files or code.
+  </Accordion>
+  <Accordion title="Monitor Usage">
+    Regularly check API usage to detect unusual activity.
+  </Accordion>
+</AccordionGroup>
+
+## Multi-Provider Setup
+
+Use different providers for different agents:
+
+```markdown
+---
+name: fast-agent
+model: anthropic:claude-3-5-haiku-20241022  # Uses Anthropic
+---
+```
+
+```markdown
+---
+name: powerful-agent
+model: openai:gpt-5  # Uses OpenAI GPT-5
+openai:
+  reasoningEffort: high    # More thorough reasoning
+  textVerbosity: medium    # Balanced response length
+---
+```
+
+```markdown
+---
+name: specialized-agent
+model: openrouter:qwen/qwen-2.5-coder-32b-instruct  # Uses OpenRouter
+---
+```
+
+## Provider Options
+
+Configure provider-specific settings for fine-tuned model behavior:
+
+### OpenAI Provider Options
+
+For OpenAI models (especially GPT-5), you can control reasoning and verbosity:
+
+```yaml
+---
+model: openai:gpt-5
+openai:
+  reasoningEffort: high  # Options: 'low', 'medium', 'high'
+  textVerbosity: low     # Options: 'low', 'medium', 'high'
+---
+```
+
+<Info>
+  **reasoningEffort**: Controls computational effort for reasoning
+  - `low`: Faster responses with less thorough reasoning
+  - `medium`: Balanced performance (default)
+  - `high`: More comprehensive reasoning, slower responses
+
+  **textVerbosity**: Controls response length and detail
+  - `low`: Concise, minimal prose
+  - `medium`: Balanced detail (default)  
+  - `high`: Verbose, detailed explanations
+</Info>
+
+These options help you optimize for:
+- **Speed vs Quality**: Lower reasoning effort for faster responses
+- **Conciseness vs Detail**: Lower verbosity for more direct answers
+- **Cost Optimization**: Lower settings reduce token usage
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Authentication failed">
+    - Verify API key is correct
+    - Check key hasn't expired
+    - Ensure key has required permissions
+    - Try logging out and back in
+  </Accordion>
+  <Accordion title="Rate limiting">
+    - Check your API tier and limits
+    - Implement exponential backoff
+    - Consider upgrading your plan
+    - Use different keys for different projects
+  </Accordion>
+  <Accordion title="OAuth issues">
+    - Clear browser cookies
+    - Try a different browser
+    - Ensure you're using the correct OAuth mode (Max vs Console)
+    - Check that your Claude subscription is active (for Max mode)
+    - Verify you have console access (for Console mode)
+    - Try manual API key authentication as fallback
+  </Accordion>
+</AccordionGroup>
+
+## CI/CD Authentication
+
+For automated environments:
+
+### GitHub Actions
+
+```yaml
+name: Run Agent
+on: [push]
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: pnpm install -g agentuse
+      - run: agentuse run my-agent.agentuse
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+```
+
+### Docker
+
+```dockerfile
+FROM node:20
+RUN npm install -g pnpm && pnpm install -g agentuse
+ENV ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+ENV OPENAI_API_KEY=${OPENAI_API_KEY}
+ENV OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+CMD ["agentuse", "run", "agent.agentuse"]
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Start using your authenticated providers
+  </Card>
+  <Card title="Creating Agents" icon="file-pen" href="/guides/creating-agents">
+    Build agents with your providers
+  </Card>
+</CardGroup>

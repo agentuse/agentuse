@@ -1,0 +1,269 @@
+---
+title: Agent Design Patterns
+description: Best practices for building production-ready AgentUse agents
+---
+
+## Core Design Principles
+
+### Writing Instructions as SOPs
+
+<Note>
+  Writing agent instructions is like creating a Standard Operating Procedure (SOP) for an employee. Just as SOPs provide clear, repeatable instructions for human workers, agent instructions should be precise, actionable, and comprehensive.
+</Note>
+
+When crafting agent instructions, think of yourself as a manager writing detailed procedures that any employee could follow:
+- **Be specific**: Like an SOP, leave no room for ambiguity
+- **Include all context**: Provide all necessary information upfront
+- **Define success criteria**: Clearly state what "done" looks like
+- **Handle edge cases**: Anticipate and document how to handle exceptions
+
+### 1. Non-Interactive by Design
+
+<Note>
+  AgentUse agents run without interactive prompts, making them perfect for automation, CI/CD pipelines, and cron jobs.
+</Note>
+
+Agents are designed to:
+- Run autonomously from start to finish
+- Complete tasks without user intervention
+- Work in headless environments
+- Integrate into automated workflows
+
+### 2. Agent as Delegated Employee
+
+<Info>
+  Think of agents as specialized employees you delegate work to. Once you hand off a task with clear instructions, they work autonomously until completion—just like delegating to a trusted team member.
+</Info>
+
+This delegation model means:
+- **Set and forget**: Give clear instructions and let the agent work independently
+- **No micromanagement**: The agent handles the task from start to finish
+- **Clear handoff**: Define input requirements and expected outputs
+- **Trust the process**: Like a well-trained employee, the agent follows your SOPs
+
+### 3. Communication Through Tools
+
+<Note>
+  Just as employees communicate and hand off work through tools like Slack and Notion, agents should use MCP servers and external integrations to report progress and deliver results.
+</Note>
+
+Agents communicate through:
+- **Status updates**: Use Slack MCP to send progress notifications
+- **Documentation**: Update Notion databases with results
+- **Handoffs**: Save artifacts to shared filesystems for other agents
+- **Reporting**: Post summaries to webhooks or APIs
+
+This approach mirrors how remote teams collaborate—asynchronously through shared tools rather than constant direct interaction.
+
+### 4. Separation of Concerns
+
+<Info>
+  Use sub-agents to separate different responsibilities, keeping each agent focused on a single task.
+</Info>
+
+Each agent should:
+- Have a single, clear purpose
+- Delegate complex subtasks to sub-agents
+- Use appropriate models for the task (Haiku for simple tasks, Sonnet for complex reasoning)
+- Maintain clear boundaries between concerns
+
+## Implementation Patterns
+
+### Multi-Agent Workflow Pattern
+
+Complex tasks can be decomposed into specialized agents that work together through sub-agent composition. This mirrors how organizations structure teams—each specialist handles their domain, communicating through established channels.
+
+#### Example: Content Pipeline
+
+<Steps>
+  <Step title="Research Agent">
+    Gathers information using web search or MCP tools
+    
+    ```markdown research.agentuse
+    ---
+    model: anthropic:claude-3-5-haiku-latest
+    mcp_servers:
+      filesystem:
+        command: "pnpx"
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "./research"]
+    ---
+    
+    You are a research specialist. Find and save relevant information.
+    
+    ## Task
+    1. Research the given topic thoroughly
+    2. Save findings to research folder
+    3. Return key insights summary
+    ```
+  </Step>
+  
+  <Step title="Writer Agent">
+    Creates content based on research
+    
+    ```markdown writer.agentuse
+    ---
+    model: anthropic:claude-sonnet-4-20250514
+    ---
+    
+    You are a content writer. Create engaging, accurate content.
+    
+    ## Task
+    1. Review provided research
+    2. Create well-structured content
+    3. Ensure factual accuracy
+    ```
+  </Step>
+  
+  <Step title="Orchestrator Agent">
+    Coordinates the workflow
+    
+    ```markdown orchestrator.agentuse
+    ---
+    model: anthropic:claude-sonnet-4-20250514
+    subagents:
+      - path: ./research.agentuse
+        maxSteps: 50
+      - path: ./writer.agentuse
+        maxSteps: 100
+    ---
+    
+    You coordinate content creation workflow.
+    
+    ## Task
+    1. Use research agent to gather information
+    2. Pass findings to writer agent
+    3. Review and finalize output
+    ```
+  </Step>
+</Steps>
+
+### State Management with External Systems
+
+Since AgentUse agents are stateless between runs, use MCP servers to manage state:
+
+<CodeGroup>
+```yaml notion-state.agentuse
+---
+model: anthropic:claude-sonnet-4-20250514
+mcp_servers:
+  notion:
+    command: "pnpx"
+    args: ["-y", "@modelcontextprotocol/server-notion"]
+    requiredEnvVars: ["NOTION_TOKEN"]
+---
+
+You track workflow state in Notion.
+
+## Task
+1. Check current state in Notion database
+2. Process next pending item
+3. Update state after completion
+```
+
+```yaml file-state.agentuse
+---
+model: anthropic:claude-sonnet-4-20250514
+mcp_servers:
+  filesystem:
+    command: "pnpx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "./state"]
+---
+
+You manage state using local files.
+
+## Task
+1. Read state from state/current.json
+2. Process based on current state
+3. Write updated state back
+```
+</CodeGroup>
+
+### Error Handling
+
+Build resilient agents with proper error handling:
+
+```markdown robust-agent.agentuse
+---
+model: anthropic:claude-sonnet-4-20250514
+subagents:
+  - path: ./validator.agentuse
+  - path: ./processor.agentuse
+  - path: ./error-handler.agentuse
+---
+
+You execute tasks with comprehensive error handling.
+
+## Error Handling Strategy
+1. Validate input with validator agent
+2. If validation fails, use error-handler to log and notify
+3. Process with processor agent
+4. If processing fails, use error-handler for recovery
+5. Always provide clear status at completion
+```
+
+### Chain of Responsibility
+
+Process data through a sequential pipeline where each agent handles a specific transformation step:
+
+```markdown chain-pipeline.agentuse
+---
+model: anthropic:claude-sonnet-4-20250514
+subagents:
+  - path: ./validator.agentuse
+  - path: ./transformer.agentuse
+  - path: ./publisher.agentuse
+---
+
+You coordinate a data processing pipeline.
+
+## Processing Pipeline
+1. Use validator agent to validate input data
+2. Pass validated data to transformer agent for processing
+3. Send transformed data to publisher agent for final output
+4. Return confirmation once all steps complete successfully
+```
+
+### Conditional Routing
+
+Route requests to different handlers based on complexity or type:
+
+```markdown conditional-router.agentuse
+---
+model: anthropic:claude-sonnet-4-20250514
+subagents:
+  - path: ./simple-handler.agentuse
+  - path: ./complex-handler.agentuse
+---
+
+You route requests to appropriate handlers based on complexity.
+
+## Routing Strategy
+1. Analyze the incoming request complexity
+2. For simple requests (< 3 steps), use simple-handler agent
+3. For complex requests (>= 3 steps), use complex-handler agent
+4. Return the handler's response with routing decision details
+```
+
+### Retry with Fallback
+
+Implement resilient processing with automatic fallback on failures:
+
+```markdown retry-fallback.agentuse
+---
+model: anthropic:claude-sonnet-4-20250514
+subagents:
+  - path: ./primary-agent.agentuse
+  - path: ./fallback-agent.agentuse
+---
+
+You ensure task completion through retry and fallback mechanisms.
+
+## Execution Strategy
+1. Attempt task with primary-agent first
+2. If primary-agent succeeds, return its results
+3. If primary-agent fails or times out, use fallback-agent
+4. Log which path was taken and why
+5. Always provide task results, regardless of path taken
+```
+
+

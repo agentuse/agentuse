@@ -1,0 +1,98 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "AgentUse",
+  "logo": {
+    "dark": "/static/agentuse-logo-small.png",
+    "light": "/static/agentuse-logo-small.png"
+  },
+  "favicon": "/static/agentuse-logo-small.png",
+  "colors": {
+    "primary": "#3B82F6",
+    "light": "#F3F4F6",
+    "dark": "#0F172A",
+    "background": {
+      "light": "#FFFFFF",
+      "dark": "#0F172A"
+    },
+    "anchors": {
+      "from": "#3B82F6",
+      "to": "#8B5CF6"
+    }
+  },
+  "topbarLinks": [],
+  "topbarCtaButton": {
+    "type": "github",
+    "url": "https://github.com/agentuse/agentuse"
+  },
+  "tabs": [],
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "icon": "rocket",
+      "pages": [
+        "introduction",
+        "quickstart",
+        "installation"
+      ]
+    },
+    {
+      "group": "Guides",
+      "icon": "book-open",
+      "pages": [
+        "guides/creating-agents",
+        "guides/agent-design-patterns",
+        "guides/subagents",
+        "guides/model-configuration",
+        "guides/context-management",
+        "guides/remote-agents",
+        "guides/plugins"
+      ]
+    },
+    {
+      "group": "Reference",
+      "icon": "code",
+      "pages": [
+        "reference/cli-commands",
+        "reference/agent-syntax",
+        "reference/environment-variables"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/agentuse/agentuse",
+    "x": "https://x.com/agentuse"
+  },
+  "backgroundImage": "/static/background.png",
+  "metadata": {
+    "og:title": "AgentUse - AI Agents as Simple as Markdown",
+    "og:description": "Build production AI agents with just markdown files. Zero-configuration CLI for AI agents with MCP tools support.",
+    "og:image": "/static/agentuse-logo.png",
+    "twitter:card": "summary_large_image",
+    "twitter:title": "AgentUse Documentation",
+    "twitter:description": "Build production AI agents with just markdown files.",
+    "twitter:image": "/static/agentuse-logo.png"
+  },
+  "search": {
+    "prompt": "Search documentation..."
+  },
+  "modeToggle": {
+    "default": "light",
+    "isHidden": false
+  },
+  "feedback": {
+    "suggestEdit": true,
+    "raiseIssue": true,
+    "thumbsRating": true
+  },
+  "api": {
+    "playground": {
+      "mode": "simple"
+    }
+  },
+  "codeBlock": {
+    "mode": "auto"
+  },
+  "styling": {
+    "codeblocks": "dark"
+  }
+}

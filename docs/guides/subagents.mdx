@@ -1,0 +1,383 @@
+---
+title: Sub-Agents
+description: Compose agents that can delegate to other agents
+---
+
+## What are Sub-Agents?
+
+Sub-agents allow you to create modular, reusable agents that can be composed together. A parent agent can delegate specific tasks to specialized sub-agents through tool calls.
+
+<Info>
+  Sub-agents are automatically converted to tools that parent agents can call. Each sub-agent runs with a default limit of 50 steps.
+</Info>
+
+## Basic Usage
+
+### Define a Sub-Agent
+
+Create `researcher.agentuse`:
+```markdown
+---
+model: anthropic:claude-3-5-haiku-latest
+---
+
+You are a research specialist. Find accurate, relevant information.
+
+## Task
+Research the requested topic and provide comprehensive findings.
+```
+
+<Note>
+  The agent name is automatically derived from the filename (e.g., `researcher.agentuse` becomes `researcher`).
+</Note>
+
+### Use the Sub-Agent
+
+Create `main.agentuse`:
+```markdown
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: ./researcher.agentuse
+---
+
+You coordinate research tasks using specialized agents.
+
+## Task
+When asked for information, use the researcher tool to gather data.
+```
+
+<Warning>
+  Sub-agents are called as tools using their filename (without `.agentuse`). The `researcher.agentuse` becomes available as the `researcher` tool.
+</Warning>
+
+## Multiple Sub-Agents
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: ./agents/researcher.agentuse
+  - path: ./agents/writer.agentuse
+  - path: ./agents/editor.agentuse
+---
+
+You manage content creation using specialized agents.
+
+## Workflow
+1. Use researcher tool to gather information
+2. Use writer tool to create initial draft
+3. Use editor tool to polish and finalize
+```
+
+## Sub-Agent Configuration
+
+You can customize sub-agent behavior:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: ./researcher.agentuse
+    name: custom_researcher  # Override default name
+    maxSteps: 25            # Override default 50 steps
+  - path: ./writer.agentuse
+    maxSteps: 100           # Allow more steps for complex writing
+---
+```
+
+## Remote Sub-Agents
+
+<Warning>
+  Remote sub-agents are **not currently supported**. Sub-agents can only be loaded from local file paths relative to the parent agent.
+</Warning>
+
+All sub-agent paths must be relative to the parent agent's directory:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: ./translator.agentuse          # Same directory
+  - path: ../shared/processor.agentuse   # Parent directory
+  - path: ./team/specialist.agentuse     # Subdirectory
+---
+```
+
+## Passing Context
+
+Sub-agents accept optional parameters when called as tools:
+
+```markdown
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: ./data-processor.agentuse
+---
+
+You analyze data using specialized processors.
+
+## Task
+When given data:
+1. Call data_processor tool with task parameter and context
+2. Interpret the results
+3. Provide insights
+
+Example: data_processor(task="Analyze sales data", context={"period": "Q4 2023"})
+```
+
+### Sub-Agent Tool Schema
+
+Each sub-agent tool accepts:
+- `task` (optional string): Additional instructions for the sub-agent
+- `context` (optional object): Structured data to pass to the sub-agent
+
+The sub-agent receives its original instructions plus any additional task and context.
+
+## Advanced Patterns
+
+### Conditional Delegation
+
+```markdown
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: ./technical-expert.agentuse
+  - path: ./creative-writer.agentuse
+  - path: ./data-analyst.agentuse
+---
+
+You route requests to appropriate specialists.
+
+## Routing Logic
+- Technical questions → call technical_expert tool
+- Creative tasks → call creative_writer tool
+- Data requests → call data_analyst tool
+```
+
+### Recursive Agents
+
+Sub-agents can have their own sub-agents:
+
+```yaml
+# orchestrator.agentuse
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: ./team-lead.agentuse  # This has its own sub-agents
+---
+
+# team-lead.agentuse
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: ./developer.agentuse
+  - path: ./tester.agentuse
+---
+```
+
+<Note>
+  Each level of sub-agents creates its own MCP connections and tool set. Paths are always resolved relative to each agent's directory.
+</Note>
+
+### Parallel Processing
+
+```markdown
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: ./analyzer-1.agentuse
+  - path: ./analyzer-2.agentuse
+  - path: ./analyzer-3.agentuse
+---
+
+You process data in parallel using multiple analyzers.
+
+## Task
+Split the data and send parts to different analyzer tools.
+Combine their results for comprehensive analysis.
+
+You can call multiple tools in sequence or use them to analyze different aspects of the same data.
+```
+
+<Warning>
+  Sub-agents run sequentially, not in true parallel. The parent agent calls each sub-agent tool one at a time.
+</Warning>
+
+## Sub-Agent Communication
+
+### Tool and Resource Inheritance
+
+Sub-agents create their own isolated tool environments:
+
+```yaml
+# parent.agentuse
+---
+model: anthropic:claude-sonnet-4-0
+mcp_servers:
+  database:
+    command: "node"
+    args: ["./database-server.js"]
+subagents:
+  - path: ./child.agentuse
+---
+
+# child.agentuse  
+---
+model: anthropic:claude-3-5-haiku-latest
+mcp_servers:
+  # Child defines its own MCP servers
+  filesystem:
+    command: "npx"
+    args: ["@modelcontextprotocol/server-filesystem"]
+---
+```
+
+<Info>
+  Each sub-agent manages its own MCP connections and tools. They don't automatically inherit parent tools.
+</Info>
+
+### System Context
+
+All sub-agents receive consistent system context:
+- Date and time information
+- Autonomous agent behavior prompts
+- Model-specific system messages (e.g., "Claude Code" for Anthropic models)
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Single Responsibility">
+    Each sub-agent should have one clear purpose. This makes them reusable and easier to maintain.
+  </Accordion>
+  <Accordion title="Clear Interfaces">
+    Define clear expectations for what each sub-agent receives and returns.
+  </Accordion>
+  <Accordion title="Error Handling">
+    Parent agents should handle sub-agent failures gracefully.
+  </Accordion>
+  <Accordion title="Performance">
+    Use lighter models (like Haiku) for simple sub-agents to reduce costs and latency.
+  </Accordion>
+  <Accordion title="Testing">
+    Test sub-agents independently before composing them.
+  </Accordion>
+</AccordionGroup>
+
+## Example: Customer Support System
+
+```yaml
+# support-system.agentuse
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: ./agents/ticket-classifier.agentuse
+  - path: ./agents/knowledge-base.agentuse
+  - path: ./agents/escalation-handler.agentuse
+---
+
+You manage customer support requests.
+
+## Workflow
+1. Call ticket_classifier tool to categorize the issue
+2. Call knowledge_base tool to find solutions
+3. If unresolved, call escalation_handler tool
+
+Each tool returns structured output you can use to make decisions.
+```
+
+```yaml
+# ticket-classifier.agentuse
+---
+model: anthropic:claude-3-5-haiku-latest
+---
+
+Classify support tickets into categories:
+- Technical issue
+- Billing question
+- Feature request
+- General inquiry
+```
+
+## Performance Optimization
+
+### Model Selection
+
+```yaml
+# Optimize model usage
+---
+model: anthropic:claude-sonnet-4-0  # Smart coordinator
+subagents:
+  - path: ./simple-task.agentuse  # Can use claude-3-5-haiku-latest
+  - path: ./complex-task.agentuse  # Can use anthropic:claude-opus-4-1
+---
+```
+
+### Step Limits
+
+Control sub-agent execution limits:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  - path: ./quick-task.agentuse
+    maxSteps: 10              # Limit for simple tasks
+  - path: ./complex-task.agentuse  
+    maxSteps: 200             # More steps for complex work
+---
+```
+
+<Note>
+  Default step limit for sub-agents is 50 (compared to 1000 for main agents).
+</Note>
+
+## Debugging Sub-Agents
+
+### Enable Verbose Logging
+
+```bash
+agentuse run main.agentuse --verbose
+```
+
+### Trace Execution
+
+```bash
+DEBUG=agent:* agentuse run main.agentuse
+```
+
+### Test Sub-Agents Individually
+
+```bash
+# Test sub-agent directly
+agentuse run ./agents/researcher.agentuse "test query"
+```
+
+## Security Considerations
+
+<Warning>
+  Sub-agents run with the same system permissions as the parent process. Each sub-agent:
+  - Creates its own MCP connections with full permissions
+  - Can access any tools defined in its configuration
+  - Runs with the same file system and network access
+  - Has access to environment variables
+</Warning>
+
+### Best Practices for Security
+
+- Audit sub-agent configurations carefully
+- Use minimal necessary permissions in MCP server configs
+- Avoid loading sub-agents from untrusted sources
+- Review sub-agent instructions for potentially harmful commands
+- Use `disallowedTools` in MCP configs to restrict dangerous tools
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Remote Agents" icon="globe" href="/guides/remote-agents">
+    Learn about remote agent execution
+  </Card>
+  <Card title="Examples" icon="code" href="https://github.com/agentuse/agentuse/tree/main/cookbook/agents">
+    See sub-agent examples
+  </Card>
+</CardGroup>
