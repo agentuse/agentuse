@@ -1,6 +1,9 @@
 import { glob } from 'glob';
 import { homedir } from 'os';
-import { join, resolve } from 'path';
+import { join, dirname, extname } from 'path';
+import { pathToFileURL } from 'url';
+import { stat } from 'fs/promises';
+import * as esbuild from 'esbuild';
 import type { AgentCompleteEvent, PluginHandlers } from './types';
 import { logger } from '../utils/logger';
 
@@ -20,14 +23,34 @@ export class PluginManager {
         
         for (const file of files) {
           try {
-            // Clear require cache to allow hot-reloading in development
-            const resolvedPath = resolve(file);
-            if (require.cache[resolvedPath]) {
-              delete require.cache[resolvedPath];
+            let module: any;
+            const ext = extname(file);
+            
+            if (ext === '.ts') {
+              // TypeScript: Bundle with esbuild and import via data URL
+              const result = await esbuild.build({
+                entryPoints: [file],
+                bundle: true,
+                platform: 'node',
+                format: 'esm',
+                target: 'node18',
+                sourcemap: 'inline',
+                absWorkingDir: dirname(file),
+                write: false,
+                external: ['node:*']
+              });
+              
+              const code = result.outputFiles[0].text;
+              const dataUrl = 'data:text/javascript;base64,' + 
+                Buffer.from(code + '\n//# sourceURL=' + file).toString('base64');
+              module = await import(dataUrl);
+            } else {
+              // JavaScript: Dynamic import with cache busting
+              const fileStat = await stat(file);
+              const url = pathToFileURL(file).href + '?v=' + fileStat.mtimeMs;
+              module = await import(url);
             }
             
-            // Import the plugin module
-            const module = await import(resolvedPath);
             const plugin = module.default;
             
             // Validate it's an object with handler functions
