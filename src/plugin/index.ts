@@ -1,11 +1,24 @@
 import { glob } from 'glob';
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join, dirname, extname } from 'path';
 import { pathToFileURL } from 'url';
-import { stat } from 'fs/promises';
-import * as esbuild from 'esbuild';
+import { stat, writeFile, rm } from 'fs/promises';
+import * as esbuild from 'esbuild-wasm';
+import { createHash } from 'crypto';
 import type { AgentCompleteEvent, PluginHandlers } from './types';
 import { logger } from '../utils/logger';
+
+// Global initialization state for esbuild-wasm (shared across all instances)
+let esbuildInitialized = false;
+
+async function initializeEsbuild(): Promise<void> {
+  if (!esbuildInitialized) {
+    // In Node.js, esbuild-wasm will automatically find the WASM binary
+    // from the installed package when an empty object is provided
+    await esbuild.initialize({});
+    esbuildInitialized = true;
+  }
+}
 
 export class PluginManager {
   private plugins: Array<{ path: string; handlers: PluginHandlers }> = [];
@@ -27,7 +40,10 @@ export class PluginManager {
             const ext = extname(file);
             
             if (ext === '.ts') {
-              // TypeScript: Bundle with esbuild and import via data URL
+              // Initialize esbuild-wasm if needed
+              await initializeEsbuild();
+              
+              // TypeScript: Bundle with esbuild-wasm and write to temp file
               const result = await esbuild.build({
                 entryPoints: [file],
                 bundle: true,
@@ -41,9 +57,21 @@ export class PluginManager {
               });
               
               const code = result.outputFiles[0].text;
-              const dataUrl = 'data:text/javascript;base64,' + 
-                Buffer.from(code + '\n//# sourceURL=' + file).toString('base64');
-              module = await import(dataUrl);
+              // Create a unique temp file name based on the original file path
+              const hash = createHash('md5').update(file).digest('hex').substring(0, 8);
+              const tempFile = join(tmpdir(), `agentuse-plugin-${hash}.mjs`);
+              
+              // Write the compiled code to temp file
+              await writeFile(tempFile, code);
+              
+              try {
+                // Import from the temp file
+                const tempUrl = pathToFileURL(tempFile).href + '?t=' + Date.now();
+                module = await import(tempUrl);
+              } finally {
+                // Clean up temp file
+                await rm(tempFile, { force: true }).catch(() => {});
+              }
             } else {
               // JavaScript: Dynamic import with cache busting
               const fileStat = await stat(file);
