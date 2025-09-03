@@ -298,7 +298,8 @@ program
               text: result.text || '',
               duration,
               tokens: result.usage?.totalTokens,
-              toolCalls: result.toolCallCount || 0
+              toolCalls: result.toolCallCount || 0,
+              ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces })
             },
             isSubAgent: false,
             consoleOutput

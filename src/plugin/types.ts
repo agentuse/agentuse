@@ -2,6 +2,16 @@
  * Plugin system type definitions
  */
 
+export interface ToolCallTrace {
+  name: string;           // Tool, sub-agent, or model name
+  type: 'tool' | 'subagent' | 'llm';
+  startTime: number;      // Unix timestamp in ms
+  duration: number;       // Duration in ms
+  tokens?: number;        // Tokens used (for sub-agents and LLM calls)
+  promptTokens?: number;  // Input tokens (for LLM calls)
+  completionTokens?: number; // Output tokens (for LLM calls)
+}
+
 export interface AgentCompleteEvent {
   agent: {
     name: string;
@@ -14,6 +24,7 @@ export interface AgentCompleteEvent {
     duration: number;      // seconds
     tokens?: number;       // total tokens used
     toolCalls: number;     // count of tool calls
+    toolCallTraces?: ToolCallTrace[];  // Detailed timing for each tool/sub-agent call
   };
   isSubAgent: boolean;
   consoleOutput: string;    // Full console output including logs and results

@@ -38,6 +38,7 @@ export async function createSubAgentTool(
       context: z.record(z.any()).optional().describe('Additional context to pass to the sub-agent')
     }),
     execute: async ({ task, context }) => {
+      const startTime = Date.now();
       try {
         logger.info(`[SubAgent] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
         
@@ -94,7 +95,8 @@ export async function createSubAgentTool(
             }
           );
           
-          logger.info(`[SubAgent] ${agent.name} completed`);
+          const duration = Date.now() - startTime;
+          logger.info(`[SubAgent] ${agent.name} completed in ${(duration / 1000).toFixed(2)}s`);
           
           // Log token usage
           if (result.usage?.totalTokens) {
@@ -106,7 +108,8 @@ export async function createSubAgentTool(
             metadata: {
               agent: agent.name,
               toolCalls: result.toolCalls && result.toolCalls.length > 0 ? result.toolCalls : undefined,
-              tokensUsed: result.usage?.totalTokens
+              tokensUsed: result.usage?.totalTokens,
+              duration  // Add duration in ms to metadata
             }
           };
         } finally {
