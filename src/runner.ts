@@ -370,7 +370,7 @@ export async function* executeAgentCore(
               role: 'tool',
               content: [{
                 type: 'tool-result',
-                toolCallId: (chunk as any).toolCallId || 'unknown',
+                toolCallId,
                 toolName: chunk.toolName,
                 output: parseToolResult(chunk)
               }]
@@ -696,7 +696,7 @@ export async function runAgent(
   startTime?: number, 
   verbose: boolean = false,
   agentFilePath?: string
-): Promise<{ text: string; usage?: LanguageModelUsage; toolCallCount: number }> {
+): Promise<{ text: string; usage?: LanguageModelUsage; toolCallCount: number; toolCallTraces?: ToolCallTrace[] }> {
   try {
     // Check if we're using OAuth (for system prompt modification)
     const isUsingOAuth = agent.config.model.includes('anthropic') && await AnthropicAuth.access();
@@ -716,9 +716,16 @@ export async function runAgent(
     // Merge all tools
     const tools = { ...mcpTools, ...subAgentTools };
     
+    const maxSteps = parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS));
+    
     logger.info(`Running agent with model: ${agent.config.model}`);
     if (Object.keys(tools).length > 0) {
       logger.info(`Available tools: ${Object.keys(tools).join(', ')}`);
+    }
+    
+    // Log step limit if it's non-default or in verbose mode
+    if (maxSteps !== DEFAULT_MAX_STEPS || verbose) {
+      logger.info(`Max steps: ${maxSteps} (override via MAX_STEPS env var)`);
     }
     
     // Log initialization time if verbose
@@ -761,7 +768,7 @@ export async function runAgent(
     const coreOptions = {
       userMessage: agent.instructions,
       systemMessages,
-      maxSteps: parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS)),
+      maxSteps,
       subAgentNames,  // Pass subagent names for logging
       ...(abortSignal && { abortSignal })
     };
@@ -792,7 +799,8 @@ export async function runAgent(
     return {
       text: result.text,
       ...(result.usage && { usage: result.usage }),
-      toolCallCount: result.toolCalls?.length || 0
+      toolCallCount: result.toolCalls?.length || 0,
+      ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces })
     };
   } catch (error: unknown) {
     // Check if it's an abort error from timeout
