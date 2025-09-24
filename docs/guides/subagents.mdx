@@ -155,29 +155,37 @@ You route requests to appropriate specialists.
 - Data requests → call data_analyst tool
 ```
 
-### Recursive Agents
+### Limitations: No Nested Sub-Agents
 
-Sub-agents can have their own sub-agents:
+<Warning>
+  **Important**: Sub-agents cannot have their own sub-agents. Any `subagents` configuration in a sub-agent file will be ignored.
+</Warning>
+
+This limitation is intentional to:
+- Prevent infinite recursion (Agent A → Agent B → Agent A)
+- Avoid deep nesting complexity that's hard to debug
+- Reduce resource consumption and token usage
+- Keep execution traces manageable
 
 ```yaml
 # orchestrator.agentuse
 ---
 model: anthropic:claude-sonnet-4-0
 subagents:
-  - path: ./team-lead.agentuse  # This has its own sub-agents
+  - path: ./team-lead.agentuse  # ✅ Works
 ---
 
 # team-lead.agentuse
 ---
 model: anthropic:claude-sonnet-4-0
 subagents:
-  - path: ./developer.agentuse
-  - path: ./tester.agentuse
+  - path: ./developer.agentuse  # ❌ Will be ignored
+  - path: ./tester.agentuse      # ❌ Will be ignored
 ---
 ```
 
 <Note>
-  Each level of sub-agents creates its own MCP connections and tool set. Paths are always resolved relative to each agent's directory.
+  Sub-agents only have access to their configured MCP tools, not other sub-agents. Each sub-agent creates its own isolated MCP connections.
 </Note>
 
 ### Parallel Processing
@@ -352,6 +360,7 @@ DEBUG=agent:* agentuse run main.agentuse
 # Test sub-agent directly
 agentuse run ./agents/researcher.agentuse "test query"
 ```
+
 
 ## Security Considerations
 
