@@ -36,8 +36,9 @@
   ],
   "scripts": {
     "clean": "rm -rf dist",
-    "build:js": "bun build ./src/index.ts --outdir ./dist --target node --format esm --splitting --sourcemap --external @ai-sdk/* --external @modelcontextprotocol/* --external @openauthjs/* --external ai --external chalk --external commander --external dotenv --external glob --external gray-matter --external zod",
+    "build:js": "bun build ./src/index.ts --outdir ./dist --target node --format esm --splitting --sourcemap --packages external",
     "build": "bun run clean && bun run build:js && chmod +x bin/cli.js",
+    "watch": "bun build ./src/index.ts --outdir ./dist --target node --format esm --splitting --sourcemap --packages external --watch",
     "link": "npm link",
     "unlink": "npm unlink",
     "test": "bun test",
