@@ -75,7 +75,7 @@ export async function processAgentStream(
         break;
         
       case 'tool-call':
-        logger.tool(chunk.toolName!, chunk.toolInput);
+        logger.tool(chunk.toolName!, chunk.toolInput, undefined, chunk.isSubAgent);
         if (options?.collectToolCalls) {
           toolCalls.push({ tool: chunk.toolName!, args: chunk.toolInput });
         }
@@ -137,6 +137,7 @@ export async function* executeAgentCore(
     systemMessages: Array<{role: string, content: string}>;
     maxSteps: number;
     abortSignal?: AbortSignal;
+    subAgentNames?: Set<string>;  // Track which tools are subagents
   }
 ): AsyncGenerator<AgentChunk> {
   let model;
@@ -513,7 +514,10 @@ export async function runAgent(
     // If we have an agent file path, use its directory as the base path for sub-agents
     const basePath = agentFilePath ? require('path').dirname(agentFilePath) : undefined;
     const subAgentTools = await createSubAgentTools(agent.config.subagents, basePath);
-    
+
+    // Track subagent names for logging
+    const subAgentNames = new Set(Object.keys(subAgentTools));
+
     // Merge all tools
     const tools = { ...mcpTools, ...subAgentTools };
     
@@ -563,6 +567,7 @@ export async function runAgent(
       userMessage: agent.instructions,
       systemMessages,
       maxSteps: parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS)),
+      subAgentNames,  // Pass subagent names for logging
       ...(abortSignal && { abortSignal })
     };
     

@@ -78,7 +78,8 @@ export async function createSubAgentTool(
             executeAgentCore(agent, tools, {
               userMessage,
               systemMessages,
-              maxSteps
+              maxSteps,
+              subAgentNames: new Set<string>()  // Sub-agents don't have sub-agents themselves
             }),
             {
               collectToolCalls: true,

@@ -158,7 +158,7 @@ class Logger {
     this.writeToStderr(chalk.magenta(`[SYSTEM] ${message}`));
   }
 
-  tool(name: string, args?: unknown, result?: unknown) {
+  tool(name: string, args?: unknown, result?: unknown, isSubAgent?: boolean) {
     // Only show when tool is being called, not when returning results
     if (args !== undefined) {
       // Format args concisely for display
@@ -173,8 +173,8 @@ class Logger {
             if (value === null || value === undefined) {
               valueStr = String(value);
             } else if (typeof value === 'string') {
-              valueStr = value.length > MAX_VALUE_LENGTH 
-                ? `"${value.substring(0, MAX_VALUE_LENGTH)}..."` 
+              valueStr = value.length > MAX_VALUE_LENGTH
+                ? `"${value.substring(0, MAX_VALUE_LENGTH)}..."`
                 : `"${value}"`;
             } else if (typeof value === 'object') {
               valueStr = Array.isArray(value) ? `[${value.length} items]` : '{...}';
@@ -190,10 +190,13 @@ class Logger {
         const argsStr = JSON.stringify(args);
         argsDisplay = argsStr.length > 100 ? ` (${argsStr.substring(0, 100)}...)` : ` (${argsStr})`;
       }
-      
+
+      // Check if this is a subagent or regular tool
+      const callType = isSubAgent ? 'Calling subagent:' : 'Calling tool:';
+
       // Tool is being called - show concise message with parameters
-      this.info(`Calling tool: ${chalk.cyan(name)}${chalk.gray(argsDisplay)}`);
-      
+      this.info(`${callType} ${chalk.cyan(name)}${chalk.gray(argsDisplay)}`);
+
       // Show full args in debug mode
       if (this.enableDebug) {
         this.writeToStderr(chalk.gray(`[DEBUG] Full parameters: ${JSON.stringify(args, null, 2)}`));
