@@ -32,8 +32,7 @@
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
   <a href="https://docs.agentuse.io">Documentation</a> •
-  <a href="#-real-world-automation-examples">Examples</a> •
-  <a href="#-agentuse-vs-alternatives">Compare</a>
+  <a href="#-real-world-automation-examples">Examples</a>
 </p>
 
 ## 🚀 Quick Start
@@ -161,9 +160,9 @@ AgentUse is Infrastructure-as-Code philosophy applied to AI agents. Your agents 
 
 ## ✨ Features
 
-<table>
+<table border="0" cellspacing="0" cellpadding="0" style="border: none;">
 <tr>
-<td>
+<td style="border: none;">
 
 ### 🚀 Performance
 - Sub-second startup
@@ -172,7 +171,7 @@ AgentUse is Infrastructure-as-Code philosophy applied to AI agents. Your agents 
 - Automatic retries
 
 </td>
-<td>
+<td style="border: none;">
 
 ### 🔧 Developer Experience
 - Plain markdown files
@@ -181,7 +180,7 @@ AgentUse is Infrastructure-as-Code philosophy applied to AI agents. Your agents 
 - URL-shareable agents
 
 </td>
-<td>
+<td style="border: none;">
 
 ### 🔌 Integrations
 - MCP servers
