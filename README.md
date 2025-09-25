@@ -160,37 +160,13 @@ AgentUse is Infrastructure-as-Code philosophy applied to AI agents. Your agents 
 
 ## ✨ Features
 
-<table border="0" cellspacing="0" cellpadding="0" style="border: none;">
-<tr>
-<td style="border: none;">
+<div align="center">
 
-### 🚀 Performance
-- Sub-second startup
-- Minimal dependencies
-- Smart context management
-- Automatic retries
+| 🚀 **Performance** | 🔧 **Developer Experience** | 🔌 **Integrations** |
+|:---|:---|:---|
+| • Sub-second startup<br>• Minimal dependencies<br>• Smart context management<br>• Automatic retries | • Plain markdown files<br>• Zero boilerplate<br>• Git-friendly<br>• URL-shareable agents | • MCP servers<br>• Multiple AI providers (Anthropic, OpenAI, OpenRouter)<br>• Plugin system<br>• Sub-agent composition |
 
-</td>
-<td style="border: none;">
-
-### 🔧 Developer Experience
-- Plain markdown files
-- Zero boilerplate
-- Git-friendly
-- URL-shareable agents
-
-</td>
-<td style="border: none;">
-
-### 🔌 Integrations
-- MCP servers
-- Multiple AI providers (Anthropic, OpenAI, OpenRouter)
-- Plugin system
-- Sub-agent composition
-
-</td>
-</tr>
-</table>
+</div>
 
 ## 📦 Installation & Setup
 
@@ -222,34 +198,13 @@ export OPENROUTER_API_KEY="sk-or-..."
 
 ## 📚 Documentation
 
-<table>
-<tr>
-<td align="center">
-  <a href="https://docs.agentuse.io/quickstart">
-    <strong>🚀 Getting Started</strong><br/>
-    5-minute tutorial
-  </a>
-</td>
-<td align="center">
-  <a href="https://docs.agentuse.io/guides">
-    <strong>📖 Guides</strong><br/>
-    Learn concepts
-  </a>
-</td>
-<td align="center">
-  <a href="https://docs.agentuse.io/reference">
-    <strong>📘 API Reference</strong><br/>
-    Complete reference
-  </a>
-</td>
-<td align="center">
-  <a href="https://github.com/agentuse/agentuse/tree/main/templates">
-    <strong>💡 Templates</strong><br/>
-    Example agents
-  </a>
-</td>
-</tr>
-</table>
+<div align="center">
+
+| [**🚀 Getting Started**](https://docs.agentuse.io/quickstart) | [**📖 Guides**](https://docs.agentuse.io/guides) | [**📘 API Reference**](https://docs.agentuse.io/reference) | [**💡 Templates**](https://github.com/agentuse/agentuse/tree/main/templates) |
+|:---:|:---:|:---:|:---:|
+| 5-minute tutorial | Learn concepts | Complete reference | Example agents |
+
+</div>
 
 ## 📋 Core Concepts
 
