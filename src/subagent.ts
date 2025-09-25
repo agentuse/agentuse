@@ -4,7 +4,7 @@ import { parseAgent } from './parser';
 import { connectMCP, getMCPTools, type MCPServersConfig } from './mcp';
 import { logger } from './utils/logger';
 import { executeAgentCore, processAgentStream, buildAutonomousAgentPrompt } from './runner';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
 
 /**
  * Create a tool that runs another agent as a sub-agent
@@ -43,8 +43,10 @@ export async function createSubAgentTool(
         logger.info(`[SubAgent] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
         
         // Connect to any MCP servers the sub-agent needs
-        const mcpConnections = agent.config.mcp_servers 
-          ? await connectMCP(agent.config.mcp_servers as MCPServersConfig, false)
+        // Use the sub-agent's directory as base path for resolving relative paths
+        const subAgentBasePath = dirname(resolvedPath);
+        const mcpConnections = agent.config.mcp_servers
+          ? await connectMCP(agent.config.mcp_servers as MCPServersConfig, false, subAgentBasePath)
           : [];
         
         const tools = await getMCPTools(mcpConnections);

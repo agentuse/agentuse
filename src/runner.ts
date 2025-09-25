@@ -8,6 +8,7 @@ import { AnthropicAuth } from './auth/anthropic';
 import { logger } from './utils/logger';
 import { ContextManager } from './context-manager';
 import { compactMessages } from './compactor';
+import { dirname } from 'path';
 import type { ToolCallTrace } from './plugin/types';
 
 // Constants
@@ -708,7 +709,11 @@ export async function runAgent(
     
     // Load sub-agent tools if configured
     // If we have an agent file path, use its directory as the base path for sub-agents
-    const basePath = agentFilePath ? require('path').dirname(agentFilePath) : undefined;
+    const basePath = agentFilePath ? dirname(agentFilePath) : undefined;
+    if (agentFilePath) {
+      logger.debug(`[SubAgent] Agent file path: ${agentFilePath}`);
+      logger.debug(`[SubAgent] Base path for sub-agents: ${basePath}`);
+    }
     // Pass the parent's model to subagents so they inherit any model override
     const subAgentTools = await createSubAgentTools(agent.config.subagents, basePath, agent.config.model);
 

@@ -185,16 +185,25 @@ mcp_servers:
 <Tabs>
   <Tab title="Option 1: .env File (Recommended)">
     Create a `.env` file in your project root:
-    
+
     ```bash
     # .env
     NOTION_API_KEY=secret_abc123
     GITHUB_TOKEN=ghp_xyz789
     OPENAI_API_KEY=sk-proj-...
     ```
-    
-    AgentUse automatically loads this file when running agents.
-    
+
+    AgentUse automatically loads `.env` files from the project root (detected via `.git/`, `.agentuse/`, or `package.json`).
+
+    **Override Options:**
+    ```bash
+    # Use a specific .env file
+    agentuse run agent.agentuse --env-file .env.production
+
+    # Change project root (affects .env location)
+    agentuse run agent.agentuse -C /path/to/project
+    ```
+
     <Warning>
       Add `.env` to your `.gitignore` to prevent committing secrets!
     </Warning>

@@ -86,23 +86,59 @@ subagents:
 ---
 ```
 
-## Remote Sub-Agents
+## Path Resolution
 
-<Warning>
-  Remote sub-agents are **not currently supported**. Sub-agents can only be loaded from local file paths relative to the parent agent.
-</Warning>
+<Info>
+  **Important**: All sub-agent paths are resolved relative to the **parent agent file's directory**, not the current working directory. This ensures your agent compositions work consistently regardless of where you run them.
+</Info>
 
-All sub-agent paths must be relative to the parent agent's directory:
+### How Path Resolution Works
+
+When you define a sub-agent path, it's always relative to the location of the parent agent file:
 
 ```yaml
+# File: /project/agents/orchestrator.agentuse
 ---
 model: anthropic:claude-sonnet-4-0
 subagents:
-  - path: ./translator.agentuse          # Same directory
-  - path: ../shared/processor.agentuse   # Parent directory
-  - path: ./team/specialist.agentuse     # Subdirectory
+  - path: ./researcher.agentuse          # → /project/agents/researcher.agentuse
+  - path: ../utils/helper.agentuse       # → /project/utils/helper.agentuse
+  - path: ./team/specialist.agentuse     # → /project/agents/team/specialist.agentuse
 ---
 ```
+
+### Directory Structure Example
+
+```
+project/
+├── agents/
+│   ├── orchestrator.agentuse
+│   ├── researcher.agentuse
+│   └── team/
+│       └── specialist.agentuse
+└── utils/
+    └── helper.agentuse
+```
+
+You can run the orchestrator from any directory:
+```bash
+# From project root
+agentuse run agents/orchestrator.agentuse
+
+# From agents directory
+cd agents && agentuse run orchestrator.agentuse
+
+# From anywhere with absolute path
+agentuse run /full/path/to/project/agents/orchestrator.agentuse
+```
+
+In all cases, the sub-agent paths resolve correctly based on the orchestrator's location.
+
+## Remote Sub-Agents
+
+<Warning>
+  Remote sub-agents are **not currently supported**. Sub-agents must be local files accessible via the filesystem.
+</Warning>
 
 ## Passing Context
 
@@ -225,12 +261,12 @@ model: anthropic:claude-sonnet-4-0
 mcp_servers:
   database:
     command: "node"
-    args: ["./database-server.js"]
+    args: ["./database-server.js"]  # Relative to parent.agentuse location
 subagents:
   - path: ./child.agentuse
 ---
 
-# child.agentuse  
+# child.agentuse
 ---
 model: anthropic:claude-3-5-haiku-latest
 mcp_servers:
@@ -238,8 +274,14 @@ mcp_servers:
   filesystem:
     command: "npx"
     args: ["@modelcontextprotocol/server-filesystem"]
+  custom:
+    command: "../tools/my-server"  # Relative to child.agentuse location
 ---
 ```
+
+<Note>
+  MCP server commands with relative paths are resolved from the agent file's directory, ensuring consistent behavior across different execution contexts.
+</Note>
 
 <Info>
   Each sub-agent manages its own MCP connections and tools. They don't automatically inherit parent tools.

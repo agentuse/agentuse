@@ -23,12 +23,14 @@ async function initializeEsbuild(): Promise<void> {
 export class PluginManager {
   private plugins: Array<{ path: string; handlers: PluginHandlers }> = [];
   
-  async loadPlugins(): Promise<void> {
+  async loadPlugins(customDirs?: string[]): Promise<void> {
     // Define plugin search paths
-    const pluginPaths = [
-      './.agentuse/plugins/*.{ts,js}',
-      join(homedir(), '.agentuse/plugins/*.{ts,js}')
-    ];
+    const pluginPaths = customDirs && customDirs.length > 0
+      ? customDirs.map(dir => join(dir, '*.{ts,js}'))
+      : [
+          './.agentuse/plugins/*.{ts,js}',
+          join(homedir(), '.agentuse/plugins/*.{ts,js}')
+        ];
     
     for (const pattern of pluginPaths) {
       try {

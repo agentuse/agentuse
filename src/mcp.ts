@@ -11,6 +11,7 @@ import { logger } from './utils/logger';
 import { parseJsonEnvVar } from './utils/env';
 import { z } from 'zod';
 import type { AgentConfig } from './parser';
+import { resolve, isAbsolute } from 'path';
 
 // Use the actual type from the parser to avoid mismatches
 export type MCPServerConfig = NonNullable<AgentConfig['mcp_servers']>[string];
@@ -26,7 +27,7 @@ export interface MCPConnection {
 /**
  * Create transport based on configuration (stdio or HTTP)
  */
-function createTransport(name: string, config: MCPServerConfig, debug: boolean = false): any {
+function createTransport(name: string, config: MCPServerConfig, debug: boolean = false, basePath?: string): any {
   // HTTP transport with SSE streaming
   if ('url' in config) {
     const options: any = {};
@@ -123,8 +124,18 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
       Object.assign(env, config.env);
     }
     
+    // Resolve command path relative to basePath if provided and not absolute
+    let commandPath = config.command;
+    if (basePath && !isAbsolute(commandPath)) {
+      // Only resolve if it looks like a path (contains / or \)
+      if (commandPath.includes('/') || commandPath.includes('\\')) {
+        commandPath = resolve(basePath, commandPath);
+        logger.debug(`[MCP] Resolved command path: ${config.command} -> ${commandPath}`);
+      }
+    }
+
     return new StdioClientTransport({
-      command: config.command,
+      command: commandPath,
       args: config.args || [],
       env: env,
       stderr: debug ? 'inherit' : 'ignore'
@@ -140,7 +151,7 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
  * @param debug Enable debug logging
  * @returns Array of MCP client connections
  */
-export async function connectMCP(servers?: MCPServersConfig, debug: boolean = false): Promise<MCPConnection[]> {
+export async function connectMCP(servers?: MCPServersConfig, debug: boolean = false, basePath?: string): Promise<MCPConnection[]> {
   if (!servers) {
     logger.debug('[MCP] No MCP servers configured');
     return [];
@@ -157,7 +168,7 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       logger.debug(`[MCP] Configuring server: ${name} - ${JSON.stringify(config)}`);
       
       // Create transport based on config type
-      const transport = createTransport(name, config, debug);
+      const transport = createTransport(name, config, debug, basePath);
       
       // Create MCP client using AI SDK's built-in method
       const client = await experimental_createMCPClient({
@@ -167,7 +178,7 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       
       // Also create a raw MCP SDK client for resource access
       // We need a separate transport instance for the raw client
-      const rawTransport = createTransport(name, config, debug);
+      const rawTransport = createTransport(name, config, debug, basePath);
       
       const rawClient = new Client({
         name: `${name}-raw`,

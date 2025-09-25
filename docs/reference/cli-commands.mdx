@@ -30,12 +30,62 @@ agentuse run <agent-file> [prompt...] [options]
 -d, --debug             Enable verbose debug logging
 -v, --verbose           Show detailed execution information
 --timeout <seconds>     Maximum execution time in seconds (default: 300)
+-C, --directory <path>  Run as if agentuse was started in <path> instead of the current directory
+--env-file <path>       Path to custom .env file
 -m, --model <model>     Override the model specified in the agent file
 ```
 
 <Note>
   The `--quiet` and `--debug` options cannot be used together.
 </Note>
+
+### Project Root and Path Resolution
+
+AgentUse automatically detects your project root by searching upward for project markers. This ensures that relative paths in your agent files work correctly regardless of where you run the command.
+
+#### Project Root Detection
+
+AgentUse automatically detects project root by searching upward for `.git/`, `.agentuse/`, or `package.json`. This directory is used for loading `.env` files and plugins.
+
+#### Directory Override (-C, --directory)
+
+The `-C` or `--directory` option lets you explicitly set the project root:
+
+```bash
+# Run from anywhere, use specific project root
+agentuse run agent.agentuse -C /path/to/project
+
+# Equivalent to:
+cd /path/to/project && agentuse run agent.agentuse
+```
+
+This is useful for:
+- Running agents from different projects
+- CI/CD environments with complex directory structures
+- Testing with different configurations
+
+#### Path Resolution Rules
+
+**For Subagents:**
+Paths are relative to the **parent agent file's directory**:
+```yaml
+# In /project/agents/main.agentuse
+subagents:
+  - path: ../utils/helper.agentuse  # Resolves to /project/utils/helper.agentuse
+```
+
+**For MCP Servers:**
+Command paths are relative to the **agent file's directory**:
+```yaml
+# In /project/agents/main.agentuse
+mcp_servers:
+  custom:
+    command: ../tools/my-server  # Resolves to /project/tools/my-server
+```
+
+**For Environment Files:**
+- Default: `{project-root}/.env`
+- Override: `--env-file /path/to/.env`
 
 ### Model Override
 
@@ -111,6 +161,16 @@ Only continue if you trust the source and have audited the agent.
 ```bash
 # Run local agent
 agentuse run hello.agentuse
+
+# Run agent from subdirectory (finds project root automatically)
+cd agents/subfolder
+agentuse run my-agent.agentuse  # Still finds .env and plugins at project root
+
+# Override project directory
+agentuse run agent.agentuse -C /my/project
+
+# Use custom environment file
+agentuse run agent.agentuse --env-file .env.production
 
 # Run with additional prompt
 agentuse run assistant.agentuse "Help me write an email"

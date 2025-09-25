@@ -78,8 +78,17 @@ Additional instructions or context.
 
 <ParamField path="subagents" type="array" required={false}>
   Array of sub-agent configurations that this agent can delegate tasks to.
-  
+
   Each sub-agent must specify a `path` to the `.agentuse` file, with optional `name` and `maxSteps` parameters.
+
+  **Path Resolution**: Subagent paths are resolved relative to the **parent agent file's directory**, not the current working directory. This ensures portability and consistency.
+
+  ```yaml
+  # In /project/agents/main.agentuse
+  subagents:
+    - path: ../utils/helper.agentuse  # Resolves to /project/utils/helper.agentuse
+    - path: ./local-agent.agentuse    # Resolves to /project/agents/local-agent.agentuse
+  ```
 </ParamField>
 
 <ParamField path="openai" type="object" required={false}>
@@ -239,8 +248,18 @@ mcp_servers:
 
 #### Stdio Server Fields
 - **`command`**: Executable command to start the MCP server (required)
+  - Can be an absolute path or a command in PATH
+  - Relative paths (containing `/` or `\`) are resolved from the **agent file's directory**
 - **`args`**: Array of command-line arguments (optional)
 - **`env`**: Object of additional environment variables to set (optional)
+
+```yaml
+# In /project/agents/main.agentuse
+mcp_servers:
+  custom:
+    command: ../tools/my-server  # Resolves to /project/tools/my-server
+    args: ["--port", "3000"]
+```
 
 #### HTTP Server Fields  
 - **`url`**: HTTPS URL of the MCP server (required, must use HTTPS)
