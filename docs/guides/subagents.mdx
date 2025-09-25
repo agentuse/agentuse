@@ -321,6 +321,28 @@ subagents:
 ---
 ```
 
+### Model Override Inheritance
+
+<Info>
+  When you use the `--model` CLI flag, it overrides the model for both the parent agent
+  and ALL sub-agents. This allows you to test entire agent hierarchies with different
+  models without editing any files.
+</Info>
+
+```bash
+# Override all agents to use GPT-5-mini (parent + all sub-agents)
+agentuse run orchestrator.agentuse --model openai:gpt-5-mini
+
+# All agents will use claude-3-5-haiku regardless of their configured models
+agentuse run complex-system.agentuse -m anthropic:claude-3-5-haiku-latest
+```
+
+This is particularly useful for:
+- **Cost optimization**: Use cheaper models for development/testing
+- **A/B testing**: Compare entire workflows with different models
+- **Environment-specific deployments**: Different models for dev/staging/prod
+- **Quick experiments**: Try new models without modifying agent files
+
 ### Step Limits
 
 Control sub-agent execution limits:

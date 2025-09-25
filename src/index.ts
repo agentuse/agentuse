@@ -84,7 +84,8 @@ program
   .option('-d, --debug', 'Enable debug mode with detailed logging and full error messages')
   .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
   .option('--env-file <path>', 'Path to custom .env file')
-  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, timeout: string, envFile?: string }) => {
+  .option('-m, --model <model>', 'Override the model specified in the agent file')
+  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, timeout: string, envFile?: string, model?: string }) => {
     const startTime = Date.now();
     
     try {
@@ -195,7 +196,31 @@ program
           logger.info(`Appended prompt: ${additionalPrompt}`);
         }
       }
-      
+
+      // Override model if specified via CLI
+      if (options.model) {
+        // Validate model format (provider:model or provider:model:env)
+        const modelParts = options.model.split(':');
+        if (modelParts.length < 2) {
+          throw new Error(`Invalid model format '${options.model}'. Expected format: provider:model or provider:model:env (e.g., openai:gpt-5, anthropic:claude-sonnet-4-0:dev)`);
+        }
+
+        const [provider] = modelParts;
+        const validProviders = ['anthropic', 'openai'];
+        if (!validProviders.includes(provider)) {
+          throw new Error(`Invalid model provider '${provider}'. Supported providers: ${validProviders.join(', ')}`);
+        }
+
+        const originalModel = agent.config.model;
+        agent.config.model = options.model;
+        logger.info(`Model override: ${originalModel} → ${options.model}`);
+
+        // Warn if provider-specific options don't match the new provider
+        if (agent.config.openai && provider !== 'openai') {
+          logger.warn(`Warning: OpenAI-specific options in config will be ignored with ${provider} model`);
+        }
+      }
+
       // Connect to MCP servers if configured
       let mcp;
       try {

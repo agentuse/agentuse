@@ -11,19 +11,26 @@ import { resolve } from 'path';
  * @param agentPath Path to the agent file (.agentuse)
  * @param maxSteps Maximum steps the sub-agent can take
  * @param basePath Optional base path for resolving relative paths
+ * @param modelOverride Optional model override from parent agent
  * @returns Tool that executes the sub-agent
  */
 export async function createSubAgentTool(
   agentPath: string,
   maxSteps: number = 50,
-  basePath?: string
+  basePath?: string,
+  modelOverride?: string
 ): Promise<Tool> {
   // Resolve the path relative to the base path if provided
   const resolvedPath = basePath ? resolve(basePath, agentPath) : agentPath;
   
   // Parse the agent file
   const agent = await parseAgent(resolvedPath);
-  
+
+  // Apply model override if provided
+  if (modelOverride) {
+    agent.config.model = modelOverride;
+  }
+
   return {
     description: agent.description || `Run ${agent.name} agent: ${agent.instructions.split('\n')[0].slice(0, 100)}...`,
     inputSchema: z.object({
@@ -128,11 +135,13 @@ export async function createSubAgentTool(
  * Create tools for multiple sub-agents
  * @param subAgents Array of sub-agent configurations
  * @param basePath Optional base path for resolving relative agent paths
+ * @param modelOverride Optional model override from parent agent
  * @returns Map of sub-agent tools
  */
 export async function createSubAgentTools(
   subAgents?: Array<{ path: string; name?: string | undefined; maxSteps?: number | undefined }>,
-  basePath?: string
+  basePath?: string,
+  modelOverride?: string
 ): Promise<Record<string, Tool>> {
   if (!subAgents || subAgents.length === 0) {
     return {};
@@ -142,7 +151,7 @@ export async function createSubAgentTools(
   
   for (const config of subAgents) {
     try {
-      const tool = await createSubAgentTool(config.path, config.maxSteps, basePath);
+      const tool = await createSubAgentTool(config.path, config.maxSteps, basePath, modelOverride);
       // Use custom name if provided, otherwise extract from filename
       let name = config.name;
       if (!name) {
