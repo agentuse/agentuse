@@ -63,6 +63,7 @@ Event data:
   agent: {
     name: string;         // Agent name
     model: string;        // Model used (e.g., "anthropic:claude-sonnet-4-0")
+    description?: string; // Agent description from YAML frontmatter
     filePath?: string;    // Path to agent file
   };
   result: {

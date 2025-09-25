@@ -230,7 +230,13 @@ program
       
       // Start capturing console output for plugins
       logger.startCapture();
-      
+
+      // Log agent information
+      logger.info(`Running agent: ${agent.name}`);
+      if (agent.description) {
+        logger.info(`Description: ${agent.description}`);
+      }
+
       // Run the agent with timeout
       let result: any;
       try {
@@ -260,6 +266,7 @@ program
             agent: {
               name: agent.name,
               model: agent.config.model,
+              ...(agent.description && { description: agent.description }),
               ...(agentFilePath && { filePath: agentFilePath })
             },
             result: {

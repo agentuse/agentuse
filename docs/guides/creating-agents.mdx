@@ -14,6 +14,7 @@ AgentUse agents are markdown files with a `.agentuse` extension. They consist of
 ```markdown
 ---
 model: anthropic:claude-sonnet-4-0
+description: "General-purpose AI assistant for various tasks"
 ---
 
 You are a helpful assistant.
@@ -50,6 +51,20 @@ Help the user with their request.
 
 ### Optional Fields
 
+<ParamField path="description" type="string">
+  A concise description of the agent's purpose.
+
+  This appears in:
+  - Tool descriptions when used as a sub-agent
+  - CLI output when running the agent
+  - Plugin events for logging
+
+  Best practices:
+  - Keep under 80-120 characters
+  - Be action-oriented
+  - Focus on primary capability
+</ParamField>
+
 <ParamField path="mcp_servers" type="object">
   MCP server configurations. Each server can have:
   - `command` + `args`: For stdio-based servers
@@ -76,6 +91,7 @@ Connect to Model Context Protocol servers:
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-0
+description: "File system and GitHub integration agent"
 mcp_servers:
   filesystem:
     command: "pnpx"
@@ -119,6 +135,7 @@ Agents can delegate to other agents:
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-0
+description: "Coordinator agent that manages research and writing tasks"
 subagents:
   - path: ./research-agent.agentuse
     name: "research_specialist"  # Optional custom name

@@ -79,6 +79,7 @@ Create `hello.agentuse`:
 ```markdown
 ---
 model: anthropic:claude-3-5-haiku-latest
+description: "Simple greeting agent that welcomes users"
 ---
 
 Greet the user.
@@ -104,6 +105,7 @@ Create `project-analyzer.agentuse`:
 ```markdown
 ---
 model: anthropic:claude-3-5-haiku-latest
+description: "Analyzes project structure and identifies key components"
 mcp_servers:
   filesystem:
     command: "npx"
@@ -152,6 +154,7 @@ AgentUse supports calling other agents as sub-agents:
 ```markdown
 ---
 model: anthropic:claude-3-5-haiku-latest
+description: "Orchestrates tasks by delegating to specialized sub-agents"
 subagents:
   - path: "./helper-agent.agentuse"
     name: "helper"

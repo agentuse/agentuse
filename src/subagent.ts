@@ -25,7 +25,7 @@ export async function createSubAgentTool(
   const agent = await parseAgent(resolvedPath);
   
   return {
-    description: `Run ${agent.name} agent: ${agent.instructions.split('\n')[0].slice(0, 100)}...`,
+    description: agent.description || `Run ${agent.name} agent: ${agent.instructions.split('\n')[0].slice(0, 100)}...`,
     inputSchema: z.object({
       task: z.string().optional().describe('Optional additional task or question for the sub-agent'),
       context: z.record(z.any()).optional().describe('Additional context to pass to the sub-agent')

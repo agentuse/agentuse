@@ -1,5 +1,6 @@
 ---
 model: anthropic:claude-sonnet-4-0
+description: "Monitors websites for changes and sends notifications via Slack"
 mcp_servers:
   fetch:
     command: "uvx"

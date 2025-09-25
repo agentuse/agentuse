@@ -6,6 +6,7 @@ export interface AgentCompleteEvent {
   agent: {
     name: string;
     model: string;
+    description?: string;
     filePath?: string;
   };
   result: {
