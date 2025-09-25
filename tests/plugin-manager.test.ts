@@ -381,6 +381,7 @@ describe('PluginManager', () => {
           await expect(plugin.handlers['agent:complete'](event)).resolves.toBeUndefined();
         }
       } finally {
+        mock.restore();
         rmSync(testDir, { recursive: true, force: true });
       }
     });
@@ -421,6 +422,7 @@ describe('PluginManager', () => {
         expect(plugin).toBeDefined();
         expect(plugin?.handlers['agent:complete']).toBeDefined();
       } finally {
+        mock.restore();
         rmSync(testDir, { recursive: true, force: true });
       }
     });
@@ -462,6 +464,7 @@ describe('PluginManager', () => {
         const plugins = (testManager as any).plugins;
         expect(plugins).toHaveLength(0);
       } finally {
+        mock.restore();
         rmSync(testDir, { recursive: true, force: true });
       }
     });

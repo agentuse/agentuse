@@ -1,17 +1,19 @@
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, beforeEach, afterEach, mock } from 'bun:test';
 import { PluginManager } from '../src/plugin/index';
 import type { AgentCompleteEvent } from '../src/plugin/types';
 import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 
 describe('Plugin Integration Tests', () => {
-  const testPluginDir = './.agentuse/plugins';
-  
+  const testPluginDir = './tmp/test-plugins-integration';
+
   beforeEach(() => {
+    // Restore any mocks that might have been set by other tests
+    mock.restore();
     // Create test plugin directory
     mkdirSync(testPluginDir, { recursive: true });
   });
-  
+
   afterEach(() => {
     // Clean up test plugins
     rmSync(testPluginDir, { recursive: true, force: true });
