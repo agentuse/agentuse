@@ -43,22 +43,21 @@ agentuse run <agent-file> [prompt...] [options]
 
 #### Directory Override (-C, --directory)
 
-The `-C` or `--directory` option changes the working directory before running the agent:
+The `-C` or `--directory` option changes the working directory before running:
 
 ```bash
 # Without -C: runs from current directory
 agentuse run agent.agentuse
 
-# With -C: changes to specified directory first
+# With -C: changes to specified directory first (like cd)
 agentuse run agent.agentuse -C /path/to/project
-
-# Exactly equivalent to:
-cd /path/to/project && agentuse run agent.agentuse
 ```
 
 #### Project Root Detection
 
-After any directory change (from `-C`), AgentUse detects the project root by searching upward for `.git/`, `.agentuse/`, or `package.json`. This is used for:
+AgentUse searches from the current directory upward for `.git/`, `.agentuse/`, or `package.json`.
+
+The project root is used for:
 - Loading `.env` files
 - Finding plugins in `.agentuse/plugins/`
 

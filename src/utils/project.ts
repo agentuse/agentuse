@@ -1,4 +1,4 @@
-import { existsSync } from 'fs';
+import { existsSync, statSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { logger } from './logger';
 
@@ -10,10 +10,14 @@ import { logger } from './logger';
  * @returns Project root directory path
  */
 export function findProjectRoot(startPath: string): string {
-  // If startPath is a file, start from its directory
-  let currentDir = existsSync(startPath) && !startPath.endsWith('/')
-    ? dirname(startPath)
-    : startPath;
+  // If startPath exists and is a file (not a directory), start from its directory
+  let currentDir = startPath;
+  if (existsSync(startPath)) {
+    const stats = statSync(startPath);
+    if (stats.isFile()) {
+      currentDir = dirname(startPath);
+    }
+  }
 
   // For URLs or non-existent paths, use current working directory
   if (!existsSync(currentDir) || currentDir.startsWith('http')) {
@@ -38,6 +42,7 @@ export function findProjectRoot(startPath: string): string {
 
     for (const marker of markers) {
       const markerPath = resolve(currentDir, marker);
+      logger.debug(`Checking for ${marker} at ${markerPath}`);
       if (existsSync(markerPath)) {
         logger.debug(`Found project root marker '${marker}' at: ${currentDir}`);
         return currentDir;
