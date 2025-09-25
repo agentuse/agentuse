@@ -39,7 +39,7 @@ export default plugin;
     writeFileSync(join(testPluginDir, 'test-plugin.ts'), tsPluginContent);
     
     const pluginManager = new PluginManager();
-    await pluginManager.loadPlugins(undefined);
+    await pluginManager.loadPlugins([testPluginDir]);
     
     const plugins = (pluginManager as any).plugins;
     expect(plugins.length).toBeGreaterThan(0);
@@ -74,7 +74,7 @@ export default plugin;
     writeFileSync(join(testPluginDir, 'test-plugin.js'), jsPluginContent);
     
     const pluginManager = new PluginManager();
-    await pluginManager.loadPlugins(undefined);
+    await pluginManager.loadPlugins([testPluginDir]);
     
     const plugins = (pluginManager as any).plugins;
     expect(plugins.length).toBeGreaterThan(0);
@@ -111,7 +111,7 @@ export default plugin;
     writeFileSync(join(testPluginDir, 'invalid.ts'), invalidTsContent);
     
     const pluginManager = new PluginManager();
-    await pluginManager.loadPlugins(undefined);
+    await pluginManager.loadPlugins([testPluginDir]);
     
     // Plugin should fail to load but not crash
     const plugins = (pluginManager as any).plugins;
@@ -148,7 +148,7 @@ export default plugin;
     writeFileSync(join(testPluginDir, 'plugin2.js'), jsContent);
     
     const pluginManager = new PluginManager();
-    await pluginManager.loadPlugins(undefined);
+    await pluginManager.loadPlugins([testPluginDir]);
     
     const plugins = (pluginManager as any).plugins;
     expect(plugins.length).toBe(2);

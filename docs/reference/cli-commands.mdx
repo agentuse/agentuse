@@ -39,25 +39,28 @@ agentuse run <agent-file> [prompt...] [options]
   The `--quiet` and `--debug` options cannot be used together.
 </Note>
 
-### Project Root and Path Resolution
-
-AgentUse automatically detects your project root by searching upward for project markers. This ensures that relative paths in your agent files work correctly regardless of where you run the command.
-
-#### Project Root Detection
-
-AgentUse automatically detects project root by searching upward for `.git/`, `.agentuse/`, or `package.json`. This directory is used for loading `.env` files and plugins.
+### Directory and Path Resolution
 
 #### Directory Override (-C, --directory)
 
-The `-C` or `--directory` option lets you explicitly set the project root:
+The `-C` or `--directory` option changes the working directory before running the agent:
 
 ```bash
-# Run from anywhere, use specific project root
+# Without -C: runs from current directory
+agentuse run agent.agentuse
+
+# With -C: changes to specified directory first
 agentuse run agent.agentuse -C /path/to/project
 
-# Equivalent to:
+# Exactly equivalent to:
 cd /path/to/project && agentuse run agent.agentuse
 ```
+
+#### Project Root Detection
+
+After any directory change (from `-C`), AgentUse detects the project root by searching upward for `.git/`, `.agentuse/`, or `package.json`. This is used for:
+- Loading `.env` files
+- Finding plugins in `.agentuse/plugins/`
 
 This is useful for:
 - Running agents from different projects
@@ -159,15 +162,18 @@ Only continue if you trust the source and have audited the agent.
 ### Examples
 
 ```bash
-# Run local agent
+# Run agent from current directory
 agentuse run hello.agentuse
 
-# Run agent from subdirectory (finds project root automatically)
+# Run agent from subdirectory
 cd agents/subfolder
-agentuse run my-agent.agentuse  # Still finds .env and plugins at project root
+agentuse run my-agent.agentuse  # Finds .env and plugins at project root
 
-# Override project directory
-agentuse run agent.agentuse -C /my/project
+# Change to different directory first with -C
+agentuse run agent.agentuse -C /my/project  # Same as: cd /my/project && agentuse run agent.agentuse
+
+# Run agent from a different project
+agentuse run newsletter/writer.agentuse -C ~/projects/content
 
 # Use custom environment file
 agentuse run agent.agentuse --env-file .env.production

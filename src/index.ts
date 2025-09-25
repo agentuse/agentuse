@@ -89,7 +89,8 @@ program
   .option('-m, --model <model>', 'Override the model specified in the agent file')
   .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, timeout: string, directory?: string, envFile?: string, model?: string }) => {
     const startTime = Date.now();
-    
+    let originalCwd: string | undefined;
+
     try {
       // Configure logger based on flags
       if (options.quiet && options.debug) {
@@ -113,18 +114,22 @@ program
         throw new Error('Invalid timeout value. Must be a positive number of seconds.');
       }
       
-      // Determine agent path (for project root detection)
-      let agentPath = file;
-      if (isURL(file)) {
-        // For URLs, we'll use current directory as base
-        agentPath = process.cwd();
+      // Change working directory first if -C/--directory was specified
+      originalCwd = process.cwd();
+      if (options.directory) {
+        const targetDir = resolve(options.directory);
+        if (!existsSync(targetDir)) {
+          throw new Error(`Directory not found: ${options.directory}`);
+        }
+        logger.debug(`Changing working directory from ${originalCwd} to ${targetDir}`);
+        process.chdir(targetDir);
       }
 
-      // Resolve project context
-      const projectContext = resolveProjectContext(agentPath, {
-        ...(options.directory && { directory: options.directory }),
+      // Now detect project root from current directory (after potential cd)
+      const projectContext = resolveProjectContext(process.cwd(), {
         ...(options.envFile && { envFile: options.envFile }),
       });
+      logger.info(`Using project root: ${projectContext.projectRoot}`);
 
       // Load environment variables from resolved env file
       if (existsSync(projectContext.envFile)) {
@@ -137,12 +142,12 @@ program
       } else {
         logger.debug(`No .env file found at ${projectContext.envFile}, using system environment variables`);
       }
-      
+
       // Join additional prompt arguments if provided
       const additionalPrompt = promptArgs.length > 0 ? promptArgs.join(' ') : null;
-      
+
       let agent;
-      
+
       // Check if input is a URL
       if (isURL(file)) {
         // Validate HTTPS only
@@ -230,7 +235,9 @@ program
 
       // Connect to MCP servers if configured
       // Pass the agent file's directory as base path for resolving relative paths
-      const mcpBasePath = !isURL(file) ? dirname(resolve(file)) : undefined;
+      // Since we've already changed directory, resolve the file path from the new CWD
+      const agentFilePath = !isURL(file) ? resolve(file) : undefined;
+      const mcpBasePath = agentFilePath ? dirname(agentFilePath) : undefined;
       let mcp;
       try {
         mcp = await connectMCP(agent.config.mcp_servers, options.debug, mcpBasePath);
@@ -264,16 +271,6 @@ program
       // if (pluginManager) {
       //   await pluginManager.emitAgentStart({ ... });
       // }
-      
-      // Resolve the absolute file path BEFORE changing directory (if it's a local file)
-      const agentFilePath = !isURL(file) ? resolve(file) : undefined;
-
-      // Change working directory to project root if specified
-      const originalCwd = process.cwd();
-      if (options.directory || projectContext.workingDir !== originalCwd) {
-        logger.debug(`Changing working directory from ${originalCwd} to ${projectContext.workingDir}`);
-        process.chdir(projectContext.workingDir);
-      }
 
       // Start capturing console output for plugins
       logger.startCapture();
@@ -299,12 +296,6 @@ program
         throw error;
       } finally {
         clearTimeout(timeoutId);
-
-        // Restore original working directory if changed
-        if (options.directory || projectContext.workingDir !== originalCwd) {
-          process.chdir(originalCwd);
-          logger.debug(`Restored working directory to ${originalCwd}`);
-        }
       }
 
       // Stop capturing and get console output
@@ -338,10 +329,21 @@ program
           logger.warn(`Plugin event error: ${(pluginError as Error).message}`);
         }
       }
-      
+
+      // Restore original working directory if changed
+      if (options.directory && originalCwd && originalCwd !== process.cwd()) {
+        process.chdir(originalCwd);
+        logger.debug(`Restored working directory to ${originalCwd}`);
+      }
+
       // Exit successfully after agent completes
       process.exit(0);
     } catch (error) {
+      // Restore original working directory if changed
+      if (options.directory && originalCwd && originalCwd !== process.cwd()) {
+        process.chdir(originalCwd);
+      }
+
       // Check if it's an authentication error
       if (error instanceof AuthenticationError) {
         console.error(`\n[ERROR] ${error.message}`);

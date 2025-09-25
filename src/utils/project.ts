@@ -59,27 +59,22 @@ export function findProjectRoot(startPath: string): string {
 }
 
 /**
- * Resolve project context based on agent file path and CLI options
+ * Resolve project context based on current directory and CLI options
  *
- * @param agentPath - Path to the agent file
- * @param options - CLI options including directory override
+ * @param currentDir - Current working directory
+ * @param options - CLI options
  * @returns Project context with resolved paths
  */
 export function resolveProjectContext(
-  agentPath: string,
-  options: { directory?: string; envFile?: string }
+  currentDir: string,
+  options: { envFile?: string } = {}
 ): {
   projectRoot: string;
   envFile: string;
   pluginDirs: string[];
-  workingDir: string;
 } {
-  // Use -C/--directory if provided, otherwise find project root
-  const projectRoot = options.directory
-    ? resolve(options.directory)
-    : findProjectRoot(agentPath);
-
-  logger.info(`Using project root: ${projectRoot}`);
+  // Find project root from current directory
+  const projectRoot = findProjectRoot(currentDir);
 
   // Resolve env file path
   let envFile: string;
@@ -106,6 +101,5 @@ export function resolveProjectContext(
     projectRoot,
     envFile,
     pluginDirs,
-    workingDir: projectRoot,
   };
 }
