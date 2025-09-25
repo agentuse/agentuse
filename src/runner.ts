@@ -48,6 +48,7 @@ export interface AgentChunk {
   usage?: LanguageModelUsage;
   toolStartTime?: number;  // Track when tool started
   toolDuration?: number;    // Duration in ms
+  isSubAgent?: boolean;     // Track if this tool is a subagent
   llmModel?: string;        // Model name for LLM traces
   llmStartTime?: number;    // When LLM call started
   llmFirstTokenTime?: number; // Time to first token
@@ -353,7 +354,8 @@ export async function* executeAgentCore(
             type: 'tool-call',
             toolName: chunk.toolName,
             toolInput: (chunk as any).input || (chunk as any).args,
-            toolStartTime: startTime
+            toolStartTime: startTime,
+            ...(options.subAgentNames?.has(chunk.toolName!) && { isSubAgent: true })
           };
           break;
         }
