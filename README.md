@@ -40,8 +40,9 @@
 ### Zero Setup - Try it NOW (10 seconds)
 ```bash
 # Run an agent directly from the web - no files, no install!
-# Get your API key from: https://console.anthropic.com/account/keys
 ANTHROPIC_API_KEY=sk-ant-... npx -y agentuse@latest run https://agentuse.io/hello.agentuse
+# Or override the model to gpt-5
+OPENAI_API_KEY=sk-... npx -y agentuse@latest run https://agentuse.io/hello.agentuse -m openai:gpt-5
 ```
 
 ### Create Your Own (30 seconds)
