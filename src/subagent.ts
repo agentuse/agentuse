@@ -4,39 +4,49 @@ import { parseAgent } from './parser';
 import { connectMCP, getMCPTools, type MCPServersConfig } from './mcp';
 import { logger } from './utils/logger';
 import { executeAgentCore, processAgentStream, buildAutonomousAgentPrompt } from './runner';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
 
 /**
  * Create a tool that runs another agent as a sub-agent
  * @param agentPath Path to the agent file (.agentuse)
  * @param maxSteps Maximum steps the sub-agent can take
  * @param basePath Optional base path for resolving relative paths
+ * @param modelOverride Optional model override from parent agent
  * @returns Tool that executes the sub-agent
  */
 export async function createSubAgentTool(
   agentPath: string,
   maxSteps: number = 50,
-  basePath?: string
+  basePath?: string,
+  modelOverride?: string
 ): Promise<Tool> {
   // Resolve the path relative to the base path if provided
   const resolvedPath = basePath ? resolve(basePath, agentPath) : agentPath;
   
   // Parse the agent file
   const agent = await parseAgent(resolvedPath);
-  
+
+  // Apply model override if provided
+  if (modelOverride) {
+    agent.config.model = modelOverride;
+  }
+
   return {
-    description: `Run ${agent.name} agent: ${agent.instructions.split('\n')[0].slice(0, 100)}...`,
+    description: agent.description || `Run ${agent.name} agent: ${agent.instructions.split('\n')[0].slice(0, 100)}...`,
     inputSchema: z.object({
       task: z.string().optional().describe('Optional additional task or question for the sub-agent'),
       context: z.record(z.any()).optional().describe('Additional context to pass to the sub-agent')
     }),
     execute: async ({ task, context }) => {
+      const startTime = Date.now();
       try {
         logger.info(`[SubAgent] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
         
         // Connect to any MCP servers the sub-agent needs
-        const mcpConnections = agent.config.mcp_servers 
-          ? await connectMCP(agent.config.mcp_servers as MCPServersConfig, false)
+        // Use the sub-agent's directory as base path for resolving relative paths
+        const subAgentBasePath = dirname(resolvedPath);
+        const mcpConnections = agent.config.mcp_servers
+          ? await connectMCP(agent.config.mcp_servers as MCPServersConfig, false, subAgentBasePath)
           : [];
         
         const tools = await getMCPTools(mcpConnections);
@@ -78,7 +88,8 @@ export async function createSubAgentTool(
             executeAgentCore(agent, tools, {
               userMessage,
               systemMessages,
-              maxSteps
+              maxSteps,
+              subAgentNames: new Set<string>()  // Sub-agents don't have sub-agents themselves
             }),
             {
               collectToolCalls: true,
@@ -86,7 +97,8 @@ export async function createSubAgentTool(
             }
           );
           
-          logger.info(`[SubAgent] ${agent.name} completed`);
+          const duration = Date.now() - startTime;
+          logger.info(`[SubAgent] ${agent.name} completed in ${(duration / 1000).toFixed(2)}s`);
           
           // Log token usage
           if (result.usage?.totalTokens) {
@@ -98,7 +110,8 @@ export async function createSubAgentTool(
             metadata: {
               agent: agent.name,
               toolCalls: result.toolCalls && result.toolCalls.length > 0 ? result.toolCalls : undefined,
-              tokensUsed: result.usage?.totalTokens
+              tokensUsed: result.usage?.totalTokens,
+              duration  // Add duration in ms to metadata
             }
           };
         } finally {
@@ -127,11 +140,13 @@ export async function createSubAgentTool(
  * Create tools for multiple sub-agents
  * @param subAgents Array of sub-agent configurations
  * @param basePath Optional base path for resolving relative agent paths
+ * @param modelOverride Optional model override from parent agent
  * @returns Map of sub-agent tools
  */
 export async function createSubAgentTools(
   subAgents?: Array<{ path: string; name?: string | undefined; maxSteps?: number | undefined }>,
-  basePath?: string
+  basePath?: string,
+  modelOverride?: string
 ): Promise<Record<string, Tool>> {
   if (!subAgents || subAgents.length === 0) {
     return {};
@@ -141,7 +156,7 @@ export async function createSubAgentTools(
   
   for (const config of subAgents) {
     try {
-      const tool = await createSubAgentTool(config.path, config.maxSteps, basePath);
+      const tool = await createSubAgentTool(config.path, config.maxSteps, basePath, modelOverride);
       // Use custom name if provided, otherwise extract from filename
       let name = config.name;
       if (!name) {

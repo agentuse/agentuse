@@ -5,13 +5,14 @@ import { runAgent } from './runner';
 import { Command } from 'commander';
 import { createAuthCommand } from './cli/auth';
 import { logger, LogLevel } from './utils/logger';
-import { basename } from 'path';
+import { basename, resolve, dirname } from 'path';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
 import { version } from '../package.json';
 import { AuthenticationError } from './models';
 import * as dotenv from 'dotenv';
 import { existsSync } from 'fs';
+import { resolveProjectContext } from './utils/project';
 
 const program = new Command();
 
@@ -83,10 +84,13 @@ program
   .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
   .option('-d, --debug', 'Enable debug mode with detailed logging and full error messages')
   .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
+  .option('-C, --directory <path>', 'Run as if agentuse was started in <path> instead of the current directory')
   .option('--env-file <path>', 'Path to custom .env file')
-  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, timeout: string, envFile?: string }) => {
+  .option('-m, --model <model>', 'Override the model specified in the agent file')
+  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, timeout: string, directory?: string, envFile?: string, model?: string }) => {
     const startTime = Date.now();
-    
+    let originalCwd: string | undefined;
+
     try {
       // Configure logger based on flags
       if (options.quiet && options.debug) {
@@ -110,31 +114,40 @@ program
         throw new Error('Invalid timeout value. Must be a positive number of seconds.');
       }
       
-      // Load environment variables from .env file (needed for API keys)
-      if (options.envFile) {
-        if (existsSync(options.envFile)) {
-          logger.info(`Loading environment from: ${options.envFile}`);
-          // @ts-ignore - quiet option exists but may not be in types
-          dotenv.config({ path: options.envFile, quiet: true });
-        } else {
-          throw new Error(`Environment file not found: ${options.envFile}`);
+      // Change working directory first if -C/--directory was specified
+      originalCwd = process.cwd();
+      if (options.directory) {
+        const targetDir = resolve(options.directory);
+        if (!existsSync(targetDir)) {
+          throw new Error(`Directory not found: ${options.directory}`);
         }
-      } else {
-        // Check if default .env file exists
-        if (existsSync('.env')) {
-          logger.info(`Loading environment from: .env (default)`);
-          // @ts-ignore - quiet option exists but may not be in types
-          dotenv.config({ quiet: true });
-        } else {
-          logger.debug('No .env file found, using system environment variables');
-        }
+        logger.debug(`Changing working directory from ${originalCwd} to ${targetDir}`);
+        process.chdir(targetDir);
       }
-      
+
+      // Now detect project root from current directory (after potential cd)
+      const projectContext = resolveProjectContext(process.cwd(), {
+        ...(options.envFile && { envFile: options.envFile }),
+      });
+      logger.info(`Using project root: ${projectContext.projectRoot}`);
+
+      // Load environment variables from resolved env file
+      if (existsSync(projectContext.envFile)) {
+        logger.info(`Loading environment from: ${projectContext.envFile}`);
+        // @ts-ignore - quiet option exists but may not be in types
+        dotenv.config({ path: projectContext.envFile, quiet: true });
+      } else if (options.envFile) {
+        // If explicitly specified but not found, error
+        throw new Error(`Environment file not found: ${options.envFile}`);
+      } else {
+        logger.debug(`No .env file found at ${projectContext.envFile}, using system environment variables`);
+      }
+
       // Join additional prompt arguments if provided
       const additionalPrompt = promptArgs.length > 0 ? promptArgs.join(' ') : null;
-      
+
       let agent;
-      
+
       // Check if input is a URL
       if (isURL(file)) {
         // Validate HTTPS only
@@ -195,11 +208,39 @@ program
           logger.info(`Appended prompt: ${additionalPrompt}`);
         }
       }
-      
+
+      // Override model if specified via CLI
+      if (options.model) {
+        // Validate model format (provider:model or provider:model:env)
+        const modelParts = options.model.split(':');
+        if (modelParts.length < 2) {
+          throw new Error(`Invalid model format '${options.model}'. Expected format: provider:model or provider:model:env (e.g., openai:gpt-5, anthropic:claude-sonnet-4-0:dev)`);
+        }
+
+        const [provider] = modelParts;
+        const validProviders = ['anthropic', 'openai'];
+        if (!validProviders.includes(provider)) {
+          throw new Error(`Invalid model provider '${provider}'. Supported providers: ${validProviders.join(', ')}`);
+        }
+
+        const originalModel = agent.config.model;
+        agent.config.model = options.model;
+        logger.info(`Model override: ${originalModel} → ${options.model}`);
+
+        // Warn if provider-specific options don't match the new provider
+        if (agent.config.openai && provider !== 'openai') {
+          logger.warn(`Warning: OpenAI-specific options in config will be ignored with ${provider} model`);
+        }
+      }
+
       // Connect to MCP servers if configured
+      // Pass the agent file's directory as base path for resolving relative paths
+      // Since we've already changed directory, resolve the file path from the new CWD
+      const agentFilePath = !isURL(file) ? resolve(file) : undefined;
+      const mcpBasePath = agentFilePath ? dirname(agentFilePath) : undefined;
       let mcp;
       try {
-        mcp = await connectMCP(agent.config.mcp_servers, options.debug);
+        mcp = await connectMCP(agent.config.mcp_servers, options.debug, mcpBasePath);
       } catch (mcpError: any) {
         // Exit immediately on MCP connection errors (especially missing required env vars)
         if (mcpError.fatal || mcpError.message?.includes('Missing required environment variables')) {
@@ -214,11 +255,14 @@ program
         abortController.abort();
       }, timeoutMs);
       
-      // Initialize plugin manager before running agent
+      // Initialize plugin manager before running agent with project-specific plugin directories
       let pluginManager: PluginManager | null = null;
       try {
         pluginManager = new PluginManager();
-        await pluginManager.loadPlugins();
+        await pluginManager.loadPlugins(projectContext.pluginDirs);
+        if (projectContext.pluginDirs.length > 0) {
+          logger.debug(`Loading plugins from: ${projectContext.pluginDirs.join(', ')}`);
+        }
       } catch (pluginError) {
         logger.warn(`Failed to initialize plugins: ${(pluginError as Error).message}`);
       }
@@ -227,15 +271,22 @@ program
       // if (pluginManager) {
       //   await pluginManager.emitAgentStart({ ... });
       // }
-      
+
       // Start capturing console output for plugins
       logger.startCapture();
-      
+
+      // Log agent information
+      logger.info(`Running agent: ${agent.name}`);
+      if (agent.description) {
+        logger.info(`Description: ${agent.description}`);
+      }
+
       // Run the agent with timeout
       let result: any;
       try {
-        // Pass the file path for sub-agent resolution (if it's a local file)
-        const agentFilePath = !isURL(file) ? file : undefined;
+        if (agentFilePath && options.debug) {
+          logger.debug(`[Main] Passing agent file path to runner: ${agentFilePath}`);
+        }
         result = await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.debug, agentFilePath);
       } catch (error: unknown) {
         if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
@@ -246,7 +297,7 @@ program
       } finally {
         clearTimeout(timeoutId);
       }
-      
+
       // Stop capturing and get console output
       const consoleOutput = logger.stopCapture();
       
@@ -254,19 +305,21 @@ program
       if (pluginManager) {
         try {
           const duration = startTime ? (Date.now() - startTime) / 1000 : 0;
-          const agentFilePath = !isURL(file) ? file : undefined;
+          // agentFilePath already resolved before directory change
           
           await pluginManager.emitAgentComplete({
             agent: {
               name: agent.name,
               model: agent.config.model,
+              ...(agent.description && { description: agent.description }),
               ...(agentFilePath && { filePath: agentFilePath })
             },
             result: {
               text: result.text || '',
               duration,
               tokens: result.usage?.totalTokens,
-              toolCalls: result.toolCallCount || 0
+              toolCalls: result.toolCallCount || 0,
+              ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces })
             },
             isSubAgent: false,
             consoleOutput
@@ -276,10 +329,21 @@ program
           logger.warn(`Plugin event error: ${(pluginError as Error).message}`);
         }
       }
-      
+
+      // Restore original working directory if changed
+      if (options.directory && originalCwd && originalCwd !== process.cwd()) {
+        process.chdir(originalCwd);
+        logger.debug(`Restored working directory to ${originalCwd}`);
+      }
+
       // Exit successfully after agent completes
       process.exit(0);
     } catch (error) {
+      // Restore original working directory if changed
+      if (options.directory && originalCwd && originalCwd !== process.cwd()) {
+        process.chdir(originalCwd);
+      }
+
       // Check if it's an authentication error
       if (error instanceof AuthenticationError) {
         console.error(`\n[ERROR] ${error.message}`);

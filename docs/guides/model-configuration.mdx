@@ -236,6 +236,94 @@ AgentUse checks authentication sources in this order:
   </Accordion>
 </AccordionGroup>
 
+## Runtime Model Override
+
+You can override the model specified in an agent file at runtime using the `--model` flag. This is especially useful for:
+
+- **Testing**: Compare how different models handle the same task
+- **Cost Optimization**: Use cheaper models during development
+- **Environment-Specific Deployment**: Different models for dev/staging/prod
+- **Quick Experimentation**: Try new models without editing files
+
+### Basic Usage
+
+```bash
+# Original agent uses claude-3-5-sonnet
+agentuse run agent.agentuse --model anthropic:claude-3-5-haiku-latest
+
+# Switch to OpenAI for comparison
+agentuse run agent.agentuse --model openai:gpt-4o
+
+# Use a faster model for development
+agentuse run agent.agentuse -m openai:gpt-5-mini
+```
+
+### Environment-Specific Keys
+
+Combine model override with environment suffixes:
+
+```bash
+# Development environment
+agentuse run agent.agentuse --model openai:gpt-4o:dev
+# Uses OPENAI_API_KEY_DEV
+
+# Production environment
+agentuse run agent.agentuse --model openai:gpt-5:prod
+# Uses OPENAI_API_KEY_PROD
+
+# Personal projects
+agentuse run agent.agentuse --model anthropic:claude-3-5-sonnet:ANTHROPIC_API_KEY_PERSONAL
+# Uses specific environment variable
+```
+
+### CI/CD Examples
+
+```yaml
+# GitHub Actions - different models per environment
+- name: Run agent (Development)
+  run: agentuse run agent.agentuse --model anthropic:claude-3-5-haiku-latest
+  if: github.ref != 'refs/heads/main'
+
+- name: Run agent (Production)
+  run: agentuse run agent.agentuse --model anthropic:claude-3-5-sonnet-20241022
+  if: github.ref == 'refs/heads/main'
+```
+
+```bash
+# Shell script for model comparison
+for model in "anthropic:claude-3-5-haiku-latest" "openai:gpt-4o" "openai:gpt-5-mini"; do
+  echo "Testing with $model"
+  agentuse run benchmark.agentuse --model "$model" > "results_${model//:/\_}.txt"
+done
+```
+
+<Note>
+  When overriding to a different provider, provider-specific options (like OpenAI's `reasoningEffort`)
+  from the original agent file will be ignored.
+</Note>
+
+### Sub-Agent Model Inheritance
+
+When using the `--model` flag with agents that have sub-agents:
+
+1. **Complete Override**: The model override applies to the parent AND all sub-agents
+2. **Uniform Execution**: All agents in the hierarchy will use the same model
+3. **Authentication**: Ensures consistent authentication across all agents
+
+```bash
+# Parent agent configured with claude-sonnet-4-0
+# Sub-agents configured with various models
+agentuse run orchestrator.agentuse --model openai:gpt-5-mini
+
+# Result: ALL agents (parent + sub-agents) use gpt-5-mini
+```
+
+This behavior ensures:
+- **Consistent performance** across the entire agent hierarchy
+- **Simplified testing** with different model configurations
+- **Cost control** when switching between expensive and cheap models
+- **No authentication conflicts** between parent and sub-agents
+
 ## Multi-Provider Setup
 
 Use different providers for different agents:

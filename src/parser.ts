@@ -35,6 +35,7 @@ const MCPServerSchema = z.union([
 // Schema for agent configuration as per spec
 const AgentSchema = z.object({
   model: z.string(),
+  description: z.string().optional(),
   openai: z.object({
     reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
     textVerbosity: z.enum(['low', 'medium', 'high']).optional()
@@ -53,6 +54,7 @@ export interface ParsedAgent {
   name: string;
   config: AgentConfig;
   instructions: string;
+  description?: string;
 }
 
 /**
@@ -68,12 +70,13 @@ export function parseAgentContent(content: string, name: string): ParsedAgent {
     
     // Validate configuration with Zod
     const config = AgentSchema.parse(data);
-    
+
     // Return parsed agent
     return {
       name,
       config,
-      instructions: instructions.trim()
+      instructions: instructions.trim(),
+      ...(config.description && { description: config.description })
     };
   } catch (error) {
     if (error instanceof z.ZodError) {

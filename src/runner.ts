@@ -8,6 +8,8 @@ import { AnthropicAuth } from './auth/anthropic';
 import { logger } from './utils/logger';
 import { ContextManager } from './context-manager';
 import { compactMessages } from './compactor';
+import { dirname } from 'path';
+import type { ToolCallTrace } from './plugin/types';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -36,7 +38,7 @@ Today's date: ${todayDate}`;
 }
 
 export interface AgentChunk {
-  type: 'text' | 'tool-call' | 'tool-result' | 'tool-error' | 'finish' | 'error';
+  type: 'text' | 'tool-call' | 'tool-result' | 'tool-error' | 'finish' | 'error' | 'llm-start' | 'llm-first-token';
   text?: string;
   toolName?: string;
   toolInput?: unknown;
@@ -45,6 +47,12 @@ export interface AgentChunk {
   error?: unknown;
   finishReason?: string;
   usage?: LanguageModelUsage;
+  toolStartTime?: number;  // Track when tool started
+  toolDuration?: number;    // Duration in ms
+  isSubAgent?: boolean;     // Track if this tool is a subagent
+  llmModel?: string;        // Model name for LLM traces
+  llmStartTime?: number;    // When LLM call started
+  llmFirstTokenTime?: number; // Time to first token
 }
 
 /**
@@ -61,11 +69,16 @@ export async function processAgentStream(
   usage?: LanguageModelUsage;
   toolCalls?: Array<{ tool: string; args: unknown }>;
   subAgentTokens?: number;
+  toolCallTraces?: ToolCallTrace[];
 }> {
   let finalText = '';
   let usage: LanguageModelUsage | null = null;
   const toolCalls: Array<{ tool: string; args: unknown }> = [];
   let subAgentTokens = 0;
+  const toolCallTraces: ToolCallTrace[] = [];
+  const pendingToolCalls = new Map<string, { name: string; startTime: number }>();
+  let currentLlmCall: { model: string; startTime: number; firstTokenTime?: number } | null = null;
+  let llmSegmentCount = 0;
   
   for await (const chunk of generator) {
     switch (chunk.type) {
@@ -74,23 +87,72 @@ export async function processAgentStream(
         logger.response(chunk.text!);
         break;
         
+      case 'llm-start':
+        // Track the start of an LLM generation
+        if (chunk.llmModel && chunk.llmStartTime) {
+          currentLlmCall = {
+            model: chunk.llmModel,
+            startTime: chunk.llmStartTime
+          };
+          llmSegmentCount++;
+        }
+        break;
+        
+      case 'llm-first-token':
+        // Track time to first token
+        if (currentLlmCall && chunk.llmFirstTokenTime) {
+          currentLlmCall.firstTokenTime = chunk.llmFirstTokenTime;
+        }
+        break;
+        
       case 'tool-call':
-        logger.tool(chunk.toolName!, chunk.toolInput);
+        logger.tool(chunk.toolName!, chunk.toolInput, undefined, chunk.isSubAgent);
         if (options?.collectToolCalls) {
           toolCalls.push({ tool: chunk.toolName!, args: chunk.toolInput });
+        }
+        // Store the start time for this tool call
+        if (chunk.toolName && chunk.toolStartTime) {
+          const key = `${chunk.toolName}_${chunk.toolStartTime}`;
+          pendingToolCalls.set(key, { name: chunk.toolName, startTime: chunk.toolStartTime });
         }
         break;
         
       case 'tool-result':
         logger.tool(chunk.toolName!, undefined, chunk.toolResult);
-        // Extract sub-agent token usage from metadata if present
-        if (chunk.toolResultRaw && typeof chunk.toolResultRaw === 'object') {
-          const rawResult = chunk.toolResultRaw as Record<string, unknown>;
-          if (rawResult.metadata && typeof rawResult.metadata === 'object') {
-            const metadata = rawResult.metadata as Record<string, unknown>;
-            if (typeof metadata.tokensUsed === 'number') {
-              subAgentTokens += metadata.tokensUsed;
+        
+        // Find and complete the tool call trace
+        if (chunk.toolName && chunk.toolStartTime && chunk.toolDuration !== undefined) {
+          const key = `${chunk.toolName}_${chunk.toolStartTime}`;
+          const pending = pendingToolCalls.get(key);
+          if (pending) {
+            let isSubAgent = false;
+            let tokens: number | undefined;
+            
+            // Extract sub-agent token usage and detect if it's a sub-agent
+            if (chunk.toolResultRaw && typeof chunk.toolResultRaw === 'object') {
+              const rawResult = chunk.toolResultRaw as Record<string, unknown>;
+              if (rawResult.metadata && typeof rawResult.metadata === 'object') {
+                const metadata = rawResult.metadata as Record<string, unknown>;
+                if (typeof metadata.tokensUsed === 'number') {
+                  subAgentTokens += metadata.tokensUsed;
+                  tokens = metadata.tokensUsed;
+                }
+                // Check if this is a sub-agent by presence of agent field
+                if (metadata.agent) {
+                  isSubAgent = true;
+                }
+              }
             }
+            
+            toolCallTraces.push({
+              name: pending.name,
+              type: isSubAgent ? 'subagent' : 'tool',
+              startTime: pending.startTime,
+              duration: chunk.toolDuration,
+              ...(tokens && { tokens })
+            });
+            
+            pendingToolCalls.delete(key);
           }
         }
         break;
@@ -107,7 +169,32 @@ export async function processAgentStream(
         break;
         
       case 'finish':
-        usage = chunk.usage || null;
+        // Only update usage on final finish (not intermediate segments)
+        if (chunk.usage) {
+          usage = chunk.usage;
+        }
+        
+        // Complete the LLM call trace for this segment
+        if (currentLlmCall && currentLlmCall.startTime) {
+          const duration = Date.now() - currentLlmCall.startTime;
+          const segmentName = llmSegmentCount > 1 ? 
+            `${currentLlmCall.model}_segment_${llmSegmentCount}` : 
+            currentLlmCall.model;
+          
+          const llmTrace: ToolCallTrace = {
+            name: segmentName,
+            type: 'llm',
+            startTime: currentLlmCall.startTime,
+            duration,
+            // Only add tokens for final segment with usage data
+            ...(chunk.usage && chunk.usage.totalTokens && {
+              tokens: chunk.usage.totalTokens
+            })
+          };
+          toolCallTraces.push(llmTrace);
+          currentLlmCall = null;
+        }
+        
         if (finalText.trim()) {
           logger.responseComplete();
         }
@@ -122,7 +209,8 @@ export async function processAgentStream(
     text: finalText,
     ...(usage && { usage }),
     ...(options?.collectToolCalls && { toolCalls }),
-    ...(subAgentTokens > 0 && { subAgentTokens })
+    ...(subAgentTokens > 0 && { subAgentTokens }),
+    ...(toolCallTraces.length > 0 && { toolCallTraces })
   };
 }
 
@@ -137,6 +225,7 @@ export async function* executeAgentCore(
     systemMessages: Array<{role: string, content: string}>;
     maxSteps: number;
     abortSignal?: AbortSignal;
+    subAgentNames?: Set<string>;  // Track which tools are subagents
   }
 ): AsyncGenerator<AgentChunk> {
   let model;
@@ -209,8 +298,20 @@ export async function* executeAgentCore(
     return streamText(streamConfig);
   };
   
+  // Declare timing variables before use
+  let accumulatedText = '';
+  const toolStartTimes = new Map<string, number>();
+  let llmGenerationStartTime: number | undefined;
+  let llmFirstTokenTime: number | undefined;
+  const currentLlmModel = agent.config.model;
+  let stepCount = 0; // Track step count to detect when we're approaching limit
+  
   let stream;
   try {
+    // Track when we start the LLM generation
+    llmGenerationStartTime = Date.now();
+    yield { type: 'llm-start', llmModel: currentLlmModel, llmStartTime: llmGenerationStartTime };
+    
     stream = await createStream();
   } catch (error: any) {
     // Handle initial stream creation errors
@@ -219,20 +320,52 @@ export async function* executeAgentCore(
     return;
   }
   
-  let accumulatedText = '';
-  
   try {
     for await (const chunk of stream.fullStream) {
       switch (chunk.type) {
-        case 'tool-call':
+        case 'tool-call': {
+          stepCount++; // Each tool call counts as a step
+          
+          // Warn when approaching step limit
+          if (stepCount >= options.maxSteps * 0.9 && stepCount < options.maxSteps) {
+            logger.warn(`⚠️  Approaching step limit: ${stepCount}/${options.maxSteps} steps used`);
+          } else if (stepCount >= options.maxSteps) {
+            logger.warn(`⚠️  Step limit reached: ${stepCount}/${options.maxSteps} steps. Generation may be incomplete.`);
+          }
+          
+          // Complete the current LLM generation segment before tool call
+          if (llmGenerationStartTime) {
+            const llmDuration = Date.now() - llmGenerationStartTime;
+            // Emit a finish event for the LLM segment
+            yield {
+              type: 'finish',
+              finishReason: 'tool-call' as any,
+              toolStartTime: llmGenerationStartTime,
+              toolDuration: llmDuration
+            };
+            llmGenerationStartTime = undefined;
+            llmFirstTokenTime = undefined;
+          }
+          
+          const startTime = Date.now();
+          const toolCallId = (chunk as any).toolCallId || 'unknown';
+          toolStartTimes.set(toolCallId, startTime);
+          
           yield {
             type: 'tool-call',
             toolName: chunk.toolName,
-            toolInput: (chunk as any).input || (chunk as any).args
+            toolInput: (chunk as any).input || (chunk as any).args,
+            toolStartTime: startTime,
+            ...(options.subAgentNames?.has(chunk.toolName!) && { isSubAgent: true })
           };
           break;
+        }
           
-        case 'tool-result':
+        case 'tool-result': {
+          const toolCallId = (chunk as any).toolCallId || 'unknown';
+          const startTime = toolStartTimes.get(toolCallId);
+          const duration = startTime ? Date.now() - startTime : undefined;
+          
           // Track tool results in context
           if (contextManager) {
             // Use simple format for tool message
@@ -240,7 +373,7 @@ export async function* executeAgentCore(
               role: 'tool',
               content: [{
                 type: 'tool-result',
-                toolCallId: (chunk as any).toolCallId || 'unknown',
+                toolCallId,
                 toolName: chunk.toolName,
                 output: parseToolResult(chunk)
               }]
@@ -252,11 +385,28 @@ export async function* executeAgentCore(
             type: 'tool-result',
             toolName: chunk.toolName,
             toolResult: parseToolResult(chunk),
-            toolResultRaw: (chunk as any).result || (chunk as any).output
+            toolResultRaw: (chunk as any).result || (chunk as any).output,
+            ...(startTime && { toolStartTime: startTime }),
+            ...(duration !== undefined && { toolDuration: duration })
           };
-          break;
           
-        case 'tool-error':
+          // Clean up
+          if (startTime) {
+            toolStartTimes.delete(toolCallId);
+          }
+          
+          // Start tracking new LLM generation segment after tool result
+          llmGenerationStartTime = Date.now();
+          llmFirstTokenTime = undefined;
+          yield { type: 'llm-start', llmModel: currentLlmModel, llmStartTime: llmGenerationStartTime };
+          break;
+        }
+          
+        case 'tool-error': {
+          const toolCallId = (chunk as any).toolCallId || 'unknown';
+          const startTime = toolStartTimes.get(toolCallId);
+          const duration = startTime ? Date.now() - startTime : undefined;
+          
           // Pass tool errors as structured results to let AI decide on retry
           const errorMessage = (chunk as any).error?.message || (chunk as any).error || 'Unknown error';
           yield {
@@ -271,13 +421,26 @@ export async function* executeAgentCore(
                 suggestions: getSuggestions(errorMessage)
               }
             }),
-            toolResultRaw: { error: errorMessage }
+            toolResultRaw: { error: errorMessage },
+            ...(startTime && { toolStartTime: startTime }),
+            ...(duration !== undefined && { toolDuration: duration })
           };
+          
+          // Clean up
+          if (startTime) {
+            toolStartTimes.delete(toolCallId);
+          }
           break;
+        }
           
         case 'text-delta':
           const textContent = (chunk as any).text || (chunk as any).textDelta || (chunk as any).delta || (chunk as any).content;
           if (textContent && typeof textContent === 'string') {
+            // Track time to first token
+            if (!llmFirstTokenTime && llmGenerationStartTime) {
+              llmFirstTokenTime = Date.now();
+              yield { type: 'llm-first-token', llmFirstTokenTime };
+            }
             accumulatedText += textContent;
             yield { type: 'text', text: textContent };
           }
@@ -300,11 +463,46 @@ export async function* executeAgentCore(
             contextManager.updateUsage(usage);
           }
           
-          yield {
-            type: 'finish',
-            finishReason: chunk.finishReason,
-            usage
-          };
+          // Log finish reason for debugging and warnings
+          const finishReason = chunk.finishReason;
+          if (finishReason === 'length') {
+            logger.warn(`⚠️  Output length limit reached. The response was truncated.`);
+          } else if (finishReason === 'content-filter') {
+            logger.warn(`⚠️  Content filter triggered. Response may be incomplete.`);
+          } else if (finishReason === 'error') {
+            logger.warn(`⚠️  Generation stopped due to an error.`);
+          }
+          // Note: We can't directly detect step limit from finishReason, as AI SDK uses 'stop'
+          
+          // Complete final LLM segment if exists
+          if (llmGenerationStartTime) {
+            const llmDuration = Date.now() - llmGenerationStartTime;
+            yield {
+              type: 'finish',
+              finishReason: chunk.finishReason,
+              usage,
+              toolStartTime: llmGenerationStartTime,
+              toolDuration: llmDuration
+            };
+            llmGenerationStartTime = undefined;
+            llmFirstTokenTime = undefined;
+          } else {
+            yield {
+              type: 'finish',
+              finishReason: chunk.finishReason,
+              usage
+            };
+          }
+          
+          // We can't directly detect step limit from finishReason alone
+          // since AI SDK just reports 'stop' when stepCountIs condition is met
+          // But we can check our step count
+          if (stepCount >= options.maxSteps && chunk.finishReason === 'stop') {
+            logger.warn(`
+⚠️  Agent stopped at step limit (${options.maxSteps} steps).
+   To increase the limit, set MAX_STEPS environment variable:
+   MAX_STEPS=2000 agentuse run <agent-file>`);
+          }
           break;
           
         case 'error':
@@ -501,7 +699,7 @@ export async function runAgent(
   startTime?: number, 
   verbose: boolean = false,
   agentFilePath?: string
-): Promise<{ text: string; usage?: LanguageModelUsage; toolCallCount: number }> {
+): Promise<{ text: string; usage?: LanguageModelUsage; toolCallCount: number; toolCallTraces?: ToolCallTrace[] }> {
   try {
     // Check if we're using OAuth (for system prompt modification)
     const isUsingOAuth = agent.config.model.includes('anthropic') && await AnthropicAuth.access();
@@ -511,15 +709,30 @@ export async function runAgent(
     
     // Load sub-agent tools if configured
     // If we have an agent file path, use its directory as the base path for sub-agents
-    const basePath = agentFilePath ? require('path').dirname(agentFilePath) : undefined;
-    const subAgentTools = await createSubAgentTools(agent.config.subagents, basePath);
-    
+    const basePath = agentFilePath ? dirname(agentFilePath) : undefined;
+    if (agentFilePath) {
+      logger.debug(`[SubAgent] Agent file path: ${agentFilePath}`);
+      logger.debug(`[SubAgent] Base path for sub-agents: ${basePath}`);
+    }
+    // Pass the parent's model to subagents so they inherit any model override
+    const subAgentTools = await createSubAgentTools(agent.config.subagents, basePath, agent.config.model);
+
+    // Track subagent names for logging
+    const subAgentNames = new Set(Object.keys(subAgentTools));
+
     // Merge all tools
     const tools = { ...mcpTools, ...subAgentTools };
+    
+    const maxSteps = parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS));
     
     logger.info(`Running agent with model: ${agent.config.model}`);
     if (Object.keys(tools).length > 0) {
       logger.info(`Available tools: ${Object.keys(tools).join(', ')}`);
+    }
+    
+    // Log step limit if it's non-default or in verbose mode
+    if (maxSteps !== DEFAULT_MAX_STEPS || verbose) {
+      logger.info(`Max steps: ${maxSteps} (override via MAX_STEPS env var)`);
     }
     
     // Log initialization time if verbose
@@ -562,7 +775,8 @@ export async function runAgent(
     const coreOptions = {
       userMessage: agent.instructions,
       systemMessages,
-      maxSteps: parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS)),
+      maxSteps,
+      subAgentNames,  // Pass subagent names for logging
       ...(abortSignal && { abortSignal })
     };
     
@@ -592,7 +806,8 @@ export async function runAgent(
     return {
       text: result.text,
       ...(result.usage && { usage: result.usage }),
-      toolCallCount: result.toolCalls?.length || 0
+      toolCallCount: result.toolCalls?.length || 0,
+      ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces })
     };
   } catch (error: unknown) {
     // Check if it's an abort error from timeout

@@ -4,6 +4,8 @@ import type { AgentCompleteEvent, PluginHandlers } from '../src/plugin/types';
 import { homedir } from 'os';
 import { join } from 'path';
 import { logger } from '../src/utils/logger';
+import { writeFileSync, mkdirSync, rmSync } from 'fs';
+import { stat } from 'fs/promises';
 
 describe('PluginManager', () => {
   let pluginManager: PluginManager;
@@ -12,23 +14,20 @@ describe('PluginManager', () => {
   let loggerDebugSpy: any;
 
   beforeEach(() => {
+    // Clear all mocks before each test
+    mock.restore();
     pluginManager = new PluginManager();
     
     loggerWarnSpy = spyOn(logger, 'warn').mockImplementation(() => {});
     loggerInfoSpy = spyOn(logger, 'info').mockImplementation(() => {});
     loggerDebugSpy = spyOn(logger, 'debug').mockImplementation(() => {});
-    
-    Object.keys(require.cache).forEach(key => {
-      if (key.includes('__fixtures__')) {
-        delete require.cache[key];
-      }
-    });
   });
   
   afterEach(() => {
     loggerWarnSpy.mockRestore();
     loggerInfoSpy.mockRestore();
     loggerDebugSpy.mockRestore();
+    mock.restore();
   });
 
   describe('Plugin Loading', () => {
@@ -75,30 +74,67 @@ describe('PluginManager', () => {
       );
     });
 
-    test('should clear require cache for hot-reloading', async () => {
-      const pluginPath = join(__dirname, '__fixtures__', 'plugin', 'valid-plugin.ts');
-      const resolvedPath = require.resolve(pluginPath);
-      
-      // Pre-load the module to populate cache
-      require(pluginPath);
-      expect(require.cache[resolvedPath]).toBeDefined();
-      
-      // Test that the actual loadPlugins method clears cache
-      // Mock glob to return our test plugin
-      const mockGlob = mock(() => Promise.resolve([pluginPath]));
+    test('should load TypeScript plugins using esbuild', async () => {
+      const tsPluginPath = join(__dirname, '__fixtures__', 'plugin', 'ts-with-imports.ts');
+      const mockGlob = mock((pattern: string) => {
+        // Match any pattern that looks for plugins
+        if (pattern.includes('plugins/*.{ts,js}')) {
+          return Promise.resolve([tsPluginPath]);
+        }
+        return Promise.resolve([]);
+      });
       mock.module('glob', () => ({ glob: mockGlob }));
+
+      const testManager = new PluginManager();
+      await testManager.loadPlugins();
       
-      // Clear the cache manually to simulate what loadPlugins does
-      delete require.cache[resolvedPath];
+      const plugins = (testManager as any).plugins;
+      expect(plugins.length).toBeGreaterThan(0);
+      const tsPlugin = plugins.find((p: any) => p.path === tsPluginPath);
+      expect(tsPlugin).toBeDefined();
+      expect(tsPlugin?.handlers['agent:complete']).toBeDefined();
+    });
+
+    test('should load JavaScript plugins with cache busting', async () => {
+      const jsPluginPath = join(__dirname, '__fixtures__', 'plugin', 'valid-plugin.js');
+      const mockGlob = mock((pattern: string) => {
+        // Match any pattern that looks for plugins
+        if (pattern.includes('plugins/*.{ts,js}')) {
+          return Promise.resolve([jsPluginPath]);
+        }
+        return Promise.resolve([]);
+      });
+      mock.module('glob', () => ({ glob: mockGlob }));
+
+      const testManager = new PluginManager();
+      await testManager.loadPlugins();
       
-      // Verify cache was cleared
-      expect(require.cache[resolvedPath]).toBeUndefined();
+      const plugins = (testManager as any).plugins;
+      expect(plugins.length).toBeGreaterThan(0);
+      const jsPlugin = plugins.find((p: any) => p.path === jsPluginPath);
+      expect(jsPlugin).toBeDefined();
+      expect(jsPlugin?.handlers['agent:complete']).toBeDefined();
+    });
+
+    test('should handle mixed TypeScript and JavaScript plugins', async () => {
+      const tsPluginPath = join(__dirname, '__fixtures__', 'plugin', 'valid-plugin.ts');
+      const jsPluginPath = join(__dirname, '__fixtures__', 'plugin', 'valid-plugin.js');
       
-      // Load plugins which should work with cleared cache
+      const mockGlob = mock((pattern: string) => {
+        // Return different files based on pattern
+        if (pattern.includes('./.agentuse')) {
+          return Promise.resolve([tsPluginPath]);
+        }
+        return Promise.resolve([jsPluginPath]);
+      });
+      mock.module('glob', () => ({ glob: mockGlob }));
+
       await pluginManager.loadPlugins();
       
-      // After dynamic import, cache may be repopulated but that's expected
-      // The important part is that cache was cleared before import
+      const plugins = (pluginManager as any).plugins;
+      expect(plugins).toHaveLength(2);
+      expect(plugins.some((p: any) => p.path === tsPluginPath)).toBe(true);
+      expect(plugins.some((p: any) => p.path === jsPluginPath)).toBe(true);
     });
 
     test('should search in both project and home directories', async () => {
@@ -289,6 +325,148 @@ describe('PluginManager', () => {
           isSubAgent: true
         })
       );
+    });
+  });
+
+  describe('ESBuild and Dynamic Import Tests', () => {
+    test('should compile TypeScript plugins with esbuild at runtime', async () => {
+      // Create a temporary test directory
+      const testDir = join(__dirname, '.test-plugins');
+      mkdirSync(testDir, { recursive: true });
+      
+      // Create a TypeScript plugin with imports
+      const tsContent = `
+        import { basename } from 'path';
+        import type { PluginHandlers } from '${join(__dirname, '../src/plugin/types')}';
+        
+        const plugin: PluginHandlers = {
+          'agent:complete': async (event) => {
+            const name = basename(event.agent.name || 'unknown');
+            console.log('Compiled TS plugin:', name);
+          }
+        };
+        
+        export default plugin;
+      `;
+      
+      const tsPath = join(testDir, 'test-plugin.ts');
+      writeFileSync(tsPath, tsContent);
+      
+      try {
+        const mockGlob = mock((pattern: string) => {
+          if (pattern.includes('plugins/*.{ts,js}')) {
+            return Promise.resolve([tsPath]);
+          }
+          return Promise.resolve([]);
+        });
+        mock.module('glob', () => ({ glob: mockGlob }));
+        
+        const testManager = new PluginManager();
+        await testManager.loadPlugins();
+        
+        const plugins = (testManager as any).plugins;
+        expect(plugins.length).toBeGreaterThan(0);
+        const plugin = plugins.find((p: any) => p.path === tsPath);
+        expect(plugin).toBeDefined();
+        expect(plugin?.handlers['agent:complete']).toBeDefined();
+        
+        // Test that the handler works
+        if (plugin) {
+          const event: AgentCompleteEvent = {
+            agent: { name: 'test-agent', model: 'test' },
+            result: { text: 'test', duration: 1, toolCalls: 0 },
+            isSubAgent: false
+          };
+          
+          await expect(plugin.handlers['agent:complete'](event)).resolves.toBeUndefined();
+        }
+      } finally {
+        mock.restore();
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+
+    test('should add cache-busting query parameter for JavaScript plugins', async () => {
+      // Create a temporary test directory
+      const testDir = join(__dirname, '.test-plugins');
+      mkdirSync(testDir, { recursive: true });
+      
+      // Create a JavaScript plugin
+      const jsContent = `
+        const plugin = {
+          'agent:complete': async (event) => {
+            console.log('JS plugin with cache busting');
+          }
+        };
+        export default plugin;
+      `;
+      
+      const jsPath = join(testDir, 'test-plugin.js');
+      writeFileSync(jsPath, jsContent);
+      
+      try {
+        const mockGlob = mock((pattern: string) => {
+          if (pattern.includes('plugins/*.{ts,js}')) {
+            return Promise.resolve([jsPath]);
+          }
+          return Promise.resolve([]);
+        });
+        mock.module('glob', () => ({ glob: mockGlob }));
+        
+        const testManager = new PluginManager();
+        await testManager.loadPlugins();
+        
+        const plugins = (testManager as any).plugins;
+        expect(plugins.length).toBeGreaterThan(0);
+        const plugin = plugins.find((p: any) => p.path === jsPath);
+        expect(plugin).toBeDefined();
+        expect(plugin?.handlers['agent:complete']).toBeDefined();
+      } finally {
+        mock.restore();
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+
+    test('should handle esbuild compilation errors gracefully', async () => {
+      // Create a TypeScript plugin with syntax error
+      const testDir = join(__dirname, '.test-plugins');
+      mkdirSync(testDir, { recursive: true });
+      
+      const invalidTsContent = `
+        import { join } from 'path';
+        // Syntax error: missing closing brace
+        const plugin = {
+          'agent:complete': async (event) => {
+            console.log('test'
+        };
+        export default plugin;
+      `;
+      
+      const tsPath = join(testDir, 'invalid.ts');
+      writeFileSync(tsPath, invalidTsContent);
+      
+      try {
+        const mockGlob = mock((pattern: string) => {
+          if (pattern.includes('plugins/*.{ts,js}')) {
+            return Promise.resolve([tsPath]);
+          }
+          return Promise.resolve([]);
+        });
+        mock.module('glob', () => ({ glob: mockGlob }));
+        
+        const testManager = new PluginManager();
+        await testManager.loadPlugins();
+        
+        expect(loggerWarnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to load plugin')
+        );
+        
+        const plugins = (testManager as any).plugins;
+        expect(plugins).toHaveLength(0);
+      } finally {
+        mock.restore();
+        rmSync(testDir, { recursive: true, force: true });
+      }
     });
   });
 

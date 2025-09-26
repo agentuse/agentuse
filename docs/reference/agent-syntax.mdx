@@ -49,16 +49,46 @@ Additional instructions or context.
 
 ### Optional Fields
 
+<ParamField path="description" type="string" required={false}>
+  A brief description of what the agent does.
+
+  This description is used in multiple contexts:
+  - **As subagent tool description**: When this agent is used as a subagent, this becomes the tool description that parent agents see
+  - **CLI output**: Displayed when running the agent to provide context
+  - **Plugin events**: Available to plugins for logging or monitoring
+  - **Documentation**: Self-documenting agents for teams
+
+  Best practices:
+  - Keep it concise (80-120 characters recommended)
+  - Be action-oriented (describe what the agent does, not what it is)
+  - Focus on the primary capability or purpose
+
+  ```yaml
+  description: "Reviews code for security vulnerabilities and best practices"
+  description: "Generates unit tests for JavaScript/TypeScript functions"
+  description: "Analyzes logs and identifies potential issues"
+  ```
+</ParamField>
+
 <ParamField path="mcp_servers" type="object" required={false}>
   Configuration for Model Context Protocol (MCP) servers that provide tools and resources to the agent.
-  
+
   Each server is defined as a key-value pair where the key is the server name and the value is the server configuration.
 </ParamField>
 
 <ParamField path="subagents" type="array" required={false}>
   Array of sub-agent configurations that this agent can delegate tasks to.
-  
+
   Each sub-agent must specify a `path` to the `.agentuse` file, with optional `name` and `maxSteps` parameters.
+
+  **Path Resolution**: Subagent paths are resolved relative to the **parent agent file's directory**, not the current working directory. This ensures portability and consistency.
+
+  ```yaml
+  # In /project/agents/main.agentuse
+  subagents:
+    - path: ../utils/helper.agentuse  # Resolves to /project/utils/helper.agentuse
+    - path: ./local-agent.agentuse    # Resolves to /project/agents/local-agent.agentuse
+  ```
 </ParamField>
 
 <ParamField path="openai" type="object" required={false}>
@@ -218,8 +248,18 @@ mcp_servers:
 
 #### Stdio Server Fields
 - **`command`**: Executable command to start the MCP server (required)
+  - Can be an absolute path or a command in PATH
+  - Relative paths (containing `/` or `\`) are resolved from the **agent file's directory**
 - **`args`**: Array of command-line arguments (optional)
 - **`env`**: Object of additional environment variables to set (optional)
+
+```yaml
+# In /project/agents/main.agentuse
+mcp_servers:
+  custom:
+    command: ../tools/my-server  # Resolves to /project/tools/my-server
+    args: ["--port", "3000"]
+```
 
 #### HTTP Server Fields  
 - **`url`**: HTTPS URL of the MCP server (required, must use HTTPS)
@@ -340,6 +380,7 @@ Output: "4"
 ```markdown
 ---
 model: openai:gpt-5
+description: "Multi-capability AI assistant with file, GitHub, and research capabilities"
 openai:
   reasoningEffort: high
   textVerbosity: medium

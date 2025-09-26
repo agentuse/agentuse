@@ -14,6 +14,7 @@ AgentUse agents are markdown files with a `.agentuse` extension. They consist of
 ```markdown
 ---
 model: anthropic:claude-sonnet-4-0
+description: "General-purpose AI assistant for various tasks"
 ---
 
 You are a helpful assistant.
@@ -50,6 +51,20 @@ Help the user with their request.
 
 ### Optional Fields
 
+<ParamField path="description" type="string">
+  A concise description of the agent's purpose.
+
+  This appears in:
+  - Tool descriptions when used as a sub-agent
+  - CLI output when running the agent
+  - Plugin events for logging
+
+  Best practices:
+  - Keep under 80-120 characters
+  - Be action-oriented
+  - Focus on primary capability
+</ParamField>
+
 <ParamField path="mcp_servers" type="object">
   MCP server configurations. Each server can have:
   - `command` + `args`: For stdio-based servers
@@ -76,6 +91,7 @@ Connect to Model Context Protocol servers:
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-0
+description: "File system and GitHub integration agent"
 mcp_servers:
   filesystem:
     command: "pnpx"
@@ -114,17 +130,18 @@ mcp_servers:
 
 ## Using Sub-Agents
 
-Agents can delegate to other agents:
+Agents can delegate to other agents. All sub-agent paths are resolved relative to the parent agent file's directory:
 
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-0
+description: "Coordinator agent that manages research and writing tasks"
 subagents:
-  - path: ./research-agent.agentuse
-    name: "research_specialist"  # Optional custom name
-    maxSteps: 100  # Optional: limit sub-agent steps
-  - path: ./writer-agent.agentuse
-  - path: https://example.com/public-agent.agentuse
+  - path: ./research-agent.agentuse      # Same directory as parent
+    name: "research_specialist"          # Optional custom name
+    maxSteps: 100                         # Optional: limit sub-agent steps
+  - path: ../utils/writer-agent.agentuse # Parent directory
+  - path: ./team/editor.agentuse         # Subdirectory
 ---
 
 You coordinate between research and writing agents.
@@ -198,6 +215,76 @@ This is useful for:
 ## Examples
 
 For a comprehensive collection of agent examples, including data analysis, code review, API integration, and more, visit the [AgentUse Templates](https://github.com/agentuse/agentuse/tree/main/templates/agents).
+
+## Project Structure and Path Resolution
+
+### Project Root Detection
+
+AgentUse automatically detects your project root by searching upward for `.git/`, `.agentuse/`, or `package.json`.
+
+### Recommended Project Structure
+
+```
+my-agent-project/
+├── .env                    # Project-wide environment variables
+├── .agentuse/
+│   └── plugins/           # Custom plugins
+│       └── logger.js
+├── agents/
+│   ├── main.agentuse      # Main orchestrator
+│   ├── research/
+│   │   ├── web.agentuse
+│   │   └── docs.agentuse
+│   └── processing/
+│       ├── analyzer.agentuse
+│       └── formatter.agentuse
+├── utils/
+│   ├── helper.agentuse
+│   └── validator.agentuse
+└── tools/
+    └── custom-mcp-server  # Custom MCP server executable
+```
+
+### Path Resolution Examples
+
+```yaml
+# In agents/main.agentuse
+---
+model: anthropic:claude-sonnet-4-0
+subagents:
+  # Paths relative to agents/main.agentuse location
+  - path: ./research/web.agentuse      # → agents/research/web.agentuse
+  - path: ../utils/helper.agentuse     # → utils/helper.agentuse
+mcp_servers:
+  custom:
+    # Command paths relative to agents/main.agentuse location
+    command: ../tools/custom-mcp-server  # → tools/custom-mcp-server
+---
+```
+
+You can run this from anywhere:
+```bash
+# From project root
+agentuse run agents/main.agentuse
+
+# From any subdirectory
+cd agents/research
+agentuse run ../main.agentuse
+
+# From outside the project
+agentuse run /path/to/project/agents/main.agentuse
+
+# Override project root if needed
+agentuse run agent.agentuse -C /different/project
+```
+
+### Benefits of This Structure
+
+1. **Portability**: Share entire agent projects without breaking paths
+2. **Organization**: Clear separation of concerns
+3. **Reusability**: Utils and helpers can be shared across agents
+4. **Version Control**: Everything in one repository
+5. **Environment Management**: Single `.env` file for all agents
 
 ## Next Steps
 

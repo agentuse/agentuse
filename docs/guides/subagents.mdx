@@ -86,23 +86,59 @@ subagents:
 ---
 ```
 
-## Remote Sub-Agents
+## Path Resolution
 
-<Warning>
-  Remote sub-agents are **not currently supported**. Sub-agents can only be loaded from local file paths relative to the parent agent.
-</Warning>
+<Info>
+  **Important**: All sub-agent paths are resolved relative to the **parent agent file's directory**, not the current working directory. This ensures your agent compositions work consistently regardless of where you run them.
+</Info>
 
-All sub-agent paths must be relative to the parent agent's directory:
+### How Path Resolution Works
+
+When you define a sub-agent path, it's always relative to the location of the parent agent file:
 
 ```yaml
+# File: /project/agents/orchestrator.agentuse
 ---
 model: anthropic:claude-sonnet-4-0
 subagents:
-  - path: ./translator.agentuse          # Same directory
-  - path: ../shared/processor.agentuse   # Parent directory
-  - path: ./team/specialist.agentuse     # Subdirectory
+  - path: ./researcher.agentuse          # → /project/agents/researcher.agentuse
+  - path: ../utils/helper.agentuse       # → /project/utils/helper.agentuse
+  - path: ./team/specialist.agentuse     # → /project/agents/team/specialist.agentuse
 ---
 ```
+
+### Directory Structure Example
+
+```
+project/
+├── agents/
+│   ├── orchestrator.agentuse
+│   ├── researcher.agentuse
+│   └── team/
+│       └── specialist.agentuse
+└── utils/
+    └── helper.agentuse
+```
+
+You can run the orchestrator from any directory:
+```bash
+# From project root
+agentuse run agents/orchestrator.agentuse
+
+# From agents directory
+cd agents && agentuse run orchestrator.agentuse
+
+# From anywhere with absolute path
+agentuse run /full/path/to/project/agents/orchestrator.agentuse
+```
+
+In all cases, the sub-agent paths resolve correctly based on the orchestrator's location.
+
+## Remote Sub-Agents
+
+<Warning>
+  Remote sub-agents are **not currently supported**. Sub-agents must be local files accessible via the filesystem.
+</Warning>
 
 ## Passing Context
 
@@ -155,29 +191,37 @@ You route requests to appropriate specialists.
 - Data requests → call data_analyst tool
 ```
 
-### Recursive Agents
+### Limitations: No Nested Sub-Agents
 
-Sub-agents can have their own sub-agents:
+<Warning>
+  **Important**: Sub-agents cannot have their own sub-agents. Any `subagents` configuration in a sub-agent file will be ignored.
+</Warning>
+
+This limitation is intentional to:
+- Prevent infinite recursion (Agent A → Agent B → Agent A)
+- Avoid deep nesting complexity that's hard to debug
+- Reduce resource consumption and token usage
+- Keep execution traces manageable
 
 ```yaml
 # orchestrator.agentuse
 ---
 model: anthropic:claude-sonnet-4-0
 subagents:
-  - path: ./team-lead.agentuse  # This has its own sub-agents
+  - path: ./team-lead.agentuse  # ✅ Works
 ---
 
 # team-lead.agentuse
 ---
 model: anthropic:claude-sonnet-4-0
 subagents:
-  - path: ./developer.agentuse
-  - path: ./tester.agentuse
+  - path: ./developer.agentuse  # ❌ Will be ignored
+  - path: ./tester.agentuse      # ❌ Will be ignored
 ---
 ```
 
 <Note>
-  Each level of sub-agents creates its own MCP connections and tool set. Paths are always resolved relative to each agent's directory.
+  Sub-agents only have access to their configured MCP tools, not other sub-agents. Each sub-agent creates its own isolated MCP connections.
 </Note>
 
 ### Parallel Processing
@@ -217,12 +261,12 @@ model: anthropic:claude-sonnet-4-0
 mcp_servers:
   database:
     command: "node"
-    args: ["./database-server.js"]
+    args: ["./database-server.js"]  # Relative to parent.agentuse location
 subagents:
   - path: ./child.agentuse
 ---
 
-# child.agentuse  
+# child.agentuse
 ---
 model: anthropic:claude-3-5-haiku-latest
 mcp_servers:
@@ -230,8 +274,14 @@ mcp_servers:
   filesystem:
     command: "npx"
     args: ["@modelcontextprotocol/server-filesystem"]
+  custom:
+    command: "../tools/my-server"  # Relative to child.agentuse location
 ---
 ```
+
+<Note>
+  MCP server commands with relative paths are resolved from the agent file's directory, ensuring consistent behavior across different execution contexts.
+</Note>
 
 <Info>
   Each sub-agent manages its own MCP connections and tools. They don't automatically inherit parent tools.
@@ -313,6 +363,28 @@ subagents:
 ---
 ```
 
+### Model Override Inheritance
+
+<Info>
+  When you use the `--model` CLI flag, it overrides the model for both the parent agent
+  and ALL sub-agents. This allows you to test entire agent hierarchies with different
+  models without editing any files.
+</Info>
+
+```bash
+# Override all agents to use GPT-5-mini (parent + all sub-agents)
+agentuse run orchestrator.agentuse --model openai:gpt-5-mini
+
+# All agents will use claude-3-5-haiku regardless of their configured models
+agentuse run complex-system.agentuse -m anthropic:claude-3-5-haiku-latest
+```
+
+This is particularly useful for:
+- **Cost optimization**: Use cheaper models for development/testing
+- **A/B testing**: Compare entire workflows with different models
+- **Environment-specific deployments**: Different models for dev/staging/prod
+- **Quick experiments**: Try new models without modifying agent files
+
 ### Step Limits
 
 Control sub-agent execution limits:
@@ -352,6 +424,7 @@ DEBUG=agent:* agentuse run main.agentuse
 # Test sub-agent directly
 agentuse run ./agents/researcher.agentuse "test query"
 ```
+
 
 ## Security Considerations
 

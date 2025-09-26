@@ -79,6 +79,7 @@ Create `hello.agentuse`:
 ```markdown
 ---
 model: anthropic:claude-3-5-haiku-latest
+description: "Simple greeting agent that welcomes users"
 ---
 
 Greet the user.
@@ -95,6 +96,10 @@ agentuse run hello.agentuse "speak like a pirate"
 agentuse run hello.agentuse --verbose
 agentuse run hello.agentuse --quiet
 agentuse run hello.agentuse --timeout 600
+
+# Override the model at runtime
+agentuse run hello.agentuse --model openai:gpt-5-mini
+agentuse run hello.agentuse -m anthropic:claude-3-5-sonnet-20241022
 ```
 
 ## File System Agent
@@ -104,6 +109,7 @@ Create `project-analyzer.agentuse`:
 ```markdown
 ---
 model: anthropic:claude-3-5-haiku-latest
+description: "Analyzes project structure and identifies key components"
 mcp_servers:
   filesystem:
     command: "npx"
@@ -145,6 +151,33 @@ cd /path/to/your/project
 agentuse run project-analyzer.agentuse
 ```
 
+## Model Override
+
+Test your agents with different models without editing files:
+
+```bash
+# Original agent uses claude-3-5-haiku
+cat analyzer.agentuse | grep model
+# model: anthropic:claude-3-5-haiku-latest
+
+# Test with a more powerful model
+agentuse run analyzer.agentuse --model anthropic:claude-3-5-sonnet-20241022
+
+# Compare with OpenAI
+agentuse run analyzer.agentuse --model openai:gpt-5
+
+# Use cheaper model for development
+agentuse run analyzer.agentuse -m openai:gpt-5-mini
+
+# Use different API key via environment suffix
+agentuse run analyzer.agentuse --model openai:gpt-4o:dev
+# This uses OPENAI_API_KEY_DEV instead of OPENAI_API_KEY
+```
+
+<Tip>
+  Perfect for CI/CD pipelines, A/B testing models, or optimizing costs between dev and production.
+</Tip>
+
 ## Sub-agents Support
 
 AgentUse supports calling other agents as sub-agents:
@@ -152,6 +185,7 @@ AgentUse supports calling other agents as sub-agents:
 ```markdown
 ---
 model: anthropic:claude-3-5-haiku-latest
+description: "Orchestrates tasks by delegating to specialized sub-agents"
 subagents:
   - path: "./helper-agent.agentuse"
     name: "helper"

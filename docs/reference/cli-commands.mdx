@@ -30,11 +30,112 @@ agentuse run <agent-file> [prompt...] [options]
 -d, --debug             Enable verbose debug logging
 -v, --verbose           Show detailed execution information
 --timeout <seconds>     Maximum execution time in seconds (default: 300)
+-C, --directory <path>  Run as if agentuse was started in <path> instead of the current directory
+--env-file <path>       Path to custom .env file
+-m, --model <model>     Override the model specified in the agent file
 ```
 
 <Note>
   The `--quiet` and `--debug` options cannot be used together.
 </Note>
+
+### Directory and Path Resolution
+
+#### Directory Override (-C, --directory)
+
+The `-C` or `--directory` option changes the working directory before running:
+
+```bash
+# Without -C: runs from current directory
+agentuse run agent.agentuse
+
+# With -C: changes to specified directory first (like cd)
+agentuse run agent.agentuse -C /path/to/project
+```
+
+#### Project Root Detection
+
+AgentUse searches from the current directory upward for `.git/`, `.agentuse/`, or `package.json`.
+
+The project root is used for:
+- Loading `.env` files
+- Finding plugins in `.agentuse/plugins/`
+
+This is useful for:
+- Running agents from different projects
+- CI/CD environments with complex directory structures
+- Testing with different configurations
+
+#### Path Resolution Rules
+
+**For Subagents:**
+Paths are relative to the **parent agent file's directory**:
+```yaml
+# In /project/agents/main.agentuse
+subagents:
+  - path: ../utils/helper.agentuse  # Resolves to /project/utils/helper.agentuse
+```
+
+**For MCP Servers:**
+Command paths are relative to the **agent file's directory**:
+```yaml
+# In /project/agents/main.agentuse
+mcp_servers:
+  custom:
+    command: ../tools/my-server  # Resolves to /project/tools/my-server
+```
+
+**For Environment Files:**
+- Default: `{project-root}/.env`
+- Override: `--env-file /path/to/.env`
+
+### Model Override
+
+The `--model` option allows you to override the model specified in an agent file at runtime. This is useful for:
+
+- **Testing**: Compare agent behavior across different models
+- **Cost Optimization**: Use cheaper models for development/testing
+- **Environment-Specific Models**: Different models for dev/staging/production
+- **Quick Experiments**: Try new models without editing files
+
+#### Format
+
+```
+provider:model[:env]
+```
+
+Where:
+- `provider`: Either `anthropic` or `openai`
+- `model`: The specific model name (e.g., `claude-3-5-sonnet-20241022`, `gpt-4o`)
+- `env`: Optional environment suffix for API keys (e.g., `dev`, `prod`, or full env var name)
+
+#### Examples
+
+```bash
+# Override with OpenAI GPT-5
+agentuse run agent.agentuse --model openai:gpt-5
+
+# Use Anthropic Claude Haiku for quick testing
+agentuse run agent.agentuse -m anthropic:claude-3-5-haiku-latest
+
+# Use different API key via environment suffix
+agentuse run agent.agentuse --model openai:gpt-4o:dev
+# This will use OPENAI_API_KEY_DEV instead of OPENAI_API_KEY
+
+# Use specific environment variable
+agentuse run agent.agentuse --model anthropic:claude-3-5-sonnet:ANTHROPIC_API_KEY_PERSONAL
+```
+
+<Warning>
+  When overriding models, provider-specific options (like OpenAI's `reasoningEffort`)
+  will be ignored if you switch to a different provider.
+</Warning>
+
+<Info>
+  Model overrides propagate to all sub-agents. When you use `--model`, both the parent
+  agent and all its sub-agents will use the specified model, regardless of what models
+  are defined in their individual agent files.
+</Info>
 
 ### Remote Agent Security
 
@@ -60,8 +161,21 @@ Only continue if you trust the source and have audited the agent.
 ### Examples
 
 ```bash
-# Run local agent
+# Run agent from current directory
 agentuse run hello.agentuse
+
+# Run agent from subdirectory
+cd agents/subfolder
+agentuse run my-agent.agentuse  # Finds .env and plugins at project root
+
+# Change to different directory first with -C
+agentuse run agent.agentuse -C /my/project  # Same as: cd /my/project && agentuse run agent.agentuse
+
+# Run agent from a different project
+agentuse run newsletter/writer.agentuse -C ~/projects/content
+
+# Use custom environment file
+agentuse run agent.agentuse --env-file .env.production
 
 # Run with additional prompt
 agentuse run assistant.agentuse "Help me write an email"
@@ -87,6 +201,18 @@ agentuse run agent.agentuse --timeout 600
 
 # Run quietly (only warnings/errors)
 agentuse run agent.agentuse --quiet
+
+# Override model at runtime
+agentuse run agent.agentuse --model openai:gpt-5-mini
+
+# Override model and add prompt
+agentuse run agent.agentuse "be concise" --model anthropic:claude-3-5-haiku-latest
+
+# Use development API key with model override
+agentuse run agent.agentuse -m openai:gpt-4o:dev
+
+# Override model for agent with sub-agents (all will use the same model)
+agentuse run orchestrator.agentuse --model openai:gpt-5-mini
 ```
 
 ## agentuse auth

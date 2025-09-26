@@ -63,6 +63,7 @@ Event data:
   agent: {
     name: string;         // Agent name
     model: string;        // Model used (e.g., "anthropic:claude-sonnet-4-0")
+    description?: string; // Agent description from YAML frontmatter
     filePath?: string;    // Path to agent file
   };
   result: {
@@ -70,11 +71,39 @@ Event data:
     duration: number;     // Execution time in seconds
     tokens?: number;      // Total tokens used
     toolCalls: number;    // Number of tool calls made
+    toolCallTraces?: ToolCallTrace[];  // Detailed timing for each tool/sub-agent/LLM call
   };
   isSubAgent: boolean;    // True if this is a sub-agent
   consoleOutput: string;  // Full console output including logs and results
 }
 ```
+
+### ToolCallTrace Interface
+
+The `toolCallTraces` array provides detailed performance information for each operation during agent execution:
+
+```typescript
+interface ToolCallTrace {
+  name: string;           // Tool, sub-agent, or model name
+  type: 'tool' | 'subagent' | 'llm';
+  startTime: number;      // Unix timestamp in ms
+  duration: number;       // Duration in ms
+  tokens?: number;        // Total tokens used (for sub-agents and LLM calls)
+  promptTokens?: number;  // Input tokens (for LLM calls)
+  completionTokens?: number; // Output tokens (for LLM calls)
+}
+```
+
+**Trace Types:**
+- `tool`: Function tool calls (bash commands, file operations, etc.)
+- `subagent`: Sub-agent executions
+- `llm`: Direct LLM model calls
+
+**Use Cases:**
+- Performance monitoring and optimization
+- Cost tracking for token usage
+- Debugging slow operations
+- Analytics and reporting
 
 ## Example: Slack Notifications
 
@@ -112,6 +141,82 @@ Set your webhook URL:
 ```bash
 export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 ```
+
+## Example: Performance Trace Reporting
+
+Display detailed performance traces for agent executions using `toolCallTraces`:
+
+```javascript
+// .agentuse/plugins/trace-reporter.js
+export default {
+  'agent:complete': async (event) => {
+    // Only process if traces are available and not a sub-agent
+    if (!event.result.toolCallTraces || event.isSubAgent) {
+      return;
+    }
+
+    console.log("\n📊 Performance Traces:");
+
+    // Display each trace with appropriate icon
+    for (const trace of event.result.toolCallTraces) {
+      const icon =
+        trace.type === 'llm' ? '🧠' :
+        trace.type === 'subagent' ? '🤖' : '🔧';
+
+      console.log(`  ${icon} ${trace.name}: ${trace.duration}ms`);
+
+      if (trace.tokens) {
+        console.log(`     └─ Tokens: ${trace.tokens}`);
+      }
+    }
+
+    // Summary statistics
+    const llmCalls = event.result.toolCallTraces.filter(t => t.type === 'llm');
+    const toolCalls = event.result.toolCallTraces.filter(t => t.type === 'tool');
+    const subagentCalls = event.result.toolCallTraces.filter(t => t.type === 'subagent');
+
+    console.log("\n📈 Summary:");
+    console.log(`  LLM calls: ${llmCalls.length} (${llmCalls.reduce((sum, t) => sum + t.duration, 0)}ms total)`);
+    console.log(`  Tool calls: ${toolCalls.length} (${toolCalls.reduce((sum, t) => sum + t.duration, 0)}ms total)`);
+    console.log(`  Sub-agents: ${subagentCalls.length} (${subagentCalls.reduce((sum, t) => sum + t.duration, 0)}ms total)`);
+  }
+};
+```
+
+This plugin outputs performance information like:
+```
+📊 Performance Traces:
+  🧠 anthropic:claude-sonnet-4-0: 1234ms
+     └─ Tokens: 450
+  🔧 bash: 567ms
+  🤖 code-reviewer: 8901ms
+     └─ Tokens: 1200
+  🧠 anthropic:claude-sonnet-4-0_segment_2: 2345ms
+     └─ Tokens: 320
+
+📈 Summary:
+  LLM calls: 2 (3579ms total)
+  Tool calls: 1 (567ms total)
+  Sub-agents: 1 (8901ms total)
+```
+
+<Tip>
+  **Ready to Use**: Find this complete plugin in `templates/plugins/trace-reporter.js`. Copy it to `.agentuse/plugins/` to start tracking performance.
+</Tip>
+
+## Advanced Performance Monitoring Ideas
+
+You can extend the basic trace reporting with more advanced features:
+
+- **Slow Operation Detection**: Warn about operations taking longer than 5 seconds
+- **Token Usage Tracking**: Monitor prompt and completion tokens with cost estimates
+- **Operation Breakdown**: Categorize calls by type (tool, sub-agent, LLM)
+- **Historical Logging**: Save performance data to `.agentuse/performance.log`
+- **Smart Filtering**: Skip sub-agent executions to avoid duplicate logging
+- **Cost Analysis**: Calculate estimated costs based on token usage
+- **Performance Thresholds**: Set alerts for operations exceeding time or token limits
+- **Dashboards**: Export data to monitoring services like Datadog or Grafana
+- **Comparative Analysis**: Compare performance across different models or agent versions
 
 ## TypeScript Support
 
