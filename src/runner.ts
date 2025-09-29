@@ -118,32 +118,42 @@ export async function processAgentStream(
         break;
         
       case 'tool-result':
-        logger.tool(chunk.toolName!, undefined, chunk.toolResult);
-        
+        // Use the new toolResult method with timing and metadata
+        const toolDuration = chunk.toolDuration;
+        let tokens: number | undefined;
+        let isSubAgent = false;
+
+        // Extract metadata before logging
+        if (chunk.toolResultRaw && typeof chunk.toolResultRaw === 'object') {
+          const rawResult = chunk.toolResultRaw as Record<string, unknown>;
+          if (rawResult.metadata && typeof rawResult.metadata === 'object') {
+            const metadata = rawResult.metadata as Record<string, unknown>;
+            if (typeof metadata.tokensUsed === 'number') {
+              tokens = metadata.tokensUsed;
+            }
+            if (metadata.agent) {
+              isSubAgent = true;
+            }
+          }
+        }
+
+        // Log the result with timing info
+        logger.toolResult(chunk.toolResult || 'No result', {
+          ...(toolDuration !== undefined && { duration: toolDuration }),
+          success: true,
+          ...(tokens && { tokens })
+        });
+
         // Find and complete the tool call trace
         if (chunk.toolName && chunk.toolStartTime && chunk.toolDuration !== undefined) {
           const key = `${chunk.toolName}_${chunk.toolStartTime}`;
           const pending = pendingToolCalls.get(key);
           if (pending) {
-            let isSubAgent = false;
-            let tokens: number | undefined;
-            
-            // Extract sub-agent token usage and detect if it's a sub-agent
-            if (chunk.toolResultRaw && typeof chunk.toolResultRaw === 'object') {
-              const rawResult = chunk.toolResultRaw as Record<string, unknown>;
-              if (rawResult.metadata && typeof rawResult.metadata === 'object') {
-                const metadata = rawResult.metadata as Record<string, unknown>;
-                if (typeof metadata.tokensUsed === 'number') {
-                  subAgentTokens += metadata.tokensUsed;
-                  tokens = metadata.tokensUsed;
-                }
-                // Check if this is a sub-agent by presence of agent field
-                if (metadata.agent) {
-                  isSubAgent = true;
-                }
-              }
+            // Add tokens to subagent total if applicable
+            if (tokens) {
+              subAgentTokens += tokens;
             }
-            
+
             toolCallTraces.push({
               name: pending.name,
               type: isSubAgent ? 'subagent' : 'tool',
@@ -151,7 +161,7 @@ export async function processAgentStream(
               duration: chunk.toolDuration,
               ...(tokens && { tokens })
             });
-            
+
             pendingToolCalls.delete(key);
           }
         }

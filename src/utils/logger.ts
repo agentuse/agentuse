@@ -8,6 +8,46 @@ export enum LogLevel {
 }
 
 /**
+ * Simple spinner for animating in-progress operations
+ */
+class Spinner {
+  private frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  private currentFrame = 0;
+  private interval: NodeJS.Timeout | null = null;
+  private isSpinning = false;
+
+  start(writeFn: (line: string) => void, getLineFn: () => string) {
+    if (this.isSpinning) return;
+
+    this.isSpinning = true;
+    this.currentFrame = 0;
+
+    // Start animation loop
+    this.interval = setInterval(() => {
+      this.currentFrame = (this.currentFrame + 1) % this.frames.length;
+      const frame = this.frames[this.currentFrame];
+      const line = getLineFn().replace(/^[⋮⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/, frame);
+
+      // Clear line and rewrite with new frame
+      writeFn(`\r${line}`);
+    }, 80); // 80ms per frame = ~12 fps
+  }
+
+  stop() {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+    this.isSpinning = false;
+    this.currentFrame = 0;
+  }
+
+  isActive(): boolean {
+    return this.isSpinning;
+  }
+}
+
+/**
  * Format a warning message with tool context and error details
  * In debug mode, shows full error; otherwise shows shortened version
  */
@@ -67,10 +107,44 @@ class Logger {
   private enableDebug: boolean;
   private captureBuffer: string[] = [];
   private isCapturing: boolean = false;
+  private useTUI: boolean;
+  private spinner: Spinner;
+  private currentToolLine = '';
 
   constructor(options: LoggerOptions = {}) {
     this.level = options.level ?? LogLevel.INFO;
     this.enableDebug = options.enableDebug ?? (process.env.DEBUG === 'true' || process.env.DEBUG === '1');
+    this.useTUI = process.stdout.isTTY && this.level <= LogLevel.INFO;
+    this.spinner = new Spinner();
+  }
+
+  /**
+   * Format a tool name as a colored badge
+   */
+  private formatToolBadge(toolName: string, isSubAgent: boolean = false): string {
+    if (!this.useTUI) {
+      return `[${toolName}]`; // Fallback for non-TTY
+    }
+
+    if (isSubAgent) {
+      // Sub-agents: Magenta background, white text
+      return chalk.bgMagenta.white.bold(` ${toolName} `);
+    }
+
+    if (toolName.startsWith('mcp__')) {
+      // MCP tools: Cyan background, black text
+      return chalk.bgCyan.black.bold(` ${toolName} `);
+    }
+
+    // Native tools: Blue background, white text
+    return chalk.bgBlue.white.bold(` ${toolName} `);
+  }
+
+  /**
+   * Get agent activity prefix
+   */
+  private getAgentPrefix(): string {
+    return this.useTUI ? '⋮' : '';
   }
 
   configure(options: LoggerOptions) {
@@ -80,6 +154,8 @@ class Logger {
     if (options.enableDebug !== undefined) {
       this.enableDebug = options.enableDebug;
     }
+    // Update TUI setting based on new configuration
+    this.useTUI = process.stdout.isTTY && this.level <= LogLevel.INFO;
   }
 
   startCapture() {
@@ -120,8 +196,14 @@ class Logger {
   }
 
   error(message: string, error?: Error) {
+    const prefix = this.getAgentPrefix();
+    const badge = this.useTUI ? chalk.bgRed.white.bold(' ERROR ') : '[ERROR]';
     const errorMessage = error ? `${message}: ${error.message}` : message;
-    this.writeToStderr(chalk.red(`[ERROR] ${errorMessage}`));
+    const formattedMessage = this.useTUI
+      ? `${prefix} ${badge} ${errorMessage}`
+      : `${badge} ${errorMessage}`;
+
+    this.writeToStderr(chalk.red(formattedMessage));
     if (error?.stack && this.enableDebug) {
       this.writeToStderr(chalk.gray(error.stack));
     }
@@ -129,13 +211,25 @@ class Logger {
 
   warn(message: string) {
     if (this.level <= LogLevel.WARN) {
-      this.writeToStderr(chalk.yellow(`[WARN] ${message}`));
+      const prefix = this.getAgentPrefix();
+      const badge = this.useTUI ? chalk.bgYellow.black.bold(' WARN ') : '[WARN]';
+      const formattedMessage = this.useTUI
+        ? `${prefix} ${badge} ${message}`
+        : `${badge} ${message}`;
+
+      this.writeToStderr(chalk.yellow(formattedMessage));
     }
   }
 
   info(message: string) {
     if (this.level <= LogLevel.INFO) {
-      this.writeToStderr(chalk.blue(`\n[INFO] ${message}`));
+      const prefix = this.getAgentPrefix();
+      const badge = this.useTUI ? chalk.bgBlue.white.bold(' INFO ') : '[INFO]';
+      const formattedMessage = this.useTUI
+        ? `${prefix} ${badge} ${message}`
+        : `\n${badge} ${message}`;
+
+      this.writeToStderr(chalk.blue(formattedMessage));
     }
   }
 
@@ -152,6 +246,66 @@ class Logger {
   warnWithTool(tool: string, operation: string, error: string) {
     const formatted = formatWarning(tool, operation, error, this.enableDebug);
     this.warn(formatted);
+  }
+
+  /**
+   * Log tool result with formatting and optional timing/status
+   */
+  toolResult(result: string, options?: { duration?: number; success?: boolean; tokens?: number }) {
+    // Stop spinner if active
+    if (this.spinner.isActive()) {
+      this.spinner.stop();
+
+      // Clear the spinner line and rewrite with final ⋮ prefix
+      if (this.useTUI) {
+        const finalLine = this.currentToolLine.replace(/^[⋮⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/, '⋮');
+        process.stderr.write(`\r${finalLine}\n`);
+        this.capture('\n');
+      }
+    }
+
+    if (!this.useTUI) {
+      // Fallback for non-TTY
+      if (this.enableDebug) {
+        this.writeToStderr(chalk.gray(`  Result: ${result}`));
+      }
+      return;
+    }
+
+    // Format duration if provided
+    let durationStr = '';
+    if (options?.duration !== undefined) {
+      const ms = options.duration;
+      if (ms < 100) {
+        durationStr = ` ${chalk.gray('⚡')} ${chalk.gray(`${ms}ms`)}`;
+      } else if (ms < 1000) {
+        durationStr = ` ${chalk.gray(`${ms}ms`)}`;
+      } else {
+        durationStr = ` ${chalk.gray(`${(ms / 1000).toFixed(1)}s`)}`;
+      }
+    }
+
+    // Format tokens if provided
+    let tokensStr = '';
+    if (options?.tokens !== undefined) {
+      tokensStr = ` ${chalk.gray(`(${options.tokens.toLocaleString()} tokens)`)}`;
+    }
+
+    // Status icon
+    const statusIcon = options?.success === false
+      ? chalk.red('✗')
+      : options?.success === true
+        ? chalk.green('✓')
+        : chalk.gray('↳');
+
+    // Format result - truncate if too long
+    const MAX_RESULT_LENGTH = 100;
+    let resultStr = result;
+    if (result.length > MAX_RESULT_LENGTH) {
+      resultStr = result.substring(0, MAX_RESULT_LENGTH) + '...';
+    }
+
+    this.writeToStderr(`  ${statusIcon} ${resultStr}${durationStr}${tokensStr}`);
   }
 
   system(message: string) {
@@ -183,19 +337,38 @@ class Logger {
             }
             return `${key}: ${valueStr}`;
           }).join(', ');
-          argsDisplay = ` (${params})`;
+          argsDisplay = ` ${chalk.gray(params)}`;
         }
       } else if (args) {
         // For non-object args, just stringify with length limit
         const argsStr = JSON.stringify(args);
-        argsDisplay = argsStr.length > 100 ? ` (${argsStr.substring(0, 100)}...)` : ` (${argsStr})`;
+        const displayStr = argsStr.length > 100 ? `${argsStr.substring(0, 100)}...` : argsStr;
+        argsDisplay = ` ${chalk.gray(displayStr)}`;
       }
 
-      // Check if this is a subagent or regular tool
-      const callType = isSubAgent ? 'Calling subagent:' : 'Calling tool:';
+      // Format with new TUI style
+      if (this.useTUI) {
+        const prefix = this.getAgentPrefix();
+        const badge = this.formatToolBadge(name, isSubAgent);
+        this.currentToolLine = `${prefix} ${badge}${argsDisplay}`;
 
-      // Tool is being called - show concise message with parameters
-      this.info(`${callType} ${chalk.cyan(name)}${chalk.gray(argsDisplay)}`);
+        // Write initial line
+        process.stderr.write(this.currentToolLine);
+        this.capture(this.currentToolLine);
+
+        // Start spinner animation
+        this.spinner.start(
+          (line) => {
+            // Update the line in place (without newline)
+            process.stderr.write(line);
+          },
+          () => this.currentToolLine
+        );
+      } else {
+        // Fallback for non-TTY
+        const callType = isSubAgent ? 'Calling subagent:' : 'Calling tool:';
+        this.info(`${callType} ${chalk.cyan(name)}${chalk.gray(argsDisplay)}`);
+      }
 
       // Show full args in debug mode
       if (this.enableDebug) {
