@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import readline from 'readline';
 
 export enum LogLevel {
   DEBUG = 0,
@@ -11,26 +12,40 @@ export enum LogLevel {
  * Simple spinner for animating in-progress operations
  */
 class Spinner {
-  private frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  private frames = ['⋮', '⋰', '⋯', '⋱'];
   private currentFrame = 0;
   private interval: NodeJS.Timeout | null = null;
   private isSpinning = false;
+  private writeFn?: (line: string) => void;
+  private getLineFn?: () => string;
+  private baseLine: string | null = null;
 
   start(writeFn: (line: string) => void, getLineFn: () => string) {
-    if (this.isSpinning) return;
+    if (this.isSpinning) {
+      return;
+    }
 
+    this.writeFn = writeFn;
+    this.getLineFn = getLineFn;
+
+    const baseLine = this.getLineFn?.();
+    if (!this.writeFn || !baseLine) {
+      this.writeFn = undefined;
+      this.getLineFn = undefined;
+      return;
+    }
+    this.baseLine = baseLine;
     this.isSpinning = true;
-    this.currentFrame = 0;
-
-    // Start animation loop
     this.interval = setInterval(() => {
-      this.currentFrame = (this.currentFrame + 1) % this.frames.length;
-      const frame = this.frames[this.currentFrame];
-      const line = getLineFn().replace(/^[⋮⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/, frame);
+      if (!this.writeFn || !this.baseLine) {
+        return;
+      }
 
-      // Clear line and rewrite with new frame
-      writeFn(`\r${line}`);
-    }, 80); // 80ms per frame = ~12 fps
+      const frame = this.frames[this.currentFrame];
+      this.currentFrame = (this.currentFrame + 1) % this.frames.length;
+      const animatedLine = this.baseLine.replace(/^⋮/, frame);
+      this.writeFn(animatedLine);
+    }, 120);
   }
 
   stop() {
@@ -38,6 +53,14 @@ class Spinner {
       clearInterval(this.interval);
       this.interval = null;
     }
+
+    if (this.isSpinning && this.writeFn && this.baseLine) {
+      this.writeFn(this.baseLine);
+    }
+
+    this.writeFn = undefined;
+    this.getLineFn = undefined;
+    this.baseLine = null;
     this.isSpinning = false;
     this.currentFrame = 0;
   }
@@ -252,17 +275,8 @@ class Logger {
    * Log tool result with formatting and optional timing/status
    */
   toolResult(result: string, options?: { duration?: number; success?: boolean; tokens?: number }) {
-    // Stop spinner if active
-    if (this.spinner.isActive()) {
-      this.spinner.stop();
-
-      // Clear the spinner line and rewrite with final ⋮ prefix
-      if (this.useTUI) {
-        const finalLine = this.currentToolLine.replace(/^[⋮⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/, '⋮');
-        process.stderr.write(`\r${finalLine}\n`);
-        this.capture('\n');
-      }
-    }
+    // Spinner is disabled, no cleanup needed
+    this.spinner.stop();
 
     if (!this.useTUI) {
       // Fallback for non-TTY
@@ -315,6 +329,10 @@ class Logger {
   tool(name: string, args?: unknown, result?: unknown, isSubAgent?: boolean) {
     // Only show when tool is being called, not when returning results
     if (args !== undefined) {
+      if (this.useTUI && this.spinner.isActive()) {
+        this.spinner.stop();
+      }
+
       // Format args concisely for display
       let argsDisplay = '';
       if (args && typeof args === 'object' && !Array.isArray(args)) {
@@ -352,18 +370,23 @@ class Logger {
         const badge = this.formatToolBadge(name, isSubAgent);
         this.currentToolLine = `${prefix} ${badge}${argsDisplay}`;
 
-        // Write initial line
-        process.stderr.write(this.currentToolLine);
-        this.capture(this.currentToolLine);
+        // Write line without animation
+        process.stderr.write(this.currentToolLine + '\n');
+        this.capture(this.currentToolLine + '\n');
 
-        // Start spinner animation
-        this.spinner.start(
-          (line) => {
-            // Update the line in place (without newline)
-            process.stderr.write(line);
-          },
-          () => this.currentToolLine
-        );
+        const spinnerWrite = (line: string) => {
+          if (!process.stderr.isTTY) {
+            return;
+          }
+          readline.moveCursor(process.stderr, 0, -1);
+          readline.cursorTo(process.stderr, 0);
+          process.stderr.write(line);
+          readline.clearLine(process.stderr, 1);
+          readline.cursorTo(process.stderr, 0);
+          readline.moveCursor(process.stderr, 0, 1);
+        };
+
+        this.spinner.start(spinnerWrite, () => this.currentToolLine);
       } else {
         // Fallback for non-TTY
         const callType = isSubAgent ? 'Calling subagent:' : 'Calling tool:';
