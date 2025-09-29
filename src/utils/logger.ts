@@ -145,22 +145,35 @@ class Logger {
    * Format a tool name as a colored badge
    */
   private formatToolBadge(toolName: string, isSubAgent: boolean = false): string {
+    const displayName = this.getToolDisplayName(toolName);
+
     if (!this.useTUI) {
-      return `[${toolName}]`; // Fallback for non-TTY
+      return `[${displayName}]`; // Fallback for non-TTY
     }
 
     if (isSubAgent) {
       // Sub-agents: Magenta background, white text
-      return chalk.bgMagenta.white.bold(` ${toolName} `);
+      return chalk.bgMagenta.white.bold(` ${displayName} `);
     }
 
     if (toolName.startsWith('mcp__')) {
       // MCP tools: Cyan background, black text
-      return chalk.bgCyan.black.bold(` ${toolName} `);
+      return chalk.bgCyan.black.bold(` ${displayName} `);
     }
 
     // Native tools: Blue background, white text
-    return chalk.bgBlue.white.bold(` ${toolName} `);
+    return chalk.bgBlue.white.bold(` ${displayName} `);
+  }
+
+  private getToolDisplayName(toolName: string): string {
+    if (toolName.startsWith('mcp__')) {
+      const parts = toolName.split('__').slice(1);
+      if (parts.length >= 2) {
+        const [provider, ...rest] = parts;
+        return `${provider}:${rest.join('__')}`;
+      }
+    }
+    return toolName;
   }
 
   /**
@@ -390,7 +403,8 @@ class Logger {
       } else {
         // Fallback for non-TTY
         const callType = isSubAgent ? 'Calling subagent:' : 'Calling tool:';
-        this.info(`${callType} ${chalk.cyan(name)}${chalk.gray(argsDisplay)}`);
+        const displayName = this.getToolDisplayName(name);
+        this.info(`${callType} ${chalk.cyan(displayName)}${chalk.gray(argsDisplay)}`);
       }
 
       // Show full args in debug mode
