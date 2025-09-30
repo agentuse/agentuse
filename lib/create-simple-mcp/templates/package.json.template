@@ -1,0 +1,21 @@
+{
+  "name": "{{PROJECT_NAME}}",
+  "version": "0.1.0",
+  "description": "MCP tools project",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "serve": "simple-mcp serve ./tools/example.ts",
+    "serve:date": "simple-mcp serve ./tools/date.ts"
+  },
+  "dependencies": {
+    "zod": "^3.25.76",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "simple-mcp": "^0.1.0",
+    "tsx": "^4.0.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.9.2"
+  }
+}

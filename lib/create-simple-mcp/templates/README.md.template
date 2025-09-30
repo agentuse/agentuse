@@ -1,0 +1,93 @@
+# {{PROJECT_NAME}}
+
+MCP tools project created with `create-simple-mcp`.
+
+## Getting Started
+
+```bash
+# Install dependencies
+npm install
+
+# Test your tools
+npm run serve
+
+# Or serve a specific tool
+npm run serve:date
+```
+
+## Project Structure
+
+```
+{{PROJECT_NAME}}/
+├── tools/
+│   ├── example.ts    # Example tool with HTTP requests
+│   └── date.ts       # Simple date/time tool
+├── package.json
+└── README.md
+```
+
+## Adding New Tools
+
+Create a new file in `tools/`:
+
+```typescript
+// tools/my-tool.ts
+import { z } from 'zod';
+
+export default {
+  description: 'What your tool does',
+  parameters: z.object({
+    param1: z.string(),
+    param2: z.number().optional()
+  }),
+  execute: async ({ param1, param2 }) => {
+    // Your logic here
+    return 'result';
+  }
+};
+```
+
+## Using with Claude Desktop
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "{{PROJECT_NAME}}": {
+      "command": "npx",
+      "args": ["simple-mcp", "serve", "/absolute/path/to/{{PROJECT_NAME}}/tools/example.ts"]
+    }
+  }
+}
+```
+
+## Using with AgentUse
+
+```yaml
+---
+tools:
+  - example
+  - date
+---
+
+Use the tools to help me.
+```
+
+## Adding Dependencies
+
+```bash
+npm install package-name
+```
+
+Then import in your tools:
+
+```typescript
+import something from 'package-name';
+```
+
+## Documentation
+
+- [simple-mcp docs](https://github.com/agentuse/agentuse/tree/main/lib/simple-mcp)
+- [MCP specification](https://modelcontextprotocol.io/)
+- [Zod documentation](https://zod.dev/)

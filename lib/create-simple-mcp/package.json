@@ -1,0 +1,32 @@
+{
+  "name": "create-simple-mcp",
+  "version": "0.1.0",
+  "description": "Scaffold a new simple-mcp tools project",
+  "type": "module",
+  "author": "",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "scaffold",
+    "generator",
+    "create"
+  ],
+  "bin": {
+    "create-simple-mcp": "./bin/cli.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "templates",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.9.2"
+  }
+}
