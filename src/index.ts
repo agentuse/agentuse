@@ -96,6 +96,8 @@ program
       if (options.quiet && options.debug) {
         throw new Error('Cannot use --quiet and --debug together');
       }
+
+      process.env.AGENTUSE_DEBUG = options.debug ? 'true' : 'false';
       
       if (options.quiet) {
         logger.configure({ level: LogLevel.WARN });

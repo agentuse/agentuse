@@ -25,7 +25,6 @@ export function formatWarning(tool: string, operation: string, error: string, en
       const additionalInfo = lines.slice(1)
         .map(line => line.trim())
         .filter(line => line.length > 0 && !line.match(/^\s*at\s+/)) // Skip stack trace lines
-        .slice(0, 3) // Limit to first 3 meaningful lines
         .join(' | ');
       
       if (additionalInfo) {
@@ -46,6 +45,17 @@ export function formatWarning(tool: string, operation: string, error: string, en
     
     return `${tool}: ${operation} failed - ${reason}`;
   }
+}
+
+function isEnvDebugFlagEnabled(): boolean {
+  const candidates = [process.env.AGENTUSE_DEBUG, process.env.DEBUG];
+  return candidates.some(value => {
+    if (!value) {
+      return false;
+    }
+    const normalized = value.toLowerCase();
+    return normalized === 'true' || normalized === '1';
+  });
 }
 
 // Log channels for future use
@@ -257,7 +267,15 @@ function formatParameter(key: string, value: any): string {
 /**
  * Format tool arguments with granular truncation
  */
-function formatToolArgsGranular(args: any): string {
+function formatToolArgsGranular(args: any, options?: { disableTruncation?: boolean }): string {
+  if (options?.disableTruncation) {
+    try {
+      return typeof args === 'string' ? args : JSON.stringify(args);
+    } catch {
+      return String(args);
+    }
+  }
+
   if (!args || typeof args !== 'object' || Array.isArray(args)) {
     if (args) {
       // For non-object args, just stringify
@@ -293,8 +311,12 @@ class Logger {
 
   constructor(options: LoggerOptions = {}) {
     this.level = options.level ?? LogLevel.INFO;
-    this.enableDebug = options.enableDebug ?? (process.env.DEBUG === 'true' || process.env.DEBUG === '1');
-    this.useTUI = process.stdout.isTTY && this.level <= LogLevel.INFO;
+    this.enableDebug = options.enableDebug ?? isEnvDebugFlagEnabled();
+    this.useTUI = process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
+  }
+
+  private isDebugEnabled(): boolean {
+    return this.enableDebug || isEnvDebugFlagEnabled();
   }
 
   /**
@@ -352,7 +374,7 @@ class Logger {
       this.enableDebug = options.enableDebug;
     }
     // Update TUI setting based on new configuration
-    this.useTUI = process.stdout.isTTY && this.level <= LogLevel.INFO;
+    this.useTUI = process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
   }
 
   startCapture() {
@@ -414,7 +436,7 @@ class Logger {
       : `${badge} ${errorMessage}`;
 
     this.writeToStderr(chalk.red(formattedMessage));
-    if (error?.stack && this.enableDebug) {
+    if (error?.stack && this.isDebugEnabled()) {
       this.writeToStderr(chalk.gray(error.stack));
     }
   }
@@ -456,7 +478,7 @@ class Logger {
   }
 
   debug(message: string) {
-    if (this.enableDebug && this.level <= LogLevel.DEBUG) {
+    if (this.isDebugEnabled() && this.level <= LogLevel.DEBUG) {
       this.writeToStderr(chalk.gray(`[DEBUG] ${message}`));
     }
   }
@@ -466,7 +488,7 @@ class Logger {
    * Automatically uses debug mode based on logger configuration
    */
   warnWithTool(tool: string, operation: string, error: string) {
-    const formatted = formatWarning(tool, operation, error, this.enableDebug);
+    const formatted = formatWarning(tool, operation, error, this.isDebugEnabled());
     this.warn(formatted);
   }
 
@@ -482,13 +504,8 @@ class Logger {
     }
     this.spinnerStoppedByOutput = false;
 
-    if (!this.useTUI) {
-      // Fallback for non-TTY
-      if (this.enableDebug) {
-        this.writeToStderr(chalk.gray(`  Result: ${result}`));
-      }
-      return;
-    }
+    const debugMode = this.isDebugEnabled();
+    const useTUI = this.useTUI && !debugMode;
 
     // Format duration if provided
     let durationStr = '';
@@ -519,11 +536,18 @@ class Logger {
     // Format result - truncate if too long
     const MAX_RESULT_LENGTH = 100;
     let resultStr = result;
-    if (result.length > MAX_RESULT_LENGTH) {
+    if (!debugMode && result.length > MAX_RESULT_LENGTH) {
       resultStr = result.substring(0, MAX_RESULT_LENGTH) + '...';
     }
 
-    this.writeToStderr(`  ${statusIcon} ${resultStr}${durationStr}${tokensStr}`);
+    const line = `  ${statusIcon} ${resultStr}${durationStr}${tokensStr}`;
+
+    if (!useTUI) {
+      this.writeToStderr(line);
+      return;
+    }
+
+    this.writeToStderr(line);
   }
 
   system(message: string) {
@@ -543,18 +567,21 @@ class Logger {
       // Reset flag for new tool execution
       this.spinnerStoppedByOutput = false;
 
+      const debugMode = this.isDebugEnabled();
+      const useTUI = this.useTUI && !debugMode;
+
       // Format args with granular truncation
       // (Full args shown in separate [DEBUG] line below if debug mode is enabled)
       let argsDisplay = '';
       if (args) {
-        const formatted = formatToolArgsGranular(args);
+        const formatted = formatToolArgsGranular(args, { disableTruncation: debugMode });
         if (formatted) {
           argsDisplay = ` ${chalk.gray(formatted)}`;
         }
       }
 
       // Format with new TUI style
-      if (this.useTUI) {
+      if (useTUI) {
         const badge = this.formatToolBadge(name, isSubAgent);
         let text = ` ${badge}${argsDisplay}`;
 
@@ -574,7 +601,7 @@ class Logger {
             interval: 120,
             frames: ['⋮', '⋰', '⋯', '⋱']
           },
-          isEnabled: this.useTUI
+          isEnabled: useTUI
         }).start();
 
         // Capture for testing/debugging (include prefix for logging)
@@ -587,16 +614,13 @@ class Logger {
       }
 
       // Show full args in debug mode
-      if (this.enableDebug) {
+      if (debugMode) {
         this.writeToStderr(chalk.gray(`[DEBUG] Full parameters: ${JSON.stringify(args, null, 2)}`));
       }
-    } else if (result !== undefined && this.enableDebug) {
-      // Only show results in debug mode
-      const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
-      const RESULT_PREVIEW_LENGTH = 500;
-      if (resultStr.length > RESULT_PREVIEW_LENGTH) {
-        this.writeToStderr(chalk.gray(`[DEBUG] Tool ${name} result: ${resultStr.substring(0, RESULT_PREVIEW_LENGTH)}...`));
-      } else {
+    } else if (result !== undefined) {
+      const debugMode = this.isDebugEnabled();
+      if (debugMode) {
+        const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
         this.writeToStderr(chalk.gray(`[DEBUG] Tool ${name} result: ${resultStr}`));
       }
     }
@@ -607,5 +631,5 @@ export const logger = new Logger({
   level: process.env.LOG_LEVEL ? 
     (LogLevel[process.env.LOG_LEVEL as keyof typeof LogLevel] ?? LogLevel.INFO) : 
     LogLevel.INFO,
-  enableDebug: process.env.DEBUG === 'true' || process.env.DEBUG === '1',
+  enableDebug: isEnvDebugFlagEnabled(),
 });
