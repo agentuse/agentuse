@@ -859,7 +859,8 @@ export async function runAgent(
       logger.debug(`[SubAgent] Base path for sub-agents: ${basePath}`);
     }
     // Pass the parent's model to subagents so they inherit any model override
-    const subAgentTools = await createSubAgentTools(agent.config.subagents, basePath, agent.config.model);
+    // Start at depth 0 for main agent's sub-agents
+    const subAgentTools = await createSubAgentTools(agent.config.subagents, basePath, agent.config.model, 0, []);
 
     // Track subagent names for logging
     const subAgentNames = new Set(Object.keys(subAgentTools));
