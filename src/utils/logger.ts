@@ -390,11 +390,12 @@ class Logger {
       const parts = toolName.split('__').slice(1);
       if (parts.length >= 2) {
         const [provider, ...rest] = parts;
-        return `${provider}:${rest.join('__')}`;
+        return `${provider}:${rest.join('__')} (MCP)`;
       }
     }
     if (toolName.startsWith('subagent__')) {
-      return toolName.substring(10); // Remove 'subagent__' prefix
+      const name = toolName.substring(10); // Remove 'subagent__' prefix
+      return `${name} (Subagent)`;
     }
     return toolName;
   }
