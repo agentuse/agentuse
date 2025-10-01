@@ -168,10 +168,11 @@ export async function createSubAgentTools(
       
       // Ensure the name is valid for API requirements (only alphanumeric, underscore, hyphen)
       name = name.replace(/[^a-zA-Z0-9_-]/g, '_');
-      
-      // Support both regular name and @-prefixed name
-      tools[name] = tool;
-      logger.info(`[SubAgent] Registered sub-agent: ${name} (use as tool: ${name})`);
+
+      // Add subagent__ prefix
+      const prefixedName = `subagent__${name}`;
+      tools[prefixedName] = tool;
+      logger.info(`[SubAgent] Registered sub-agent: ${prefixedName}`);
       
       // Note: @ symbol is not allowed in tool names by the API
       // So we won't register @-prefixed versions anymore

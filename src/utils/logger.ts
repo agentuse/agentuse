@@ -370,7 +370,8 @@ class Logger {
       return `[${displayName}]`; // Fallback for non-TTY
     }
 
-    if (isSubAgent) {
+    // Check prefix-based detection first, then fall back to isSubAgent flag
+    if (toolName.startsWith('subagent__') || isSubAgent) {
       // Sub-agents: Magenta background, white text
       return chalk.bgMagenta.white.bold(` ${displayName} `);
     }
@@ -391,6 +392,9 @@ class Logger {
         const [provider, ...rest] = parts;
         return `${provider}:${rest.join('__')}`;
       }
+    }
+    if (toolName.startsWith('subagent__')) {
+      return toolName.substring(10); // Remove 'subagent__' prefix
     }
     return toolName;
   }
@@ -600,7 +604,7 @@ class Logger {
         this.spinner.start(spinnerWrite, () => this.currentToolLine);
       } else {
         // Fallback for non-TTY
-        const callType = isSubAgent ? 'Calling subagent:' : 'Calling tool:';
+        const callType = (name.startsWith('subagent__') || isSubAgent) ? 'Calling subagent:' : 'Calling tool:';
         const displayName = this.getToolDisplayName(name);
         this.info(`${callType} ${chalk.cyan(displayName)}${chalk.gray(argsDisplay)}`);
       }

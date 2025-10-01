@@ -295,7 +295,7 @@ function createResourceTools(connection: MCPConnection, resources: Resource[]): 
   }
   
   // Create a list resources tool
-  const listToolName = `${connection.name}_list_resources`;
+  const listToolName = `mcp__${connection.name}__list_resources`;
   tools[listToolName] = {
     description: `List all available resources from ${connection.name}`,
     inputSchema: z.object({}),
@@ -321,7 +321,7 @@ function createResourceTools(connection: MCPConnection, resources: Resource[]): 
   };
   
   // Create a read resource tool
-  const readToolName = `${connection.name}_read_resource`;
+  const readToolName = `mcp__${connection.name}__read_resource`;
   tools[readToolName] = {
     description: `Read a specific resource from ${connection.name}`,
     inputSchema: z.object({
@@ -427,7 +427,7 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
           continue;
         }
         
-        const prefixedName = `${connection.name}_${toolName}`;
+        const prefixedName = `mcp__${connection.name}__${toolName}`;
         
         // Wrap the tool execution like opencode does
         const originalExecute = tool.execute;
