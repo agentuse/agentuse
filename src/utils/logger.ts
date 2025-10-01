@@ -120,6 +120,225 @@ export function formatWarning(tool: string, operation: string, error: string, en
 //   SYSTEM = 'system',
 // }
 
+/**
+ * Truncation budget for tool argument formatting
+ */
+const TRUNCATION_BUDGET = {
+  // Never truncate these types
+  neverTruncate: {
+    filePath: true,
+    url: true,
+    id: true,
+  },
+
+  // Only truncate these
+  truncate: {
+    string: 100,       // Regular strings
+    object: {
+      maxKeys: 3,      // Show first 3 keys
+      perKey: 40,      // Chars per key-value in preview
+    },
+    array: {
+      maxItems: 3,     // Show first 3 items
+      perItem: 30,     // Chars per item in preview
+    }
+  },
+
+  // Important field names - never truncate
+  importantFields: new Set([
+    'id', 'key', 'page_id', 'parent_id', 'database_id',
+    'error', 'type', 'status', 'message', 'name', 'title'
+  ])
+} as const;
+
+/**
+ * Detect value type based on key name and content
+ */
+function detectValueType(key: string, value: string): 'filePath' | 'url' | 'id' | 'default' {
+  const keyLower = key.toLowerCase();
+
+  // File path detection
+  if (keyLower.includes('path') || keyLower.includes('file') || keyLower.includes('dir')) {
+    return 'filePath';
+  }
+
+  // URL detection
+  if (keyLower.includes('url') || keyLower.includes('uri') || keyLower.includes('link')) {
+    return 'url';
+  }
+
+  // ID detection
+  if (keyLower.endsWith('_id') || keyLower.endsWith('id') || key === 'key') {
+    return 'id';
+  }
+
+  return 'default';
+}
+
+/**
+ * Format a string value with context-aware truncation
+ */
+function formatStringValue(key: string, value: string): string {
+  // Check if it's an important field - never truncate
+  if (TRUNCATION_BUDGET.importantFields.has(key)) {
+    return `"${value}"`;
+  }
+
+  const valueType = detectValueType(key, value);
+
+  // Never truncate file paths, URLs, or IDs
+  if (valueType === 'filePath' || valueType === 'url' || valueType === 'id') {
+    return `"${value}"`;
+  }
+
+  // Truncate regular strings
+  const limit = TRUNCATION_BUDGET.truncate.string;
+  if (value.length <= limit) {
+    return `"${value}"`;
+  }
+
+  return `"${value.substring(0, limit)}..."`;
+}
+
+/**
+ * Format an object value showing structure preview
+ */
+function formatObjectValue(obj: Record<string, any>): string {
+  const keys = Object.keys(obj);
+
+  if (keys.length === 0) {
+    return '{}';
+  }
+
+  const maxKeys = TRUNCATION_BUDGET.truncate.object.maxKeys;
+  const keyBudget = TRUNCATION_BUDGET.truncate.object.perKey;
+
+  const preview = keys.slice(0, maxKeys).map(key => {
+    const value = obj[key];
+    let valueStr: string;
+
+    if (value === null || value === undefined) {
+      valueStr = String(value);
+    } else if (typeof value === 'string') {
+      valueStr = value.length > keyBudget
+        ? `"${value.substring(0, keyBudget)}..."`
+        : `"${value}"`;
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      valueStr = String(value);
+    } else if (Array.isArray(value)) {
+      valueStr = `[${value.length}]`;
+    } else if (typeof value === 'object') {
+      // Nested objects - show key count
+      const nestedKeys = Object.keys(value).length;
+      valueStr = nestedKeys > 0 ? `{...${nestedKeys}}` : '{}';
+    } else {
+      valueStr = String(value);
+    }
+
+    return `${key}: ${valueStr}`;
+  });
+
+  const remaining = keys.length - maxKeys;
+
+  if (remaining > 0) {
+    return `{${preview.join(', ')}, ... +${remaining}}`;
+  } else {
+    return `{${preview.join(', ')}}`;
+  }
+}
+
+/**
+ * Format an array value showing preview
+ */
+function formatArrayValue(arr: any[]): string {
+  if (arr.length === 0) {
+    return '[]';
+  }
+
+  const maxItems = TRUNCATION_BUDGET.truncate.array.maxItems;
+  const itemBudget = TRUNCATION_BUDGET.truncate.array.perItem;
+
+  const preview = arr.slice(0, maxItems).map(item => {
+    if (item === null || item === undefined) {
+      return String(item);
+    } else if (typeof item === 'string') {
+      return item.length > itemBudget
+        ? `"${item.substring(0, itemBudget)}..."`
+        : `"${item}"`;
+    } else if (typeof item === 'number' || typeof item === 'boolean') {
+      return String(item);
+    } else if (typeof item === 'object' && !Array.isArray(item)) {
+      // For objects in arrays, show compact preview
+      const keys = Object.keys(item);
+      if (keys.length > 0) {
+        const firstKey = keys[0];
+        const firstVal = item[firstKey];
+        const valStr = typeof firstVal === 'string' && firstVal.length > 15
+          ? `"${firstVal.substring(0, 15)}..."`
+          : JSON.stringify(firstVal);
+        return `{${firstKey}: ${valStr}}`;
+      }
+      return '{}';
+    } else if (Array.isArray(item)) {
+      return `[${item.length}]`;
+    } else {
+      return String(item);
+    }
+  });
+
+  const remaining = arr.length - maxItems;
+
+  if (remaining > 0) {
+    return `[${preview.join(', ')}, ... +${remaining} (${arr.length} total)]`;
+  } else {
+    return `[${preview.join(', ')}]`;
+  }
+}
+
+/**
+ * Format a single parameter (key-value pair)
+ */
+function formatParameter(key: string, value: any): string {
+  let valueStr: string;
+
+  if (value === null || value === undefined) {
+    valueStr = String(value);
+  } else if (typeof value === 'string') {
+    valueStr = formatStringValue(key, value);
+  } else if (Array.isArray(value)) {
+    valueStr = formatArrayValue(value);
+  } else if (typeof value === 'object') {
+    valueStr = formatObjectValue(value);
+  } else {
+    valueStr = String(value);
+  }
+
+  return `${key}: ${valueStr}`;
+}
+
+/**
+ * Format tool arguments with granular truncation
+ */
+function formatToolArgsGranular(args: any): string {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    if (args) {
+      // For non-object args, just stringify
+      const argsStr = JSON.stringify(args);
+      return argsStr.length > 100 ? `${argsStr.substring(0, 100)}...` : argsStr;
+    }
+    return '';
+  }
+
+  const entries = Object.entries(args);
+  if (entries.length === 0) {
+    return '';
+  }
+
+  const formatted = entries.map(([key, value]) => formatParameter(key, value));
+
+  return formatted.join(', ');
+}
+
 interface LoggerOptions {
   level?: LogLevel;
   enableDebug?: boolean;
@@ -346,35 +565,14 @@ class Logger {
         this.spinner.stop();
       }
 
-      // Format args concisely for display
+      // Format args with granular truncation
+      // (Full args shown in separate [DEBUG] line below if debug mode is enabled)
       let argsDisplay = '';
-      if (args && typeof args === 'object' && !Array.isArray(args)) {
-        const entries = Object.entries(args);
-        if (entries.length > 0) {
-          // Show key-value pairs, truncating long values
-          const MAX_VALUE_LENGTH = 50;
-          const params = entries.map(([key, value]) => {
-            let valueStr = '';
-            if (value === null || value === undefined) {
-              valueStr = String(value);
-            } else if (typeof value === 'string') {
-              valueStr = value.length > MAX_VALUE_LENGTH
-                ? `"${value.substring(0, MAX_VALUE_LENGTH)}..."`
-                : `"${value}"`;
-            } else if (typeof value === 'object') {
-              valueStr = Array.isArray(value) ? `[${value.length} items]` : '{...}';
-            } else {
-              valueStr = String(value);
-            }
-            return `${key}: ${valueStr}`;
-          }).join(', ');
-          argsDisplay = ` ${chalk.gray(params)}`;
+      if (args) {
+        const formatted = formatToolArgsGranular(args);
+        if (formatted) {
+          argsDisplay = ` ${chalk.gray(formatted)}`;
         }
-      } else if (args) {
-        // For non-object args, just stringify with length limit
-        const argsStr = JSON.stringify(args);
-        const displayStr = argsStr.length > 100 ? `${argsStr.substring(0, 100)}...` : argsStr;
-        argsDisplay = ` ${chalk.gray(displayStr)}`;
       }
 
       // Format with new TUI style
