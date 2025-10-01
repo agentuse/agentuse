@@ -22,6 +22,7 @@ export interface MCPConnection {
   client: Awaited<ReturnType<typeof experimental_createMCPClient>>;
   rawClient?: Client; // Raw MCP SDK client for resource access
   disallowedTools?: string[]; // List of disallowed tool names/patterns for this connection
+  preloadedTools?: Record<string, Tool>; // Cached tools for HTTP connections (loaded immediately)
 }
 
 /**
@@ -175,26 +176,42 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
         name,
         transport: transport,
       });
-      
+
+      // For HTTP transports, immediately fetch tools to ensure connection is ready
+      // This follows the official AI SDK pattern for MCP clients
+      let preloadedTools: Record<string, Tool> | undefined = undefined;
+      if ('url' in config) {
+        logger.debug(`[MCP] HTTP connection detected, fetching tools immediately for: ${name}`);
+        try {
+          preloadedTools = await client.tools();
+          logger.debug(`[MCP] HTTP connection verified and ${Object.keys(preloadedTools).length} tools loaded for: ${name}`);
+        } catch (error) {
+          logger.warn(`[MCP] Failed to fetch tools immediately for ${name}: ${error instanceof Error ? error.message : String(error)}`);
+          // Re-throw to be caught by outer try-catch
+          throw error;
+        }
+      }
+
       // Also create a raw MCP SDK client for resource access
       // We need a separate transport instance for the raw client
       const rawTransport = createTransport(name, config, debug, basePath);
-      
+
       const rawClient = new Client({
         name: `${name}-raw`,
         version: '1.0.0',
       }, {
         capabilities: {}
       });
-      
+
       await rawClient.connect(rawTransport);
-      
+
       logger.info(`Connected to MCP server: ${name}`);
-      
+
       return {
         name,
         client,
         rawClient,
+        ...(preloadedTools && { preloadedTools }),
         ...(config.disallowedTools && { disallowedTools: config.disallowedTools })
       };
     } catch (error) {
@@ -416,12 +433,14 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
     
     // First, try to get regular tools
     try {
-      // Use AI SDK's built-in tools() method - this handles all the complexity
-      const clientTools = await connection.client.tools();
+      // If tools were preloaded during connection (HTTP), use them
+      // Otherwise, fetch them now (stdio)
+      const clientTools = connection.preloadedTools || await connection.client.tools();
 
       // Log what tools were retrieved
       const toolNames = Object.keys(clientTools);
-      logger.info(`[MCP] Retrieved ${toolNames.length} tools from ${connection.name}${toolNames.length > 0 ? ': ' + toolNames.join(', ') : ''}`);
+      const source = connection.preloadedTools ? '(preloaded)' : '(fetched)';
+      logger.info(`[MCP] Retrieved ${toolNames.length} tools from ${connection.name} ${source}${toolNames.length > 0 ? ': ' + toolNames.join(', ') : ''}`);
 
       // Add tools with prefixed names to avoid conflicts and wrap execution (like opencode)
       for (const [toolName, tool] of Object.entries(clientTools)) {
