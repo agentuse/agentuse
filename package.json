@@ -65,6 +65,7 @@
     "esbuild-wasm": "0.23.1",
     "glob": "^11.0.3",
     "gray-matter": "^4.0.3",
+    "ora": "^9.0.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {

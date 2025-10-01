@@ -1,73 +1,11 @@
 import chalk from 'chalk';
-import readline from 'readline';
+import ora, { type Ora } from 'ora';
 
 export enum LogLevel {
   DEBUG = 0,
   INFO = 1,
   WARN = 2,
   ERROR = 3,
-}
-
-/**
- * Simple spinner for animating in-progress operations
- */
-class Spinner {
-  private frames = ['⋮', '⋰', '⋯', '⋱'];
-  private currentFrame = 0;
-  private interval: NodeJS.Timeout | null = null;
-  private isSpinning = false;
-  private writeFn?: (line: string) => void;
-  private getLineFn?: () => string;
-  private baseLine: string | null = null;
-
-  start(writeFn: (line: string) => void, getLineFn: () => string) {
-    if (this.isSpinning) {
-      return;
-    }
-
-    this.writeFn = writeFn;
-    this.getLineFn = getLineFn;
-
-    const baseLine = this.getLineFn?.();
-    if (!this.writeFn || !baseLine) {
-      this.writeFn = undefined;
-      this.getLineFn = undefined;
-      return;
-    }
-    this.baseLine = baseLine;
-    this.isSpinning = true;
-    this.interval = setInterval(() => {
-      if (!this.writeFn || !this.baseLine) {
-        return;
-      }
-
-      const frame = this.frames[this.currentFrame];
-      this.currentFrame = (this.currentFrame + 1) % this.frames.length;
-      const animatedLine = this.baseLine.replace(/^⋮/, frame);
-      this.writeFn(animatedLine);
-    }, 120);
-  }
-
-  stop() {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-
-    if (this.isSpinning && this.writeFn && this.baseLine) {
-      this.writeFn(this.baseLine);
-    }
-
-    this.writeFn = undefined;
-    this.getLineFn = undefined;
-    this.baseLine = null;
-    this.isSpinning = false;
-    this.currentFrame = 0;
-  }
-
-  isActive(): boolean {
-    return this.isSpinning;
-  }
 }
 
 /**
@@ -154,7 +92,7 @@ const TRUNCATION_BUDGET = {
 /**
  * Detect value type based on key name and content
  */
-function detectValueType(key: string, value: string): 'filePath' | 'url' | 'id' | 'default' {
+function detectValueType(key: string, _value: string): 'filePath' | 'url' | 'id' | 'default' {
   const keyLower = key.toLowerCase();
 
   // File path detection
@@ -350,14 +288,13 @@ class Logger {
   private captureBuffer: string[] = [];
   private isCapturing: boolean = false;
   private useTUI: boolean;
-  private spinner: Spinner;
-  private currentToolLine = '';
+  private spinner: Ora | null = null;
+  private spinnerStoppedByOutput = false;
 
   constructor(options: LoggerOptions = {}) {
     this.level = options.level ?? LogLevel.INFO;
     this.enableDebug = options.enableDebug ?? (process.env.DEBUG === 'true' || process.env.DEBUG === '1');
     this.useTUI = process.stdout.isTTY && this.level <= LogLevel.INFO;
-    this.spinner = new Spinner();
   }
 
   /**
@@ -443,6 +380,13 @@ class Logger {
   }
 
   response(message: string) {
+    // Stop spinner on first response output to avoid conflicts
+    if (this.spinner?.isSpinning && !this.spinnerStoppedByOutput) {
+      // Add static symbol when stopping
+      this.spinner.stopAndPersist({ symbol: '⋮' });
+      this.spinnerStoppedByOutput = true;
+    }
+
     // For streaming responses, don't add newline
     this.capture(message);
     process.stdout.write(message);
@@ -456,11 +400,17 @@ class Logger {
   }
 
   error(message: string, error?: Error) {
+    // Stop spinner before writing to avoid cursor conflicts
+    if (this.spinner?.isSpinning) {
+      this.spinner.stopAndPersist({ symbol: '⋮' });
+      this.spinner = null;
+    }
+
     const prefix = this.getAgentPrefix();
     const badge = this.useTUI ? chalk.bgRed.white.bold(' ERROR ') : '[ERROR]';
     const errorMessage = error ? `${message}: ${error.message}` : message;
     const formattedMessage = this.useTUI
-      ? `${prefix} ${badge} ${errorMessage}`
+      ? `${prefix}  ${badge} ${errorMessage}`
       : `${badge} ${errorMessage}`;
 
     this.writeToStderr(chalk.red(formattedMessage));
@@ -471,10 +421,16 @@ class Logger {
 
   warn(message: string) {
     if (this.level <= LogLevel.WARN) {
+      // Stop spinner before writing to avoid cursor conflicts
+      if (this.spinner?.isSpinning) {
+        this.spinner.stopAndPersist({ symbol: '⋮' });
+        this.spinner = null;
+      }
+
       const prefix = this.getAgentPrefix();
       const badge = this.useTUI ? chalk.bgYellow.black.bold(' WARN ') : '[WARN]';
       const formattedMessage = this.useTUI
-        ? `${prefix} ${badge} ${message}`
+        ? `${prefix}  ${badge} ${message}`
         : `${badge} ${message}`;
 
       this.writeToStderr(chalk.yellow(formattedMessage));
@@ -483,10 +439,16 @@ class Logger {
 
   info(message: string) {
     if (this.level <= LogLevel.INFO) {
+      // Stop spinner before writing to avoid cursor conflicts
+      if (this.spinner?.isSpinning) {
+        this.spinner.stopAndPersist({ symbol: '⋮' });
+        this.spinner = null;
+      }
+
       const prefix = this.getAgentPrefix();
       const badge = this.useTUI ? chalk.bgBlue.white.bold(' INFO ') : '[INFO]';
       const formattedMessage = this.useTUI
-        ? `${prefix} ${badge} ${message}`
+        ? `${prefix}  ${badge} ${message}`
         : `\n${badge} ${message}`;
 
       this.writeToStderr(chalk.blue(formattedMessage));
@@ -512,8 +474,13 @@ class Logger {
    * Log tool result with formatting and optional timing/status
    */
   toolResult(result: string, options?: { duration?: number; success?: boolean; tokens?: number }) {
-    // Spinner is disabled, no cleanup needed
-    this.spinner.stop();
+    // Stop spinner and persist the line
+    if (this.spinner?.isSpinning) {
+      // Add static symbol when stopping
+      this.spinner.stopAndPersist({ symbol: '⋮' });
+      this.spinner = null;
+    }
+    this.spinnerStoppedByOutput = false;
 
     if (!this.useTUI) {
       // Fallback for non-TTY
@@ -566,9 +533,15 @@ class Logger {
   tool(name: string, args?: unknown, result?: unknown, isSubAgent?: boolean) {
     // Only show when tool is being called, not when returning results
     if (args !== undefined) {
-      if (this.useTUI && this.spinner.isActive()) {
-        this.spinner.stop();
+      // Stop any existing spinner and persist the line
+      if (this.spinner?.isSpinning) {
+        // Add static symbol when stopping
+        this.spinner.stopAndPersist({ symbol: '⋮' });
+        this.spinner = null;
       }
+
+      // Reset flag for new tool execution
+      this.spinnerStoppedByOutput = false;
 
       // Format args with granular truncation
       // (Full args shown in separate [DEBUG] line below if debug mode is enabled)
@@ -582,27 +555,30 @@ class Logger {
 
       // Format with new TUI style
       if (this.useTUI) {
-        const prefix = this.getAgentPrefix();
         const badge = this.formatToolBadge(name, isSubAgent);
-        this.currentToolLine = `${prefix} ${badge}${argsDisplay}`;
+        let text = ` ${badge}${argsDisplay}`;
 
-        // Write line without animation
-        process.stderr.write(this.currentToolLine + '\n');
-        this.capture(this.currentToolLine + '\n');
+        // Truncate to prevent terminal wrapping (which causes duplicate lines)
+        // Symbol (1) + space (2) + text = total line length
+        // Leave room for terminal width variations (use 140 chars as safe limit)
+        const MAX_LINE_LENGTH = 140;
+        if (text.length > MAX_LINE_LENGTH) {
+          text = text.substring(0, MAX_LINE_LENGTH - 3) + '...';
+        }
 
-        const spinnerWrite = (line: string) => {
-          if (!process.stderr.isTTY) {
-            return;
-          }
-          readline.moveCursor(process.stderr, 0, -1);
-          readline.cursorTo(process.stderr, 0);
-          process.stderr.write(line);
-          readline.clearLine(process.stderr, 1);
-          readline.cursorTo(process.stderr, 0);
-          readline.moveCursor(process.stderr, 0, 1);
-        };
+        // Create and start ora spinner
+        this.spinner = ora({
+          text,
+          stream: process.stderr,
+          spinner: {
+            interval: 120,
+            frames: ['⋮', '⋰', '⋯', '⋱']
+          },
+          isEnabled: this.useTUI
+        }).start();
 
-        this.spinner.start(spinnerWrite, () => this.currentToolLine);
+        // Capture for testing/debugging (include prefix for logging)
+        this.capture(`${this.getAgentPrefix()}${text}\n`);
       } else {
         // Fallback for non-TTY
         const callType = (name.startsWith('subagent__') || isSubAgent) ? 'Calling subagent:' : 'Calling tool:';
