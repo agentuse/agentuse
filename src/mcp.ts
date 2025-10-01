@@ -418,7 +418,11 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
     try {
       // Use AI SDK's built-in tools() method - this handles all the complexity
       const clientTools = await connection.client.tools();
-      
+
+      // Log what tools were retrieved
+      const toolNames = Object.keys(clientTools);
+      logger.info(`[MCP] Retrieved ${toolNames.length} tools from ${connection.name}${toolNames.length > 0 ? ': ' + toolNames.join(', ') : ''}`);
+
       // Add tools with prefixed names to avoid conflicts and wrap execution (like opencode)
       for (const [toolName, tool] of Object.entries(clientTools)) {
         // Check if this tool is disallowed
@@ -479,7 +483,8 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
         connectionTools[prefixedName] = wrappedTool;
       }
     } catch (error) {
-      logger.debug(`Server ${connection.name} does not support tools: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(`[MCP] Failed to get tools from ${connection.name}: ${error instanceof Error ? error.message : String(error)}`);
+      logger.debug(`[MCP] Full error for ${connection.name}: ${error instanceof Error ? error.stack : String(error)}`);
       // Don't return yet - try to get resources
     }
     
@@ -509,6 +514,15 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
   for (const connectionTools of toolsArrays) {
     Object.assign(tools, connectionTools);
   }
-  
+
+  // Log final tool count
+  const toolCount = Object.keys(tools).length;
+  if (toolCount > 0) {
+    logger.info(`[MCP] Total tools loaded: ${toolCount}`);
+    logger.debug(`[MCP] Tool names: ${Object.keys(tools).join(', ')}`);
+  } else {
+    logger.warn(`[MCP] No tools were loaded from any MCP server`);
+  }
+
   return tools;
 }
