@@ -290,6 +290,18 @@ program
           logger.debug(`[Main] Passing agent file path to runner: ${agentFilePath}`);
         }
         result = await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.debug, agentFilePath);
+
+        if (!result.hasTextOutput) {
+          logger.warn('Agent completed without producing a final response.');
+        }
+
+        if (result.finishReason && result.finishReason !== 'stop') {
+          if (result.finishReason === 'unknown') {
+            logger.warn('Agent finished without reporting a reason; output may be incomplete.');
+          } else {
+            logger.warn(`Agent stopped with finish reason: ${result.finishReason}. Output may be incomplete.`);
+          }
+        }
       } catch (error: unknown) {
         if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
           logger.error(`Agent execution timed out after ${options.timeout} seconds`);
@@ -321,7 +333,10 @@ program
               duration,
               tokens: result.usage?.totalTokens,
               toolCalls: result.toolCallCount || 0,
-              ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces })
+              ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
+              ...(result.finishReason && { finishReason: result.finishReason }),
+              ...(result.finishReasons && { finishReasons: result.finishReasons }),
+              hasTextOutput: result.hasTextOutput
             },
             isSubAgent: false,
             consoleOutput

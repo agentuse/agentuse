@@ -54,7 +54,7 @@ export default plugin;
     // Execute the plugin
     const event: AgentCompleteEvent = {
       agent: { name: 'test-agent', model: 'test-model' },
-      result: { text: 'test result', duration: 1.5, toolCalls: 2 },
+      result: { text: 'test result', duration: 1.5, toolCalls: 2, hasTextOutput: true },
       isSubAgent: false
     };
     
@@ -89,7 +89,7 @@ export default plugin;
     // Execute the plugin
     const event: AgentCompleteEvent = {
       agent: { name: 'js-test-agent', model: 'test-model' },
-      result: { text: 'test result', duration: 0.5, toolCalls: 1 },
+      result: { text: 'test result', duration: 0.5, toolCalls: 1, hasTextOutput: true },
       isSubAgent: false
     };
     
@@ -165,7 +165,7 @@ export default plugin;
     // Execute both plugins
     const event: AgentCompleteEvent = {
       agent: { name: 'multi-test', model: 'test-model' },
-      result: { text: 'test', duration: 1, toolCalls: 0 },
+      result: { text: 'test', duration: 1, toolCalls: 0, hasTextOutput: true },
       isSubAgent: false
     };
     

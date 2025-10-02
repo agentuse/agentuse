@@ -222,7 +222,8 @@ describe('PluginManager', () => {
           text: 'Test result',
           duration: 1.5,
           tokens: 100,
-          toolCalls: 3
+          toolCalls: 3,
+          hasTextOutput: true
         },
         isSubAgent: false
       };
@@ -249,7 +250,7 @@ describe('PluginManager', () => {
 
       const event: AgentCompleteEvent = {
         agent: { name: 'test', model: 'test' },
-        result: { text: '', duration: 0, toolCalls: 0 },
+        result: { text: '', duration: 0, toolCalls: 0, hasTextOutput: false },
         isSubAgent: false
       };
 
@@ -269,7 +270,7 @@ describe('PluginManager', () => {
 
       const event: AgentCompleteEvent = {
         agent: { name: 'test', model: 'test' },
-        result: { text: '', duration: 0, toolCalls: 0 },
+        result: { text: '', duration: 0, toolCalls: 0, hasTextOutput: false },
         isSubAgent: false
       };
 
@@ -302,7 +303,8 @@ describe('PluginManager', () => {
           text: 'Complete result text',
           duration: 2.5,
           tokens: 250,
-          toolCalls: 5
+          toolCalls: 5,
+          hasTextOutput: true
         },
         isSubAgent: true
       };
@@ -374,7 +376,7 @@ describe('PluginManager', () => {
         if (plugin) {
           const event: AgentCompleteEvent = {
             agent: { name: 'test-agent', model: 'test' },
-            result: { text: 'test', duration: 1, toolCalls: 0 },
+            result: { text: 'test', duration: 1, toolCalls: 0, hasTextOutput: true },
             isSubAgent: false
           };
           
@@ -484,7 +486,7 @@ describe('PluginManager', () => {
 
       const event: AgentCompleteEvent = {
         agent: { name: 'test', model: 'test' },
-        result: { text: '', duration: 0, toolCalls: 0 },
+        result: { text: '', duration: 0, toolCalls: 0, hasTextOutput: false },
         isSubAgent: false
       };
 
@@ -498,7 +500,7 @@ describe('PluginManager', () => {
     test('should ensure event data immutability between plugins', async () => {
       const originalEvent: AgentCompleteEvent = {
         agent: { name: 'test', model: 'test' },
-        result: { text: 'original', duration: 1, toolCalls: 0 },
+        result: { text: 'original', duration: 1, toolCalls: 0, hasTextOutput: true },
         isSubAgent: false
       };
 
@@ -534,7 +536,7 @@ describe('PluginManager', () => {
 
       const event: AgentCompleteEvent = {
         agent: { name: 'test', model: 'test' },
-        result: { text: '', duration: 0, toolCalls: 0 },
+        result: { text: '', duration: 0, toolCalls: 0, hasTextOutput: false },
         isSubAgent: false
       };
 
@@ -556,7 +558,7 @@ describe('PluginManager', () => {
 
       const event: AgentCompleteEvent = {
         agent: { name: 'test', model: 'test' },
-        result: { text: '', duration: 0, toolCalls: 0 },
+        result: { text: '', duration: 0, toolCalls: 0, hasTextOutput: false },
         isSubAgent: false
       };
 
