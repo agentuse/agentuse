@@ -443,10 +443,11 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
       logger.info(`[MCP] Retrieved ${toolNames.length} tools from ${connection.name} ${source}${toolNames.length > 0 ? ': ' + toolNames.join(', ') : ''}`);
 
       // Add tools with prefixed names to avoid conflicts and wrap execution (like opencode)
+      const disallowedTools: string[] = [];
       for (const [toolName, tool] of Object.entries(clientTools)) {
         // Check if this tool is disallowed
         if (isToolDisallowed(toolName, connection.disallowedTools)) {
-          logger.info(`[MCP] Tool '${toolName}' is disallowed for server ${connection.name}`);
+          disallowedTools.push(toolName);
           continue;
         }
         
@@ -500,6 +501,10 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
         };
         
         connectionTools[prefixedName] = wrappedTool;
+      }
+      if (disallowedTools.length > 0) {
+        const toolsList = disallowedTools.map(name => `'${name}'`).join(', ');
+        logger.info(`[MCP] Tools disallowed for server ${connection.name}: ${toolsList}`);
       }
     } catch (error) {
       logger.warn(`[MCP] Failed to get tools from ${connection.name}: ${error instanceof Error ? error.message : String(error)}`);
