@@ -21,6 +21,30 @@ interface ModelConfig {
   envSuffix?: string;
 }
 
+function resolveBaseURL(
+  config: ModelConfig,
+  provider: 'openai' | 'anthropic'
+): string | undefined {
+  const readEnv = (name: string | undefined) => {
+    if (!name) return undefined;
+    const value = process.env[name];
+    return value && value.trim() !== '' ? value : undefined;
+  };
+
+  if (config.envVar) {
+    const envVarBase = readEnv(`${config.envVar}_BASE_URL`);
+    if (envVarBase) return envVarBase;
+  }
+
+  if (config.envSuffix) {
+    const suffix = `_${config.envSuffix}`;
+    const suffixBase = readEnv(`${provider.toUpperCase()}_BASE_URL${suffix}`);
+    if (suffixBase) return suffixBase;
+  }
+
+  return readEnv(`${provider.toUpperCase()}_BASE_URL`);
+}
+
 /**
  * Parse model string to extract provider, model name, and optional env suffix
  * Format: "provider:model[:env]"
@@ -57,14 +81,19 @@ export async function createModel(modelString: string) {
   const config = parseModelConfig(modelString);
   
   if (config.provider === 'anthropic') {
+    const baseURL = resolveBaseURL(config, 'anthropic');
     // Check for OAuth token first (handles refresh automatically)
     const oauthToken = await AnthropicAuth.access();
     if (oauthToken) {
       logger.info('Using Anthropic OAuth token for authentication');
       // For OAuth, we need to use a custom fetch to set Bearer token
-      const anthropic = createAnthropic({ 
+      const anthropicOptions: {
+        apiKey: string;
+        baseURL?: string;
+        fetch: typeof fetch;
+      } = {
         apiKey: '', // Empty API key for OAuth
-        fetch: (async (input: any, init: any) => {
+        fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
           const access = await AnthropicAuth.access();
           const headers: Record<string, string> = {
             ...((init?.headers || {}) as Record<string, string>),
@@ -79,8 +108,14 @@ export async function createModel(modelString: string) {
             ...init,
             headers,
           });
-        }) as any,
-      });
+        },
+      };
+
+      if (baseURL) {
+        anthropicOptions.baseURL = baseURL;
+      }
+
+      const anthropic = createAnthropic(anthropicOptions);
       return anthropic.chat(config.modelName);
     }
     
@@ -121,7 +156,11 @@ export async function createModel(modelString: string) {
     if (!apiKey) {
       throw new Error('Failed to obtain API key for Anthropic');
     }
-    const anthropic = createAnthropic({ apiKey });
+    const anthropicOptions: { apiKey: string; baseURL?: string } = { apiKey };
+    if (baseURL) {
+      anthropicOptions.baseURL = baseURL;
+    }
+    const anthropic = createAnthropic(anthropicOptions);
     return anthropic.chat(config.modelName);
     
   } else if (config.provider === 'openai') {
@@ -162,7 +201,12 @@ export async function createModel(modelString: string) {
     if (!apiKey) {
       throw new Error('Failed to obtain API key for OpenAI');
     }
-    const openai = createOpenAI({ apiKey });
+    const baseURL = resolveBaseURL(config, 'openai');
+    const openaiOptions: { apiKey: string; baseURL?: string } = { apiKey };
+    if (baseURL) {
+      openaiOptions.baseURL = baseURL;
+    }
+    const openai = createOpenAI(openaiOptions);
     return openai.chat(config.modelName);
     
   } else if (config.provider === 'openrouter') {
