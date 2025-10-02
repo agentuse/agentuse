@@ -325,7 +325,48 @@ export async function* executeAgentCore(
     stream = await createStream();
   } catch (error: any) {
     // Handle initial stream creation errors
-    logger.error('Failed to create stream:', error);
+    const errorMessage = error?.message || String(error);
+    const errorLower = errorMessage.toLowerCase();
+
+    // Check for token limit errors
+    if (
+      errorLower.includes('context_length_exceeded') ||
+      errorLower.includes('context length') ||
+      errorLower.includes('maximum context') ||
+      errorLower.includes('token limit') ||
+      errorLower.includes('context window') ||
+      errorLower.includes('too many tokens')
+    ) {
+      // Check if this is initial failure (no tool calls yet) vs mid-conversation
+      const isInitialFailure = stepCount === 0;
+
+      logger.error(isInitialFailure ? `
+⚠️  INITIAL PROMPT TOO LARGE
+
+Your initial prompt exceeds the model's context limit.
+
+Suggestions:
+- Break your task into smaller sub-agents (see docs on subagents)
+- Reduce the size of your initial prompt/instructions
+- Use a model with a larger context window (e.g., claude-sonnet-4-20250514)
+- Split your task into multiple sequential steps
+
+Error: ${errorMessage}` : `
+⚠️  CONTEXT LIMIT EXCEEDED
+
+The conversation history has grown too large for the model.
+
+Suggestions:
+- Break your task into smaller sub-agents (see docs on subagents)
+- Lower the compaction threshold: COMPACTION_THRESHOLD=0.6 (current: 0.7)
+- Keep fewer recent messages: COMPACTION_KEEP_RECENT=2 (current: 3)
+- Use a model with a larger context window
+
+Error: ${errorMessage}`);
+    } else {
+      logger.error('Failed to create stream:', error);
+    }
+
     yield { type: 'error', error };
     return;
   }
@@ -476,7 +517,17 @@ export async function* executeAgentCore(
           // Log finish reason for debugging and warnings
           const finishReason = chunk.finishReason;
           if (finishReason === 'length') {
-            logger.warn(`⚠️  Output length limit reached. The response was truncated.`);
+            logger.warn(`
+⚠️  OUTPUT LENGTH LIMIT REACHED
+
+The model reached its maximum output token limit. The response was truncated.
+
+Suggestions:
+- Break your task into smaller sub-agents (see docs on subagents)
+- Use a model with a larger output limit
+- Ask the agent to be more concise in its responses
+
+Current step: ${stepCount}/${options.maxSteps}`);
           } else if (finishReason === 'content-filter') {
             logger.warn(`⚠️  Content filter triggered. Response may be incomplete.`);
           } else if (finishReason === 'error') {
@@ -521,6 +572,35 @@ export async function* executeAgentCore(
       }
     }
   } catch (error: any) {
+    // Check for token limit errors first
+    const errorMessage = error?.message || String(error);
+    const errorLower = errorMessage.toLowerCase();
+
+    if (
+      errorLower.includes('context_length_exceeded') ||
+      errorLower.includes('context length') ||
+      errorLower.includes('maximum context') ||
+      errorLower.includes('token limit') ||
+      errorLower.includes('context window') ||
+      errorLower.includes('too many tokens')
+    ) {
+      logger.error(`
+⚠️  CONTEXT LIMIT EXCEEDED
+
+The conversation history has grown too large for the model.
+
+Suggestions:
+- Break your task into smaller sub-agents (see docs on subagents)
+- Lower the compaction threshold: COMPACTION_THRESHOLD=0.6 (current: 0.7)
+- Keep fewer recent messages: COMPACTION_KEEP_RECENT=2 (current: 3)
+- Use a model with a larger context window
+
+Current step: ${stepCount}
+Error: ${errorMessage}`);
+      yield { type: 'error', error };
+      return;
+    }
+
     // Handle AI SDK errors gracefully
     if (error.name === 'AI_NoSuchToolError' || error.message?.includes('unavailable tool')) {
       // Extract tool name from the error message
