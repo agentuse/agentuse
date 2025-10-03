@@ -36,6 +36,8 @@ const MCPServerSchema = z.union([
 const AgentSchema = z.object({
   model: z.string(),
   description: z.string().optional(),
+  timeout: z.number().positive().optional(),
+  maxSteps: z.number().positive().int().optional(),
   openai: z.object({
     reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
     textVerbosity: z.enum(['low', 'medium', 'high']).optional()

@@ -60,14 +60,20 @@ model: anthropic:claude-sonnet-4-0:dev  # Uses ANTHROPIC_API_KEY_DEV
 ## Behavior Control
 
 <ParamField path="MAX_STEPS" type="number">
-  Override the maximum number of conversation steps an agent can take.
-  Default: 1000
-  
+  Override the maximum number of conversation steps (LLM generation cycles) an agent can take.
+  Default: 100
+
   ```bash
-  export MAX_STEPS="2000"
+  export MAX_STEPS="200"
   ```
-  
-  This prevents infinite loops and controls agent execution time.
+
+  **Precedence:** This environment variable overrides the `maxSteps` value in agent YAML files.
+
+  This prevents infinite loops and controls cost by limiting the number of LLM calls. Each step typically involves an LLM generation with potential tool calls.
+
+  <Note>
+    The default was reduced from 1000 to 100 for better cost protection. Most agents complete successfully within 100 steps.
+  </Note>
 </ParamField>
 
 ## Context Management

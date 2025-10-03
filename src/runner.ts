@@ -13,7 +13,7 @@ import type { ToolCallTrace } from './plugin/types';
 
 // Constants
 const MAX_RETRIES = 3;
-const DEFAULT_MAX_STEPS = 1000;
+const DEFAULT_MAX_STEPS = 100;
 
 /**
  * Build autonomous agent system prompt
@@ -832,15 +832,17 @@ function parseToolResult(chunk: any): string {
  * @param startTime Optional start time for timing
  * @param verbose Enable verbose logging
  * @param agentFilePath Optional path to the agent file for resolving sub-agent paths
+ * @param cliMaxSteps Optional CLI override for max steps
  */
 export async function runAgent(
-  agent: ParsedAgent, 
-  mcpClients: MCPConnection[], 
-  _debug: boolean = false, 
-  abortSignal?: AbortSignal, 
-  startTime?: number, 
+  agent: ParsedAgent,
+  mcpClients: MCPConnection[],
+  _debug: boolean = false,
+  abortSignal?: AbortSignal,
+  startTime?: number,
   verbose: boolean = false,
-  agentFilePath?: string
+  agentFilePath?: string,
+  cliMaxSteps?: number
 ): Promise<RunAgentResult> {
   try {
     // Check if we're using OAuth (for system prompt modification)
@@ -864,9 +866,10 @@ export async function runAgent(
 
     // Merge all tools
     const tools = { ...mcpTools, ...subAgentTools };
-    
-    const maxSteps = parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS));
-    
+
+    // Precedence: CLI > Agent YAML > Default
+    const maxSteps = cliMaxSteps ?? agent.config.maxSteps ?? DEFAULT_MAX_STEPS;
+
     logger.info(`Running agent with model: ${agent.config.model}`);
     if (Object.keys(tools).length > 0) {
       logger.info(`Available tools: ${Object.keys(tools).join(', ')}`);

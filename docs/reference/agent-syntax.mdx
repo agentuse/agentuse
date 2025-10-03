@@ -49,6 +49,42 @@ Additional instructions or context.
 
 ### Optional Fields
 
+<ParamField path="timeout" type="number" required={false}>
+  Maximum execution time in seconds before the agent is terminated.
+  Default: 300 (5 minutes)
+
+  This prevents runaway agents and provides a safety ceiling for execution time.
+
+  **Precedence:** CLI `--timeout` flag overrides this value.
+
+  ```yaml
+  timeout: 600  # 10 minutes
+  timeout: 1800  # 30 minutes
+  ```
+
+  <Note>
+    Choose a timeout appropriate for your agent's expected workload. Simple tasks may complete in seconds, while complex multi-step workflows may need 10-30 minutes.
+  </Note>
+</ParamField>
+
+<ParamField path="maxSteps" type="number" required={false}>
+  Maximum number of LLM generation steps (tool call cycles) the agent can take.
+  Default: 100
+
+  This prevents infinite loops and controls cost by limiting the number of LLM calls.
+
+  **Precedence:** `MAX_STEPS` environment variable overrides this value.
+
+  ```yaml
+  maxSteps: 50   # Conservative limit for simple tasks
+  maxSteps: 200  # Higher limit for complex workflows
+  ```
+
+  <Warning>
+    Each step typically involves an LLM call. Higher values increase potential cost if the agent gets stuck in a loop.
+  </Warning>
+</ParamField>
+
 <ParamField path="description" type="string" required={false}>
   A brief description of what the agent does.
 
@@ -381,6 +417,8 @@ Output: "4"
 ---
 model: openai:gpt-5
 description: "Multi-capability AI assistant with file, GitHub, and research capabilities"
+timeout: 900
+maxSteps: 150
 openai:
   reasoningEffort: high
   textVerbosity: medium

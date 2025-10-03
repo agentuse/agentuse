@@ -110,10 +110,16 @@ program
         logger.info(`Starting AgentUse at ${new Date().toISOString()}`);
       }
       
-      // Parse timeout value
-      const timeoutMs = parseInt(options.timeout) * 1000;
-      if (isNaN(timeoutMs) || timeoutMs <= 0) {
+      // Parse CLI timeout value (will be used as override later)
+      const cliTimeoutSeconds = parseInt(options.timeout);
+      if (isNaN(cliTimeoutSeconds) || cliTimeoutSeconds <= 0) {
         throw new Error('Invalid timeout value. Must be a positive number of seconds.');
+      }
+
+      // Parse MAX_STEPS env var if present (CLI override)
+      const cliMaxSteps = process.env.MAX_STEPS ? parseInt(process.env.MAX_STEPS) : undefined;
+      if (cliMaxSteps !== undefined && (isNaN(cliMaxSteps) || cliMaxSteps <= 0)) {
+        throw new Error('Invalid MAX_STEPS value. Must be a positive integer.');
       }
       
       // Change working directory first if -C/--directory was specified
@@ -235,6 +241,13 @@ program
         }
       }
 
+      // Determine effective timeout (precedence: CLI > agent YAML > default)
+      const DEFAULT_TIMEOUT = 300;
+      const effectiveTimeoutSeconds = options.timeout !== '300'
+        ? cliTimeoutSeconds  // CLI override
+        : (agent.config.timeout ?? DEFAULT_TIMEOUT);  // Agent YAML or default
+      const timeoutMs = effectiveTimeoutSeconds * 1000;
+
       // Connect to MCP servers if configured
       // Pass the agent file's directory as base path for resolving relative paths
       // Since we've already changed directory, resolve the file path from the new CWD
@@ -289,7 +302,7 @@ program
         if (agentFilePath && options.debug) {
           logger.debug(`[Main] Passing agent file path to runner: ${agentFilePath}`);
         }
-        result = await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.debug, agentFilePath);
+        result = await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.debug, agentFilePath, cliMaxSteps);
 
         if (!result.hasTextOutput) {
           logger.warn('Agent completed without producing a final response.');
@@ -307,7 +320,7 @@ program
           logger.error(`
 ⚠️  EXECUTION TIMEOUT
 
-Agent execution timed out after ${options.timeout} seconds (${Math.floor(parseInt(options.timeout) / 60)} minutes).
+Agent execution timed out after ${effectiveTimeoutSeconds} seconds (${Math.floor(effectiveTimeoutSeconds / 60)} minutes).
 
 The task may require more time to complete. Try one of these solutions:
 
@@ -315,11 +328,14 @@ The task may require more time to complete. Try one of these solutions:
    agentuse run --timeout 600 ${file}  (10 minutes)
    agentuse run --timeout 1200 ${file}  (20 minutes)
 
-2. Break your task into smaller sub-agents (see docs on subagents)
+2. Add timeout to agent YAML:
+   timeout: 600  # 10 minutes
 
-3. Optimize your agent to use fewer tool calls
+3. Break your task into smaller sub-agents (see docs on subagents)
 
-Current timeout: ${options.timeout}s`);
+4. Optimize your agent to use fewer tool calls
+
+Current timeout: ${effectiveTimeoutSeconds}s`);
           process.exit(1);
         }
         throw error;
