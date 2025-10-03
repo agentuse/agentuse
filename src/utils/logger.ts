@@ -564,6 +564,11 @@ class Logger {
     this.writeToStderr(chalk.magenta(`[SYSTEM] ${message}`));
   }
 
+  /**
+   * Start LLM spinner in TUI mode or log a message in non-TUI mode
+   * Displays the model name and starts tracking for first-token latency
+   * @param model - The name of the LLM model being called (e.g., "claude-sonnet-4")
+   */
   llmStart(model: string) {
     // Stop any existing spinner
     if (this.spinner?.isSpinning) {
@@ -604,6 +609,12 @@ class Logger {
 
   }
 
+  /**
+   * Update LLM spinner with first-token latency
+   * Called after receiving the first token from the LLM to display response time
+   * @param model - The name of the LLM model
+   * @param latencyMs - Time in milliseconds from request start to first token
+   */
   llmFirstToken(model: string, latencyMs: number) {
     if (!this.spinner?.isSpinning || this.activeLlmModel !== model) {
       return;

@@ -13,7 +13,16 @@ const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
  * Get the maximum sub-agent nesting depth from environment or use default
  */
 function getMaxSubAgentDepth(): number {
-  return parseInt(process.env.MAX_SUBAGENT_DEPTH || String(DEFAULT_MAX_SUBAGENT_DEPTH));
+  const envValue = process.env.MAX_SUBAGENT_DEPTH;
+  if (envValue) {
+    const parsed = parseInt(envValue);
+    if (isNaN(parsed) || parsed <= 0) {
+      logger.warn(`Invalid MAX_SUBAGENT_DEPTH value: "${envValue}". Using default: ${DEFAULT_MAX_SUBAGENT_DEPTH}`);
+      return DEFAULT_MAX_SUBAGENT_DEPTH;
+    }
+    return parsed;
+  }
+  return DEFAULT_MAX_SUBAGENT_DEPTH;
 }
 
 /**
@@ -61,7 +70,7 @@ export async function createSubAgentTool(
     execute: async ({ task, context }) => {
       const startTime = Date.now();
       try {
-        logger.info(`[SubAgent:depth=${depth + 1}] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
+        logger.info(`[SubAgent:depth=${depth}] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
 
         // Connect to any MCP servers the sub-agent needs
         // Use the sub-agent's directory as base path for resolving relative paths
@@ -89,7 +98,7 @@ export async function createSubAgentTool(
           }
         } else if (agent.config.subagents && agent.config.subagents.length > 0) {
           // At depth limit, warn that nested sub-agents are being skipped
-          logger.warn(`[SubAgent:depth=${depth + 1}] Max depth ${maxDepth} reached, skipping ${agent.config.subagents.length} nested sub-agent(s) for ${agent.name}`);
+          logger.warn(`[SubAgent:depth=${depth}] Max depth ${maxDepth} reached, skipping ${agent.config.subagents.length} nested sub-agent(s) for ${agent.name}`);
         }
 
         // Merge MCP tools and nested sub-agent tools
@@ -142,11 +151,11 @@ export async function createSubAgentTool(
           );
           
           const duration = Date.now() - startTime;
-          logger.info(`[SubAgent:depth=${depth + 1}] ${agent.name} completed in ${(duration / 1000).toFixed(2)}s`);
+          logger.info(`[SubAgent:depth=${depth}] ${agent.name} completed in ${(duration / 1000).toFixed(2)}s`);
 
           // Log token usage
           if (result.usage?.totalTokens) {
-            logger.info(`[SubAgent:depth=${depth + 1}] ${agent.name} tokens used: ${result.usage.totalTokens}`);
+            logger.info(`[SubAgent:depth=${depth}] ${agent.name} tokens used: ${result.usage.totalTokens}`);
           }
           
           return {

@@ -87,11 +87,7 @@ export async function createModel(modelString: string) {
     if (oauthToken) {
       logger.info('Using Anthropic OAuth token for authentication');
       // For OAuth, we need to use a custom fetch to set Bearer token
-      const anthropicOptions: {
-        apiKey: string;
-        baseURL?: string;
-        fetch: typeof fetch;
-      } = {
+      const anthropicOptions: Record<string, any> = {
         apiKey: '', // Empty API key for OAuth
         fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
           const access = await AnthropicAuth.access();

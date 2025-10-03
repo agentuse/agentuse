@@ -16,6 +16,9 @@ import { resolveProjectContext } from './utils/project';
 
 const program = new Command();
 
+// Constants
+const DEFAULT_TIMEOUT = 300; // 5 minutes in seconds
+
 // Helper function to prompt user
 async function prompt(question: string): Promise<string> {
   const rl = readline.createInterface({
@@ -111,6 +114,7 @@ program
       }
       
       // Parse CLI timeout value (will be used as override later)
+      const timeoutWasExplicit = process.argv.includes('--timeout');
       const cliTimeoutSeconds = parseInt(options.timeout);
       if (isNaN(cliTimeoutSeconds) || cliTimeoutSeconds <= 0) {
         throw new Error('Invalid timeout value. Must be a positive number of seconds.');
@@ -242,8 +246,7 @@ program
       }
 
       // Determine effective timeout (precedence: CLI > agent YAML > default)
-      const DEFAULT_TIMEOUT = 300;
-      const effectiveTimeoutSeconds = options.timeout !== '300'
+      const effectiveTimeoutSeconds = timeoutWasExplicit
         ? cliTimeoutSeconds  // CLI override
         : (agent.config.timeout ?? DEFAULT_TIMEOUT);  // Agent YAML or default
       const timeoutMs = effectiveTimeoutSeconds * 1000;
@@ -324,12 +327,13 @@ Agent execution timed out after ${effectiveTimeoutSeconds} seconds (${Math.floor
 
 The task may require more time to complete. Try one of these solutions:
 
-1. Increase timeout:
+1. Add timeout to your agent YAML file:
+   timeout: 600  # 10 minutes
+   timeout: 1200  # 20 minutes
+
+2. Or increase timeout using --timeout flag:
    agentuse run --timeout 600 ${file}  (10 minutes)
    agentuse run --timeout 1200 ${file}  (20 minutes)
-
-2. Add timeout to agent YAML:
-   timeout: 600  # 10 minutes
 
 3. Break your task into smaller sub-agents (see docs on subagents)
 

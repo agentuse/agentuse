@@ -616,7 +616,9 @@ Current step: ${stepCount}/${options.maxSteps}`);
         case 'tool-input-end':
         case 'text-start':
         case 'text-end':
-          // These are internal AI SDK streaming events, no action needed
+          // AI SDK streaming events for text generation boundaries (not tool-related)
+          // These indicate when the LLM starts/stops generating text content
+          // Safe to ignore as they don't require processing
           break;
 
         default:
