@@ -308,6 +308,7 @@ class Logger {
   private useTUI: boolean;
   private spinner: Ora | null = null;
   private spinnerStoppedByOutput = false;
+  private activeLlmModel: string | null = null;
 
   constructor(options: LoggerOptions = {}) {
     this.level = options.level ?? LogLevel.INFO;
@@ -366,6 +367,14 @@ class Logger {
     return this.useTUI ? '⋮' : '';
   }
 
+  private formatLlmSpinnerText(model: string, latencyMs?: number): string {
+    const badge = chalk.bgGreen.black.bold(' LLM ');
+    const latencySuffix = latencyMs !== undefined
+      ? chalk.gray(` • ${latencyMs >= 1000 ? `${(latencyMs / 1000).toFixed(1)}s` : `${Math.round(latencyMs)}ms`}`)
+      : '';
+    return ` ${badge} ${chalk.gray(model)}${latencySuffix}`;
+  }
+
   configure(options: LoggerOptions) {
     if (options.level !== undefined) {
       this.level = options.level;
@@ -407,6 +416,7 @@ class Logger {
       // Add static symbol when stopping
       this.spinner.stopAndPersist({ symbol: '⋮' });
       this.spinnerStoppedByOutput = true;
+      this.activeLlmModel = null;
     }
 
     // For streaming responses, don't add newline
@@ -554,6 +564,60 @@ class Logger {
     this.writeToStderr(chalk.magenta(`[SYSTEM] ${message}`));
   }
 
+  llmStart(model: string) {
+    // Stop any existing spinner
+    if (this.spinner?.isSpinning) {
+      this.spinner.stopAndPersist({ symbol: '⋮' });
+      this.spinner = null;
+    }
+
+    this.activeLlmModel = null;
+    this.spinnerStoppedByOutput = false;
+    const debugMode = this.isDebugEnabled();
+    const useTUI = this.useTUI && !debugMode;
+
+    if (useTUI) {
+      let text = this.formatLlmSpinnerText(model);
+
+      const MAX_LINE_LENGTH = 140;
+      if (text.length > MAX_LINE_LENGTH) {
+        text = text.substring(0, MAX_LINE_LENGTH - 3) + '...';
+      }
+
+      this.spinner = ora({
+        text,
+        stream: process.stderr,
+        spinner: {
+          interval: 120,
+          frames: ['⋮', '⋰', '⋯', '⋱']
+        },
+        isEnabled: useTUI
+      }).start();
+
+      this.capture(`${this.getAgentPrefix()}${text}\n`);
+      this.activeLlmModel = model;
+    } else {
+      const message = `Calling model: ${model}`;
+      this.info(message);
+      this.activeLlmModel = null;
+    }
+
+  }
+
+  llmFirstToken(model: string, latencyMs: number) {
+    if (!this.spinner?.isSpinning || this.activeLlmModel !== model) {
+      return;
+    }
+
+    let text = this.formatLlmSpinnerText(model, latencyMs);
+    const MAX_LINE_LENGTH = 140;
+    if (text.length > MAX_LINE_LENGTH) {
+      text = text.substring(0, MAX_LINE_LENGTH - 3) + '...';
+    }
+
+    this.spinner.text = text;
+  }
+
   tool(name: string, args?: unknown, result?: unknown, isSubAgent?: boolean) {
     // Only show when tool is being called, not when returning results
     if (args !== undefined) {
@@ -563,6 +627,8 @@ class Logger {
         this.spinner.stopAndPersist({ symbol: '⋮' });
         this.spinner = null;
       }
+
+      this.activeLlmModel = null;
 
       // Reset flag for new tool execution
       this.spinnerStoppedByOutput = false;

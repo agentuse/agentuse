@@ -107,6 +107,10 @@ export async function processAgentStream(
         
       case 'llm-start':
         // Track the start of an LLM generation
+        if (chunk.llmModel) {
+          logger.llmStart(chunk.llmModel);
+        }
+
         if (chunk.llmModel && chunk.llmStartTime) {
           currentLlmCall = {
             model: chunk.llmModel,
@@ -120,6 +124,10 @@ export async function processAgentStream(
         // Track time to first token
         if (currentLlmCall && chunk.llmFirstTokenTime) {
           currentLlmCall.firstTokenTime = chunk.llmFirstTokenTime;
+          if (currentLlmCall.startTime) {
+            const latency = chunk.llmFirstTokenTime - currentLlmCall.startTime;
+            logger.llmFirstToken(currentLlmCall.model, latency);
+          }
         }
         break;
         
@@ -398,14 +406,14 @@ Error: ${errorMessage}`);
       switch (chunk.type) {
         case 'tool-call': {
           stepCount++; // Each tool call counts as a step
-          
+
           // Warn when approaching step limit
           if (stepCount >= options.maxSteps * 0.9 && stepCount < options.maxSteps) {
             logger.warn(`⚠️  Approaching step limit: ${stepCount}/${options.maxSteps} steps used`);
           } else if (stepCount >= options.maxSteps) {
             logger.warn(`⚠️  Step limit reached: ${stepCount}/${options.maxSteps} steps. Generation may be incomplete.`);
           }
-          
+
           // Complete the current LLM generation segment before tool call
           if (llmGenerationStartTime) {
             const llmDuration = Date.now() - llmGenerationStartTime;
@@ -419,11 +427,11 @@ Error: ${errorMessage}`);
             llmGenerationStartTime = undefined;
             llmFirstTokenTime = undefined;
           }
-          
+
           const startTime = Date.now();
           const toolCallId = (chunk as any).toolCallId || 'unknown';
           toolStartTimes.set(toolCallId, startTime);
-          
+
           yield {
             type: 'tool-call',
             toolName: chunk.toolName,
@@ -529,13 +537,13 @@ Error: ${errorMessage}`);
             contextManager.addMessage(assistantMessage);
             accumulatedText = '';
           }
-          
+
           // Update usage if available
           const usage = (chunk as any).totalUsage || (chunk as any).usage;
           if (contextManager && usage) {
             contextManager.updateUsage(usage);
           }
-          
+
           // Log finish reason for debugging and warnings
           const finishReason = chunk.finishReason;
           if (finishReason === 'length') {
@@ -591,8 +599,30 @@ Current step: ${stepCount}/${options.maxSteps}`);
         case 'error':
           yield { type: 'error', error: chunk.error };
           break;
+
+        case 'abort':
+          logger.warn(`⚠️  Stream aborted - likely due to timeout or cancellation (${stepCount} steps completed)`);
+          // Create an AbortError to properly signal timeout
+          const abortError = new Error('Stream aborted - execution timeout or manual cancellation');
+          abortError.name = 'AbortError';
+          yield { type: 'error', error: abortError };
+          return;
+
+        // Handle other AI SDK chunk types that we don't need to process but shouldn't warn about
+        case 'finish-step':
+        case 'start-step':
+        case 'tool-input-start':
+        case 'tool-input-delta':
+        case 'tool-input-end':
+          // These are internal AI SDK streaming events, no action needed
+          break;
+
+        default:
+          logger.warn(`[STREAM] Unknown chunk type received: ${chunk.type}`);
+          break;
       }
     }
+
   } catch (error: any) {
     // Check for token limit errors first
     const errorMessage = error?.message || String(error);

@@ -304,7 +304,22 @@ program
         }
       } catch (error: unknown) {
         if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
-          logger.error(`Agent execution timed out after ${options.timeout} seconds`);
+          logger.error(`
+⚠️  EXECUTION TIMEOUT
+
+Agent execution timed out after ${options.timeout} seconds (${Math.floor(parseInt(options.timeout) / 60)} minutes).
+
+The task may require more time to complete. Try one of these solutions:
+
+1. Increase timeout:
+   agentuse run --timeout 600 ${file}  (10 minutes)
+   agentuse run --timeout 1200 ${file}  (20 minutes)
+
+2. Break your task into smaller sub-agents (see docs on subagents)
+
+3. Optimize your agent to use fewer tool calls
+
+Current timeout: ${options.timeout}s`);
           process.exit(1);
         }
         throw error;
