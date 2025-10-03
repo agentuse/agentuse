@@ -614,11 +614,13 @@ Current step: ${stepCount}/${options.maxSteps}`);
         case 'tool-input-start':
         case 'tool-input-delta':
         case 'tool-input-end':
+        case 'text-start':
+        case 'text-end':
           // These are internal AI SDK streaming events, no action needed
           break;
 
         default:
-          logger.warn(`[STREAM] Unknown chunk type received: ${chunk.type}`);
+          logger.debug(`[STREAM] Unknown chunk type received: ${chunk.type}`);
           break;
       }
     }
