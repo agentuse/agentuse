@@ -9,6 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from './utils/logger';
 import { parseJsonEnvVar } from './utils/env';
+import { resolveToolTimeout } from './utils/config';
 import { z } from 'zod';
 import type { AgentConfig } from './parser';
 import { resolve, isAbsolute } from 'path';
@@ -23,6 +24,7 @@ export interface MCPConnection {
   rawClient?: Client; // Raw MCP SDK client for resource access
   disallowedTools?: string[]; // List of disallowed tool names/patterns for this connection
   preloadedTools?: Record<string, Tool>; // Cached tools for HTTP connections (loaded immediately)
+  config?: MCPServerConfig; // Original config for accessing toolTimeout and other settings
 }
 
 /**
@@ -211,6 +213,7 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
         name,
         client,
         rawClient,
+        config,  // Store config for accessing toolTimeout and other settings
         ...(preloadedTools && { preloadedTools }),
         ...(config.disallowedTools && { disallowedTools: config.disallowedTools })
       };
@@ -459,25 +462,47 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
           continue;
         }
         
-        // Create wrapped tool with proper result handling
+        // Get timeout configuration for this server
+        const timeoutSeconds = resolveToolTimeout(connection.config?.toolTimeout);
+
+        // Create wrapped tool with proper result handling and timeout
         const wrappedTool = {
           ...tool,
           execute: async (args: any, opts: any) => {
             try {
-              const result = await originalExecute(args, opts);
-              
+              let result: any;
+
+              // Apply timeout if configured (0 means no timeout)
+              if (timeoutSeconds > 0) {
+                const timeoutPromise = new Promise((_, reject) => {
+                  setTimeout(() => {
+                    const error = new Error(`Tool timed out after ${timeoutSeconds}s`);
+                    error.name = 'TimeoutError';
+                    reject(error);
+                  }, timeoutSeconds * 1000);
+                });
+
+                result = await Promise.race([
+                  originalExecute(args, opts),
+                  timeoutPromise
+                ]);
+              } else {
+                // No timeout - execute normally
+                result = await originalExecute(args, opts);
+              }
+
               // Handle MCP result format (like opencode does)
               if (result && typeof result === 'object' && 'content' in result && Array.isArray(result.content)) {
                 const output = result.content
                   .filter((x: any) => x.type === "text")
                   .map((x: any) => x.text)
                   .join("\n\n");
-                
+
                 return {
                   output,
                 };
               }
-              
+
               // Fallback for non-standard result formats
               const output = typeof result === 'string' ? result : JSON.stringify(result);
               return {
