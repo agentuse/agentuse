@@ -79,7 +79,7 @@ That's it! Your AI agent runs anywhere - CI/CD pipelines, cron jobs, webhooks, o
 ---
 model: openai:gpt-5
 description: Daily sales metrics reporter - runs daily at 9am via cron
-mcp_servers:
+mcpServers:
   postgres:
     command: uv
     args: ["run", "postgres-mcp", "--access-mode=restricted"]
@@ -97,7 +97,7 @@ Format as markdown report.
 ---
 model: openai:gpt-5
 description: SEO performance analyzer - runs weekly via GitHub Actions
-mcp_servers:
+mcpServers:
   dataforseo:
     command: "npx"
     args: ["-y", "dataforseo-mcp-server"]
@@ -117,7 +117,7 @@ Output recommendations as JSON for our CMS.
 ---
 model: openai:gpt-5
 description: Social media automation bot - runs every 6 hours via cron
-mcp_servers:
+mcpServers:
   twitter:
     command: npx
     args: ["-y", "@enescinar/twitter-mcp"]
@@ -214,7 +214,7 @@ Agents are markdown files with YAML frontmatter for configuration and markdown c
 ```markdown
 ---
 model: anthropic:claude-sonnet-4-0  # Required: AI model
-mcp_servers: {...}                   # Optional: MCP tools
+mcpServers: {...}                   # Optional: MCP tools
 subagents: [...]                     # Optional: sub-agents
 ---
 

@@ -106,7 +106,7 @@ Additional instructions or context.
   ```
 </ParamField>
 
-<ParamField path="mcp_servers" type="object" required={false}>
+<ParamField path="mcpServers" type="object" required={false}>
   Configuration for Model Context Protocol (MCP) servers that provide tools and resources to the agent.
 
   Each server is defined as a key-value pair where the key is the server name and the value is the server configuration.
@@ -161,7 +161,7 @@ Tools are available to agents through:
 ### Stdio MCP Configuration
 
 ```yaml
-mcp_servers:
+mcpServers:
   filesystem:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/directory", "--read-only"]
@@ -177,7 +177,7 @@ mcp_servers:
 ### HTTP MCP Configuration
 
 ```yaml
-mcp_servers:
+mcpServers:
   remote_server:
     url: https://api.example.com/mcp
     sessionId: my-session-123           # Optional session ID
@@ -197,7 +197,7 @@ mcp_servers:
 ### Multiple MCP Servers
 
 ```yaml
-mcp_servers:
+mcpServers:
   filesystem:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "./data"]
@@ -221,9 +221,9 @@ mcp_servers:
       - API_TOKEN
 ```
 
-<Warning>
-  Note: The `mcp_servers` field uses a map format where each server has a name as the key.
-</Warning>
+<Note>
+  The `mcpServers` field uses a map format where each server has a name as the key.
+</Note>
 
 ## Sub-Agents
 
@@ -257,7 +257,7 @@ subagents:
 </Info>
 
 ```yaml
-mcp_servers:
+mcpServers:
   github:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-github"]
@@ -291,7 +291,7 @@ mcp_servers:
 
 ```yaml
 # In /project/agents/main.agentuse
-mcp_servers:
+mcpServers:
   custom:
     command: ../tools/my-server  # Resolves to /project/tools/my-server
     args: ["--port", "3000"]
@@ -422,7 +422,7 @@ maxSteps: 150
 openai:
   reasoningEffort: high
   textVerbosity: medium
-mcp_servers:
+mcpServers:
   filesystem:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "./data", "--read-only"]
