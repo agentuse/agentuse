@@ -76,8 +76,8 @@ export async function createSubAgentTool(
         // Connect to any MCP servers the sub-agent needs
         // Use the sub-agent's directory as base path for resolving relative paths
         const subAgentBasePath = dirname(resolvedPath);
-        const mcpConnections = agent.config.mcp_servers
-          ? await connectMCP(agent.config.mcp_servers as MCPServersConfig, false, subAgentBasePath)
+        const mcpConnections = agent.config.mcpServers
+          ? await connectMCP(agent.config.mcpServers as MCPServersConfig, false, subAgentBasePath)
           : [];
 
         const mcpTools = await getMCPTools(mcpConnections);

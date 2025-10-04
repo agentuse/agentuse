@@ -258,7 +258,7 @@ program
       const mcpBasePath = agentFilePath ? dirname(agentFilePath) : undefined;
       let mcp;
       try {
-        mcp = await connectMCP(agent.config.mcp_servers, options.debug, mcpBasePath);
+        mcp = await connectMCP(agent.config.mcpServers, options.debug, mcpBasePath);
       } catch (mcpError: any) {
         // Exit immediately on MCP connection errors (especially missing required env vars)
         if (mcpError.fatal || mcpError.message?.includes('Missing required environment variables')) {

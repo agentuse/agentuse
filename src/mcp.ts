@@ -15,8 +15,9 @@ import type { AgentConfig } from './parser';
 import { resolve, isAbsolute } from 'path';
 
 // Use the actual type from the parser to avoid mismatches
-export type MCPServerConfig = NonNullable<AgentConfig['mcp_servers']>[string];
-export type MCPServersConfig = AgentConfig['mcp_servers'];
+// Note: Using mcpServers (the normalized field after transform)
+export type MCPServerConfig = NonNullable<AgentConfig['mcpServers']>[string];
+export type MCPServersConfig = AgentConfig['mcpServers'];
 
 export interface MCPConnection {
   name: string;
