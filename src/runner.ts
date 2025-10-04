@@ -10,10 +10,10 @@ import { ContextManager } from './context-manager';
 import { compactMessages } from './compactor';
 import { dirname } from 'path';
 import type { ToolCallTrace } from './plugin/types';
+import { resolveMaxSteps, DEFAULT_MAX_STEPS } from './utils/config';
 
 // Constants
 const MAX_RETRIES = 3;
-const DEFAULT_MAX_STEPS = 100;
 
 /**
  * Build autonomous agent system prompt
@@ -873,7 +873,7 @@ export async function runAgent(
     const tools = { ...mcpTools, ...subAgentTools };
 
     // Precedence: CLI > Agent YAML > Default
-    const maxSteps = cliMaxSteps ?? agent.config.maxSteps ?? DEFAULT_MAX_STEPS;
+    const maxSteps = resolveMaxSteps(cliMaxSteps, agent.config.maxSteps);
 
     logger.info(`Running agent with model: ${agent.config.model}`);
     if (Object.keys(tools).length > 0) {

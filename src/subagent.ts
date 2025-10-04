@@ -11,8 +11,9 @@ const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
 
 /**
  * Get the maximum sub-agent nesting depth from environment or use default
+ * Exported for testing purposes
  */
-function getMaxSubAgentDepth(): number {
+export function getMaxSubAgentDepth(): number {
   const envValue = process.env.MAX_SUBAGENT_DEPTH;
   if (envValue) {
     const parsed = parseInt(envValue);

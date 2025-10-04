@@ -13,11 +13,9 @@ import { AuthenticationError } from './models';
 import * as dotenv from 'dotenv';
 import { existsSync } from 'fs';
 import { resolveProjectContext } from './utils/project';
+import { resolveTimeout } from './utils/config';
 
 const program = new Command();
-
-// Constants
-const DEFAULT_TIMEOUT = 300; // 5 minutes in seconds
 
 // Helper function to prompt user
 async function prompt(question: string): Promise<string> {
@@ -246,9 +244,11 @@ program
       }
 
       // Determine effective timeout (precedence: CLI > agent YAML > default)
-      const effectiveTimeoutSeconds = timeoutWasExplicit
-        ? cliTimeoutSeconds  // CLI override
-        : (agent.config.timeout ?? DEFAULT_TIMEOUT);  // Agent YAML or default
+      const effectiveTimeoutSeconds = resolveTimeout(
+        cliTimeoutSeconds,
+        timeoutWasExplicit,
+        agent.config.timeout
+      );
       const timeoutMs = effectiveTimeoutSeconds * 1000;
 
       // Connect to MCP servers if configured
