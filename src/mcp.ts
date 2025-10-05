@@ -9,19 +9,23 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from './utils/logger';
 import { parseJsonEnvVar } from './utils/env';
+import { resolveToolTimeout } from './utils/config';
 import { z } from 'zod';
 import type { AgentConfig } from './parser';
 import { resolve, isAbsolute } from 'path';
 
 // Use the actual type from the parser to avoid mismatches
-export type MCPServerConfig = NonNullable<AgentConfig['mcp_servers']>[string];
-export type MCPServersConfig = AgentConfig['mcp_servers'];
+// Note: Using mcpServers (the normalized field after transform)
+export type MCPServerConfig = NonNullable<AgentConfig['mcpServers']>[string];
+export type MCPServersConfig = AgentConfig['mcpServers'];
 
 export interface MCPConnection {
   name: string;
   client: Awaited<ReturnType<typeof experimental_createMCPClient>>;
   rawClient?: Client; // Raw MCP SDK client for resource access
   disallowedTools?: string[]; // List of disallowed tool names/patterns for this connection
+  preloadedTools?: Record<string, Tool>; // Cached tools for HTTP connections (loaded immediately)
+  config?: MCPServerConfig; // Original config for accessing toolTimeout and other settings
 }
 
 /**
@@ -175,26 +179,43 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
         name,
         transport: transport,
       });
-      
+
+      // For HTTP transports, immediately fetch tools to ensure connection is ready
+      // This follows the official AI SDK pattern for MCP clients
+      let preloadedTools: Record<string, Tool> | undefined = undefined;
+      if ('url' in config) {
+        logger.debug(`[MCP] HTTP connection detected, fetching tools immediately for: ${name}`);
+        try {
+          preloadedTools = await client.tools();
+          logger.debug(`[MCP] HTTP connection verified and ${Object.keys(preloadedTools).length} tools loaded for: ${name}`);
+        } catch (error) {
+          logger.warn(`[MCP] Failed to fetch tools immediately for ${name}: ${error instanceof Error ? error.message : String(error)}`);
+          // Re-throw to be caught by outer try-catch
+          throw error;
+        }
+      }
+
       // Also create a raw MCP SDK client for resource access
       // We need a separate transport instance for the raw client
       const rawTransport = createTransport(name, config, debug, basePath);
-      
+
       const rawClient = new Client({
         name: `${name}-raw`,
         version: '1.0.0',
       }, {
         capabilities: {}
       });
-      
+
       await rawClient.connect(rawTransport);
-      
+
       logger.info(`Connected to MCP server: ${name}`);
-      
+
       return {
         name,
         client,
         rawClient,
+        config,  // Store config for accessing toolTimeout and other settings
+        ...(preloadedTools && { preloadedTools }),
         ...(config.disallowedTools && { disallowedTools: config.disallowedTools })
       };
     } catch (error) {
@@ -295,7 +316,7 @@ function createResourceTools(connection: MCPConnection, resources: Resource[]): 
   }
   
   // Create a list resources tool
-  const listToolName = `${connection.name}_list_resources`;
+  const listToolName = `mcp__${connection.name}__list_resources`;
   tools[listToolName] = {
     description: `List all available resources from ${connection.name}`,
     inputSchema: z.object({}),
@@ -321,7 +342,7 @@ function createResourceTools(connection: MCPConnection, resources: Resource[]): 
   };
   
   // Create a read resource tool
-  const readToolName = `${connection.name}_read_resource`;
+  const readToolName = `mcp__${connection.name}__read_resource`;
   tools[readToolName] = {
     description: `Read a specific resource from ${connection.name}`,
     inputSchema: z.object({
@@ -416,18 +437,25 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
     
     // First, try to get regular tools
     try {
-      // Use AI SDK's built-in tools() method - this handles all the complexity
-      const clientTools = await connection.client.tools();
-      
+      // If tools were preloaded during connection (HTTP), use them
+      // Otherwise, fetch them now (stdio)
+      const clientTools = connection.preloadedTools || await connection.client.tools();
+
+      // Log what tools were retrieved
+      const toolNames = Object.keys(clientTools);
+      const source = connection.preloadedTools ? '(preloaded)' : '(fetched)';
+      logger.info(`[MCP] Retrieved ${toolNames.length} tools from ${connection.name} ${source}${toolNames.length > 0 ? ': ' + toolNames.join(', ') : ''}`);
+
       // Add tools with prefixed names to avoid conflicts and wrap execution (like opencode)
+      const disallowedTools: string[] = [];
       for (const [toolName, tool] of Object.entries(clientTools)) {
         // Check if this tool is disallowed
         if (isToolDisallowed(toolName, connection.disallowedTools)) {
-          logger.info(`[MCP] Tool '${toolName}' is disallowed for server ${connection.name}`);
+          disallowedTools.push(toolName);
           continue;
         }
         
-        const prefixedName = `${connection.name}_${toolName}`;
+        const prefixedName = `mcp__${connection.name}__${toolName}`;
         
         // Wrap the tool execution like opencode does
         const originalExecute = tool.execute;
@@ -435,25 +463,47 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
           continue;
         }
         
-        // Create wrapped tool with proper result handling
+        // Get timeout configuration for this server
+        const timeoutSeconds = resolveToolTimeout(connection.config?.toolTimeout);
+
+        // Create wrapped tool with proper result handling and timeout
         const wrappedTool = {
           ...tool,
           execute: async (args: any, opts: any) => {
             try {
-              const result = await originalExecute(args, opts);
-              
+              let result: any;
+
+              // Apply timeout if configured (0 means no timeout)
+              if (timeoutSeconds > 0) {
+                const timeoutPromise = new Promise((_, reject) => {
+                  setTimeout(() => {
+                    const error = new Error(`Tool timed out after ${timeoutSeconds}s`);
+                    error.name = 'TimeoutError';
+                    reject(error);
+                  }, timeoutSeconds * 1000);
+                });
+
+                result = await Promise.race([
+                  originalExecute(args, opts),
+                  timeoutPromise
+                ]);
+              } else {
+                // No timeout - execute normally
+                result = await originalExecute(args, opts);
+              }
+
               // Handle MCP result format (like opencode does)
               if (result && typeof result === 'object' && 'content' in result && Array.isArray(result.content)) {
                 const output = result.content
                   .filter((x: any) => x.type === "text")
                   .map((x: any) => x.text)
                   .join("\n\n");
-                
+
                 return {
                   output,
                 };
               }
-              
+
               // Fallback for non-standard result formats
               const output = typeof result === 'string' ? result : JSON.stringify(result);
               return {
@@ -462,8 +512,8 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
             } catch (error) {
               // Log the error first
               const errorMessage = error instanceof Error ? error.message : String(error);
-              console.error(`[WARNING] Tool call failed: ${prefixedName} - ${errorMessage}`);
-              
+              logger.error(`Tool call failed: ${prefixedName} - ${errorMessage}`);
+
               // Re-throw the error so it properly triggers tool-error event
               throw error;
             }
@@ -478,8 +528,13 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
         
         connectionTools[prefixedName] = wrappedTool;
       }
+      if (disallowedTools.length > 0) {
+        const toolsList = disallowedTools.map(name => `'${name}'`).join(', ');
+        logger.info(`[MCP] Tools disallowed for server ${connection.name}: ${toolsList}`);
+      }
     } catch (error) {
-      logger.debug(`Server ${connection.name} does not support tools: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(`[MCP] Failed to get tools from ${connection.name}: ${error instanceof Error ? error.message : String(error)}`);
+      logger.debug(`[MCP] Full error for ${connection.name}: ${error instanceof Error ? error.stack : String(error)}`);
       // Don't return yet - try to get resources
     }
     
@@ -509,6 +564,15 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
   for (const connectionTools of toolsArrays) {
     Object.assign(tools, connectionTools);
   }
-  
+
+  // Log final tool count
+  const toolCount = Object.keys(tools).length;
+  if (toolCount > 0) {
+    logger.info(`[MCP] Total tools loaded: ${toolCount}`);
+    logger.debug(`[MCP] Tool names: ${Object.keys(tools).join(', ')}`);
+  } else {
+    logger.warn(`[MCP] No tools were loaded from any MCP server`);
+  }
+
   return tools;
 }

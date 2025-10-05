@@ -2,6 +2,7 @@ import matter from 'gray-matter';
 import { z } from 'zod';
 import { readFile } from 'fs/promises';
 import { resolve, basename } from 'path';
+import { logger } from './utils/logger';
 
 // Schema for MCP server configuration
 const MCPServerSchema = z.union([
@@ -12,7 +13,8 @@ const MCPServerSchema = z.union([
     env: z.record(z.string()).optional(),
     requiredEnvVars: z.array(z.string()).optional(),
     allowedEnvVars: z.array(z.string()).optional(),
-    disallowedTools: z.array(z.string()).optional()
+    disallowedTools: z.array(z.string()).optional(),
+    toolTimeout: z.number().positive().optional()
   }),
   // HTTP configuration (has url)
   z.object({
@@ -28,24 +30,46 @@ const MCPServerSchema = z.union([
     headers: z.record(z.string()).optional(),
     requiredEnvVars: z.array(z.string()).optional(),
     allowedEnvVars: z.array(z.string()).optional(),
-    disallowedTools: z.array(z.string()).optional()
+    disallowedTools: z.array(z.string()).optional(),
+    toolTimeout: z.number().positive().optional()
   })
 ]);
 
 // Schema for agent configuration as per spec
+// Supports both mcp_servers (deprecated) and mcpServers (preferred)
 const AgentSchema = z.object({
   model: z.string(),
   description: z.string().optional(),
+  timeout: z.number().positive().optional(),
+  maxSteps: z.number().positive().int().optional(),
   openai: z.object({
     reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
     textVerbosity: z.enum(['low', 'medium', 'high']).optional()
   }).strict().optional(),
-  mcp_servers: z.record(MCPServerSchema).optional(),
+  mcp_servers: z.record(MCPServerSchema).optional(),  // Deprecated: use mcpServers
+  mcpServers: z.record(MCPServerSchema).optional(),   // Preferred: camelCase
   subagents: z.array(z.object({
     path: z.string(),
     name: z.string().optional(),
     maxSteps: z.number().optional()
   })).optional()
+}).transform((data) => {
+  // Handle backward compatibility: support both mcp_servers and mcpServers
+  if (data.mcp_servers && data.mcpServers) {
+    throw new Error('Cannot specify both "mcp_servers" and "mcpServers". Use "mcpServers" (camelCase) only.');
+  }
+
+  // Normalize to mcpServers and warn about deprecation
+  if (data.mcp_servers && !data.mcpServers) {
+    logger.warn('The "mcp_servers" field is deprecated. Please use "mcpServers" (camelCase) instead.');
+    return {
+      ...data,
+      mcpServers: data.mcp_servers,
+      mcp_servers: undefined  // Remove deprecated field
+    };
+  }
+
+  return data;
 });
 
 export type AgentConfig = z.infer<typeof AgentSchema>;

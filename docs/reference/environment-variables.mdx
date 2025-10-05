@@ -60,14 +60,20 @@ model: anthropic:claude-sonnet-4-0:dev  # Uses ANTHROPIC_API_KEY_DEV
 ## Behavior Control
 
 <ParamField path="MAX_STEPS" type="number">
-  Override the maximum number of conversation steps an agent can take.
-  Default: 1000
-  
+  Override the maximum number of conversation steps (LLM generation cycles) an agent can take.
+  Default: 100
+
   ```bash
-  export MAX_STEPS="2000"
+  export MAX_STEPS="200"
   ```
-  
-  This prevents infinite loops and controls agent execution time.
+
+  **Precedence:** This environment variable overrides the `maxSteps` value in agent YAML files.
+
+  This prevents infinite loops and controls cost by limiting the number of LLM calls. Each step typically involves an LLM generation with potential tool calls.
+
+  <Note>
+    The default was reduced from 1000 to 100 for better cost protection. Most agents complete successfully within 100 steps.
+  </Note>
 </ParamField>
 
 ## Context Management
@@ -161,7 +167,7 @@ MCP servers can access environment variables through two fields:
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-0
-mcp_servers:
+mcpServers:
   notion:
     command: "pnpx"
     args: ["-y", "@notionhq/notion-mcp-server"]
@@ -279,7 +285,7 @@ If this server requires these variables, please set them in your .env file.
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-0
-mcp_servers:
+mcpServers:
   # API-based service requiring authentication
   notion:
     command: "pnpx"
@@ -369,13 +375,13 @@ Never hardcode API keys in agent files:
 
 ```yaml
 # ❌ Bad - Would be insecure (but AgentUse doesn't allow this)
-mcp_servers:
+mcpServers:
   github:
     env:
       GITHUB_TOKEN: "ghp_actualTokenHere"  # Not supported by design!
 
 # ✅ Good - Use environment variable allowlist
-mcp_servers:
+mcpServers:
   github:
     command: "pnpx"
     args: ["-y", "@modelcontextprotocol/server-github"]

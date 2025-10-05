@@ -65,7 +65,7 @@ Help the user with their request.
   - Focus on primary capability
 </ParamField>
 
-<ParamField path="mcp_servers" type="object">
+<ParamField path="mcpServers" type="object">
   MCP server configurations. Each server can have:
   - `command` + `args`: For stdio-based servers
   - `url`: For HTTP-based servers
@@ -92,7 +92,7 @@ Connect to Model Context Protocol servers:
 ---
 model: anthropic:claude-sonnet-4-0
 description: "File system and GitHub integration agent"
-mcp_servers:
+mcpServers:
   filesystem:
     command: "pnpx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/documents"]
@@ -107,7 +107,7 @@ mcp_servers:
 ```
 
 <Info>
-  MCP servers provide standardized access to external tools and data sources. Each server needs a unique name (key) in the `mcp_servers` object.
+  MCP servers provide standardized access to external tools and data sources. Each server needs a unique name (key) in the `mcpServers` object.
 </Info>
 
 ### HTTP MCP Servers
@@ -115,7 +115,7 @@ mcp_servers:
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-0
-mcp_servers:
+mcpServers:
   remote_api:
     url: https://api.example.com/mcp
     sessionId: "unique-session-id"
@@ -167,7 +167,7 @@ When asked to create content:
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-0
-mcp_servers:
+mcpServers:
   api_server:
     command: ./api-server
     requiredEnvVars: ["API_KEY"]
@@ -255,7 +255,7 @@ subagents:
   # Paths relative to agents/main.agentuse location
   - path: ./research/web.agentuse      # → agents/research/web.agentuse
   - path: ../utils/helper.agentuse     # → utils/helper.agentuse
-mcp_servers:
+mcpServers:
   custom:
     # Command paths relative to agents/main.agentuse location
     command: ../tools/custom-mcp-server  # → tools/custom-mcp-server

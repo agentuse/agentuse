@@ -1,0 +1,10 @@
+---
+model: anthropic:claude-sonnet-4
+description: Agent C (refers back to A - creates cycle)
+subagents:
+  - path: agent-a.agentuse
+---
+
+# Agent C
+
+You are agent C. You have access to agent A (creating a cycle).

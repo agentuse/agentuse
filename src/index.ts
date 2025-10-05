@@ -13,6 +13,7 @@ import { AuthenticationError } from './models';
 import * as dotenv from 'dotenv';
 import { existsSync } from 'fs';
 import { resolveProjectContext } from './utils/project';
+import { resolveTimeout } from './utils/config';
 
 const program = new Command();
 
@@ -96,6 +97,8 @@ program
       if (options.quiet && options.debug) {
         throw new Error('Cannot use --quiet and --debug together');
       }
+
+      process.env.AGENTUSE_DEBUG = options.debug ? 'true' : 'false';
       
       if (options.quiet) {
         logger.configure({ level: LogLevel.WARN });
@@ -108,10 +111,17 @@ program
         logger.info(`Starting AgentUse at ${new Date().toISOString()}`);
       }
       
-      // Parse timeout value
-      const timeoutMs = parseInt(options.timeout) * 1000;
-      if (isNaN(timeoutMs) || timeoutMs <= 0) {
+      // Parse CLI timeout value (will be used as override later)
+      const timeoutWasExplicit = process.argv.includes('--timeout');
+      const cliTimeoutSeconds = parseInt(options.timeout);
+      if (isNaN(cliTimeoutSeconds) || cliTimeoutSeconds <= 0) {
         throw new Error('Invalid timeout value. Must be a positive number of seconds.');
+      }
+
+      // Parse MAX_STEPS env var if present (CLI override)
+      const cliMaxSteps = process.env.MAX_STEPS ? parseInt(process.env.MAX_STEPS) : undefined;
+      if (cliMaxSteps !== undefined && (isNaN(cliMaxSteps) || cliMaxSteps <= 0)) {
+        throw new Error('Invalid MAX_STEPS value. Must be a positive integer.');
       }
       
       // Change working directory first if -C/--directory was specified
@@ -233,6 +243,14 @@ program
         }
       }
 
+      // Determine effective timeout (precedence: CLI > agent YAML > default)
+      const effectiveTimeoutSeconds = resolveTimeout(
+        cliTimeoutSeconds,
+        timeoutWasExplicit,
+        agent.config.timeout
+      );
+      const timeoutMs = effectiveTimeoutSeconds * 1000;
+
       // Connect to MCP servers if configured
       // Pass the agent file's directory as base path for resolving relative paths
       // Since we've already changed directory, resolve the file path from the new CWD
@@ -240,7 +258,7 @@ program
       const mcpBasePath = agentFilePath ? dirname(agentFilePath) : undefined;
       let mcp;
       try {
-        mcp = await connectMCP(agent.config.mcp_servers, options.debug, mcpBasePath);
+        mcp = await connectMCP(agent.config.mcpServers, options.debug, mcpBasePath);
       } catch (mcpError: any) {
         // Exit immediately on MCP connection errors (especially missing required env vars)
         if (mcpError.fatal || mcpError.message?.includes('Missing required environment variables')) {
@@ -287,10 +305,41 @@ program
         if (agentFilePath && options.debug) {
           logger.debug(`[Main] Passing agent file path to runner: ${agentFilePath}`);
         }
-        result = await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.debug, agentFilePath);
+        result = await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.debug, agentFilePath, cliMaxSteps);
+
+        if (!result.hasTextOutput) {
+          logger.warn('Agent completed without producing a final response.');
+        }
+
+        if (result.finishReason && result.finishReason !== 'stop') {
+          if (result.finishReason === 'unknown') {
+            logger.warn('Agent finished without reporting a reason; output may be incomplete.');
+          } else {
+            logger.warn(`Agent stopped with finish reason: ${result.finishReason}. Output may be incomplete.`);
+          }
+        }
       } catch (error: unknown) {
         if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
-          logger.error(`Agent execution timed out after ${options.timeout} seconds`);
+          logger.error(`
+⚠️  EXECUTION TIMEOUT
+
+Agent execution timed out after ${effectiveTimeoutSeconds} seconds (${Math.floor(effectiveTimeoutSeconds / 60)} minutes).
+
+The task may require more time to complete. Try one of these solutions:
+
+1. Add timeout to your agent YAML file:
+   timeout: 600  # 10 minutes
+   timeout: 1200  # 20 minutes
+
+2. Or increase timeout using --timeout flag:
+   agentuse run --timeout 600 ${file}  (10 minutes)
+   agentuse run --timeout 1200 ${file}  (20 minutes)
+
+3. Break your task into smaller sub-agents (see docs on subagents)
+
+4. Optimize your agent to use fewer tool calls
+
+Current timeout: ${effectiveTimeoutSeconds}s`);
           process.exit(1);
         }
         throw error;
@@ -319,7 +368,10 @@ program
               duration,
               tokens: result.usage?.totalTokens,
               toolCalls: result.toolCallCount || 0,
-              ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces })
+              ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
+              ...(result.finishReason && { finishReason: result.finishReason }),
+              ...(result.finishReasons && { finishReasons: result.finishReasons }),
+              hasTextOutput: result.hasTextOutput
             },
             isSubAgent: false,
             consoleOutput
