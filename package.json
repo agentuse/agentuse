@@ -41,7 +41,7 @@
     "watch": "bun build ./src/index.ts --outdir ./dist --target node --format esm --splitting --sourcemap --packages external --watch",
     "link": "npm link",
     "unlink": "npm unlink",
-    "test": "bun test tests/compaction.test.ts tests/error-recovery.test.ts && bun test tests/plugin-manager.test.ts && bun test tests/plugin-integration.test.ts",
+    "test": "bun test tests/compaction.test.ts tests/error-recovery.test.ts && bun test tests/plugin-manager.test.ts && bun test tests/plugin-integration.test.ts tests/models.test.ts tests/subagent.test.ts tests/precedence.test.ts",
     "test:all": "bun test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build && bun run test",
@@ -65,6 +65,7 @@
     "esbuild-wasm": "0.23.1",
     "glob": "^11.0.3",
     "gray-matter": "^4.0.3",
+    "ora": "^9.0.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {

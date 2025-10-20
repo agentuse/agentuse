@@ -110,7 +110,7 @@ Create `project-analyzer.agentuse`:
 ---
 model: anthropic:claude-3-5-haiku-latest
 description: "Analyzes project structure and identifies key components"
-mcp_servers:
+mcpServers:
   filesystem:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
@@ -123,7 +123,7 @@ mcp_servers:
     allowedEnvVars: ["HOME", "PATH"]
     # Optional: Tools to disable from this server
     disallowedTools: []
-  
+
   # HTTP MCP Server example
   remote_api:
     url: "https://api.example.com/mcp"

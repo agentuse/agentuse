@@ -1,0 +1,10 @@
+---
+model: anthropic:claude-sonnet-4
+description: Agent B (refers to C)
+subagents:
+  - path: agent-c.agentuse
+---
+
+# Agent B
+
+You are agent B. You have access to agent C.

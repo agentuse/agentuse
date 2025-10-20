@@ -258,7 +258,7 @@ Sub-agents create their own isolated tool environments:
 # parent.agentuse
 ---
 model: anthropic:claude-sonnet-4-0
-mcp_servers:
+mcpServers:
   database:
     command: "node"
     args: ["./database-server.js"]  # Relative to parent.agentuse location
@@ -269,7 +269,7 @@ subagents:
 # child.agentuse
 ---
 model: anthropic:claude-3-5-haiku-latest
-mcp_servers:
+mcpServers:
   # Child defines its own MCP servers
   filesystem:
     command: "npx"

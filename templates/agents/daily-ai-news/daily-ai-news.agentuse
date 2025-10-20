@@ -1,7 +1,7 @@
 ---
 model: anthropic:claude-sonnet-4-0
 description: "Searches for latest AI news and posts a formatted digest to Slack"
-mcp_servers:
+mcpServers:
   exa:
     command: npx
     args:

@@ -82,7 +82,7 @@ Complex tasks can be decomposed into specialized agents that work together throu
     ```markdown research.agentuse
     ---
     model: anthropic:claude-3-5-haiku-latest
-    mcp_servers:
+    mcpServers:
       filesystem:
         command: "pnpx"
         args: ["-y", "@modelcontextprotocol/server-filesystem", "./research"]
@@ -145,7 +145,7 @@ Since AgentUse agents are stateless between runs, use MCP servers to manage stat
 ```yaml notion-state.agentuse
 ---
 model: anthropic:claude-sonnet-4-20250514
-mcp_servers:
+mcpServers:
   notion:
     command: "pnpx"
     args: ["-y", "@modelcontextprotocol/server-notion"]
@@ -163,7 +163,7 @@ You track workflow state in Notion.
 ```yaml file-state.agentuse
 ---
 model: anthropic:claude-sonnet-4-20250514
-mcp_servers:
+mcpServers:
   filesystem:
     command: "pnpx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "./state"]

@@ -25,6 +25,9 @@ export interface AgentCompleteEvent {
     tokens?: number;       // total tokens used
     toolCalls: number;     // count of tool calls
     toolCallTraces?: ToolCallTrace[];  // Detailed timing for each tool/sub-agent call
+    finishReason?: string;
+    finishReasons?: string[];
+    hasTextOutput: boolean;
   };
   isSubAgent: boolean;
   consoleOutput: string;    // Full console output including logs and results
