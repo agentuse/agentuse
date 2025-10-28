@@ -144,11 +144,10 @@ program
       // Initialize storage and session manager
       let sessionManager;
       try {
-        const { initStorage, runMigrations } = await import('./storage/index.js');
+        const { initStorage } = await import('./storage/index.js');
         const { SessionManager } = await import('./session/index.js');
 
         await initStorage(projectContext.projectRoot);
-        await runMigrations();
         sessionManager = new SessionManager();
 
         logger.debug('Session storage initialized');

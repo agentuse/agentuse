@@ -4,7 +4,6 @@ import { getSessionStorageDir } from './paths';
 
 export interface StorageState {
   dir: string;
-  version: number;
 }
 
 let storageState: Promise<StorageState> | null = null;
@@ -23,17 +22,7 @@ export async function initStorage(projectRoot: string): Promise<StorageState> {
     // Ensure base directory exists
     await fs.mkdir(dir, { recursive: true });
 
-    // Check version
-    const versionFile = path.join(dir, '../version.json');
-    let version = 1;
-    try {
-      const content = await fs.readFile(versionFile, 'utf-8');
-      version = JSON.parse(content).version;
-    } catch {
-      // No version file yet, will be created
-    }
-
-    return { dir, version };
+    return { dir };
   })();
 
   return storageState;

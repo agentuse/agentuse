@@ -91,6 +91,7 @@ export async function processAgentStream(
     sessionManager?: SessionManager;
     sessionID?: string;
     messageID?: string;
+    agentName?: string;
   }
 ): Promise<{
   text: string;
@@ -130,8 +131,8 @@ export async function processAgentStream(
         logger.response(chunk.text!);
 
         // Log to session
-        if (options?.sessionManager && options?.sessionID && options?.messageID) {
-          options.sessionManager.addPart(options.sessionID, options.messageID, {
+        if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
+          options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
             type: 'text',
             text: chunk.text!,
             time: { start: Date.now() }
@@ -183,8 +184,8 @@ export async function processAgentStream(
         }
 
         // Log to session
-        if (options?.sessionManager && options?.sessionID && options?.messageID) {
-          options.sessionManager.addPart(options.sessionID, options.messageID, {
+        if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
+          options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
             type: 'tool',
             state: 'pending',
             name: chunk.toolName!,
@@ -1034,10 +1035,10 @@ export async function runAgent(
         });
 
         // Create user message
-        await sessionManager.createUserMessage(sessionID);
+        await sessionManager.createUserMessage(sessionID, agent.name);
 
         // Create assistant message
-        assistantMsgID = await sessionManager.createAssistantMessage(sessionID, {
+        assistantMsgID = await sessionManager.createAssistantMessage(sessionID, agent.name, {
           time: { created: Date.now() },
           system: systemMessages.map(m => m.content),
           modelID: agent.config.model,
@@ -1072,7 +1073,8 @@ export async function runAgent(
         collectToolCalls: true,
         sessionManager,
         sessionID,
-        messageID: assistantMsgID
+        messageID: assistantMsgID,
+        agentName: agent.name
       } : {
         collectToolCalls: true
       }
