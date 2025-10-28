@@ -12,6 +12,7 @@ import { dirname } from 'path';
 import type { ToolCallTrace } from './plugin/types';
 import { resolveMaxSteps, DEFAULT_MAX_STEPS } from './utils/config';
 import type { AgentPart } from './types/parts';
+import { SessionManager } from './session';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -87,6 +88,9 @@ export async function processAgentStream(
   options?: {
     collectToolCalls?: boolean;
     logPrefix?: string;
+    sessionManager?: SessionManager;
+    sessionID?: string;
+    messageID?: string;
   }
 ): Promise<{
   text: string;
@@ -124,6 +128,15 @@ export async function processAgentStream(
           hasTextOutput = true;
         }
         logger.response(chunk.text!);
+
+        // Log to session
+        if (options?.sessionManager && options?.sessionID && options?.messageID) {
+          options.sessionManager.addPart(options.sessionID, options.messageID, {
+            type: 'text',
+            text: chunk.text!,
+            time: { start: Date.now() }
+          }).catch(err => logger.debug(`Failed to log text part: ${err.message}`));
+        }
         break;
         
       case 'llm-start':
@@ -167,6 +180,17 @@ export async function processAgentStream(
         if (chunk.toolName && chunk.toolStartTime) {
           const key = `${chunk.toolName}_${chunk.toolStartTime}`;
           pendingToolCalls.set(key, { name: chunk.toolName, startTime: chunk.toolStartTime });
+        }
+
+        // Log to session
+        if (options?.sessionManager && options?.sessionID && options?.messageID) {
+          options.sessionManager.addPart(options.sessionID, options.messageID, {
+            type: 'tool',
+            state: 'pending',
+            name: chunk.toolName!,
+            input: chunk.toolInput,
+            time: { start: chunk.toolStartTime || Date.now() }
+          }).catch(err => logger.debug(`Failed to log tool-call part: ${err.message}`));
         }
         break;
         
@@ -883,7 +907,9 @@ export async function runAgent(
   startTime?: number,
   verbose: boolean = false,
   agentFilePath?: string,
-  cliMaxSteps?: number
+  cliMaxSteps?: number,
+  sessionManager?: SessionManager,
+  projectContext?: { projectRoot: string; cwd: string }
 ): Promise<RunAgentResult> {
   try {
     // Check if we're using OAuth (for system prompt modification)
@@ -954,9 +980,82 @@ export async function runAgent(
     
     // Add main system prompt as second message
     systemMessages.push({
-      role: 'system', 
+      role: 'system',
       content: buildAutonomousAgentPrompt(todayDate, false)
     });
+
+    // Create session if session manager is provided
+    let sessionID: string | undefined;
+    let assistantMsgID: string | undefined;
+
+    logger.debug(`Session manager available: ${!!sessionManager}, Project context available: ${!!projectContext}`);
+
+    if (sessionManager && projectContext) {
+      try {
+        // Create session
+        const agentConfig: {
+          name: string;
+          filePath?: string;
+          description?: string;
+          isSubAgent: boolean;
+        } = {
+          name: agent.name,
+          isSubAgent: false
+        };
+        if (agentFilePath) agentConfig.filePath = agentFilePath;
+        if (agent.description) agentConfig.description = agent.description;
+
+        const sessionConfig: {
+          timeout?: number;
+          maxSteps?: number;
+          mcpServers?: string[];
+          subagents?: Array<{ path: string; name?: string }>;
+        } = {};
+        if (agent.config.timeout) sessionConfig.timeout = agent.config.timeout;
+        if (maxSteps) sessionConfig.maxSteps = maxSteps;
+        if (agent.config.mcpServers) sessionConfig.mcpServers = Object.keys(agent.config.mcpServers);
+        if (agent.config.subagents) {
+          sessionConfig.subagents = agent.config.subagents.map(sa => {
+            const result: { path: string; name?: string } = { path: sa.path };
+            if (sa.name) result.name = sa.name;
+            return result;
+          });
+        }
+
+        sessionID = await sessionManager.createSession({
+          agent: agentConfig,
+          model: agent.config.model,
+          version: '0.1.4', // TODO: import from package.json
+          config: sessionConfig,
+          project: {
+            root: projectContext.projectRoot,
+            cwd: projectContext.cwd
+          }
+        });
+
+        // Create user message
+        await sessionManager.createUserMessage(sessionID);
+
+        // Create assistant message
+        assistantMsgID = await sessionManager.createAssistantMessage(sessionID, {
+          time: { created: Date.now() },
+          system: systemMessages.map(m => m.content),
+          modelID: agent.config.model,
+          providerID: agent.config.model.split(':')[0],
+          mode: 'build',
+          path: { cwd: projectContext.cwd, root: projectContext.projectRoot },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+        });
+
+        logger.debug(`Session created: ${sessionID}`);
+      } catch (error) {
+        logger.warn(`Failed to create session: ${(error as Error).message}`);
+        if (verbose) {
+          logger.debug(`Session creation error stack: ${(error as Error).stack}`);
+        }
+      }
+    }
 
     // Execute using the core generator
     const coreOptions = {
@@ -966,10 +1065,17 @@ export async function runAgent(
       subAgentNames,  // Pass subagent names for logging
       ...(abortSignal && { abortSignal })
     };
-    
+
     const result = await processAgentStream(
       executeAgentCore(agent, tools, coreOptions),
-      { collectToolCalls: true }
+      sessionManager && sessionID && assistantMsgID ? {
+        collectToolCalls: true,
+        sessionManager,
+        sessionID,
+        messageID: assistantMsgID
+      } : {
+        collectToolCalls: true
+      }
     );
     
     logger.debug(`Agent finish reasons: ${result.finishReasons?.join(', ') ?? 'none'}`);

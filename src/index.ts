@@ -141,6 +141,21 @@ program
       });
       logger.info(`Using project root: ${projectContext.projectRoot}`);
 
+      // Initialize storage and session manager
+      let sessionManager;
+      try {
+        const { initStorage, runMigrations } = await import('./storage/index.js');
+        const { SessionManager } = await import('./session/index.js');
+
+        await initStorage(projectContext.projectRoot);
+        await runMigrations();
+        sessionManager = new SessionManager();
+
+        logger.debug('Session storage initialized');
+      } catch (storageError) {
+        logger.warn(`Failed to initialize session storage: ${(storageError as Error).message}`);
+      }
+
       // Load environment variables from resolved env file
       if (existsSync(projectContext.envFile)) {
         logger.info(`Loading environment from: ${projectContext.envFile}`);
@@ -305,7 +320,18 @@ program
         if (agentFilePath && options.debug) {
           logger.debug(`[Main] Passing agent file path to runner: ${agentFilePath}`);
         }
-        result = await runAgent(agent, mcp, options.debug, abortController.signal, startTime, options.debug, agentFilePath, cliMaxSteps);
+        result = await runAgent(
+          agent,
+          mcp,
+          options.debug,
+          abortController.signal,
+          startTime,
+          options.debug,
+          agentFilePath,
+          cliMaxSteps,
+          sessionManager,
+          { projectRoot: projectContext.projectRoot, cwd: process.cwd() }
+        );
 
         if (!result.hasTextOutput) {
           logger.warn('Agent completed without producing a final response.');
