@@ -11,6 +11,7 @@ import { compactMessages } from './compactor';
 import { dirname } from 'path';
 import type { ToolCallTrace } from './plugin/types';
 import { resolveMaxSteps, DEFAULT_MAX_STEPS } from './utils/config';
+import type { AgentPart } from './types/parts';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -28,10 +29,23 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
 - Don't announce tool usage - just use them
 - Format output for terminal readability: use bullets (•), arrows (→), moderate emojis, and 2-space indentation for hierarchy
 - Keep lines short for terminal display
-- Iterate until the task is fully complete`;
+- Iterate until the task is fully complete
+
+IMPORTANT: When tools modify the system, explicitly state what changed:
+- Which files were modified (path and what changed)
+- Which resources were created/updated (e.g., Linear issues, GitHub PRs, Slack messages)
+- What commands were executed and their results
+- Be specific but concise
+
+Examples:
+✓ "Modified src/auth.ts to add null check on line 42"
+✓ "Created Linear issue PROJ-123: Fix authentication bug"
+✓ "Deployed to staging and notified #engineering"
+✗ "Done!" (too vague)
+✗ "Made some changes" (not specific)`;
 
   const subAgentAddition = isSubAgent ? '\n- Provide only essential summary when complete' : '';
-  
+
   return `${basePrompt}${subAgentAddition}
 
 Today's date: ${todayDate}`;
@@ -83,6 +97,7 @@ export async function processAgentStream(
   finishReason?: string;
   finishReasons?: string[];
   hasTextOutput: boolean;
+  parts: AgentPart[];
 }> {
   let finalText = '';
   let usage: LanguageModelUsage | null = null;
@@ -94,10 +109,16 @@ export async function processAgentStream(
   let llmSegmentCount = 0;
   let hasTextOutput = false;
   const finishReasons: string[] = [];
+  const parts: AgentPart[] = [];
   
   for await (const chunk of generator) {
     switch (chunk.type) {
       case 'text':
+        parts.push({
+          type: 'text',
+          text: chunk.text!,
+          timestamp: Date.now()
+        });
         finalText += chunk.text!;
         if (chunk.text && chunk.text.trim()) {
           hasTextOutput = true;
@@ -132,6 +153,12 @@ export async function processAgentStream(
         break;
         
       case 'tool-call':
+        parts.push({
+          type: 'tool-call',
+          tool: chunk.toolName!,
+          args: chunk.toolInput,
+          timestamp: Date.now()
+        });
         logger.tool(chunk.toolName!, chunk.toolInput, undefined, chunk.isSubAgent);
         if (options?.collectToolCalls) {
           toolCalls.push({ tool: chunk.toolName!, args: chunk.toolInput });
@@ -162,6 +189,15 @@ export async function processAgentStream(
             }
           }
         }
+
+        parts.push({
+          type: 'tool-result',
+          tool: chunk.toolName!,
+          output: chunk.toolResult || 'No result',
+          duration: toolDuration || 0,
+          success: true,
+          timestamp: Date.now()
+        });
 
         // Log the result with timing info
         logger.toolResult(chunk.toolResult || 'No result', {
@@ -250,7 +286,8 @@ export async function processAgentStream(
     ...(subAgentTokens > 0 && { subAgentTokens }),
     ...(toolCallTraces.length > 0 && { toolCallTraces }),
     ...(finishReasons.length > 0 && { finishReasons, finishReason: finishReasons[finishReasons.length - 1] }),
-    hasTextOutput
+    hasTextOutput,
+    parts
   };
 }
 
