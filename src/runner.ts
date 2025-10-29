@@ -56,6 +56,7 @@ export interface AgentChunk {
   type: 'text' | 'tool-call' | 'tool-result' | 'tool-error' | 'finish' | 'error' | 'llm-start' | 'llm-first-token';
   text?: string;
   toolName?: string;
+  toolCallId?: string;      // Tool call ID from AI SDK
   toolInput?: unknown;
   toolResult?: string;
   toolResultRaw?: unknown;
@@ -109,7 +110,7 @@ export async function processAgentStream(
   const toolCalls: Array<{ tool: string; args: unknown }> = [];
   let subAgentTokens = 0;
   const toolCallTraces: ToolCallTrace[] = [];
-  const pendingToolCalls = new Map<string, { name: string; startTime: number }>();
+  const pendingToolCalls = new Map<string, { name: string; startTime: number; partID?: string; input?: unknown }>();
   let currentLlmCall: { model: string; startTime: number; firstTokenTime?: number } | null = null;
   let llmSegmentCount = 0;
   let hasTextOutput = false;
@@ -177,20 +178,28 @@ export async function processAgentStream(
         if (options?.collectToolCalls) {
           toolCalls.push({ tool: chunk.toolName!, args: chunk.toolInput });
         }
-        // Store the start time for this tool call
-        if (chunk.toolName && chunk.toolStartTime) {
-          const key = `${chunk.toolName}_${chunk.toolStartTime}`;
-          pendingToolCalls.set(key, { name: chunk.toolName, startTime: chunk.toolStartTime });
+        // Store info for this tool call using toolCallId as key
+        if (chunk.toolCallId && chunk.toolName && chunk.toolStartTime) {
+          pendingToolCalls.set(chunk.toolCallId, {
+            name: chunk.toolName,
+            startTime: chunk.toolStartTime,
+            input: chunk.toolInput  // Store input for later use in completed state
+          });
         }
 
-        // Log to session
-        if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
+        // Log to session and track partID for later update
+        if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName && chunk.toolCallId) {
           options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
             type: 'tool',
-            state: 'pending',
-            name: chunk.toolName!,
-            input: chunk.toolInput,
-            time: { start: chunk.toolStartTime || Date.now() }
+            callID: chunk.toolCallId,
+            tool: chunk.toolName!,
+            state: { status: 'pending' }  // Use discriminated union
+          }).then(partID => {
+            // Track partID so we can update it when result comes in
+            const pending = pendingToolCalls.get(chunk.toolCallId!);
+            if (pending) {
+              pendingToolCalls.set(chunk.toolCallId!, { ...pending, partID });
+            }
           }).catch(err => logger.debug(`Failed to log tool-call part: ${err.message}`));
         }
         break;
@@ -231,10 +240,9 @@ export async function processAgentStream(
           ...(tokens && { tokens })
         });
 
-        // Find and complete the tool call trace
-        if (chunk.toolName && chunk.toolStartTime && chunk.toolDuration !== undefined) {
-          const key = `${chunk.toolName}_${chunk.toolStartTime}`;
-          const pending = pendingToolCalls.get(key);
+        // Find and complete the tool call trace using toolCallId
+        if (chunk.toolCallId && chunk.toolDuration !== undefined) {
+          const pending = pendingToolCalls.get(chunk.toolCallId);
           if (pending) {
             // Add tokens to subagent total if applicable
             if (tokens) {
@@ -249,7 +257,26 @@ export async function processAgentStream(
               ...(tokens && { tokens })
             });
 
-            pendingToolCalls.delete(key);
+            // Update the session storage part with completed state
+            if (pending.partID && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
+              // Build completed state with required fields
+              const completedState: import('./session/types').ToolStateCompleted = {
+                status: 'completed',
+                input: pending.input || {},  // Use stored input from tool-call
+                output: chunk.toolResultRaw || chunk.toolResult,
+                time: {
+                  start: pending.startTime,
+                  end: Date.now()
+                },
+                ...(tokens && { metadata: { tokens } })
+              };
+
+              options.sessionManager.updatePart(options.sessionID, options.agentName, options.messageID, pending.partID, {
+                state: completedState
+              }).catch(err => logger.debug(`Failed to update tool part: ${err.message}`));
+            }
+
+            pendingToolCalls.delete(chunk.toolCallId);
           }
         }
         break;
@@ -497,6 +524,7 @@ Error: ${errorMessage}`);
           yield {
             type: 'tool-call',
             toolName: chunk.toolName,
+            toolCallId,  // Add toolCallId to the chunk
             toolInput: (chunk as any).input || (chunk as any).args,
             toolStartTime: startTime,
             ...(options.subAgentNames?.has(chunk.toolName!) && { isSubAgent: true })
@@ -527,6 +555,7 @@ Error: ${errorMessage}`);
           yield {
             type: 'tool-result',
             toolName: chunk.toolName,
+            toolCallId,  // Add toolCallId to the chunk
             toolResult: parseToolResult(chunk),
             toolResultRaw: (chunk as any).result || (chunk as any).output,
             ...(startTime && { toolStartTime: startTime }),
@@ -910,7 +939,8 @@ export async function runAgent(
   agentFilePath?: string,
   cliMaxSteps?: number,
   sessionManager?: SessionManager,
-  projectContext?: { projectRoot: string; cwd: string }
+  projectContext?: { projectRoot: string; cwd: string },
+  userPrompt?: string
 ): Promise<RunAgentResult> {
   try {
     // Check if we're using OAuth (for system prompt modification)
@@ -919,22 +949,10 @@ export async function runAgent(
     // Convert MCP tools to AI SDK format
     const mcpTools = await getMCPTools(mcpClients);
     
-    // Load sub-agent tools if configured
-    // If we have an agent file path, use its directory as the base path for sub-agents
-    const basePath = agentFilePath ? dirname(agentFilePath) : undefined;
-    if (agentFilePath) {
-      logger.debug(`[SubAgent] Agent file path: ${agentFilePath}`);
-      logger.debug(`[SubAgent] Base path for sub-agents: ${basePath}`);
-    }
-    // Pass the parent's model to subagents so they inherit any model override
-    // Start at depth 0 for main agent's sub-agents
-    const subAgentTools = await createSubAgentTools(agent.config.subagents, basePath, agent.config.model, 0, []);
-
-    // Track subagent names for logging
-    const subAgentNames = new Set(Object.keys(subAgentTools));
-
-    // Merge all tools
-    const tools = { ...mcpTools, ...subAgentTools };
+    // Sub-agent tools will be created after session is initialized
+    // For now, just use MCP tools
+    let subAgentTools: Record<string, any> = {};
+    let tools = { ...mcpTools };
 
     // Precedence: CLI > Agent YAML > Default
     const maxSteps = resolveMaxSteps(cliMaxSteps, agent.config.maxSteps);
@@ -1034,19 +1052,23 @@ export async function runAgent(
           }
         });
 
-        // Create user message
-        await sessionManager.createUserMessage(sessionID, agent.name);
-
-        // Create assistant message
-        assistantMsgID = await sessionManager.createAssistantMessage(sessionID, agent.name, {
-          time: { created: Date.now() },
-          system: systemMessages.map(m => m.content),
-          modelID: agent.config.model,
-          providerID: agent.config.model.split(':')[0],
-          mode: 'build',
-          path: { cwd: projectContext.cwd, root: projectContext.projectRoot },
-          cost: 0,
-          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+        // Create message exchange (user + assistant in one)
+        assistantMsgID = await sessionManager.createMessage(sessionID, agent.name, {
+          user: {
+            prompt: {
+              task: agent.instructions,
+              ...(userPrompt && { user: userPrompt })
+            }
+          },
+          assistant: {
+            system: systemMessages.map(m => m.content),
+            modelID: agent.config.model,
+            providerID: agent.config.model.split(':')[0],
+            mode: 'build',
+            path: { cwd: projectContext.cwd, root: projectContext.projectRoot },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+          }
         });
 
         logger.debug(`Session created: ${sessionID}`);
@@ -1058,9 +1080,47 @@ export async function runAgent(
       }
     }
 
+    // Load sub-agent tools if configured and session exists
+    // If we have an agent file path, use its directory as the base path for sub-agents
+    if (agent.config.subagents && agent.config.subagents.length > 0) {
+      const basePath = agentFilePath ? dirname(agentFilePath) : undefined;
+      if (agentFilePath && verbose) {
+        logger.debug(`[SubAgent] Agent file path: ${agentFilePath}`);
+        logger.debug(`[SubAgent] Base path for sub-agents: ${basePath}`);
+      }
+      // Pass the parent's model to subagents so they inherit any model override
+      // Start at depth 0 for main agent's sub-agents
+      subAgentTools = await createSubAgentTools(
+        agent.config.subagents,
+        basePath,
+        agent.config.model,
+        0,
+        [],
+        sessionManager,
+        sessionID,
+        agent.name,
+        projectContext
+      );
+
+      // Merge all tools
+      tools = { ...mcpTools, ...subAgentTools };
+
+      if (verbose) {
+        logger.debug(`[SubAgent] Loaded ${Object.keys(subAgentTools).length} sub-agent tool(s)`);
+      }
+    }
+
+    // Track subagent names for logging
+    const subAgentNames = new Set(Object.keys(subAgentTools));
+
+    // Build user message by concatenating task and user prompts
+    const userMessage = userPrompt
+      ? `${agent.instructions}\n\n${userPrompt}`
+      : agent.instructions;
+
     // Execute using the core generator
     const coreOptions = {
-      userMessage: agent.instructions,
+      userMessage,
       systemMessages,
       maxSteps,
       subAgentNames,  // Pass subagent names for logging

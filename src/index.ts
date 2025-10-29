@@ -225,12 +225,9 @@ program
         agent = await parseAgent(file);
       }
       
-      // Append additional prompt if provided
-      if (additionalPrompt) {
-        agent.instructions = agent.instructions + '\n\n' + additionalPrompt;
-        if (options.debug) {
-          logger.info(`Appended prompt: ${additionalPrompt}`);
-        }
+      // Keep additional prompt separate (don't concatenate)
+      if (additionalPrompt && options.debug) {
+        logger.info(`Additional user prompt: ${additionalPrompt}`);
       }
 
       // Override model if specified via CLI
@@ -329,7 +326,8 @@ program
           agentFilePath,
           cliMaxSteps,
           sessionManager,
-          { projectRoot: projectContext.projectRoot, cwd: process.cwd() }
+          { projectRoot: projectContext.projectRoot, cwd: process.cwd() },
+          additionalPrompt || undefined
         );
 
         if (!result.hasTextOutput) {

@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 // Session Info Schema
 export interface SessionInfo {
   id: string;                        // ULID
@@ -39,51 +41,140 @@ export interface SessionInfo {
   };
 }
 
-// Message Schemas
-export type Message = UserMessage | AssistantMessage;
-
-export interface UserMessage {
-  id: string;
-  role: 'user';
+// Message Schema (contains both user input and assistant response in one exchange)
+export interface Message {
+  id: string;                        // Message exchange ID
   sessionID: string;
   time: {
-    created: number;
+    created: number;                 // When user sent message
+    completed?: number;              // When assistant finished
   };
-}
 
-export interface AssistantMessage {
-  id: string;
-  role: 'assistant';
-  sessionID: string;
-  time: {
-    created: number;
-    completed?: number;
-  };
-  error?: {
-    message: string;
-    type?: string;
-    stack?: string;
-  };
-  system: string[];                  // System prompts
-  modelID: string;
-  providerID: string;
-  mode: string;                      // 'build', 'plan', etc.
-  path: {
-    cwd: string;
-    root: string;
-  };
-  summary?: boolean;
-  cost: number;
-  tokens: {
-    input: number;
-    output: number;
-    reasoning: number;
-    cache: {
-      read: number;
-      write: number;
+  // User input
+  user: {
+    prompt: {
+      task: string;                  // From .agentuse markdown body
+      user?: string;                 // From CLI args (optional)
     };
   };
+
+  // Assistant response
+  assistant: {
+    system: string[];                // System prompts used
+    modelID: string;
+    providerID: string;
+    mode: string;                    // 'build', 'plan', etc.
+    path: {
+      cwd: string;
+      root: string;
+    };
+    cost: number;
+    tokens: {
+      input: number;
+      output: number;
+      reasoning: number;
+      cache: {
+        read: number;
+        write: number;
+      };
+    };
+    error?: {
+      message: string;
+      type?: string;
+      stack?: string;
+    };
+    summary?: boolean;
+  };
 }
+
+// Zod validation schema for Message
+export const MessageSchema = z.object({
+  id: z.string(),
+  sessionID: z.string(),
+  time: z.object({
+    created: z.number(),
+    completed: z.number().optional(),
+  }),
+  user: z.object({
+    prompt: z.object({
+      task: z.string(),
+      user: z.string().optional(),
+    }),
+  }),
+  assistant: z.object({
+    system: z.array(z.string()),
+    modelID: z.string(),
+    providerID: z.string(),
+    mode: z.string(),
+    path: z.object({
+      cwd: z.string(),
+      root: z.string(),
+    }),
+    cost: z.number(),
+    tokens: z.object({
+      input: z.number(),
+      output: z.number(),
+      reasoning: z.number(),
+      cache: z.object({
+        read: z.number(),
+        write: z.number(),
+      }),
+    }),
+    error: z.object({
+      message: z.string(),
+      type: z.string().optional(),
+      stack: z.string().optional(),
+    }).optional(),
+    summary: z.boolean().optional(),
+  }),
+});
+
+// Part Base - all parts include these fields
+export interface PartBase {
+  id: string;        // Part ID (ULID)
+  sessionID: string; // Session this part belongs to
+  messageID: string; // Message this part belongs to
+}
+
+// Tool State - discriminated union for type safety
+export type ToolStatePending = {
+  status: 'pending';
+};
+
+export type ToolStateRunning = {
+  status: 'running';
+  input: unknown;
+  title?: string;
+  metadata?: Record<string, unknown>;
+  time: {
+    start: number;
+  };
+};
+
+export type ToolStateCompleted = {
+  status: 'completed';
+  input: unknown;
+  output: unknown;
+  title?: string;
+  metadata?: Record<string, unknown>;
+  time: {
+    start: number;
+    end: number;
+  };
+};
+
+export type ToolStateError = {
+  status: 'error';
+  input: unknown;
+  error: string;
+  metadata?: Record<string, unknown>;
+  time: {
+    start: number;
+    end: number;
+  };
+};
+
+export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted | ToolStateError;
 
 // Part Schemas
 export type Part =
@@ -97,61 +188,67 @@ export type Part =
   | SnapshotPart
   | PatchPart;
 
-export interface TextPart {
+export interface TextPart extends PartBase {
   type: 'text';
   text: string;
+  synthetic?: boolean;
   time?: {
     start: number;
     end?: number;
   };
 }
 
-export interface ReasoningPart {
+export interface ReasoningPart extends PartBase {
   type: 'reasoning';
   text: string;
-  time?: {
-    start: number;
-    end?: number;
-  };
-}
-
-export interface ToolPart {
-  type: 'tool';
-  state: 'pending' | 'running' | 'completed' | 'error';
-  name: string;
-  input?: unknown;
-  output?: unknown;
-  title?: string;
-  error?: string;
   metadata?: Record<string, unknown>;
-  time?: {
+  time: {
     start: number;
     end?: number;
   };
 }
 
-export interface FilePart {
+export interface ToolPart extends PartBase {
+  type: 'tool';
+  callID: string;    // Tool call ID from AI SDK
+  tool: string;      // Tool name (renamed from 'name')
+  state: ToolState;  // Discriminated union
+}
+
+export interface FilePart extends PartBase {
   type: 'file';
-  file: string;                      // File path
-  mime?: string;
+  mime: string;
+  filename?: string;
+  url: string;
   source?: {
+    type: 'file' | 'symbol';
+    path: string;
+    text?: {
+      value: string;
+      start: number;
+      end: number;
+    };
+  };
+}
+
+export interface AgentPart extends PartBase {
+  type: 'agent';
+  name: string;
+  source?: {
+    value: string;
     start: number;
     end: number;
   };
 }
 
-export interface AgentPart {
-  type: 'agent';
-  id: string;
-}
-
-export interface StepStartPart {
+export interface StepStartPart extends PartBase {
   type: 'step-start';
 }
 
-export interface StepFinishPart {
+export interface StepFinishPart extends PartBase {
   type: 'step-finish';
-  tokens?: {
+  cost: number;
+  tokens: {
     input: number;
     output: number;
     reasoning: number;
@@ -160,15 +257,15 @@ export interface StepFinishPart {
       write: number;
     };
   };
-  cost?: number;
 }
 
-export interface SnapshotPart {
+export interface SnapshotPart extends PartBase {
   type: 'snapshot';
   snapshot: string;
 }
 
-export interface PatchPart {
+export interface PatchPart extends PartBase {
   type: 'patch';
-  patch: string;
+  hash: string;
+  files: string[];
 }

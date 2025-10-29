@@ -5,6 +5,7 @@ import { connectMCP, getMCPTools, type MCPServersConfig } from './mcp';
 import { logger } from './utils/logger';
 import { executeAgentCore, processAgentStream, buildAutonomousAgentPrompt } from './runner';
 import { resolve, dirname } from 'path';
+import { SessionManager } from './session/manager';
 
 // Constants
 const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
@@ -34,6 +35,10 @@ export function getMaxSubAgentDepth(): number {
  * @param modelOverride Optional model override from parent agent
  * @param depth Current nesting depth (0 = main agent)
  * @param callStack Array of agent paths in the call stack for cycle detection
+ * @param sessionManager Optional session manager for logging
+ * @param parentSessionID Optional parent session ID
+ * @param parentAgentName Optional parent agent name
+ * @param projectContext Optional project context (root, cwd)
  * @returns Tool that executes the sub-agent
  */
 export async function createSubAgentTool(
@@ -42,7 +47,11 @@ export async function createSubAgentTool(
   basePath?: string,
   modelOverride?: string,
   depth: number = 0,
-  callStack: string[] = []
+  callStack: string[] = [],
+  sessionManager?: SessionManager,
+  parentSessionID?: string,
+  parentAgentName?: string,
+  projectContext?: { projectRoot: string; cwd: string }
 ): Promise<Tool> {
   // Resolve the path relative to the base path if provided
   const resolvedPath = basePath ? resolve(basePath, agentPath) : agentPath;
@@ -70,6 +79,7 @@ export async function createSubAgentTool(
     }),
     execute: async ({ task, context }) => {
       const startTime = Date.now();
+
       try {
         logger.info(`[SubAgent:depth=${depth}] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
 
@@ -82,62 +92,144 @@ export async function createSubAgentTool(
 
         const mcpTools = await getMCPTools(mcpConnections);
 
-        // Load nested sub-agents if within depth limit
+        // Load nested sub-agents if within depth limit (will be populated after session creation)
         const maxDepth = getMaxSubAgentDepth();
         let nestedSubAgentTools: Record<string, Tool> = {};
 
-        if (depth + 1 < maxDepth) {
-          // Within limit, load nested sub-agents
-          if (agent.config.subagents && agent.config.subagents.length > 0) {
-            nestedSubAgentTools = await createSubAgentTools(
-              agent.config.subagents,
-              subAgentBasePath,
-              agent.config.model,
-              depth + 1,
-              [...callStack, resolvedPath]
-            );
-          }
-        } else if (agent.config.subagents && agent.config.subagents.length > 0) {
+        // Will be set after session creation
+        let subagentSessionID: string | undefined;
+        let subagentMsgID: string | undefined;
+
+        // Create NEW SessionManager instance for this subagent (eliminates shared state issues)
+        let subagentSessionManager: SessionManager | undefined;
+
+        // Check depth limit but don't create nested tools yet
+        if (depth + 1 >= maxDepth && agent.config.subagents && agent.config.subagents.length > 0) {
           // At depth limit, warn that nested sub-agents are being skipped
           logger.warn(`[SubAgent:depth=${depth}] Max depth ${maxDepth} reached, skipping ${agent.config.subagents.length} nested sub-agent(s) for ${agent.name}`);
         }
 
-        // Merge MCP tools and nested sub-agent tools
-        const tools = { ...mcpTools, ...nestedSubAgentTools };
-        
+        // Initially just MCP tools (nested subagents will be added after session creation)
+        let tools = { ...mcpTools };
+
         try {
           // Build system messages (same as main agent)
           const systemMessages: Array<{role: string, content: string}> = [];
-          
+
           if (agent.config.model.includes('anthropic')) {
             systemMessages.push({
               role: 'system',
               content: 'You are Claude Code, Anthropic\'s official CLI for Claude.'
             });
           }
-          
-          const todayDate = new Date().toLocaleDateString('en-US', { 
-            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
+
+          const todayDate = new Date().toLocaleDateString('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
           });
-          
+
           systemMessages.push({
-            role: 'system', 
+            role: 'system',
             content: buildAutonomousAgentPrompt(todayDate, true)
           });
-          
+
           // Build user message: agent instructions + optional parent task
           let userMessage = agent.instructions;
-          
+
           // Only append task if it's meaningful (not empty or generic)
           if (task && task.trim() && !task.match(/^(run|execute|perform|do)$/i)) {
-            userMessage = context 
+            userMessage = context
               ? `${agent.instructions}\n\nAdditional task: ${task}\n\nContext: ${JSON.stringify(context)}`
               : `${agent.instructions}\n\nAdditional task: ${task}`;
           } else if (context) {
             userMessage = `${agent.instructions}\n\nContext: ${JSON.stringify(context)}`;
           }
-          
-          // Process the agent stream
+
+          // Create session for this subagent if SessionManager is provided
+          if (sessionManager && parentSessionID && parentAgentName && projectContext) {
+            try {
+              // Create NEW SessionManager instance for this subagent
+              // This eliminates shared state issues with parent agent
+              subagentSessionManager = new SessionManager();
+
+              // Set parent context on the NEW instance
+              subagentSessionManager.setParentContext(parentSessionID, parentAgentName);
+
+              // Create subagent session using the NEW instance
+              subagentSessionID = await subagentSessionManager.createSession({
+                agent: {
+                  name: agent.name,
+                  ...(resolvedPath && { filePath: resolvedPath }),
+                  ...(agent.description && { description: agent.description }),
+                  isSubAgent: true
+                },
+                model: agent.config.model,
+                version: process.env.npm_package_version || 'unknown',
+                config: {
+                  ...(agent.config.timeout !== undefined && { timeout: agent.config.timeout }),
+                  ...(agent.config.maxSteps !== undefined && { maxSteps: agent.config.maxSteps }),
+                  ...(agent.config.mcpServers && { mcpServers: Object.keys(agent.config.mcpServers) }),
+                  ...(agent.config.subagents && {
+                    subagents: agent.config.subagents.map(s => ({
+                      path: s.path,
+                      ...(s.name && { name: s.name })
+                    }))
+                  })
+                },
+                project: {
+                  root: projectContext.projectRoot,
+                  cwd: projectContext.cwd
+                }
+              });
+
+              // Create message exchange
+              const taskPrompt = task && task.trim() && !task.match(/^(run|execute|perform|do)$/i)
+                ? task
+                : undefined;
+
+              subagentMsgID = await subagentSessionManager.createMessage(subagentSessionID, agent.name, {
+                user: {
+                  prompt: {
+                    task: agent.instructions,
+                    ...(taskPrompt && { user: taskPrompt })
+                  }
+                },
+                assistant: {
+                  system: systemMessages.map(m => m.content),
+                  modelID: agent.config.model,
+                  providerID: agent.config.model.split(':')[0],
+                  mode: 'build',
+                  path: { cwd: projectContext.cwd, root: projectContext.projectRoot },
+                  cost: 0,
+                  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+                }
+              });
+
+              logger.debug(`[SubAgent] Created session ${subagentSessionID} for ${agent.name}`);
+            } catch (error) {
+              logger.warn(`[SubAgent] Failed to create session: ${(error as Error).message}`);
+            }
+          }
+
+          // Now create nested sub-agent tools after this subagent's session exists
+          // Pass the NEW subagent SessionManager instance to nested tools
+          if (depth + 1 < maxDepth && agent.config.subagents && agent.config.subagents.length > 0) {
+            nestedSubAgentTools = await createSubAgentTools(
+              agent.config.subagents,
+              subAgentBasePath,
+              agent.config.model,
+              depth + 1,
+              [...callStack, resolvedPath],
+              subagentSessionManager,  // Pass NEW instance (not parent's)
+              subagentSessionID,
+              agent.name,
+              projectContext
+            );
+
+            // Merge nested subagent tools into tools
+            tools = { ...mcpTools, ...nestedSubAgentTools };
+          }
+
+          // Process the agent stream using the NEW SessionManager instance
           const result = await processAgentStream(
             executeAgentCore(agent, tools, {
               userMessage,
@@ -145,7 +237,14 @@ export async function createSubAgentTool(
               maxSteps,
               subAgentNames: new Set(Object.keys(nestedSubAgentTools))  // Track nested sub-agent names for logging
             }),
-            {
+            subagentSessionID && subagentMsgID && subagentSessionManager ? {
+              sessionManager: subagentSessionManager,  // Use NEW instance
+              sessionID: subagentSessionID,
+              agentName: agent.name,
+              messageID: subagentMsgID,
+              collectToolCalls: true,
+              logPrefix: '[SubAgent] '
+            } : {
               collectToolCalls: true,
               logPrefix: '[SubAgent] '
             }
@@ -158,7 +257,7 @@ export async function createSubAgentTool(
           if (result.usage?.totalTokens) {
             logger.info(`[SubAgent:depth=${depth}] ${agent.name} tokens used: ${result.usage.totalTokens}`);
           }
-          
+
           return {
             output: result.text || 'Sub-agent completed without text response',
             metadata: {
@@ -204,7 +303,11 @@ export async function createSubAgentTools(
   basePath?: string,
   modelOverride?: string,
   depth: number = 0,
-  callStack: string[] = []
+  callStack: string[] = [],
+  sessionManager?: SessionManager,
+  parentSessionID?: string,
+  parentAgentName?: string,
+  projectContext?: { projectRoot: string; cwd: string }
 ): Promise<Record<string, Tool>> {
   if (!subAgents || subAgents.length === 0) {
     return {};
@@ -214,7 +317,18 @@ export async function createSubAgentTools(
 
   for (const config of subAgents) {
     try {
-      const tool = await createSubAgentTool(config.path, config.maxSteps, basePath, modelOverride, depth, callStack);
+      const tool = await createSubAgentTool(
+        config.path,
+        config.maxSteps,
+        basePath,
+        modelOverride,
+        depth,
+        callStack,
+        sessionManager,
+        parentSessionID,
+        parentAgentName,
+        projectContext
+      );
       // Use custom name if provided, otherwise extract from filename
       let name = config.name;
       if (!name) {

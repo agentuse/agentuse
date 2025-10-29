@@ -2,8 +2,6 @@ import { ulid } from 'ulid';
 import { writeJSON, readJSON, sanitizeAgentName } from '../storage';
 import type {
   SessionInfo,
-  UserMessage,
-  AssistantMessage,
   Part,
   Message
 } from './types';
@@ -52,57 +50,72 @@ export class SessionManager {
   }
 
   /**
-   * Create a user message
+   * Create a message exchange (user + assistant in one)
    */
-  async createUserMessage(sessionID: string, agentName?: string): Promise<string> {
-    const id = ulid();
-    const effectiveAgentName = agentName || this.agentName;
-
-    if (!effectiveAgentName) {
-      throw new Error('Agent name is required for creating messages');
-    }
-
-    const message: UserMessage = {
-      id,
-      role: 'user',
-      sessionID,
-      time: { created: Date.now() }
-    };
-
-    const sessionPath = this.buildSessionPath(sessionID, effectiveAgentName);
-    await writeJSON(`${sessionPath}/message/${id}`, message);
-    return id;
-  }
-
-  /**
-   * Create an assistant message
-   */
-  async createAssistantMessage(
+  async createMessage(
     sessionID: string,
     agentName: string,
-    data: Omit<AssistantMessage, 'id' | 'role' | 'sessionID' | 'time'> & { time: { created: number } }
+    data: {
+      user: {
+        prompt: {
+          task: string;
+          user?: string;
+        };
+      };
+      assistant: {
+        system: string[];
+        modelID: string;
+        providerID: string;
+        mode: string;
+        path: { cwd: string; root: string };
+        cost: number;
+        tokens: {
+          input: number;
+          output: number;
+          reasoning: number;
+          cache: { read: number; write: number };
+        };
+      };
+    }
   ): Promise<string> {
     const id = ulid();
 
-    const message: AssistantMessage = {
-      ...data,
+    const message: Message = {
       id,
-      role: 'assistant',
-      sessionID
+      sessionID,
+      time: { created: Date.now() },
+      ...data
     };
 
     const sessionPath = this.buildSessionPath(sessionID, agentName);
-    await writeJSON(`${sessionPath}/message/${id}`, message);
+    // New path structure: {messageID}/message.json
+    await writeJSON(`${sessionPath}/${id}/message`, message);
     return id;
   }
 
   /**
    * Add a part to a message
+   * Accepts part data without base fields (id, sessionID, messageID) and adds them
    */
-  async addPart(sessionID: string, agentName: string, messageID: string, part: Part): Promise<string> {
+  async addPart(
+    sessionID: string,
+    agentName: string,
+    messageID: string,
+    partData: Omit<Part, 'id' | 'sessionID' | 'messageID'>
+  ): Promise<string> {
     const id = ulid();
     const sessionPath = this.buildSessionPath(sessionID, agentName);
-    await writeJSON(`${sessionPath}/part/${messageID}/${id}`, part);
+
+    // Add base fields to create complete Part
+    const completePart: Part = {
+      ...partData,
+      id,
+      sessionID,
+      messageID,
+    } as Part; // Type assertion needed due to discriminated union complexity
+
+    // New path structure: {messageID}/part/{partID}.json
+    await writeJSON(`${sessionPath}/${messageID}/part/${id}`, completePart);
     return id;
   }
 
@@ -111,7 +124,8 @@ export class SessionManager {
    */
   async updatePart(sessionID: string, agentName: string, messageID: string, partID: string, updates: Partial<Part>): Promise<void> {
     const sessionPath = this.buildSessionPath(sessionID, agentName);
-    const key = `${sessionPath}/part/${messageID}/${partID}`;
+    // New path structure: {messageID}/part/{partID}.json
+    const key = `${sessionPath}/${messageID}/part/${partID}`;
 
     const existing = await readJSON<Part>(key);
     if (existing) {
@@ -136,18 +150,19 @@ export class SessionManager {
   }
 
   /**
-   * Update assistant message
+   * Update message (typically for updating assistant response data)
    */
-  async updateAssistantMessage(
+  async updateMessage(
     sessionID: string,
     agentName: string,
     messageID: string,
-    updates: Partial<Omit<AssistantMessage, 'id' | 'role' | 'sessionID'>>
+    updates: Partial<Omit<Message, 'id' | 'sessionID'>>
   ): Promise<void> {
     const sessionPath = this.buildSessionPath(sessionID, agentName);
-    const key = `${sessionPath}/message/${messageID}`;
+    // New path structure: {messageID}/message.json
+    const key = `${sessionPath}/${messageID}/message`;
 
-    const message = await readJSON<AssistantMessage>(key);
+    const message = await readJSON<Message>(key);
     if (message) {
       Object.assign(message, updates);
       await writeJSON(key, message);
@@ -181,7 +196,8 @@ export class SessionManager {
    */
   async getMessage(sessionID: string, agentName: string, messageID: string): Promise<Message | null> {
     const sessionPath = this.buildSessionPath(sessionID, agentName);
-    return readJSON<Message>(`${sessionPath}/message/${messageID}`);
+    // New path structure: {messageID}/message.json
+    return readJSON<Message>(`${sessionPath}/${messageID}/message`);
   }
 
   /**
@@ -189,7 +205,8 @@ export class SessionManager {
    */
   async getPart(sessionID: string, agentName: string, messageID: string, partID: string): Promise<Part | null> {
     const sessionPath = this.buildSessionPath(sessionID, agentName);
-    return readJSON<Part>(`${sessionPath}/part/${messageID}/${partID}`);
+    // New path structure: {messageID}/part/{partID}.json
+    return readJSON<Part>(`${sessionPath}/${messageID}/part/${partID}`);
   }
 
   /**
