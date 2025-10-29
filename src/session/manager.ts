@@ -10,6 +10,7 @@ export class SessionManager {
   private sessionID: string | null = null;
   private agentName: string | null = null;
   private parentPath: string | null = null; // For subagents: "{mainSessionID}-{mainAgentName}/subagent"
+  private fullPath: string | null = null; // Full path to this session's directory
 
   /**
    * Build full session directory path
@@ -45,6 +46,7 @@ export class SessionManager {
 
     this.sessionID = id;
     this.agentName = sanitizeAgentName(info.agent.name);
+    this.fullPath = sessionPath;
 
     return id;
   }
@@ -210,10 +212,17 @@ export class SessionManager {
   }
 
   /**
-   * Set parent context for subagent sessions
+   * Set parent path for subagent sessions
+   * @param parentFullPath The full path of the parent session
    */
-  setParentContext(parentSessionID: string, parentAgentName: string): void {
-    const sanitizedParentName = sanitizeAgentName(parentAgentName);
-    this.parentPath = `${parentSessionID}-${sanitizedParentName}/subagent`;
+  setParentPath(parentFullPath: string): void {
+    this.parentPath = `${parentFullPath}/subagent`;
+  }
+
+  /**
+   * Get the full path to this session's directory
+   */
+  getFullPath(): string | null {
+    return this.fullPath;
   }
 }

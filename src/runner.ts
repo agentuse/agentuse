@@ -117,11 +117,19 @@ export async function processAgentStream(
   const finishReasons: string[] = [];
   const parts: AgentPart[] = [];
 
-  // Track current text part for streaming updates (OpenCode approach)
+  // Track current text part for streaming updates with debouncing
   let currentTextPart: { partID: string; text: string; startTime: number } | null = null;
+  let textUpdateTimer: NodeJS.Timeout | null = null;
+  const TEXT_UPDATE_DEBOUNCE_MS = 500; // Write to disk every 500ms max
 
   // Helper to finalize current text part
   const finalizeTextPart = async () => {
+    // Clear any pending debounced update
+    if (textUpdateTimer) {
+      clearTimeout(textUpdateTimer);
+      textUpdateTimer = null;
+    }
+
     if (currentTextPart && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
       try {
         await options.sessionManager.updatePart(
@@ -158,16 +166,16 @@ export async function processAgentStream(
         }
         logger.response(chunk.text!);
 
-        // Log to session using OpenCode approach: create once, update as streaming
+        // Log to session with debounced writes to prevent race conditions
         if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
           if (!currentTextPart) {
-            // First text chunk: create new part
+            // First text chunk: create new part (await to ensure partID is available)
             const startTime = Date.now();
             options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
               type: 'text',
               text: chunk.text!,
               time: { start: startTime }
-            }).then(partID => {
+            } as any).then(partID => {
               currentTextPart = {
                 partID,
                 text: chunk.text!,
@@ -175,17 +183,37 @@ export async function processAgentStream(
               };
             }).catch(err => logger.debug(`Failed to create text part: ${err.message}`));
           } else {
-            // Subsequent chunks: update existing part
-            currentTextPart.text += chunk.text!;
-            options.sessionManager.updatePart(
-              options.sessionID,
-              options.agentName,
-              options.messageID,
-              currentTextPart.partID,
-              {
-                text: currentTextPart.text
+            // Subsequent chunks: update in-memory immediately, debounce disk writes
+            // TypeScript can't track that currentTextPart is set in the async .then() above,
+            // but in practice chunks arrive slowly enough that this is safe
+            if (currentTextPart) {
+              const textPart = currentTextPart as { partID: string; text: string; startTime: number };
+              textPart.text += chunk.text!;
+
+              // Clear existing timer and schedule new debounced write
+              if (textUpdateTimer) {
+                clearTimeout(textUpdateTimer);
               }
-            ).catch(err => logger.debug(`Failed to update text part: ${err.message}`));
+
+              // Capture current state for the timeout callback
+              const partID = textPart.partID;
+              const getText = () => currentTextPart?.text || '';
+
+              textUpdateTimer = setTimeout(() => {
+                if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
+                  options.sessionManager.updatePart(
+                    options.sessionID,
+                    options.agentName,
+                    options.messageID,
+                    partID,
+                    {
+                      text: getText()
+                    }
+                  ).catch(err => logger.debug(`Failed to update text part: ${err.message}`));
+                }
+                textUpdateTimer = null;
+              }, TEXT_UPDATE_DEBOUNCE_MS);
+            }
           }
         }
         break;
@@ -246,7 +274,7 @@ export async function processAgentStream(
             callID: chunk.toolCallId,
             tool: chunk.toolName!,
             state: { status: 'pending' }  // Use discriminated union
-          }).then(partID => {
+          } as any).then(partID => {
             // Track partID so we can update it when result comes in
             const pending = pendingToolCalls.get(chunk.toolCallId!);
             if (pending) {

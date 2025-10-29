@@ -151,8 +151,11 @@ export async function createSubAgentTool(
               // This eliminates shared state issues with parent agent
               subagentSessionManager = new SessionManager();
 
-              // Set parent context on the NEW instance
-              subagentSessionManager.setParentContext(parentSessionID, parentAgentName);
+              // Set parent path on the NEW instance using parent's full path
+              const parentFullPath = sessionManager.getFullPath();
+              if (parentFullPath) {
+                subagentSessionManager.setParentPath(parentFullPath);
+              }
 
               // Create subagent session using the NEW instance
               subagentSessionID = await subagentSessionManager.createSession({
