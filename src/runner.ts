@@ -116,7 +116,34 @@ export async function processAgentStream(
   let hasTextOutput = false;
   const finishReasons: string[] = [];
   const parts: AgentPart[] = [];
-  
+
+  // Track current text part for streaming updates (OpenCode approach)
+  let currentTextPart: { partID: string; text: string; startTime: number } | null = null;
+
+  // Helper to finalize current text part
+  const finalizeTextPart = async () => {
+    if (currentTextPart && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
+      try {
+        await options.sessionManager.updatePart(
+          options.sessionID,
+          options.agentName,
+          options.messageID,
+          currentTextPart.partID,
+          {
+            text: currentTextPart.text.trimEnd(),
+            time: {
+              start: currentTextPart.startTime,
+              end: Date.now()
+            }
+          }
+        );
+      } catch (err) {
+        logger.debug(`Failed to finalize text part: ${(err as Error).message}`);
+      }
+      currentTextPart = null;
+    }
+  };
+
   for await (const chunk of generator) {
     switch (chunk.type) {
       case 'text':
@@ -131,13 +158,35 @@ export async function processAgentStream(
         }
         logger.response(chunk.text!);
 
-        // Log to session
+        // Log to session using OpenCode approach: create once, update as streaming
         if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
-          options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
-            type: 'text',
-            text: chunk.text!,
-            time: { start: Date.now() }
-          }).catch(err => logger.debug(`Failed to log text part: ${err.message}`));
+          if (!currentTextPart) {
+            // First text chunk: create new part
+            const startTime = Date.now();
+            options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
+              type: 'text',
+              text: chunk.text!,
+              time: { start: startTime }
+            }).then(partID => {
+              currentTextPart = {
+                partID,
+                text: chunk.text!,
+                startTime
+              };
+            }).catch(err => logger.debug(`Failed to create text part: ${err.message}`));
+          } else {
+            // Subsequent chunks: update existing part
+            currentTextPart.text += chunk.text!;
+            options.sessionManager.updatePart(
+              options.sessionID,
+              options.agentName,
+              options.messageID,
+              currentTextPart.partID,
+              {
+                text: currentTextPart.text
+              }
+            ).catch(err => logger.debug(`Failed to update text part: ${err.message}`));
+          }
         }
         break;
         
@@ -168,6 +217,9 @@ export async function processAgentStream(
         break;
         
       case 'tool-call':
+        // Finalize any pending text part before tool call
+        await finalizeTextPart();
+
         parts.push({
           type: 'tool-call',
           tool: chunk.toolName!,
@@ -293,6 +345,9 @@ export async function processAgentStream(
         break;
         
       case 'finish':
+        // Finalize any pending text part
+        await finalizeTextPart();
+
         // Only update usage on final finish (not intermediate segments)
         if (chunk.usage) {
           usage = chunk.usage;
@@ -327,10 +382,15 @@ export async function processAgentStream(
         break;
         
       case 'error':
+        // Finalize any pending text part before throwing error
+        await finalizeTextPart();
         throw chunk.error;
     }
   }
-  
+
+  // Finalize any pending text part before returning (safety fallback)
+  await finalizeTextPart();
+
   return {
     text: finalText,
     ...(usage && { usage }),
