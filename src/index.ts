@@ -5,6 +5,7 @@ import { runAgent } from './runner';
 import { Command } from 'commander';
 import { createAuthCommand } from './cli/auth';
 import { logger, LogLevel } from './utils/logger';
+import { OutputVerbosity, verbosityManager } from './utils/output-verbosity';
 import { basename, resolve, dirname } from 'path';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
@@ -84,11 +85,13 @@ program
   .description('Run an AI agent from a markdown file or URL, optionally appending a prompt')
   .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
   .option('-d, --debug', 'Enable debug mode with detailed logging and full error messages')
+  .option('-v, --verbosity <level>', 'Set output verbosity: minimal, compact, normal, verbose, debug (default: compact)')
+  .option('--no-keyboard', 'Disable keyboard shortcuts (Ctrl-O for verbosity, Ctrl-D for debug)')
   .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
   .option('-C, --directory <path>', 'Run as if agentuse was started in <path> instead of the current directory')
   .option('--env-file <path>', 'Path to custom .env file')
   .option('-m, --model <model>', 'Override the model specified in the agent file')
-  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, timeout: string, directory?: string, envFile?: string, model?: string }) => {
+  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, verbosity?: string, keyboard?: boolean, timeout: string, directory?: string, envFile?: string, model?: string }) => {
     const startTime = Date.now();
     let originalCwd: string | undefined;
 
@@ -98,12 +101,44 @@ program
         throw new Error('Cannot use --quiet and --debug together');
       }
 
+      if (options.verbosity && (options.quiet || options.debug)) {
+        throw new Error('Cannot use --verbosity with --quiet or --debug');
+      }
+
       process.env.AGENTUSE_DEBUG = options.debug ? 'true' : 'false';
-      
-      if (options.quiet) {
+
+      // Handle verbosity configuration
+      if (options.verbosity) {
+        const verbosityMap: Record<string, OutputVerbosity> = {
+          'minimal': OutputVerbosity.MINIMAL,
+          'compact': OutputVerbosity.COMPACT,
+          'normal': OutputVerbosity.NORMAL,
+          'verbose': OutputVerbosity.VERBOSE,
+          'debug': OutputVerbosity.DEBUG,
+        };
+
+        const level = options.verbosity.toLowerCase();
+        if (!(level in verbosityMap)) {
+          throw new Error(`Invalid verbosity level: ${options.verbosity}. Valid options: minimal, compact, normal, verbose, debug`);
+        }
+
+        verbosityManager.setVerbosity(verbosityMap[level]);
+
+        // Also set debug mode if verbosity is debug
+        if (verbosityMap[level] === OutputVerbosity.DEBUG) {
+          logger.configure({ level: LogLevel.DEBUG, enableDebug: true });
+        }
+      } else if (options.quiet) {
         logger.configure({ level: LogLevel.WARN });
+        verbosityManager.setVerbosity(OutputVerbosity.NORMAL);
       } else if (options.debug) {
         logger.configure({ level: LogLevel.DEBUG, enableDebug: true });
+        verbosityManager.setVerbosity(OutputVerbosity.DEBUG);
+      }
+
+      // Enable keyboard shortcuts unless explicitly disabled
+      if (options.keyboard !== false && process.stdin.isTTY) {
+        logger.enableKeyboardShortcuts();
       }
       
       // Log startup time if debug
@@ -139,11 +174,11 @@ program
       const projectContext = resolveProjectContext(process.cwd(), {
         ...(options.envFile && { envFile: options.envFile }),
       });
-      logger.info(`Using project root: ${projectContext.projectRoot}`);
+      logger.infoVerbose(`Using project root: ${projectContext.projectRoot}`);
 
       // Load environment variables from resolved env file
       if (existsSync(projectContext.envFile)) {
-        logger.info(`Loading environment from: ${projectContext.envFile}`);
+        logger.infoVerbose(`Loading environment from: ${projectContext.envFile}`);
         // @ts-ignore - quiet option exists but may not be in types
         dotenv.config({ path: projectContext.envFile, quiet: true });
       } else if (options.envFile) {
@@ -294,9 +329,13 @@ program
       logger.startCapture();
 
       // Log agent information
-      logger.info(`Running agent: ${agent.name}`);
+      // Show compact summary at compact level
+      logger.compact(`▶ ${agent.name} [${agent.config.model}]`);
+
+      // Show full details at verbose level
+      logger.infoVerbose(`Running agent: ${agent.name}`);
       if (agent.description) {
-        logger.info(`Description: ${agent.description}`);
+        logger.infoVerbose(`Description: ${agent.description}`);
       }
 
       // Run the agent with timeout

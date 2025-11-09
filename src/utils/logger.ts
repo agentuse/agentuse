@@ -1,5 +1,8 @@
 import chalk from 'chalk';
 import ora, { type Ora } from 'ora';
+import cliBoxes from 'cli-boxes';
+import { terminalManager } from './terminal-manager.js';
+import { verbosityManager, OutputVerbosity, type VerbosityChangeEvent } from './output-verbosity.js';
 
 export enum LogLevel {
   DEBUG = 0,
@@ -309,11 +312,107 @@ class Logger {
   private spinner: Ora | null = null;
   private spinnerStoppedByOutput = false;
   private activeLlmModel: string | null = null;
+  private keyboardShortcutsEnabled: boolean = false;
 
   constructor(options: LoggerOptions = {}) {
     this.level = options.level ?? LogLevel.INFO;
     this.enableDebug = options.enableDebug ?? isEnvDebugFlagEnabled();
     this.useTUI = process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
+
+    // Initialize verbosity based on logger level
+    this.syncVerbosityWithLogLevel();
+
+    // Listen for verbosity changes
+    verbosityManager.onChange(this.handleVerbosityChange.bind(this));
+  }
+
+  /**
+   * Sync verbosity manager with current log level
+   */
+  private syncVerbosityWithLogLevel(): void {
+    if (this.isDebugEnabled()) {
+      verbosityManager.setVerbosity(OutputVerbosity.DEBUG);
+    } else if (this.level === LogLevel.WARN) {
+      verbosityManager.setVerbosity(OutputVerbosity.NORMAL);
+    } else if (this.level === LogLevel.INFO) {
+      verbosityManager.setVerbosity(OutputVerbosity.COMPACT);
+    }
+  }
+
+  /**
+   * Handle verbosity changes from keyboard shortcuts
+   */
+  private handleVerbosityChange(event: VerbosityChangeEvent): void {
+    // Update logger configuration based on new verbosity
+    if (event.isDebug) {
+      this.enableDebug = true;
+      this.level = LogLevel.DEBUG;
+    } else {
+      this.enableDebug = false;
+
+      switch (event.current) {
+        case OutputVerbosity.MINIMAL:
+        case OutputVerbosity.COMPACT:
+          this.level = LogLevel.INFO;
+          break;
+        case OutputVerbosity.NORMAL:
+          this.level = LogLevel.WARN;
+          break;
+        case OutputVerbosity.VERBOSE:
+          this.level = LogLevel.INFO;
+          break;
+      }
+    }
+
+    // Update TUI setting
+    this.useTUI = process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
+
+    // Show notification toast
+    this.showVerbosityNotification(event);
+  }
+
+  /**
+   * Show a temporary notification about verbosity change
+   */
+  private showVerbosityNotification(event: VerbosityChangeEvent): void {
+    const levelName = verbosityManager.getVerbosityName(event.current);
+    const debugIndicator = event.isDebug ? ' • DEBUG ON' : '';
+    const message = chalk.cyan(`Output level: ${levelName}${debugIndicator}`);
+
+    // Temporarily stop spinner if running
+    const wasSpinning = this.spinner?.isSpinning;
+    if (wasSpinning) {
+      this.spinner?.stop();
+    }
+
+    process.stderr.write(`\r${chalk.dim('┌')}${chalk.dim('─'.repeat(message.length + 2))}${chalk.dim('┐')}\n`);
+    process.stderr.write(`${chalk.dim('│')} ${message} ${chalk.dim('│')}\n`);
+    process.stderr.write(`${chalk.dim('└')}${chalk.dim('─'.repeat(message.length + 2))}${chalk.dim('┘')}\n`);
+
+    // Resume spinner if it was running
+    if (wasSpinning && this.spinner) {
+      this.spinner.start();
+    }
+  }
+
+  /**
+   * Enable keyboard shortcuts for verbosity control
+   */
+  enableKeyboardShortcuts(): void {
+    if (!this.keyboardShortcutsEnabled) {
+      verbosityManager.enableKeyboardShortcuts();
+      this.keyboardShortcutsEnabled = true;
+    }
+  }
+
+  /**
+   * Disable keyboard shortcuts
+   */
+  disableKeyboardShortcuts(): void {
+    if (this.keyboardShortcutsEnabled) {
+      verbosityManager.disableKeyboardShortcuts();
+      this.keyboardShortcutsEnabled = false;
+    }
   }
 
   private isDebugEnabled(): boolean {
@@ -384,6 +483,74 @@ class Logger {
     }
     // Update TUI setting based on new configuration
     this.useTUI = process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
+
+    // Re-sync verbosity
+    this.syncVerbosityWithLogLevel();
+  }
+
+  /**
+   * Render a box with title and content
+   */
+  box(title: string, content: string, options?: { style?: 'round' | 'single' | 'double' | 'bold'; color?: typeof chalk }): void {
+    // Stop spinner before rendering box
+    if (this.spinner?.isSpinning) {
+      this.spinner.stopAndPersist({ symbol: '⋮' });
+      this.spinner = null;
+    }
+
+    const style = options?.style || 'round';
+    const colorFn = options?.color || chalk.white;
+    const box = cliBoxes[style];
+
+    const termWidth = terminalManager.getWidth();
+    const maxWidth = Math.min(termWidth - 4, 100); // Leave some margin
+    const contentWidth = maxWidth - 4; // Account for borders and padding
+
+    // Wrap content to fit
+    const wrappedContent = terminalManager.wrap(content, { maxWidth: contentWidth });
+    const contentLines = wrappedContent.split('\n');
+
+    // Calculate actual box width based on longest line
+    let actualWidth = terminalManager.getTextWidth(title) + 4;
+    for (const line of contentLines) {
+      const lineWidth = terminalManager.getTextWidth(line);
+      if (lineWidth + 4 > actualWidth) {
+        actualWidth = Math.min(lineWidth + 4, maxWidth);
+      }
+    }
+
+    // Build box
+    const topLine = box.topLeft + chalk.dim('─') + ' ' + colorFn.bold(title) + ' ' + chalk.dim('─'.repeat(Math.max(0, actualWidth - terminalManager.getTextWidth(title) - 6))) + box.topRight;
+    const middleLines = contentLines.map(line => {
+      const padding = ' '.repeat(Math.max(0, actualWidth - terminalManager.getTextWidth(line) - 4));
+      return chalk.dim(box.left) + ' ' + colorFn(line) + padding + ' ' + chalk.dim(box.right);
+    });
+    const bottomLine = chalk.dim(box.bottomLeft + '─'.repeat(actualWidth - 2) + box.bottomRight);
+
+    this.writeToStderr(topLine);
+    for (const line of middleLines) {
+      this.writeToStderr(line);
+    }
+    this.writeToStderr(bottomLine);
+  }
+
+  /**
+   * Show a compact summary line (for COMPACT verbosity)
+   */
+  compact(message: string, icon?: string): void {
+    if (verbosityManager.shouldShow(OutputVerbosity.COMPACT)) {
+      const prefix = icon ? `${icon} ` : '';
+      this.writeToStderr(chalk.gray(prefix + message));
+    }
+  }
+
+  /**
+   * Show info only if verbosity level allows
+   */
+  infoVerbose(message: string, requiredLevel: OutputVerbosity = OutputVerbosity.VERBOSE): void {
+    if (verbosityManager.shouldShow(requiredLevel)) {
+      this.info(message);
+    }
   }
 
   startCapture() {

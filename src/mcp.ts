@@ -161,7 +161,9 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
     return [];
   }
   
-  logger.info(`[MCP] Connecting to ${Object.keys(servers).length} MCP server(s): ${Object.keys(servers).join(', ')}`);
+  // Only show detailed connection info at VERBOSE level, compact summary at COMPACT level
+  logger.infoVerbose(`[MCP] Connecting to ${Object.keys(servers).length} MCP server(s): ${Object.keys(servers).join(', ')}`);
+  logger.compact(`Connecting to ${Object.keys(servers).length} MCP server(s)...`, '🔌');
   
   // Note: Environment variables are already loaded in index.ts before this is called
   // The envFile parameter is kept for backwards compatibility but is no longer used here
@@ -208,7 +210,7 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
 
       await rawClient.connect(rawTransport);
 
-      logger.info(`Connected to MCP server: ${name}`);
+      logger.infoVerbose(`Connected to MCP server: ${name}`);
 
       return {
         name,
@@ -444,7 +446,7 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
       // Log what tools were retrieved
       const toolNames = Object.keys(clientTools);
       const source = connection.preloadedTools ? '(preloaded)' : '(fetched)';
-      logger.info(`[MCP] Retrieved ${toolNames.length} tools from ${connection.name} ${source}${toolNames.length > 0 ? ': ' + toolNames.join(', ') : ''}`);
+      logger.infoVerbose(`[MCP] Retrieved ${toolNames.length} tools from ${connection.name} ${source}${toolNames.length > 0 ? ': ' + toolNames.join(', ') : ''}`);
 
       // Add tools with prefixed names to avoid conflicts and wrap execution (like opencode)
       const disallowedTools: string[] = [];
@@ -530,7 +532,7 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
       }
       if (disallowedTools.length > 0) {
         const toolsList = disallowedTools.map(name => `'${name}'`).join(', ');
-        logger.info(`[MCP] Tools disallowed for server ${connection.name}: ${toolsList}`);
+        logger.infoVerbose(`[MCP] Tools disallowed for server ${connection.name}: ${toolsList}`);
       }
     } catch (error) {
       logger.warn(`[MCP] Failed to get tools from ${connection.name}: ${error instanceof Error ? error.message : String(error)}`);
@@ -542,10 +544,10 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
     try {
       const resources = await getMCPResources(connection);
       if (resources.length > 0) {
-        logger.info(`[MCP] Found ${resources.length} resources in ${connection.name}`);
+        logger.infoVerbose(`[MCP] Found ${resources.length} resources in ${connection.name}`);
         const resourceTools = createResourceTools(connection, resources);
         Object.assign(connectionTools, resourceTools);
-        logger.info(`[MCP] Created ${Object.keys(resourceTools).length} resource tools for ${connection.name}: ${Object.keys(resourceTools).join(', ')}`);
+        logger.infoVerbose(`[MCP] Created ${Object.keys(resourceTools).length} resource tools for ${connection.name}: ${Object.keys(resourceTools).join(', ')}`);
       } else {
         logger.debug(`[MCP] No resources found in ${connection.name}`);
       }
@@ -568,7 +570,12 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
   // Log final tool count
   const toolCount = Object.keys(tools).length;
   if (toolCount > 0) {
-    logger.info(`[MCP] Total tools loaded: ${toolCount}`);
+    // Compact summary for COMPACT/NORMAL modes
+    const serverCount = connections.length;
+    logger.compact(`✓ MCP: ${serverCount} server${serverCount !== 1 ? 's' : ''}, ${toolCount} tool${toolCount !== 1 ? 's' : ''} loaded`);
+
+    // Verbose details
+    logger.infoVerbose(`[MCP] Total tools loaded: ${toolCount}`);
     logger.debug(`[MCP] Tool names: ${Object.keys(tools).join(', ')}`);
   } else {
     logger.warn(`[MCP] No tools were loaded from any MCP server`);

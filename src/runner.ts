@@ -6,6 +6,7 @@ import { createSubAgentTools } from './subagent';
 import { createModel, AuthenticationError } from './models';
 import { AnthropicAuth } from './auth/anthropic';
 import { logger } from './utils/logger';
+import { OutputVerbosity } from './utils/output-verbosity';
 import { ContextManager } from './context-manager';
 import { compactMessages } from './compactor';
 import { dirname } from 'path';
@@ -875,20 +876,21 @@ export async function runAgent(
     // Precedence: CLI > Agent YAML > Default
     const maxSteps = resolveMaxSteps(cliMaxSteps, agent.config.maxSteps);
 
-    logger.info(`Running agent with model: ${agent.config.model}`);
+    // Only show full details at verbose level
+    logger.infoVerbose(`Running agent with model: ${agent.config.model}`);
     if (Object.keys(tools).length > 0) {
-      logger.info(`Available tools: ${Object.keys(tools).join(', ')}`);
+      logger.infoVerbose(`Available tools: ${Object.keys(tools).join(', ')}`);
     }
-    
+
     // Log step limit if it's non-default or in verbose mode
     if (maxSteps !== DEFAULT_MAX_STEPS || verbose) {
-      logger.info(`Max steps: ${maxSteps} (override via MAX_STEPS env var)`);
+      logger.infoVerbose(`Max steps: ${maxSteps} (override via MAX_STEPS env var)`);
     }
-    
+
     // Log initialization time if verbose
     if (verbose && startTime) {
       const initTime = Date.now() - startTime;
-      logger.info(`Initialization completed in ${initTime}ms`);
+      logger.infoVerbose(`Initialization completed in ${initTime}ms`);
     }
     
     // Add today's date and autonomous agent instructions to system prompt
@@ -943,11 +945,20 @@ export async function runAgent(
       const mainTokens = result.usage?.totalTokens || 0;
       const subTokens = result.subAgentTokens || 0;
       const totalTokens = mainTokens + subTokens;
-      
+
+      // Compact completion message
+      const duration = startTime ? ((Date.now() - startTime) / 1000).toFixed(1) : null;
+      if (duration) {
+        logger.compact(`✓ Done in ${duration}s`);
+      } else {
+        logger.compact(`✓ Done`);
+      }
+
+      // Detailed token usage at normal+ verbosity
       if (subTokens > 0) {
-        logger.info(`Tokens used: ${totalTokens} (main: ${mainTokens}, sub-agents: ${subTokens})`);
+        logger.infoVerbose(`Tokens used: ${totalTokens} (main: ${mainTokens}, sub-agents: ${subTokens})`, OutputVerbosity.NORMAL);
       } else if (mainTokens > 0) {
-        logger.info(`Tokens used: ${mainTokens}`);
+        logger.infoVerbose(`Tokens used: ${mainTokens}`, OutputVerbosity.NORMAL);
       }
     }
     

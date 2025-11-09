@@ -71,7 +71,7 @@ export async function createSubAgentTool(
     execute: async ({ task, context }) => {
       const startTime = Date.now();
       try {
-        logger.info(`[SubAgent:depth=${depth}] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
+        logger.infoVerbose(`[SubAgent:depth=${depth}] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
 
         // Connect to any MCP servers the sub-agent needs
         // Use the sub-agent's directory as base path for resolving relative paths
@@ -152,11 +152,17 @@ export async function createSubAgentTool(
           );
           
           const duration = Date.now() - startTime;
-          logger.info(`[SubAgent:depth=${depth}] ${agent.name} completed in ${(duration / 1000).toFixed(2)}s`);
 
-          // Log token usage
+          // Compact summary for sub-agent completion
+          const durationStr = (duration / 1000).toFixed(1);
+          const tokensStr = result.usage?.totalTokens ? `, ${result.usage.totalTokens} tokens` : '';
+          const indentStr = '  '.repeat(depth);
+          logger.compact(`${indentStr}└─ ${agent.name} (${durationStr}s${tokensStr})`);
+
+          // Verbose details
+          logger.infoVerbose(`[SubAgent:depth=${depth}] ${agent.name} completed in ${(duration / 1000).toFixed(2)}s`);
           if (result.usage?.totalTokens) {
-            logger.info(`[SubAgent:depth=${depth}] ${agent.name} tokens used: ${result.usage.totalTokens}`);
+            logger.infoVerbose(`[SubAgent:depth=${depth}] ${agent.name} tokens used: ${result.usage.totalTokens}`);
           }
           
           return {
@@ -230,7 +236,7 @@ export async function createSubAgentTools(
       // Add subagent__ prefix
       const prefixedName = `subagent__${name}`;
       tools[prefixedName] = tool;
-      logger.info(`[SubAgent] Registered sub-agent: ${prefixedName}`);
+      logger.infoVerbose(`[SubAgent] Registered sub-agent: ${prefixedName}`);
       
       // Note: @ symbol is not allowed in tool names by the API
       // So we won't register @-prefixed versions anymore
