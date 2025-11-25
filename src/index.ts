@@ -23,8 +23,13 @@ async function prompt(question: string): Promise<string> {
     input: process.stdin,
     output: process.stdout
   });
-  
-  return new Promise((resolve) => {
+
+  return new Promise((resolve, reject) => {
+    rl.on('SIGINT', () => {
+      rl.close();
+      reject(new Error('Interrupted'));
+    });
+
     rl.question(question, (answer) => {
       rl.close();
       resolve(answer.toLowerCase().trim());
@@ -280,10 +285,34 @@ program
       
       // Create abort controller for timeout
       const abortController = new AbortController();
+      let wasInterrupted = false;  // Track if abort was from user interrupt vs timeout
       const timeoutId = setTimeout(() => {
         abortController.abort();
       }, timeoutMs);
-      
+
+      // Handle Ctrl-C gracefully
+      let sigintCount = 0;
+      const sigintHandler = () => {
+        sigintCount++;
+
+        if (sigintCount === 1) {
+          console.log('\n⚠️  Interrupting...');
+          wasInterrupted = true;  // Mark as user interrupt
+          abortController.abort();  // Trigger existing abort mechanism
+
+          // Give cleanup 2 seconds, then force exit if still hanging
+          setTimeout(() => {
+            console.log('\n⚠️  Force exiting...');
+            process.exit(130);
+          }, 2000);
+        } else {
+          // Second Ctrl-C - immediate exit (if cleanup is taking too long)
+          console.log('\n⚠️  Force exiting...');
+          process.exit(130);
+        }
+      };
+      process.on('SIGINT', sigintHandler);
+
       // Initialize plugin manager before running agent with project-specific plugin directories
       let pluginManager: PluginManager | null = null;
       try {
@@ -343,7 +372,13 @@ program
         }
       } catch (error: unknown) {
         if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
-          logger.error(`
+          if (wasInterrupted) {
+            // User pressed Ctrl-C - clean exit with standard interrupt code
+            logger.info('Agent execution interrupted by user.');
+            process.exit(130);
+          } else {
+            // Actual timeout
+            logger.error(`
 ⚠️  EXECUTION TIMEOUT
 
 Agent execution timed out after ${effectiveTimeoutSeconds} seconds (${Math.floor(effectiveTimeoutSeconds / 60)} minutes).
@@ -363,11 +398,13 @@ The task may require more time to complete. Try one of these solutions:
 4. Optimize your agent to use fewer tool calls
 
 Current timeout: ${effectiveTimeoutSeconds}s`);
-          process.exit(1);
+            process.exit(1);
+          }
         }
         throw error;
       } finally {
         clearTimeout(timeoutId);
+        process.off('SIGINT', sigintHandler);
       }
 
       // Stop capturing and get console output

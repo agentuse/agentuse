@@ -13,7 +13,12 @@ function createReadlineInterface() {
 
 async function promptInput(question: string): Promise<string> {
   const rl = createReadlineInterface();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    rl.on('SIGINT', () => {
+      rl.close();
+      reject(new Error('Interrupted'));
+    });
+
     rl.question(question, (answer) => {
       rl.close();
       resolve(answer.trim());

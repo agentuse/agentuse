@@ -51,7 +51,8 @@ export async function createSubAgentTool(
   sessionManager?: SessionManager,
   parentSessionID?: string,
   parentAgentName?: string,
-  projectContext?: { projectRoot: string; cwd: string }
+  projectContext?: { projectRoot: string; cwd: string },
+  abortSignal?: AbortSignal
 ): Promise<Tool> {
   // Resolve the path relative to the base path if provided
   const resolvedPath = basePath ? resolve(basePath, agentPath) : agentPath;
@@ -225,7 +226,8 @@ export async function createSubAgentTool(
               subagentSessionManager,  // Pass NEW instance (not parent's)
               subagentSessionID,
               agent.name,
-              projectContext
+              projectContext,
+              abortSignal  // Pass parent's abort signal to nested subagents
             );
 
             // Merge nested subagent tools into tools
@@ -238,6 +240,7 @@ export async function createSubAgentTool(
               userMessage,
               systemMessages,
               maxSteps,
+              ...(abortSignal && { abortSignal }),  // Pass parent's abort signal
               subAgentNames: new Set(Object.keys(nestedSubAgentTools))  // Track nested sub-agent names for logging
             }),
             subagentSessionID && subagentMsgID && subagentSessionManager ? {
@@ -310,7 +313,8 @@ export async function createSubAgentTools(
   sessionManager?: SessionManager,
   parentSessionID?: string,
   parentAgentName?: string,
-  projectContext?: { projectRoot: string; cwd: string }
+  projectContext?: { projectRoot: string; cwd: string },
+  abortSignal?: AbortSignal
 ): Promise<Record<string, Tool>> {
   if (!subAgents || subAgents.length === 0) {
     return {};
@@ -330,7 +334,8 @@ export async function createSubAgentTools(
         sessionManager,
         parentSessionID,
         parentAgentName,
-        projectContext
+        projectContext,
+        abortSignal
       );
       // Use custom name if provided, otherwise extract from filename
       let name = config.name;
