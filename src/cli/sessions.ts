@@ -568,6 +568,14 @@ async function showSession(
       }
       process.stdout.write(statsLine + "\n");
 
+      // Show error if session failed
+      if (message.assistant.error) {
+        process.stdout.write(`\n✗ Error: ${message.assistant.error.message}\n`);
+        if (message.assistant.error.type) {
+          process.stdout.write(`  Type: ${message.assistant.error.type}\n`);
+        }
+      }
+
       // Count parts by type
       const partCounts: Record<string, number> = {};
       for (const part of parts) {
