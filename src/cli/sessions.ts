@@ -313,30 +313,22 @@ function extractOutputValue(output: unknown): string {
 }
 
 /**
- * Format output with ⎿ prefix and proper indentation
+ * Format tool output with truncation and line limits
  */
-function formatToolOutput(output: string, indent: string = "      ", maxLen: number = 200): string {
+function formatToolOutput(output: string, maxLen: number = 200, maxLines: number = 5): string {
   const lines = output.split("\n");
   const result: string[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
-    if (i === 0) {
-      // First line with ⎿ prefix
-      if (line.length > maxLen) {
-        line = line.substring(0, maxLen) + `… [${output.length} chars]`;
-      }
-      result.push(`${indent}⎿  ${line}`);
-    } else {
-      // Continuation lines
-      if (line.length > maxLen) {
-        line = line.substring(0, maxLen) + "…";
-      }
-      result.push(`${indent}   ${line}`);
+    if (line.length > maxLen) {
+      line = line.substring(0, maxLen) + `… [${output.length} chars]`;
     }
-    // Limit to first 5 lines in non-full mode
-    if (i >= 4 && lines.length > 5) {
-      result.push(`${indent}   ... (${lines.length - 5} more lines)`);
+    result.push(line);
+
+    // Limit lines in non-full mode
+    if (i >= maxLines - 1 && lines.length > maxLines) {
+      result.push(`... (${lines.length - maxLines} more lines)`);
       break;
     }
   }
@@ -549,23 +541,24 @@ async function showSession(
   // Display messages
   if (details.messages.length > 0) {
     process.stdout.write(`\n${"─".repeat(60)}\n`);
-    process.stdout.write(`MESSAGES (${details.messages.length})\n`);
-    process.stdout.write(`${"─".repeat(60)}\n`);
 
     for (const { message, parts } of details.messages) {
-      process.stdout.write(`\n[Message ${message.id.substring(0, 8)}]\n`);
+      // Show message header only if multiple messages
+      if (details.messages.length > 1) {
+        process.stdout.write(`[Message ${message.id.substring(0, 8)}]\n`);
+      }
 
       // Show user prompt (first line only for task, full for user input)
       const taskFirstLine = message.user.prompt.task.split("\n")[0];
-      process.stdout.write(`  Task: ${truncate(taskFirstLine, 80)}\n`);
+      process.stdout.write(`Task: ${truncate(taskFirstLine, 80)}\n`);
       if (message.user.prompt.user) {
-        process.stdout.write(`  User: ${message.user.prompt.user}\n`);
+        process.stdout.write(`User: ${message.user.prompt.user}\n`);
       }
 
       // Show token usage and duration
       const tokens = message.assistant.tokens;
       const totalTokens = tokens.input + tokens.output;
-      let statsLine = `  Tokens: ${totalTokens} (in: ${tokens.input}, out: ${tokens.output})`;
+      let statsLine = `Tokens: ${totalTokens} (in: ${tokens.input}, out: ${tokens.output})`;
 
       // Add duration if completed timestamp exists
       if (message.time.completed) {
@@ -585,7 +578,7 @@ async function showSession(
         const partSummary = Object.entries(partCounts)
           .map(([type, count]) => `${type}: ${count}`)
           .join(", ");
-        process.stdout.write(`  Parts: ${partSummary}\n`);
+        process.stdout.write(`Parts: ${partSummary}\n`);
       }
 
       // Show tools summary
@@ -611,7 +604,7 @@ async function showSession(
         const toolSummary = Object.entries(toolCounts)
           .map(([name, count]) => count > 1 ? `${name} x${count}` : name)
           .join(", ");
-        process.stdout.write(`  Tools: ${toolParts.length} calls (${truncate(toolSummary, 60)})\n`);
+        process.stdout.write(`Tools: ${toolParts.length} calls (${truncate(toolSummary, 60)})\n`);
       }
 
       // Show interleaved output (text and tool parts in chronological order)
@@ -621,21 +614,14 @@ async function showSession(
         .sort((a, b) => a.id.localeCompare(b.id));
 
       if (displayParts.length > 0) {
-        process.stdout.write(`\n  Output:\n`);
+        process.stdout.write(`\nOutput:\n`);
 
         for (const part of displayParts) {
           if (part.type === "text") {
             const textPart = part as Part & { type: "text"; text: string };
             if (textPart.text.trim()) {
-              // Add blank line before text to separate from tool output
-              process.stdout.write(`\n`);
-              // Indent each line of text output with a different style
-              const indented = textPart.text
-                .trim()
-                .split("\n")
-                .map((line) => `    │ ${line}`)
-                .join("\n");
-              process.stdout.write(`${indented}\n`);
+              // Plain text output, no prefix
+              process.stdout.write(`${textPart.text.trim()}\n`);
             }
           } else if (part.type === "tool") {
             const tool = part as Part & {
@@ -673,33 +659,39 @@ async function showSession(
                 : ` ${(durationMs / 1000).toFixed(1)}s`;
             }
 
-            process.stdout.write(`\n    ${status} ${toolName}${inputDisplay}${durationStr}\n`);
+            // Visual indicator for tool call
+            const header = `─── ${status} ${toolName}${inputDisplay}${durationStr} `;
+            const padding = Math.max(0, 60 - header.length);
+            process.stdout.write(`\n${header}${"─".repeat(padding)}\n`);
 
             // Show full input in --full mode
             if (showFull && tool.state.input !== undefined) {
-              process.stdout.write(`      Input:\n`);
-              process.stdout.write(formatValueFull(tool.state.input) + "\n");
+              process.stdout.write(`Input:\n`);
+              process.stdout.write(formatValueFull(tool.state.input, "  ") + "\n");
             }
 
-            // Show output or error with ⎿ prefix
+            // Show output or error
             if (tool.state.status === "error" && tool.state.error) {
               if (showFull) {
-                process.stdout.write(`      Error:\n`);
-                process.stdout.write(formatValueFull(tool.state.error) + "\n");
+                process.stdout.write(`Error:\n`);
+                process.stdout.write(formatValueFull(tool.state.error, "  ") + "\n");
               } else {
-                const errorOutput = formatToolOutput(tool.state.error, "      ", 150);
+                const errorOutput = formatToolOutput(tool.state.error, 150);
                 process.stdout.write(`${errorOutput}\n`);
               }
             } else if (tool.state.status === "completed" && tool.state.output !== undefined) {
               if (showFull) {
-                process.stdout.write(`      Output:\n`);
-                process.stdout.write(formatValueFull(tool.state.output) + "\n");
+                process.stdout.write(`Result:\n`);
+                process.stdout.write(formatValueFull(tool.state.output, "  ") + "\n");
               } else {
                 const outputValue = extractOutputValue(tool.state.output);
-                const formattedOutput = formatToolOutput(outputValue, "      ", 150);
+                const formattedOutput = formatToolOutput(outputValue, 150);
                 process.stdout.write(`${formattedOutput}\n`);
               }
             }
+
+            // Closing separator
+            process.stdout.write(`${"─".repeat(60)}\n`);
           }
         }
       }
