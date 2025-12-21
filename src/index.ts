@@ -6,10 +6,20 @@ import { Command } from 'commander';
 import { createAuthCommand } from './cli/auth';
 import { createSessionsCommand } from './cli/sessions';
 import { logger, LogLevel } from './utils/logger';
-import { basename, resolve, dirname } from 'path';
+import { basename, resolve, dirname, join } from 'path';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
-import { version } from '../package.json';
+import { version as packageVersion } from '../package.json';
+import { existsSync as existsSyncFs } from 'fs';
+
+// Detect if running from a linked/local development build
+function getVersionString(): string {
+  const packageRoot = join(__dirname, '..');
+  const isLocalDev = existsSyncFs(join(packageRoot, '.git'));
+  return isLocalDev ? `${packageVersion} (local)` : packageVersion;
+}
+
+const version = getVersionString();
 import { AuthenticationError } from './models';
 import * as dotenv from 'dotenv';
 import { existsSync } from 'fs';
