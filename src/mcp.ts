@@ -1,4 +1,5 @@
-import { experimental_createMCPClient, type Tool } from 'ai';
+import { experimental_createMCPClient } from '@ai-sdk/mcp';
+import type { Tool } from 'ai';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -186,7 +187,8 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       if ('url' in config) {
         logger.debug(`[MCP] HTTP connection detected, fetching tools immediately for: ${name}`);
         try {
-          preloadedTools = await client.tools();
+          // Cast to Record<string, Tool> since McpToolSet is structurally compatible
+          preloadedTools = await client.tools() as Record<string, Tool>;
           logger.debug(`[MCP] HTTP connection verified and ${Object.keys(preloadedTools).length} tools loaded for: ${name}`);
         } catch (error) {
           logger.warn(`[MCP] Failed to fetch tools immediately for ${name}: ${error instanceof Error ? error.message : String(error)}`);
@@ -439,7 +441,8 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
     try {
       // If tools were preloaded during connection (HTTP), use them
       // Otherwise, fetch them now (stdio)
-      const clientTools = connection.preloadedTools || await connection.client.tools();
+      // Cast to Record<string, Tool> since McpToolSet is structurally compatible
+      const clientTools = connection.preloadedTools || await connection.client.tools() as Record<string, Tool>;
 
       // Log what tools were retrieved
       const toolNames = Object.keys(clientTools);
