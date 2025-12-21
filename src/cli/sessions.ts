@@ -207,36 +207,6 @@ function truncate(str: string, len: number): string {
 }
 
 /**
- * Format value for display with truncation
- */
-function formatValue(value: unknown, maxLen: number = 200): string {
-  if (value === null || value === undefined) {
-    return String(value);
-  }
-
-  let str: string;
-  if (typeof value === "string") {
-    str = value;
-  } else if (typeof value === "object") {
-    try {
-      str = JSON.stringify(value);
-    } catch {
-      str = String(value);
-    }
-  } else {
-    str = String(value);
-  }
-
-  // Replace newlines with visible marker for single-line display
-  str = str.replace(/\n/g, "↵");
-
-  if (str.length > maxLen) {
-    return str.substring(0, maxLen) + `… [${str.length} chars]`;
-  }
-  return str;
-}
-
-/**
  * Format value for full display (multi-line, indented)
  */
 function formatValueFull(value: unknown, indent: string = "        "): string {
@@ -262,6 +232,116 @@ function formatValueFull(value: unknown, indent: string = "        "): string {
     .split("\n")
     .map((line) => `${indent}${line}`)
     .join("\n");
+}
+
+/**
+ * Format tool name for cleaner display
+ * mcp__bash__run_bash -> Bash{run_bash}
+ * mcp__notion__API-post-page -> Notion{API-post-page}
+ */
+function formatToolName(toolName: string): string {
+  // Handle MCP tools: mcp__<server>__<method>
+  if (toolName.startsWith("mcp__")) {
+    const parts = toolName.substring(5).split("__");
+    if (parts.length >= 2) {
+      const server = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+      const method = parts.slice(1).join("__");
+      return `${server}{${method}}`;
+    }
+  }
+  return toolName;
+}
+
+/**
+ * Extract main input value for inline display
+ */
+function extractMainInput(input: unknown): string | null {
+  if (!input || typeof input !== "object") return null;
+
+  const obj = input as Record<string, unknown>;
+
+  // Priority order for common input fields
+  const priorityFields = ["command", "query", "url", "path", "file_path", "pattern", "text", "content"];
+
+  for (const field of priorityFields) {
+    if (obj[field] && typeof obj[field] === "string") {
+      return obj[field] as string;
+    }
+  }
+
+  // Fallback: use first string value
+  for (const value of Object.values(obj)) {
+    if (typeof value === "string" && value.length < 200) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract output value for display (unwrap common wrapper patterns)
+ */
+function extractOutputValue(output: unknown): string {
+  if (output === null || output === undefined) return String(output);
+
+  if (typeof output === "string") return output;
+
+  if (typeof output === "object") {
+    const obj = output as Record<string, unknown>;
+
+    // Common wrapper patterns
+    if (obj.output && typeof obj.output === "string") {
+      return obj.output;
+    }
+    if (obj.result && typeof obj.result === "string") {
+      return obj.result;
+    }
+    if (obj.content && typeof obj.content === "string") {
+      return obj.content;
+    }
+
+    // Fallback to JSON
+    try {
+      return JSON.stringify(output);
+    } catch {
+      return String(output);
+    }
+  }
+
+  return String(output);
+}
+
+/**
+ * Format output with ⎿ prefix and proper indentation
+ */
+function formatToolOutput(output: string, indent: string = "      ", maxLen: number = 200): string {
+  const lines = output.split("\n");
+  const result: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    if (i === 0) {
+      // First line with ⎿ prefix
+      if (line.length > maxLen) {
+        line = line.substring(0, maxLen) + `… [${output.length} chars]`;
+      }
+      result.push(`${indent}⎿  ${line}`);
+    } else {
+      // Continuation lines
+      if (line.length > maxLen) {
+        line = line.substring(0, maxLen) + "…";
+      }
+      result.push(`${indent}   ${line}`);
+    }
+    // Limit to first 5 lines in non-full mode
+    if (i >= 4 && lines.length > 5) {
+      result.push(`${indent}   ... (${lines.length - 5} more lines)`);
+      break;
+    }
+  }
+
+  return result.join("\n");
 }
 
 /**
@@ -508,7 +588,7 @@ async function showSession(
         process.stdout.write(`  Parts: ${partSummary}\n`);
       }
 
-      // Show tool calls with input/output
+      // Show tools summary
       const toolParts = parts.filter((p) => p.type === "tool") as Array<
         Part & {
           type: "tool";
@@ -523,74 +603,104 @@ async function showSession(
         }
       >;
       if (toolParts.length > 0) {
-        process.stdout.write(`  Tools:\n`);
-        const toolsToShow = showFull ? toolParts : toolParts.slice(0, 10);
-        for (const tool of toolsToShow) {
-          const status =
-            tool.state.status === "completed"
-              ? "✓"
-              : tool.state.status === "error"
-                ? "✗"
-                : "…";
-
-          // Show duration if available
-          let durationStr = "";
-          if (tool.state.time?.start && tool.state.time?.end) {
-            const durationMs = tool.state.time.end - tool.state.time.start;
-            durationStr = durationMs < 1000
-              ? ` (${durationMs}ms)`
-              : ` (${(durationMs / 1000).toFixed(1)}s)`;
-          }
-
-          process.stdout.write(`    ${status} ${tool.tool}${durationStr}\n`);
-
-          // Show input
-          if (tool.state.input !== undefined) {
-            if (showFull) {
-              process.stdout.write(`      Input:\n`);
-              process.stdout.write(formatValueFull(tool.state.input) + "\n");
-            } else {
-              process.stdout.write(`      Input: ${formatValue(tool.state.input)}\n`);
-            }
-          }
-
-          // Show output or error
-          if (tool.state.status === "error" && tool.state.error) {
-            if (showFull) {
-              process.stdout.write(`      Error:\n`);
-              process.stdout.write(formatValueFull(tool.state.error) + "\n");
-            } else {
-              process.stdout.write(`      Error: ${formatValue(tool.state.error)}\n`);
-            }
-          } else if (tool.state.status === "completed" && tool.state.output !== undefined) {
-            if (showFull) {
-              process.stdout.write(`      Output:\n`);
-              process.stdout.write(formatValueFull(tool.state.output) + "\n");
-            } else {
-              process.stdout.write(`      Output: ${formatValue(tool.state.output)}\n`);
-            }
-          }
+        // Count tools by name for summary
+        const toolCounts: Record<string, number> = {};
+        for (const tool of toolParts) {
+          toolCounts[tool.tool] = (toolCounts[tool.tool] || 0) + 1;
         }
-        if (!showFull && toolParts.length > 10) {
-          process.stdout.write(`    ... and ${toolParts.length - 10} more (use --full to see all)\n`);
-        }
+        const toolSummary = Object.entries(toolCounts)
+          .map(([name, count]) => count > 1 ? `${name} x${count}` : name)
+          .join(", ");
+        process.stdout.write(`  Tools: ${toolParts.length} calls (${truncate(toolSummary, 60)})\n`);
       }
 
-      // Show text output (if any)
-      const textParts = parts.filter((p) => p.type === "text") as Array<
-        Part & { type: "text"; text: string }
-      >;
-      if (textParts.length > 0) {
-        const fullText = textParts.map((p) => p.text).join("\n");
-        if (fullText.trim()) {
-          process.stdout.write(`\n  Output:\n`);
-          // Indent each line of output
-          const indented = fullText
-            .trim()
-            .split("\n")
-            .map((line) => `    ${line}`)
-            .join("\n");
-          process.stdout.write(`${indented}\n`);
+      // Show interleaved output (text and tool parts in chronological order)
+      // Sort parts by ULID id (which is chronologically sortable)
+      const displayParts = parts
+        .filter((p) => p.type === "text" || p.type === "tool")
+        .sort((a, b) => a.id.localeCompare(b.id));
+
+      if (displayParts.length > 0) {
+        process.stdout.write(`\n  Output:\n`);
+
+        for (const part of displayParts) {
+          if (part.type === "text") {
+            const textPart = part as Part & { type: "text"; text: string };
+            if (textPart.text.trim()) {
+              // Add blank line before text to separate from tool output
+              process.stdout.write(`\n`);
+              // Indent each line of text output with a different style
+              const indented = textPart.text
+                .trim()
+                .split("\n")
+                .map((line) => `    │ ${line}`)
+                .join("\n");
+              process.stdout.write(`${indented}\n`);
+            }
+          } else if (part.type === "tool") {
+            const tool = part as Part & {
+              type: "tool";
+              tool: string;
+              state: {
+                status: string;
+                input?: unknown;
+                output?: unknown;
+                error?: string;
+                time?: { start: number; end?: number };
+              }
+            };
+
+            const status =
+              tool.state.status === "completed"
+                ? "✓"
+                : tool.state.status === "error"
+                  ? "✗"
+                  : "…";
+
+            // Format tool name: mcp__bash__run_bash -> Bash{run_bash}
+            const toolName = formatToolName(tool.tool);
+
+            // Extract main input for inline display
+            const mainInput = extractMainInput(tool.state.input);
+            const inputDisplay = mainInput ? ` (${truncate(mainInput, 60)})` : "";
+
+            // Show duration if available
+            let durationStr = "";
+            if (tool.state.time?.start && tool.state.time?.end) {
+              const durationMs = tool.state.time.end - tool.state.time.start;
+              durationStr = durationMs < 1000
+                ? ` ${durationMs}ms`
+                : ` ${(durationMs / 1000).toFixed(1)}s`;
+            }
+
+            process.stdout.write(`\n    ${status} ${toolName}${inputDisplay}${durationStr}\n`);
+
+            // Show full input in --full mode
+            if (showFull && tool.state.input !== undefined) {
+              process.stdout.write(`      Input:\n`);
+              process.stdout.write(formatValueFull(tool.state.input) + "\n");
+            }
+
+            // Show output or error with ⎿ prefix
+            if (tool.state.status === "error" && tool.state.error) {
+              if (showFull) {
+                process.stdout.write(`      Error:\n`);
+                process.stdout.write(formatValueFull(tool.state.error) + "\n");
+              } else {
+                const errorOutput = formatToolOutput(tool.state.error, "      ", 150);
+                process.stdout.write(`${errorOutput}\n`);
+              }
+            } else if (tool.state.status === "completed" && tool.state.output !== undefined) {
+              if (showFull) {
+                process.stdout.write(`      Output:\n`);
+                process.stdout.write(formatValueFull(tool.state.output) + "\n");
+              } else {
+                const outputValue = extractOutputValue(tool.state.output);
+                const formattedOutput = formatToolOutput(outputValue, "      ", 150);
+                process.stdout.write(`${formattedOutput}\n`);
+              }
+            }
+          }
         }
       }
     }
