@@ -207,6 +207,64 @@ function truncate(str: string, len: number): string {
 }
 
 /**
+ * Format value for display with truncation
+ */
+function formatValue(value: unknown, maxLen: number = 200): string {
+  if (value === null || value === undefined) {
+    return String(value);
+  }
+
+  let str: string;
+  if (typeof value === "string") {
+    str = value;
+  } else if (typeof value === "object") {
+    try {
+      str = JSON.stringify(value);
+    } catch {
+      str = String(value);
+    }
+  } else {
+    str = String(value);
+  }
+
+  // Replace newlines with visible marker for single-line display
+  str = str.replace(/\n/g, "↵");
+
+  if (str.length > maxLen) {
+    return str.substring(0, maxLen) + `… [${str.length} chars]`;
+  }
+  return str;
+}
+
+/**
+ * Format value for full display (multi-line, indented)
+ */
+function formatValueFull(value: unknown, indent: string = "        "): string {
+  if (value === null || value === undefined) {
+    return `${indent}${String(value)}`;
+  }
+
+  let str: string;
+  if (typeof value === "string") {
+    str = value;
+  } else if (typeof value === "object") {
+    try {
+      str = JSON.stringify(value, null, 2);
+    } catch {
+      str = String(value);
+    }
+  } else {
+    str = String(value);
+  }
+
+  // Indent each line
+  return str
+    .split("\n")
+    .map((line) => `${indent}${line}`)
+    .join("\n");
+}
+
+/**
  * Format model name for display (shorter)
  */
 function formatModel(model: string): string {
@@ -229,12 +287,16 @@ export function createSessionsCommand(): Command {
     .option("-a, --all", "Show all sessions including subagents")
     .option("-n, --limit <n>", "Limit number of sessions to show", "10")
     .option("-j, --json", "Output as JSON")
-    .action(async (sessionId?: string, options?: { all?: boolean; limit?: string; json?: boolean }) => {
+    .option("-f, --full", "Show full tool input/output (not truncated)")
+    .action(async (sessionId?: string, options?: { all?: boolean; limit?: string; json?: boolean; full?: boolean }) => {
       const projectContext = resolveProjectContext(process.cwd());
 
       if (sessionId) {
         // Show specific session
-        await showSession(projectContext.projectRoot, sessionId, options?.json);
+        const showOptions: { json?: boolean; full?: boolean } = {};
+        if (options?.json) showOptions.json = options.json;
+        if (options?.full) showOptions.full = options.full;
+        await showSession(projectContext.projectRoot, sessionId, showOptions);
       } else {
         // List sessions
         await listSessionsCommand(projectContext.projectRoot, options);
@@ -259,9 +321,10 @@ export function createSessionsCommand(): Command {
     .command("show <id>")
     .description("Show session details")
     .option("-j, --json", "Output as JSON")
-    .action(async (id: string, options: { json?: boolean }) => {
+    .option("-f, --full", "Show full tool input/output (not truncated)")
+    .action(async (id: string, options: { json?: boolean; full?: boolean }) => {
       const projectContext = resolveProjectContext(process.cwd());
-      await showSession(projectContext.projectRoot, id, options?.json);
+      await showSession(projectContext.projectRoot, id, options);
     });
 
   // Add path subcommand to show storage location
@@ -342,7 +405,7 @@ async function listSessionsCommand(
 async function showSession(
   projectRoot: string,
   sessionId: string,
-  json?: boolean
+  options?: { json?: boolean; full?: boolean }
 ): Promise<void> {
   // Find session by partial ID match
   const sessions = await listSessions(projectRoot);
@@ -372,10 +435,12 @@ async function showSession(
     process.exit(1);
   }
 
-  if (json) {
+  if (options?.json) {
     process.stdout.write(JSON.stringify(details, null, 2) + "\n");
     return;
   }
+
+  const showFull = options?.full ?? false;
 
   // Display session info
   const s = details.session;
@@ -443,23 +508,71 @@ async function showSession(
         process.stdout.write(`  Parts: ${partSummary}\n`);
       }
 
-      // Show tool calls
+      // Show tool calls with input/output
       const toolParts = parts.filter((p) => p.type === "tool") as Array<
-        Part & { type: "tool"; tool: string; state: { status: string } }
+        Part & {
+          type: "tool";
+          tool: string;
+          state: {
+            status: string;
+            input?: unknown;
+            output?: unknown;
+            error?: string;
+            time?: { start: number; end?: number };
+          }
+        }
       >;
       if (toolParts.length > 0) {
         process.stdout.write(`  Tools:\n`);
-        for (const tool of toolParts.slice(0, 10)) {
+        const toolsToShow = showFull ? toolParts : toolParts.slice(0, 10);
+        for (const tool of toolsToShow) {
           const status =
             tool.state.status === "completed"
               ? "✓"
               : tool.state.status === "error"
                 ? "✗"
                 : "…";
-          process.stdout.write(`    ${status} ${tool.tool}\n`);
+
+          // Show duration if available
+          let durationStr = "";
+          if (tool.state.time?.start && tool.state.time?.end) {
+            const durationMs = tool.state.time.end - tool.state.time.start;
+            durationStr = durationMs < 1000
+              ? ` (${durationMs}ms)`
+              : ` (${(durationMs / 1000).toFixed(1)}s)`;
+          }
+
+          process.stdout.write(`    ${status} ${tool.tool}${durationStr}\n`);
+
+          // Show input
+          if (tool.state.input !== undefined) {
+            if (showFull) {
+              process.stdout.write(`      Input:\n`);
+              process.stdout.write(formatValueFull(tool.state.input) + "\n");
+            } else {
+              process.stdout.write(`      Input: ${formatValue(tool.state.input)}\n`);
+            }
+          }
+
+          // Show output or error
+          if (tool.state.status === "error" && tool.state.error) {
+            if (showFull) {
+              process.stdout.write(`      Error:\n`);
+              process.stdout.write(formatValueFull(tool.state.error) + "\n");
+            } else {
+              process.stdout.write(`      Error: ${formatValue(tool.state.error)}\n`);
+            }
+          } else if (tool.state.status === "completed" && tool.state.output !== undefined) {
+            if (showFull) {
+              process.stdout.write(`      Output:\n`);
+              process.stdout.write(formatValueFull(tool.state.output) + "\n");
+            } else {
+              process.stdout.write(`      Output: ${formatValue(tool.state.output)}\n`);
+            }
+          }
         }
-        if (toolParts.length > 10) {
-          process.stdout.write(`    ... and ${toolParts.length - 10} more\n`);
+        if (!showFull && toolParts.length > 10) {
+          process.stdout.write(`    ... and ${toolParts.length - 10} more (use --full to see all)\n`);
         }
       }
 
