@@ -1,6 +1,6 @@
 {
   "name": "agentuse",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Zero-configuration CLI for AI agents with MCP tools support",
   "type": "module",
   "author": "",
