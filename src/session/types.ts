@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+// Deep partial type for updates
+export type DeepPartial<T> = {
+  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
+};
+
 // Session Info Schema
 export interface SessionInfo {
   id: string;                        // ULID

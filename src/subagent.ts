@@ -264,6 +264,23 @@ export async function createSubAgentTool(
             logger.info(`[SubAgent:depth=${depth}] ${agent.name} tokens used: ${result.usage.totalTokens}`);
           }
 
+          // Update session message with final token usage
+          if (subagentSessionManager && subagentSessionID && subagentMsgID && result.usage) {
+            try {
+              await subagentSessionManager.updateMessage(subagentSessionID, agent.name, subagentMsgID, {
+                time: { completed: Date.now() },
+                assistant: {
+                  tokens: {
+                    input: result.usage.inputTokens || 0,
+                    output: result.usage.outputTokens || 0
+                  }
+                }
+              });
+            } catch (error) {
+              logger.debug(`[SubAgent] Failed to update message with token usage: ${(error as Error).message}`);
+            }
+          }
+
           return {
             output: result.text || 'Sub-agent completed without text response',
             metadata: {

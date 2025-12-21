@@ -392,15 +392,8 @@ async function showSession(
     process.stdout.write(`File:        ${s.agent.filePath}\n`);
   }
   process.stdout.write(`Model:       ${s.model}\n`);
-  process.stdout.write(`Created:     ${new Date(s.time.created).toLocaleString()}\n`);
-  process.stdout.write(`Updated:     ${new Date(s.time.updated).toLocaleString()}\n`);
+  process.stdout.write(`Started:     ${new Date(s.time.created).toLocaleString()}\n`);
 
-  if (s.config.timeout) {
-    process.stdout.write(`Timeout:     ${s.config.timeout}s\n`);
-  }
-  if (s.config.maxSteps) {
-    process.stdout.write(`Max Steps:   ${s.config.maxSteps}\n`);
-  }
   if (s.config.mcpServers && s.config.mcpServers.length > 0) {
     process.stdout.write(`MCP Servers: ${s.config.mcpServers.join(", ")}\n`);
   }
@@ -424,12 +417,18 @@ async function showSession(
         process.stdout.write(`  User: ${message.user.prompt.user}\n`);
       }
 
-      // Show token usage
+      // Show token usage and duration
       const tokens = message.assistant.tokens;
       const totalTokens = tokens.input + tokens.output;
-      process.stdout.write(
-        `  Tokens: ${totalTokens} (in: ${tokens.input}, out: ${tokens.output})\n`
-      );
+      let statsLine = `  Tokens: ${totalTokens} (in: ${tokens.input}, out: ${tokens.output})`;
+
+      // Add duration if completed timestamp exists
+      if (message.time.completed) {
+        const durationMs = message.time.completed - message.time.created;
+        const durationSec = (durationMs / 1000).toFixed(1);
+        statsLine += `  Duration: ${durationSec}s`;
+      }
+      process.stdout.write(statsLine + "\n");
 
       // Count parts by type
       const partCounts: Record<string, number> = {};

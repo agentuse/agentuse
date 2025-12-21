@@ -3,7 +3,8 @@ import { writeJSON, readJSON, sanitizeAgentName } from '../storage';
 import type {
   SessionInfo,
   Part,
-  Message
+  Message,
+  DeepPartial
 } from './types';
 
 export class SessionManager {
@@ -158,7 +159,7 @@ export class SessionManager {
     sessionID: string,
     agentName: string,
     messageID: string,
-    updates: Partial<Omit<Message, 'id' | 'sessionID'>>
+    updates: DeepPartial<Omit<Message, 'id' | 'sessionID'>>
   ): Promise<void> {
     const sessionPath = this.buildSessionPath(sessionID, agentName);
     // New path structure: {messageID}/message.json
@@ -166,7 +167,23 @@ export class SessionManager {
 
     const message = await readJSON<Message>(key);
     if (message) {
-      Object.assign(message, updates);
+      // Deep merge for nested objects (time, assistant, user)
+      if (updates.time) {
+        message.time = { ...message.time, ...updates.time } as Message['time'];
+      }
+      if (updates.assistant) {
+        const assistantUpdates = updates.assistant;
+        // Deep merge tokens if provided
+        if (assistantUpdates.tokens) {
+          message.assistant.tokens = { ...message.assistant.tokens, ...assistantUpdates.tokens } as Message['assistant']['tokens'];
+        }
+        // Merge other assistant fields (excluding tokens which we handled above)
+        const { tokens: _, ...otherAssistantUpdates } = assistantUpdates;
+        message.assistant = { ...message.assistant, ...otherAssistantUpdates } as Message['assistant'];
+      }
+      if (updates.user) {
+        message.user = { ...message.user, ...updates.user } as Message['user'];
+      }
       await writeJSON(key, message);
     }
   }

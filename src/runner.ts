@@ -1226,14 +1226,31 @@ export async function runAgent(
       const mainTokens = result.usage?.totalTokens || 0;
       const subTokens = result.subAgentTokens || 0;
       const totalTokens = mainTokens + subTokens;
-      
+
       if (subTokens > 0) {
         logger.info(`Tokens used: ${totalTokens} (main: ${mainTokens}, sub-agents: ${subTokens})`);
       } else if (mainTokens > 0) {
         logger.info(`Tokens used: ${mainTokens}`);
       }
     }
-    
+
+    // Update session message with final token usage
+    if (sessionManager && sessionID && assistantMsgID && result.usage) {
+      try {
+        await sessionManager.updateMessage(sessionID, agent.name, assistantMsgID, {
+          time: { completed: Date.now() },
+          assistant: {
+            tokens: {
+              input: result.usage.inputTokens || 0,
+              output: result.usage.outputTokens || 0
+            }
+          }
+        });
+      } catch (error) {
+        logger.debug(`Failed to update message with token usage: ${(error as Error).message}`);
+      }
+    }
+
     // Return metrics for plugin system
     return {
       text: result.text,
