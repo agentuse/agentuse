@@ -4,6 +4,7 @@ import { connectMCP } from './mcp';
 import { runAgent } from './runner';
 import { Command } from 'commander';
 import { createAuthCommand } from './cli/auth';
+import { createSessionsCommand } from './cli/sessions';
 import { logger, LogLevel } from './utils/logger';
 import { basename, resolve, dirname } from 'path';
 import * as readline from 'readline';
@@ -83,6 +84,9 @@ program
 
 // Add auth command
 program.addCommand(createAuthCommand());
+
+// Add sessions command
+program.addCommand(createSessionsCommand());
 
 program
   .command('run <file> [prompt...]')
