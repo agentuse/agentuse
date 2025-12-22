@@ -1,0 +1,295 @@
+---
+title: Session Storage
+description: Storage structure and data schemas for session logs
+---
+
+## Directory Structure
+
+Sessions are stored using XDG conventions:
+
+```
+~/.local/share/agentuse/
+└── project/
+    └── {git-hash}/           # Per-project isolation (or "global" for non-git)
+        └── session/
+            └── {sessionID}-{agentName}/
+                ├── session.json
+                └── {messageID}/
+                    ├── message.json
+                    └── part/
+                        ├── {partID}.json
+                        └── ...
+```
+
+### Path Components
+
+| Component | Description |
+|-----------|-------------|
+| `{git-hash}` | First 16 chars of SHA-256 hash of git root path |
+| `{sessionID}` | ULID (time-sortable unique ID) |
+| `{agentName}` | Sanitized agent name (lowercase, alphanumeric) |
+| `{messageID}` | ULID for message exchange |
+| `{partID}` | ULID for individual parts |
+
+### Subagent Sessions
+
+When an agent invokes subagents, their sessions are nested:
+
+```
+{sessionID}-{agentName}/
+├── session.json
+├── {messageID}/
+└── subagent/
+    └── {subSessionID}-{subAgentName}/
+        ├── session.json
+        └── ...
+```
+
+## Data Schemas
+
+### SessionInfo
+
+Stored in `session.json` at the root of each session directory.
+
+```typescript
+interface SessionInfo {
+  id: string;                    // ULID
+  parentSessionID?: string;      // For subagent sessions
+
+  agent: {
+    name: string;                // Agent name from YAML
+    filePath?: string;           // Path to .agentuse file
+    description?: string;        // Agent description
+    isSubAgent: boolean;         // True if subagent execution
+  };
+
+  model: string;                 // e.g., "anthropic:claude-sonnet-4-0"
+  version: string;               // AgentUse version
+
+  config: {
+    timeout?: number;            // Timeout in seconds
+    maxSteps?: number;           // Max steps configured
+    mcpServers?: string[];       // MCP server names
+    subagents?: Array<{
+      path: string;
+      name?: string;
+    }>;
+  };
+
+  project: {
+    root: string;                // Project root directory
+    cwd: string;                 // Working directory
+  };
+
+  time: {
+    created: number;             // Unix timestamp (ms)
+    updated: number;             // Unix timestamp (ms)
+  };
+}
+```
+
+### Message
+
+Stored in `{messageID}/message.json`. Contains both user input and assistant response.
+
+```typescript
+interface Message {
+  id: string;                    // Message exchange ID
+  sessionID: string;
+
+  time: {
+    created: number;             // When user sent message
+    completed?: number;          // When assistant finished
+  };
+
+  user: {
+    prompt: {
+      task: string;              // From .agentuse markdown body
+      user?: string;             // From CLI args (optional)
+    };
+  };
+
+  assistant: {
+    system: string[];            // System prompts used
+    modelID: string;
+    providerID: string;
+    mode: string;                // 'build', 'plan', etc.
+    path: {
+      cwd: string;
+      root: string;
+    };
+    cost: number;
+    tokens: {
+      input: number;
+      output: number;
+      reasoning: number;
+      cache: {
+        read: number;
+        write: number;
+      };
+    };
+    error?: {
+      message: string;
+      type?: string;
+      stack?: string;
+    };
+  };
+}
+```
+
+### Parts
+
+Stored in `{messageID}/part/{partID}.json`. Each part represents a discrete unit of content.
+
+#### Base Fields
+
+All parts include these fields:
+
+```typescript
+interface PartBase {
+  id: string;        // Part ID (ULID)
+  sessionID: string; // Session this part belongs to
+  messageID: string; // Message this part belongs to
+}
+```
+
+#### Part Types
+
+| Type | Description |
+|------|-------------|
+| `text` | Text output from the model |
+| `reasoning` | Internal reasoning/thinking content |
+| `tool` | Tool call with input, output, status, duration |
+| `file` | File references |
+| `agent` | Subagent invocations |
+| `step-start` | Step boundary markers |
+| `step-finish` | Step completion with token counts |
+
+#### TextPart
+
+```typescript
+interface TextPart extends PartBase {
+  type: 'text';
+  text: string;
+  synthetic?: boolean;
+  time?: {
+    start: number;
+    end?: number;
+  };
+}
+```
+
+#### ReasoningPart
+
+```typescript
+interface ReasoningPart extends PartBase {
+  type: 'reasoning';
+  text: string;
+  metadata?: Record<string, unknown>;
+  time: {
+    start: number;
+    end?: number;
+  };
+}
+```
+
+#### ToolPart
+
+```typescript
+interface ToolPart extends PartBase {
+  type: 'tool';
+  callID: string;    // Tool call ID from AI SDK
+  tool: string;      // Tool name
+  state: ToolState;
+}
+
+type ToolState =
+  | { status: 'pending' }
+  | {
+      status: 'running';
+      input: unknown;
+      title?: string;
+      metadata?: Record<string, unknown>;
+      time: { start: number };
+    }
+  | {
+      status: 'completed';
+      input: unknown;
+      output: unknown;
+      title?: string;
+      metadata?: Record<string, unknown>;
+      time: { start: number; end: number };
+    }
+  | {
+      status: 'error';
+      input: unknown;
+      error: string;
+      metadata?: Record<string, unknown>;
+      time: { start: number; end: number };
+    };
+```
+
+#### FilePart
+
+```typescript
+interface FilePart extends PartBase {
+  type: 'file';
+  mime: string;
+  filename?: string;
+  url: string;
+  source?: {
+    type: 'file' | 'symbol';
+    path: string;
+    text?: {
+      value: string;
+      start: number;
+      end: number;
+    };
+  };
+}
+```
+
+#### AgentPart
+
+```typescript
+interface AgentPart extends PartBase {
+  type: 'agent';
+  name: string;
+  source?: {
+    value: string;
+    start: number;
+    end: number;
+  };
+}
+```
+
+#### StepStartPart
+
+```typescript
+interface StepStartPart extends PartBase {
+  type: 'step-start';
+}
+```
+
+#### StepFinishPart
+
+```typescript
+interface StepFinishPart extends PartBase {
+  type: 'step-finish';
+  cost: number;
+  tokens: {
+    input: number;
+    output: number;
+    reasoning: number;
+    cache: {
+      read: number;
+      write: number;
+    };
+  };
+}
+```
+
+## Related
+
+- [Session Logs Guide](/guides/session-logs) - How to use the sessions CLI
+- [Environment Variables](/reference/environment-variables#storage) - Configure storage location

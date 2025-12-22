@@ -136,6 +136,21 @@ model: anthropic:claude-sonnet-4-0:dev  # Uses ANTHROPIC_API_KEY_DEV
   Shows detailed execution information, tool calls, and internal state.
 </ParamField>
 
+## Storage
+
+<ParamField path="XDG_DATA_HOME" type="string">
+  Override the default data directory for session logs and project data.
+  Default: `~/.local/share`
+
+  ```bash
+  export XDG_DATA_HOME="/custom/data/path"
+  ```
+
+  Session logs are stored at `$XDG_DATA_HOME/agentuse/project/{git-hash}/session/`.
+
+  See [Session Logs](/guides/session-logs) for more details.
+</ParamField>
+
 ## Development Variables
 
 <ParamField path="NODE_TLS_REJECT_UNAUTHORIZED" type="string">
