@@ -45,7 +45,8 @@
         "guides/model-configuration",
         "guides/context-management",
         "guides/remote-agents",
-        "guides/plugins"
+        "guides/plugins",
+        "guides/session-logs"
       ]
     },
     {

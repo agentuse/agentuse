@@ -1,0 +1,292 @@
+# Session Logs
+
+AgentUse automatically tracks every agent execution with detailed logs, providing full visibility into what happened during each run.
+
+## Quick Start
+
+```bash
+# List recent sessions
+agentuse sessions
+
+# View session details (partial ID match supported)
+agentuse sessions 01JFN8
+
+# Show full tool inputs/outputs
+agentuse sessions 01JFN8 --full
+
+# Export as JSON
+agentuse sessions 01JFN8 --json
+```
+
+## What Gets Tracked
+
+Each session captures:
+
+| Category | Data |
+|----------|------|
+| **Session** | Agent name, model, MCP servers, project context, timestamps |
+| **Messages** | User prompts, system prompts, token usage, cost, duration |
+| **Parts** | Text output, tool calls, reasoning, step boundaries |
+| **Tools** | Tool name, input, output, duration, errors |
+
+## CLI Reference
+
+### List Sessions
+
+```bash
+agentuse sessions [options]
+agentuse sessions list [options]
+agentuse sessions ls [options]
+```
+
+**Options:**
+- `-a, --all` - Include subagent sessions
+- `-n, --limit <n>` - Limit results (default: 10)
+- `-j, --json` - Output as JSON
+
+**Example output:**
+```
+ID            AGENT                 MODEL                 DATE
+----------------------------------------------------------
+01JFN8K3M2P1  daily-reporter        claude-sonnet-4       Today 14:32
+01JFN7XYZAB  seo-analyzer          gpt-5                 Yesterday 09:15
+01JFN6DEFGH  code-reviewer         claude-sonnet-4       Mon 16:45
+```
+
+### Show Session Details
+
+```bash
+agentuse sessions <id>
+agentuse sessions show <id> [options]
+```
+
+**Options:**
+- `-f, --full` - Show complete tool input/output (not truncated)
+- `-j, --json` - Output as JSON
+
+**Example output:**
+```
+════════════════════════════════════════════════════════════
+SESSION: 01JFN8K3M2P1NRXZW4Y5V6Q7B8
+════════════════════════════════════════════════════════════
+
+Agent:       daily-reporter
+Description: Generate daily motivation quotes
+Model:       anthropic:claude-sonnet-4-0
+Started:     12/21/2025, 2:32:45 PM
+MCP Servers: postgres
+
+Project:     /Users/you/project
+Working Dir: /Users/you/project
+
+────────────────────────────────────────────────────────────
+Task: Generate a daily motivation quote with an interesting fact
+Tokens: 1523 (in: 892, out: 631)  Duration: 3.2s
+Parts: text: 2, tool: 3
+
+Output:
+Here's today's motivation quote...
+
+─── ✓ Postgres{query} (SELECT * FROM quotes...) 0.8s ────────
+{"rows": [{"id": 1, "quote": "..."}]}
+────────────────────────────────────────────────────────────
+
+Generated your daily quote successfully!
+```
+
+### Show Storage Path
+
+```bash
+agentuse sessions path
+```
+
+Shows where session data is stored for the current project.
+
+## Storage Location
+
+Sessions are stored using XDG conventions:
+
+```
+~/.local/share/agentuse/
+└── project/
+    └── {git-hash}/           # Per-project isolation (or "global" for non-git)
+        └── session/
+            └── {sessionID}-{agentName}/
+                ├── session.json
+                └── {messageID}/
+                    ├── message.json
+                    └── part/
+                        ├── {partID}.json
+                        └── ...
+```
+
+**Path components:**
+- `{git-hash}` - First 16 chars of SHA-256 hash of git root path
+- `{sessionID}` - ULID (time-sortable unique ID)
+- `{agentName}` - Sanitized agent name (lowercase, alphanumeric)
+
+## Data Schemas
+
+### Session Info (`session.json`)
+
+```typescript
+interface SessionInfo {
+  id: string;                    // ULID
+  parentSessionID?: string;      // For subagent sessions
+
+  agent: {
+    name: string;
+    filePath?: string;
+    description?: string;
+    isSubAgent: boolean;
+  };
+
+  model: string;                 // e.g., "anthropic:claude-sonnet-4-0"
+  version: string;               // AgentUse version
+
+  config: {
+    timeout?: number;
+    maxSteps?: number;
+    mcpServers?: string[];
+    subagents?: Array<{ path: string; name?: string }>;
+  };
+
+  project: {
+    root: string;
+    cwd: string;
+  };
+
+  time: {
+    created: number;             // Unix timestamp (ms)
+    updated: number;
+  };
+}
+```
+
+### Message (`message.json`)
+
+```typescript
+interface Message {
+  id: string;
+  sessionID: string;
+
+  time: {
+    created: number;
+    completed?: number;
+  };
+
+  user: {
+    prompt: {
+      task: string;              // From .agentuse file
+      user?: string;             // From CLI args
+    };
+  };
+
+  assistant: {
+    system: string[];
+    modelID: string;
+    providerID: string;
+    mode: string;
+    path: { cwd: string; root: string };
+    cost: number;
+    tokens: {
+      input: number;
+      output: number;
+      reasoning: number;
+      cache: { read: number; write: number };
+    };
+    error?: {
+      message: string;
+      type?: string;
+      stack?: string;
+    };
+  };
+}
+```
+
+### Part Types
+
+Parts capture different types of content generated during execution:
+
+| Type | Description |
+|------|-------------|
+| `text` | Text output from the model |
+| `reasoning` | Internal reasoning/thinking content |
+| `tool` | Tool call with input, output, status, duration |
+| `file` | File references |
+| `agent` | Subagent invocations |
+| `step-start` | Step boundary markers |
+| `step-finish` | Step completion with token counts |
+
+### Tool Part
+
+```typescript
+interface ToolPart {
+  type: 'tool';
+  id: string;
+  callID: string;
+  tool: string;
+  state:
+    | { status: 'pending' }
+    | { status: 'running'; input: unknown; time: { start: number } }
+    | { status: 'completed'; input: unknown; output: unknown; time: { start: number; end: number } }
+    | { status: 'error'; input: unknown; error: string; time: { start: number; end: number } };
+}
+```
+
+## Subagent Sessions
+
+When an agent invokes subagents, their sessions are nested:
+
+```
+{sessionID}-{agentName}/
+├── session.json
+├── {messageID}/
+└── subagent/
+    └── {subSessionID}-{subAgentName}/
+        ├── session.json
+        └── ...
+```
+
+Use `--all` flag to include subagent sessions in listings:
+
+```bash
+agentuse sessions --all
+```
+
+## Use Cases
+
+### Debugging Failed Runs
+
+```bash
+# Find recent failed session
+agentuse sessions | grep -i error
+
+# View full details with complete tool outputs
+agentuse sessions 01JFN8 --full
+```
+
+### Cost Tracking
+
+```bash
+# Export sessions as JSON for analysis
+agentuse sessions --json > sessions.json
+
+# Query costs with jq
+cat sessions.json | jq '.[].cost'
+```
+
+### Audit Logging
+
+Session logs provide a complete audit trail:
+- What prompts were sent
+- Which tools were called with what inputs
+- What outputs were generated
+- Token usage and costs
+- Error details and stack traces
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `XDG_DATA_HOME` | Override default data directory (default: `~/.local/share`) |
