@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { readFile } from 'fs/promises';
 import { resolve, basename } from 'path';
 import { logger } from './utils/logger';
+import { ToolsConfigSchema } from './tools/index.js';
 
 // Schema for MCP server configuration
 const MCPServerSchema = z.union([
@@ -52,7 +53,8 @@ const AgentSchema = z.object({
     path: z.string(),
     name: z.string().optional(),
     maxSteps: z.number().optional()
-  })).optional()
+  })).optional(),
+  tools: ToolsConfigSchema.optional()
 }).transform((data) => {
   // Handle backward compatibility: support both mcp_servers and mcpServers
   if (data.mcp_servers && data.mcpServers) {

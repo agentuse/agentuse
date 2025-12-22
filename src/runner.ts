@@ -3,6 +3,7 @@ import type { ParsedAgent } from './parser';
 import type { MCPConnection } from './mcp';
 import { getMCPTools } from './mcp';
 import { createSubAgentTools } from './subagent';
+import { getTools as getConfiguredTools, DoomLoopDetector } from './tools/index.js';
 import { createModel, AuthenticationError } from './models';
 import { AnthropicAuth } from './auth/anthropic';
 import { logger } from './utils/logger';
@@ -82,6 +83,7 @@ export async function processAgentStream(
     sessionID?: string;
     messageID?: string;
     agentName?: string;
+    doomLoopDetector?: DoomLoopDetector;
   }
 ): Promise<{
   text: string;
@@ -236,6 +238,12 @@ export async function processAgentStream(
       case 'tool-call':
         // Finalize any pending text part before tool call
         await finalizeTextPart();
+
+        // Check for doom loop (repeated identical tool calls)
+        if (options?.doomLoopDetector) {
+          // This will throw DoomLoopError if threshold exceeded
+          options.doomLoopDetector.check(chunk.toolName!, chunk.toolInput);
+        }
 
         parts.push({
           type: 'tool-call',
@@ -1025,14 +1033,26 @@ export async function runAgent(
     
     // Convert MCP tools to AI SDK format
     const mcpTools = await getMCPTools(mcpClients);
-    
+
+    // Get configured builtin tools (filesystem, bash)
+    const configuredTools = agent.config.tools && projectContext
+      ? getConfiguredTools(agent.config.tools, projectContext.projectRoot)
+      : {};
+
+    if (Object.keys(configuredTools).length > 0) {
+      logger.debug(`Loaded ${Object.keys(configuredTools).length} configured tool(s): ${Object.keys(configuredTools).join(', ')}`);
+    }
+
     // Sub-agent tools will be created after session is initialized
-    // For now, just use MCP tools
+    // For now, just use MCP tools + configured tools
     let subAgentTools: Record<string, any> = {};
-    let tools = { ...mcpTools };
+    let tools = { ...mcpTools, ...configuredTools };
 
     // Precedence: CLI > Agent YAML > Default
     const maxSteps = resolveMaxSteps(cliMaxSteps, agent.config.maxSteps);
+
+    // Create doom loop detector to catch agents stuck in repetitive tool calls
+    const doomLoopDetector = new DoomLoopDetector({ threshold: 3, action: 'error' });
 
     logger.info(`Running agent with model: ${agent.config.model}`);
     if (Object.keys(tools).length > 0) {
@@ -1181,7 +1201,7 @@ export async function runAgent(
       );
 
       // Merge all tools
-      tools = { ...mcpTools, ...subAgentTools };
+      tools = { ...mcpTools, ...configuredTools, ...subAgentTools };
 
       if (verbose) {
         logger.debug(`[SubAgent] Loaded ${Object.keys(subAgentTools).length} sub-agent tool(s)`);
@@ -1212,9 +1232,11 @@ export async function runAgent(
         sessionManager,
         sessionID,
         messageID: assistantMsgID,
-        agentName: agent.name
+        agentName: agent.name,
+        doomLoopDetector
       } : {
-        collectToolCalls: true
+        collectToolCalls: true,
+        doomLoopDetector
       }
     );
     

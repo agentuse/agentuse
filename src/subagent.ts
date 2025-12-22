@@ -4,6 +4,7 @@ import { parseAgent } from './parser';
 import { connectMCP, getMCPTools, type MCPServersConfig } from './mcp';
 import { logger } from './utils/logger';
 import { executeAgentCore, processAgentStream, buildAutonomousAgentPrompt } from './runner';
+import { DoomLoopDetector } from './tools/index.js';
 import { resolve, dirname } from 'path';
 import { SessionManager } from './session/manager';
 
@@ -234,6 +235,9 @@ export async function createSubAgentTool(
             tools = { ...mcpTools, ...nestedSubAgentTools };
           }
 
+          // Create doom loop detector for sub-agent
+          const doomLoopDetector = new DoomLoopDetector({ threshold: 3, action: 'error' });
+
           // Process the agent stream using the NEW SessionManager instance
           const result = await processAgentStream(
             executeAgentCore(agent, tools, {
@@ -249,10 +253,12 @@ export async function createSubAgentTool(
               agentName: agent.name,
               messageID: subagentMsgID,
               collectToolCalls: true,
-              logPrefix: '[SubAgent] '
+              logPrefix: '[SubAgent] ',
+              doomLoopDetector
             } : {
               collectToolCalls: true,
-              logPrefix: '[SubAgent] '
+              logPrefix: '[SubAgent] ',
+              doomLoopDetector
             }
           );
           
