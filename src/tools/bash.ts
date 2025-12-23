@@ -7,6 +7,95 @@ import type { BashConfig, ToolOutput, ToolErrorOutput } from './types.js';
 const DEFAULT_TIMEOUT = 120000; // 2 minutes
 const DEFAULT_MAX_OUTPUT = 30 * 1024; // 30KB
 
+// Environment variables that should be cleared for security
+// These can be used for library injection, path hijacking, or other attacks
+const DANGEROUS_ENV_VARS = [
+  // Library injection (Linux)
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'LD_AUDIT',
+  'LD_DEBUG',
+  'LD_DEBUG_OUTPUT',
+  'LD_DYNAMIC_WEAK',
+  'LD_ORIGIN_PATH',
+  'LD_PROFILE',
+  'LD_SHOW_AUXV',
+
+  // Library injection (macOS)
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'DYLD_FRAMEWORK_PATH',
+  'DYLD_FALLBACK_LIBRARY_PATH',
+  'DYLD_FALLBACK_FRAMEWORK_PATH',
+  'DYLD_IMAGE_SUFFIX',
+  'DYLD_PRINT_LIBRARIES',
+
+  // Python injection
+  'PYTHONPATH',
+  'PYTHONSTARTUP',
+  'PYTHONHOME',
+
+  // Node.js injection
+  'NODE_OPTIONS',
+  'NODE_PATH',
+
+  // Ruby injection
+  'RUBYLIB',
+  'RUBYOPT',
+
+  // Perl injection
+  'PERL5LIB',
+  'PERL5OPT',
+  'PERLLIB',
+
+  // Bash startup injection
+  'BASH_ENV',
+  'ENV',
+  'CDPATH',
+
+  // Git hooks (can execute arbitrary code)
+  'GIT_TEMPLATE_DIR',
+  'GIT_EXEC_PATH',
+
+  // IFS manipulation (word splitting attacks)
+  'IFS',
+
+  // Proxy hijacking
+  'http_proxy',
+  'https_proxy',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'all_proxy',
+  'ftp_proxy',
+  'FTP_PROXY',
+];
+
+/**
+ * Create a sanitized environment for command execution
+ * Removes dangerous environment variables that could be used for attacks
+ */
+function createSafeEnvironment(projectRoot: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+
+  // Clear all dangerous environment variables
+  for (const varName of DANGEROUS_ENV_VARS) {
+    delete env[varName];
+  }
+
+  // Set safe defaults
+  env['SHELL'] = '/bin/sh';
+  env['PWD'] = projectRoot;
+
+  // Ensure PATH doesn't start with current directory (PATH injection)
+  if (env['PATH']) {
+    const paths = env['PATH'].split(':').filter(p => p !== '.' && p !== '');
+    env['PATH'] = paths.join(':');
+  }
+
+  return env;
+}
+
 /**
  * Kill a process and all its children
  */
@@ -63,16 +152,12 @@ export function createBashTool(
         let stdoutTruncated = false;
         let stderrTruncated = false;
 
-        // Spawn the command
+        // Spawn the command with sanitized environment
         const child = spawn(command, {
           shell: true,
           cwd: projectRoot,
           detached: true, // Create new process group for cleanup
-          env: {
-            ...process.env,
-            // Limit some potentially dangerous env vars
-            SHELL: '/bin/sh',
-          },
+          env: createSafeEnvironment(projectRoot),
         });
 
         // Set up timeout

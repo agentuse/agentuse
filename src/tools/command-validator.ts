@@ -5,6 +5,27 @@ import type { CommandValidationResult } from './types.js';
 // Shell operators that separate commands
 const SHELL_OPERATORS = ['&&', '||', '|', ';', '&'];
 
+// Command substitution patterns - these allow arbitrary command execution
+// and can bypass allowlist checks
+const COMMAND_SUBSTITUTION_PATTERNS: RegExp[] = [
+  /\$\([^)]+\)/,           // $(command) - POSIX command substitution
+  /`[^`]+`/,               // `command` - legacy backtick substitution
+  /\$\{[^}]*[`$\(]/,       // ${var:-`cmd`} or ${var:-$(cmd)} - parameter expansion with substitution
+];
+
+// Process substitution patterns (bash-specific)
+const PROCESS_SUBSTITUTION_PATTERNS: RegExp[] = [
+  /<\([^)]+\)/,            // <(command) - input process substitution
+  />\([^)]+\)/,            // >(command) - output process substitution
+];
+
+// Raw command patterns that should be checked BEFORE parsing
+// These patterns contain shell operators that would be split during parsing
+const RAW_DENYLIST_PATTERNS: RegExp[] = [
+  // Fork bomb patterns - must be checked before parsing splits on | and ;
+  /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,  // :(){ :|:& };:
+];
+
 // Built-in denylist - always blocked, cannot be overridden
 // These are checked against individual commands after parsing
 const BUILTIN_DENYLIST = [
@@ -50,8 +71,36 @@ const BUILTIN_DENYLIST = [
   'ruby',
   'eval *',
 
-  // Fork bomb patterns
-  ':(){ :|:& };:*',
+  // Note: Fork bomb patterns are checked in RAW_DENYLIST_PATTERNS
+  // because they contain shell operators that would be split during parsing
+
+  // Network exfiltration patterns
+  '* | nc *',
+  '* | netcat *',
+  '* | ncat *',
+  '* | curl *',
+  '* | wget *',
+  '* > /dev/tcp/*',
+  '* > /dev/udp/*',
+
+  // Reverse shell patterns
+  'nc -e *',
+  'nc * -e *',
+  'netcat -e *',
+  'netcat * -e *',
+  'ncat -e *',
+  'ncat * -e *',
+  'bash -i *',
+  'bash -c *sh -i*',
+
+  // History/credential theft
+  'cat *history*',
+  'cat *_history',
+  'cat *.ssh/*',
+  'cat *id_rsa*',
+  'cat *id_ed25519*',
+  'cat /etc/passwd',
+  'cat /etc/shadow',
 ];
 
 export class CommandValidator {
@@ -194,6 +243,47 @@ export class CommandValidator {
   }
 
   /**
+   * Check for raw dangerous patterns that must be checked before parsing
+   * These patterns contain shell operators and would be incorrectly split
+   */
+  private checkRawDenylist(command: string): string | null {
+    for (const pattern of RAW_DENYLIST_PATTERNS) {
+      if (pattern.test(command)) {
+        return `Command blocked: contains dangerous pattern (fork bomb or similar)`;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Check for command substitution patterns that could bypass allowlist
+   * These patterns allow arbitrary command execution within a command
+   */
+  private checkCommandSubstitution(command: string): string | null {
+    // First, remove content inside single quotes (where substitution doesn't happen)
+    // Single quotes in bash prevent all substitution
+    const withoutSingleQuotes = command.replace(/'[^']*'/g, '');
+
+    // Check for command substitution patterns
+    for (const pattern of COMMAND_SUBSTITUTION_PATTERNS) {
+      if (pattern.test(withoutSingleQuotes)) {
+        const match = withoutSingleQuotes.match(pattern);
+        return `Command substitution detected: "${match?.[0] || 'unknown'}" - this could execute arbitrary commands`;
+      }
+    }
+
+    // Check for process substitution patterns
+    for (const pattern of PROCESS_SUBSTITUTION_PATTERNS) {
+      if (pattern.test(withoutSingleQuotes)) {
+        const match = withoutSingleQuotes.match(pattern);
+        return `Process substitution detected: "${match?.[0] || 'unknown'}" - this could execute arbitrary commands`;
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Parse a compound command into individual commands
    * Handles: cmd1 && cmd2, cmd1 || cmd2, cmd1 | cmd2, cmd1 ; cmd2, cmd1 & cmd2
    */
@@ -278,11 +368,12 @@ export class CommandValidator {
 
   /**
    * Convert a wildcard pattern to a regex
+   * Escapes all regex special characters except * which becomes .*
    */
   private patternToRegex(pattern: string): RegExp {
     const regexPattern = pattern
       .split('*')
-      .map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+      .map(part => part.replace(/[.+?^${}()|[\]\\]/g, (char) => '\\' + char))
       .join('.*');
     return new RegExp(`^${regexPattern}$`, 'i');
   }
@@ -348,6 +439,20 @@ export class CommandValidator {
 
     if (!normalizedCommand) {
       return { allowed: false, error: 'Empty command' };
+    }
+
+    // Check raw denylist FIRST (before parsing splits on operators)
+    // This catches patterns like fork bombs that contain shell operators
+    const rawDenyError = this.checkRawDenylist(normalizedCommand);
+    if (rawDenyError) {
+      return { allowed: false, error: rawDenyError };
+    }
+
+    // Check for command/process substitution (before parsing)
+    // These patterns can execute arbitrary commands and bypass allowlist
+    const substitutionError = this.checkCommandSubstitution(normalizedCommand);
+    if (substitutionError) {
+      return { allowed: false, error: substitutionError };
     }
 
     // Parse compound command
