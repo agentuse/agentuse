@@ -314,6 +314,37 @@ describe('CommandValidator', () => {
   });
 });
 
+describe('multi-line commands', () => {
+  it('allows multi-line python -c commands when python * is in allowlist', () => {
+    const validator = new CommandValidator(['python *', 'python3 *']);
+    const multilineCmd = `python3 -c "
+from datetime import datetime
+print(datetime.now())
+"`;
+    const result = validator.validate(multilineCmd);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('allows heredoc-style commands when pattern matches', () => {
+    const validator = new CommandValidator(['cat *']);
+    const heredocCmd = `cat << 'EOF'
+line 1
+line 2
+EOF`;
+    const result = validator.validate(heredocCmd);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('rejects multi-line commands not in allowlist', () => {
+    const validator = new CommandValidator(['npm *']);
+    const multilineCmd = `python3 -c "
+print('hello')
+"`;
+    const result = validator.validate(multilineCmd);
+    expect(result.allowed).toBe(false);
+  });
+});
+
 describe('CommandValidator accessors', () => {
   it('returns allowed patterns', () => {
     const validator = new CommandValidator(['npm *', 'git *']);

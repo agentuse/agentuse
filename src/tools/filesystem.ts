@@ -28,6 +28,32 @@ function formatWithLineNumbers(content: string, offset: number = 1): string {
 }
 
 /**
+ * Format path configurations for tool description
+ */
+function formatPathsForDescription(
+  configs: FilesystemPathConfig[],
+  permission: 'read' | 'write' | 'edit'
+): string {
+  const relevantConfigs = configs.filter(c => c.permissions.includes(permission));
+  if (relevantConfigs.length === 0) {
+    return '  (none configured)';
+  }
+
+  const paths: string[] = [];
+  for (const config of relevantConfigs) {
+    if (config.path) {
+      paths.push(`  - ${config.path}`);
+    }
+    if (config.paths) {
+      for (const p of config.paths) {
+        paths.push(`  - ${p}`);
+      }
+    }
+  }
+  return paths.join('\n');
+}
+
+/**
  * Create the filesystem read tool
  */
 export function createReadTool(
@@ -36,8 +62,16 @@ export function createReadTool(
 ): Tool {
   const validator = new PathValidator(configs, projectRoot);
 
+  const allowedPaths = formatPathsForDescription(configs, 'read');
+  const description = `Read file contents from the filesystem. Returns content with line numbers.
+
+Allowed paths for reading:
+${allowedPaths}
+
+Paths not matching these patterns will be rejected.`;
+
   return {
-    description: 'Read file contents from the filesystem. Returns content with line numbers.',
+    description,
     inputSchema: z.object({
       file_path: z.string().describe('Absolute path to the file to read'),
       offset: z.number().optional().describe('Line number to start from (1-indexed)'),
@@ -108,8 +142,16 @@ export function createWriteTool(
 ): Tool {
   const validator = new PathValidator(configs, projectRoot);
 
+  const allowedPaths = formatPathsForDescription(configs, 'write');
+  const description = `Write content to a file. Creates the file if it does not exist, overwrites if it does.
+
+Allowed paths for writing:
+${allowedPaths}
+
+Paths not matching these patterns will be rejected.`;
+
   return {
-    description: 'Write content to a file. Creates the file if it does not exist, overwrites if it does.',
+    description,
     inputSchema: z.object({
       file_path: z.string().describe('Absolute path to the file to write'),
       content: z.string().describe('Content to write to the file'),
@@ -172,8 +214,16 @@ export function createEditTool(
 ): Tool {
   const validator = new PathValidator(configs, projectRoot);
 
+  const allowedPaths = formatPathsForDescription(configs, 'edit');
+  const description = `Edit a file by replacing an exact string with a new string. The old_string must match exactly.
+
+Allowed paths for editing:
+${allowedPaths}
+
+Paths not matching these patterns will be rejected.`;
+
   return {
-    description: 'Edit a file by replacing an exact string with a new string. The old_string must match exactly.',
+    description,
     inputSchema: z.object({
       file_path: z.string().describe('Absolute path to the file to edit'),
       old_string: z.string().describe('Exact string to find and replace'),

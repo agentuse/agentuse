@@ -375,7 +375,8 @@ export class CommandValidator {
       .split('*')
       .map(part => part.replace(/[.+?^${}()|[\]\\]/g, (char) => '\\' + char))
       .join('.*');
-    return new RegExp(`^${regexPattern}$`, 'i');
+    // Use 's' flag (dotAll) so .* matches newlines in multi-line commands
+    return new RegExp(`^${regexPattern}$`, 'is');
   }
 
   /**
@@ -428,7 +429,9 @@ export class CommandValidator {
       return { allowed: true, matchedPattern: allowMatch };
     }
 
-    return { allowed: false, error: `Command not in allowlist: "${trimmed}"` };
+    const allowedHint = this.allowedPatterns.slice(0, 5).join(', ');
+    const moreCount = this.allowedPatterns.length > 5 ? ` (+${this.allowedPatterns.length - 5} more)` : '';
+    return { allowed: false, error: `Command not in allowlist: "${trimmed}". Allowed patterns: ${allowedHint}${moreCount}` };
   }
 
   /**

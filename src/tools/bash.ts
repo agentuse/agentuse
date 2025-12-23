@@ -123,8 +123,17 @@ export function createBashTool(
   const validator = new CommandValidator(config.commands, projectRoot);
   const defaultTimeout = config.timeout || DEFAULT_TIMEOUT;
 
+  // Build description with allowed commands
+  const allowedCommandsList = config.commands.map(cmd => `  - ${cmd}`).join('\n');
+  const description = `Execute a shell command. Only commands matching the configured allowlist patterns are permitted.
+
+Allowed command patterns:
+${allowedCommandsList}
+
+Commands not matching these patterns will be rejected.`;
+
   return {
-    description: 'Execute a shell command. Only commands matching the configured allowlist patterns are permitted.',
+    description,
     inputSchema: z.object({
       command: z.string().describe('The shell command to execute'),
       timeout: z.number().optional().describe(`Timeout in milliseconds (default: ${defaultTimeout})`),
