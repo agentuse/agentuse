@@ -287,9 +287,53 @@ export async function processAgentStream(
         let tokens: number | undefined;
         let isSubAgent = false;
 
-        // Extract metadata before logging
-        if (chunk.toolResultRaw && typeof chunk.toolResultRaw === 'object') {
-          const rawResult = chunk.toolResultRaw as Record<string, unknown>;
+        // Extract metadata and success status before logging
+        let toolSuccess = true;
+        let rawResult: Record<string, unknown> | null = null;
+        let toolMetadata: Record<string, unknown> | null = null;
+
+        // Try to get rawResult as object - handles multiple nesting levels
+        // toolResultRaw can be:
+        // 1. A string with JSON: '{"success":false,...}'
+        // 2. An object with error: {error: "message"}
+        // 3. An object with output containing JSON: {output: '{"success":false,...}'}
+        // 4. An object with output string and metadata: {output: "...", metadata: {exitCode: 1}}
+        if (chunk.toolResultRaw) {
+          const raw = chunk.toolResultRaw;
+
+          // First, extract metadata if present (for case 4)
+          if (typeof raw === 'object' && raw !== null && raw.metadata && typeof raw.metadata === 'object') {
+            toolMetadata = raw.metadata as Record<string, unknown>;
+          }
+
+          let toCheck = raw;
+
+          // If it's an object with .output string, use that for parsing
+          if (typeof toCheck === 'object' && toCheck !== null && typeof toCheck.output === 'string') {
+            toCheck = toCheck.output;
+          }
+
+          // Now parse if it's a string
+          if (typeof toCheck === 'string') {
+            try {
+              const parsed = JSON.parse(toCheck);
+              if (typeof parsed === 'object' && parsed !== null) {
+                rawResult = parsed;
+              }
+            } catch {
+              // Not valid JSON, ignore
+            }
+          } else if (typeof toCheck === 'object' && toCheck !== null) {
+            rawResult = toCheck as Record<string, unknown>;
+          }
+        }
+
+        // Check for failure conditions
+        if (rawResult) {
+          // Check if tool explicitly returned success: false or has an error field
+          if (rawResult.success === false || rawResult.error !== undefined) {
+            toolSuccess = false;
+          }
           if (rawResult.metadata && typeof rawResult.metadata === 'object') {
             const metadata = rawResult.metadata as Record<string, unknown>;
             if (typeof metadata.tokensUsed === 'number') {
@@ -301,19 +345,32 @@ export async function processAgentStream(
           }
         }
 
+        // Check metadata for non-zero exit code (bash tool returns this)
+        if (toolMetadata) {
+          if (typeof toolMetadata.exitCode === 'number' && toolMetadata.exitCode !== 0) {
+            toolSuccess = false;
+          }
+          if (typeof toolMetadata.tokensUsed === 'number') {
+            tokens = toolMetadata.tokensUsed;
+          }
+          if (toolMetadata.agent) {
+            isSubAgent = true;
+          }
+        }
+
         parts.push({
           type: 'tool-result',
           tool: chunk.toolName!,
           output: chunk.toolResult || 'No result',
           duration: toolDuration || 0,
-          success: true,
+          success: toolSuccess,
           timestamp: Date.now()
         });
 
         // Log the result with timing info
         logger.toolResult(chunk.toolResult || 'No result', {
           ...(toolDuration !== undefined && { duration: toolDuration }),
-          success: true,
+          success: toolSuccess,
           ...(tokens && { tokens })
         });
 
