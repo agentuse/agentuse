@@ -1,6 +1,6 @@
 ---
 title: Introduction
-description: Build production AI agents with just markdown files
+description: AI agents on autopilot - define in markdown, run on cron, CI/CD, or serverless
 ---
 
 <img
@@ -14,9 +14,9 @@ description: Build production AI agents with just markdown files
   alt="AgentUse Logo Dark"
 />
 
-## AI Agents as Simple as Markdown
+## AI Agents on Autopilot
 
-**AgentUse** is a minimal-configuration CLI that lets you build production AI agents with just markdown files. Inspired by Claude Code's elegant markdown-based configuration, AgentUse takes this philosophy further - your entire agent *is* a markdown file. Just set your API key and start building.
+**AgentUse** is a CLI framework for building AI agents that run themselves. Define agents in markdown, run via cron, CI/CD, or serverless, and get results without babysitting. No SDK. No flowcharts. Just AI that works while you don't.
 
 <CardGroup cols={2}>
   <Card
@@ -39,34 +39,37 @@ description: Build production AI agents with just markdown files
 
 ### The Problem
 
-Current agent frameworks force an impossible choice:
+AI tools today force you to choose:
+- **Interactive copilots** require your constant attention - great for pair programming, but can't run unattended
 - **Visual workflow tools** give you drag-and-drop simplicity but create version control nightmares and vendor lock-in
-- **Traditional code frameworks** offer power and flexibility but require hundreds of lines of boilerplate just to say "hello world"
+- **SDK-heavy frameworks** offer power but require hundreds of lines of boilerplate just to say "hello world"
 
 ### The Solution
 
-AgentUse makes your agents *just markdown files*. Not configuration files that generate code. Not visual flows that compile to JSON. The markdown IS the agent.
+AgentUse puts AI agents on autopilot. Define agents in markdown, run via cron, CI/CD, or serverless, and get results asynchronously.
 
 <AccordionGroup>
+  <Accordion title="Runs Unattended">
+    Run via cron jobs, CI/CD pipelines, and serverless functions. No babysitting required.
+  </Accordion>
   <Accordion title="Version Control Just Works">
     Diff, review, and merge agents like any other code. Your agents are text files that integrate seamlessly with Git.
   </Accordion>
-  <Accordion title="Share Agents with a URL">
-    As easy as sharing a gist. Agents can even be run directly from HTTPS URLs.
-  </Accordion>
-  <Accordion title="Zero Learning Curve">
-    If you can write a README, you can build an agent. No new syntax to learn.
+  <Accordion title="No SDK Required">
+    If you can write plain English, you can build an agent. No new syntax or programming required.
   </Accordion>
   <Accordion title="Production Ready">
     Built-in retries, streaming, error recovery, and MCP support. Sub-second startup times.
   </Accordion>
 </AccordionGroup>
 
+**Copilots assist you. AgentUse agents work for you.**
+
 ## Key Features
 
 <Steps>
-  <Step title="Fast Startup">
-    Run agents quickly with minimal overhead. Sub-second startup times for rapid deployment.
+  <Step title="Autopilot Execution">
+    Run agents via cron jobs, CI/CD pipelines, and serverless functions. Sub-second startup times.
   </Step>
   <Step title="Multi-Provider Support">
     Works with Anthropic Claude (including OAuth), OpenAI GPT, and OpenRouter with flexible API key management.
@@ -81,7 +84,7 @@ AgentUse makes your agents *just markdown files*. Not configuration files that g
 
 ## How It Works
 
-AgentUse agents are defined using a simple markdown format with minimal configuration:
+AgentUse agents are markdown files with YAML configuration and plain English instructions:
 
 ```yaml
 ---

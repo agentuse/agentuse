@@ -66,12 +66,12 @@
   },
   "backgroundImage": "/static/background.png",
   "metadata": {
-    "og:title": "AgentUse - AI Agents as Simple as Markdown",
-    "og:description": "Build production AI agents with just markdown files. Zero-configuration CLI for AI agents with MCP tools support.",
+    "og:title": "AgentUse - AI Agents on Autopilot",
+    "og:description": "Define in markdown. Run on cron, CI/CD, or serverless. No SDK. No flowcharts. Just AI agents that run themselves.",
     "og:image": "/static/agentuse-logo.png",
     "twitter:card": "summary_large_image",
     "twitter:title": "AgentUse Documentation",
-    "twitter:description": "Build production AI agents with just markdown files.",
+    "twitter:description": "AI agents on autopilot. Define in markdown, run on cron, CI/CD, or serverless.",
     "twitter:image": "/static/agentuse-logo.png"
   },
   "search": {

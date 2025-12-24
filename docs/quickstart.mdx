@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-description: Get up and running with AgentUse in 5 minutes
+description: Deploy your first AI agent on autopilot in 5 minutes
 ---
 
 ## Installation
@@ -231,6 +231,25 @@ export OPENAI_API_KEY_PERSONAL="sk-proj-..."
 
 <Tip>
   Use custom API key suffixes to manage multiple accounts: `anthropic:claude-sonnet-4-5:WORK` will use `ANTHROPIC_API_KEY_WORK`
+</Tip>
+
+## Schedule Your Agent
+
+Once you have an agent working, put it on autopilot:
+
+```bash
+# Run daily at 9am
+0 9 * * * agentuse run /path/to/daily-report.agentuse >> /var/log/reports.log
+
+# Run every 6 hours
+0 */6 * * * agentuse run /path/to/monitor.agentuse
+
+# Run in CI/CD (GitHub Actions, etc.)
+agentuse run ./agents/deploy-check.agentuse --quiet
+```
+
+<Tip>
+  AgentUse agents are designed for autopilot execution - cron jobs, CI/CD pipelines, and serverless functions. No babysitting required.
 </Tip>
 
 ## What's Next?

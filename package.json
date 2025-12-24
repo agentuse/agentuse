@@ -1,7 +1,7 @@
 {
   "name": "agentuse",
   "version": "0.2.0",
-  "description": "Zero-configuration CLI for AI agents with MCP tools support",
+  "description": "AI agents on autopilot - define in markdown, run on cron, CI/CD, or serverless",
   "type": "module",
   "author": "",
   "license": "Apache-2.0",
@@ -20,7 +20,12 @@
     "anthropic",
     "openai",
     "cli",
-    "llm"
+    "llm",
+    "automation",
+    "cron",
+    "cicd",
+    "serverless",
+    "autopilot"
   ],
   "engines": {
     "node": ">=18.0.0"

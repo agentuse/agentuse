@@ -4,7 +4,7 @@
   <img alt="AgentUse Logo" src="./static/agentuse-logo.png"  width="full">
 </picture>
 
-<h1 align="center">AI Agents as Simple as Markdown</h1>
+<h1 align="center">AI Agents on Autopilot</h1>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/agentuse">
@@ -25,8 +25,8 @@
 </p>
 
 <p align="center">
-  <strong>Build and deploy AI agents with just markdown files.</strong><br/>
-  Perfect for automation, CI/CD, and scheduled tasks. No servers, no frameworks, just text files.
+  <strong>Define in markdown. Run on cron, CI/CD, or serverless.</strong><br/>
+  No SDK. No flowcharts. Just AI agents that run themselves.
 </p>
 
 <p align="center">
@@ -70,7 +70,7 @@ agentuse run daily-reporter.agentuse
 0 9 * * * agentuse run daily-reporter.agentuse >> daily-quotes.json
 ```
 
-That's it! Your AI agent runs anywhere - CI/CD pipelines, cron jobs, webhooks, or serverless functions.
+That's it! Your AI agent runs on autopilot - CI/CD pipelines, cron jobs, webhooks, or serverless functions.
 
 ## 🎯 Real-World Automation Examples
 
@@ -144,28 +144,28 @@ Choose the best one and post to X.
 <summary><strong>Why AgentUse?</strong> The philosophy behind the project...</summary>
 
 ### The Problem
-Current agent frameworks force an impossible choice. Visual workflow tools give you drag-and-drop simplicity but create version control nightmares and vendor lock-in. Traditional code frameworks offer power and flexibility but require hundreds of lines of boilerplate just to say "hello world."
+AI tools today force you to choose: interactive copilots that require your constant attention, visual workflow builders with version control nightmares, or SDK-heavy frameworks with hundreds of lines of boilerplate.
 
 ### The Insight
-Claude Code proved that markdown configuration is incredibly powerful for AI interactions. But Claude Code is an interactive CLI tool, not a framework for building deployable agents. What if we took that brilliant markdown-first philosophy and built a proper agent development framework around it?
+What if AI agents could run like cron jobs? Define what you want in markdown, schedule with cron or CI/CD, and let it work while you don't. No chat. No babysitting. Just results.
 
 ### The Solution
-AgentUse makes your agents *just markdown files*. Not configuration files that generate code. Not visual flows that compile to JSON. The markdown IS the agent. This means:
+AgentUse puts AI agents on autopilot. Define agents in markdown, run via cron, CI/CD, or serverless, and get results asynchronously. This means:
+- **Runs unattended** - cron jobs, CI/CD pipelines, serverless functions
 - **Version control just works** - diff, review, and merge agents like any other code
-- **Share agents with a URL** - as easy as sharing a gist
-- **Zero learning curve** - if you can write a README, you can build an agent
+- **No SDK required** - if you can write plain English, you can build an agent
 - **Production-ready** - built-in retries, streaming, error recovery, and MCP support
 
-AgentUse is Infrastructure-as-Code philosophy applied to AI agents. Your agents are text files that can be versioned, reviewed, tested, and deployed like any other code artifact.
+Copilots assist you. AgentUse agents work for you.
 </details>
 
 ## ✨ Features
 
 <div align="center">
 
-| 🚀 **Performance** | 🔧 **Developer Experience** | 🔌 **Integrations** |
+| 🚀 **Autopilot Execution** | 🔧 **Developer Experience** | 🔌 **Integrations** |
 |:---|:---|:---|
-| • Sub-second startup<br>• Minimal dependencies<br>• Smart context management<br>• Automatic retries | • Plain markdown files<br>• Zero boilerplate<br>• Git-friendly<br>• URL-shareable agents | • MCP servers<br>• Multiple AI providers (Anthropic, OpenAI, OpenRouter)<br>• Plugin system<br>• Sub-agent composition |
+| • Cron jobs<br>• CI/CD pipelines<br>• Serverless functions<br>• Any external trigger | • Markdown format<br>• Zero boilerplate<br>• Git-friendly<br>• URL-shareable agents | • MCP servers<br>• Multiple AI providers (Anthropic, OpenAI, OpenRouter)<br>• Plugin system<br>• Sub-agent composition |
 
 </div>
 
@@ -209,7 +209,7 @@ export OPENROUTER_API_KEY="sk-or-..."
 
 ## 📋 Core Concepts
 
-Agents are markdown files with YAML frontmatter for configuration and markdown content for instructions:
+Agents are markdown files with YAML frontmatter for configuration and plain English instructions:
 
 ```markdown
 ---
