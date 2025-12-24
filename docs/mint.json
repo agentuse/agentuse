@@ -55,6 +55,7 @@
       "pages": [
         "reference/cli-commands",
         "reference/agent-syntax",
+        "reference/variables",
         "reference/session-storage",
         "reference/environment-variables"
       ]

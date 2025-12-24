@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { PathValidator } from '../src/tools/path-validator';
+import { PathValidator, resolveSafeVariables } from '../src/tools/path-validator';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -38,7 +38,7 @@ describe('PathValidator Security', () => {
     ];
 
     it('blocks access to .env files', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       // Create a .env file
       fs.writeFileSync(path.join(projectRoot, '.env'), 'SECRET=password123');
@@ -49,7 +49,7 @@ describe('PathValidator Security', () => {
     });
 
     it('blocks access to .env.local', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, '.env.local'), 'API_KEY=secret');
 
@@ -59,7 +59,7 @@ describe('PathValidator Security', () => {
     });
 
     it('blocks access to .env.production', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, '.env.production'), 'DB_PASSWORD=secret');
 
@@ -69,7 +69,7 @@ describe('PathValidator Security', () => {
     });
 
     it('blocks access to .env.development', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, '.env.development'), 'DEV_SECRET=test');
 
@@ -78,7 +78,7 @@ describe('PathValidator Security', () => {
     });
 
     it('blocks access to .env.staging', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, '.env.staging'), 'STAGING_KEY=test');
 
@@ -87,7 +87,7 @@ describe('PathValidator Security', () => {
     });
 
     it('allows access to .env.example (safe file)', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, '.env.example'), 'API_KEY=your-key-here');
 
@@ -96,7 +96,7 @@ describe('PathValidator Security', () => {
     });
 
     it('allows access to .env.sample (safe file)', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, '.env.sample'), 'API_KEY=your-key-here');
 
@@ -105,7 +105,7 @@ describe('PathValidator Security', () => {
     });
 
     it('allows access to .env.template (safe file)', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, '.env.template'), 'API_KEY=your-key-here');
 
@@ -114,7 +114,7 @@ describe('PathValidator Security', () => {
     });
 
     it('blocks .env files in subdirectories', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.mkdirSync(path.join(projectRoot, 'config'), { recursive: true });
       fs.writeFileSync(path.join(projectRoot, 'config', '.env'), 'NESTED_SECRET=value');
@@ -130,7 +130,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       // Create a file outside project
       const outsidePath = '/tmp/outside-project-secret.txt';
@@ -154,7 +154,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       const symlinkPath = path.join(projectRoot, 'passwd-link');
       try {
@@ -171,7 +171,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       const sshDir = path.join(os.homedir(), '.ssh');
       if (fs.existsSync(sshDir)) {
@@ -191,7 +191,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       // Create a file inside project
       const realFile = path.join(projectRoot, 'src', 'index.ts');
@@ -216,7 +216,7 @@ describe('PathValidator Security', () => {
     ];
 
     it('blocks ../ traversal to escape project root', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       const result = validator.validate(
         path.join(projectRoot, '..', '..', 'etc', 'passwd'),
@@ -226,7 +226,7 @@ describe('PathValidator Security', () => {
     });
 
     it('blocks multiple ../ sequences', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       const result = validator.validate(
         path.join(projectRoot, 'src', '..', '..', '..', 'etc', 'passwd'),
@@ -236,7 +236,7 @@ describe('PathValidator Security', () => {
     });
 
     it('blocks encoded ../ in path', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       // After path resolution, %2e%2e should become ..
       const maliciousPath = `${projectRoot}/../etc/passwd`;
@@ -245,7 +245,7 @@ describe('PathValidator Security', () => {
     });
 
     it('allows valid nested paths within project', () => {
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       // Create nested structure
       fs.mkdirSync(path.join(projectRoot, 'src', 'lib'), { recursive: true });
@@ -264,7 +264,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['write'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, 'file.txt'), 'content');
 
@@ -277,7 +277,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       const result = validator.validate(path.join(projectRoot, 'file.txt'), 'write');
       expect(result.allowed).toBe(false);
@@ -287,7 +287,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       const result = validator.validate(path.join(projectRoot, 'file.txt'), 'edit');
       expect(result.allowed).toBe(false);
@@ -297,7 +297,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read', 'write', 'edit'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, 'file.txt'), 'content');
 
@@ -313,7 +313,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${homeDir}/.config/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       const result = validator.validate('~/.config/app/settings.json', 'read');
       // Should be allowed if the resolved path matches the pattern
@@ -325,7 +325,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, 'file.txt'), 'content');
 
@@ -338,7 +338,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, 'file.txt'), 'content');
 
@@ -350,7 +350,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, 'file.txt'), 'content');
 
@@ -365,7 +365,7 @@ describe('PathValidator Security', () => {
         { path: `${projectRoot}/src/**`, permissions: ['read'] },
         { path: `${projectRoot}/data/**`, permissions: ['read', 'write'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, 'src', 'index.ts'), 'export {}');
       fs.writeFileSync(path.join(projectRoot, 'data', 'db.json'), '{}');
@@ -380,7 +380,7 @@ describe('PathValidator Security', () => {
         { path: `${projectRoot}/**`, permissions: ['read'] },
         { path: `${projectRoot}/src/**`, permissions: ['read', 'write'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, 'src', 'index.ts'), 'export {}');
 
@@ -392,7 +392,7 @@ describe('PathValidator Security', () => {
   describe('no configuration edge case', () => {
     it('blocks all access when no configs provided', () => {
       const configs: FilesystemPathConfig[] = [];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, 'file.txt'), 'content');
 
@@ -407,7 +407,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: '${root}/**', permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, 'file.txt'), 'content');
 
@@ -415,15 +415,52 @@ describe('PathValidator Security', () => {
       expect(result.allowed).toBe(true);
     });
 
-    it('resolves ${cwd} variable', () => {
-      const configs: FilesystemPathConfig[] = [
-        { path: '${cwd}/**', permissions: ['read'] },
-      ];
-      const validator = new PathValidator(configs, projectRoot);
+    it('resolves ${agentDir} variable when provided', () => {
+      const agentDir = path.join(projectRoot, 'agents');
+      fs.mkdirSync(agentDir, { recursive: true });
+      fs.writeFileSync(path.join(agentDir, 'data.json'), '{}');
 
-      // Should resolve to current working directory
+      const configs: FilesystemPathConfig[] = [
+        { path: '${agentDir}/**', permissions: ['read'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot, agentDir });
+
+      const result = validator.validate(path.join(agentDir, 'data.json'), 'read');
+      expect(result.allowed).toBe(true);
+    });
+
+    it('does not resolve ${agentDir} when not provided', () => {
+      const configs: FilesystemPathConfig[] = [
+        { path: '${agentDir}/**', permissions: ['read'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      // Pattern should remain unresolved, so nothing should match
       const patterns = validator.getPatternsForPermission('read');
-      expect(patterns[0]).toBe(process.cwd() + '/**');
+      expect(patterns[0]).toBe('${agentDir}/**');
+    });
+
+    it('resolves ${tmpDir} variable', () => {
+      const configs: FilesystemPathConfig[] = [
+        { path: '${tmpDir}/**', permissions: ['read'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      const patterns = validator.getPatternsForPermission('read');
+      expect(patterns[0]).toBe(os.tmpdir() + '/**');
+    });
+
+    it('resolves ${tmpDir} to custom value when provided', () => {
+      const customTmpDir = path.join(projectRoot, 'tmp');
+      fs.mkdirSync(customTmpDir, { recursive: true });
+
+      const configs: FilesystemPathConfig[] = [
+        { path: '${tmpDir}/**', permissions: ['read'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot, tmpDir: customTmpDir });
+
+      const patterns = validator.getPatternsForPermission('read');
+      expect(patterns[0]).toBe(customTmpDir + '/**');
     });
   });
 
@@ -432,7 +469,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.mkdirSync(path.join(projectRoot, 'a', 'b', 'c'), { recursive: true });
       fs.writeFileSync(path.join(projectRoot, 'a', 'b', 'c', 'deep.txt'), 'content');
@@ -448,7 +485,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/*.ts`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, 'index.ts'), 'export {}');
 
@@ -466,7 +503,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       fs.writeFileSync(path.join(projectRoot, '.gitignore'), 'node_modules');
 
@@ -480,7 +517,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       const result = validator.validate('/etc/passwd', 'read');
       expect(result.allowed).toBe(false);
@@ -490,7 +527,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       const result = validator.validate('/root/.bashrc', 'read');
       expect(result.allowed).toBe(false);
@@ -500,7 +537,7 @@ describe('PathValidator Security', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const validator = new PathValidator(configs, projectRoot);
+      const validator = new PathValidator(configs, { projectRoot });
 
       const result = validator.validate('/var/log/auth.log', 'read');
       expect(result.allowed).toBe(false);
@@ -524,7 +561,7 @@ describe('PathValidator - Case Sensitivity', () => {
     const configs: FilesystemPathConfig[] = [
       { path: `${projectRoot}/**`, permissions: ['read'] },
     ];
-    const validator = new PathValidator(configs, projectRoot);
+    const validator = new PathValidator(configs, { projectRoot });
 
     fs.writeFileSync(path.join(projectRoot, '.ENV'), 'content');
 
@@ -555,7 +592,7 @@ describe('PathValidator - Concurrent Access', () => {
     const configs: FilesystemPathConfig[] = [
       { path: `${projectRoot}/**`, permissions: ['read'] },
     ];
-    const validator = new PathValidator(configs, projectRoot);
+    const validator = new PathValidator(configs, { projectRoot });
 
     // Create test files
     for (let i = 0; i < 10; i++) {
@@ -576,5 +613,78 @@ describe('PathValidator - Concurrent Access', () => {
     results.forEach((result, i) => {
       expect(result.allowed).toBe(true);
     });
+  });
+});
+
+describe('resolveSafeVariables', () => {
+  const projectRoot = '/test/project';
+  const agentDir = '/test/project/agents';
+  const tmpDir = '/custom/tmp';
+
+  it('resolves ${root} variable', () => {
+    const text = 'Project is at ${root}/src';
+    const result = resolveSafeVariables(text, { projectRoot });
+    expect(result).toBe('Project is at /test/project/src');
+  });
+
+  it('resolves ${agentDir} variable when provided', () => {
+    const text = 'Agent is at ${agentDir}';
+    const result = resolveSafeVariables(text, { projectRoot, agentDir });
+    expect(result).toBe('Agent is at /test/project/agents');
+  });
+
+  it('does NOT resolve ${agentDir} when not provided', () => {
+    const text = 'Agent is at ${agentDir}';
+    const result = resolveSafeVariables(text, { projectRoot });
+    expect(result).toBe('Agent is at ${agentDir}');
+  });
+
+  it('resolves ${tmpDir} to system tmpdir by default', () => {
+    const text = 'Temp is at ${tmpDir}';
+    const result = resolveSafeVariables(text, { projectRoot });
+    expect(result).toBe(`Temp is at ${os.tmpdir()}`);
+  });
+
+  it('resolves ${tmpDir} to custom value when provided', () => {
+    const text = 'Temp is at ${tmpDir}';
+    const result = resolveSafeVariables(text, { projectRoot, tmpDir });
+    expect(result).toBe('Temp is at /custom/tmp');
+  });
+
+  it('resolves multiple variables in same text', () => {
+    const text = 'Root: ${root}, Agent: ${agentDir}, Tmp: ${tmpDir}';
+    const result = resolveSafeVariables(text, { projectRoot, agentDir, tmpDir });
+    expect(result).toBe('Root: /test/project, Agent: /test/project/agents, Tmp: /custom/tmp');
+  });
+
+  it('does NOT resolve ${env:VAR_NAME} (security)', () => {
+    const text = 'Token: ${env:SECRET_TOKEN}';
+    const result = resolveSafeVariables(text, { projectRoot });
+    // Should remain unresolved to prevent secret leakage
+    expect(result).toBe('Token: ${env:SECRET_TOKEN}');
+  });
+
+  it('does NOT resolve unknown variables', () => {
+    const text = 'Unknown: ${unknown} and ${foo}';
+    const result = resolveSafeVariables(text, { projectRoot });
+    expect(result).toBe('Unknown: ${unknown} and ${foo}');
+  });
+
+  it('handles text with no variables', () => {
+    const text = 'No variables here';
+    const result = resolveSafeVariables(text, { projectRoot });
+    expect(result).toBe('No variables here');
+  });
+
+  it('handles empty text', () => {
+    const text = '';
+    const result = resolveSafeVariables(text, { projectRoot });
+    expect(result).toBe('');
+  });
+
+  it('resolves same variable multiple times', () => {
+    const text = '${root}/a and ${root}/b';
+    const result = resolveSafeVariables(text, { projectRoot });
+    expect(result).toBe('/test/project/a and /test/project/b');
   });
 });

@@ -3,7 +3,7 @@ import type { ParsedAgent } from './parser';
 import type { MCPConnection } from './mcp';
 import { getMCPTools } from './mcp';
 import { createSubAgentTools } from './subagent';
-import { getTools as getConfiguredTools, DoomLoopDetector } from './tools/index.js';
+import { getTools as getConfiguredTools, DoomLoopDetector, resolveSafeVariables, type PathResolverContext } from './tools/index.js';
 import { createModel, AuthenticationError } from './models';
 import { logger } from './utils/logger';
 import { ContextManager } from './context-manager';
@@ -92,12 +92,22 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
 
   // Get configured builtin tools (filesystem, bash)
   const configuredTools = agent.config.tools && projectContext
-    ? getConfiguredTools(agent.config.tools, projectContext.projectRoot)
+    ? getConfiguredTools(agent.config.tools, {
+        projectRoot: projectContext.projectRoot,
+        agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
+      } as PathResolverContext)
     : {};
 
   if (Object.keys(configuredTools).length > 0) {
     logger.debug(`Loaded ${Object.keys(configuredTools).length} configured tool(s): ${Object.keys(configuredTools).join(', ')}`);
   }
+
+  // Resolve safe variables in instructions (${root}, ${agentDir}, ${tmpDir} - NOT ${env:*})
+  const pathContext: PathResolverContext = {
+    projectRoot: projectContext?.projectRoot ?? process.cwd(),
+    agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
+  };
+  const resolvedInstructions = resolveSafeVariables(agent.instructions, pathContext);
 
   // Precedence: CLI > Agent YAML > Default
   const maxSteps = resolveMaxSteps(cliMaxSteps, agent.config.maxSteps);
@@ -186,7 +196,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       assistantMsgID = await sessionManager.createMessage(sessionID, agent.name, {
         user: {
           prompt: {
-            task: agent.instructions,
+            task: resolvedInstructions,
             ...(userPrompt && { user: userPrompt })
           }
         },
@@ -254,8 +264,8 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
 
   // Build user message by concatenating task and user prompts
   const userMessage = userPrompt
-    ? `${agent.instructions}\n\n${userPrompt}`
-    : agent.instructions;
+    ? `${resolvedInstructions}\n\n${userPrompt}`
+    : resolvedInstructions;
 
   return {
     tools,

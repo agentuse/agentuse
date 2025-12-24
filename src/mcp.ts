@@ -30,6 +30,22 @@ export interface MCPConnection {
 }
 
 /**
+ * Resolve ${env:VAR_NAME} placeholders in a string
+ * @param value The string that may contain ${env:VAR_NAME} placeholders
+ * @returns The string with placeholders replaced by environment variable values
+ */
+function resolveEnvVariables(value: string): string {
+  return value.replace(/\$\{env:(\w+)\}/g, (match, varName) => {
+    const envValue = process.env[varName];
+    if (envValue === undefined) {
+      logger.warn(`Environment variable '${varName}' referenced in config is not set`);
+      return match; // Return original if not found
+    }
+    return envValue;
+  });
+}
+
+/**
  * Create transport based on configuration (stdio or HTTP)
  */
 function createTransport(name: string, config: MCPServerConfig, debug: boolean = false, basePath?: string): any {
@@ -42,8 +58,9 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
     }
     
     if (config.auth?.token) {
+      const resolvedToken = resolveEnvVariables(config.auth.token);
       options.authProvider = {
-        getToken: async () => config.auth!.token!
+        getToken: async () => resolvedToken
       };
     }
     

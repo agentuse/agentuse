@@ -183,7 +183,7 @@ mcpServers:
     sessionId: my-session-123           # Optional session ID
     auth:                               # Optional authentication
       type: bearer
-      token: ${API_TOKEN}
+      token: ${env:API_TOKEN}
     headers:                            # Optional custom headers
       X-Custom-Header: custom-value
     requiredEnvVars:                    # Variables that must exist
@@ -216,7 +216,7 @@ mcpServers:
     sessionId: unique-session-id
     auth:
       type: bearer
-      token: ${API_TOKEN}
+      token: ${env:API_TOKEN}
     requiredEnvVars:
       - API_TOKEN
 ```
@@ -270,9 +270,9 @@ mcpServers:
     url: https://api.example.com/mcp
     auth:
       type: bearer
-      token: ${API_TOKEN}
+      token: ${env:API_TOKEN}
     requiredEnvVars:
-      - API_TOKEN         # Required for auth.token reference
+      - API_TOKEN         # Validates API_TOKEN exists (used by ${env:API_TOKEN})
 ```
 
 ### MCP Server Configuration Fields
@@ -302,7 +302,7 @@ mcpServers:
 - **`sessionId`**: Optional session identifier for the connection
 - **`auth`**: Authentication configuration object (optional)
   - **`type`**: Currently only `"bearer"` is supported
-  - **`token`**: Bearer token value, can reference environment variables with `${VAR_NAME}`
+  - **`token`**: Bearer token value, can reference environment variables with `${env:VAR_NAME}` syntax
 - **`headers`**: Object of custom HTTP headers to send (optional)
 
 <Warning>
@@ -440,7 +440,7 @@ mcpServers:
     sessionId: agent-session-123
     auth:
       type: bearer
-      token: ${API_TOKEN}
+      token: ${env:API_TOKEN}
     requiredEnvVars:
       - API_TOKEN
 subagents:
@@ -478,9 +478,9 @@ Assist the user with their request using all available capabilities.
    - Stdio servers: Must have `command` field
    - HTTP servers: Must have `url` field with `http://` or `https://` protocol
    - Cannot have both `command` and `url` in the same server config
-4. **Environment Variables**: 
+4. **Environment Variables**:
    - `requiredEnvVars` and `allowedEnvVars` must be arrays of strings
-   - Environment variable names in `${VAR_NAME}` format are validated at runtime
+   - Use `${env:VAR_NAME}` syntax to reference environment variables (e.g., in `auth.token`)
 5. **Sub-agents**:
    - Must be an array of objects
    - Each object must have a `path` field (string)

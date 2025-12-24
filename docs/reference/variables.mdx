@@ -1,0 +1,308 @@
+---
+title: Variables
+description: Variable placeholders available in AgentUse agent files
+---
+
+AgentUse supports variable placeholders in agent files (both YAML frontmatter and markdown content) to make your agent definitions more flexible and secure.
+
+## Available Variables
+
+| Variable | Syntax | Usage Locations | Description |
+|----------|--------|-----------------|-------------|
+| Project Root | `${root}` | Filesystem paths, System prompt | Expands to the project root directory |
+| Agent Directory | `${agentDir}` | Filesystem paths, System prompt | Expands to the directory containing the agent file |
+| Temp Directory | `${tmpDir}` | Filesystem paths, System prompt | Expands to the system temp directory |
+| Environment Variable | `${env:VAR_NAME}` | `mcpServers.<name>.auth.token` only | Expands to the value of an environment variable |
+
+<Warning>
+  `${env:VAR_NAME}` is intentionally NOT supported in the system prompt (markdown content) to prevent accidental secret exposure to the LLM.
+</Warning>
+
+## `${root}` - Project Root
+
+The `${root}` variable expands to your project's root directory, which is detected by looking for markers like `.git`, `package.json`, or `.agentuse` directory.
+
+### Usage
+
+Use `${root}` in filesystem tool path configurations to reference paths relative to your project root, regardless of where you run the agent from.
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+tools:
+  filesystem:
+    - path: ${root}/src
+      permissions: [read, write]
+    - paths:
+        - ${root}/docs
+        - ${root}/tests
+      permissions: [read]
+---
+```
+
+### Benefits
+
+- **Portable**: Paths work regardless of current working directory
+- **Consistent**: Always references the same location relative to project
+- **Safe**: Restricts file access to defined project paths
+
+## `${agentDir}` - Agent Directory
+
+The `${agentDir}` variable expands to the directory containing the agent file. This is useful for referencing files bundled with your agent.
+
+### Usage
+
+Use `${agentDir}` to access files that are distributed alongside your agent file, such as scripts, configs, or data files.
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+tools:
+  filesystem:
+    - path: ${agentDir}/scripts
+      permissions: [read]
+    - path: ${agentDir}/data
+      permissions: [read, write]
+---
+```
+
+### Benefits
+
+- **Self-contained agents**: Bundle resources with your agent file
+- **Relocatable**: Agent works regardless of where it's installed
+- **No absolute paths**: Avoid hardcoding paths in agent definitions
+
+<Note>
+  `${agentDir}` is only available when the agent is loaded from a file. If the agent is loaded from a string or other source, this variable will not be resolved.
+</Note>
+
+## `${tmpDir}` - Temp Directory
+
+The `${tmpDir}` variable expands to the system's temporary directory (`os.tmpdir()`).
+
+### Usage
+
+Use `${tmpDir}` for temporary file storage that doesn't need to persist across agent runs.
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+tools:
+  filesystem:
+    - path: ${tmpDir}/agentuse
+      permissions: [read, write]
+---
+```
+
+### Benefits
+
+- **Platform-independent**: Works on macOS, Linux, and Windows
+- **No cleanup needed**: Temp files are typically cleaned by the OS
+- **Safe for scratch work**: Ideal for intermediate processing files
+
+## `${env:VAR_NAME}` - Environment Variables
+
+The `${env:VAR_NAME}` syntax allows you to reference environment variables in your configuration. This is particularly useful for sensitive values like API tokens.
+
+### Usage
+
+Currently supported in HTTP MCP server authentication:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+mcpServers:
+  api_server:
+    url: https://api.example.com/mcp
+    auth:
+      type: bearer
+      token: ${env:API_TOKEN}
+    requiredEnvVars:
+      - API_TOKEN  # Validates the variable exists before connecting
+---
+```
+
+### How It Works
+
+1. When the agent starts, `${env:API_TOKEN}` is replaced with `process.env.API_TOKEN`
+2. If the environment variable is not set, a warning is logged
+3. Use `requiredEnvVars` to ensure the variable exists before the agent runs
+
+### Security Benefits
+
+- **No hardcoded secrets**: Tokens stay in environment variables, not in code
+- **Version control safe**: `.agentuse` files can be committed without exposing secrets
+- **Explicit requirements**: `requiredEnvVars` documents what's needed to run the agent
+
+## Variables in System Prompt
+
+You can use path variables (`${root}`, `${agentDir}`, `${tmpDir}`) in the markdown content (system prompt) of your agent file. This helps the agent understand its environment.
+
+### Usage
+
+```markdown
+---
+model: anthropic:claude-sonnet-4-5
+tools:
+  filesystem:
+    - path: ${root}/data
+      permissions: [read, write]
+---
+
+You are a data processing agent.
+
+## Your Environment
+
+- Project root: ${root}
+- Agent location: ${agentDir}
+- Temp workspace: ${tmpDir}
+
+You have read/write access to the project's data directory.
+```
+
+When the agent runs, these variables are resolved to actual paths, so the agent receives:
+
+```
+You are a data processing agent.
+
+## Your Environment
+
+- Project root: /home/user/my-project
+- Agent location: /home/user/my-project/agents
+- Temp workspace: /tmp
+
+You have read/write access to the project's data directory.
+```
+
+### Security Note
+
+`${env:VAR_NAME}` is **not supported** in the system prompt to prevent accidental secret exposure. Environment variables should only be used for authentication tokens in MCP server configuration, where they are handled securely and never sent to the LLM.
+
+## Examples
+
+### Complete Agent with All Path Variables
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+description: "Agent with multiple filesystem paths"
+tools:
+  filesystem:
+    - path: ${root}/data
+      permissions: [read, write]
+    - path: ${agentDir}/templates
+      permissions: [read]
+    - path: ${tmpDir}/workspace
+      permissions: [read, write]
+mcpServers:
+  external_api:
+    url: https://api.example.com/mcp
+    auth:
+      type: bearer
+      token: ${env:EXTERNAL_API_KEY}
+    requiredEnvVars:
+      - EXTERNAL_API_KEY
+---
+
+You are an agent with access to project files, bundled templates, and temp workspace.
+```
+
+### Self-Contained Agent with Bundled Resources
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+description: "Agent with bundled scripts and data"
+tools:
+  filesystem:
+    - path: ${agentDir}/scripts
+      permissions: [read]
+    - path: ${agentDir}/prompts
+      permissions: [read]
+    - path: ${tmpDir}/output
+      permissions: [read, write]
+---
+
+You have access to bundled scripts in ./scripts and prompt templates in ./prompts.
+Write output files to the temp workspace.
+```
+
+### Multiple Environment Variables
+
+```yaml
+mcpServers:
+  service_a:
+    url: https://a.example.com/mcp
+    auth:
+      type: bearer
+      token: ${env:SERVICE_A_TOKEN}
+    requiredEnvVars:
+      - SERVICE_A_TOKEN
+
+  service_b:
+    url: https://b.example.com/mcp
+    auth:
+      type: bearer
+      token: ${env:SERVICE_B_TOKEN}
+    requiredEnvVars:
+      - SERVICE_B_TOKEN
+```
+
+## Variable Resolution
+
+Variables are resolved at different times:
+
+| Variable | Resolution Time | Scope |
+|----------|-----------------|-------|
+| `${root}` | Agent initialization | Filesystem paths, System prompt |
+| `${agentDir}` | Agent initialization | Filesystem paths, System prompt |
+| `${tmpDir}` | Agent initialization | Filesystem paths, System prompt |
+| `${env:VAR_NAME}` | MCP connection setup | HTTP auth tokens only |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Variable not expanding">
+    Ensure you're using the correct syntax:
+    - Project root: `${root}` (lowercase)
+    - Agent directory: `${agentDir}` (camelCase)
+    - Temp directory: `${tmpDir}` (camelCase)
+    - Environment variables: `${env:VAR_NAME}` (with `env:` prefix)
+
+    The old `${VAR_NAME}` syntax without the `env:` prefix is not supported.
+  </Accordion>
+
+  <Accordion title="agentDir not resolving">
+    `${agentDir}` is only available when the agent is loaded from a file path. It will not resolve when:
+    - The agent is loaded from a URL
+    - The agent is loaded from a string
+    - The agent file path is not passed to the runner
+
+    In these cases, `${agentDir}` will remain as literal text and path validation may fail.
+  </Accordion>
+
+  <Accordion title="Environment variable not found">
+    If you see a warning about an environment variable not being set:
+    1. Check that the variable is exported in your shell or defined in `.env`
+    2. Verify the variable name matches exactly (case-sensitive)
+    3. Add the variable to `requiredEnvVars` for early validation
+  </Accordion>
+
+  <Accordion title="Path not resolving correctly">
+    If `${root}` isn't pointing to the expected directory:
+    1. Ensure your project has a recognizable marker (`.git`, `package.json`, etc.)
+    2. Run the agent from within your project directory
+    3. Use `agentuse run -C /path/to/project` to specify the project root
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agent Syntax" icon="code" href="/reference/agent-syntax">
+    Complete YAML configuration reference
+  </Card>
+  <Card title="Environment Variables" icon="gear" href="/reference/environment-variables">
+    All environment variables used by AgentUse
+  </Card>
+</CardGroup>

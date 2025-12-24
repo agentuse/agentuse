@@ -23,23 +23,62 @@ const SENSITIVE_FILE_EXCEPTIONS = [
   '.env.defaults',
 ];
 
+export interface PathResolverContext {
+  projectRoot: string;
+  agentDir?: string | undefined;
+  tmpDir?: string | undefined;
+}
+
+/**
+ * Resolve safe variable placeholders in a string.
+ * Only resolves ${root}, ${agentDir}, ${tmpDir} - NOT ${env:*} to prevent secret exposure.
+ *
+ * @param text The text that may contain variable placeholders
+ * @param context Path resolver context with projectRoot, agentDir, and tmpDir
+ * @returns The text with safe variables resolved
+ */
+export function resolveSafeVariables(text: string, context: PathResolverContext): string {
+  let result = text
+    .replace(/\$\{root\}/g, context.projectRoot)
+    .replace(/\$\{tmpDir\}/g, context.tmpDir ?? os.tmpdir());
+
+  // Only replace ${agentDir} if it's defined
+  if (context.agentDir) {
+    result = result.replace(/\$\{agentDir\}/g, context.agentDir);
+  }
+
+  return result;
+}
+
 export class PathValidator {
   private readonly projectRoot: string;
+  private readonly agentDir: string | undefined;
+  private readonly tmpDir: string;
   private readonly configs: FilesystemPathConfig[];
 
-  constructor(configs: FilesystemPathConfig[], projectRoot: string) {
+  constructor(configs: FilesystemPathConfig[], context: PathResolverContext) {
     this.configs = configs;
-    this.projectRoot = projectRoot;
+    this.projectRoot = context.projectRoot;
+    this.agentDir = context.agentDir;
+    this.tmpDir = context.tmpDir ?? os.tmpdir();
   }
 
   /**
    * Resolve variable placeholders in a path pattern
+   * Supported: ${root}, ${agentDir}, ${tmpDir}, ~
    */
   private resolveVariables(pattern: string): string {
-    return pattern
+    let result = pattern
       .replace(/\$\{root\}/g, this.projectRoot)
-      .replace(/\$\{cwd\}/g, process.cwd())
+      .replace(/\$\{tmpDir\}/g, this.tmpDir)
       .replace(/^~/, os.homedir());
+
+    // Only replace ${agentDir} if it's defined
+    if (this.agentDir) {
+      result = result.replace(/\$\{agentDir\}/g, this.agentDir);
+    }
+
+    return result;
   }
 
   /**

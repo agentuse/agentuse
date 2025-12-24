@@ -3,7 +3,7 @@ import { z } from 'zod';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { PathValidator } from './path-validator.js';
+import { PathValidator, type PathResolverContext } from './path-validator.js';
 import { fuzzyReplace } from './edit-replacers.js';
 import type { FilesystemPathConfig, ToolOutput, ToolErrorOutput } from './types.js';
 
@@ -31,12 +31,20 @@ function formatWithLineNumbers(content: string, offset: number = 1): string {
 
 /**
  * Resolve variable placeholders in a path pattern
+ * Supported: ${root}, ${agentDir}, ${tmpDir}, ~
  */
-function resolvePathVariables(pattern: string, projectRoot: string): string {
-  return pattern
-    .replace(/\$\{root\}/g, projectRoot)
-    .replace(/\$\{cwd\}/g, process.cwd())
+function resolvePathVariables(pattern: string, context: PathResolverContext): string {
+  let result = pattern
+    .replace(/\$\{root\}/g, context.projectRoot)
+    .replace(/\$\{tmpDir\}/g, context.tmpDir ?? os.tmpdir())
     .replace(/^~/, os.homedir());
+
+  // Only replace ${agentDir} if it's defined
+  if (context.agentDir) {
+    result = result.replace(/\$\{agentDir\}/g, context.agentDir);
+  }
+
+  return result;
 }
 
 /**
@@ -45,7 +53,7 @@ function resolvePathVariables(pattern: string, projectRoot: string): string {
 function formatPathsForDescription(
   configs: FilesystemPathConfig[],
   permission: 'read' | 'write' | 'edit',
-  projectRoot: string
+  context: PathResolverContext
 ): string {
   const relevantConfigs = configs.filter(c => c.permissions.includes(permission));
   if (relevantConfigs.length === 0) {
@@ -55,11 +63,11 @@ function formatPathsForDescription(
   const paths: string[] = [];
   for (const config of relevantConfigs) {
     if (config.path) {
-      paths.push(`  - ${resolvePathVariables(config.path, projectRoot)}`);
+      paths.push(`  - ${resolvePathVariables(config.path, context)}`);
     }
     if (config.paths) {
       for (const p of config.paths) {
-        paths.push(`  - ${resolvePathVariables(p, projectRoot)}`);
+        paths.push(`  - ${resolvePathVariables(p, context)}`);
       }
     }
   }
@@ -71,11 +79,11 @@ function formatPathsForDescription(
  */
 export function createReadTool(
   configs: FilesystemPathConfig[],
-  projectRoot: string
+  context: PathResolverContext
 ): Tool {
-  const validator = new PathValidator(configs, projectRoot);
+  const validator = new PathValidator(configs, context);
 
-  const allowedPaths = formatPathsForDescription(configs, 'read', projectRoot);
+  const allowedPaths = formatPathsForDescription(configs, 'read', context);
   const description = `Read file contents from the filesystem. Returns content with line numbers.
 
 **You can only read files from these paths:**
@@ -151,11 +159,11 @@ Use absolute paths within these directories. Other paths will be rejected.`;
  */
 export function createWriteTool(
   configs: FilesystemPathConfig[],
-  projectRoot: string
+  context: PathResolverContext
 ): Tool {
-  const validator = new PathValidator(configs, projectRoot);
+  const validator = new PathValidator(configs, context);
 
-  const allowedPaths = formatPathsForDescription(configs, 'write', projectRoot);
+  const allowedPaths = formatPathsForDescription(configs, 'write', context);
   const description = `Write content to a file. Creates the file if it does not exist, overwrites if it does.
 
 **You must write files to these paths:**
@@ -223,11 +231,11 @@ Use absolute paths within these directories. Other paths will be rejected.`;
  */
 export function createEditTool(
   configs: FilesystemPathConfig[],
-  projectRoot: string
+  context: PathResolverContext
 ): Tool {
-  const validator = new PathValidator(configs, projectRoot);
+  const validator = new PathValidator(configs, context);
 
-  const allowedPaths = formatPathsForDescription(configs, 'edit', projectRoot);
+  const allowedPaths = formatPathsForDescription(configs, 'edit', context);
   const description = `Edit a file by replacing a string with a new string. Uses fuzzy matching to handle minor whitespace/indentation differences.
 
 **You can only edit files in these paths:**

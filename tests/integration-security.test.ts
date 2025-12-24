@@ -43,7 +43,7 @@ describe('Integration Security - Multi-Layer Attack Prevention', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
       const pathResult = pathValidator.validate('/etc/passwd', 'read');
       expect(pathResult.allowed).toBe(false);
     });
@@ -53,7 +53,7 @@ describe('Integration Security - Multi-Layer Attack Prevention', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       // Create a .env file
       fs.writeFileSync(path.join(projectRoot, '.env'), 'SECRET=password');
@@ -72,7 +72,7 @@ describe('Integration Security - Multi-Layer Attack Prevention', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       // Create a symlink to /etc/passwd inside project
       const symlinkPath = path.join(projectRoot, 'passwd-link');
@@ -176,7 +176,7 @@ describe('Integration Security - Multi-Layer Attack Prevention', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/data/**`, permissions: ['read'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       // Both validators must pass for legitimate access
       const cmdResult = cmdValidator.validate(`cat ${projectRoot}/data/safe.txt`);
@@ -194,7 +194,7 @@ describe('Integration Security - Multi-Layer Attack Prevention', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/data/**`, permissions: ['read'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       // Command is allowed
       const cmdResult = cmdValidator.validate(`cat ${projectRoot}/restricted.txt`);
@@ -261,7 +261,7 @@ describe('Integration Security - Real-World Scenarios', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/src/**`, permissions: ['read', 'write', 'edit'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       fs.mkdirSync(path.join(projectRoot, 'src'), { recursive: true });
       fs.writeFileSync(path.join(projectRoot, 'src', 'index.ts'), '');
@@ -275,7 +275,7 @@ describe('Integration Security - Real-World Scenarios', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/src/**`, permissions: ['read', 'write', 'edit'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       expect(pathValidator.validate('/etc/passwd', 'write').allowed).toBe(false);
       expect(pathValidator.validate('/etc/sudoers', 'edit').allowed).toBe(false);
@@ -285,7 +285,7 @@ describe('Integration Security - Real-World Scenarios', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read', 'write', 'edit'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       // .env files are blocked even in allowed directories
       fs.writeFileSync(path.join(projectRoot, '.env'), 'SECRET=value');
@@ -355,7 +355,7 @@ describe('Integration Security - Edge Cases', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['write'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       // Validate a path for a file that doesn't exist yet
       const newFilePath = path.join(projectRoot, 'new-file.txt');
@@ -371,7 +371,7 @@ describe('Integration Security - Edge Cases', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       // Create circular symlinks
       const linkA = path.join(projectRoot, 'linkA');
@@ -397,7 +397,7 @@ describe('Integration Security - Edge Cases', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       const danglingLink = path.join(projectRoot, 'dangling');
       try {
@@ -421,7 +421,7 @@ describe('Integration Security - Edge Cases', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       const unicodeFile = path.join(projectRoot, '文件.txt');
       fs.writeFileSync(unicodeFile, 'content');
@@ -434,7 +434,7 @@ describe('Integration Security - Edge Cases', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       const emojiFile = path.join(projectRoot, '🔐secret🔐.txt');
       fs.writeFileSync(emojiFile, 'content');
@@ -447,7 +447,7 @@ describe('Integration Security - Edge Cases', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       fs.mkdirSync(path.join(projectRoot, 'path with spaces'), { recursive: true });
       const spacedFile = path.join(projectRoot, 'path with spaces', 'file name.txt');
@@ -463,7 +463,7 @@ describe('Integration Security - Edge Cases', () => {
       const pathConfigs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },
       ];
-      const pathValidator = new PathValidator(pathConfigs, projectRoot);
+      const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
       // Create a deep directory structure
       let deepPath = projectRoot;
@@ -538,7 +538,7 @@ describe('Integration Security - Concurrent Access', () => {
     const pathConfigs: FilesystemPathConfig[] = [
       { path: `${projectRoot}/**`, permissions: ['read'] },
     ];
-    const pathValidator = new PathValidator(pathConfigs, projectRoot);
+    const pathValidator = new PathValidator(pathConfigs, { projectRoot });
 
     // Create test files
     for (let i = 0; i < 5; i++) {
@@ -578,7 +578,7 @@ describe('Integration Security - Error Handling', () => {
     const pathConfigs: FilesystemPathConfig[] = [
       { path: '/tmp/test/**', permissions: ['read'] },
     ];
-    const pathValidator = new PathValidator(pathConfigs, '/tmp/test');
+    const pathValidator = new PathValidator(pathConfigs, { projectRoot: '/tmp/test' });
 
     // Empty path
     expect(() => pathValidator.validate('', 'read')).not.toThrow();
