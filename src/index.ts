@@ -7,6 +7,7 @@ import { createAuthCommand } from './cli/auth';
 import { createSessionsCommand } from './cli/sessions';
 import { createServeCommand } from './cli/serve';
 import { createModelsCommand } from './cli/models';
+import { createSkillsCommand } from './cli/skills';
 import { logger, LogLevel } from './utils/logger';
 import { basename, resolve, dirname, join } from 'path';
 import * as readline from 'readline';
@@ -106,6 +107,9 @@ program.addCommand(createServeCommand());
 
 // Add models command
 program.addCommand(createModelsCommand());
+
+// Add skills command
+program.addCommand(createSkillsCommand());
 
 program
   .command('run <file> [prompt...]')

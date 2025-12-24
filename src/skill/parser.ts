@@ -14,10 +14,15 @@ function formatZodError(error: ZodError): string {
 
 /**
  * Parse allowed-tools string into array of patterns
+ * Supports both space-separated and comma-separated formats
  */
 function parseAllowedTools(allowedTools: string | undefined): string[] | undefined {
   if (!allowedTools) return undefined;
-  const tools = allowedTools.trim().split(/\s+/).filter(Boolean);
+  // Split by comma or whitespace, trim each, filter empty
+  const tools = allowedTools
+    .split(/[,\s]+/)
+    .map(t => t.trim())
+    .filter(Boolean);
   return tools.length > 0 ? tools : undefined;
 }
 
