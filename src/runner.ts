@@ -302,15 +302,16 @@ export async function processAgentStream(
           const raw = chunk.toolResultRaw;
 
           // First, extract metadata if present (for case 4)
-          if (typeof raw === 'object' && raw !== null && raw.metadata && typeof raw.metadata === 'object') {
-            toolMetadata = raw.metadata as Record<string, unknown>;
+          const rawObj = raw as Record<string, unknown>;
+          if (typeof raw === 'object' && raw !== null && 'metadata' in raw && typeof rawObj.metadata === 'object') {
+            toolMetadata = rawObj.metadata as Record<string, unknown>;
           }
 
-          let toCheck = raw;
+          let toCheck: unknown = raw;
 
           // If it's an object with .output string, use that for parsing
-          if (typeof toCheck === 'object' && toCheck !== null && typeof toCheck.output === 'string') {
-            toCheck = toCheck.output;
+          if (typeof toCheck === 'object' && toCheck !== null && 'output' in toCheck && typeof (toCheck as Record<string, unknown>).output === 'string') {
+            toCheck = (toCheck as Record<string, unknown>).output;
           }
 
           // Now parse if it's a string
