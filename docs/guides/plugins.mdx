@@ -62,7 +62,7 @@ Event data:
 {
   agent: {
     name: string;         // Agent name
-    model: string;        // Model used (e.g., "anthropic:claude-sonnet-4-0")
+    model: string;        // Model used (e.g., "anthropic:claude-sonnet-4-5")
     description?: string; // Agent description from YAML frontmatter
     filePath?: string;    // Path to agent file
   };
@@ -186,12 +186,12 @@ export default {
 This plugin outputs performance information like:
 ```
 📊 Performance Traces:
-  🧠 anthropic:claude-sonnet-4-0: 1234ms
+  🧠 anthropic:claude-sonnet-4-5: 1234ms
      └─ Tokens: 450
   🔧 bash: 567ms
   🤖 code-reviewer: 8901ms
      └─ Tokens: 1200
-  🧠 anthropic:claude-sonnet-4-0_segment_2: 2345ms
+  🧠 anthropic:claude-sonnet-4-5: 2345ms
      └─ Tokens: 320
 
 📈 Summary:

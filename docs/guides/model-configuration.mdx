@@ -77,8 +77,8 @@ export ANTHROPIC_API_KEY_PROD=sk-ant-api03-prod-key
 export OPENAI_API_KEY_PERSONAL=sk-proj-personal-key
 
 # Then specify in model string
-agentuse run agent.md --model anthropic:claude-3-sonnet:dev
-agentuse run agent.md --model openai:gpt-4:OPENAI_API_KEY_PERSONAL
+agentuse run agent.md --model anthropic:claude-sonnet-4-5:dev
+agentuse run agent.md --model openai:gpt-5.2:OPENAI_API_KEY_PERSONAL
 ```
 
 <Warning>
@@ -103,11 +103,11 @@ Output:
 📁 Credentials stored in: ~/.local/share/agentuse/auth.json
 
 Stored credentials:
-  🔑 anthropic (oauth) → Use as: anthropic:claude-3-5-sonnet-20241022
-  🎫 openai (api) → Use as: openai:gpt-4-turbo
+  🔑 anthropic (oauth) → Use as: anthropic:claude-sonnet-4-5
+  🎫 openai (api) → Use as: openai:gpt-5.2
 
 Environment variables:
-  🌍 openrouter (OPENROUTER_API_KEY) → Use as: openrouter:qwen/qwen-2.5-72b-instruct
+  🌍 openrouter (OPENROUTER_API_KEY) → Use as: openrouter:z-ai/glm-4.7
 ```
 
 ### Remove Credentials
@@ -249,10 +249,10 @@ You can override the model specified in an agent file at runtime using the `--mo
 
 ```bash
 # Original agent uses claude-3-5-sonnet
-agentuse run agent.agentuse --model anthropic:claude-3-5-haiku-latest
+agentuse run agent.agentuse --model anthropic:claude-haiku-4-5
 
 # Switch to OpenAI for comparison
-agentuse run agent.agentuse --model openai:gpt-4o
+agentuse run agent.agentuse --model openai:gpt-5.2
 
 # Use a faster model for development
 agentuse run agent.agentuse -m openai:gpt-5-mini
@@ -264,7 +264,7 @@ Combine model override with environment suffixes:
 
 ```bash
 # Development environment
-agentuse run agent.agentuse --model openai:gpt-4o:dev
+agentuse run agent.agentuse --model openai:gpt-5.2:dev
 # Uses OPENAI_API_KEY_DEV
 
 # Production environment
@@ -272,7 +272,7 @@ agentuse run agent.agentuse --model openai:gpt-5:prod
 # Uses OPENAI_API_KEY_PROD
 
 # Personal projects
-agentuse run agent.agentuse --model anthropic:claude-3-5-sonnet:ANTHROPIC_API_KEY_PERSONAL
+agentuse run agent.agentuse --model anthropic:claude-sonnet-4-5:ANTHROPIC_API_KEY_PERSONAL
 # Uses specific environment variable
 ```
 
@@ -281,17 +281,17 @@ agentuse run agent.agentuse --model anthropic:claude-3-5-sonnet:ANTHROPIC_API_KE
 ```yaml
 # GitHub Actions - different models per environment
 - name: Run agent (Development)
-  run: agentuse run agent.agentuse --model anthropic:claude-3-5-haiku-latest
+  run: agentuse run agent.agentuse --model anthropic:claude-haiku-4-5
   if: github.ref != 'refs/heads/main'
 
 - name: Run agent (Production)
-  run: agentuse run agent.agentuse --model anthropic:claude-3-5-sonnet-20241022
+  run: agentuse run agent.agentuse --model anthropic:claude-sonnet-4-5
   if: github.ref == 'refs/heads/main'
 ```
 
 ```bash
 # Shell script for model comparison
-for model in "anthropic:claude-3-5-haiku-latest" "openai:gpt-4o" "openai:gpt-5-mini"; do
+for model in "anthropic:claude-haiku-4-5" "openai:gpt-5.2" "openai:gpt-5-mini"; do
   echo "Testing with $model"
   agentuse run benchmark.agentuse --model "$model" > "results_${model//:/\_}.txt"
 done
@@ -331,7 +331,7 @@ Use different providers for different agents:
 ```markdown
 ---
 name: fast-agent
-model: anthropic:claude-3-5-haiku-20241022  # Uses Anthropic
+model: anthropic:claude-haiku-4-5  # Uses Anthropic
 ---
 ```
 
@@ -348,7 +348,7 @@ openai:
 ```markdown
 ---
 name: specialized-agent
-model: openrouter:qwen/qwen-2.5-coder-32b-instruct  # Uses OpenRouter
+model: openrouter:z-ai/glm-4.7  # Uses OpenRouter
 ---
 ```
 

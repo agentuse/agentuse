@@ -1,0 +1,81 @@
+---
+title: Model Reference
+description: Recommended AI models for AgentUse
+---
+
+# Model Reference
+
+This page lists recommended models for AgentUse, organized by provider.
+
+> **Note**: Other models from these providers may also work. These are the ones we recommend and test against.
+
+> **Auto-generated**: Run `pnpm generate:models` to update.
+
+## Quick Reference
+
+**Default models:**
+- **Anthropic**: `anthropic:claude-sonnet-4-5` (balanced performance)
+- **OpenAI**: `openai:gpt-5.2` (latest GPT)
+- **OpenRouter**: `openrouter:z-ai/glm-4.7` (open source)
+
+## Recommended Models
+
+
+### Anthropic
+
+| Model ID | Name | Context | Output | Capabilities |
+|----------|------|---------|--------|--------------|
+| `anthropic:claude-opus-4-5` | Claude Opus 4.5 (latest) | 200,000 | 64,000 | Reasoning, Vision, Tools |
+| `anthropic:claude-haiku-4-5` | Claude Haiku 4.5 (latest) | 200,000 | 64,000 | Reasoning, Vision, Tools |
+| `anthropic:claude-sonnet-4-5` | Claude Sonnet 4.5 (latest) | 200,000 | 64,000 | Reasoning, Vision, Tools |
+| `anthropic:claude-opus-4-5` | Claude Opus 4.5 | 200,000 | 64,000 | Reasoning, Vision, Tools |
+| `anthropic:claude-haiku-4-5` | Claude Haiku 4.5 | 200,000 | 64,000 | Reasoning, Vision, Tools |
+| `anthropic:claude-sonnet-4-5` | Claude Sonnet 4.5 | 200,000 | 64,000 | Reasoning, Vision, Tools |
+
+### OpenAI
+
+| Model ID | Name | Context | Output | Capabilities |
+|----------|------|---------|--------|--------------|
+| `openai:gpt-5.2` | GPT-5.2 | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.2-pro` | GPT-5.2 Pro | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.2-chat-latest` | GPT-5.2 Chat | 128,000 | 16,384 | Reasoning, Vision, Tools |
+| `openai:gpt-5.1` | GPT-5.1 | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.1-codex` | GPT-5.1 Codex | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.1-codex-max` | GPT-5.1 Codex Max | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.1-codex-mini` | GPT-5.1 Codex mini | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.1-chat-latest` | GPT-5.1 Chat | 128,000 | 16,384 | Reasoning, Vision, Tools |
+| `openai:gpt-5` | GPT-5 | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5-pro` | GPT-5 Pro | 400,000 | 272,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5-nano` | GPT-5 Nano | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5-mini` | GPT-5 Mini | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5-codex` | GPT-5-Codex | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5-chat-latest` | GPT-5 Chat (latest) | 400,000 | 128,000 | Reasoning, Vision |
+
+### OpenRouter
+
+| Model ID | Name | Context | Output | Capabilities |
+|----------|------|---------|--------|--------------|
+| `openrouter:z-ai/glm-4.7` | GLM-4.7 | 204,800 | 131,072 | Reasoning, Tools |
+| `openrouter:z-ai/glm-4.6` | GLM-4.6 | 204,800 | 131,072 | Reasoning, Tools |
+| `openrouter:z-ai/glm-4.6v` | GLM-4.6V | 128,000 | 32,768 | Reasoning, Vision, Tools |
+| `openrouter:z-ai/glm-4.5` | GLM-4.5 | 131,072 | 98,304 | Reasoning, Tools |
+| `openrouter:z-ai/glm-4.5v` | GLM-4.5V | 64,000 | 16,384 | Reasoning, Vision, Tools |
+| `openrouter:z-ai/glm-4.5-air` | GLM-4.5-Air | 131,072 | 98,304 | Reasoning, Tools |
+| `openrouter:z-ai/glm-4.5-flash` | GLM-4.5-Flash | 131,072 | 98,304 | Reasoning, Tools |
+| `openrouter:minimax/minimax-m2.1` | MiniMax M2.1 | 204,800 | 131,072 | Reasoning, Tools |
+
+## Usage
+
+Specify a model in your agent file:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+---
+```
+
+Or override via CLI:
+
+```bash
+agentuse run agent.agentuse -m openai:gpt-5.2
+```

@@ -1,5 +1,5 @@
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 description: "Searches for latest AI news and posts a formatted digest to Slack"
 mcpServers:
   exa:

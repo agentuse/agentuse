@@ -53,7 +53,7 @@ export OPENAI_API_KEY_PROD="sk-proj-prod..."
 Then reference them in your agent:
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-0:dev  # Uses ANTHROPIC_API_KEY_DEV
+model: anthropic:claude-sonnet-4-5:dev  # Uses ANTHROPIC_API_KEY_DEV
 ---
 ```
 
@@ -181,7 +181,7 @@ MCP servers can access environment variables through two fields:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 mcpServers:
   notion:
     command: "pnpx"
@@ -299,7 +299,7 @@ If this server requires these variables, please set them in your .env file.
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 mcpServers:
   # API-based service requiring authentication
   notion:

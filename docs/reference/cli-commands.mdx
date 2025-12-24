@@ -116,14 +116,14 @@ Where:
 agentuse run agent.agentuse --model openai:gpt-5
 
 # Use Anthropic Claude Haiku for quick testing
-agentuse run agent.agentuse -m anthropic:claude-3-5-haiku-latest
+agentuse run agent.agentuse -m anthropic:claude-haiku-4-5
 
 # Use different API key via environment suffix
-agentuse run agent.agentuse --model openai:gpt-4o:dev
+agentuse run agent.agentuse --model openai:gpt-5.2:dev
 # This will use OPENAI_API_KEY_DEV instead of OPENAI_API_KEY
 
 # Use specific environment variable
-agentuse run agent.agentuse --model anthropic:claude-3-5-sonnet:ANTHROPIC_API_KEY_PERSONAL
+agentuse run agent.agentuse --model anthropic:claude-sonnet-4-5:ANTHROPIC_API_KEY_PERSONAL
 ```
 
 <Warning>
@@ -206,10 +206,10 @@ agentuse run agent.agentuse --quiet
 agentuse run agent.agentuse --model openai:gpt-5-mini
 
 # Override model and add prompt
-agentuse run agent.agentuse "be concise" --model anthropic:claude-3-5-haiku-latest
+agentuse run agent.agentuse "be concise" --model anthropic:claude-haiku-4-5
 
 # Use development API key with model override
-agentuse run agent.agentuse -m openai:gpt-4o:dev
+agentuse run agent.agentuse -m openai:gpt-5.2:dev
 
 # Override model for agent with sub-agents (all will use the same model)
 agentuse run orchestrator.agentuse --model openai:gpt-5-mini
@@ -277,17 +277,17 @@ Output:
 📁 Credentials stored in: ~/.agentuse/auth.json
 
 Stored credentials:
-  🔑 anthropic (oauth) → Use as: anthropic:claude-3-5-sonnet-20241022
-  🎫 openai (api) → Use as: openai:gpt-4o
-  🎫 openrouter (api) → Use as: openrouter:qwen/qwen-2.5-72b-instruct
+  🔑 anthropic (oauth) → Use as: anthropic:claude-sonnet-4-5
+  🎫 openai (api) → Use as: openai:gpt-5.2
+  🎫 openrouter (api) → Use as: openrouter:z-ai/glm-4.7
 
 Environment variables:
-  🌍 openai (OPENAI_API_KEY) → Use as: openai:gpt-4o
+  🌍 openai (OPENAI_API_KEY) → Use as: openai:gpt-5.2
 
 Model usage examples:
-  agentuse run agent.agentuse --model anthropic:claude-3-5-sonnet-20241022
-  agentuse run agent.agentuse --model openai:gpt-4o
-  agentuse run agent.agentuse --model openrouter:qwen/qwen-2.5-72b-instruct
+  agentuse run agent.agentuse --model anthropic:claude-sonnet-4-5
+  agentuse run agent.agentuse --model openai:gpt-5.2
+  agentuse run agent.agentuse --model openrouter:z-ai/glm-4.7
 ```
 
 #### auth help
@@ -365,8 +365,8 @@ OPENAI_API_KEY=sk-...
 OPENROUTER_API_KEY=sk-or-...
 
 # Custom API Key Suffixes (for different environments)
-ANTHROPIC_API_KEY_DEV=sk-ant-...  # For model: anthropic:claude:dev
-OPENAI_API_KEY_PROD=sk-...        # For model: openai:gpt-4:prod
+ANTHROPIC_API_KEY_DEV=sk-ant-...  # For model: anthropic:claude-opus-4-5:dev
+OPENAI_API_KEY_PROD=sk-...        # For model: openai:gpt-5.2:prod
 
 # Behavior Control
 MAX_STEPS=1000            # Override max steps (default: 1000)

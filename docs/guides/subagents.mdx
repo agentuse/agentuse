@@ -18,7 +18,7 @@ Sub-agents allow you to create modular, reusable agents that can be composed tog
 Create `researcher.agentuse`:
 ```markdown
 ---
-model: anthropic:claude-3-5-haiku-latest
+model: anthropic:claude-haiku-4-5
 ---
 
 You are a research specialist. Find accurate, relevant information.
@@ -36,7 +36,7 @@ Research the requested topic and provide comprehensive findings.
 Create `main.agentuse`:
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./researcher.agentuse
 ---
@@ -55,7 +55,7 @@ When asked for information, use the researcher tool to gather data.
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./agents/researcher.agentuse
   - path: ./agents/writer.agentuse
@@ -76,7 +76,7 @@ You can customize sub-agent behavior:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./researcher.agentuse
     name: custom_researcher  # Override default name
@@ -99,7 +99,7 @@ When you define a sub-agent path, it's always relative to the location of the pa
 ```yaml
 # File: /project/agents/orchestrator.agentuse
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./researcher.agentuse          # → /project/agents/researcher.agentuse
   - path: ../utils/helper.agentuse       # → /project/utils/helper.agentuse
@@ -146,7 +146,7 @@ Sub-agents accept optional parameters when called as tools:
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./data-processor.agentuse
 ---
@@ -176,7 +176,7 @@ The sub-agent receives its original instructions plus any additional task and co
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./technical-expert.agentuse
   - path: ./creative-writer.agentuse
@@ -206,14 +206,14 @@ This limitation is intentional to:
 ```yaml
 # orchestrator.agentuse
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./team-lead.agentuse  # ✅ Works
 ---
 
 # team-lead.agentuse
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./developer.agentuse  # ❌ Will be ignored
   - path: ./tester.agentuse      # ❌ Will be ignored
@@ -228,7 +228,7 @@ subagents:
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./analyzer-1.agentuse
   - path: ./analyzer-2.agentuse
@@ -257,7 +257,7 @@ Sub-agents create their own isolated tool environments:
 ```yaml
 # parent.agentuse
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 mcpServers:
   database:
     command: "node"
@@ -268,7 +268,7 @@ subagents:
 
 # child.agentuse
 ---
-model: anthropic:claude-3-5-haiku-latest
+model: anthropic:claude-haiku-4-5
 mcpServers:
   # Child defines its own MCP servers
   filesystem:
@@ -319,7 +319,7 @@ All sub-agents receive consistent system context:
 ```yaml
 # support-system.agentuse
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./agents/ticket-classifier.agentuse
   - path: ./agents/knowledge-base.agentuse
@@ -339,7 +339,7 @@ Each tool returns structured output you can use to make decisions.
 ```yaml
 # ticket-classifier.agentuse
 ---
-model: anthropic:claude-3-5-haiku-latest
+model: anthropic:claude-haiku-4-5
 ---
 
 Classify support tickets into categories:
@@ -356,10 +356,10 @@ Classify support tickets into categories:
 ```yaml
 # Optimize model usage
 ---
-model: anthropic:claude-sonnet-4-0  # Smart coordinator
+model: anthropic:claude-sonnet-4-5  # Smart coordinator
 subagents:
   - path: ./simple-task.agentuse  # Can use claude-3-5-haiku-latest
-  - path: ./complex-task.agentuse  # Can use anthropic:claude-opus-4-1
+  - path: ./complex-task.agentuse  # Can use anthropic:claude-opus-4-5
 ---
 ```
 
@@ -376,7 +376,7 @@ subagents:
 agentuse run orchestrator.agentuse --model openai:gpt-5-mini
 
 # All agents will use claude-3-5-haiku regardless of their configured models
-agentuse run complex-system.agentuse -m anthropic:claude-3-5-haiku-latest
+agentuse run complex-system.agentuse -m anthropic:claude-haiku-4-5
 ```
 
 This is particularly useful for:
@@ -391,7 +391,7 @@ Control sub-agent execution limits:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./quick-task.agentuse
     maxSteps: 10              # Limit for simple tasks

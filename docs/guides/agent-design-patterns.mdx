@@ -81,7 +81,7 @@ Complex tasks can be decomposed into specialized agents that work together throu
     
     ```markdown research.agentuse
     ---
-    model: anthropic:claude-3-5-haiku-latest
+    model: anthropic:claude-haiku-4-5
     mcpServers:
       filesystem:
         command: "pnpx"
@@ -102,7 +102,7 @@ Complex tasks can be decomposed into specialized agents that work together throu
     
     ```markdown writer.agentuse
     ---
-    model: anthropic:claude-sonnet-4-20250514
+    model: anthropic:claude-sonnet-4-5
     ---
     
     You are a content writer. Create engaging, accurate content.
@@ -119,7 +119,7 @@ Complex tasks can be decomposed into specialized agents that work together throu
     
     ```markdown orchestrator.agentuse
     ---
-    model: anthropic:claude-sonnet-4-20250514
+    model: anthropic:claude-sonnet-4-5
     subagents:
       - path: ./research.agentuse
         maxSteps: 50
@@ -144,7 +144,7 @@ Since AgentUse agents are stateless between runs, use MCP servers to manage stat
 <CodeGroup>
 ```yaml notion-state.agentuse
 ---
-model: anthropic:claude-sonnet-4-20250514
+model: anthropic:claude-sonnet-4-5
 mcpServers:
   notion:
     command: "pnpx"
@@ -162,7 +162,7 @@ You track workflow state in Notion.
 
 ```yaml file-state.agentuse
 ---
-model: anthropic:claude-sonnet-4-20250514
+model: anthropic:claude-sonnet-4-5
 mcpServers:
   filesystem:
     command: "pnpx"
@@ -184,7 +184,7 @@ Build resilient agents with proper error handling:
 
 ```markdown robust-agent.agentuse
 ---
-model: anthropic:claude-sonnet-4-20250514
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./validator.agentuse
   - path: ./processor.agentuse
@@ -207,7 +207,7 @@ Process data through a sequential pipeline where each agent handles a specific t
 
 ```markdown chain-pipeline.agentuse
 ---
-model: anthropic:claude-sonnet-4-20250514
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./validator.agentuse
   - path: ./transformer.agentuse
@@ -229,7 +229,7 @@ Route requests to different handlers based on complexity or type:
 
 ```markdown conditional-router.agentuse
 ---
-model: anthropic:claude-sonnet-4-20250514
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./simple-handler.agentuse
   - path: ./complex-handler.agentuse
@@ -250,7 +250,7 @@ Implement resilient processing with automatic fallback on failures:
 
 ```markdown retry-fallback.agentuse
 ---
-model: anthropic:claude-sonnet-4-20250514
+model: anthropic:claude-sonnet-4-5
 subagents:
   - path: ./primary-agent.agentuse
   - path: ./fallback-agent.agentuse

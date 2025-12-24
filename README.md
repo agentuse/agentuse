@@ -213,7 +213,7 @@ Agents are markdown files with YAML frontmatter for configuration and markdown c
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-0  # Required: AI model
+model: anthropic:claude-sonnet-4-5  # Required: AI model
 mcpServers: {...}                   # Optional: MCP tools
 subagents: [...]                     # Optional: sub-agents
 ---

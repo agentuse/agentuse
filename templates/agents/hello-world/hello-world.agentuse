@@ -1,5 +1,5 @@
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 description: "Creates a poetic Hello World message in Markdown format"
 ---
 Write a hello world poem in Markdown format but without the code block

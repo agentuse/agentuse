@@ -13,7 +13,7 @@ AgentUse agents are markdown files with a `.agentuse` extension. They consist of
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 description: "General-purpose AI assistant for various tasks"
 ---
 
@@ -35,16 +35,16 @@ Help the user with their request.
   The AI model to use. Format: `provider:model-name`
   
   Examples:
-  - `anthropic:claude-opus-4-1`
-  - `anthropic:claude-sonnet-4-0`
-  - `anthropic:claude-3-5-haiku-latest`
+  - `anthropic:claude-opus-4-5`
+  - `anthropic:claude-sonnet-4-5`
+  - `anthropic:claude-haiku-4-5`
   - `openai:gpt-5`
   - `openai:gpt-5-mini`
   - `openai:gpt-5-nano`
-  - `openrouter:meta/llama-3-70b`
+  - `openrouter:z-ai/glm-4.7`
   
   You can also specify environment variable suffixes:
-  - `anthropic:claude-sonnet-4-0:dev` (uses ANTHROPIC_API_KEY_DEV)
+  - `anthropic:claude-sonnet-4-5:dev` (uses ANTHROPIC_API_KEY_DEV)
   - `openai:gpt-5:prod` (uses OPENAI_API_KEY_PROD)
   - `openai:gpt-5:OPENAI_API_KEY_PERSONAL` (uses specific env var)
 </ParamField>
@@ -90,7 +90,7 @@ Connect to Model Context Protocol servers:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 description: "File system and GitHub integration agent"
 mcpServers:
   filesystem:
@@ -114,7 +114,7 @@ mcpServers:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 mcpServers:
   remote_api:
     url: https://api.example.com/mcp
@@ -134,7 +134,7 @@ Agents can delegate to other agents. All sub-agent paths are resolved relative t
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 description: "Coordinator agent that manages research and writing tasks"
 subagents:
   - path: ./research-agent.agentuse      # Same directory as parent
@@ -166,7 +166,7 @@ When asked to create content:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 mcpServers:
   api_server:
     command: ./api-server
@@ -250,7 +250,7 @@ my-agent-project/
 ```yaml
 # In agents/main.agentuse
 ---
-model: anthropic:claude-sonnet-4-0
+model: anthropic:claude-sonnet-4-5
 subagents:
   # Paths relative to agents/main.agentuse location
   - path: ./research/web.agentuse      # → agents/research/web.agentuse
