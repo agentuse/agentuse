@@ -49,7 +49,8 @@
     "release:preview": "np --preview",
     "release:dry": "np --preview --any-branch",
     "docs:dev": "cd docs && mintlify dev",
-    "docs:preview": "cd docs && mintlify preview"
+    "docs:preview": "cd docs && mintlify preview",
+    "generate:models": "npx tsx scripts/generate-models.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "2.0.6",
@@ -63,6 +64,7 @@
     "commander": "^12.0.0",
     "dotenv": "^17.2.1",
     "esbuild-wasm": "0.23.1",
+    "fuzzysort": "^3.1.0",
     "glob": "^11.0.3",
     "gray-matter": "^4.0.3",
     "minimatch": "^10.1.1",

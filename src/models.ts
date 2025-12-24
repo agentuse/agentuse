@@ -2,6 +2,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { AnthropicAuth } from './auth/anthropic';
 import { logger } from './utils/logger';
+import { warnIfModelNotInRegistry } from './utils/model-utils';
 
 export class AuthenticationError extends Error {
   constructor(
@@ -49,9 +50,9 @@ function resolveBaseURL(
  * Parse model string to extract provider, model name, and optional env suffix
  * Format: "provider:model[:env]"
  * Examples:
- * - "openai:gpt-4-turbo" -> default env vars
- * - "openai:gpt-4-turbo:dev" -> use _DEV suffix
- * - "openai:gpt-4-turbo:OPENAI_API_KEY_PERSONAL" -> use specific env var
+ * - "openai:gpt-5.2" -> default env vars
+ * - "openai:gpt-5.2:dev" -> use _DEV suffix
+ * - "openai:gpt-5.2:OPENAI_API_KEY_PERSONAL" -> use specific env var
  */
 function parseModelConfig(modelString: string): ModelConfig {
   const parts = modelString.split(':');
@@ -78,6 +79,9 @@ function parseModelConfig(modelString: string): ModelConfig {
  * Create AI model instance based on configuration
  */
 export async function createModel(modelString: string) {
+  // Validate model and warn if not in registry (non-blocking)
+  warnIfModelNotInRegistry(modelString);
+
   const config = parseModelConfig(modelString);
   
   if (config.provider === 'anthropic') {

@@ -2,7 +2,6 @@ import { Command } from "commander";
 import { AnthropicAuth, AuthStorage } from "../auth/index.js";
 import readline from "readline";
 import { logger } from "../utils/logger";
-import { getModelSuggestions } from "../utils/models-api";
 
 function createReadlineInterface() {
   return readline.createInterface({
@@ -202,23 +201,10 @@ export function createAuthCommand(): Command {
         return;
       }
 
-      // Get dynamic model suggestions
-      const modelSuggestions = await getModelSuggestions();
-      
       process.stdout.write("Stored credentials:\n");
       for (const [provider, auth] of Object.entries(credentials)) {
         const typeIcon = auth.type === "oauth" ? "🔑" : auth.type === "api" ? "🎫" : "🔧";
-        let modelExample = "";
-        
-        // Use dynamic suggestions if available
-        if (modelSuggestions) {
-          const suggestion = modelSuggestions.find(s => s.provider === provider);
-          if (suggestion) {
-            modelExample = ` → Use as: ${provider}:${suggestion.modelId}`;
-          }
-        }
-        
-        process.stdout.write(`  ${typeIcon} ${provider} (${auth.type})${modelExample}\n`);
+        process.stdout.write(`  ${typeIcon} ${provider} (${auth.type})\n`);
       }
 
       // Show environment variables
@@ -232,25 +218,7 @@ export function createAuthCommand(): Command {
       if (activeEnvVars.length > 0) {
         process.stdout.write("\nEnvironment variables:\n");
         activeEnvVars.forEach(({ name, provider }) => {
-          let modelExample = "";
-          
-          // Use dynamic suggestions if available
-          if (modelSuggestions) {
-            const suggestion = modelSuggestions.find(s => s.provider === provider);
-            if (suggestion) {
-              modelExample = ` → Use as: ${provider}:${suggestion.modelId}`;
-            }
-          }
-          
-          process.stdout.write(`  🌍 ${provider} (${name})${modelExample}\n`);
-        });
-      }
-      
-      // Show model usage examples with dynamic suggestions
-      if (modelSuggestions && modelSuggestions.length > 0) {
-        process.stdout.write("\nModel usage examples:\n");
-        modelSuggestions.forEach(suggestion => {
-          process.stdout.write(`  agentuse run agent.md --model ${suggestion.provider}:${suggestion.modelId}\n`);
+          process.stdout.write(`  🌍 ${provider} (${name})\n`);
         });
       }
     });
