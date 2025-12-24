@@ -5,6 +5,7 @@ import { runAgent } from './runner';
 import { Command } from 'commander';
 import { createAuthCommand } from './cli/auth';
 import { createSessionsCommand } from './cli/sessions';
+import { createServeCommand } from './cli/serve';
 import { logger, LogLevel } from './utils/logger';
 import { basename, resolve, dirname, join } from 'path';
 import * as readline from 'readline';
@@ -97,6 +98,9 @@ program.addCommand(createAuthCommand());
 
 // Add sessions command
 program.addCommand(createSessionsCommand());
+
+// Add serve command
+program.addCommand(createServeCommand());
 
 program
   .command('run <file> [prompt...]')

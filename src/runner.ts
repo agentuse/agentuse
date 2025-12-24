@@ -5,7 +5,6 @@ import { getMCPTools } from './mcp';
 import { createSubAgentTools } from './subagent';
 import { getTools as getConfiguredTools, DoomLoopDetector } from './tools/index.js';
 import { createModel, AuthenticationError } from './models';
-import { AnthropicAuth } from './auth/anthropic';
 import { logger } from './utils/logger';
 import { ContextManager } from './context-manager';
 import { compactMessages } from './compactor';
@@ -40,6 +39,234 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
   return `${basePrompt}${subAgentAddition}
 
 Today's date: ${todayDate}`;
+}
+
+/**
+ * Options for preparing agent execution
+ */
+export interface PrepareAgentOptions {
+  agent: ParsedAgent;
+  mcpClients: MCPConnection[];
+  agentFilePath?: string | undefined;
+  cliMaxSteps?: number | undefined;
+  sessionManager?: SessionManager | undefined;
+  projectContext?: { projectRoot: string; cwd: string } | undefined;
+  userPrompt?: string | undefined;
+  abortSignal?: AbortSignal | undefined;
+  verbose?: boolean | undefined;
+}
+
+/**
+ * Result of preparing agent execution - contains everything needed to run the agent
+ */
+export interface PreparedAgentExecution {
+  tools: ToolSet;
+  systemMessages: Array<{ role: string; content: string }>;
+  userMessage: string;
+  maxSteps: number;
+  subAgentNames: Set<string>;
+  sessionID?: string | undefined;
+  assistantMsgID?: string | undefined;
+  doomLoopDetector: DoomLoopDetector;
+}
+
+/**
+ * Prepare agent execution - shared setup logic for both streaming and non-streaming modes
+ * This extracts the common setup code to avoid duplication between runAgent and serve.ts
+ */
+export async function prepareAgentExecution(options: PrepareAgentOptions): Promise<PreparedAgentExecution> {
+  const {
+    agent,
+    mcpClients,
+    agentFilePath,
+    cliMaxSteps,
+    sessionManager,
+    projectContext,
+    userPrompt,
+    abortSignal,
+    verbose = false
+  } = options;
+
+  // Convert MCP tools to AI SDK format
+  const mcpTools = await getMCPTools(mcpClients);
+
+  // Get configured builtin tools (filesystem, bash)
+  const configuredTools = agent.config.tools && projectContext
+    ? getConfiguredTools(agent.config.tools, projectContext.projectRoot)
+    : {};
+
+  if (Object.keys(configuredTools).length > 0) {
+    logger.debug(`Loaded ${Object.keys(configuredTools).length} configured tool(s): ${Object.keys(configuredTools).join(', ')}`);
+  }
+
+  // Precedence: CLI > Agent YAML > Default
+  const maxSteps = resolveMaxSteps(cliMaxSteps, agent.config.maxSteps);
+
+  // Create doom loop detector to catch agents stuck in repetitive tool calls
+  const doomLoopDetector = new DoomLoopDetector({ threshold: 3, action: 'error' });
+
+  logger.info(`Running agent with model: ${agent.config.model}`);
+
+  // Build today's date for system prompt
+  const todayDate = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
+  // Build system messages array
+  const systemMessages: Array<{ role: string; content: string }> = [];
+
+  // For Anthropic, add the Claude Code prompt as FIRST system message
+  if (agent.config.model.includes('anthropic')) {
+    systemMessages.push({
+      role: 'system',
+      content: 'You are Claude Code, Anthropic\'s official CLI for Claude.'
+    });
+    logger.debug("Using Anthropic system prompt: You are Claude Code...");
+  }
+
+  // Add main system prompt as second message
+  systemMessages.push({
+    role: 'system',
+    content: buildAutonomousAgentPrompt(todayDate, false)
+  });
+
+  // Create session if session manager is provided
+  let sessionID: string | undefined;
+  let assistantMsgID: string | undefined;
+
+  logger.debug(`Session manager available: ${!!sessionManager}, Project context available: ${!!projectContext}`);
+
+  if (sessionManager && projectContext) {
+    try {
+      // Create session
+      const agentConfig: {
+        name: string;
+        filePath?: string;
+        description?: string;
+        isSubAgent: boolean;
+      } = {
+        name: agent.name,
+        isSubAgent: false
+      };
+      if (agentFilePath) agentConfig.filePath = agentFilePath;
+      if (agent.description) agentConfig.description = agent.description;
+
+      const sessionConfig: {
+        timeout?: number;
+        maxSteps?: number;
+        mcpServers?: string[];
+        subagents?: Array<{ path: string; name?: string }>;
+      } = {};
+      if (agent.config.timeout) sessionConfig.timeout = agent.config.timeout;
+      if (maxSteps) sessionConfig.maxSteps = maxSteps;
+      if (agent.config.mcpServers) sessionConfig.mcpServers = Object.keys(agent.config.mcpServers);
+      if (agent.config.subagents) {
+        sessionConfig.subagents = agent.config.subagents.map(sa => {
+          const result: { path: string; name?: string } = { path: sa.path };
+          if (sa.name) result.name = sa.name;
+          return result;
+        });
+      }
+
+      sessionID = await sessionManager.createSession({
+        agent: agentConfig,
+        model: agent.config.model,
+        version: '0.1.4', // TODO: import from package.json
+        config: sessionConfig,
+        project: {
+          root: projectContext.projectRoot,
+          cwd: projectContext.cwd
+        }
+      });
+
+      // Create message exchange (user + assistant in one)
+      assistantMsgID = await sessionManager.createMessage(sessionID, agent.name, {
+        user: {
+          prompt: {
+            task: agent.instructions,
+            ...(userPrompt && { user: userPrompt })
+          }
+        },
+        assistant: {
+          system: systemMessages.map(m => m.content),
+          modelID: agent.config.model,
+          providerID: agent.config.model.split(':')[0],
+          mode: 'build',
+          path: { cwd: projectContext.cwd, root: projectContext.projectRoot },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+        }
+      });
+
+      logger.debug(`Session created: ${sessionID}`);
+    } catch (error) {
+      logger.warn(`Failed to create session: ${(error as Error).message}`);
+      if (verbose) {
+        logger.debug(`Session creation error stack: ${(error as Error).stack}`);
+      }
+    }
+  }
+
+  // Load sub-agent tools if configured
+  let subAgentTools: Record<string, ToolSet[string]> = {};
+  if (agent.config.subagents && agent.config.subagents.length > 0) {
+    const basePath = agentFilePath ? dirname(agentFilePath) : undefined;
+    if (agentFilePath && verbose) {
+      logger.debug(`[SubAgent] Agent file path: ${agentFilePath}`);
+      logger.debug(`[SubAgent] Base path for sub-agents: ${basePath}`);
+    }
+    // Pass the parent's model to subagents so they inherit any model override
+    subAgentTools = await createSubAgentTools(
+      agent.config.subagents,
+      basePath,
+      agent.config.model,
+      0,
+      [],
+      sessionManager,
+      sessionID,
+      agent.name,
+      projectContext,
+      abortSignal
+    );
+
+    if (verbose) {
+      logger.debug(`[SubAgent] Loaded ${Object.keys(subAgentTools).length} sub-agent tool(s)`);
+    }
+  }
+
+  // Merge all tools
+  const tools = { ...mcpTools, ...configuredTools, ...subAgentTools };
+
+  if (Object.keys(tools).length > 0) {
+    logger.info(`Available tools: ${Object.keys(tools).join(', ')}`);
+  }
+
+  // Log step limit if it's non-default or in verbose mode
+  if (maxSteps !== DEFAULT_MAX_STEPS || verbose) {
+    logger.info(`Max steps: ${maxSteps} (override via MAX_STEPS env var)`);
+  }
+
+  // Track subagent names for logging
+  const subAgentNames = new Set(Object.keys(subAgentTools));
+
+  // Build user message by concatenating task and user prompts
+  const userMessage = userPrompt
+    ? `${agent.instructions}\n\n${userPrompt}`
+    : agent.instructions;
+
+  return {
+    tools,
+    systemMessages,
+    userMessage,
+    maxSteps,
+    subAgentNames,
+    sessionID,
+    assistantMsgID,
+    doomLoopDetector
+  };
 }
 
 export interface AgentChunk {
@@ -1086,200 +1313,40 @@ export async function runAgent(
   userPrompt?: string
 ): Promise<RunAgentResult> {
   try {
-    // Check if we're using OAuth (for system prompt modification)
-    const isUsingOAuth = agent.config.model.includes('anthropic') && await AnthropicAuth.access();
-    
-    // Convert MCP tools to AI SDK format
-    const mcpTools = await getMCPTools(mcpClients);
-
-    // Get configured builtin tools (filesystem, bash)
-    const configuredTools = agent.config.tools && projectContext
-      ? getConfiguredTools(agent.config.tools, projectContext.projectRoot)
-      : {};
-
-    if (Object.keys(configuredTools).length > 0) {
-      logger.debug(`Loaded ${Object.keys(configuredTools).length} configured tool(s): ${Object.keys(configuredTools).join(', ')}`);
-    }
-
-    // Sub-agent tools will be created after session is initialized
-    // For now, just use MCP tools + configured tools
-    let subAgentTools: Record<string, any> = {};
-    let tools = { ...mcpTools, ...configuredTools };
-
-    // Precedence: CLI > Agent YAML > Default
-    const maxSteps = resolveMaxSteps(cliMaxSteps, agent.config.maxSteps);
-
-    // Create doom loop detector to catch agents stuck in repetitive tool calls
-    const doomLoopDetector = new DoomLoopDetector({ threshold: 3, action: 'error' });
-
-    logger.info(`Running agent with model: ${agent.config.model}`);
-    if (Object.keys(tools).length > 0) {
-      logger.info(`Available tools: ${Object.keys(tools).join(', ')}`);
-    }
-    
-    // Log step limit if it's non-default or in verbose mode
-    if (maxSteps !== DEFAULT_MAX_STEPS || verbose) {
-      logger.info(`Max steps: ${maxSteps} (override via MAX_STEPS env var)`);
-    }
-    
     // Log initialization time if verbose
     if (verbose && startTime) {
       const initTime = Date.now() - startTime;
       logger.info(`Initialization completed in ${initTime}ms`);
     }
-    
-    // Add today's date and autonomous agent instructions to system prompt
-    const todayDate = new Date().toLocaleDateString('en-US', { 
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
+
+    // Use shared preparation logic
+    const {
+      tools,
+      systemMessages,
+      userMessage,
+      maxSteps,
+      subAgentNames,
+      sessionID,
+      assistantMsgID,
+      doomLoopDetector
+    } = await prepareAgentExecution({
+      agent,
+      mcpClients,
+      agentFilePath,
+      cliMaxSteps,
+      sessionManager,
+      projectContext,
+      userPrompt,
+      abortSignal,
+      verbose
     });
-    
-    // Build system messages array (like OpenCode does)
-    const systemMessages: Array<{role: string, content: string}> = [];
-    
-    // For Anthropic, add the Claude Code prompt as FIRST system message (exact text from OpenCode)
-    if (agent.config.model.includes('anthropic')) {
-      systemMessages.push({
-        role: 'system',
-        content: 'You are Claude Code, Anthropic\'s official CLI for Claude.'  // Exact text, no changes
-      });
-      
-      logger.debug("Using Anthropic system prompt: You are Claude Code...");
-      if (isUsingOAuth) {
-        logger.debug("Authentication: OAuth token");
-      }
-    }
-    
-    // Add main system prompt as second message
-    systemMessages.push({
-      role: 'system',
-      content: buildAutonomousAgentPrompt(todayDate, false)
-    });
-
-    // Create session if session manager is provided
-    let sessionID: string | undefined;
-    let assistantMsgID: string | undefined;
-
-    logger.debug(`Session manager available: ${!!sessionManager}, Project context available: ${!!projectContext}`);
-
-    if (sessionManager && projectContext) {
-      try {
-        // Create session
-        const agentConfig: {
-          name: string;
-          filePath?: string;
-          description?: string;
-          isSubAgent: boolean;
-        } = {
-          name: agent.name,
-          isSubAgent: false
-        };
-        if (agentFilePath) agentConfig.filePath = agentFilePath;
-        if (agent.description) agentConfig.description = agent.description;
-
-        const sessionConfig: {
-          timeout?: number;
-          maxSteps?: number;
-          mcpServers?: string[];
-          subagents?: Array<{ path: string; name?: string }>;
-        } = {};
-        if (agent.config.timeout) sessionConfig.timeout = agent.config.timeout;
-        if (maxSteps) sessionConfig.maxSteps = maxSteps;
-        if (agent.config.mcpServers) sessionConfig.mcpServers = Object.keys(agent.config.mcpServers);
-        if (agent.config.subagents) {
-          sessionConfig.subagents = agent.config.subagents.map(sa => {
-            const result: { path: string; name?: string } = { path: sa.path };
-            if (sa.name) result.name = sa.name;
-            return result;
-          });
-        }
-
-        sessionID = await sessionManager.createSession({
-          agent: agentConfig,
-          model: agent.config.model,
-          version: '0.1.4', // TODO: import from package.json
-          config: sessionConfig,
-          project: {
-            root: projectContext.projectRoot,
-            cwd: projectContext.cwd
-          }
-        });
-
-        // Create message exchange (user + assistant in one)
-        assistantMsgID = await sessionManager.createMessage(sessionID, agent.name, {
-          user: {
-            prompt: {
-              task: agent.instructions,
-              ...(userPrompt && { user: userPrompt })
-            }
-          },
-          assistant: {
-            system: systemMessages.map(m => m.content),
-            modelID: agent.config.model,
-            providerID: agent.config.model.split(':')[0],
-            mode: 'build',
-            path: { cwd: projectContext.cwd, root: projectContext.projectRoot },
-            cost: 0,
-            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
-          }
-        });
-
-        logger.debug(`Session created: ${sessionID}`);
-      } catch (error) {
-        logger.warn(`Failed to create session: ${(error as Error).message}`);
-        if (verbose) {
-          logger.debug(`Session creation error stack: ${(error as Error).stack}`);
-        }
-      }
-    }
-
-    // Load sub-agent tools if configured and session exists
-    // If we have an agent file path, use its directory as the base path for sub-agents
-    if (agent.config.subagents && agent.config.subagents.length > 0) {
-      const basePath = agentFilePath ? dirname(agentFilePath) : undefined;
-      if (agentFilePath && verbose) {
-        logger.debug(`[SubAgent] Agent file path: ${agentFilePath}`);
-        logger.debug(`[SubAgent] Base path for sub-agents: ${basePath}`);
-      }
-      // Pass the parent's model to subagents so they inherit any model override
-      // Start at depth 0 for main agent's sub-agents
-      subAgentTools = await createSubAgentTools(
-        agent.config.subagents,
-        basePath,
-        agent.config.model,
-        0,
-        [],
-        sessionManager,
-        sessionID,
-        agent.name,
-        projectContext,
-        abortSignal  // Pass abort signal to subagents
-      );
-
-      // Merge all tools
-      tools = { ...mcpTools, ...configuredTools, ...subAgentTools };
-
-      if (verbose) {
-        logger.debug(`[SubAgent] Loaded ${Object.keys(subAgentTools).length} sub-agent tool(s)`);
-      }
-    }
-
-    // Track subagent names for logging
-    const subAgentNames = new Set(Object.keys(subAgentTools));
-
-    // Build user message by concatenating task and user prompts
-    const userMessage = userPrompt
-      ? `${agent.instructions}\n\n${userPrompt}`
-      : agent.instructions;
 
     // Execute using the core generator
     const coreOptions = {
       userMessage,
       systemMessages,
       maxSteps,
-      subAgentNames,  // Pass subagent names for logging
+      subAgentNames,
       ...(abortSignal && { abortSignal })
     };
 
