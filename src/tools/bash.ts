@@ -1,6 +1,7 @@
 import type { Tool } from 'ai';
 import { z } from 'zod';
 import { spawn } from 'child_process';
+import * as path from 'path';
 import { CommandValidator } from './command-validator.js';
 import type { BashConfig, ToolOutput, ToolErrorOutput } from './types.js';
 
@@ -137,10 +138,12 @@ Commands not matching these patterns will be rejected.`;
     inputSchema: z.object({
       command: z.string().describe('The shell command to execute'),
       timeout: z.number().optional().describe(`Timeout in milliseconds (default: ${defaultTimeout})`),
+      workdir: z.string().optional().describe(`Working directory for command execution. Must be within the project. Defaults to project root. Use this instead of 'cd' commands.`),
     }),
-    execute: async ({ command, timeout }: {
+    execute: async ({ command, timeout, workdir }: {
       command: string;
       timeout?: number;
+      workdir?: string;
     }): Promise<ToolOutput> => {
       // Validate command
       const validation = validator.validate(command);
@@ -150,6 +153,27 @@ Commands not matching these patterns will be rejected.`;
           error: validation.error || 'Command validation failed',
         };
         return { output: JSON.stringify(error) };
+      }
+
+      // Resolve and validate workdir
+      let cwd = projectRoot;
+      if (workdir) {
+        const resolvedWorkdir = path.isAbsolute(workdir)
+          ? workdir
+          : path.resolve(projectRoot, workdir);
+
+        // Security: ensure workdir is within projectRoot
+        const normalizedWorkdir = path.normalize(resolvedWorkdir);
+        const normalizedProjectRoot = path.normalize(projectRoot);
+        if (!normalizedWorkdir.startsWith(normalizedProjectRoot + path.sep) &&
+            normalizedWorkdir !== normalizedProjectRoot) {
+          const error: ToolErrorOutput = {
+            success: false,
+            error: `Working directory must be within project root: ${workdir}`,
+          };
+          return { output: JSON.stringify(error) };
+        }
+        cwd = resolvedWorkdir;
       }
 
       const timeoutMs = timeout || defaultTimeout;
@@ -164,9 +188,9 @@ Commands not matching these patterns will be rejected.`;
         // Spawn the command with sanitized environment
         const child = spawn(command, {
           shell: true,
-          cwd: projectRoot,
+          cwd,
           detached: true, // Create new process group for cleanup
-          env: createSafeEnvironment(projectRoot),
+          env: createSafeEnvironment(cwd),
         });
 
         // Set up timeout

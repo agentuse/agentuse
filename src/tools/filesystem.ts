@@ -3,6 +3,7 @@ import { z } from 'zod';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { PathValidator } from './path-validator.js';
+import { fuzzyReplace } from './edit-replacers.js';
 import type { FilesystemPathConfig, ToolOutput, ToolErrorOutput } from './types.js';
 
 const DEFAULT_MAX_LINES = 2000;
@@ -215,7 +216,7 @@ export function createEditTool(
   const validator = new PathValidator(configs, projectRoot);
 
   const allowedPaths = formatPathsForDescription(configs, 'edit');
-  const description = `Edit a file by replacing an exact string with a new string. The old_string must match exactly.
+  const description = `Edit a file by replacing a string with a new string. Uses fuzzy matching to handle minor whitespace/indentation differences.
 
 Allowed paths for editing:
 ${allowedPaths}
@@ -250,47 +251,31 @@ Paths not matching these patterns will be rejected.`;
         // Read current content
         const content = await fs.readFile(validation.resolvedPath, 'utf-8');
 
-        // Check if old_string exists
-        if (!content.includes(old_string)) {
+        // Use fuzzy replace with fallback strategies
+        const result = fuzzyReplace(content, old_string, new_string, replace_all);
+
+        if (!result.success) {
           const error: ToolErrorOutput = {
             success: false,
-            error: `String not found in file: "${old_string.slice(0, 50)}${old_string.length > 50 ? '...' : ''}"`,
+            error: result.error,
           };
           return { output: JSON.stringify(error) };
-        }
-
-        // Count occurrences
-        const occurrences = content.split(old_string).length - 1;
-
-        // Check for ambiguous match when not replace_all
-        if (!replace_all && occurrences > 1) {
-          const error: ToolErrorOutput = {
-            success: false,
-            error: `Ambiguous match: found ${occurrences} occurrences. Use replace_all=true or provide more context in old_string.`,
-          };
-          return { output: JSON.stringify(error) };
-        }
-
-        // Perform replacement
-        let newContent: string;
-        let replacements: number;
-
-        if (replace_all) {
-          newContent = content.split(old_string).join(new_string);
-          replacements = occurrences;
-        } else {
-          newContent = content.replace(old_string, new_string);
-          replacements = 1;
         }
 
         // Write back
-        await fs.writeFile(validation.resolvedPath, newContent, 'utf-8');
+        await fs.writeFile(validation.resolvedPath, result.newContent, 'utf-8');
+
+        // Count replacements for replace_all mode
+        const replacements = replace_all
+          ? content.split(result.matchedString).length - 1
+          : 1;
 
         return {
           output: JSON.stringify({
             success: true,
             path: validation.resolvedPath,
             replacements,
+            matchStrategy: result.replacerUsed,
           }),
         };
       } catch (err) {
