@@ -5,18 +5,22 @@ import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 
 describe('Plugin Integration Tests', () => {
-  const testPluginDir = './tmp/test-plugins-integration';
+  // Use unique directory per test to avoid race conditions when running in parallel
+  let testPluginDir: string;
 
   beforeEach(() => {
     // Restore any mocks that might have been set by other tests
     mock.restore();
-    // Create test plugin directory
+    // Create unique test plugin directory for each test
+    testPluginDir = `./tmp/test-plugins-integration-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     mkdirSync(testPluginDir, { recursive: true });
   });
 
   afterEach(() => {
     // Clean up test plugins
-    rmSync(testPluginDir, { recursive: true, force: true });
+    if (testPluginDir) {
+      rmSync(testPluginDir, { recursive: true, force: true });
+    }
   });
   
   test('should load and execute TypeScript plugin with imports', async () => {
