@@ -2,6 +2,7 @@ import type { Tool } from 'ai';
 import { z } from 'zod';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as os from 'os';
 import { PathValidator } from './path-validator.js';
 import { fuzzyReplace } from './edit-replacers.js';
 import type { FilesystemPathConfig, ToolOutput, ToolErrorOutput } from './types.js';
@@ -29,11 +30,22 @@ function formatWithLineNumbers(content: string, offset: number = 1): string {
 }
 
 /**
+ * Resolve variable placeholders in a path pattern
+ */
+function resolvePathVariables(pattern: string, projectRoot: string): string {
+  return pattern
+    .replace(/\$\{root\}/g, projectRoot)
+    .replace(/\$\{cwd\}/g, process.cwd())
+    .replace(/^~/, os.homedir());
+}
+
+/**
  * Format path configurations for tool description
  */
 function formatPathsForDescription(
   configs: FilesystemPathConfig[],
-  permission: 'read' | 'write' | 'edit'
+  permission: 'read' | 'write' | 'edit',
+  projectRoot: string
 ): string {
   const relevantConfigs = configs.filter(c => c.permissions.includes(permission));
   if (relevantConfigs.length === 0) {
@@ -43,11 +55,11 @@ function formatPathsForDescription(
   const paths: string[] = [];
   for (const config of relevantConfigs) {
     if (config.path) {
-      paths.push(`  - ${config.path}`);
+      paths.push(`  - ${resolvePathVariables(config.path, projectRoot)}`);
     }
     if (config.paths) {
       for (const p of config.paths) {
-        paths.push(`  - ${p}`);
+        paths.push(`  - ${resolvePathVariables(p, projectRoot)}`);
       }
     }
   }
@@ -63,13 +75,13 @@ export function createReadTool(
 ): Tool {
   const validator = new PathValidator(configs, projectRoot);
 
-  const allowedPaths = formatPathsForDescription(configs, 'read');
+  const allowedPaths = formatPathsForDescription(configs, 'read', projectRoot);
   const description = `Read file contents from the filesystem. Returns content with line numbers.
 
-Allowed paths for reading:
+**You can only read files from these paths:**
 ${allowedPaths}
 
-Paths not matching these patterns will be rejected.`;
+Use absolute paths within these directories. Other paths will be rejected.`;
 
   return {
     description,
@@ -143,13 +155,13 @@ export function createWriteTool(
 ): Tool {
   const validator = new PathValidator(configs, projectRoot);
 
-  const allowedPaths = formatPathsForDescription(configs, 'write');
+  const allowedPaths = formatPathsForDescription(configs, 'write', projectRoot);
   const description = `Write content to a file. Creates the file if it does not exist, overwrites if it does.
 
-Allowed paths for writing:
+**You must write files to these paths:**
 ${allowedPaths}
 
-Paths not matching these patterns will be rejected.`;
+Use absolute paths within these directories. Other paths will be rejected.`;
 
   return {
     description,
@@ -215,13 +227,13 @@ export function createEditTool(
 ): Tool {
   const validator = new PathValidator(configs, projectRoot);
 
-  const allowedPaths = formatPathsForDescription(configs, 'edit');
+  const allowedPaths = formatPathsForDescription(configs, 'edit', projectRoot);
   const description = `Edit a file by replacing a string with a new string. Uses fuzzy matching to handle minor whitespace/indentation differences.
 
-Allowed paths for editing:
+**You can only edit files in these paths:**
 ${allowedPaths}
 
-Paths not matching these patterns will be rejected.`;
+Use absolute paths within these directories. Other paths will be rejected.`;
 
   return {
     description,
