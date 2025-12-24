@@ -13,6 +13,7 @@ import type { ToolCallTrace } from './plugin/types';
 import { resolveMaxSteps, DEFAULT_MAX_STEPS } from './utils/config';
 import type { AgentPart } from './types/parts';
 import { SessionManager } from './session';
+import { createSkillTool } from './skill/index.js';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -220,6 +221,20 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     }
   }
 
+  // Load skill tool if project context is available
+  let skillTools: Record<string, ToolSet[string]> = {};
+  if (projectContext) {
+    try {
+      const { tool, skills } = await createSkillTool(projectContext.projectRoot, agent.config.tools);
+      if (skills.length > 0) {
+        skillTools['tools__skill'] = tool;
+        logger.debug(`Loaded ${skills.length} skill(s): ${skills.map(s => s.name).join(', ')}`);
+      }
+    } catch (error) {
+      logger.warn(`Failed to load skills: ${(error as Error).message}`);
+    }
+  }
+
   // Load sub-agent tools if configured
   let subAgentTools: Record<string, ToolSet[string]> = {};
   if (agent.config.subagents && agent.config.subagents.length > 0) {
@@ -248,7 +263,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   }
 
   // Merge all tools
-  const tools = { ...mcpTools, ...configuredTools, ...subAgentTools };
+  const tools = { ...mcpTools, ...configuredTools, ...skillTools, ...subAgentTools };
 
   if (Object.keys(tools).length > 0) {
     logger.info(`Available tools: ${Object.keys(tools).join(', ')}`);
