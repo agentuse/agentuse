@@ -7,6 +7,7 @@ import { runAgent, executeAgentCore, prepareAgentExecution, type AgentChunk } fr
 import { connectMCP, type MCPConnection } from "../mcp";
 import { resolveProjectContext } from "../utils/project";
 import { logger, LogLevel } from "../utils/logger";
+import { printLogo } from "../utils/branding";
 import { SessionManager } from "../session";
 import { initStorage } from "../storage/index.js";
 import * as dotenv from "dotenv";
@@ -313,13 +314,7 @@ export function createServeCommand(): Command {
       process.on("SIGTERM", shutdown);
 
       server.listen(port, options.host, () => {
-        console.log(`
-   ██    ██████  ███████ ███    ██ ████████ ██    ██ ███████ ███████
-  ████  ██       ██      ████   ██    ██    ██    ██ ██      ██
- ██  ██ ██   ███ █████   ██ ██  ██    ██    ██    ██ ███████ █████
-██    ████    ██ ██      ██  ██ ██    ██    ██    ██      ██ ██
-██    ██ ██████  ███████ ██   ████    ██     ██████  ███████ ███████
-`);
+        printLogo();
         console.log(`Server running at http://${options.host}:${port}`);
         console.log(`Working directory: ${projectContext.projectRoot}`);
         console.log(`\nExample:`);

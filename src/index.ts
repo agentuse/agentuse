@@ -26,6 +26,7 @@ import * as dotenv from 'dotenv';
 import { existsSync } from 'fs';
 import { resolveProjectContext } from './utils/project';
 import { resolveTimeout } from './utils/config';
+import { printLogo } from './utils/branding';
 
 const program = new Command();
 
@@ -122,13 +123,18 @@ program
       }
 
       process.env.AGENTUSE_DEBUG = options.debug ? 'true' : 'false';
-      
+
       if (options.quiet) {
         logger.configure({ level: LogLevel.WARN });
       } else if (options.debug) {
         logger.configure({ level: LogLevel.DEBUG, enableDebug: true });
       }
-      
+
+      // Show ASCII logo (unless in quiet mode)
+      if (!options.quiet) {
+        printLogo();
+      }
+
       // Log startup time if debug
       if (options.debug) {
         logger.info(`Starting AgentUse at ${new Date().toISOString()}`);
