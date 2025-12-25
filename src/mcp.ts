@@ -1,4 +1,4 @@
-import { experimental_createMCPClient } from '@ai-sdk/mcp';
+import { createMCPClient } from '@ai-sdk/mcp';
 import type { Tool } from 'ai';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -22,7 +22,7 @@ export type MCPServersConfig = AgentConfig['mcpServers'];
 
 export interface MCPConnection {
   name: string;
-  client: Awaited<ReturnType<typeof experimental_createMCPClient>>;
+  client: Awaited<ReturnType<typeof createMCPClient>>;
   rawClient?: Client; // Raw MCP SDK client for resource access
   disallowedTools?: string[]; // List of disallowed tool names/patterns for this connection
   preloadedTools?: Record<string, Tool>; // Cached tools for HTTP connections (loaded immediately)
@@ -168,7 +168,7 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
 }
 
 /**
- * Connect to MCP servers using AI SDK experimental_createMCPClient
+ * Connect to MCP servers using AI SDK createMCPClient
  * @param servers Optional server configurations
  * @param debug Enable debug logging
  * @returns Array of MCP client connections
@@ -193,7 +193,7 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       const transport = createTransport(name, config, debug, basePath);
       
       // Create MCP client using AI SDK's built-in method
-      const client = await experimental_createMCPClient({
+      const client = await createMCPClient({
         name,
         transport: transport,
       });
@@ -538,10 +538,10 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
               throw error;
             }
           },
-          toModelOutput: (result: any) => {
+          toModelOutput: ({ output }: { output: { output: string } }) => {
             return {
               type: "text" as const,
-              value: result.output,
+              value: output.output,
             };
           }
         };

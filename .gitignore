@@ -26,3 +26,4 @@ test-performance.ts
 # Build output
 dist/
 *.tgz
+.devtools

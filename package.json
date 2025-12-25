@@ -58,13 +58,13 @@
     "generate:models": "npx tsx scripts/generate-models.ts"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "2.0.6",
-    "@ai-sdk/mcp": "0.0.12",
-    "@ai-sdk/openai": "2.0.19",
+    "@ai-sdk/anthropic": "3.0.1",
+    "@ai-sdk/mcp": "1.0.1",
+    "@ai-sdk/openai": "3.0.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@openauthjs/openauth": "^0.4.3",
     "@types/glob": "^9.0.0",
-    "ai": "5.0.22",
+    "ai": "6.0.3",
     "chalk": "^5.5.0",
     "commander": "^12.0.0",
     "dotenv": "^17.2.1",
@@ -78,6 +78,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@ai-sdk/devtools": "^0.0.1",
     "@types/bun": "^1.2.19",
     "np": "^10.2.0",
     "typescript": "^5.9.2"

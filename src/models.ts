@@ -1,8 +1,53 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { wrapLanguageModel } from 'ai';
 import { AnthropicAuth } from './auth/anthropic';
 import { logger } from './utils/logger';
 import { warnIfModelNotInRegistry } from './utils/model-utils';
+
+/**
+ * Check if DevTools is enabled via environment variable
+ */
+function isDevToolsEnabled(): boolean {
+  return process.env.AGENTUSE_DEVTOOLS === 'true';
+}
+
+// Cache for DevTools middleware (lazy loaded)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let devToolsMiddlewareCache: any = null;
+let devToolsLoadAttempted = false;
+
+/**
+ * Wrap model with DevTools middleware if enabled (dev dependency, dynamically imported)
+ */
+async function maybeWrapWithDevTools<T>(model: T): Promise<T> {
+  if (!isDevToolsEnabled()) {
+    return model;
+  }
+
+  // Try to load devtools (dev dependency, may not be installed in production)
+  if (!devToolsLoadAttempted) {
+    devToolsLoadAttempted = true;
+    try {
+      const { devToolsMiddleware } = await import('@ai-sdk/devtools');
+      devToolsMiddlewareCache = devToolsMiddleware();
+      logger.info('DevTools enabled - run `npx @ai-sdk/devtools` to inspect agent runs');
+    } catch {
+      logger.warn('DevTools requested but @ai-sdk/devtools not installed. Run: pnpm add -D @ai-sdk/devtools');
+    }
+  }
+
+  if (!devToolsMiddlewareCache) {
+    return model;
+  }
+
+  // wrapLanguageModel expects LanguageModelV3, which is what providers return
+  return wrapLanguageModel({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    model: model as any,
+    middleware: devToolsMiddlewareCache,
+  }) as T;
+}
 
 export class AuthenticationError extends Error {
   constructor(
@@ -116,9 +161,9 @@ export async function createModel(modelString: string) {
       }
 
       const anthropic = createAnthropic(anthropicOptions);
-      return anthropic.chat(config.modelName);
+      return await maybeWrapWithDevTools(anthropic.chat(config.modelName));
     }
-    
+
     // Fall back to API key authentication
     let apiKey: string | undefined;
     if (config.envVar) {
@@ -161,8 +206,8 @@ export async function createModel(modelString: string) {
       anthropicOptions.baseURL = baseURL;
     }
     const anthropic = createAnthropic(anthropicOptions);
-    return anthropic.chat(config.modelName);
-    
+    return await maybeWrapWithDevTools(anthropic.chat(config.modelName));
+
   } else if (config.provider === 'openai') {
     let apiKey: string | undefined;
     
@@ -207,8 +252,8 @@ export async function createModel(modelString: string) {
       openaiOptions.baseURL = baseURL;
     }
     const openai = createOpenAI(openaiOptions);
-    return openai.chat(config.modelName);
-    
+    return await maybeWrapWithDevTools(openai.chat(config.modelName));
+
   } else if (config.provider === 'openrouter') {
     let apiKey: string | undefined;
     
@@ -253,8 +298,8 @@ export async function createModel(modelString: string) {
       apiKey,
       baseURL: 'https://openrouter.ai/api/v1',
     });
-    return openrouter.chat(config.modelName);
-    
+    return await maybeWrapWithDevTools(openrouter.chat(config.modelName));
+
   } else {
     throw new Error(`Unsupported provider: ${config.provider}`);
   }
