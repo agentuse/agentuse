@@ -23,9 +23,6 @@ importers:
       '@openauthjs/openauth':
         specifier: ^0.4.3
         version: 0.4.3(arctic@2.3.4)(hono@4.9.4)
-      '@types/glob':
-        specifier: ^9.0.0
-        version: 9.0.0
       ai:
         specifier: 6.0.3
         version: 6.0.3(zod@3.25.76)
@@ -352,10 +349,6 @@ packages:
 
   '@types/bun@1.2.20':
     resolution: {integrity: sha512-dX3RGzQ8+KgmMw7CsW4xT5ITBSCrSbfHc36SNT31EOUg/LA9JWq0VDdEXDRSe1InVWpd2yLUM1FUF/kEOyTzYA==}
-
-  '@types/glob@9.0.0':
-    resolution: {integrity: sha512-00UxlRaIUvYm4R4W9WYkN8/J+kV8fmOQ7okeH6YFtGWFMt3odD45tpG5yA5wnL7HE6lLgjaTW5n14ju2hl2NNA==}
-    deprecated: This is a stub types definition. glob provides its own type definitions, so you do not need this installed.
 
   '@types/node@24.3.0':
     resolution: {integrity: sha512-aPTXCrfwnDLj4VvXrm+UUCQjNEvJgNA8s5F1cvwQU+3KNltTOkBm1j30uNLyqqPNe7gE3KFzImYoZEfLhp4Yow==}
@@ -2184,10 +2177,6 @@ snapshots:
       bun-types: 1.2.20(@types/react@19.1.11)
     transitivePeerDependencies:
       - '@types/react'
-
-  '@types/glob@9.0.0':
-    dependencies:
-      glob: 11.0.3
 
   '@types/node@24.3.0':
     dependencies:
