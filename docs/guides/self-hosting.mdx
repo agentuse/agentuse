@@ -1,0 +1,224 @@
+---
+title: Self-Hosting
+description: Deploy your own AgentUse server for production workloads
+---
+
+## Why Self-Host?
+
+<CardGroup cols={2}>
+  <Card title="Full Control" icon="sliders">
+    Host on your infrastructure. Your data and API keys never leave your network.
+  </Card>
+  <Card title="Scalable" icon="arrow-up-right-dots">
+    Deploy multiple instances behind a load balancer as demand grows.
+  </Card>
+  <Card title="API Access" icon="webhook">
+    Expose agents via HTTP API for integration with other services.
+  </Card>
+  <Card title="Always On" icon="clock">
+    Run agents 24/7 without keeping your local machine running.
+  </Card>
+</CardGroup>
+
+## Quick Start
+
+Run the official Docker image:
+
+```bash
+docker run -d \
+  -p 12233:12233 \
+  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -v $(pwd)/agents:/agents \
+  ghcr.io/agentuse/agentuse:latest
+```
+
+Your AgentUse server is now running at `http://localhost:12233`.
+
+Test it:
+
+```bash
+curl http://localhost:12233/run \
+  -H "Content-Type: application/json" \
+  -d '{"agent": "/agents/hello.agentuse"}'
+```
+
+## What's Included
+
+| Component | Version | Purpose |
+|-----------|---------|---------|
+| AgentUse | Latest | Bun-compiled binary |
+| Node.js | 20.x | Run JavaScript scripts |
+| Python | 3.12 | Run Python scripts |
+| git | Latest | Version control operations |
+| curl | Latest | HTTP requests |
+| jq | Latest | JSON processing |
+| bash | Latest | Shell scripts |
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes* | Anthropic Claude API key |
+| `ANTHROPIC_REFRESH_TOKEN` | Yes* | Anthropic OAuth refresh token (alternative to API key) |
+| `OPENAI_API_KEY` | Yes* | OpenAI API key |
+| `OPENROUTER_API_KEY` | No | OpenRouter API key |
+
+<Note>
+  *At least one AI provider authentication is required. For Anthropic, use either `ANTHROPIC_API_KEY` or `ANTHROPIC_REFRESH_TOKEN`.
+</Note>
+
+<Tip>
+  To get your refresh token, run `agentuse auth login anthropic` locally, then extract it from `~/.local/share/agentuse/auth.json`.
+</Tip>
+
+### Using an Environment File
+
+```bash
+docker run -d \
+  -p 12233:12233 \
+  --env-file .env \
+  -v $(pwd)/agents:/agents \
+  ghcr.io/agentuse/agentuse:latest
+```
+
+## Including Your Agents
+
+### Option 1: Volume Mount
+
+Mount agent files at runtime:
+
+```bash
+docker run -d \
+  -p 12233:12233 \
+  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -v $(pwd)/agents:/agents \
+  ghcr.io/agentuse/agentuse:latest
+```
+
+<Info>
+  Best for development - no rebuild needed when agents change.
+</Info>
+
+### Option 2: Extend Base Image
+
+Create a Dockerfile in your project:
+
+```dockerfile
+FROM ghcr.io/agentuse/agentuse:latest
+
+COPY ./agents /agents
+```
+
+Build and deploy:
+
+```bash
+docker build -t my-company/agents:latest .
+docker run -d -p 12233:12233 -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY my-company/agents:latest
+```
+
+<Info>
+  Best for production - self-contained, versioned, deployable.
+</Info>
+
+### Option 3: Docker Compose
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  agentuse:
+    image: ghcr.io/agentuse/agentuse:latest
+    ports:
+      - "12233:12233"
+    environment:
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+    volumes:
+      - ./agents:/agents
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:12233/run"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+```
+
+```bash
+docker-compose up -d
+```
+
+## Extending the Base Image
+
+Add packages your agents need:
+
+```dockerfile
+FROM ghcr.io/agentuse/agentuse:latest
+
+# System packages
+RUN apk add --no-cache ffmpeg imagemagick
+
+# Python packages
+RUN pip3 install --no-cache-dir pandas numpy requests
+
+# Node.js packages
+RUN npm install -g typescript puppeteer
+
+# Copy your agents
+COPY ./agents /agents
+```
+
+## Building from Source
+
+Build for your platform:
+
+<Tabs>
+  <Tab title="arm64 (Apple Silicon / Graviton)">
+    ```bash
+    docker build --platform linux/arm64 -t agentuse:latest .
+    ```
+  </Tab>
+  <Tab title="amd64 (Intel/AMD)">
+    ```bash
+    docker build --platform linux/amd64 -t agentuse:latest .
+    ```
+  </Tab>
+</Tabs>
+
+Build and push multi-arch:
+
+```bash
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t myregistry/agentuse:latest \
+  --push .
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Container exits immediately">
+    Check the logs:
+    ```bash
+    docker logs agentuse
+    ```
+
+    Common causes:
+    - Missing API keys
+    - Port already in use
+  </Accordion>
+  <Accordion title="Cannot connect to server">
+    The official image binds to `0.0.0.0` by default. If building a custom image, ensure:
+    ```dockerfile
+    ENTRYPOINT ["/usr/local/bin/agentuse", "serve", "-H", "0.0.0.0"]
+    ```
+  </Accordion>
+  <Accordion title="Agent file not found">
+    Check the volume mount:
+    ```bash
+    docker exec -it agentuse ls /agents
+    ```
+    Ensure paths in API requests match container paths.
+  </Accordion>
+</AccordionGroup>

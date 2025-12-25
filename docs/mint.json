@@ -46,7 +46,9 @@
         "guides/context-management",
         "guides/remote-agents",
         "guides/plugins",
-        "guides/session-logs"
+        "guides/session-logs",
+        "guides/isolated-environment",
+        "guides/self-hosting"
       ]
     },
     {

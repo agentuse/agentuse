@@ -4,6 +4,14 @@ import { AuthStorage } from "./storage.js";
 export namespace AnthropicAuth {
   const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 
+  // In-memory cache for tokens from environment variable
+  // This allows token refresh to work in containers without filesystem access
+  let envTokenCache: {
+    refresh: string;
+    access: string;
+    expires: number;
+  } | null = null;
+
   export async function authorize(mode: "max" | "console") {
     const pkce = await generatePKCE();
 
@@ -52,9 +60,49 @@ export namespace AnthropicAuth {
   }
 
   export async function access() {
+    // Priority 1: Check in-memory cache (for env var tokens)
+    if (envTokenCache) {
+      if (envTokenCache.access && envTokenCache.expires > Date.now()) {
+        return envTokenCache.access;
+      }
+      // Refresh using cached refresh token
+      const refreshed = await refreshToken(envTokenCache.refresh);
+      if (refreshed) {
+        envTokenCache = refreshed;
+        return refreshed.access;
+      }
+      // Refresh failed, clear cache
+      envTokenCache = null;
+    }
+
+    // Priority 2: Check ANTHROPIC_REFRESH_TOKEN env var
+    const envRefreshToken = process.env.ANTHROPIC_REFRESH_TOKEN;
+    if (envRefreshToken) {
+      const refreshed = await refreshToken(envRefreshToken);
+      if (refreshed) {
+        envTokenCache = refreshed;
+        return refreshed.access;
+      }
+    }
+
+    // Priority 3: Fall back to file-based storage
     const info = await AuthStorage.get("anthropic");
     if (!info || info.type !== "oauth") return;
     if (info.access && info.expires > Date.now()) return info.access;
+
+    const refreshed = await refreshToken(info.refresh);
+    if (!refreshed) return;
+
+    await AuthStorage.set("anthropic", {
+      type: "oauth",
+      refresh: refreshed.refresh,
+      access: refreshed.access,
+      expires: refreshed.expires,
+    });
+    return refreshed.access;
+  }
+
+  async function refreshToken(refresh: string) {
     const response = await fetch("https://console.anthropic.com/v1/oauth/token", {
       method: "POST",
       headers: {
@@ -62,19 +110,17 @@ export namespace AnthropicAuth {
       },
       body: JSON.stringify({
         grant_type: "refresh_token",
-        refresh_token: info.refresh,
+        refresh_token: refresh,
         client_id: CLIENT_ID,
       }),
     });
-    if (!response.ok) return;
+    if (!response.ok) return null;
     const json = await response.json();
-    await AuthStorage.set("anthropic", {
-      type: "oauth",
+    return {
       refresh: json.refresh_token as string,
       access: json.access_token as string,
       expires: Date.now() + json.expires_in * 1000,
-    });
-    return json.access_token as string;
+    };
   }
 
   export class ExchangeFailed extends Error {

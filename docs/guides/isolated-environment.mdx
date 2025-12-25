@@ -1,0 +1,204 @@
+---
+title: Isolated Environment
+description: Run agents in a sandboxed container while using your local credentials
+---
+
+## Why Use an Isolated Environment?
+
+<CardGroup cols={2}>
+  <Card title="Sandboxed Execution" icon="shield-check">
+    Agents run in a container with their own Node.js, Python, and tools - no conflicts with your host system.
+  </Card>
+  <Card title="Use Local Credentials" icon="key">
+    Mount your existing OAuth tokens and API keys - no need to reconfigure authentication.
+  </Card>
+  <Card title="Reproducible" icon="copy">
+    Same container runs identically across machines. Share your setup with teammates.
+  </Card>
+  <Card title="Session Persistence" icon="clock-rotate-left">
+    Keep your session history and logs across container restarts.
+  </Card>
+</CardGroup>
+
+## Quick Start
+
+Start a persistent container that runs in the background:
+
+```bash
+docker run -d --name agentuse-dev \
+  -p 12233:12233 \
+  -v ~/.local/share/agentuse:/root/.local/share/agentuse \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  ghcr.io/agentuse/agentuse:latest
+```
+
+This starts `agentuse serve` with your local credentials and workspace mounted.
+
+### Run Agents
+
+<Tabs>
+  <Tab title="Via API">
+    ```bash
+    curl http://localhost:12233/run \
+      -H "Content-Type: application/json" \
+      -d '{"agent": "/workspace/my-agent.agentuse"}'
+    ```
+  </Tab>
+  <Tab title="Via exec">
+    ```bash
+    docker exec -it agentuse-dev agentuse run my-agent.agentuse
+    ```
+  </Tab>
+</Tabs>
+
+### Manage Container
+
+```bash
+# Stop
+docker stop agentuse-dev
+
+# Start again
+docker start agentuse-dev
+
+# Remove
+docker rm -f agentuse-dev
+```
+
+## What's Included
+
+| Component | Version | Purpose |
+|-----------|---------|---------|
+| AgentUse | Latest | Bun-compiled binary |
+| Node.js | 20.x | Run JavaScript scripts |
+| Python | 3.12 | Run Python scripts |
+| git | Latest | Version control operations |
+| curl | Latest | HTTP requests |
+| jq | Latest | JSON processing |
+| bash | Latest | Shell scripts |
+
+## Using Your Local Credentials
+
+AgentUse stores credentials in `~/.local/share/agentuse/`. Mount this directory to use your existing authentication:
+
+```bash
+-v ~/.local/share/agentuse:/root/.local/share/agentuse
+```
+
+This gives the container access to:
+- **OAuth tokens** - From `agentuse auth login`
+- **API keys** - Stored via auth commands
+- **Session logs** - Execution history
+
+<Warning>
+  OAuth tokens may expire. If you encounter auth errors, run `agentuse auth login` on your host to refresh tokens.
+</Warning>
+
+## Shell Alias
+
+Add to your `~/.bashrc` or `~/.zshrc`:
+
+```bash
+# Run commands in the container
+alias agentuse-docker='docker exec -it agentuse-dev agentuse'
+```
+
+Now use it like the native command:
+
+```bash
+agentuse-docker run my-agent.agentuse
+agentuse-docker sessions list
+agentuse-docker sessions view <session-id>
+```
+
+<Note>
+  Make sure the container is running first with `docker start agentuse-dev`.
+</Note>
+
+## Docker Compose
+
+For easier management, use Docker Compose:
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  agentuse:
+    image: ghcr.io/agentuse/agentuse:latest
+    container_name: agentuse-dev
+    ports:
+      - "12233:12233"
+    volumes:
+      - ~/.local/share/agentuse:/root/.local/share/agentuse
+      - .:/workspace
+    working_dir: /workspace
+    restart: unless-stopped
+```
+
+```bash
+# Start
+docker-compose up -d
+
+# Run agents
+docker-compose exec agentuse agentuse run my-agent.agentuse
+
+# Stop
+docker-compose down
+```
+
+## Using Environment Variables Instead
+
+If you prefer not to mount credentials:
+
+```bash
+docker run -d --name agentuse-dev \
+  -p 12233:12233 \
+  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  ghcr.io/agentuse/agentuse:latest
+```
+
+<Note>
+  Session logs won't persist unless you mount the data directory.
+</Note>
+
+## Adding Custom Tools
+
+If your agents need additional packages, create a custom image:
+
+```dockerfile
+FROM ghcr.io/agentuse/agentuse:latest
+
+# Add what your agents need
+RUN apk add --no-cache ffmpeg
+RUN pip3 install --no-cache-dir pandas requests
+RUN npm install -g typescript
+```
+
+Build and use:
+
+```bash
+docker build -t my-agentuse .
+
+docker run -d --name agentuse-dev \
+  -p 12233:12233 \
+  -v ~/.local/share/agentuse:/root/.local/share/agentuse \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  my-agentuse
+```
+
+## Comparison: Isolated vs Self-Hosting
+
+| Feature | Isolated Environment | Self-Hosting |
+|---------|---------------------|--------------|
+| **Purpose** | Local development | Production deployment |
+| **Credentials** | Mount from host | Environment variables |
+| **Sessions** | Persist to host | Optional persistence |
+| **Workspace** | Mount local directory | Bake into image or mount |
+| **Typical use** | Single developer | Team/CI/CD |
+
+<Card title="Self-Hosting Guide" icon="server" href="/guides/self-hosting">
+  Need to deploy for production? See the self-hosting guide.
+</Card>

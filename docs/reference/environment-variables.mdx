@@ -9,15 +9,31 @@ These environment variables are required for authenticating with AI providers.
 
 <ParamField path="ANTHROPIC_API_KEY" type="string">
   API key for Anthropic Claude models.
-  
+
   ```bash
   export ANTHROPIC_API_KEY="sk-ant-api03-..."
   ```
-  
+
   You can also use the OAuth configuration flow:
   ```bash
   agentuse auth login anthropic
   ```
+</ParamField>
+
+<ParamField path="ANTHROPIC_REFRESH_TOKEN" type="string">
+  OAuth refresh token for Anthropic. Alternative to `ANTHROPIC_API_KEY`.
+
+  Useful for Docker/container deployments where you want to use OAuth instead of API keys.
+
+  ```bash
+  export ANTHROPIC_REFRESH_TOKEN="your-refresh-token"
+  ```
+
+  To get your refresh token:
+  1. Run `agentuse auth login anthropic` locally
+  2. Extract from `~/.local/share/agentuse/auth.json`
+
+  The token is automatically refreshed when expired and stored in memory.
 </ParamField>
 
 <ParamField path="OPENAI_API_KEY" type="string">

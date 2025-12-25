@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+docs/
+
+# Tests
+tests/
+
+# Temporary files
+tmp/
+
+# Environment files
+.env
+.env.*
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local config
+.agentuse/
+CLAUDE.local.md
+
+# Logs
+*.log
+npm-debug.log*
+
+# Package manager locks (bun will generate its own)
+pnpm-lock.yaml
+bun.lockb
