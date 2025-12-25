@@ -215,6 +215,167 @@ agentuse run agent.agentuse -m openai:gpt-5.2:dev
 agentuse run orchestrator.agentuse --model openai:gpt-5-mini
 ```
 
+## agentuse serve
+
+Start an HTTP server to run agents via API. This enables integration with external applications, webhooks, or any system that can make HTTP requests.
+
+### Syntax
+
+```bash
+agentuse serve [options]
+```
+
+### Options
+
+```bash
+-p, --port <number>     Port to listen on (default: 12233)
+-H, --host <string>     Host to bind to (default: 127.0.0.1)
+-C, --directory <path>  Working directory for agent resolution
+-d, --debug             Enable debug mode
+```
+
+### API Endpoint
+
+#### POST /run
+
+Execute an agent and receive the result.
+
+**Request Body:**
+
+```json
+{
+  "agent": "path/to/agent.agentuse",
+  "prompt": "Optional additional prompt",
+  "model": "anthropic:claude-sonnet-4-5",
+  "timeout": 300,
+  "maxSteps": 100
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent` | string | Yes | Path to agent file (relative to project root) |
+| `prompt` | string | No | Additional prompt to append to agent instructions |
+| `model` | string | No | Override the model specified in agent file |
+| `timeout` | number | No | Maximum execution time in seconds (default: 300) |
+| `maxSteps` | number | No | Maximum number of tool call steps |
+
+**Response (JSON):**
+
+```json
+{
+  "success": true,
+  "result": {
+    "text": "Agent response text",
+    "finishReason": "end-turn",
+    "duration": 1234,
+    "tokens": { "input": 500, "output": 200 },
+    "toolCalls": 3
+  }
+}
+```
+
+**Error Response:**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "AGENT_NOT_FOUND",
+    "message": "Agent file not found: my-agent.agentuse"
+  }
+}
+```
+
+| Error Code | HTTP Status | Description |
+|------------|-------------|-------------|
+| `NOT_FOUND` | 404 | Endpoint not found (use POST /run) |
+| `AGENT_NOT_FOUND` | 404 | Agent file doesn't exist |
+| `INVALID_PATH` | 400 | Agent path outside project root |
+| `INVALID_REQUEST` | 400 | Invalid JSON body |
+| `MISSING_FIELD` | 400 | Required field missing |
+| `TIMEOUT` | 504 | Agent execution timed out |
+| `EXECUTION_ERROR` | 500 | Runtime error during execution |
+| `INTERNAL_ERROR` | 500 | Unexpected server error |
+
+### Streaming Response
+
+For real-time output, request NDJSON streaming by setting the `Accept` header:
+
+```bash
+curl -N -X POST http://127.0.0.1:12233/run \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/x-ndjson" \
+  -d '{"agent": "my-agent.agentuse"}'
+```
+
+Each line is a JSON object representing an execution event:
+
+```json
+{"type": "text", "text": "Analyzing..."}
+{"type": "tool-call", "name": "read_file", "args": {"path": "data.txt"}}
+{"type": "tool-result", "name": "read_file", "result": "..."}
+{"type": "text", "text": "Complete!"}
+{"type": "finish", "finishReason": "end-turn", "duration": 2345}
+```
+
+### Examples
+
+```bash
+# Start server with defaults (127.0.0.1:12233)
+agentuse serve
+
+# Start on custom port
+agentuse serve --port 8080
+
+# Bind to all interfaces (for external access)
+agentuse serve --host 0.0.0.0 --port 3000
+
+# Use specific project directory
+agentuse serve -C /path/to/project
+
+# Start with debug logging
+agentuse serve --debug
+```
+
+**API Usage Examples:**
+
+```bash
+# Run an agent (JSON response)
+curl -X POST http://127.0.0.1:12233/run \
+  -H "Content-Type: application/json" \
+  -d '{"agent": "agents/assistant.agentuse"}'
+
+# Run with additional prompt
+curl -X POST http://127.0.0.1:12233/run \
+  -H "Content-Type: application/json" \
+  -d '{"agent": "agents/writer.agentuse", "prompt": "Write about AI"}'
+
+# Override model
+curl -X POST http://127.0.0.1:12233/run \
+  -H "Content-Type: application/json" \
+  -d '{"agent": "agents/helper.agentuse", "model": "openai:gpt-5-mini"}'
+
+# Streaming response
+curl -N -X POST http://127.0.0.1:12233/run \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/x-ndjson" \
+  -d '{"agent": "agents/analyzer.agentuse"}'
+```
+
+<Info>
+  The server enables CORS by default, allowing requests from any origin.
+  This is suitable for development and internal tools.
+</Info>
+
+<Warning>
+  For production use, consider running behind a reverse proxy (nginx, Caddy)
+  with proper authentication and rate limiting. The default host `127.0.0.1`
+  only accepts local connections.
+</Warning>
+
+---
+
 ## agentuse auth
 
 Manage authentication for AI providers.
@@ -397,6 +558,7 @@ AgentUse currently supports these commands:
 
 ```bash
 agentuse run <file> [prompt...]   # Run an agent with optional prompt
+agentuse serve [options]          # Start HTTP server to run agents via API
 agentuse auth login [provider]    # Authenticate with a provider
 agentuse auth logout [provider]   # Remove stored credentials
 agentuse auth list                # Show authentication status
