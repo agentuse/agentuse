@@ -467,9 +467,79 @@ Displays comprehensive help including:
 - Links to get API keys
 
 <Note>
-  The `agentuse create` command is not yet implemented. 
+  The `agentuse create` command is not yet implemented.
   Please create agent files manually using the .agentuse extension.
 </Note>
+
+---
+
+## agentuse skills
+
+List available skills discovered from the project and user skill directories.
+
+### Syntax
+
+```bash
+agentuse skills [options]
+```
+
+### Options
+
+```bash
+-v, --verbose    Show skill file paths and tool requirements
+```
+
+### Discovery Locations
+
+Skills are discovered from these directories (in priority order):
+
+1. `.agentuse/skills/` - Project-specific skills
+2. `~/.agentuse/skills/` - User-global skills
+3. `.claude/skills/` - Claude ecosystem compatibility
+4. `~/.claude/skills/` - Claude ecosystem compatibility
+
+### Examples
+
+```bash
+# List all available skills
+agentuse skills
+
+# Show verbose output with file paths and tool requirements
+agentuse skills -v
+agentuse skills --verbose
+```
+
+### Output Example
+
+```
+Found 2 skill(s):
+
+.agentuse/skills
+  code-review
+    Review code for quality, security, and maintainability...
+
+~/.agentuse/skills
+  seo-analyzer
+    Analyze content for SEO optimization...
+```
+
+With verbose mode (`-v`):
+
+```
+Found 2 skill(s):
+
+.agentuse/skills
+  code-review
+    Review code for quality, security, and maintainability...
+    /path/to/project/.agentuse/skills/code-review/SKILL.md
+    tools: Read, Bash(git:*)
+```
+
+<Tip>
+  For detailed information on creating and using skills, see the [Skills Guide](/guides/skills).
+</Tip>
+
+---
 
 ## agentuse help
 
@@ -563,6 +633,7 @@ agentuse auth login [provider]    # Authenticate with a provider
 agentuse auth logout [provider]   # Remove stored credentials
 agentuse auth list                # Show authentication status
 agentuse auth help                # Show detailed auth help
+agentuse skills [options]         # List available skills
 agentuse --version                # Show version
 agentuse --help                   # Show help
 ```

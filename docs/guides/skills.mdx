@@ -1,0 +1,236 @@
+# Skills
+
+Skills are based on the [Agent Skills](https://agentskills.io) open standard, originally developed by Anthropic. AgentUse implements this standard to enable portable, reusable instruction modules across different AI agent platforms.
+
+## What Are Skills?
+
+Skills are reusable instruction modules that agents can load on-demand. Think of them as specialized knowledge packages - each skill contains detailed guidance for a specific type of task.
+
+Unlike sub-agents that execute independently, skills provide instructions that the agent follows directly. This makes skills ideal for:
+
+- **Specialized workflows**: Code review checklists, deployment procedures, data analysis patterns
+- **Domain expertise**: Writing guidelines, compliance requirements, best practices
+- **Reusable templates**: Project scaffolding, documentation formats, testing strategies
+- **Cross-agent knowledge**: Share instructions across multiple agents without duplication
+
+## Quick Start
+
+1. Create a skill directory:
+```bash
+mkdir -p .agentuse/skills/code-review
+```
+
+2. Add a `SKILL.md` file with YAML frontmatter and markdown content:
+
+```yaml
+---
+name: code-review
+description: Review code for quality, security, and maintainability.
+allowed-tools: Read Bash(git:*)
+---
+```
+
+Then add your skill instructions in markdown below the frontmatter.
+
+3. The skill is automatically available to your agents!
+
+## Skill Locations
+
+Skills are discovered from these directories (in priority order):
+
+| Location | Scope | Purpose |
+|----------|-------|---------|
+| `.agentuse/skills/` | Project | Project-specific skills |
+| `~/.agentuse/skills/` | User | Personal skills across projects |
+| `.claude/skills/` | Project | Claude ecosystem compatibility |
+| `~/.claude/skills/` | User | Claude ecosystem compatibility |
+
+<Note>
+If duplicate skill names exist, the first discovered skill takes precedence.
+</Note>
+
+## Skill Structure
+
+Each skill lives in its own directory with a `SKILL.md` file:
+
+```
+.agentuse/skills/
+└── my-skill/           # Directory name must match skill name
+    └── SKILL.md        # Skill definition file
+```
+
+### SKILL.md Format
+
+Skills use markdown with YAML frontmatter:
+
+```yaml
+---
+name: my-skill
+description: What this skill does
+allowed-tools: Read Write
+license: MIT
+compatibility: ">=0.3.0"
+metadata:
+  author: your-name
+  version: "1.0.0"
+---
+```
+
+Below the frontmatter, add your skill instructions in markdown.
+
+### Frontmatter Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Skill identifier (1-64 chars, lowercase, hyphens allowed) |
+| `description` | Yes | What the skill does and when to use it (max 1024 chars) |
+| `allowed-tools` | No | Space-delimited list of required tools |
+| `license` | No | Skill license (e.g., MIT, Apache-2.0) |
+| `compatibility` | No | Version requirements or environment notes |
+| `metadata` | No | Custom key-value metadata |
+
+### Name Requirements
+
+Skill names must:
+- Be 1-64 characters long
+- Use only lowercase letters, numbers, and hyphens
+- Not start or end with a hyphen
+- Not contain consecutive hyphens (`--`)
+- Match the parent directory name
+
+**Valid names:** `code-review`, `seo-analyzer`, `db-migration`
+
+**Invalid names:** `Code-Review`, `my_skill`, `-invalid`, `too--many`
+
+## Allowed Tools
+
+The `allowed-tools` field documents which tools your skill needs. It's a space-separated list of tool names for **documentation purposes**.
+
+```yaml
+allowed-tools: Read Write Bash(git:*) mcp__github
+```
+
+<Note>
+Skills use whatever tools the **agent** has configured. The `allowed-tools` field documents dependencies and provides validation warnings for builtin tools.
+</Note>
+
+### Validation
+
+Only builtin tools are validated against the agent's configuration:
+- `Read`, `Write`, `Edit` - checked against `tools.filesystem`
+- `Bash`, `Bash(command:*)` - checked against `tools.bash.commands`
+
+Other tool names (like MCP tools) are accepted but not validated - they serve as documentation only.
+
+If validation fails:
+- A warning is logged to the console
+- The LLM sees a warning message
+- The skill still loads (graceful degradation)
+
+## Agent Tool Configuration
+
+Skills run with the **agent's tools**. For a skill to use the tools it documents, the agent must have them configured.
+
+### Example
+
+**Skill** (`code-review/SKILL.md`):
+```yaml
+---
+name: code-review
+description: Review code for quality and security.
+allowed-tools: Read Bash(git:*) mcp__github
+---
+```
+
+**Agent** (`reviewer.agentuse`):
+```yaml
+---
+model: anthropic:claude-sonnet-4-20250514
+tools:
+  filesystem:
+    - path: ${root}
+      permissions: [read]
+  bash:
+    commands:
+      - "git *"
+mcpServers:
+  github:
+    command: npx
+    args: ["-y", "@anthropic/mcp-server-github"]
+    env:
+      GITHUB_TOKEN: ${env:GITHUB_TOKEN}
+---
+
+You are a code reviewer. Use the code-review skill to analyze changes.
+```
+
+The skill documents needing `Read`, `Bash(git:*)`, and `mcp__github`. The agent provides all three through its `tools` and `mcpServers` configuration.
+
+<Warning>
+If a skill's instructions reference tools that the agent hasn't configured, those operations will fail at runtime.
+</Warning>
+
+## How Agents Use Skills
+
+Skills are exposed to agents via a special `skill` tool. The agent sees available skills listed in XML format and can load them on demand.
+
+When the agent loads a skill, it receives:
+- The skill name and base directory
+- Any tool warnings (if required tools are missing)
+- The full markdown content with instructions
+
+## Example Skills
+
+### Git Commit Guidelines
+
+**Frontmatter:**
+```yaml
+---
+name: commit-guidelines
+description: Create well-structured git commits following conventional commit format.
+allowed-tools: Bash(git:*)
+---
+```
+
+**Content:** Include guidance on conventional commit format, commit types (feat, fix, docs, refactor, test, chore), and best practices like keeping subject lines under 72 characters.
+
+### API Documentation Writer
+
+**Frontmatter:**
+```yaml
+---
+name: api-docs
+description: Generate comprehensive API documentation from code.
+allowed-tools: Read
+---
+```
+
+**Content:** Include templates for endpoint documentation (HTTP method, path, parameters, response format, error codes) and function documentation (purpose, parameters, return values, examples).
+
+### Database Migration Checker
+
+**Frontmatter:**
+```yaml
+---
+name: migration-check
+description: Validate database migrations for safety before production.
+allowed-tools: Read Bash(psql:*)
+---
+```
+
+**Content:** Include checklists for backwards compatibility, data safety, performance considerations, and rollback planning.
+
+## Skills vs Sub-agents
+
+| Aspect | Skills | Sub-agents |
+|--------|--------|------------|
+| **Execution** | Instructions followed by parent agent | Runs as separate agent |
+| **Context** | Shared with parent agent | Isolated context |
+| **Tools** | Uses parent agent's tools (no own config) | Has own tool configuration |
+| **Tool declaration** | `allowed-tools` for documentation/validation | Full `tools` config in agent file |
+| **Output** | Integrated into parent's response | Returns result to parent |
+| **Use case** | Guidelines, procedures, knowledge | Independent tasks |
+
+<Tip>
+Use skills for knowledge and procedures. Use sub-agents for independent task execution.
+</Tip>

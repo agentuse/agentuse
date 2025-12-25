@@ -42,6 +42,7 @@
         "guides/creating-agents",
         "guides/agent-design-patterns",
         "guides/subagents",
+        "guides/skills",
         "guides/model-configuration",
         "guides/context-management",
         "guides/remote-agents",
