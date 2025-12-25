@@ -4,14 +4,6 @@ import { AuthStorage } from "./storage.js";
 export namespace AnthropicAuth {
   const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 
-  // In-memory cache for tokens from environment variable
-  // This allows token refresh to work in containers without filesystem access
-  let envTokenCache: {
-    refresh: string;
-    access: string;
-    expires: number;
-  } | null = null;
-
   export async function authorize(mode: "max" | "console") {
     const pkce = await generatePKCE();
 
@@ -60,32 +52,14 @@ export namespace AnthropicAuth {
   }
 
   export async function access() {
-    // Priority 1: Check in-memory cache (for env var tokens)
-    if (envTokenCache) {
-      if (envTokenCache.access && envTokenCache.expires > Date.now()) {
-        return envTokenCache.access;
-      }
-      // Refresh using cached refresh token
-      const refreshed = await refreshToken(envTokenCache.refresh);
-      if (refreshed) {
-        envTokenCache = refreshed;
-        return refreshed.access;
-      }
-      // Refresh failed, clear cache
-      envTokenCache = null;
+    // Priority 1: Check CLAUDE_CODE_OAUTH_TOKEN (long-lived token from `claude setup-token`)
+    // This token is valid for 1 year and doesn't require refresh
+    const claudeCodeOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    if (claudeCodeOAuthToken) {
+      return claudeCodeOAuthToken;
     }
 
-    // Priority 2: Check ANTHROPIC_REFRESH_TOKEN env var
-    const envRefreshToken = process.env.ANTHROPIC_REFRESH_TOKEN;
-    if (envRefreshToken) {
-      const refreshed = await refreshToken(envRefreshToken);
-      if (refreshed) {
-        envTokenCache = refreshed;
-        return refreshed.access;
-      }
-    }
-
-    // Priority 3: Fall back to file-based storage
+    // Priority 2: Fall back to file-based storage
     const info = await AuthStorage.get("anthropic");
     if (!info || info.type !== "oauth") return;
     if (info.access && info.expires > Date.now()) return info.access;

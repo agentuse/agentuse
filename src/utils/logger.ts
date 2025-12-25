@@ -342,7 +342,7 @@ class Logger {
   private disableTUI: boolean;
   private captureBuffer: string[] = [];
   private isCapturing: boolean = false;
-  private useTUI: boolean;
+  private useTUI: boolean = false;
   private spinner: Ora | null = null;
   private spinnerStoppedByOutput = false;
   private activeLlmModel: string | null = null;

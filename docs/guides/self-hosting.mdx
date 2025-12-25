@@ -61,16 +61,16 @@ curl http://localhost:12233/run \
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ANTHROPIC_API_KEY` | Yes* | Anthropic Claude API key |
-| `ANTHROPIC_REFRESH_TOKEN` | Yes* | Anthropic OAuth refresh token (alternative to API key) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Yes* | Long-lived OAuth token from `claude setup-token` (valid 1 year) |
 | `OPENAI_API_KEY` | Yes* | OpenAI API key |
 | `OPENROUTER_API_KEY` | No | OpenRouter API key |
 
 <Note>
-  *At least one AI provider authentication is required. For Anthropic, use either `ANTHROPIC_API_KEY` or `ANTHROPIC_REFRESH_TOKEN`.
+  *At least one AI provider authentication is required. For Anthropic, use either `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`.
 </Note>
 
 <Tip>
-  To get your refresh token, run `agentuse auth login anthropic` locally, then extract it from `~/.local/share/agentuse/auth.json`.
+  To get your OAuth token, run `claude setup-token` in Claude Code CLI. This creates a long-lived token valid for 1 year.
 </Tip>
 
 ### Using an Environment File
