@@ -28,6 +28,7 @@ agentuse run <agent-file> [prompt...] [options]
 ```bash
 -q, --quiet             Suppress info messages (only show warnings/errors)
 -d, --debug             Enable verbose debug logging
+--no-tty                Disable TUI output (plain logs for piping/automation)
 -v, --verbose           Show detailed execution information
 --timeout <seconds>     Maximum execution time in seconds (default: 300)
 -C, --directory <path>  Run as if agentuse was started in <path> instead of the current directory
@@ -38,6 +39,10 @@ agentuse run <agent-file> [prompt...] [options]
 <Note>
   The `--quiet` and `--debug` options cannot be used together.
 </Note>
+
+<Info>
+  You can also set `NO_TTY=true` to force plain logging without spinners.
+</Info>
 
 ### Directory and Path Resolution
 
@@ -201,6 +206,9 @@ agentuse run agent.agentuse --timeout 600
 
 # Run quietly (only warnings/errors)
 agentuse run agent.agentuse --quiet
+
+# Disable TUI output for piping/automation
+agentuse run agent.agentuse --no-tty
 
 # Override model at runtime
 agentuse run agent.agentuse --model openai:gpt-5-mini

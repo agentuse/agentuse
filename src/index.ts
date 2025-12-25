@@ -116,12 +116,13 @@ program
   .description('Run an AI agent from a markdown file or URL, optionally appending a prompt')
   .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
   .option('-d, --debug', 'Enable debug mode with detailed logging and full error messages')
+  .option('--no-tty', 'Disable TUI output (spinners, badges) for non-interactive use')
   .option('--compact', 'Use compact single-line header instead of ASCII logo')
   .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
   .option('-C, --directory <path>', 'Run as if agentuse was started in <path> instead of the current directory')
   .option('--env-file <path>', 'Path to custom .env file')
   .option('-m, --model <model>', 'Override the model specified in the agent file')
-  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string }) => {
+  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string }) => {
     const startTime = Date.now();
     let originalCwd: string | undefined;
 
@@ -133,10 +134,25 @@ program
 
       process.env.AGENTUSE_DEBUG = options.debug ? 'true' : 'false';
 
+      const loggerConfig: { level?: LogLevel; enableDebug?: boolean; disableTUI?: boolean } = {};
+
+      // Commander maps --no-tty to options.tty === false (noTty isn't guaranteed), so check both
+      const disableTUI = options.tty === false || options.noTty === true || (options as any)['no-tty'] === true;
+
       if (options.quiet) {
-        logger.configure({ level: LogLevel.WARN });
+        loggerConfig.level = LogLevel.WARN;
       } else if (options.debug) {
-        logger.configure({ level: LogLevel.DEBUG, enableDebug: true });
+        loggerConfig.level = LogLevel.DEBUG;
+        loggerConfig.enableDebug = true;
+      }
+      if (disableTUI) {
+        process.env.NO_TTY = 'true';
+        loggerConfig.disableTUI = true;
+        // Switch to plain mode immediately so no spinner can start before configure()
+        logger.forcePlainOutput();
+      }
+      if (Object.keys(loggerConfig).length > 0) {
+        logger.configure(loggerConfig);
       }
 
       // Show ASCII logo (unless in quiet mode)

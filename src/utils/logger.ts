@@ -65,6 +65,17 @@ function isEnvDebugFlagEnabled(): boolean {
   });
 }
 
+function isEnvNoTTYEnabled(): boolean {
+  const value = process.env.NO_TTY;
+  if (!value) return false;
+  const normalized = value.toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
+function isNoTTYArgPresent(): boolean {
+  return process.argv?.some(arg => arg === '--no-tty' || arg === '--noTTY') ?? false;
+}
+
 /**
  * Detect if running in a CI environment
  * CI environments may report isTTY incorrectly or have issues with ora spinners
@@ -322,11 +333,13 @@ function formatToolArgsGranular(args: any, options?: { disableTruncation?: boole
 interface LoggerOptions {
   level?: LogLevel;
   enableDebug?: boolean;
+  disableTUI?: boolean;
 }
 
 class Logger {
   private level: LogLevel;
   private enableDebug: boolean;
+  private disableTUI: boolean;
   private captureBuffer: string[] = [];
   private isCapturing: boolean = false;
   private useTUI: boolean;
@@ -337,11 +350,51 @@ class Logger {
   constructor(options: LoggerOptions = {}) {
     this.level = options.level ?? LogLevel.INFO;
     this.enableDebug = options.enableDebug ?? isEnvDebugFlagEnabled();
-    this.useTUI = !isCI() && process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
+    const noTTYRequested = options.disableTUI ?? (isEnvNoTTYEnabled() || isNoTTYArgPresent());
+    this.disableTUI = noTTYRequested;
+    if (noTTYRequested) {
+      this.forcePlainOutput();
+    } else {
+      this.refreshTUIState();
+    }
   }
 
   private isDebugEnabled(): boolean {
     return this.enableDebug || isEnvDebugFlagEnabled();
+  }
+
+  private shouldUseTUI(): boolean {
+    return !this.disableTUI && !isCI() && process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
+  }
+
+  /**
+   * Recompute TUI setting and stop any active spinner if TUI is disabled
+   */
+  private refreshTUIState() {
+    // Re-evaluate in case NO_TTY env/argv was set after construction
+    if (isEnvNoTTYEnabled() || isNoTTYArgPresent()) {
+      this.disableTUI = true;
+    }
+
+    const nextUseTUI = this.shouldUseTUI();
+    if (this.useTUI && !nextUseTUI && this.spinner?.isSpinning) {
+      this.spinner.stop();
+      this.spinner = null;
+    }
+    this.useTUI = nextUseTUI;
+  }
+
+  /**
+   * Permanently switch to plain (non-TUI) mode for this process.
+   * Stops any active spinner and prevents new ones from starting.
+   */
+  forcePlainOutput() {
+    this.disableTUI = true;
+    this.useTUI = false;
+    if (this.spinner?.isSpinning) {
+      this.spinner.stop();
+      this.spinner = null;
+    }
   }
 
   /**
@@ -406,8 +459,15 @@ class Logger {
     if (options.enableDebug !== undefined) {
       this.enableDebug = options.enableDebug;
     }
+    if (options.disableTUI !== undefined) {
+      this.disableTUI = options.disableTUI;
+    }
     // Update TUI setting based on new configuration
-    this.useTUI = !isCI() && process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
+    if (this.disableTUI) {
+      this.forcePlainOutput();
+    } else {
+      this.refreshTUIState();
+    }
   }
 
   startCapture() {
@@ -532,6 +592,8 @@ class Logger {
    * Log tool result with formatting and optional timing/status
    */
   toolResult(result: string, options?: { duration?: number; success?: boolean; tokens?: number }) {
+    this.refreshTUIState();
+
     // Stop spinner and persist the line
     if (this.spinner?.isSpinning) {
       // Add static symbol when stopping
@@ -596,6 +658,8 @@ class Logger {
    * @param model - The name of the LLM model being called (e.g., "claude-sonnet-4")
    */
   llmStart(model: string) {
+    this.refreshTUIState();
+
     // Stop any existing spinner - just clear it, don't persist
     // LLM spinners are loading indicators, not permanent output
     if (this.spinner?.isSpinning) {
@@ -657,6 +721,8 @@ class Logger {
   }
 
   tool(name: string, args?: unknown, result?: unknown, isSubAgent?: boolean) {
+    this.refreshTUIState();
+
     // Only show when tool is being called, not when returning results
     if (args !== undefined) {
       // Stop any existing spinner and persist the line
@@ -734,6 +800,8 @@ class Logger {
    * Print a thin horizontal separator line
    */
   separator() {
+    this.refreshTUIState();
+
     // Stop any existing spinner before printing separator
     if (this.spinner?.isSpinning) {
       this.spinner.stopAndPersist({ symbol: '⋮' });
@@ -749,6 +817,8 @@ class Logger {
    * Print execution summary with timing and token info
    */
   summary(data: ExecutionSummary) {
+    this.refreshTUIState();
+
     // Stop any existing spinner
     if (this.spinner?.isSpinning) {
       this.spinner.stopAndPersist({ symbol: '⋮' });
@@ -824,4 +894,5 @@ export const logger = new Logger({
     (LogLevel[process.env.LOG_LEVEL as keyof typeof LogLevel] ?? LogLevel.INFO) : 
     LogLevel.INFO,
   enableDebug: isEnvDebugFlagEnabled(),
+  disableTUI: process.env.NO_TTY === 'true',
 });
