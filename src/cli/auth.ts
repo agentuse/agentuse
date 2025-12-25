@@ -234,74 +234,62 @@ export function createAuthCommand(): Command {
     .command("setup-github")
     .description("Set up long-lived OAuth token for GitHub Actions (1 year validity)")
     .option("--repo <repo>", "GitHub repository (owner/repo) - auto-detected from git if not specified")
-    .option("--output <file>", "Output to file instead of GitHub secrets (for local act testing)")
-    .action(async (options: { repo?: string; output?: string }) => {
+    .action(async (options: { repo?: string }) => {
       const { execSync } = await import("child_process");
 
-      // If --output specified, skip GitHub checks
-      if (!options.output) {
-        // Auto-detect repo from git remote if not specified
-        if (!options.repo) {
-          try {
-            const remoteUrl = execSync("git remote get-url origin", { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
-            // Parse GitHub URL: git@github.com:owner/repo.git or https://github.com/owner/repo.git
-            const match = remoteUrl.match(/github\.com[:/]([^/]+\/[^/.]+)/);
-            if (match) {
-              options.repo = match[1];
-              process.stdout.write(`📦 Auto-detected repository: ${options.repo}\n\n`);
-            }
-          } catch {
-            // Not a git repo or no remote
+      // Auto-detect repo from git remote if not specified
+      if (!options.repo) {
+        try {
+          const remoteUrl = execSync("git remote get-url origin", { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+          // Parse GitHub URL: git@github.com:owner/repo.git or https://github.com/owner/repo.git
+          const match = remoteUrl.match(/github\.com[:/]([^/]+\/[^/.]+)/);
+          if (match) {
+            options.repo = match[1];
+            process.stdout.write(`📦 Auto-detected repository: ${options.repo}\n\n`);
           }
-        }
-
-        if (!options.repo) {
-          logger.error("Could not detect repository. Specify --repo owner/repo");
-          process.stdout.write("\nUsage:\n");
-          process.stdout.write("  agentuse auth setup-github                      # Auto-detect from git\n");
-          process.stdout.write("  agentuse auth setup-github --repo owner/repo    # Specify repo\n");
-          process.stdout.write("  agentuse auth setup-github --output tokens.env  # Save to file (for act)\n");
-          process.exit(1);
+        } catch {
+          // Not a git repo or no remote
         }
       }
 
-      // Check prerequisites for GitHub secrets mode
-      if (!options.output) {
-        try {
-          execSync("gh --version", { stdio: "ignore" });
-        } catch {
-          logger.error("GitHub CLI (gh) is not installed. Run: brew install gh");
-          process.exit(1);
-        }
+      if (!options.repo) {
+        logger.error("Could not detect repository. Specify --repo owner/repo");
+        process.stdout.write("\nUsage:\n");
+        process.stdout.write("  agentuse auth setup-github                    # Auto-detect from git\n");
+        process.stdout.write("  agentuse auth setup-github --repo owner/repo  # Specify repo\n");
+        process.exit(1);
+      }
 
-        try {
-          execSync("gh auth status", { stdio: "ignore" });
-        } catch {
-          logger.error("Not authenticated with gh. Run: gh auth login");
-          process.exit(1);
-        }
+      // Check prerequisites
+      try {
+        execSync("gh --version", { stdio: "ignore" });
+      } catch {
+        logger.error("GitHub CLI (gh) is not installed. Run: brew install gh");
+        process.exit(1);
+      }
 
-        // Check if we have secrets:write permission by trying to list secrets
-        try {
-          execSync(`gh secret list --repo ${options.repo}`, { stdio: "ignore" });
-        } catch {
-          logger.error(`Cannot access secrets for ${options.repo}`);
-          process.stdout.write("\nYou need a PAT with 'secrets:write' permission.\n");
-          process.stdout.write("Set it with: export GH_TOKEN=your_pat_here\n");
-          process.stdout.write("\nOr create one at:\n");
-          process.stdout.write("  GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens\n");
-          process.stdout.write("  Permissions: Secrets (Read and write)\n");
-          process.exit(1);
-        }
+      try {
+        execSync("gh auth status", { stdio: "ignore" });
+      } catch {
+        logger.error("Not authenticated with gh. Run: gh auth login");
+        process.exit(1);
+      }
+
+      // Check if we have secrets:write permission by trying to list secrets
+      try {
+        execSync(`gh secret list --repo ${options.repo}`, { stdio: "ignore" });
+      } catch {
+        logger.error(`Cannot access secrets for ${options.repo}`);
+        process.stdout.write("\nYou need a PAT with 'secrets:write' permission.\n");
+        process.stdout.write("Set it with: export GH_TOKEN=your_pat_here\n");
+        process.stdout.write("\nOr create one at:\n");
+        process.stdout.write("  GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens\n");
+        process.stdout.write("  Permissions: Secrets (Read and write)\n");
+        process.exit(1);
       }
 
       process.stdout.write("🔐 Setting up OAuth for GitHub Actions\n\n");
-      if (options.output) {
-        process.stdout.write(`Output file: ${options.output}\n\n`);
-      } else {
-        process.stdout.write(`Repository: ${options.repo}\n\n`);
-      }
-
+      process.stdout.write(`Repository: ${options.repo}\n\n`);
       process.stdout.write("This uses a long-lived token (1 year) - no refresh needed!\n\n");
 
       process.stdout.write(`${"=".repeat(60)}\n`);
@@ -324,39 +312,21 @@ export function createAuthCommand(): Command {
         return;
       }
 
-      if (options.output) {
-        // Save to file (for local act testing)
-        const fs = await import("fs/promises");
-        const content = [
-          "# Claude Code OAuth token for act testing",
-          `# Created: ${new Date().toISOString()}`,
-          "# Valid for: 1 year",
-          `CLAUDE_CODE_OAUTH_TOKEN=${token}`,
-          "",
-        ].join("\n");
+      // Upload to GitHub secrets
+      process.stdout.write("\n📤 Uploading token to GitHub secrets...\n");
 
-        await fs.writeFile(options.output, content);
+      try {
+        execSync(`echo "${token}" | gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${options.repo}`, {
+          stdio: "pipe",
+        });
 
-        process.stdout.write(`\n✅ Token saved to ${options.output}\n\n`);
-        process.stdout.write("Usage with act:\n");
-        process.stdout.write(`  .github/test-pr-review.sh --oauth-token --local\n\n`);
-      } else {
-        // Upload to GitHub secrets
-        process.stdout.write("\n📤 Uploading token to GitHub secrets...\n");
-
-        try {
-          execSync(`echo "${token}" | gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${options.repo}`, {
-            stdio: "pipe",
-          });
-
-          process.stdout.write("\n✅ GitHub Actions setup complete!\n\n");
-          process.stdout.write("Secret created:\n");
-          process.stdout.write("   • CLAUDE_CODE_OAUTH_TOKEN (valid for 1 year)\n\n");
-          process.stdout.write("No SECRETS_ADMIN_PAT needed - this token doesn't require refresh!\n");
-        } catch {
-          logger.error("Failed to upload secret");
-          process.exit(1);
-        }
+        process.stdout.write("\n✅ GitHub Actions setup complete!\n\n");
+        process.stdout.write("Secret created:\n");
+        process.stdout.write("   • CLAUDE_CODE_OAUTH_TOKEN (valid for 1 year)\n\n");
+        process.stdout.write("No SECRETS_ADMIN_PAT needed - this token doesn't require refresh!\n");
+      } catch {
+        logger.error("Failed to upload secret");
+        process.exit(1);
       }
     });
 
