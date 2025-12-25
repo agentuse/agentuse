@@ -278,7 +278,7 @@ program
         }
 
         const [provider] = modelParts;
-        const validProviders = ['anthropic', 'openai'];
+        const validProviders = ['anthropic', 'openai', 'openrouter'];
         if (!validProviders.includes(provider)) {
           throw new Error(`Invalid model provider '${provider}'. Supported providers: ${validProviders.join(', ')}`);
         }
