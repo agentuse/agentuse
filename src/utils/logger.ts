@@ -65,6 +65,23 @@ function isEnvDebugFlagEnabled(): boolean {
   });
 }
 
+/**
+ * Detect if running in a CI environment
+ * CI environments may report isTTY incorrectly or have issues with ora spinners
+ */
+function isCI(): boolean {
+  return Boolean(
+    process.env.CI ||
+    process.env.GITHUB_ACTIONS ||
+    process.env.GITLAB_CI ||
+    process.env.CIRCLECI ||
+    process.env.JENKINS_URL ||
+    process.env.BUILDKITE ||
+    process.env.TRAVIS ||
+    process.env.TF_BUILD // Azure Pipelines
+  );
+}
+
 // Log channels for future use
 // enum LogChannel {
 //   RESPONSE = 'response',
@@ -320,7 +337,7 @@ class Logger {
   constructor(options: LoggerOptions = {}) {
     this.level = options.level ?? LogLevel.INFO;
     this.enableDebug = options.enableDebug ?? isEnvDebugFlagEnabled();
-    this.useTUI = process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
+    this.useTUI = !isCI() && process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
   }
 
   private isDebugEnabled(): boolean {
@@ -390,7 +407,7 @@ class Logger {
       this.enableDebug = options.enableDebug;
     }
     // Update TUI setting based on new configuration
-    this.useTUI = process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
+    this.useTUI = !isCI() && process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
   }
 
   startCapture() {
