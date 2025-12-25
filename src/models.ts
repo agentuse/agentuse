@@ -134,7 +134,7 @@ export async function createModel(modelString: string) {
     // Check for OAuth token first (handles refresh automatically)
     const oauthToken = await AnthropicAuth.access();
     if (oauthToken) {
-      logger.info('Using Anthropic OAuth token for authentication');
+      logger.debug('Using Anthropic OAuth token for authentication');
       // For OAuth, we need to use a custom fetch to set Bearer token
       const anthropicOptions: Record<string, any> = {
         apiKey: '', // Empty API key for OAuth
@@ -175,7 +175,7 @@ export async function createModel(modelString: string) {
           `No authentication found for Anthropic (missing ${config.envVar})`
         );
       }
-      logger.info(`Using ${config.envVar} for authentication`);
+      logger.debug(`Using ${config.envVar} for authentication`);
     } else if (config.envSuffix) {
       const suffix = `_${config.envSuffix}`;
       apiKey = process.env[`ANTHROPIC_API_KEY${suffix}`];
@@ -186,7 +186,7 @@ export async function createModel(modelString: string) {
           `No authentication found for Anthropic (missing ANTHROPIC_API_KEY${suffix})`
         );
       }
-      logger.info(`Using ANTHROPIC_API_KEY${suffix} for authentication`);
+      logger.debug(`Using ANTHROPIC_API_KEY${suffix} for authentication`);
     } else {
       apiKey = process.env.ANTHROPIC_API_KEY;
       if (!apiKey) {
@@ -220,7 +220,7 @@ export async function createModel(modelString: string) {
           `No authentication found for OpenAI (missing ${config.envVar})`
         );
       }
-      logger.info(`Using ${config.envVar} for authentication`);
+      logger.debug(`Using ${config.envVar} for authentication`);
     } else if (config.envSuffix) {
       const suffix = `_${config.envSuffix}`;
       apiKey = process.env[`OPENAI_API_KEY${suffix}`];
@@ -231,7 +231,7 @@ export async function createModel(modelString: string) {
           `No authentication found for OpenAI (missing OPENAI_API_KEY${suffix})`
         );
       }
-      logger.info(`Using OPENAI_API_KEY${suffix} for authentication`);
+      logger.debug(`Using OPENAI_API_KEY${suffix} for authentication`);
     } else {
       apiKey = process.env.OPENAI_API_KEY;
       if (!apiKey) {
@@ -266,7 +266,7 @@ export async function createModel(modelString: string) {
           `No authentication found for OpenRouter (missing ${config.envVar})`
         );
       }
-      logger.info(`Using ${config.envVar} for authentication`);
+      logger.debug(`Using ${config.envVar} for authentication`);
     } else if (config.envSuffix) {
       const suffix = `_${config.envSuffix}`;
       apiKey = process.env[`OPENROUTER_API_KEY${suffix}`];
@@ -277,7 +277,7 @@ export async function createModel(modelString: string) {
           `No authentication found for OpenRouter (missing OPENROUTER_API_KEY${suffix})`
         );
       }
-      logger.info(`Using OPENROUTER_API_KEY${suffix} for authentication`);
+      logger.debug(`Using OPENROUTER_API_KEY${suffix} for authentication`);
     } else {
       apiKey = process.env.OPENROUTER_API_KEY;
       if (!apiKey) {

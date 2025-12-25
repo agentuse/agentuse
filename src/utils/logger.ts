@@ -8,6 +8,13 @@ export enum LogLevel {
   ERROR = 3,
 }
 
+export interface ExecutionSummary {
+  success: boolean;
+  durationMs: number;
+  tokensUsed?: number;
+  toolCallCount?: number;
+}
+
 /**
  * Format a warning message with tool context and error details
  * In debug mode, shows full error; otherwise shows shortened version
@@ -413,8 +420,10 @@ class Logger {
   response(message: string) {
     // Stop spinner on first response output to avoid conflicts
     if (this.spinner?.isSpinning && !this.spinnerStoppedByOutput) {
-      // Add static symbol when stopping
-      this.spinner.stopAndPersist({ symbol: '⋮' });
+      // LLM spinner should be cleared (not persisted) - it's just a loading indicator
+      // The streaming response replaces it
+      this.spinner.stop();
+      this.spinner = null;
       this.spinnerStoppedByOutput = true;
       this.activeLlmModel = null;
     }
@@ -570,9 +579,10 @@ class Logger {
    * @param model - The name of the LLM model being called (e.g., "claude-sonnet-4")
    */
   llmStart(model: string) {
-    // Stop any existing spinner
+    // Stop any existing spinner - just clear it, don't persist
+    // LLM spinners are loading indicators, not permanent output
     if (this.spinner?.isSpinning) {
-      this.spinner.stopAndPersist({ symbol: '⋮' });
+      this.spinner.stop();
       this.spinner = null;
     }
 
@@ -602,8 +612,8 @@ class Logger {
       this.capture(`${this.getAgentPrefix()}${text}\n`);
       this.activeLlmModel = model;
     } else {
-      const message = `Calling model: ${model}`;
-      this.info(message);
+      // In non-TUI mode, just log to debug (model already in metadata)
+      this.debug(`Calling model: ${model}`);
       this.activeLlmModel = null;
     }
 
@@ -700,6 +710,94 @@ class Logger {
         const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
         this.writeToStderr(chalk.gray(`[DEBUG] Tool ${name} result: ${resultStr}`));
       }
+    }
+  }
+
+  /**
+   * Print a thin horizontal separator line
+   */
+  separator() {
+    // Stop any existing spinner before printing separator
+    if (this.spinner?.isSpinning) {
+      this.spinner.stopAndPersist({ symbol: '⋮' });
+      this.spinner = null;
+    }
+
+    const line = '─'.repeat(50);
+    const output = this.useTUI ? chalk.gray(line) : line;
+    this.writeToStderr(output);
+  }
+
+  /**
+   * Print execution summary with timing and token info
+   */
+  summary(data: ExecutionSummary) {
+    // Stop any existing spinner
+    if (this.spinner?.isSpinning) {
+      this.spinner.stopAndPersist({ symbol: '⋮' });
+      this.spinner = null;
+    }
+
+    const icon = data.success ? chalk.green('✓') : chalk.red('✗');
+    const status = data.success ? 'Completed' : 'Failed';
+
+    // Format duration
+    let durationStr: string;
+    if (data.durationMs < 1000) {
+      durationStr = `${Math.round(data.durationMs)}ms`;
+    } else {
+      durationStr = `${(data.durationMs / 1000).toFixed(1)}s`;
+    }
+
+    // Build summary parts
+    const parts = [`${status} in ${durationStr}`];
+
+    if (data.tokensUsed !== undefined) {
+      parts.push(`${data.tokensUsed.toLocaleString()} tokens`);
+    }
+
+    if (data.toolCallCount !== undefined && data.toolCallCount > 0) {
+      parts.push(`${data.toolCallCount} tool call${data.toolCallCount === 1 ? '' : 's'}`);
+    }
+
+    const message = `${icon} ${parts.join(' • ')}`;
+    this.writeToStderr(message);
+  }
+
+  /**
+   * Print grouped metadata lines (key: value format)
+   */
+  metadata(lines: string[]) {
+    // Stop any existing spinner
+    if (this.spinner?.isSpinning) {
+      this.spinner.stopAndPersist({ symbol: '⋮' });
+      this.spinner = null;
+    }
+
+    for (const line of lines) {
+      this.writeToStderr(line);
+    }
+  }
+
+  /**
+   * Print grouped warnings as a block
+   */
+  groupedWarnings(warnings: string[]) {
+    if (warnings.length === 0) return;
+
+    // Stop any existing spinner
+    if (this.spinner?.isSpinning) {
+      this.spinner.stopAndPersist({ symbol: '⋮' });
+      this.spinner = null;
+    }
+
+    const icon = chalk.yellow('⚠');
+    const count = warnings.length;
+    const header = `${icon} ${count} warning${count === 1 ? '' : 's'}:`;
+
+    this.writeToStderr(header);
+    for (const warning of warnings) {
+      this.writeToStderr(chalk.yellow(`  • ${warning}`));
     }
   }
 }

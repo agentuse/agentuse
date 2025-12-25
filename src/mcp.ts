@@ -588,10 +588,10 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
   // Log final tool count
   const toolCount = Object.keys(tools).length;
   if (toolCount > 0) {
-    logger.info(`[MCP] Total tools loaded: ${toolCount}`);
+    logger.debug(`[MCP] Total tools loaded: ${toolCount}`);
     logger.debug(`[MCP] Tool names: ${Object.keys(tools).join(', ')}`);
   } else {
-    logger.warn(`[MCP] No tools were loaded from any MCP server`);
+    logger.debug(`[MCP] No tools were loaded from any MCP server`);
   }
 
   return tools;

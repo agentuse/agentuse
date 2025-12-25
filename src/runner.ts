@@ -116,7 +116,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   // Create doom loop detector to catch agents stuck in repetitive tool calls
   const doomLoopDetector = new DoomLoopDetector({ threshold: 3, action: 'error' });
 
-  logger.info(`Running agent with model: ${agent.config.model}`);
+  logger.debug(`Running agent with model: ${agent.config.model}`);
 
   // Build today's date for system prompt
   const todayDate = new Date().toLocaleDateString('en-US', {
@@ -266,12 +266,12 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   const tools = { ...mcpTools, ...configuredTools, ...skillTools, ...subAgentTools };
 
   if (Object.keys(tools).length > 0) {
-    logger.info(`Available tools: ${Object.keys(tools).join(', ')}`);
+    logger.debug(`Available tools: ${Object.keys(tools).join(', ')}`);
   }
 
   // Log step limit if it's non-default or in verbose mode
   if (maxSteps !== DEFAULT_MAX_STEPS || verbose) {
-    logger.info(`Max steps: ${maxSteps} (override via MAX_STEPS env var)`);
+    logger.debug(`Max steps: ${maxSteps} (override via MAX_STEPS env var)`);
   }
 
   // Track subagent names for logging
@@ -1393,18 +1393,20 @@ export async function runAgent(
     logger.debug(`Agent finish reasons: ${result.finishReasons?.join(', ') ?? 'none'}`);
     logger.debug(`Agent produced text output: ${result.hasTextOutput}`);
     
-    // Display token usage
-    if (result.usage || result.subAgentTokens) {
-      const mainTokens = result.usage?.totalTokens || 0;
-      const subTokens = result.subAgentTokens || 0;
-      const totalTokens = mainTokens + subTokens;
+    // Display execution summary
+    const mainTokens = result.usage?.totalTokens || 0;
+    const subTokens = result.subAgentTokens || 0;
+    const totalTokens = mainTokens + subTokens;
+    const durationMs = startTime ? Date.now() - startTime : 0;
+    const toolCallCount = result.toolCalls?.length || 0;
 
-      if (subTokens > 0) {
-        logger.info(`Tokens used: ${totalTokens} (main: ${mainTokens}, sub-agents: ${subTokens})`);
-      } else if (mainTokens > 0) {
-        logger.info(`Tokens used: ${mainTokens}`);
-      }
-    }
+    logger.separator();
+    logger.summary({
+      success: true,
+      durationMs,
+      ...(totalTokens > 0 && { tokensUsed: totalTokens }),
+      ...(toolCallCount > 0 && { toolCallCount }),
+    });
 
     // Update session message with final token usage
     if (sessionManager && sessionID && assistantMsgID && result.usage) {

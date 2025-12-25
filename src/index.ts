@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { parseAgent, parseAgentContent } from './parser';
-import { connectMCP } from './mcp';
+import { connectMCP, getMCPTools } from './mcp';
 import { runAgent } from './runner';
 import { Command } from 'commander';
 import { createAuthCommand } from './cli/auth';
@@ -28,7 +28,7 @@ import * as dotenv from 'dotenv';
 import { existsSync } from 'fs';
 import { resolveProjectContext } from './utils/project';
 import { resolveTimeout } from './utils/config';
-import { printLogo } from './utils/branding';
+import { printLogo, type BrandingStyle } from './utils/branding';
 
 const program = new Command();
 
@@ -116,11 +116,12 @@ program
   .description('Run an AI agent from a markdown file or URL, optionally appending a prompt')
   .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
   .option('-d, --debug', 'Enable debug mode with detailed logging and full error messages')
+  .option('--compact', 'Use compact single-line header instead of ASCII logo')
   .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
   .option('-C, --directory <path>', 'Run as if agentuse was started in <path> instead of the current directory')
   .option('--env-file <path>', 'Path to custom .env file')
   .option('-m, --model <model>', 'Override the model specified in the agent file')
-  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, timeout: string, directory?: string, envFile?: string, model?: string }) => {
+  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string }) => {
     const startTime = Date.now();
     let originalCwd: string | undefined;
 
@@ -140,7 +141,8 @@ program
 
       // Show ASCII logo (unless in quiet mode)
       if (!options.quiet) {
-        printLogo();
+        const brandingStyle: BrandingStyle = options.compact ? 'compact' : 'full';
+        printLogo(brandingStyle);
       }
 
       // Log startup time if debug
@@ -176,7 +178,7 @@ program
       const projectContext = resolveProjectContext(process.cwd(), {
         ...(options.envFile && { envFile: options.envFile }),
       });
-      logger.info(`Using project root: ${projectContext.projectRoot}`);
+      logger.debug(`Using project root: ${projectContext.projectRoot}`);
 
       // Initialize storage and session manager
       let sessionManager;
@@ -194,7 +196,7 @@ program
 
       // Load environment variables from resolved env file
       if (existsSync(projectContext.envFile)) {
-        logger.info(`Loading environment from: ${projectContext.envFile}`);
+        logger.debug(`Loading environment from: ${projectContext.envFile}`);
         // @ts-ignore - quiet option exists but may not be in types
         dotenv.config({ path: projectContext.envFile, quiet: true });
       } else if (options.envFile) {
@@ -365,10 +367,22 @@ program
       // Start capturing console output for plugins
       logger.startCapture();
 
-      // Log agent information
-      logger.info(`Running agent: ${agent.name}`);
-      if (agent.description) {
-        logger.info(`Description: ${agent.description}`);
+      // Display agent metadata in clean format
+      if (!options.quiet) {
+        logger.separator();
+        const metadataLines = [
+          `Agent: ${agent.name}`,
+          `Model: ${agent.config.model}`,
+        ];
+        if (agent.description) {
+          metadataLines.push(`Description: ${agent.description}`);
+        }
+        // Count available tools (MCP tools + built-in skill tool)
+        const mcpTools = mcp ? await getMCPTools(mcp) : {};
+        const toolCount = Object.keys(mcpTools).length + 1; // +1 for built-in skill tool
+        metadataLines.push(`Tools: ${toolCount} available`);
+        logger.metadata(metadataLines);
+        logger.separator();
       }
 
       // Run the agent with timeout
