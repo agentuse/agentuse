@@ -99,6 +99,10 @@ function validateToolPattern(
   // MCP tools and other tool names are accepted as documentation
   // Only builtin tools (Read, Write, Edit, Bash) are validated
   // This allows MCP tools like mcp__github, mcp__linear, etc.
+  // Warn about unknown patterns for visibility
+  if (!resolvedPattern.startsWith('mcp__') && !resolvedPattern.startsWith('tools__')) {
+    logger.warn(`Unknown tool pattern "${pattern}" - assuming satisfied`);
+  }
   return { pattern, satisfied: true };
 }
 
