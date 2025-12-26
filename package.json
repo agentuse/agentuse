@@ -1,6 +1,6 @@
 {
   "name": "agentuse",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "AI agents on autopilot - define in markdown, run on cron, CI/CD, or serverless",
   "type": "module",
   "author": "",
