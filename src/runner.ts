@@ -1335,7 +1335,8 @@ export async function runAgent(
   cliMaxSteps?: number,
   sessionManager?: SessionManager,
   projectContext?: { projectRoot: string; cwd: string },
-  userPrompt?: string
+  userPrompt?: string,
+  preparedExecution?: PreparedAgentExecution
 ): Promise<RunAgentResult> {
   try {
     // Log initialization time if verbose
@@ -1344,17 +1345,8 @@ export async function runAgent(
       logger.info(`Initialization completed in ${initTime}ms`);
     }
 
-    // Use shared preparation logic
-    const {
-      tools,
-      systemMessages,
-      userMessage,
-      maxSteps,
-      subAgentNames,
-      sessionID,
-      assistantMsgID,
-      doomLoopDetector
-    } = await prepareAgentExecution({
+    // Use shared preparation logic (allow caller to precompute to avoid duplicate work)
+    const preparation = preparedExecution ?? await prepareAgentExecution({
       agent,
       mcpClients,
       agentFilePath,
@@ -1365,6 +1357,17 @@ export async function runAgent(
       abortSignal,
       verbose
     });
+
+    const {
+      tools,
+      systemMessages,
+      userMessage,
+      maxSteps,
+      subAgentNames,
+      sessionID,
+      assistantMsgID,
+      doomLoopDetector
+    } = preparation;
 
     // Execute using the core generator
     const coreOptions = {

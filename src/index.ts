@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { parseAgent, parseAgentContent } from './parser';
-import { connectMCP, getMCPTools } from './mcp';
-import { runAgent } from './runner';
+import { connectMCP } from './mcp';
+import { runAgent, prepareAgentExecution, type PreparedAgentExecution } from './runner';
 import { Command } from 'commander';
 import { createAuthCommand } from './cli/auth';
 import { createSessionsCommand } from './cli/sessions';
@@ -135,12 +135,14 @@ program
       process.env.AGENTUSE_DEBUG = options.debug ? 'true' : 'false';
 
       const loggerConfig: { level?: LogLevel; enableDebug?: boolean; disableTUI?: boolean } = {};
+      let quietMode = false;
 
       // Commander maps --no-tty to options.tty === false (noTty isn't guaranteed), so check both
       const disableTUI = options.tty === false || options.noTty === true || (options as any)['no-tty'] === true;
 
       if (options.quiet) {
         loggerConfig.level = LogLevel.WARN;
+        quietMode = true;
       } else if (options.debug) {
         loggerConfig.level = LogLevel.DEBUG;
         loggerConfig.enableDebug = true;
@@ -151,9 +153,7 @@ program
         // Switch to plain mode immediately so no spinner can start before configure()
         logger.forcePlainOutput();
       }
-      if (Object.keys(loggerConfig).length > 0) {
-        logger.configure(loggerConfig);
-      }
+      logger.configure({ ...loggerConfig, ...(quietMode ? { quiet: true } : {}) });
 
       // Show ASCII logo (unless in quiet mode)
       if (!options.quiet) {
@@ -383,6 +383,19 @@ program
       // Start capturing console output for plugins
       logger.startCapture();
 
+      // Prepare execution once so metadata and run share the same toolset/session
+      const preparedExecution: PreparedAgentExecution = await prepareAgentExecution({
+        agent,
+        mcpClients: mcp,
+        agentFilePath,
+        cliMaxSteps,
+        sessionManager,
+        projectContext: { projectRoot: projectContext.projectRoot, cwd: process.cwd() },
+        userPrompt: additionalPrompt || undefined,
+        abortSignal: abortController.signal,
+        verbose: options.debug
+      });
+
       // Display agent metadata in clean format
       if (!options.quiet) {
         logger.separator();
@@ -393,9 +406,8 @@ program
         if (agent.description) {
           metadataLines.push(`Description: ${agent.description}`);
         }
-        // Count available tools (MCP tools + built-in skill tool)
-        const mcpTools = mcp ? await getMCPTools(mcp) : {};
-        const toolCount = Object.keys(mcpTools).length + 1; // +1 for built-in skill tool
+        // Count available tools from prepared execution
+        const toolCount = Object.keys(preparedExecution.tools).length;
         metadataLines.push(`Tools: ${toolCount} available`);
         logger.metadata(metadataLines);
         logger.separator();
@@ -418,7 +430,8 @@ program
           cliMaxSteps,
           sessionManager,
           { projectRoot: projectContext.projectRoot, cwd: process.cwd() },
-          additionalPrompt || undefined
+          additionalPrompt || undefined,
+          preparedExecution
         );
 
         if (!result.hasTextOutput) {

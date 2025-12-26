@@ -76,6 +76,10 @@ function isNoTTYArgPresent(): boolean {
   return process.argv?.some(arg => arg === '--no-tty' || arg === '--noTTY') ?? false;
 }
 
+function isQuietArgPresent(): boolean {
+  return process.argv?.some(arg => arg === '--quiet' || arg === '-q') ?? false;
+}
+
 /**
  * Detect if running in a CI environment
  * CI environments may report isTTY incorrectly or have issues with ora spinners
@@ -334,12 +338,14 @@ interface LoggerOptions {
   level?: LogLevel;
   enableDebug?: boolean;
   disableTUI?: boolean;
+  quiet?: boolean;
 }
 
 class Logger {
   private level: LogLevel;
   private enableDebug: boolean;
   private disableTUI: boolean;
+  private quietMode: boolean;
   private captureBuffer: string[] = [];
   private isCapturing: boolean = false;
   private useTUI: boolean = false;
@@ -348,7 +354,9 @@ class Logger {
   private activeLlmModel: string | null = null;
 
   constructor(options: LoggerOptions = {}) {
-    this.level = options.level ?? LogLevel.INFO;
+    const quietFromArgs = isQuietArgPresent();
+    this.quietMode = options.quiet ?? quietFromArgs;
+    this.level = options.level ?? (this.quietMode ? LogLevel.WARN : LogLevel.INFO);
     this.enableDebug = options.enableDebug ?? isEnvDebugFlagEnabled();
     const noTTYRequested = options.disableTUI ?? (isEnvNoTTYEnabled() || isNoTTYArgPresent());
     this.disableTUI = noTTYRequested;
@@ -364,7 +372,11 @@ class Logger {
   }
 
   private shouldUseTUI(): boolean {
-    return !this.disableTUI && !isCI() && process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
+    return !this.disableTUI && !this.quietMode && !isCI() && process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
+  }
+
+  private isInfoEnabled(): boolean {
+    return !this.quietMode && this.level <= LogLevel.INFO;
   }
 
   /**
@@ -462,6 +474,9 @@ class Logger {
     if (options.disableTUI !== undefined) {
       this.disableTUI = options.disableTUI;
     }
+    if (options.quiet !== undefined) {
+      this.quietMode = options.quiet;
+    }
     // Update TUI setting based on new configuration
     if (this.disableTUI) {
       this.forcePlainOutput();
@@ -556,7 +571,7 @@ class Logger {
   }
 
   info(message: string) {
-    if (this.level <= LogLevel.INFO) {
+    if (this.isInfoEnabled()) {
       // Stop spinner before writing to avoid cursor conflicts
       if (this.spinner?.isSpinning) {
         this.spinner.stopAndPersist({ symbol: '⋮' });
@@ -800,6 +815,10 @@ class Logger {
    * Print a thin horizontal separator line
    */
   separator() {
+    if (!this.isInfoEnabled()) {
+      return;
+    }
+
     this.refreshTUIState();
 
     // Stop any existing spinner before printing separator
@@ -817,6 +836,10 @@ class Logger {
    * Print execution summary with timing and token info
    */
   summary(data: ExecutionSummary) {
+    if (!this.isInfoEnabled()) {
+      return;
+    }
+
     this.refreshTUIState();
 
     // Stop any existing spinner
