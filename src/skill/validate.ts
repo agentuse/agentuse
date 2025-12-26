@@ -1,5 +1,6 @@
 import type { ToolsConfig } from '../tools/types.js';
 import type { ToolValidationResult } from './types.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * Tool pattern aliases
@@ -95,7 +96,9 @@ function validateToolPattern(
     };
   }
 
-  // Unknown pattern - assume satisfied (don't block on unknown patterns)
+  // MCP tools and other tool names are accepted as documentation
+  // Only builtin tools (Read, Write, Edit, Bash) are validated
+  // This allows MCP tools like mcp__github, mcp__linear, etc.
   return { pattern, satisfied: true };
 }
 

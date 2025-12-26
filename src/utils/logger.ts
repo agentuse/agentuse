@@ -1,6 +1,17 @@
 import chalk from 'chalk';
 import ora, { type Ora } from 'ora';
 
+/**
+ * Logger for internal operational messages (errors, warnings, progress).
+ *
+ * IMPORTANT: For CLI command output (tables, lists, formatted data), use console.* instead.
+ * See docs/development/logging-conventions.md for the full pattern.
+ *
+ * TL;DR:
+ * - CLI output → console.log() / console.error()
+ * - Internal logging → logger.*
+ */
+
 export enum LogLevel {
   DEBUG = 0,
   INFO = 1,
@@ -341,17 +352,46 @@ interface LoggerOptions {
   quiet?: boolean;
 }
 
+/**
+ * Consolidated TUI (Terminal User Interface) state
+ *
+ * Manages all spinner and interactive terminal state in one place for easier debugging.
+ *
+ * State relationships:
+ * - disableTUI: Permanent setting (from env/args/config) - if true, TUI is never used
+ * - useTUI: Current computed state - true only if disableTUI=false AND all conditions met
+ * - spinner: Active spinner instance, managed by useTUI state
+ * - spinnerStoppedByOutput: Tracks if spinner was stopped by response streaming (prevents double-stop)
+ * - activeLlmModel: Model name for current LLM spinner (used to update latency)
+ */
+interface TUIState {
+  /** Permanent TUI disable setting (from env/args/config) */
+  disableTUI: boolean;
+  /** Current computed TUI state (recomputed on each refresh) */
+  useTUI: boolean;
+  /** Active ora spinner instance */
+  spinner: Ora | null;
+  /** Flag: spinner was stopped by streaming response output */
+  spinnerStoppedByOutput: boolean;
+  /** Model name for active LLM spinner (for latency updates) */
+  activeLlmModel: string | null;
+}
+
 class Logger {
   private level: LogLevel;
   private enableDebug: boolean;
-  private disableTUI: boolean;
   private quietMode: boolean;
   private captureBuffer: string[] = [];
   private isCapturing: boolean = false;
-  private useTUI: boolean = false;
-  private spinner: Ora | null = null;
-  private spinnerStoppedByOutput = false;
-  private activeLlmModel: string | null = null;
+
+  /** Consolidated TUI state - all spinner and interactive terminal state */
+  private tui: TUIState = {
+    disableTUI: false,
+    useTUI: false,
+    spinner: null,
+    spinnerStoppedByOutput: false,
+    activeLlmModel: null,
+  };
 
   constructor(options: LoggerOptions = {}) {
     const quietFromArgs = isQuietArgPresent();
@@ -359,7 +399,7 @@ class Logger {
     this.level = options.level ?? (this.quietMode ? LogLevel.WARN : LogLevel.INFO);
     this.enableDebug = options.enableDebug ?? isEnvDebugFlagEnabled();
     const noTTYRequested = options.disableTUI ?? (isEnvNoTTYEnabled() || isNoTTYArgPresent());
-    this.disableTUI = noTTYRequested;
+    this.tui.disableTUI = noTTYRequested;
     if (noTTYRequested) {
       this.forcePlainOutput();
     } else {
@@ -372,11 +412,31 @@ class Logger {
   }
 
   private shouldUseTUI(): boolean {
-    return !this.disableTUI && !this.quietMode && !isCI() && process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
+    return !this.tui.disableTUI && !this.quietMode && !isCI() && process.stdout.isTTY && this.level <= LogLevel.INFO && !this.isDebugEnabled();
   }
 
   private isInfoEnabled(): boolean {
     return !this.quietMode && this.level <= LogLevel.INFO;
+  }
+
+  /**
+   * Stop active spinner with optional persistence
+   * Centralized spinner cleanup to avoid duplication
+   *
+   * @param persist - If true, spinner persists with '⋮' symbol; if false, spinner is cleared
+   */
+  private stopSpinner(persist: boolean = true) {
+    if (!this.tui.spinner?.isSpinning) {
+      return;
+    }
+
+    if (persist) {
+      this.tui.spinner.stopAndPersist({ symbol: '⋮' });
+    } else {
+      this.tui.spinner.stop();
+    }
+
+    this.tui.spinner = null;
   }
 
   /**
@@ -385,15 +445,14 @@ class Logger {
   private refreshTUIState() {
     // Re-evaluate in case NO_TTY env/argv was set after construction
     if (isEnvNoTTYEnabled() || isNoTTYArgPresent()) {
-      this.disableTUI = true;
+      this.tui.disableTUI = true;
     }
 
     const nextUseTUI = this.shouldUseTUI();
-    if (this.useTUI && !nextUseTUI && this.spinner?.isSpinning) {
-      this.spinner.stop();
-      this.spinner = null;
+    if (this.tui.useTUI && !nextUseTUI) {
+      this.stopSpinner(false);
     }
-    this.useTUI = nextUseTUI;
+    this.tui.useTUI = nextUseTUI;
   }
 
   /**
@@ -401,12 +460,9 @@ class Logger {
    * Stops any active spinner and prevents new ones from starting.
    */
   forcePlainOutput() {
-    this.disableTUI = true;
-    this.useTUI = false;
-    if (this.spinner?.isSpinning) {
-      this.spinner.stop();
-      this.spinner = null;
-    }
+    this.tui.disableTUI = true;
+    this.tui.useTUI = false;
+    this.stopSpinner(false);
   }
 
   /**
@@ -415,7 +471,7 @@ class Logger {
   private formatToolBadge(toolName: string, isSubAgent: boolean = false): string {
     const displayName = this.getToolDisplayName(toolName);
 
-    if (!this.useTUI) {
+    if (!this.tui.useTUI) {
       return `[${displayName}]`; // Fallback for non-TTY
     }
 
@@ -453,7 +509,7 @@ class Logger {
    * Get agent activity prefix
    */
   private getAgentPrefix(): string {
-    return this.useTUI ? '⋮' : '';
+    return this.tui.useTUI ? '⋮' : '';
   }
 
   private formatLlmSpinnerText(model: string, latencyMs?: number): string {
@@ -472,13 +528,13 @@ class Logger {
       this.enableDebug = options.enableDebug;
     }
     if (options.disableTUI !== undefined) {
-      this.disableTUI = options.disableTUI;
+      this.tui.disableTUI = options.disableTUI;
     }
     if (options.quiet !== undefined) {
       this.quietMode = options.quiet;
     }
     // Update TUI setting based on new configuration
-    if (this.disableTUI) {
+    if (this.tui.disableTUI) {
       this.forcePlainOutput();
     } else {
       this.refreshTUIState();
@@ -511,13 +567,12 @@ class Logger {
 
   response(message: string) {
     // Stop spinner on first response output to avoid conflicts
-    if (this.spinner?.isSpinning && !this.spinnerStoppedByOutput) {
+    if (this.tui.spinner?.isSpinning && !this.tui.spinnerStoppedByOutput) {
       // LLM spinner should be cleared (not persisted) - it's just a loading indicator
       // The streaming response replaces it
-      this.spinner.stop();
-      this.spinner = null;
-      this.spinnerStoppedByOutput = true;
-      this.activeLlmModel = null;
+      this.stopSpinner(false);
+      this.tui.spinnerStoppedByOutput = true;
+      this.tui.activeLlmModel = null;
     }
 
     // For streaming responses, don't add newline
@@ -534,15 +589,12 @@ class Logger {
 
   error(message: string, error?: Error) {
     // Stop spinner before writing to avoid cursor conflicts
-    if (this.spinner?.isSpinning) {
-      this.spinner.stopAndPersist({ symbol: '⋮' });
-      this.spinner = null;
-    }
+    this.stopSpinner(true);
 
     const prefix = this.getAgentPrefix();
-    const badge = this.useTUI ? chalk.bgRed.white.bold(' ERROR ') : '[ERROR]';
+    const badge = this.tui.useTUI ? chalk.bgRed.white.bold(' ERROR ') : '[ERROR]';
     const errorMessage = error ? `${message}: ${error.message}` : message;
-    const formattedMessage = this.useTUI
+    const formattedMessage = this.tui.useTUI
       ? `${prefix}  ${badge} ${errorMessage}`
       : `${badge} ${errorMessage}`;
 
@@ -555,14 +607,11 @@ class Logger {
   warn(message: string) {
     if (this.level <= LogLevel.WARN) {
       // Stop spinner before writing to avoid cursor conflicts
-      if (this.spinner?.isSpinning) {
-        this.spinner.stopAndPersist({ symbol: '⋮' });
-        this.spinner = null;
-      }
+      this.stopSpinner(true);
 
       const prefix = this.getAgentPrefix();
-      const badge = this.useTUI ? chalk.bgYellow.black.bold(' WARN ') : '[WARN]';
-      const formattedMessage = this.useTUI
+      const badge = this.tui.useTUI ? chalk.bgYellow.black.bold(' WARN ') : '[WARN]';
+      const formattedMessage = this.tui.useTUI
         ? `${prefix}  ${badge} ${message}`
         : `${badge} ${message}`;
 
@@ -573,14 +622,11 @@ class Logger {
   info(message: string) {
     if (this.isInfoEnabled()) {
       // Stop spinner before writing to avoid cursor conflicts
-      if (this.spinner?.isSpinning) {
-        this.spinner.stopAndPersist({ symbol: '⋮' });
-        this.spinner = null;
-      }
+      this.stopSpinner(true);
 
       const prefix = this.getAgentPrefix();
-      const badge = this.useTUI ? chalk.bgBlue.white.bold(' INFO ') : '[INFO]';
-      const formattedMessage = this.useTUI
+      const badge = this.tui.useTUI ? chalk.bgBlue.white.bold(' INFO ') : '[INFO]';
+      const formattedMessage = this.tui.useTUI
         ? `${prefix}  ${badge} ${message}`
         : `\n${badge} ${message}`;
 
@@ -610,15 +656,11 @@ class Logger {
     this.refreshTUIState();
 
     // Stop spinner and persist the line
-    if (this.spinner?.isSpinning) {
-      // Add static symbol when stopping
-      this.spinner.stopAndPersist({ symbol: '⋮' });
-      this.spinner = null;
-    }
-    this.spinnerStoppedByOutput = false;
+    this.stopSpinner(true);
+    this.tui.spinnerStoppedByOutput = false;
 
     const debugMode = this.isDebugEnabled();
-    const useTUI = this.useTUI && !debugMode;
+    const useTUI = this.tui.useTUI && !debugMode;
 
     // Format duration if provided
     let durationStr = '';
@@ -677,15 +719,12 @@ class Logger {
 
     // Stop any existing spinner - just clear it, don't persist
     // LLM spinners are loading indicators, not permanent output
-    if (this.spinner?.isSpinning) {
-      this.spinner.stop();
-      this.spinner = null;
-    }
+    this.stopSpinner(false);
 
-    this.activeLlmModel = null;
-    this.spinnerStoppedByOutput = false;
+    this.tui.activeLlmModel = null;
+    this.tui.spinnerStoppedByOutput = false;
     const debugMode = this.isDebugEnabled();
-    const useTUI = this.useTUI && !debugMode;
+    const useTUI = this.tui.useTUI && !debugMode;
 
     if (useTUI) {
       let text = this.formatLlmSpinnerText(model);
@@ -695,7 +734,7 @@ class Logger {
         text = text.substring(0, MAX_LINE_LENGTH - 3) + '...';
       }
 
-      this.spinner = ora({
+      this.tui.spinner = ora({
         text,
         stream: process.stderr,
         spinner: {
@@ -706,11 +745,11 @@ class Logger {
       }).start();
 
       this.capture(`${this.getAgentPrefix()}${text}\n`);
-      this.activeLlmModel = model;
+      this.tui.activeLlmModel = model;
     } else {
       // In non-TUI mode, just log to debug (model already in metadata)
       this.debug(`Calling model: ${model}`);
-      this.activeLlmModel = null;
+      this.tui.activeLlmModel = null;
     }
 
   }
@@ -722,7 +761,7 @@ class Logger {
    * @param latencyMs - Time in milliseconds from request start to first token
    */
   llmFirstToken(model: string, latencyMs: number) {
-    if (!this.spinner?.isSpinning || this.activeLlmModel !== model) {
+    if (!this.tui.spinner?.isSpinning || this.tui.activeLlmModel !== model) {
       return;
     }
 
@@ -732,7 +771,7 @@ class Logger {
       text = text.substring(0, MAX_LINE_LENGTH - 3) + '...';
     }
 
-    this.spinner.text = text;
+    this.tui.spinner.text = text;
   }
 
   tool(name: string, args?: unknown, result?: unknown, isSubAgent?: boolean) {
@@ -741,19 +780,15 @@ class Logger {
     // Only show when tool is being called, not when returning results
     if (args !== undefined) {
       // Stop any existing spinner and persist the line
-      if (this.spinner?.isSpinning) {
-        // Add static symbol when stopping
-        this.spinner.stopAndPersist({ symbol: '⋮' });
-        this.spinner = null;
-      }
+      this.stopSpinner(true);
 
-      this.activeLlmModel = null;
+      this.tui.activeLlmModel = null;
 
       // Reset flag for new tool execution
-      this.spinnerStoppedByOutput = false;
+      this.tui.spinnerStoppedByOutput = false;
 
       const debugMode = this.isDebugEnabled();
-      const useTUI = this.useTUI && !debugMode;
+      const useTUI = this.tui.useTUI && !debugMode;
 
       // Format args with granular truncation
       // (Full args shown in separate [DEBUG] line below if debug mode is enabled)
@@ -779,7 +814,7 @@ class Logger {
         }
 
         // Create and start ora spinner
-        this.spinner = ora({
+        this.tui.spinner = ora({
           text,
           stream: process.stderr,
           spinner: {
@@ -822,13 +857,10 @@ class Logger {
     this.refreshTUIState();
 
     // Stop any existing spinner before printing separator
-    if (this.spinner?.isSpinning) {
-      this.spinner.stopAndPersist({ symbol: '⋮' });
-      this.spinner = null;
-    }
+    this.stopSpinner(true);
 
     const line = '─'.repeat(50);
-    const output = this.useTUI ? chalk.gray(line) : line;
+    const output = this.tui.useTUI ? chalk.gray(line) : line;
     this.writeToStderr(output);
   }
 
@@ -843,10 +875,7 @@ class Logger {
     this.refreshTUIState();
 
     // Stop any existing spinner
-    if (this.spinner?.isSpinning) {
-      this.spinner.stopAndPersist({ symbol: '⋮' });
-      this.spinner = null;
-    }
+    this.stopSpinner(true);
 
     const icon = data.success ? chalk.green('✓') : chalk.red('✗');
     const status = data.success ? 'Completed' : 'Failed';
@@ -879,10 +908,7 @@ class Logger {
    */
   metadata(lines: string[]) {
     // Stop any existing spinner
-    if (this.spinner?.isSpinning) {
-      this.spinner.stopAndPersist({ symbol: '⋮' });
-      this.spinner = null;
-    }
+    this.stopSpinner(true);
 
     for (const line of lines) {
       this.writeToStderr(line);
@@ -896,10 +922,7 @@ class Logger {
     if (warnings.length === 0) return;
 
     // Stop any existing spinner
-    if (this.spinner?.isSpinning) {
-      this.spinner.stopAndPersist({ symbol: '⋮' });
-      this.spinner = null;
-    }
+    this.stopSpinner(true);
 
     const icon = chalk.yellow('⚠');
     const count = warnings.length;

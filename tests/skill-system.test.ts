@@ -7,6 +7,7 @@ import { discoverSkills, getSkill, getAllSkills } from '../src/skill/discovery';
 import { validateAllowedTools, formatToolsWarning } from '../src/skill/validate';
 import { createSkillTool } from '../src/skill/tool';
 import type { ToolsConfig } from '../src/tools/types';
+import { logger } from '../src/utils/logger';
 
 describe('Skill System', () => {
   let testDir: string;
@@ -452,12 +453,30 @@ Content`);
       expect(unsatisfied).toEqual([]);
     });
 
-    it('assumes unknown patterns are satisfied', () => {
+    it('assumes unknown patterns are satisfied and warns', () => {
       const allowedTools = ['UnknownTool'];
       const toolsConfig: ToolsConfig = {};
 
-      const unsatisfied = validateAllowedTools(allowedTools, toolsConfig);
-      expect(unsatisfied).toEqual([]);
+      // Capture warnings
+      const warnings: string[] = [];
+      const originalWarn = logger.warn.bind(logger);
+      logger.warn = (message: string) => {
+        warnings.push(message);
+      };
+
+      try {
+        const unsatisfied = validateAllowedTools(allowedTools, toolsConfig);
+
+        // Should not block execution (satisfied: true)
+        expect(unsatisfied).toEqual([]);
+
+        // But should have logged a warning
+        expect(warnings.length).toBeGreaterThan(0);
+        expect(warnings.some(w => w.includes('Unknown tool pattern'))).toBe(true);
+        expect(warnings.some(w => w.includes('UnknownTool'))).toBe(true);
+      } finally {
+        logger.warn = originalWarn;
+      }
     });
   });
 

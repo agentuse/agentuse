@@ -538,10 +538,10 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
               throw error;
             }
           },
-          toModelOutput: ({ output }: { output: { output: string } }) => {
+          toModelOutput: ({ output }: { output: string }) => {
             return {
               type: "text" as const,
-              value: output.output,
+              value: output,
             };
           }
         };

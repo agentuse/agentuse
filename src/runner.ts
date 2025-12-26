@@ -1336,6 +1336,23 @@ export async function runAgent(
   sessionManager?: SessionManager,
   projectContext?: { projectRoot: string; cwd: string },
   userPrompt?: string,
+  /**
+   * Optional pre-computed execution context to avoid duplicate preparation work.
+   *
+   * **When to provide this:**
+   * - CLI flows that need to display metadata (tool count, session ID) before running
+   * - Contexts where agent setup needs inspection before execution
+   *
+   * **When to omit this:**
+   * - Direct API usage where metadata inspection isn't needed
+   * - Test contexts where simpler call signatures are preferred
+   * - Any scenario where duplicate preparation overhead is acceptable
+   *
+   * **Performance benefit:**
+   * Preparation involves MCP tool discovery, plugin loading, and session setup.
+   * Pre-computing allows the caller to inspect this context (e.g., for UI display)
+   * and then reuse it for execution, avoiding duplicate expensive operations.
+   */
   preparedExecution?: PreparedAgentExecution
 ): Promise<RunAgentResult> {
   try {
@@ -1346,6 +1363,8 @@ export async function runAgent(
     }
 
     // Use shared preparation logic (allow caller to precompute to avoid duplicate work)
+    // If preparedExecution is provided, use it directly (CLI path).
+    // If not provided, compute it fresh (API/test path).
     const preparation = preparedExecution ?? await prepareAgentExecution({
       agent,
       mcpClients,

@@ -383,7 +383,20 @@ program
       // Start capturing console output for plugins
       logger.startCapture();
 
-      // Prepare execution once so metadata and run share the same toolset/session
+      /**
+       * Prepare execution context BEFORE running the agent.
+       *
+       * This serves two purposes:
+       * 1. Display metadata (tool count, session ID) to the user before execution starts
+       * 2. Avoid duplicate preparation work by passing the prepared context to runAgent
+       *
+       * The preparation includes expensive operations:
+       * - MCP tool discovery and validation
+       * - Plugin loading and initialization
+       * - Session management setup
+       *
+       * By preparing once and reusing, we avoid doing this work twice.
+       */
       const preparedExecution: PreparedAgentExecution = await prepareAgentExecution({
         agent,
         mcpClients: mcp,
@@ -406,7 +419,7 @@ program
         if (agent.description) {
           metadataLines.push(`Description: ${agent.description}`);
         }
-        // Count available tools from prepared execution
+        // Count available tools from prepared execution (this is why we prepare early)
         const toolCount = Object.keys(preparedExecution.tools).length;
         metadataLines.push(`Tools: ${toolCount} available`);
         logger.metadata(metadataLines);

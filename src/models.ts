@@ -32,8 +32,9 @@ async function maybeWrapWithDevTools<T>(model: T): Promise<T> {
       const { devToolsMiddleware } = await import('@ai-sdk/devtools');
       devToolsMiddlewareCache = devToolsMiddleware();
       logger.info('DevTools enabled - run `npx @ai-sdk/devtools` to inspect agent runs');
-    } catch {
+    } catch (error) {
       logger.warn('DevTools requested but @ai-sdk/devtools not installed. Run: pnpm add -D @ai-sdk/devtools');
+      logger.debug(`DevTools import error: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
