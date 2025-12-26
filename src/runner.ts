@@ -1271,9 +1271,13 @@ function parseToolResult(chunk: any): string {
   }
   
   const resultStr = typeof output === 'string' ? output : JSON.stringify(output);
-  
+
   // Detect if the result looks like an error message
-  if (resultStr && typeof resultStr === 'string') {
+  // Skip error detection for tools__skill since skill content often contains
+  // documentation about errors (e.g., "not found" troubleshooting guides)
+  const isSkillTool = chunk.toolName === 'tools__skill';
+
+  if (resultStr && typeof resultStr === 'string' && !isSkillTool) {
     const errorPatterns = [
       /^Error:/i,
       /^Error executing/i,
@@ -1285,17 +1289,17 @@ function parseToolResult(chunk: any): string {
       /invalid.*token/i,
       /invalid.*api.*key/i
     ];
-    
+
     for (const pattern of errorPatterns) {
       if (pattern.test(resultStr)) {
         // Extract operation from error message or use generic "operation"
         let operation = 'operation';
-        
+
         // Try to extract operation context from error message
         const commandMatch = resultStr.match(/['"`]([^'"`]+)['"`]/);
         const fileMatch = resultStr.match(/(?:file|path|directory)\s+['"`]?([^\s'"`]+)/i);
         const actionMatch = resultStr.match(/(?:failed to|cannot|unable to)\s+(\w+)/i);
-        
+
         if (commandMatch) {
           operation = commandMatch[1];
         } else if (fileMatch) {
@@ -1303,7 +1307,7 @@ function parseToolResult(chunk: any): string {
         } else if (actionMatch) {
           operation = actionMatch[1];
         }
-        
+
         logger.warnWithTool(chunk.toolName || 'unknown', operation, resultStr);
         break;
       }
