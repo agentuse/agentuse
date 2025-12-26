@@ -519,6 +519,37 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
                   .map((x: any) => x.text)
                   .join("\n\n");
 
+                // Check for isError flag - MCP servers return this when tool execution fails
+                if (result.isError === true) {
+                  logger.error(`[MCP] Tool ${prefixedName} returned error (isError=true): ${output.substring(0, 200)}`);
+                  throw new Error(output || 'Tool execution failed');
+                }
+
+                // Additional check: Parse the content to detect API error responses
+                // Some MCP servers don't set isError but return error JSON
+                // Look for common error patterns like {"status": 400, "object": "error", ...}
+                try {
+                  const parsed = JSON.parse(output);
+                  if (parsed && typeof parsed === 'object') {
+                    // Check for HTTP error status codes (4xx, 5xx)
+                    const hasErrorStatus = typeof parsed.status === 'number' && parsed.status >= 400;
+                    const hasErrorObject = parsed.object === 'error' || parsed.error;
+                    const hasErrorCode = typeof parsed.code === 'string' && parsed.code.includes('error');
+
+                    if (hasErrorStatus || (hasErrorObject && hasErrorCode)) {
+                      const errorMsg = parsed.message || parsed.error?.message || output;
+                      logger.error(`[MCP] Tool ${prefixedName} returned error JSON: ${errorMsg.substring(0, 200)}`);
+                      throw new Error(errorMsg);
+                    }
+                  }
+                } catch (parseError) {
+                  // If it's a SyntaxError from JSON.parse, ignore it (content is not JSON)
+                  // Otherwise, re-throw (it's our intentional error from the error detection above)
+                  if (!(parseError instanceof SyntaxError)) {
+                    throw parseError;
+                  }
+                }
+
                 // Return as string - AI SDK handles conversion automatically
                 return output;
               }
