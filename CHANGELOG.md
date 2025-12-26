@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.4.0] - 2025-12-25
+
+### Features
+
+**Skill System**
+- Add skill system for reusable agent instructions with SKILL.md file support
+- New `agentuse skills` command to discover and list skills from project and user directories
+- Skill discovery from multiple directories (.agentuse/skills, ~/.agentuse/skills, .claude/skills, ~/.claude/skills)
+
+**CLI Improvements**
+- Add `--no-tty` flag and `NO_TTY` environment variable to disable TUI output for automation
+- Add `--compact` flag for single-line header instead of ASCII logo
+- Improved execution summary with duration, tokens, and tool calls
+- Cleaner output with verbose logs moved to debug level
+- Agent metadata block displaying name, model, and tool count
+
+**Deployment**
+- Docker support with multi-arch builds (amd64/arm64)
+- Multi-stage Dockerfile using Bun for compilation and Alpine for runtime
+- Includes Node.js, Python, and common utilities for agent execution
+
+### Fixes
+
+- Disable TUI mode in CI environments (GitHub Actions, GitLab CI, CircleCI, Jenkins, Buildkite, Travis, Azure Pipelines)
+- Fix model provider validations
+
+### Documentation
+
+- Add skills guide and CLI command reference
+- Add `agentuse serve` command reference with comprehensive API documentation
+- POST /run endpoint with request/response schemas
+- Error codes, HTTP status mappings, and NDJSON streaming examples
+- Update OAuth setup for self-hosting with `CLAUDE_CODE_OAUTH_TOKEN`
+- Add `setup-github` command for automated GitHub Actions secret configuration
+- Add isolated environment guide for local sandboxed development
+- Add self-hosting guide for production deployments
+
+### Refactoring
+
+- Add debug logging and improve runner initialization
+- Enhanced lifecycle logging with configurable debug mode
+- Better error handling in runner start/stop
+- Remove `--output` flag from setup-github for simplified auth flow
+
+### Maintenance
+
+- Upgrade AI SDK to v6 (ai@6.0.3, @ai-sdk/anthropic@3.x, @ai-sdk/openai@3.x, @ai-sdk/mcp@3.x)
+- Migrate `experimental_createMCPClient` to stable `createMCPClient`
+- Add @ai-sdk/devtools as dev dependency with optional middleware (AGENTUSE_DEVTOOLS=true)
+- Remove deprecated @types/glob dependency
+
+---
+
 ## [0.3.0] - 2025-12-24
 
 ### Features
