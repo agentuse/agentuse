@@ -49,7 +49,8 @@
         "guides/plugins",
         "guides/session-logs",
         "guides/isolated-environment",
-        "guides/self-hosting"
+        "guides/self-hosting",
+        "guides/cicd"
       ]
     },
     {

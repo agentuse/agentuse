@@ -1,0 +1,340 @@
+---
+title: "CI/CD"
+sidebarTitle: "CI/CD"
+---
+
+Configure AgentUse agents to run in GitHub Actions for automated PR reviews, comment responses, and custom workflows.
+
+This guide uses [agentuse/pr-review-agent](https://github.com/agentuse/pr-review-agent) as a comprehensive example. You can copy its workflows and agents directly to your project.
+
+## Overview
+
+GitHub Actions can run AgentUse agents in response to repository events:
+- **PR Reviews**: Automatic code review when PRs are opened/updated
+- **Comment Replies**: Respond to @mentions in PR/issue comments
+- **Custom Workflows**: Manual or scheduled agent runs
+
+## Quick Start
+
+### 1. Copy Workflow Files
+
+From the [agentuse-pr-agents](https://github.com/agentuse/agentuse-pr-agents) repository:
+
+```bash
+# Copy workflows and agents to your project
+cp -r .github/agents .github/workflows your-project/.github/
+```
+
+This gives you:
+```
+.github/
+├── workflows/
+│   ├── agentuse-code-review.yml    # PR review automation
+│   └── agentuse-comment-reply.yml  # @mention responses
+└── agents/
+    ├── code-review.agentuse        # Review agent prompt
+    └── comment-reply.agentuse      # Reply agent prompt
+```
+
+### 2. Configure API Keys
+
+Add ONE of these secrets to your repository (**Settings → Secrets → Actions**):
+
+| Secret Name | Provider | Get From | Best For |
+|-------------|----------|----------|----------|
+| `ANTHROPIC_API_KEY` | Anthropic | [console.anthropic.com](https://console.anthropic.com) | Pay-per-use |
+| `OPENAI_API_KEY` | OpenAI | [platform.openai.com](https://platform.openai.com) | GPT models |
+| `OPENROUTER_API_KEY` | OpenRouter | [openrouter.ai](https://openrouter.ai) | Multi-provider |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Pro/Max | `npx agentuse auth setup-github` | Subscription users |
+
+<Note>
+For Claude Pro/Max users, run `npx agentuse auth setup-github` in your project directory. Follow the instructions and the command will write the secret to GitHub for you.
+</Note>
+
+### 3. Done
+
+Open a PR to trigger automatic review, or mention `@agentuse` in any comment.
+
+## Workflow Configuration
+
+### PR Code Review Workflow
+
+**File**: `.github/workflows/agentuse-code-review.yml`
+
+#### Key Configuration
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review'
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+```
+
+#### Environment Variables
+
+The workflow sets these variables for the agent:
+
+| Variable | Description |
+|----------|-------------|
+| `GITHUB_REPOSITORY` | Repo name (e.g., `user/repo`) |
+| `PR_NUMBER` | Pull request number |
+| `BASE_REF` | Target branch (e.g., `main`) |
+| `HEAD_REF` | Source branch |
+| `GH_TOKEN` | GitHub token for API access |
+
+### Comment Reply Workflow
+
+**File**: `.github/workflows/agentuse-comment-reply.yml`
+
+#### Key Configuration
+
+```yaml
+if: |
+  github.event.issue.pull_request &&
+  contains(github.event.comment.body, '@agentuse')
+```
+
+#### Context Variables
+
+| Variable | Description |
+|----------|-------------|
+| `COMMENT_ID` | Comment ID for threading |
+| `COMMENT_AUTHOR` | Who mentioned the bot |
+| `COMMENT_BODY` | Full comment text |
+
+## Agent File Configuration
+
+### Structure
+
+Agent files use YAML frontmatter + markdown:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+maxSteps: 50
+tools:
+  bash:
+    commands:
+      - "gh *"
+      - "git *"
+  filesystem:
+    - path: "${root}/**"
+      permissions: [read]
+---
+
+# Your Agent Instructions
+
+Instructions here in markdown...
+```
+
+### Model Selection
+
+Override the default model in three ways:
+
+**1. Agent file** (recommended for consistency):
+```yaml
+model: anthropic:claude-opus-4-5
+```
+
+**2. Workflow dispatch input** (one-time override):
+```yaml
+workflow_dispatch:
+  inputs:
+    model:
+      description: 'Model override'
+      type: string
+```
+
+**3. Environment variable** (all runs):
+```yaml
+env:
+  MODEL: openai:gpt-4o
+```
+
+Priority: Dispatch input → Env var → Agent file
+
+### Tool Permissions
+
+Limit what the agent can do:
+
+```yaml
+tools:
+  bash:
+    commands:
+      - "gh *"           # GitHub CLI only
+      - "git log *"      # Limited git access
+  filesystem:
+    - path: "src/**"     # Read source files only
+      permissions: [read]
+```
+
+### Timeout & Step Limits
+
+```yaml
+maxSteps: 50  # Maximum agent steps
+```
+
+```bash
+# In workflow
+npx agentuse run agent.agentuse --timeout 300  # 5 minute timeout
+```
+
+## Advanced Configuration
+
+### Filter PRs by Path
+
+```yaml
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - '!**/*.test.ts'
+```
+
+### Different Models per Task
+
+```yaml
+# .github/agents/quick-review.agentuse
+model: anthropic:claude-haiku-4-5
+maxSteps: 20
+```
+
+### Skip Draft PRs
+
+```yaml
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+```
+
+### Monorepo: Pass Affected Packages
+
+Set environment variable in workflow:
+```yaml
+env:
+  AFFECTED_PACKAGES: ${{ steps.detect.outputs.packages }}
+```
+
+Agent reads it at runtime:
+```markdown
+## Step 1: Check Affected Packages
+
+Run this command to see which packages changed:
+\```bash
+echo $AFFECTED_PACKAGES
+\```
+
+Focus your review on these packages only.
+```
+
+### Custom Review Standards
+
+Edit `.github/agents/code-review.agentuse`:
+
+```markdown
+## Security Checks
+- No hardcoded secrets
+- Input validation on endpoints
+
+## Performance
+- No N+1 queries
+- Pagination on large lists
+```
+
+## Debugging
+
+Enable debug mode in workflow:
+
+```yaml
+env:
+  AGENTUSE_DEBUG: true
+```
+
+Common issues:
+
+| Issue | Solution |
+|-------|----------|
+| Agent times out | Increase timeout: `--timeout 600`, reduce maxSteps, use faster model |
+| Review not posting | Check `pull-requests: write` permission, verify API key |
+| Wrong files reviewed | Check path filters, verify filesystem permissions |
+
+## Security
+
+Limit agent access in CI:
+
+```yaml
+tools:
+  bash:
+    commands:
+      - "gh pr *"  # Only PR commands, not repo admin
+  filesystem:
+    - path: "src/**"  # Don't expose .env, secrets/
+      permissions: [read]  # Never [write] in CI
+```
+
+## Cost Optimization
+
+### Use Cheaper Models
+
+```yaml
+# For simple PRs
+model: anthropic:claude-haiku-4-5  # ~$0.01/review
+
+# For complex PRs
+model: anthropic:claude-sonnet-4-5  # ~$0.05/review
+```
+
+### Reduce Token Usage
+
+```yaml
+maxSteps: 20  # Limit agent execution
+```
+
+In agent prompt:
+```markdown
+Focus only on changed files. Ignore tests unless broken.
+Provide concise summaries (2-3 sentences max per section).
+```
+
+### Skip Low-Value PRs
+
+```yaml
+if: |
+  github.event.pull_request.draft == false &&
+  github.event.pull_request.additions > 10
+```
+
+## Reference
+
+Common bash commands in agents:
+
+```bash
+# Get PR metadata
+gh pr view $PR_NUMBER --json title,body,files
+
+# Get diff
+gh pr diff $PR_NUMBER
+
+# Post comment
+gh pr comment $PR_NUMBER --body "Review complete"
+```
+
+## Next Steps
+
+- **Customize agents**: Edit `.github/agents/*.agentuse` to match your workflow
+- **Add more workflows**: Create agents for deployment, testing, documentation
+- **Share across repos**: Use organization-level secrets and reusable workflows
+- See [Agent Design Patterns](/guides/agent-design-patterns) for advanced prompt engineering
