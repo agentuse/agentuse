@@ -519,16 +519,13 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
                   .map((x: any) => x.text)
                   .join("\n\n");
 
-                return {
-                  output,
-                };
+                // Return as string - AI SDK handles conversion automatically
+                return output;
               }
 
-              // Fallback for non-standard result formats
-              const output = typeof result === 'string' ? result : JSON.stringify(result);
-              return {
-                output,
-              };
+              // Fallback for non-standard result formats - return string directly
+              // AI SDK v6 handles automatic conversion to provider format
+              return typeof result === 'string' ? result : JSON.stringify(result);
             } catch (error) {
               // Log the error first
               const errorMessage = error instanceof Error ? error.message : String(error);
@@ -537,12 +534,6 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
               // Re-throw the error so it properly triggers tool-error event
               throw error;
             }
-          },
-          toModelOutput: ({ output }: { output: string }) => {
-            return {
-              type: "text" as const,
-              value: output,
-            };
           }
         };
         
