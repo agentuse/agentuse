@@ -73,7 +73,9 @@
     "gray-matter": "^4.0.3",
     "minimatch": "^10.1.1",
     "ora": "^9.0.0",
+    "tree-sitter-bash": "^0.25.1",
     "ulid": "^3.0.1",
+    "web-tree-sitter": "^0.26.3",
     "zod": "^3.25.76"
   },
   "devDependencies": {

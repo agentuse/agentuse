@@ -145,8 +145,8 @@ Commands not matching these patterns will be rejected.`;
       timeout?: number;
       workdir?: string;
     }): Promise<ToolOutput> => {
-      // Validate command
-      const validation = validator.validate(command);
+      // Validate command (async with tree-sitter)
+      const validation = await validator.validate(command);
       if (!validation.allowed) {
         const error: ToolErrorOutput = {
           success: false,
