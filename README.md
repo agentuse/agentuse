@@ -25,7 +25,7 @@
 </p>
 
 <p align="center">
-  <strong>Define in markdown. Run on cron, CI/CD, or serverless.</strong><br/>
+  <strong>Define in markdown. Run on cron, CI/CD, or Docker.</strong><br/>
   No SDK. No flowcharts. Just AI agents that run themselves.
 </p>
 
@@ -66,11 +66,11 @@ OPENAI_API_KEY=sk-... npx -y agentuse@latest run daily-reporter.agentuse
 npm install -g agentuse
 agentuse run daily-reporter.agentuse
 
-# Schedule it (cron, CI/CD, serverless)
+# Schedule it (cron, CI/CD, Docker)
 0 9 * * * agentuse run daily-reporter.agentuse >> daily-quotes.json
 ```
 
-That's it! Your AI agent runs on autopilot - CI/CD pipelines, cron jobs, webhooks, or serverless functions.
+That's it! Your AI agent runs on autopilot - CI/CD pipelines, cron jobs, webhooks, or Docker containers.
 
 ## 🎯 Real-World Automation Examples
 
@@ -150,8 +150,8 @@ AI tools today force you to choose: interactive copilots that require your const
 What if AI agents could run like cron jobs? Define what you want in markdown, schedule with cron or CI/CD, and let it work while you don't. No chat. No babysitting. Just results.
 
 ### The Solution
-AgentUse puts AI agents on autopilot. Define agents in markdown, run via cron, CI/CD, or serverless, and get results asynchronously. This means:
-- **Runs unattended** - cron jobs, CI/CD pipelines, serverless functions
+AgentUse puts AI agents on autopilot. Define agents in markdown, run via cron, CI/CD, or Docker, and get results asynchronously. This means:
+- **Runs unattended** - cron jobs, CI/CD pipelines, Docker containers
 - **Version control just works** - diff, review, and merge agents like any other code
 - **No SDK required** - if you can write plain English, you can build an agent
 - **Production-ready** - built-in retries, streaming, error recovery, and MCP support
@@ -165,7 +165,7 @@ Copilots assist you. AgentUse agents work for you.
 
 | 🚀 **Autopilot Execution** | 🔧 **Developer Experience** | 🔌 **Integrations** |
 |:---|:---|:---|
-| • Cron jobs<br>• CI/CD pipelines<br>• Serverless functions<br>• Any external trigger | • Markdown format<br>• Zero boilerplate<br>• Git-friendly<br>• URL-shareable agents | • MCP servers<br>• Multiple AI providers (Anthropic, OpenAI, OpenRouter)<br>• Plugin system<br>• Sub-agent composition |
+| • Cron jobs<br>• CI/CD pipelines<br>• Docker containers<br>• Any external trigger | • Markdown format<br>• Zero boilerplate<br>• Git-friendly<br>• URL-shareable agents | • MCP servers<br>• Multiple AI providers (Anthropic, OpenAI, OpenRouter)<br>• Plugin system<br>• Sub-agent composition |
 
 </div>
 
