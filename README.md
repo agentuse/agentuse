@@ -103,6 +103,8 @@ Set your API key:
 export ANTHROPIC_API_KEY="sk-ant-..."
 # or
 export OPENAI_API_KEY="sk-..."
+# or
+export OPENROUTER_API_KEY="sk-or-..."
 ```
 
 ## Documentation
