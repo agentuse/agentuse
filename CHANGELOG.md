@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.1] - 2025-12-29
+
+### Added
+
+- Replace regex parsing with tree-sitter AST for bash tool output parsing
+
+### Fixed
+
+- Skip error detection for skill tool output in runner
+
+### Changed
+
+- Split monolithic runner file into focused modules
+- Streamline MCP tool output handling
+
+### Documentation
+
+- Add CI/CD integration guide
+
+---
+
 ## [0.4.0] - 2025-12-25
 
 ### Features
