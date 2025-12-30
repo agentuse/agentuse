@@ -152,6 +152,17 @@ model: anthropic:claude-sonnet-4-5:dev  # Uses ANTHROPIC_API_KEY_DEV
   Shows detailed execution information, tool calls, and internal state.
 </ParamField>
 
+## Telemetry
+
+<ParamField path="AGENTUSE_TELEMETRY_DISABLED" type="boolean">
+  Disable anonymous telemetry collection. No prompts, code, or file paths are ever collected.
+  Default: false (telemetry enabled)
+
+  ```bash
+  export AGENTUSE_TELEMETRY_DISABLED=true
+  ```
+</ParamField>
+
 ## Storage
 
 <ParamField path="XDG_DATA_HOME" type="string">
@@ -378,6 +389,9 @@ COMPACTION_KEEP_RECENT=3
 # Logging and debug
 LOG_LEVEL=INFO
 DEBUG=false
+
+# Telemetry (opt-out)
+AGENTUSE_TELEMETRY_DISABLED=false
 ```
 
 <Note>

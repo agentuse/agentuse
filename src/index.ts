@@ -29,6 +29,7 @@ import { existsSync } from 'fs';
 import { resolveProjectContext } from './utils/project';
 import { resolveTimeout } from './utils/config';
 import { printLogo, type BrandingStyle } from './utils/branding';
+import { telemetry, categorizeError, aggregateToolCalls, countSteps, parseModel } from './telemetry';
 
 const program = new Command();
 
@@ -155,10 +156,20 @@ program
       }
       logger.configure({ ...loggerConfig, ...(quietMode ? { quiet: true } : {}) });
 
+      // Initialize telemetry
+      await telemetry.init(packageVersion);
+
       // Show ASCII logo (unless in quiet mode)
       if (!options.quiet) {
         const brandingStyle: BrandingStyle = options.compact ? 'compact' : 'full';
         printLogo(brandingStyle);
+
+        // Show first-run telemetry notice
+        if (await telemetry.isFirstRun()) {
+          logger.info('agentuse collects anonymous usage data to improve the product.');
+          logger.info('Set AGENTUSE_TELEMETRY_DISABLED=true to opt out.\n');
+          await telemetry.markFirstRunComplete();
+        }
       }
 
       // Log startup time if debug
@@ -463,6 +474,16 @@ program
           if (wasInterrupted) {
             // User pressed Ctrl-C - clean exit with standard interrupt code
             logger.info('Agent execution interrupted by user.');
+            // Capture telemetry for user abort
+            telemetry.captureExecution({
+              ...parseModel(agent.config.model),
+              durationMs: Date.now() - startTime,
+              inputTokens: 0,
+              outputTokens: 0,
+              success: false,
+              errorType: 'user_abort',
+            });
+            await telemetry.shutdown();
             process.exit(130);
           } else {
             // Actual timeout
@@ -486,6 +507,16 @@ The task may require more time to complete. Try one of these solutions:
 4. Optimize your agent to use fewer tool calls
 
 Current timeout: ${effectiveTimeoutSeconds}s`);
+            // Capture telemetry for timeout
+            telemetry.captureExecution({
+              ...parseModel(agent.config.model),
+              durationMs: Date.now() - startTime,
+              inputTokens: 0,
+              outputTokens: 0,
+              success: false,
+              errorType: 'timeout',
+            });
+            await telemetry.shutdown();
             process.exit(1);
           }
         }
@@ -503,7 +534,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         try {
           const duration = startTime ? (Date.now() - startTime) / 1000 : 0;
           // agentFilePath already resolved before directory change
-          
+
           await pluginManager.emitAgentComplete({
             agent: {
               name: agent.name,
@@ -530,11 +561,45 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         }
       }
 
+      // Capture telemetry for successful execution
+      telemetry.captureExecution({
+        ...parseModel(agent.config.model),
+        durationMs: Date.now() - startTime,
+        inputTokens: result.usage?.inputTokens ?? 0,
+        outputTokens: result.usage?.outputTokens ?? 0,
+        success: true,
+        toolCalls: aggregateToolCalls(result.toolCallTraces),
+        steps: countSteps(result.toolCallTraces),
+
+        // Performance & Reliability
+        finishReason: result.finishReason,
+        hasTextOutput: result.hasTextOutput,
+
+        // Feature Adoption
+        features: {
+          mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
+          subagentsConfigured: agent.config.subagents?.length ?? 0,
+          skillsUsed: false, // TODO: track skill usage
+          mode: 'cli' as const,
+        },
+
+        // Configuration Patterns
+        config: {
+          timeoutCustom: timeoutWasExplicit || (agent.config.timeout !== undefined),
+          maxStepsCustom: cliMaxSteps !== undefined || (agent.config.maxSteps !== undefined),
+          quietMode: options.quiet,
+          debugMode: options.debug,
+        },
+      });
+
       // Restore original working directory if changed
       if (options.directory && originalCwd && originalCwd !== process.cwd()) {
         process.chdir(originalCwd);
         logger.debug(`Restored working directory to ${originalCwd}`);
       }
+
+      // Shutdown telemetry before exit
+      await telemetry.shutdown();
 
       // Exit successfully after agent completes
       process.exit(0);
@@ -543,6 +608,20 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       if (options.directory && originalCwd && originalCwd !== process.cwd()) {
         process.chdir(originalCwd);
       }
+
+      // Capture telemetry for errors (if telemetry was initialized)
+      // Use 'unknown' provider/model if agent wasn't loaded yet
+      const errorType = error instanceof AuthenticationError ? 'api_error' as const : categorizeError(error);
+      telemetry.captureExecution({
+        provider: 'unknown',
+        modelName: 'unknown',
+        durationMs: Date.now() - startTime,
+        inputTokens: 0,
+        outputTokens: 0,
+        success: false,
+        ...(errorType && { errorType }),
+      });
+      await telemetry.shutdown();
 
       // Check if it's an authentication error
       if (error instanceof AuthenticationError) {
@@ -557,7 +636,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         console.error('For more options: agentuse auth --help');
         process.exit(1);
       }
-      
+
       logger.error('Error', error as Error);
       process.exit(1);
     }
