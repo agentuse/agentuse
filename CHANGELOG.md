@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.2] - 2025-12-30
+
+### Added
+
+- Bash tool `allowedPaths` config for additional directories beyond project root (e.g., shared repos, temp directories)
+- Anonymous usage telemetry (opt-out via `AGENTUSE_TELEMETRY=false`)
+
+### Changed
+
+- Improved logger display for built-in tools (Skill, Bash, Read, Write, Edit) with color-coded badges
+- Simplified Skill tool result to show "Loaded" instead of full content
+
+---
+
 ## [0.4.1] - 2025-12-29
 
 ### Added
