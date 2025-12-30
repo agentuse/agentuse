@@ -15,6 +15,7 @@ export const FilesystemPathConfigSchema = z.object({
 export const BashConfigSchema = z.object({
   commands: z.array(z.string()),
   timeout: z.number().positive().optional(),
+  allowedPaths: z.array(z.string()).optional(),
 });
 
 export const ToolsConfigSchema = z.object({

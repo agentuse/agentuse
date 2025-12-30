@@ -128,7 +128,7 @@ describe('Bash Tool - Workdir Parameter', () => {
 
       const output = JSON.parse(result.output);
       expect(output.success).toBe(false);
-      expect(output.error).toContain('Working directory must be within project root');
+      expect(output.error).toContain('Working directory must be within allowed paths');
     });
 
     it('should reject absolute path outside project root', async () => {
@@ -144,7 +144,7 @@ describe('Bash Tool - Workdir Parameter', () => {
 
       const output = JSON.parse(result.output);
       expect(output.success).toBe(false);
-      expect(output.error).toContain('Working directory must be within project root');
+      expect(output.error).toContain('Working directory must be within allowed paths');
     });
 
     it('should reject path traversal with ../ in the middle', async () => {
@@ -160,7 +160,7 @@ describe('Bash Tool - Workdir Parameter', () => {
 
       const output = JSON.parse(result.output);
       expect(output.success).toBe(false);
-      expect(output.error).toContain('Working directory must be within project root');
+      expect(output.error).toContain('Working directory must be within allowed paths');
     });
 
     it('should reject symlink-based path traversal attempts', async () => {
@@ -284,6 +284,103 @@ describe('Bash Tool - Workdir Parameter', () => {
       });
 
       expect(result.output).toContain('test');
+    });
+  });
+
+  describe('allowedPaths configuration', () => {
+    it('should allow workdir in allowedPaths', async () => {
+      const bashTool = createBashTool(
+        { commands: ['pwd', 'ls *'], allowedPaths: ['/tmp'] },
+        tempProjectRoot
+      );
+
+      const result = await bashTool.execute({
+        command: 'pwd',
+        workdir: '/tmp'
+      });
+
+      expect(result.output).toContain('/tmp');
+      expect(result.output).not.toContain('success');
+    });
+
+    it('should allow workdir in nested allowedPath', async () => {
+      const bashTool = createBashTool(
+        { commands: ['pwd', 'ls *'], allowedPaths: ['/tmp'] },
+        tempProjectRoot
+      );
+
+      const result = await bashTool.execute({
+        command: 'pwd',
+        workdir: '/tmp/test-nested'
+      });
+
+      // Should succeed (path validation passes even if dir doesn't exist)
+      // The command itself may fail, but not due to path restriction
+      expect(result.output).toBeDefined();
+    });
+
+    it('should still reject paths not in allowedPaths or projectRoot', async () => {
+      const bashTool = createBashTool(
+        { commands: ['pwd', 'ls *'], allowedPaths: ['/tmp'] },
+        tempProjectRoot
+      );
+
+      const result = await bashTool.execute({
+        command: 'pwd',
+        workdir: '/usr'
+      });
+
+      const output = JSON.parse(result.output);
+      expect(output.success).toBe(false);
+      expect(output.error).toContain('Working directory must be within allowed paths');
+    });
+
+    it('should work with multiple allowedPaths', async () => {
+      const bashTool = createBashTool(
+        { commands: ['pwd', 'ls *'], allowedPaths: ['/tmp', '/var'] },
+        tempProjectRoot
+      );
+
+      const result1 = await bashTool.execute({
+        command: 'pwd',
+        workdir: '/tmp'
+      });
+      expect(result1.output).toContain('/tmp');
+
+      const result2 = await bashTool.execute({
+        command: 'pwd',
+        workdir: '/var'
+      });
+      expect(result2.output).toContain('/var');
+    });
+
+    it('should still allow projectRoot when allowedPaths is set', async () => {
+      const bashTool = createBashTool(
+        { commands: ['pwd', 'ls *'], allowedPaths: ['/tmp'] },
+        tempProjectRoot
+      );
+
+      const result = await bashTool.execute({
+        command: 'pwd',
+        workdir: tempProjectRoot
+      });
+
+      expect(result.output).toContain(tempProjectRoot);
+    });
+
+    it('should support ~ in allowedPaths', async () => {
+      const bashTool = createBashTool(
+        { commands: ['pwd', 'ls *'], allowedPaths: ['~'] },
+        tempProjectRoot
+      );
+
+      const homeDir = process.env.HOME || '/tmp';
+      const result = await bashTool.execute({
+        command: 'pwd',
+        workdir: homeDir
+      });
+
+      expect(result.output).toContain(homeDir);
     });
   });
 

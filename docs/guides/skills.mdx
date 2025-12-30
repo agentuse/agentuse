@@ -120,6 +120,14 @@ Only builtin tools are validated against the agent's configuration:
 - `Read`, `Write`, `Edit` - checked against `tools.filesystem`
 - `Bash`, `Bash(command:*)` - checked against `tools.bash.commands`
 
+### Bash Tool Configuration
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `commands` | `string[]` | Allowlist of command patterns (supports `*` wildcard) |
+| `allowedPaths` | `string[]` | Additional directories accessible beyond project root. Supports `~` for home directory. |
+| `timeout` | `number` | Command timeout in milliseconds (default: 120000)
+
 Other tool names (like MCP tools) are accepted but not validated - they serve as documentation only.
 
 If validation fails:
@@ -153,6 +161,9 @@ tools:
   bash:
     commands:
       - "git *"
+    allowedPaths:           # Optional: directories beyond projectRoot
+      - ~/workspace/other-repo
+      - /tmp
 mcpServers:
   github:
     command: npx

@@ -161,13 +161,53 @@ describe('CommandValidator', () => {
       // Try to cd to parent directory
       const result = await validator.validate('cd ..');
       expect(result.allowed).toBe(false);
-      expect(result.error).toContain('outside project root');
+      expect(result.error).toContain('outside allowed directories');
     });
 
     test('allows access within project', async () => {
       const validator = new CommandValidator(['cd *'], projectRoot);
 
       const result = await validator.validate('cd src/components');
+      expect(result.allowed).toBe(true);
+    });
+
+    test('allows access to allowedPaths', async () => {
+      const validator = new CommandValidator(['cd *'], projectRoot, ['/tmp']);
+
+      const result = await validator.validate('cd /tmp');
+      expect(result.allowed).toBe(true);
+    });
+
+    test('allows access to nested paths within allowedPaths', async () => {
+      const validator = new CommandValidator(['cd *'], projectRoot, ['/tmp']);
+
+      const result = await validator.validate('cd /tmp/subdir');
+      expect(result.allowed).toBe(true);
+    });
+
+    test('blocks access outside both projectRoot and allowedPaths', async () => {
+      const validator = new CommandValidator(['cd *'], projectRoot, ['/tmp']);
+
+      const result = await validator.validate('cd /usr');
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('outside allowed directories');
+    });
+
+    test('supports multiple allowedPaths', async () => {
+      const validator = new CommandValidator(['cd *'], projectRoot, ['/tmp', '/var']);
+
+      const result1 = await validator.validate('cd /tmp');
+      expect(result1.allowed).toBe(true);
+
+      const result2 = await validator.validate('cd /var');
+      expect(result2.allowed).toBe(true);
+    });
+
+    test('supports ~ in allowedPaths', async () => {
+      const validator = new CommandValidator(['cd *'], projectRoot, ['~']);
+
+      const homeDir = process.env.HOME || '/tmp';
+      const result = await validator.validate(`cd ${homeDir}`);
       expect(result.allowed).toBe(true);
     });
   });

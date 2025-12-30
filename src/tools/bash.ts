@@ -115,13 +115,43 @@ async function killProcessTree(pid: number): Promise<void> {
 }
 
 /**
+ * Check if a path is within any of the allowed directories
+ */
+function isPathWithinAllowed(targetPath: string, projectRoot: string, allowedPaths: string[]): boolean {
+  const normalizedTarget = path.normalize(targetPath);
+
+  // Check project root
+  const normalizedProjectRoot = path.normalize(projectRoot);
+  const relativeToProject = path.relative(normalizedProjectRoot, normalizedTarget);
+  if (!relativeToProject.startsWith('..') && !path.isAbsolute(relativeToProject)) {
+    return true;
+  }
+
+  // Check allowedPaths
+  for (const allowedPath of allowedPaths) {
+    // Resolve ~ in allowedPath
+    const resolvedAllowedPath = allowedPath.startsWith('~')
+      ? allowedPath.replace(/^~/, process.env.HOME || '/tmp')
+      : allowedPath;
+    const normalizedAllowed = path.normalize(resolvedAllowedPath);
+    const relative = path.relative(normalizedAllowed, normalizedTarget);
+    if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Create the bash tool
  */
 export function createBashTool(
   config: BashConfig,
   projectRoot: string
 ): Tool {
-  const validator = new CommandValidator(config.commands, projectRoot);
+  const allowedPaths = config.allowedPaths ?? [];
+  const validator = new CommandValidator(config.commands, projectRoot, allowedPaths);
   const defaultTimeout = config.timeout || DEFAULT_TIMEOUT;
 
   // Build description with allowed commands
@@ -162,14 +192,11 @@ Commands not matching these patterns will be rejected.`;
           ? workdir
           : path.resolve(projectRoot, workdir);
 
-        // Security: ensure workdir is within projectRoot
-        const normalizedWorkdir = path.normalize(resolvedWorkdir);
-        const normalizedProjectRoot = path.normalize(projectRoot);
-        if (!normalizedWorkdir.startsWith(normalizedProjectRoot + path.sep) &&
-            normalizedWorkdir !== normalizedProjectRoot) {
+        // Security: ensure workdir is within allowed directories
+        if (!isPathWithinAllowed(resolvedWorkdir, projectRoot, allowedPaths)) {
           const error: ToolErrorOutput = {
             success: false,
-            error: `Working directory must be within project root: ${workdir}`,
+            error: `Working directory must be within allowed paths: ${workdir}`,
           };
           return { output: JSON.stringify(error) };
         }

@@ -67,8 +67,9 @@ const BUILTIN_DENYLIST: Record<string, boolean> = {
 export class CommandValidator {
   private readonly allowedPatterns: Record<string, 'allow' | 'deny'>;
   private readonly projectRoot: string | null;
+  private readonly allowedPaths: string[];
 
-  constructor(allowedPatterns: string[], projectRoot?: string) {
+  constructor(allowedPatterns: string[], projectRoot?: string, allowedPaths?: string[]) {
     // Convert array of patterns to Record with "allow" value
     this.allowedPatterns = {};
     for (const pattern of allowedPatterns) {
@@ -79,6 +80,7 @@ export class CommandValidator {
     this.allowedPatterns['cd *'] = 'allow';
 
     this.projectRoot = projectRoot ?? null;
+    this.allowedPaths = allowedPaths ?? [];
   }
 
   /**
@@ -100,30 +102,51 @@ export class CommandValidator {
   }
 
   /**
-   * Check if a path is within the project root
+   * Check if a path is within a given root directory
    */
-  private isWithinProjectRoot(filePath: string): boolean {
-    if (!this.projectRoot) return true; // No project root = no restriction
-
+  private isPathWithin(filePath: string, rootDir: string): boolean {
     try {
       const resolvedPath = this.resolvePath(filePath);
-
-      // Normalize project root
-      const normalizedProjectRoot = path.normalize(this.projectRoot);
+      const normalizedRoot = path.normalize(rootDir);
       const normalizedPath = path.normalize(resolvedPath);
 
-      // Check if the path is within project root
-      const relative = path.relative(normalizedProjectRoot, normalizedPath);
+      // Check if the path is within root
+      const relative = path.relative(normalizedRoot, normalizedPath);
 
-      // Path is within project if:
+      // Path is within if:
       // 1. relative path doesn't start with '..' (not going up)
       // 2. relative path is not absolute (not a completely different path)
-      const isWithin = !relative.startsWith('..') && !path.isAbsolute(relative);
-
-      return isWithin;
+      return !relative.startsWith('..') && !path.isAbsolute(relative);
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Check if a path is within any allowed directory (project root or allowedPaths)
+   */
+  private isWithinAllowedPaths(filePath: string): boolean {
+    // No project root = no restriction
+    if (!this.projectRoot) return true;
+
+    // Check project root first
+    if (this.isPathWithin(filePath, this.projectRoot)) {
+      return true;
+    }
+
+    // Check allowedPaths
+    for (const allowedPath of this.allowedPaths) {
+      // Resolve ~ in allowedPath
+      const resolvedAllowedPath = allowedPath.startsWith('~')
+        ? allowedPath.replace(/^~/, process.env.HOME || '/tmp')
+        : allowedPath;
+
+      if (this.isPathWithin(filePath, resolvedAllowedPath)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -137,8 +160,8 @@ export class CommandValidator {
     const paths = await extractPaths(commandString);
 
     for (const p of paths) {
-      if (!this.isWithinProjectRoot(p)) {
-        return `Access to path outside project root: ${p}`;
+      if (!this.isWithinAllowedPaths(p)) {
+        return `Access to path outside allowed directories: ${p}`;
       }
     }
 
