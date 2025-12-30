@@ -774,6 +774,49 @@ class Logger {
     this.tui.spinner.text = text;
   }
 
+  /**
+   * Format built-in tool display for cleaner output
+   * Returns { badge, detail } for TUI mode or { displayText } for non-TUI mode
+   */
+  private formatBuiltinTool(name: string, args: unknown, useTUI: boolean): { badge: string; detail: string } | null {
+    const argsObj = args as Record<string, unknown>;
+
+    // Skill tool
+    if (name === 'tools__skill' && argsObj?.name) {
+      const badge = useTUI ? chalk.bgMagenta.white.bold(' Skill ') : 'Skill';
+      return { badge, detail: `Loading "${argsObj.name}"` };
+    }
+
+    // Bash tool
+    if (name === 'tools__bash' && argsObj?.command) {
+      const badge = useTUI ? chalk.bgYellow.black.bold(' Bash ') : 'Bash';
+      const cmd = String(argsObj.command);
+      // Truncate long commands
+      const truncatedCmd = cmd.length > 80 ? cmd.substring(0, 80) + '...' : cmd;
+      return { badge, detail: truncatedCmd };
+    }
+
+    // Read tool
+    if (name === 'tools__filesystem_read' && argsObj?.file_path) {
+      const badge = useTUI ? chalk.bgGreen.black.bold(' Read ') : 'Read';
+      return { badge, detail: String(argsObj.file_path) };
+    }
+
+    // Write tool
+    if (name === 'tools__filesystem_write' && argsObj?.file_path) {
+      const badge = useTUI ? chalk.bgBlue.white.bold(' Write ') : 'Write';
+      return { badge, detail: String(argsObj.file_path) };
+    }
+
+    // Edit tool
+    if (name === 'tools__filesystem_edit' && argsObj?.file_path) {
+      const badge = useTUI ? chalk.bgCyan.black.bold(' Edit ') : 'Edit';
+      return { badge, detail: String(argsObj.file_path) };
+    }
+
+    return null;
+  }
+
   tool(name: string, args?: unknown, result?: unknown, isSubAgent?: boolean) {
     this.refreshTUIState();
 
@@ -790,20 +833,27 @@ class Logger {
       const debugMode = this.isDebugEnabled();
       const useTUI = this.tui.useTUI && !debugMode;
 
-      // Format args with granular truncation
-      // (Full args shown in separate [DEBUG] line below if debug mode is enabled)
-      let argsDisplay = '';
-      if (args) {
-        const formatted = formatToolArgsGranular(args, { disableTruncation: debugMode });
-        if (formatted) {
-          argsDisplay = ` ${chalk.gray(formatted)}`;
-        }
-      }
+      // Try to format as built-in tool first
+      const builtinFormat = this.formatBuiltinTool(name, args, useTUI);
 
       // Format with new TUI style
       if (useTUI) {
-        const badge = this.formatToolBadge(name, isSubAgent);
-        let text = ` ${badge}${argsDisplay}`;
+        let text: string;
+
+        if (builtinFormat) {
+          text = ` ${builtinFormat.badge} ${chalk.gray(builtinFormat.detail)}`;
+        } else {
+          // Format args with granular truncation for non-builtin tools
+          let argsDisplay = '';
+          if (args) {
+            const formatted = formatToolArgsGranular(args, { disableTruncation: debugMode });
+            if (formatted) {
+              argsDisplay = ` ${chalk.gray(formatted)}`;
+            }
+          }
+          const badge = this.formatToolBadge(name, isSubAgent);
+          text = ` ${badge}${argsDisplay}`;
+        }
 
         // Truncate to prevent terminal wrapping (which causes duplicate lines)
         // Symbol (1) + space (2) + text = total line length
@@ -828,9 +878,21 @@ class Logger {
         this.capture(`${this.getAgentPrefix()}${text}\n`);
       } else {
         // Fallback for non-TTY
-        const callType = (name.startsWith('subagent__') || isSubAgent) ? 'Calling subagent:' : 'Calling tool:';
-        const displayName = this.getToolDisplayName(name);
-        this.info(`${callType} ${chalk.cyan(displayName)}${chalk.gray(argsDisplay)}`);
+        if (builtinFormat) {
+          this.info(`${builtinFormat.badge}: ${chalk.cyan(builtinFormat.detail)}`);
+        } else {
+          // Format args with granular truncation for non-builtin tools
+          let argsDisplay = '';
+          if (args) {
+            const formatted = formatToolArgsGranular(args, { disableTruncation: debugMode });
+            if (formatted) {
+              argsDisplay = ` ${chalk.gray(formatted)}`;
+            }
+          }
+          const callType = (name.startsWith('subagent__') || isSubAgent) ? 'Calling subagent:' : 'Calling tool:';
+          const displayName = this.getToolDisplayName(name);
+          this.info(`${callType} ${chalk.cyan(displayName)}${argsDisplay}`);
+        }
       }
 
       // Show full args in debug mode

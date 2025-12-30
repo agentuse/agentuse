@@ -305,11 +305,19 @@ export async function processAgentStream(
         });
 
         // Log the result with timing info
-        logger.toolResult(chunk.toolResult || 'No result', {
-          ...(toolDuration !== undefined && { duration: toolDuration }),
-          success: toolSuccess,
-          ...(tokens && { tokens })
-        });
+        // For skill tool, show a simple "Loaded" message instead of the full skill content
+        if (chunk.toolName === 'tools__skill') {
+          logger.toolResult('Skill loaded', {
+            ...(toolDuration !== undefined && { duration: toolDuration }),
+            success: toolSuccess
+          });
+        } else {
+          logger.toolResult(chunk.toolResult || 'No result', {
+            ...(toolDuration !== undefined && { duration: toolDuration }),
+            success: toolSuccess,
+            ...(tokens && { tokens })
+          });
+        }
 
         // Find and complete the tool call trace using toolCallId
         if (chunk.toolCallId && chunk.toolDuration !== undefined) {
