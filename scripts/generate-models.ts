@@ -35,12 +35,6 @@ const PROVIDER_MAPPINGS: Record<string, {
     filter: (id: string) => id.startsWith('gpt-5'),
     transform: (id: string) => id,
   },
-  // GLM models via Z.AI -> OpenRouter
-  'zai-coding-plan': {
-    ourProvider: 'openrouter',
-    filter: (id: string) => id.startsWith('glm-4'),
-    transform: (id: string) => `z-ai/${id}`,
-  },
   // MiniMax models via Nvidia -> OpenRouter (only latest m2.1)
   'nvidia': {
     ourProvider: 'openrouter',
@@ -53,10 +47,10 @@ const PROVIDER_MAPPINGS: Record<string, {
       return `minimax/${id}`;
     },
   },
-  // OpenRouter direct (if models are already in openrouter format)
+  // OpenRouter direct (models already in openrouter format with correct pricing)
   'openrouter': {
     ourProvider: 'openrouter',
-    filter: (id: string) => id === 'minimax/minimax-m2.1',
+    filter: (id: string) => id === 'minimax/minimax-m2.1' || id.startsWith('z-ai/glm-4'),
     transform: (id: string) => id,
   },
 };
@@ -68,6 +62,7 @@ interface ModelData {
   tool_call?: boolean;
   modalities?: { input?: string[]; output?: string[] };
   limit?: { context?: number; output?: number };
+  cost?: { input?: number; output?: number };
   release_date?: string;
 }
 
@@ -148,6 +143,10 @@ function generateRegistryCode(registry: Registry): string {
         context: ${model.limit?.context ?? 32000},
         output: ${model.limit?.output ?? 4000},
       },
+      cost: {
+        input: ${model.cost?.input ?? 0},
+        output: ${model.cost?.output ?? 0},
+      },
     }`;
   };
 
@@ -211,6 +210,11 @@ export interface ModelInfo {
   };
   limit: {
     context: number;
+    output: number;
+  };
+  /** Cost per token in USD (from models.dev) */
+  cost: {
+    input: number;
     output: number;
   };
 }

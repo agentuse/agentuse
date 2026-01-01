@@ -2,6 +2,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { wrapLanguageModel } from 'ai';
 import { AnthropicAuth } from './auth/anthropic';
+import { AuthStorage } from './auth/storage';
 import { logger } from './utils/logger';
 import { warnIfModelNotInRegistry } from './utils/model-utils';
 
@@ -234,16 +235,27 @@ export async function createModel(modelString: string) {
       }
       logger.debug(`Using OPENAI_API_KEY${suffix} for authentication`);
     } else {
+      // Check environment variable first
       apiKey = process.env.OPENAI_API_KEY;
+
+      // Fall back to stored credentials from `agentuse auth login`
+      if (!apiKey) {
+        const storedAuth = await AuthStorage.get('openai');
+        if (storedAuth && storedAuth.type === 'api') {
+          apiKey = storedAuth.key;
+          logger.debug('Using stored API key for OpenAI authentication');
+        }
+      }
+
       if (!apiKey) {
         throw new AuthenticationError(
-          'openai', 
+          'openai',
           'OPENAI_API_KEY',
-          'No authentication found for OpenAI'
+          'No authentication found for OpenAI. Run `agentuse auth login openai` or set OPENAI_API_KEY'
         );
       }
     }
-    
+
     if (!apiKey) {
       throw new Error('Failed to obtain API key for OpenAI');
     }
@@ -257,7 +269,7 @@ export async function createModel(modelString: string) {
 
   } else if (config.provider === 'openrouter') {
     let apiKey: string | undefined;
-    
+
     if (config.envVar) {
       apiKey = process.env[config.envVar];
       if (!apiKey) {
@@ -280,16 +292,27 @@ export async function createModel(modelString: string) {
       }
       logger.debug(`Using OPENROUTER_API_KEY${suffix} for authentication`);
     } else {
+      // Check environment variable first
       apiKey = process.env.OPENROUTER_API_KEY;
+
+      // Fall back to stored credentials from `agentuse auth login`
+      if (!apiKey) {
+        const storedAuth = await AuthStorage.get('openrouter');
+        if (storedAuth && storedAuth.type === 'api') {
+          apiKey = storedAuth.key;
+          logger.debug('Using stored API key for OpenRouter authentication');
+        }
+      }
+
       if (!apiKey) {
         throw new AuthenticationError(
           'openrouter',
-          'OPENROUTER_API_KEY', 
-          'No authentication found for OpenRouter'
+          'OPENROUTER_API_KEY',
+          'No authentication found for OpenRouter. Run `agentuse auth login openrouter` or set OPENROUTER_API_KEY'
         );
       }
     }
-    
+
     if (!apiKey) {
       throw new Error('Failed to obtain API key for OpenRouter');
     }

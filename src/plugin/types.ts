@@ -10,6 +10,8 @@ export interface ToolCallTrace {
   tokens?: number;        // Tokens used (for sub-agents and LLM calls)
   promptTokens?: number;  // Input tokens (for LLM calls)
   completionTokens?: number; // Output tokens (for LLM calls)
+  success?: boolean;      // Whether the tool call succeeded
+  input?: unknown;        // Tool call input/arguments
 }
 
 export interface AgentCompleteEvent {

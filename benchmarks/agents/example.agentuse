@@ -1,0 +1,9 @@
+---
+# Example Agent for Benchmarking
+# The ${model} placeholder is replaced by the benchmark runner
+model: ${model}
+timeout: 60
+---
+
+You are a helpful assistant being evaluated on a benchmark.
+Answer questions clearly and concisely.

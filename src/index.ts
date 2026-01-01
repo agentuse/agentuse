@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { parseAgent, parseAgentContent } from './parser';
+import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
 import { runAgent, prepareAgentExecution, type PreparedAgentExecution } from './runner';
 import { Command } from 'commander';
@@ -8,6 +8,7 @@ import { createSessionsCommand } from './cli/sessions';
 import { createServeCommand } from './cli/serve';
 import { createModelsCommand } from './cli/models';
 import { createSkillsCommand } from './cli/skills';
+import { createBenchmarkCommand } from './cli/benchmark';
 import { logger, LogLevel } from './utils/logger';
 import { basename, resolve, dirname, join } from 'path';
 import * as readline from 'readline';
@@ -111,6 +112,9 @@ program.addCommand(createModelsCommand());
 
 // Add skills command
 program.addCommand(createSkillsCommand());
+
+// Add benchmark command (hidden from help)
+program.addCommand(createBenchmarkCommand(), { hidden: true });
 
 program
   .command('run <file> [prompt...]')
@@ -609,22 +613,14 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         process.chdir(originalCwd);
       }
 
-      // Capture telemetry for errors (if telemetry was initialized)
-      // Use 'unknown' provider/model if agent wasn't loaded yet
-      const errorType = error instanceof AuthenticationError ? 'api_error' as const : categorizeError(error);
-      telemetry.captureExecution({
-        provider: 'unknown',
-        modelName: 'unknown',
-        durationMs: Date.now() - startTime,
-        inputTokens: 0,
-        outputTokens: 0,
-        success: false,
-        ...(errorType && { errorType }),
-      });
-      await telemetry.shutdown();
-
-      // Check if it's an authentication error
+      // Capture telemetry for startup errors (auth, config) or execution errors
       if (error instanceof AuthenticationError) {
+        telemetry.captureStartupError({
+          type: 'auth',
+          provider: error.provider,
+        });
+        await telemetry.shutdown();
+
         console.error(`\n[ERROR] ${error.message}`);
         console.error('');
         console.error('To authenticate, run:');
@@ -636,6 +632,31 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         console.error('For more options: agentuse auth --help');
         process.exit(1);
       }
+
+      if (error instanceof ConfigError) {
+        telemetry.captureStartupError({
+          type: 'config',
+          field: error.field,
+          issue: error.issue,
+        });
+        await telemetry.shutdown();
+
+        logger.error('Error', error);
+        process.exit(1);
+      }
+
+      // For other errors, use the execution event
+      const errorType = categorizeError(error);
+      telemetry.captureExecution({
+        provider: 'unknown',
+        modelName: 'unknown',
+        durationMs: Date.now() - startTime,
+        inputTokens: 0,
+        outputTokens: 0,
+        success: false,
+        ...(errorType && { errorType }),
+      });
+      await telemetry.shutdown();
 
       logger.error('Error', error as Error);
       process.exit(1);

@@ -42,6 +42,17 @@ export interface ErrorPatterns {
   mcpConnectionFailures: number;
 }
 
+export interface StartupError {
+  /** Error type: 'auth' for authentication errors, 'config' for configuration errors */
+  type: 'auth' | 'config';
+  /** Provider that failed (for auth errors) */
+  provider?: string;
+  /** Config field that failed (for config errors) */
+  field?: string;
+  /** Zod error code (for config errors): "invalid_type", "unrecognized_keys", etc. */
+  issue?: string;
+}
+
 export interface ExecutionResult {
   /** Provider identifier (e.g., "anthropic", "openai", "openrouter") */
   provider: string;

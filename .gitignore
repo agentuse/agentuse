@@ -27,3 +27,7 @@ test-performance.ts
 dist/
 *.tgz
 .devtools
+__pycache__/
+
+# User local config and data
+.agentuse/

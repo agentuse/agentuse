@@ -333,7 +333,9 @@ export async function processAgentStream(
               type: isSubAgent ? 'subagent' : 'tool',
               startTime: pending.startTime,
               duration: chunk.toolDuration,
-              ...(tokens && { tokens })
+              ...(tokens && { tokens }),
+              success: toolSuccess,
+              input: pending.input,
             });
 
             // Update the session storage part with completed state

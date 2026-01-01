@@ -36,6 +36,13 @@ function buildToolDescription(skills: SkillInfo[]): string {
 }
 
 /**
+ * Substitute ${skillDir} variable in skill content
+ */
+function substituteSkillVariables(content: string, directory: string): string {
+  return content.replace(/\$\{skillDir\}/g, directory);
+}
+
+/**
  * Format the skill output with base directory and optional warnings
  */
 function formatSkillOutput(
@@ -44,6 +51,9 @@ function formatSkillOutput(
   content: string,
   warning: string | null
 ): string {
+  // Substitute ${skillDir} with actual directory path
+  const resolvedContent = substituteSkillVariables(content, directory);
+
   const parts = [
     `## Skill: ${name}`,
     '',
@@ -54,7 +64,7 @@ function formatSkillOutput(
     parts.push('', warning);
   }
 
-  parts.push('', content);
+  parts.push('', resolvedContent);
 
   return parts.join('\n');
 }

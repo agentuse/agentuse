@@ -1,0 +1,48 @@
+# Example Benchmark Suite
+# Copy this file to .agentuse/benchmark/suites/ and customize for your needs
+
+id: example
+name: "Example Benchmark Suite"
+description: "A minimal example showing the benchmark suite format"
+
+config:
+  # Models to compare (use provider:model format)
+  models:
+    - anthropic:claude-sonnet-4-5
+    - openai:gpt-5.2
+  # Number of runs per scenario (for statistical significance)
+  runs: 3
+  # Timeout per scenario in seconds
+  timeout: 120
+  # Maximum tool calls per scenario
+  maxSteps: 20
+
+tests:
+  # Each test references an agent file (relative to this suite file)
+  - agent: ../agents/example.agentuse
+    scenarios:
+      - id: simple-task
+        name: "Simple task example"
+        difficulty: easy  # easy, medium, hard (for reporting)
+        input: |
+          What is 2 + 2? Explain your reasoning.
+        expected:
+          output:
+            # "contains" - output must include these strings
+            type: contains
+            values:
+              - "4"
+
+      - id: llm-judge-example
+        name: "LLM judge example"
+        difficulty: medium
+        input: |
+          Write a haiku about programming.
+        expected:
+          output:
+            # "llm-judge" - use an LLM to evaluate the output
+            type: llm-judge
+            criteria: |
+              The output should be a valid haiku (5-7-5 syllable structure)
+              about programming or coding.
+            model: anthropic:claude-sonnet-4-5

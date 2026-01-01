@@ -5,6 +5,21 @@ import { resolve, basename } from 'path';
 import { logger } from './utils/logger';
 import { ToolsConfigSchema } from './tools/index.js';
 
+/**
+ * Error thrown when agent configuration is invalid
+ * Used for telemetry to track common config issues without exposing sensitive data
+ */
+export class ConfigError extends Error {
+  constructor(
+    message: string,
+    public field: string,  // e.g., "model", "mcpServers.foo" (for telemetry)
+    public issue: string   // Zod error code: "invalid_type", "unrecognized_keys", etc. (for telemetry)
+  ) {
+    super(message);
+    this.name = 'ConfigError';
+  }
+}
+
 // Schema for MCP server configuration
 const MCPServerSchema = z.union([
   // Stdio configuration (has command)
@@ -106,7 +121,16 @@ export function parseAgentContent(content: string, name: string): ParsedAgent {
     };
   } catch (error) {
     if (error instanceof z.ZodError) {
-      throw new Error(`Invalid agent configuration: ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`);
+      const firstError = error.errors[0];
+      const message = error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      // Sanitize field path: only include top-level field name to avoid exposing user-defined keys
+      // e.g., "mcpServers.my-secret-server.command" -> "mcpServers"
+      const topLevelField = String(firstError.path[0] ?? 'root');
+      throw new ConfigError(
+        `Invalid agent configuration: ${message}`,
+        topLevelField,
+        firstError.code
+      );
     }
     throw error;
   }
