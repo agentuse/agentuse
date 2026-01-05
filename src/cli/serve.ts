@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { createServer, IncomingMessage, ServerResponse } from "http";
+import { timingSafeEqual } from "crypto";
 import { resolve, dirname } from "path";
 import { existsSync } from "fs";
 import { glob } from "glob";
@@ -72,6 +73,29 @@ function sendError(res: ServerResponse, status: number, code: string, message: s
   sendJSON(res, status, { success: false, error: { code, message } });
 }
 
+function isExposedHost(host: string): boolean {
+  return host !== "127.0.0.1" && host !== "localhost";
+}
+
+function validateApiKey(req: IncomingMessage, expectedKey: string | undefined): boolean {
+  if (!expectedKey) return true;
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) return false;
+
+  const providedKey = authHeader.slice(7);
+  if (!providedKey) return false;
+
+  // Constant-time comparison to prevent timing attacks
+  try {
+    const expected = Buffer.from(expectedKey);
+    const provided = Buffer.from(providedKey);
+    return expected.length === provided.length && timingSafeEqual(expected, provided);
+  } catch {
+    return false;
+  }
+}
+
 export function createServeCommand(): Command {
   const serveCmd = new Command("serve")
     .description("Start an HTTP server to run agents via API")
@@ -79,10 +103,21 @@ export function createServeCommand(): Command {
     .option("-H, --host <string>", "Host to bind to", "127.0.0.1")
     .option("-C, --directory <path>", "Working directory for agent resolution")
     .option("-d, --debug", "Enable debug mode")
-    .action(async (options: { port: string; host: string; directory?: string; debug?: boolean }) => {
+    .option("--no-auth", "Disable API key requirement for exposed hosts (dangerous)")
+    .action(async (options: { port: string; host: string; directory?: string; debug?: boolean; auth: boolean }) => {
       const port = parseInt(options.port, 10);
       if (isNaN(port) || port <= 0 || port > 65535) {
         console.error("Invalid port number");
+        process.exit(1);
+      }
+
+      // Check API key requirement for exposed hosts
+      const apiKey = process.env.AGENTUSE_API_KEY;
+      const authDisabled = options.auth === false;
+
+      if (isExposedHost(options.host) && !apiKey && !authDisabled) {
+        console.error(chalk.red("Error: API key required when binding to exposed host"));
+        console.error(chalk.dim("Set AGENTUSE_API_KEY environment variable or use --no-auth to bypass (dangerous)"));
         process.exit(1);
       }
 
@@ -100,7 +135,17 @@ export function createServeCommand(): Command {
       }
 
       // Resolve project context
-      const projectContext = resolveProjectContext(workDir);
+      // If --directory is explicitly specified, use it directly as project root
+      // Otherwise, search upward for project markers
+      const projectContext = options.directory
+        ? {
+            projectRoot: workDir,
+            envFile: existsSync(resolve(workDir, '.env.local'))
+              ? resolve(workDir, '.env.local')
+              : resolve(workDir, '.env'),
+            pluginDirs: [],
+          }
+        : resolveProjectContext(workDir);
       logger.info(`Project root: ${projectContext.projectRoot}`);
 
       // Load environment
@@ -198,11 +243,17 @@ export function createServeCommand(): Command {
         // CORS headers
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization");
 
         if (req.method === "OPTIONS") {
           res.writeHead(204);
           res.end();
+          return;
+        }
+
+        // Auth check
+        if (apiKey && !validateApiKey(req, apiKey)) {
+          sendError(res, 401, "UNAUTHORIZED", "Invalid or missing Authorization header. Use: Authorization: Bearer <key>");
           return;
         }
 
@@ -416,6 +467,13 @@ export function createServeCommand(): Command {
         // Server info
         console.log(`  ${chalk.dim("Server")}    ${chalk.cyan(serverUrl)}`);
         console.log(`  ${chalk.dim("Directory")} ${projectContext.projectRoot}`);
+        if (apiKey) {
+          console.log(`  ${chalk.dim("Auth")}      ${chalk.green("API key required")}`);
+        } else if (isExposedHost(options.host)) {
+          console.log(`  ${chalk.dim("Auth")}      ${chalk.yellow("No API key (--no-auth)")}`);
+        } else {
+          console.log(`  ${chalk.dim("Auth")}      ${chalk.dim("None (localhost)")}`);
+        }
 
         // Loaded agents
         if (agentFiles.length > 0) {
@@ -427,7 +485,8 @@ export function createServeCommand(): Command {
 
         // Webhooks
         console.log(`\n  ${chalk.dim("Webhooks")}`);
-        console.log(`    curl -X POST ${serverUrl}/run -H "Content-Type: application/json" -d '{"agent": "${firstAgent}"}'`);
+        const authHeader = apiKey ? ` -H "Authorization: Bearer $AGENTUSE_API_KEY"` : "";
+        console.log(`    curl -X POST ${serverUrl}/run${authHeader} -H "Content-Type: application/json" -d '{"agent": "${firstAgent}"}'`);
         console.log(`    ${chalk.dim(`curl -N ... -H "Accept: application/x-ndjson" -d '{"agent": "..."}' (streaming)`)}`);
 
         // Scheduled agents
