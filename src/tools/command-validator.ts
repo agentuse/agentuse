@@ -1,7 +1,9 @@
 import * as path from 'path';
+import * as os from 'os';
 import type { CommandValidationResult } from './types.js';
 import { parseBashCommand, extractPaths, type ParsedCommand } from './bash-parser.js';
 import { matchStructured, type StructuredCommand } from './wildcard.js';
+import { resolveRealPath, type PathResolverContext } from './path-validator.js';
 
 // Built-in denylist - always blocked, cannot be overridden
 const BUILTIN_DENYLIST: Record<string, boolean> = {
@@ -68,8 +70,14 @@ export class CommandValidator {
   private readonly allowedPatterns: Record<string, 'allow' | 'deny'>;
   private readonly projectRoot: string | null;
   private readonly allowedPaths: string[];
+  private readonly context: PathResolverContext | null;
 
-  constructor(allowedPatterns: string[], projectRoot?: string, allowedPaths?: string[]) {
+  constructor(
+    allowedPatterns: string[],
+    projectRoot?: string,
+    allowedPaths?: string[],
+    context?: PathResolverContext
+  ) {
     // Convert array of patterns to Record with "allow" value
     this.allowedPatterns = {};
     for (const pattern of allowedPatterns) {
@@ -81,6 +89,35 @@ export class CommandValidator {
 
     this.projectRoot = projectRoot ?? null;
     this.allowedPaths = allowedPaths ?? [];
+    this.context = context ?? (projectRoot ? { projectRoot } : null);
+  }
+
+  /**
+   * Resolve variable placeholders in an allowed path.
+   * Supported: ${root}, ${agentDir}, ${tmpDir}, ~
+   */
+  private resolveAllowedPath(allowedPath: string): string {
+    let result = allowedPath;
+
+    // Resolve ~ for home directory
+    if (result.startsWith('~')) {
+      result = result.replace(/^~/, os.homedir());
+    }
+
+    // Resolve variables if context is available
+    if (this.context) {
+      const tmpDir = resolveRealPath(this.context.tmpDir ?? os.tmpdir());
+      result = result
+        .replace(/\$\{root\}/g, this.context.projectRoot)
+        .replace(/\$\{tmpDir\}/g, tmpDir);
+
+      // Only replace ${agentDir} if it's defined
+      if (this.context.agentDir) {
+        result = result.replace(/\$\{agentDir\}/g, this.context.agentDir);
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -134,12 +171,9 @@ export class CommandValidator {
       return true;
     }
 
-    // Check allowedPaths
+    // Check allowedPaths with variable resolution
     for (const allowedPath of this.allowedPaths) {
-      // Resolve ~ in allowedPath
-      const resolvedAllowedPath = allowedPath.startsWith('~')
-        ? allowedPath.replace(/^~/, process.env.HOME || '/tmp')
-        : allowedPath;
+      const resolvedAllowedPath = this.resolveAllowedPath(allowedPath);
 
       if (this.isPathWithin(filePath, resolvedAllowedPath)) {
         return true;

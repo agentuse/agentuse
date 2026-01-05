@@ -2,8 +2,10 @@ import type { Tool } from 'ai';
 import { z } from 'zod';
 import { spawn } from 'child_process';
 import * as path from 'path';
+import * as os from 'os';
 import { CommandValidator } from './command-validator.js';
 import type { BashConfig, ToolOutput, ToolErrorOutput } from './types.js';
+import { resolveRealPath, type PathResolverContext } from './path-validator.js';
 
 const DEFAULT_TIMEOUT = 120000; // 2 minutes
 const DEFAULT_MAX_OUTPUT = 30 * 1024; // 30KB
@@ -115,9 +117,40 @@ async function killProcessTree(pid: number): Promise<void> {
 }
 
 /**
+ * Resolve variable placeholders in an allowed path.
+ * Supported: ${root}, ${agentDir}, ${tmpDir}, ~
+ */
+function resolveAllowedPath(allowedPath: string, context: PathResolverContext): string {
+  let result = allowedPath;
+
+  // Resolve ~ for home directory
+  if (result.startsWith('~')) {
+    result = result.replace(/^~/, os.homedir());
+  }
+
+  // Resolve variables
+  const tmpDir = resolveRealPath(context.tmpDir ?? os.tmpdir());
+  result = result
+    .replace(/\$\{root\}/g, context.projectRoot)
+    .replace(/\$\{tmpDir\}/g, tmpDir);
+
+  // Only replace ${agentDir} if it's defined
+  if (context.agentDir) {
+    result = result.replace(/\$\{agentDir\}/g, context.agentDir);
+  }
+
+  return result;
+}
+
+/**
  * Check if a path is within any of the allowed directories
  */
-function isPathWithinAllowed(targetPath: string, projectRoot: string, allowedPaths: string[]): boolean {
+function isPathWithinAllowed(
+  targetPath: string,
+  projectRoot: string,
+  allowedPaths: string[],
+  context: PathResolverContext
+): boolean {
   const normalizedTarget = path.normalize(targetPath);
 
   // Check project root
@@ -127,12 +160,9 @@ function isPathWithinAllowed(targetPath: string, projectRoot: string, allowedPat
     return true;
   }
 
-  // Check allowedPaths
+  // Check allowedPaths with variable resolution
   for (const allowedPath of allowedPaths) {
-    // Resolve ~ in allowedPath
-    const resolvedAllowedPath = allowedPath.startsWith('~')
-      ? allowedPath.replace(/^~/, process.env.HOME || '/tmp')
-      : allowedPath;
+    const resolvedAllowedPath = resolveAllowedPath(allowedPath, context);
     const normalizedAllowed = path.normalize(resolvedAllowedPath);
     const relative = path.relative(normalizedAllowed, normalizedTarget);
     if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
@@ -148,10 +178,12 @@ function isPathWithinAllowed(targetPath: string, projectRoot: string, allowedPat
  */
 export function createBashTool(
   config: BashConfig,
-  projectRoot: string
+  projectRoot: string,
+  context?: PathResolverContext
 ): Tool {
   const allowedPaths = config.allowedPaths ?? [];
-  const validator = new CommandValidator(config.commands, projectRoot, allowedPaths);
+  const resolverContext: PathResolverContext = context ?? { projectRoot };
+  const validator = new CommandValidator(config.commands, projectRoot, allowedPaths, resolverContext);
   const defaultTimeout = config.timeout || DEFAULT_TIMEOUT;
 
   // Build description with allowed commands
@@ -193,7 +225,7 @@ Commands not matching these patterns will be rejected.`;
           : path.resolve(projectRoot, workdir);
 
         // Security: ensure workdir is within allowed directories
-        if (!isPathWithinAllowed(resolvedWorkdir, projectRoot, allowedPaths)) {
+        if (!isPathWithinAllowed(resolvedWorkdir, projectRoot, allowedPaths, resolverContext)) {
           const error: ToolErrorOutput = {
             success: false,
             error: `Working directory must be within allowed paths: ${workdir}`,

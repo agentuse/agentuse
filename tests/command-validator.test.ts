@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { CommandValidator } from '../src/tools/command-validator';
 import * as path from 'path';
 import * as os from 'os';
-import * as fs from 'fs';
+import * as fs from 'node:fs';
 
 describe('CommandValidator', () => {
   const projectRoot = path.join(os.tmpdir(), 'test-project');
@@ -208,6 +208,68 @@ describe('CommandValidator', () => {
 
       const homeDir = process.env.HOME || '/tmp';
       const result = await validator.validate(`cd ${homeDir}`);
+      expect(result.allowed).toBe(true);
+    });
+
+    test('supports ${tmpDir} in allowedPaths', async () => {
+      const validator = new CommandValidator(['cd *'], projectRoot, ['${tmpDir}'], { projectRoot });
+
+      // Use resolved real path (handles macOS /var -> /private/var symlink)
+      let tmpDir = os.tmpdir();
+      try {
+        tmpDir = fs.realpathSync(tmpDir);
+      } catch { /* ignore */ }
+      const result = await validator.validate(`cd ${tmpDir}`);
+      expect(result.allowed).toBe(true);
+    });
+
+    test('supports ${tmpDir} with custom value', async () => {
+      const customTmpDir = '/custom/tmp';
+      const validator = new CommandValidator(['cd *'], projectRoot, ['${tmpDir}'], { projectRoot, tmpDir: customTmpDir });
+
+      const result = await validator.validate('cd /custom/tmp');
+      expect(result.allowed).toBe(true);
+
+      // Should NOT allow default system tmpdir (resolved to real path)
+      let sysTmpDir = os.tmpdir();
+      try {
+        sysTmpDir = fs.realpathSync(sysTmpDir);
+      } catch { /* ignore */ }
+      const result2 = await validator.validate(`cd ${sysTmpDir}`);
+      expect(result2.allowed).toBe(false);
+    });
+
+    test('supports ${root} in allowedPaths', async () => {
+      const validator = new CommandValidator(['cd *'], projectRoot, ['${root}/other'], { projectRoot });
+
+      const result = await validator.validate(`cd ${projectRoot}/other`);
+      expect(result.allowed).toBe(true);
+    });
+
+    test('supports ${agentDir} in allowedPaths when provided', async () => {
+      const agentDir = path.join(projectRoot, 'agents');
+      const validator = new CommandValidator(['cd *'], projectRoot, ['${agentDir}'], { projectRoot, agentDir });
+
+      const result = await validator.validate(`cd ${agentDir}`);
+      expect(result.allowed).toBe(true);
+    });
+
+    test('does not resolve ${agentDir} when not provided', async () => {
+      const outsideDir = '/outside/agents';
+      const validator = new CommandValidator(['cd *'], projectRoot, ['${agentDir}'], { projectRoot });
+
+      // ${agentDir} won't be resolved, so pattern "${agentDir}" won't match /outside/agents
+      // This path is also outside project root, so it should be blocked
+      const result = await validator.validate(`cd ${outsideDir}`);
+      expect(result.allowed).toBe(false);
+    });
+
+    test('resolves ${agentDir} to allow access when provided', async () => {
+      const outsideAgentDir = '/outside/agents';
+      const validator = new CommandValidator(['cd *'], projectRoot, ['${agentDir}'], { projectRoot, agentDir: outsideAgentDir });
+
+      // With agentDir provided, ${agentDir} resolves to /outside/agents, so it should be allowed
+      const result = await validator.validate(`cd ${outsideAgentDir}`);
       expect(result.allowed).toBe(true);
     });
   });

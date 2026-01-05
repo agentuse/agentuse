@@ -30,6 +30,19 @@ export interface PathResolverContext {
 }
 
 /**
+ * Resolve a path to its real path, following symlinks.
+ * Handles macOS /var -> /private/var and similar symlinks.
+ * Returns the original path if resolution fails (e.g., path doesn't exist).
+ */
+export function resolveRealPath(inputPath: string): string {
+  try {
+    return fs.realpathSync(inputPath);
+  } catch {
+    return inputPath;
+  }
+}
+
+/**
  * Resolve safe variable placeholders in a string.
  * Only resolves ${root}, ${agentDir}, ${tmpDir} - NOT ${env:*} to prevent secret exposure.
  *
@@ -38,9 +51,10 @@ export interface PathResolverContext {
  * @returns The text with safe variables resolved
  */
 export function resolveSafeVariables(text: string, context: PathResolverContext): string {
+  const tmpDir = resolveRealPath(context.tmpDir ?? os.tmpdir());
   let result = text
     .replace(/\$\{root\}/g, context.projectRoot)
-    .replace(/\$\{tmpDir\}/g, context.tmpDir ?? os.tmpdir());
+    .replace(/\$\{tmpDir\}/g, tmpDir);
 
   // Only replace ${agentDir} if it's defined
   if (context.agentDir) {
@@ -60,7 +74,7 @@ export class PathValidator {
     this.configs = configs;
     this.projectRoot = context.projectRoot;
     this.agentDir = context.agentDir;
-    this.tmpDir = context.tmpDir ?? os.tmpdir();
+    this.tmpDir = resolveRealPath(context.tmpDir ?? os.tmpdir());
   }
 
   /**
@@ -151,7 +165,9 @@ export class PathValidator {
   }
 
   /**
-   * Check if a path matches a glob pattern
+   * Check if a path matches a pattern.
+   * - If pattern has no glob chars (*, ?, [): uses containment (path is within directory)
+   * - If pattern has glob chars: uses glob matching via minimatch
    */
   private matchesPattern(filePath: string, pattern: string): boolean {
     const resolvedPattern = this.resolveVariables(pattern);
@@ -160,6 +176,13 @@ export class PathValidator {
     const normalizedPath = path.normalize(filePath);
     const normalizedPattern = path.normalize(resolvedPattern);
 
+    // If no glob characters, use containment (industry standard: path = path/**)
+    if (!/[*?[\]]/.test(normalizedPattern)) {
+      const relative = path.relative(normalizedPattern, normalizedPath);
+      return !relative.startsWith('..') && !path.isAbsolute(relative);
+    }
+
+    // Otherwise use glob matching
     return minimatch(normalizedPath, normalizedPattern, {
       dot: true,        // Match dotfiles
       matchBase: false, // Don't match basename only

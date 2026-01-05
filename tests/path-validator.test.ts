@@ -440,14 +440,16 @@ describe('PathValidator Security', () => {
       expect(patterns[0]).toBe('${agentDir}/**');
     });
 
-    it('resolves ${tmpDir} variable', () => {
+    it('resolves ${tmpDir} variable to real path', () => {
       const configs: FilesystemPathConfig[] = [
         { path: '${tmpDir}/**', permissions: ['read'] },
       ];
       const validator = new PathValidator(configs, { projectRoot });
 
       const patterns = validator.getPatternsForPermission('read');
-      expect(patterns[0]).toBe(os.tmpdir() + '/**');
+      // Uses real path to handle macOS /var -> /private/var symlink
+      const expectedTmpDir = fs.realpathSync(os.tmpdir());
+      expect(patterns[0]).toBe(expectedTmpDir + '/**');
     });
 
     it('resolves ${tmpDir} to custom value when provided', () => {
@@ -509,6 +511,120 @@ describe('PathValidator Security', () => {
 
       const result = validator.validate(path.join(projectRoot, '.gitignore'), 'read');
       expect(result.allowed).toBe(true);
+    });
+  });
+
+  describe('containment mode (path without glob chars)', () => {
+    it('treats plain path as containment (path = path/**)', () => {
+      // This is the key behavior change: path without glob chars uses containment
+      const configs: FilesystemPathConfig[] = [
+        { path: projectRoot, permissions: ['read'] }, // No /** suffix
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      fs.writeFileSync(path.join(projectRoot, 'file.txt'), 'content');
+
+      // Should allow files in directory (containment)
+      const result = validator.validate(path.join(projectRoot, 'file.txt'), 'read');
+      expect(result.allowed).toBe(true);
+    });
+
+    it('allows deeply nested files with containment', () => {
+      const configs: FilesystemPathConfig[] = [
+        { path: projectRoot, permissions: ['read'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      fs.mkdirSync(path.join(projectRoot, 'a', 'b', 'c'), { recursive: true });
+      fs.writeFileSync(path.join(projectRoot, 'a', 'b', 'c', 'deep.txt'), 'content');
+
+      const result = validator.validate(
+        path.join(projectRoot, 'a', 'b', 'c', 'deep.txt'),
+        'read'
+      );
+      expect(result.allowed).toBe(true);
+    });
+
+    it('blocks files outside containment directory', () => {
+      const configs: FilesystemPathConfig[] = [
+        { path: path.join(projectRoot, 'src'), permissions: ['read'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      fs.mkdirSync(path.join(projectRoot, 'src'), { recursive: true });
+      fs.mkdirSync(path.join(projectRoot, 'other'), { recursive: true });
+      fs.writeFileSync(path.join(projectRoot, 'other', 'file.txt'), 'content');
+
+      const result = validator.validate(path.join(projectRoot, 'other', 'file.txt'), 'read');
+      expect(result.allowed).toBe(false);
+    });
+
+    it('works with ${root} variable in containment mode', () => {
+      const configs: FilesystemPathConfig[] = [
+        { path: '${root}', permissions: ['read'] }, // No /** suffix
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      fs.writeFileSync(path.join(projectRoot, 'file.txt'), 'content');
+
+      const result = validator.validate(path.join(projectRoot, 'file.txt'), 'read');
+      expect(result.allowed).toBe(true);
+    });
+
+    it('works with ${root}/subdir in containment mode', () => {
+      const configs: FilesystemPathConfig[] = [
+        { path: '${root}/src', permissions: ['read'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      fs.mkdirSync(path.join(projectRoot, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(projectRoot, 'src', 'index.ts'), 'export {}');
+
+      expect(validator.validate(path.join(projectRoot, 'src', 'index.ts'), 'read').allowed).toBe(true);
+      expect(validator.validate(path.join(projectRoot, 'other.ts'), 'read').allowed).toBe(false);
+    });
+
+    it('still uses glob when pattern has * char', () => {
+      const configs: FilesystemPathConfig[] = [
+        { path: `${projectRoot}/*.ts`, permissions: ['read'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      fs.writeFileSync(path.join(projectRoot, 'index.ts'), 'export {}');
+      fs.mkdirSync(path.join(projectRoot, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(projectRoot, 'src', 'nested.ts'), 'export {}');
+
+      // *.ts should match root .ts files only (glob mode)
+      expect(validator.validate(path.join(projectRoot, 'index.ts'), 'read').allowed).toBe(true);
+      expect(validator.validate(path.join(projectRoot, 'src', 'nested.ts'), 'read').allowed).toBe(false);
+    });
+
+    it('still uses glob when pattern has ? char', () => {
+      const configs: FilesystemPathConfig[] = [
+        { path: `${projectRoot}/file?.txt`, permissions: ['read'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      fs.writeFileSync(path.join(projectRoot, 'file1.txt'), 'content');
+      fs.writeFileSync(path.join(projectRoot, 'file12.txt'), 'content');
+
+      expect(validator.validate(path.join(projectRoot, 'file1.txt'), 'read').allowed).toBe(true);
+      expect(validator.validate(path.join(projectRoot, 'file12.txt'), 'read').allowed).toBe(false);
+    });
+
+    it('still uses glob when pattern has [ char', () => {
+      const configs: FilesystemPathConfig[] = [
+        { path: `${projectRoot}/file[12].txt`, permissions: ['read'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      fs.writeFileSync(path.join(projectRoot, 'file1.txt'), 'content');
+      fs.writeFileSync(path.join(projectRoot, 'file2.txt'), 'content');
+      fs.writeFileSync(path.join(projectRoot, 'file3.txt'), 'content');
+
+      expect(validator.validate(path.join(projectRoot, 'file1.txt'), 'read').allowed).toBe(true);
+      expect(validator.validate(path.join(projectRoot, 'file2.txt'), 'read').allowed).toBe(true);
+      expect(validator.validate(path.join(projectRoot, 'file3.txt'), 'read').allowed).toBe(false);
     });
   });
 
@@ -639,10 +755,12 @@ describe('resolveSafeVariables', () => {
     expect(result).toBe('Agent is at ${agentDir}');
   });
 
-  it('resolves ${tmpDir} to system tmpdir by default', () => {
+  it('resolves ${tmpDir} to system tmpdir by default (real path)', () => {
     const text = 'Temp is at ${tmpDir}';
     const result = resolveSafeVariables(text, { projectRoot });
-    expect(result).toBe(`Temp is at ${os.tmpdir()}`);
+    // Uses real path to handle macOS /var -> /private/var symlink
+    const expectedTmpDir = fs.realpathSync(os.tmpdir());
+    expect(result).toBe(`Temp is at ${expectedTmpDir}`);
   });
 
   it('resolves ${tmpDir} to custom value when provided', () => {
