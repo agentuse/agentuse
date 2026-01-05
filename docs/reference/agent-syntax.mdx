@@ -129,19 +129,51 @@ Additional instructions or context.
 
 <ParamField path="openai" type="object" required={false}>
   OpenAI-specific options for GPT-5 and other OpenAI models.
-  
+
   **Supported Options:**
   - `reasoningEffort`: Controls the computational effort for reasoning models (`'low'`, `'medium'`, `'high'`)
   - `textVerbosity`: Controls response length and detail (`'low'`, `'medium'`, `'high'`)
-  
+
   ```yaml
   openai:
     reasoningEffort: high  # More thorough reasoning
     textVerbosity: low     # Concise responses
   ```
-  
+
   <Note>
     These options are particularly useful with GPT-5 models to balance between response quality, speed, and cost.
+  </Note>
+</ParamField>
+
+<ParamField path="schedule" type="object" required={false}>
+  Cron-based scheduling for automatic agent execution in serve mode.
+
+  **Schedule Types (mutually exclusive):**
+  - `cron`: Standard cron expression (e.g., `"0 * * * *"`)
+  - `interval`: Simple interval format (`5s`, `10m`, `2h`, `1d`)
+  - `every`: Natural language aliases (`"every 5 minutes"`, `"hourly"`, `"daily"`)
+
+  **Additional Options:**
+  - `enabled`: Enable/disable the schedule (default: `true`)
+  - `timezone`: Timezone for schedule execution (default: system timezone)
+
+  ```yaml
+  # Using cron expression
+  schedule:
+    cron: "0 9 * * 1-5"    # Weekdays at 9am
+    timezone: "America/New_York"
+
+  # Using interval
+  schedule:
+    interval: "30m"        # Every 30 minutes
+
+  # Using natural language
+  schedule:
+    every: "hourly"        # Supported: every minute, every 5/10/15/30 minutes, hourly, daily, weekly, monthly
+  ```
+
+  <Note>
+    Schedules only run when the agent is loaded via `agentuse serve`. Use `agentuse run` for one-off executions.
   </Note>
 </ParamField>
 

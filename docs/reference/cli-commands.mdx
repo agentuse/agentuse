@@ -240,7 +240,32 @@ agentuse serve [options]
 -H, --host <string>     Host to bind to (default: 127.0.0.1)
 -C, --directory <path>  Working directory for agent resolution
 -d, --debug             Enable debug mode
+--no-auth               Disable API key requirement for exposed hosts (dangerous)
 ```
+
+### Authentication
+
+When binding to exposed hosts (not `127.0.0.1` or `localhost`), API key authentication is required:
+
+```bash
+# Set API key for authentication
+export AGENTUSE_API_KEY="your-secret-key"
+
+# Start server on all interfaces
+agentuse serve --host 0.0.0.0
+```
+
+Clients must include the key in requests:
+```bash
+curl -X POST http://server:12233/run \
+  -H "Authorization: Bearer your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{"agent": "my-agent.agentuse"}'
+```
+
+<Warning>
+  Use `--no-auth` to bypass authentication (dangerous for production).
+</Warning>
 
 ### API Endpoint
 
@@ -369,6 +394,30 @@ curl -N -X POST http://127.0.0.1:12233/run \
   -H "Content-Type: application/json" \
   -H "Accept: application/x-ndjson" \
   -d '{"agent": "agents/analyzer.agentuse"}'
+```
+
+### Scheduled Agents
+
+Agents with a `schedule` config in their frontmatter are automatically loaded and executed on schedule:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+schedule:
+  every: "hourly"          # Natural language aliases
+  # cron: "0 * * * *"      # Or cron expressions
+  # interval: "30m"        # Or intervals (5s, 10m, 2h, 1d)
+  timezone: "UTC"          # Optional timezone
+---
+```
+
+On startup, the server scans for `.agentuse` files with schedules and displays them:
+
+```
+Scheduled (2)
+  Agent                  Schedule        Next Run
+  reports/daily.agentuse 0 0 * * *      2024-01-02 00:00:00
+  monitors/check.agentuse */15 * * * *  2024-01-01 12:15:00
 ```
 
 <Info>

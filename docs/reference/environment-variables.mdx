@@ -73,6 +73,25 @@ model: anthropic:claude-sonnet-4-5:dev  # Uses ANTHROPIC_API_KEY_DEV
 ---
 ```
 
+## Serve Mode
+
+<ParamField path="AGENTUSE_API_KEY" type="string">
+  API key for authenticating requests to the serve mode HTTP server.
+  Required when binding to exposed hosts (not `127.0.0.1` or `localhost`).
+
+  ```bash
+  export AGENTUSE_API_KEY="your-secret-key"
+  agentuse serve --host 0.0.0.0
+  ```
+
+  Clients authenticate via Bearer token:
+  ```bash
+  curl -X POST http://server:12233/run \
+    -H "Authorization: Bearer your-secret-key" \
+    -d '{"agent": "my-agent.agentuse"}'
+  ```
+</ParamField>
+
 ## Behavior Control
 
 <ParamField path="MAX_STEPS" type="number">
