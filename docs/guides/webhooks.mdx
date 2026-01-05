@@ -1,0 +1,248 @@
+---
+title: Webhooks
+description: Trigger agents via HTTP using the serve API
+---
+
+Run agents on-demand via HTTP webhooks using `agentuse serve`. Integrate with external services, CI/CD pipelines, or any system that can make HTTP requests.
+
+## Quick Start
+
+1. Start the server:
+
+```bash
+agentuse serve
+```
+
+2. Trigger an agent via HTTP:
+
+```bash
+curl -X POST http://127.0.0.1:12233/run \
+  -H "Content-Type: application/json" \
+  -d '{"agent": "assistant.agentuse"}'
+```
+
+## API Reference
+
+### POST /run
+
+Execute an agent and receive the result.
+
+**Request:**
+
+```json
+{
+  "agent": "path/to/agent.agentuse",
+  "prompt": "Optional additional instructions",
+  "model": "anthropic:claude-sonnet-4-5",
+  "timeout": 300,
+  "maxSteps": 100
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent` | string | Yes | Path to agent file (relative to project root) |
+| `prompt` | string | No | Additional prompt appended to agent instructions |
+| `model` | string | No | Override model in agent file |
+| `timeout` | number | No | Max execution time in seconds (default: 300) |
+| `maxSteps` | number | No | Max tool call steps |
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "result": {
+    "text": "Agent response",
+    "finishReason": "end-turn",
+    "duration": 1234,
+    "tokens": { "input": 500, "output": 200 },
+    "toolCalls": 3
+  }
+}
+```
+
+**Error Response:**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "AGENT_NOT_FOUND",
+    "message": "Agent file not found: my-agent.agentuse"
+  }
+}
+```
+
+| Error Code | HTTP Status | Description |
+|------------|-------------|-------------|
+| `AGENT_NOT_FOUND` | 404 | Agent file doesn't exist |
+| `INVALID_PATH` | 400 | Path outside project root |
+| `INVALID_REQUEST` | 400 | Invalid JSON body |
+| `MISSING_FIELD` | 400 | Required field missing |
+| `TIMEOUT` | 504 | Execution timed out |
+| `EXECUTION_ERROR` | 500 | Runtime error |
+
+## Streaming Response
+
+For real-time output, request NDJSON streaming:
+
+```bash
+curl -N -X POST http://127.0.0.1:12233/run \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/x-ndjson" \
+  -d '{"agent": "analyzer.agentuse"}'
+```
+
+Each line is a JSON event:
+
+```json
+{"type": "text", "text": "Analyzing..."}
+{"type": "tool-call", "name": "read_file", "args": {"path": "data.txt"}}
+{"type": "tool-result", "name": "read_file", "result": "..."}
+{"type": "text", "text": "Complete!"}
+{"type": "finish", "finishReason": "end-turn", "duration": 2345}
+```
+
+## Authentication
+
+When exposing the server externally, authentication is required:
+
+```bash
+# Set API key
+export AGENTUSE_API_KEY="your-secret-key"
+
+# Start on all interfaces
+agentuse serve --host 0.0.0.0
+```
+
+Include the key in requests:
+
+```bash
+curl -X POST http://server:12233/run \
+  -H "Authorization: Bearer your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{"agent": "assistant.agentuse"}'
+```
+
+<Warning>
+Use `--no-auth` to bypass authentication (dangerous for production).
+</Warning>
+
+## Exposing Your Local Server
+
+<Tabs>
+  <Tab title="Tailscale (Private)">
+    Access from your devices or team only:
+
+    ```bash
+    brew install tailscale
+    tailscale up
+    agentuse serve
+    ```
+
+    Connect via `http://<machine-name>:12233` from any device on your tailnet.
+  </Tab>
+  <Tab title="Cloudflare Tunnel (Public)">
+    Expose to the internet for external webhooks:
+
+    ```bash
+    brew install cloudflared
+    agentuse serve
+    cloudflared tunnel --url http://localhost:12233
+    ```
+
+    Prints a public `https://xxx.trycloudflare.com` URL with automatic HTTPS.
+  </Tab>
+</Tabs>
+
+## Integration Examples
+
+### GitHub Webhook
+
+Create an agent to handle GitHub events:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+description: Process GitHub webhook events
+tools:
+  bash:
+    commands:
+      - "gh *"
+      - "git *"
+---
+
+Process the incoming GitHub event and take appropriate action.
+```
+
+Configure a GitHub webhook to POST to your server:
+
+```
+URL: https://your-server.com/run
+Content-Type: application/json
+Body: {"agent": "github-handler.agentuse", "prompt": "<webhook payload>"}
+```
+
+### Slack Integration
+
+Slack slash commands require a response within 3 seconds and signature verification. Use a workflow tool as middleware:
+
+**With n8n or Make:**
+1. Add Slack trigger node (receives slash commands)
+2. Add HTTP Request node → POST to `http://server:12233/run`
+3. Return agent response to Slack
+
+**With Zapier:**
+1. Trigger: Slack → New Slash Command
+2. Action: Webhooks → POST to AgentUse `/run`
+3. Action: Slack → Send Channel Message with result
+
+<Note>
+Direct Slack integration requires handling the 3-second timeout, form-urlencoded parsing, and request signature verification. Workflow tools handle this automatically.
+</Note>
+
+### n8n / Make / Zapier
+
+Use HTTP request nodes to trigger agents:
+
+1. Set URL to `http://your-server:12233/run`
+2. Method: POST
+3. Headers: `Content-Type: application/json`
+4. Body:
+```json
+{
+  "agent": "workflow-agent.agentuse",
+  "prompt": "{{trigger.data}}"
+}
+```
+
+### Cron Job (External)
+
+Trigger from system cron instead of built-in scheduler:
+
+```bash
+# /etc/cron.d/agent-tasks
+0 * * * * curl -s -X POST http://127.0.0.1:12233/run \
+  -H "Content-Type: application/json" \
+  -d '{"agent": "hourly-task.agentuse"}'
+```
+
+## Server Configuration
+
+See [CLI Commands - agentuse serve](/reference/cli-commands#agentuse-serve) for all server options including port, host, debug mode, and authentication configuration.
+
+## Production Deployment
+
+For deploying `agentuse serve` in production with reverse proxies (nginx), process management (PM2), and Docker, see [Self-Hosting](/guides/self-hosting#production-deployment).
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Scheduled Agents" icon="clock" href="/guides/schedule">
+    Run agents on a cron schedule
+  </Card>
+  <Card title="Self-Hosting" icon="server" href="/guides/self-hosting">
+    Deploy in production
+  </Card>
+</CardGroup>

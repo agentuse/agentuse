@@ -195,6 +195,65 @@ docker buildx build \
   --push .
 ```
 
+## Production Deployment
+
+For production use, run behind a reverse proxy with process management.
+
+### Reverse Proxy with nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name agents.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:12233;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+### Process Management with PM2
+
+```javascript
+// ecosystem.config.js
+module.exports = {
+  apps: [{
+    name: 'agentuse-server',
+    script: 'npx',
+    args: 'agentuse serve --port 12233',
+    cwd: '/path/to/project',
+    env: {
+      AGENTUSE_API_KEY: 'your-secret-key',
+      ANTHROPIC_API_KEY: 'sk-ant-...'
+    }
+  }]
+}
+```
+
+<AccordionGroup>
+  <Accordion title="Rate limiting">
+    Configure rate limiting in nginx to prevent abuse:
+    ```nginx
+    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+
+    location / {
+        limit_req zone=api burst=20 nodelay;
+        proxy_pass http://127.0.0.1:12233;
+    }
+    ```
+  </Accordion>
+  <Accordion title="SSL certificates">
+    Use Let's Encrypt for free SSL:
+    ```bash
+    certbot --nginx -d agents.example.com
+    ```
+  </Accordion>
+</AccordionGroup>
+
 ## Troubleshooting
 
 <AccordionGroup>

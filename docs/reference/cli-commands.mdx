@@ -73,26 +73,11 @@ This is useful for:
 
 #### Path Resolution Rules
 
-**For Subagents:**
-Paths are relative to the **parent agent file's directory**:
-```yaml
-# In /project/agents/main.agentuse
-subagents:
-  - path: ../utils/helper.agentuse  # Resolves to /project/utils/helper.agentuse
-```
+Subagent paths and MCP server commands are resolved relative to the **agent file's directory**.
 
-**For MCP Servers:**
-Command paths are relative to the **agent file's directory**:
-```yaml
-# In /project/agents/main.agentuse
-mcpServers:
-  custom:
-    command: ../tools/my-server  # Resolves to /project/tools/my-server
-```
-
-**For Environment Files:**
-- Default: `{project-root}/.env`
-- Override: `--env-file /path/to/.env`
+<Info>
+  See [Agent Syntax - Subagents](/reference/agent-syntax#subagents) for complete path resolution examples.
+</Info>
 
 ### Model Override
 
@@ -398,38 +383,23 @@ curl -N -X POST http://127.0.0.1:12233/run \
 
 ### Scheduled Agents
 
-Agents with a `schedule` config in their frontmatter are automatically loaded and executed on schedule:
+Agents with a `schedule` config in their frontmatter are automatically executed on schedule:
 
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-5
 schedule:
-  every: "hourly"          # Natural language aliases
-  # cron: "0 * * * *"      # Or cron expressions
-  # interval: "30m"        # Or intervals (5s, 10m, 2h, 1d)
-  timezone: "UTC"          # Optional timezone
+  every: "hourly"
 ---
 ```
 
-On startup, the server scans for `.agentuse` files with schedules and displays them:
-
-```
-Scheduled (2)
-  Agent                  Schedule        Next Run
-  reports/daily.agentuse 0 0 * * *      2024-01-02 00:00:00
-  monitors/check.agentuse */15 * * * *  2024-01-01 12:15:00
-```
+<Card title="Scheduled Agents Guide" icon="clock" href="/guides/schedule">
+  See the complete guide for cron expressions, intervals, natural language aliases, and best practices.
+</Card>
 
 <Info>
-  The server enables CORS by default, allowing requests from any origin.
-  This is suitable for development and internal tools.
+  The server enables CORS by default. For production, run behind a reverse proxy with authentication.
 </Info>
-
-<Warning>
-  For production use, consider running behind a reverse proxy (nginx, Caddy)
-  with proper authentication and rate limiting. The default host `127.0.0.1`
-  only accepts local connections.
-</Warning>
 
 ---
 
@@ -644,24 +614,7 @@ agentuse
 
 ## Environment Variables
 
-Control AgentUse behavior with environment variables:
-
-```bash
-# API Keys (required for respective providers)
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-OPENROUTER_API_KEY=sk-or-...
-
-# Custom API Key Suffixes (for different environments)
-ANTHROPIC_API_KEY_DEV=sk-ant-...  # For model: anthropic:claude-opus-4-5:dev
-OPENAI_API_KEY_PROD=sk-...        # For model: openai:gpt-5.2:prod
-
-# Behavior Control
-MAX_STEPS=1000            # Override max steps (default: 1000)
-
-# Development/Testing
-NODE_TLS_REJECT_UNAUTHORIZED=0    # Allow self-signed certs (localhost only)
-```
+Control AgentUse behavior with environment variables. See [Environment Variables Reference](/reference/environment-variables) for complete documentation.
 
 ## Exit Codes
 

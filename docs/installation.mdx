@@ -95,47 +95,15 @@ agentuse --version
 
 ## Authentication Setup
 
-AgentUse supports multiple AI providers. You'll need to authenticate with at least one:
-
-### Interactive Authentication (Recommended)
-
-The easiest way to set up authentication:
+AgentUse supports multiple AI providers. Authenticate using the interactive login:
 
 ```bash
-# Interactive prompt for all providers
 agentuse auth login
-
-# Or login to specific provider
-agentuse auth login anthropic
-agentuse auth login openai
-agentuse auth login openrouter
 ```
 
-### Environment Variables
-
-Alternatively, set API keys as environment variables:
-
-```bash
-# Add to your ~/.bashrc, ~/.zshrc, or ~/.profile
-export ANTHROPIC_API_KEY="sk-ant-api03-..."
-export OPENAI_API_KEY="sk-proj-..."
-export OPENROUTER_API_KEY="sk-or-v1-..."
-```
-
-### Configuration File
-
-Create a `.env` file in your project root:
-
-```bash
-# .env
-ANTHROPIC_API_KEY=sk-ant-api03-...
-OPENAI_API_KEY=sk-proj-...
-OPENROUTER_API_KEY=sk-or-v1-...
-```
-
-<Warning>
-  Never commit `.env` files to version control. Add `.env` to your `.gitignore`.
-</Warning>
+<Card title="Model Configuration" icon="key" href="/guides/model-configuration">
+  See the complete authentication guide for OAuth setup, API keys, environment variables, and security best practices.
+</Card>
 
 ## Verify Installation
 

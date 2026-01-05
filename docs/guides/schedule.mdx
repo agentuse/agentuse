@@ -1,0 +1,167 @@
+---
+title: Scheduled Agents
+description: Run agents on a recurring schedule using cron expressions or intervals
+---
+
+Run agents automatically on a schedule using `agentuse serve`. Configure schedules in agent frontmatter with cron expressions, intervals, or natural language aliases.
+
+## Quick Start
+
+1. Add a `schedule` config to your agent:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+schedule:
+  every: "hourly"
+---
+
+Check the system status and send a summary report.
+```
+
+2. Start the server:
+
+```bash
+agentuse serve
+```
+
+The server displays scheduled agents on startup:
+
+```
+Scheduled (1)
+  Agent                  Schedule    Next Run
+  monitor.agentuse       0 * * * *   2024-01-01 12:00:00
+```
+
+## Schedule Configuration
+
+Add the `schedule` field to your agent's frontmatter. Choose one of three schedule types:
+
+### Cron Expressions
+
+Standard cron syntax for precise control:
+
+```yaml
+schedule:
+  cron: "0 9 * * 1-5"    # Weekdays at 9am
+  timezone: "America/New_York"
+```
+
+Common patterns:
+
+| Pattern | Description |
+|---------|-------------|
+| `0 * * * *` | Every hour |
+| `*/15 * * * *` | Every 15 minutes |
+| `0 9 * * *` | Daily at 9am |
+| `0 0 * * 0` | Weekly on Sunday |
+| `0 0 1 * *` | Monthly on the 1st |
+
+### Intervals
+
+Simple duration format:
+
+```yaml
+schedule:
+  interval: "30m"
+```
+
+Supported units:
+
+| Unit | Example | Description |
+|------|---------|-------------|
+| `s` | `30s` | Seconds |
+| `m` | `10m` | Minutes |
+| `h` | `2h` | Hours |
+| `d` | `1d` | Days |
+
+### Natural Language
+
+Human-readable aliases:
+
+```yaml
+schedule:
+  every: "hourly"
+```
+
+Available aliases:
+
+| Alias | Equivalent |
+|-------|------------|
+| `every minute` | `* * * * *` |
+| `every 5 minutes` | `*/5 * * * *` |
+| `every 10 minutes` | `*/10 * * * *` |
+| `every 15 minutes` | `*/15 * * * *` |
+| `every 30 minutes` | `*/30 * * * *` |
+| `hourly` | `0 * * * *` |
+| `daily` | `0 0 * * *` |
+| `weekly` | `0 0 * * 0` |
+| `monthly` | `0 0 1 * *` |
+
+### Additional Options
+
+```yaml
+schedule:
+  cron: "0 9 * * *"
+  enabled: true          # Enable/disable (default: true)
+  timezone: "UTC"        # Timezone for schedule (default: system)
+```
+
+## Example
+
+A comprehensive scheduled agent demonstrating different schedule types:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+description: Generate daily analytics report
+schedule:
+  cron: "0 8 * * 1-5"       # Weekdays at 8am
+  # interval: "5m"          # Or: every 5 minutes
+  # every: "hourly"         # Or: natural language
+  timezone: "America/New_York"
+tools:
+  filesystem:
+    - path: ${root}/data
+      permissions: [read]
+  bash:
+    commands:
+      - "curl *"
+---
+
+Generate the daily analytics report and save it to reports/daily.md.
+```
+
+<Tip>
+  Use `openrouter:minimax/minimax-m2.1` for frequent, straightforward tasks (health checks, simple monitoring). Reserve `claude-sonnet-4-5` and `claude-opus-4-5` for complex creative tasks requiring nuanced reasoning.
+</Tip>
+
+## Server Options
+
+See [CLI Commands - agentuse serve](/reference/cli-commands#agentuse-serve) for all server options including port, host, and authentication configuration.
+
+## Monitoring
+
+The server logs each scheduled execution:
+
+```
+[12:00:00] Running scheduled agent: monitor.agentuse
+[12:00:05] Completed: monitor.agentuse (5.2s)
+```
+
+Enable debug mode for detailed logs:
+
+```bash
+agentuse serve --debug
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Webhooks" icon="webhook" href="/guides/webhooks">
+    Trigger agents via HTTP
+  </Card>
+  <Card title="Self-Hosting" icon="server" href="/guides/self-hosting">
+    Deploy in production
+  </Card>
+</CardGroup>

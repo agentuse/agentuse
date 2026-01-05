@@ -179,14 +179,29 @@ Additional instructions or context.
 
 ## Tools Configuration
 
-<Note>
-  AgentUse currently supports tools through MCP servers and sub-agents only. 
-  Direct tool definitions are not yet implemented.
-</Note>
-
 Tools are available to agents through:
-1. **MCP Servers** - Connect to any Model Context Protocol server
-2. **Sub-Agents** - Delegate tasks to other agents
+1. **Built-in Tools** - Filesystem and Bash tools with configurable permissions
+2. **MCP Servers** - Connect to any Model Context Protocol server
+3. **Sub-Agents** - Delegate tasks to other agents
+
+### Built-in Tools
+
+Configure filesystem and bash tool permissions via the `tools` field:
+
+```yaml
+tools:
+  filesystem:
+    - path: ${root}
+      permissions: [read, write, edit]
+  bash:
+    commands:
+      - "git *"
+      - "npm *"
+```
+
+<Card title="Built-in Tools Reference" icon="wrench" href="/reference/builtin-tools">
+  See full configuration options for filesystem and bash tools
+</Card>
 
 ## MCP Servers
 
@@ -297,49 +312,29 @@ mcpServers:
       - GITHUB_TOKEN      # Fails if not set
     allowedEnvVars:
       - GITHUB_DEBUG      # Optional, warns if missing
-  
-  http_server:
-    url: https://api.example.com/mcp
-    auth:
-      type: bearer
-      token: ${env:API_TOKEN}
-    requiredEnvVars:
-      - API_TOKEN         # Validates API_TOKEN exists (used by ${env:API_TOKEN})
 ```
+
+<Card title="Environment Variables - MCP Server Configuration" icon="shield-check" href="/reference/environment-variables#mcp-server-environment-variables">
+  See the complete reference for security model, setting environment variables, error messages, and examples.
+</Card>
 
 ### MCP Server Configuration Fields
 
 #### Common Fields (All Server Types)
-- **`requiredEnvVars`**: Array of environment variables that MUST exist. Agent fails immediately if any are missing.
-- **`allowedEnvVars`**: Array of environment variables to pass through if they exist. Warns if missing but continues.
-- **`disallowedTools`**: Array of tool names or patterns to exclude from this server. Supports wildcards (e.g., `delete_*`).
+- **`requiredEnvVars`**: Variables that MUST exist. Agent fails if missing.
+- **`allowedEnvVars`**: Optional variables to pass through if they exist.
+- **`disallowedTools`**: Tool names/patterns to exclude (supports wildcards).
 
 #### Stdio Server Fields
-- **`command`**: Executable command to start the MCP server (required)
-  - Can be an absolute path or a command in PATH
-  - Relative paths (containing `/` or `\`) are resolved from the **agent file's directory**
-- **`args`**: Array of command-line arguments (optional)
-- **`env`**: Object of additional environment variables to set (optional)
+- **`command`**: Executable command (required). Relative paths resolve from agent file's directory.
+- **`args`**: Command-line arguments (optional)
+- **`env`**: Additional environment variables (optional)
 
-```yaml
-# In /project/agents/main.agentuse
-mcpServers:
-  custom:
-    command: ../tools/my-server  # Resolves to /project/tools/my-server
-    args: ["--port", "3000"]
-```
-
-#### HTTP Server Fields  
-- **`url`**: HTTPS URL of the MCP server (required, must use HTTPS)
-- **`sessionId`**: Optional session identifier for the connection
-- **`auth`**: Authentication configuration object (optional)
-  - **`type`**: Currently only `"bearer"` is supported
-  - **`token`**: Bearer token value, can reference environment variables with `${env:VAR_NAME}` syntax
-- **`headers`**: Object of custom HTTP headers to send (optional)
-
-<Warning>
-  Direct value assignment (e.g., `GITHUB_TOKEN: "abc123"`) is intentionally not supported to prevent secrets in code.
-</Warning>
+#### HTTP Server Fields
+- **`url`**: HTTPS URL of the MCP server (required)
+- **`sessionId`**: Session identifier (optional)
+- **`auth`**: Authentication config with `type: bearer` and `token` (supports `${env:VAR_NAME}`)
+- **`headers`**: Custom HTTP headers (optional)
 
 ## System Prompt Sections
 

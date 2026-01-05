@@ -168,41 +168,15 @@ Both Claude Max and Console users can use OAuth for seamless authentication:
 
 ### Getting API Keys
 
-<Tabs>
-  <Tab title="Anthropic">
-    1. Go to [console.anthropic.com](https://console.anthropic.com)
-    2. Navigate to **API Keys**
-    3. Click **Create Key**
-    4. Name your key (e.g., "AgentUse")
-    5. Copy the key (starts with `sk-ant-api03-`)
-    
-    <Note>
-      Keys are shown only once. Store them securely!
-    </Note>
-  </Tab>
-  <Tab title="OpenAI">
-    1. Visit [platform.openai.com](https://platform.openai.com)
-    2. Go to **API keys** section
-    3. Click **Create new secret key**
-    4. Name your key
-    5. Copy the key (starts with `sk-proj-` for project keys)
-    
-    <Warning>
-      OpenAI keys have usage limits. Monitor your usage!
-    </Warning>
-  </Tab>
-  <Tab title="OpenRouter">
-    1. Go to [openrouter.ai](https://openrouter.ai)
-    2. Sign in or create account
-    3. Navigate to **Keys**
-    4. Click **Create Key**
-    5. Copy the key (starts with `sk-or-v1-`)
-    
-    <Info>
-      OpenRouter provides access to many models with one key
-    </Info>
-  </Tab>
-</Tabs>
+Get API keys from provider consoles:
+
+- **Anthropic**: [console.anthropic.com](https://console.anthropic.com) → API Keys → Create Key (starts with `sk-ant-api03-`)
+- **OpenAI**: [platform.openai.com](https://platform.openai.com) → API Keys → Create new secret key (starts with `sk-proj-`)
+- **OpenRouter**: [openrouter.ai](https://openrouter.ai) → Keys → Create Key (starts with `sk-or-v1-`)
+
+<Warning>
+  Keys are shown only once. Store them securely and never commit to version control.
+</Warning>
 
 ## Authentication Priority Order
 
@@ -238,91 +212,16 @@ AgentUse checks authentication sources in this order:
 
 ## Runtime Model Override
 
-You can override the model specified in an agent file at runtime using the `--model` flag. This is especially useful for:
-
-- **Testing**: Compare how different models handle the same task
-- **Cost Optimization**: Use cheaper models during development
-- **Environment-Specific Deployment**: Different models for dev/staging/prod
-- **Quick Experimentation**: Try new models without editing files
-
-### Basic Usage
+Override the model at runtime using the `--model` flag:
 
 ```bash
-# Original agent uses claude-3-5-sonnet
 agentuse run agent.agentuse --model anthropic:claude-haiku-4-5
-
-# Switch to OpenAI for comparison
-agentuse run agent.agentuse --model openai:gpt-5.2
-
-# Use a faster model for development
 agentuse run agent.agentuse -m openai:gpt-5-mini
 ```
 
-### Environment-Specific Keys
-
-Combine model override with environment suffixes:
-
-```bash
-# Development environment
-agentuse run agent.agentuse --model openai:gpt-5.2:dev
-# Uses OPENAI_API_KEY_DEV
-
-# Production environment
-agentuse run agent.agentuse --model openai:gpt-5:prod
-# Uses OPENAI_API_KEY_PROD
-
-# Personal projects
-agentuse run agent.agentuse --model anthropic:claude-sonnet-4-5:ANTHROPIC_API_KEY_PERSONAL
-# Uses specific environment variable
-```
-
-### CI/CD Examples
-
-```yaml
-# GitHub Actions - different models per environment
-- name: Run agent (Development)
-  run: agentuse run agent.agentuse --model anthropic:claude-haiku-4-5
-  if: github.ref != 'refs/heads/main'
-
-- name: Run agent (Production)
-  run: agentuse run agent.agentuse --model anthropic:claude-sonnet-4-5
-  if: github.ref == 'refs/heads/main'
-```
-
-```bash
-# Shell script for model comparison
-for model in "anthropic:claude-haiku-4-5" "openai:gpt-5.2" "openai:gpt-5-mini"; do
-  echo "Testing with $model"
-  agentuse run benchmark.agentuse --model "$model" > "results_${model//:/\_}.txt"
-done
-```
-
-<Note>
-  When overriding to a different provider, provider-specific options (like OpenAI's `reasoningEffort`)
-  from the original agent file will be ignored.
-</Note>
-
-### Sub-Agent Model Inheritance
-
-When using the `--model` flag with agents that have sub-agents:
-
-1. **Complete Override**: The model override applies to the parent AND all sub-agents
-2. **Uniform Execution**: All agents in the hierarchy will use the same model
-3. **Authentication**: Ensures consistent authentication across all agents
-
-```bash
-# Parent agent configured with claude-sonnet-4-0
-# Sub-agents configured with various models
-agentuse run orchestrator.agentuse --model openai:gpt-5-mini
-
-# Result: ALL agents (parent + sub-agents) use gpt-5-mini
-```
-
-This behavior ensures:
-- **Consistent performance** across the entire agent hierarchy
-- **Simplified testing** with different model configurations
-- **Cost control** when switching between expensive and cheap models
-- **No authentication conflicts** between parent and sub-agents
+<Card title="CLI Commands - Model Override" icon="terminal" href="/reference/cli-commands#model-override">
+  See the complete reference for model override format, environment-specific keys, CI/CD examples, and sub-agent inheritance behavior.
+</Card>
 
 ## Multi-Provider Setup
 

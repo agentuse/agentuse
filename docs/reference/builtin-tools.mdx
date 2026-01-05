@@ -1,0 +1,179 @@
+---
+title: Built-in Tools
+description: Configuration reference for built-in filesystem and bash tools
+---
+
+AgentUse provides two built-in tools for file operations and command execution. This reference documents their configuration options and path matching behavior.
+
+## Path Matching Behavior
+
+Both tools use **containment-based** path matching by default:
+
+| Pattern | Mode | Matches |
+|---------|------|---------|
+| `${root}` | Containment | All files under project root |
+| `${root}/src` | Containment | All files under src directory |
+| `${root}/**/*.ts` | Glob | Only `.ts` files anywhere in project |
+| `${root}/*.json` | Glob | Only `.json` files in root (not subdirs) |
+
+**Rule:** If the path contains glob characters (`*`, `?`, `[`), it uses glob matching. Otherwise, it uses containment (path = path/**).
+
+## Filesystem Tool
+
+Controls access for Read, Write, and Edit operations.
+
+### Configuration
+
+```yaml
+tools:
+  filesystem:
+    - path: ${root}
+      permissions: [read]
+    - path: ${root}/src
+      permissions: [read, write, edit]
+    - paths:
+        - ${root}/docs
+        - ${root}/tests
+      permissions: [read]
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | `string` | Single path or pattern |
+| `paths` | `string[]` | Multiple paths or patterns (alternative to `path`) |
+| `permissions` | `Permission[]` | Array of allowed operations: `read`, `write`, `edit` |
+
+### Path Variables
+
+| Variable | Description |
+|----------|-------------|
+| `${root}` | Project root directory |
+| `${agentDir}` | Directory containing the agent file |
+| `${tmpDir}` | System temp directory (or custom if configured) |
+| `~` | User's home directory |
+
+### Examples
+
+```yaml
+# Containment mode (recommended for most cases)
+filesystem:
+  - path: ${root}
+    permissions: [read, write, edit]
+
+# Restrict to specific subdirectory
+filesystem:
+  - path: ${root}/src
+    permissions: [read, write]
+  - path: ${root}/docs
+    permissions: [read]
+
+# Fine-grained control with glob patterns
+filesystem:
+  - path: ${root}/**/*.ts
+    permissions: [edit]
+  - path: ${root}/**/*.md
+    permissions: [read]
+```
+
+## Bash Tool
+
+Controls which shell commands can be executed and in which directories.
+
+### Configuration
+
+```yaml
+tools:
+  bash:
+    commands:
+      - "git *"
+      - "npm *"
+      - "pnpm *"
+    allowedPaths:
+      - /tmp
+      - ~/workspace
+    timeout: 120000
+```
+
+### Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `commands` | `string[]` | Required | Allowlist of command patterns (supports `*` wildcard) |
+| `allowedPaths` | `string[]` | `[]` | Additional directories beyond project root |
+| `timeout` | `number` | `120000` | Command timeout in milliseconds |
+
+### Command Patterns
+
+Commands use simple wildcard matching:
+
+| Pattern | Matches |
+|---------|---------|
+| `git *` | Any git command (git status, git commit, etc.) |
+| `npm install` | Only `npm install` (exact match) |
+| `*` | Any command (use with caution) |
+
+### allowedPaths Behavior
+
+The `allowedPaths` field uses **containment** - a path grants access to all files and subdirectories within it:
+
+```yaml
+bash:
+  allowedPaths:
+    - /tmp           # Allows /tmp, /tmp/foo, /tmp/foo/bar, etc.
+    - ~/workspace    # Allows all of ~/workspace/**
+```
+
+<Note>
+  Project root is always accessible for bash commands. Use `allowedPaths` for directories outside the project.
+</Note>
+
+### Examples
+
+```yaml
+# Development setup with common tools
+bash:
+  commands:
+    - "git *"
+    - "npm *"
+    - "pnpm *"
+    - "bun *"
+    - "tsc *"
+    - "eslint *"
+
+# CI/CD with restricted access
+bash:
+  commands:
+    - "npm test"
+    - "npm run build"
+  timeout: 300000
+
+# Multi-project setup
+bash:
+  commands:
+    - "git *"
+    - "make *"
+  allowedPaths:
+    - ~/projects/shared-lib
+    - /opt/tools
+```
+
+## Security Considerations
+
+### Filesystem Tool
+
+- **Sensitive files blocked**: `.env`, `.env.local`, etc. are blocked by default
+- **Symlink resolution**: Symlinks are resolved to prevent escape attacks
+- **Path traversal prevention**: `../` sequences are normalized and validated
+
+### Bash Tool
+
+- **Command allowlist**: Only explicitly allowed commands can run
+- **Directory restrictions**: Commands can only access project root and `allowedPaths`
+- **Environment sanitization**: Dangerous environment variables are cleared
+- **Timeout enforcement**: Commands are killed after timeout
+
+<Warning>
+  Be careful with broad command patterns like `*` or `bash *`. Prefer explicit command allowlists.
+</Warning>

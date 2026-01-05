@@ -5,71 +5,36 @@ description: Deploy your first AI agent on autopilot in 5 minutes
 
 ## Installation
 
-<Tabs>
-  <Tab title="pnpm">
-    ```bash
-    pnpm install -g agentuse
-    ```
-  </Tab>
-  <Tab title="npm">
-    ```bash
-    npm install -g agentuse
-    ```
-  </Tab>
-  <Tab title="npx">
-    ```bash
-    # Run without installation
-    npx agentuse@latest run your-agent.agentuse
-    ```
-  </Tab>
-  <Tab title="bunx">
-    ```bash
-    # Run without installation (faster)
-    bunx --bun agentuse run your-agent.agentuse
-    ```
-  </Tab>
-</Tabs>
+```bash
+pnpm install -g agentuse
+```
+
+<Info>
+  See [Installation Guide](/installation) for npm, bunx, Docker, and development setup options.
+</Info>
 
 ## Authentication
 
 ```bash
-# Option 1: Interactive OAuth login (recommended for Anthropic)
 agentuse auth login
-
-# Option 2: Use environment variables
-export ANTHROPIC_API_KEY="sk-ant-..."
-export OPENAI_API_KEY="sk-proj-..."
 ```
 
 <Info>
-  Get API keys: [Anthropic](https://console.anthropic.com/account/keys) | [OpenAI](https://platform.openai.com/api-keys)
+  See [Model Configuration](/guides/model-configuration) for OAuth setup, API keys, and environment variable configuration.
 </Info>
-
-<Note>
-  OAuth authentication is supported for Anthropic and provides automatic token refresh. API keys are required for OpenAI and other providers.
-</Note>
 
 ## Supported Models
 
-AgentUse supports multiple AI providers with the format `provider:model-name`:
+AgentUse supports multiple AI providers with the format `provider:model-name`. Examples:
 
-**Anthropic:**
-- `anthropic:claude-haiku-4-5`
-- `anthropic:claude-sonnet-4-5`
-- `anthropic:claude-opus-4-5`
-
-**OpenAI:**
-- `openai:gpt-5.2`
-- `openai:gpt-5.2`
-- `openai:gpt-5`
-- `openai:gpt-5-mini`
-
-**OpenRouter:**
-- `openrouter:z-ai/glm-4.7`
-- `openrouter:z-ai/glm-4.7`
+```bash
+anthropic:claude-sonnet-4-5
+openai:gpt-5.2
+openrouter:minimax/minimax-m2.1
+```
 
 <Tip>
-  You can also use custom environment variables for API keys: `anthropic:claude-sonnet-4-5:CUSTOM_API_KEY`
+  Any model available from Anthropic, OpenAI, or OpenRouter can be used. You can also specify custom API keys: `anthropic:claude-sonnet-4-5:CUSTOM_API_KEY`
 </Tip>
 
 ## Your First Agent
@@ -115,26 +80,6 @@ mcpServers:
   filesystem:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
-    # Optional: Environment variables to pass to the MCP server
-    env:
-      DEBUG: "true"
-    # Optional: Required environment variables
-    requiredEnvVars: []
-    # Optional: Allowed environment variables to pass through
-    allowedEnvVars: ["HOME", "PATH"]
-    # Optional: Tools to disable from this server
-    disallowedTools: []
-
-  # HTTP MCP Server example
-  remote_api:
-    url: "https://api.example.com/mcp"
-    sessionId: "session-123"
-    auth:
-      type: "bearer"
-      token: "${API_TOKEN}"
-    headers:
-      X-Custom-Header: "value"
-    allowedEnvVars: ["API_TOKEN"]
 ---
 
 You are a code analyzer. When asked about a project:
@@ -143,40 +88,26 @@ You are a code analyzer. When asked about a project:
 3. Summarize what the project does based on README or package.json
 ```
 
-Run it in any project directory:
+Run it:
 ```bash
-# Navigate to a project
-cd /path/to/your/project
-
-# Run the analyzer
 agentuse run project-analyzer.agentuse
 ```
 
+<Info>
+  See [Agent Syntax - MCP Servers](/reference/agent-syntax#mcp-servers) for HTTP servers, environment variables, and tool restrictions.
+</Info>
+
 ## Model Override
 
-Test your agents with different models without editing files:
+Override the model at runtime without editing agent files:
 
 ```bash
-# Original agent uses claude-3-5-haiku
-cat analyzer.agentuse | grep model
-# model: anthropic:claude-haiku-4-5
-
-# Test with a more powerful model
 agentuse run analyzer.agentuse --model anthropic:claude-sonnet-4-5
-
-# Compare with OpenAI
-agentuse run analyzer.agentuse --model openai:gpt-5
-
-# Use cheaper model for development
 agentuse run analyzer.agentuse -m openai:gpt-5-mini
-
-# Use different API key via environment suffix
-agentuse run analyzer.agentuse --model openai:gpt-5.2:dev
-# This uses OPENAI_API_KEY_DEV instead of OPENAI_API_KEY
 ```
 
 <Tip>
-  Perfect for CI/CD pipelines, A/B testing models, or optimizing costs between dev and production.
+  See [CLI Commands - Model Override](/reference/cli-commands#model-override) for format details, environment-specific keys, and sub-agent inheritance behavior.
 </Tip>
 
 ## Sub-agents Support
@@ -214,44 +145,40 @@ agentuse run https://example.com/path/to/agent.agentuse
 
 ## Environment Variables
 
-Configure AgentUse behavior with environment variables:
+Configure API keys and behavior via environment variables or `.env` files:
 
 ```bash
-# Set maximum execution steps (default: 1000)
-export MAX_STEPS=2500
-
-# API keys for different providers
 export ANTHROPIC_API_KEY="sk-ant-..."
 export OPENAI_API_KEY="sk-proj-..."
-export OPENROUTER_API_KEY="sk-or-..."
-
-# Custom API key variables
-export ANTHROPIC_API_KEY_WORK="sk-ant-..."
-export OPENAI_API_KEY_PERSONAL="sk-proj-..."
 ```
 
-<Tip>
-  Use custom API key suffixes to manage multiple accounts: `anthropic:claude-sonnet-4-5:WORK` will use `ANTHROPIC_API_KEY_WORK`
-</Tip>
+<Info>
+  See [Environment Variables Reference](/reference/environment-variables) for all configuration options including custom API key suffixes, behavior control, and MCP server settings.
+</Info>
 
 ## Schedule Your Agent
 
-Once you have an agent working, put it on autopilot:
+Add a `schedule` to run agents automatically:
 
-```bash
-# Run daily at 9am
-0 9 * * * agentuse run /path/to/daily-report.agentuse >> /var/log/reports.log
+```markdown
+---
+model: anthropic:claude-sonnet-4-5
+schedule:
+  every: "hourly"        # Or: cron: "0 * * * *" or interval: "30m"
+---
 
-# Run every 6 hours
-0 */6 * * * agentuse run /path/to/monitor.agentuse
-
-# Run in CI/CD (GitHub Actions, etc.)
-agentuse run ./agents/deploy-check.agentuse --quiet
+Check system status and send a summary report.
 ```
 
-<Tip>
-  AgentUse agents are designed for autopilot execution - cron jobs, CI/CD pipelines, and serverless functions. No babysitting required.
-</Tip>
+Start the server to enable scheduling:
+
+```bash
+agentuse serve
+```
+
+<Info>
+  See [Scheduled Agents Guide](/guides/schedule) for cron expressions, intervals, and best practices.
+</Info>
 
 ## What's Next?
 

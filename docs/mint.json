@@ -36,21 +36,29 @@
       ]
     },
     {
-      "group": "Guides",
-      "icon": "book-open",
+      "group": "Building",
+      "icon": "hammer",
       "pages": [
         "guides/creating-agents",
-        "guides/agent-design-patterns",
+        "guides/model-configuration",
         "guides/subagents",
         "guides/skills",
-        "guides/model-configuration",
-        "guides/context-management",
-        "guides/remote-agents",
         "guides/plugins",
-        "guides/session-logs",
-        "guides/isolated-environment",
+        "guides/agent-design-patterns",
+        "guides/context-management"
+      ]
+    },
+    {
+      "group": "Running",
+      "icon": "play",
+      "pages": [
+        "guides/schedule",
+        "guides/webhooks",
+        "guides/cicd",
+        "guides/remote-agents",
         "guides/self-hosting",
-        "guides/cicd"
+        "guides/isolated-environment",
+        "guides/session-logs"
       ]
     },
     {
@@ -59,6 +67,7 @@
       "pages": [
         "reference/cli-commands",
         "reference/agent-syntax",
+        "reference/builtin-tools",
         "reference/variables",
         "reference/session-storage",
         "reference/environment-variables"

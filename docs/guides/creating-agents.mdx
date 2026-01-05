@@ -86,47 +86,21 @@ Help the user with their request.
 
 ## MCP Server Integration
 
-Connect to Model Context Protocol servers:
+Connect to Model Context Protocol servers for external tools and data sources:
 
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-5
-description: "File system and GitHub integration agent"
 mcpServers:
   filesystem:
     command: "pnpx"
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/documents"]
-    disallowedTools: ["*delete*"]  # Exclude dangerous operations
-  github:
-    command: "pnpx"
-    args: ["-y", "@modelcontextprotocol/server-github"]
-    requiredEnvVars: ["GITHUB_TOKEN"]  # Will fail if missing
-    env:
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
 ---
 ```
 
-<Info>
-  MCP servers provide standardized access to external tools and data sources. Each server needs a unique name (key) in the `mcpServers` object.
-</Info>
-
-### HTTP MCP Servers
-
-```yaml
----
-model: anthropic:claude-sonnet-4-5
-mcpServers:
-  remote_api:
-    url: https://api.example.com/mcp
-    sessionId: "unique-session-id"
-    auth:
-      type: bearer
-      token: ${API_TOKEN}
-    headers:
-      X-Custom-Header: "custom-value"
-    allowedEnvVars: ["API_TOKEN", "API_REGION"]
----
-```
+<Card title="Agent Syntax - MCP Servers" icon="plug" href="/reference/agent-syntax#mcp-servers">
+  See the complete reference for stdio servers, HTTP servers, environment variables, authentication, and tool restrictions.
+</Card>
 
 ## Using Sub-Agents
 
@@ -158,35 +132,11 @@ When asked to create content:
 
 ## Environment Variables
 
-<Note>
-  Environment variables are used in MCP server configurations, not directly in the agent frontmatter.
-</Note>
+Environment variables configure API keys, behavior settings, and MCP server credentials.
 
-### Using Environment Variables in MCP
-
-```yaml
----
-model: anthropic:claude-sonnet-4-5
-mcpServers:
-  api_server:
-    command: ./api-server
-    requiredEnvVars: ["API_KEY"]
-    allowedEnvVars: ["API_URL", "DEBUG"]
-    env:
-      API_URL: ${API_URL:-https://api.example.com}  # With default
----
-```
-
-### System Environment Variables
-
-The following environment variables affect agent behavior:
-- `MAX_STEPS` - Maximum conversation turns (default: 1000)
-- `ANTHROPIC_API_KEY` - For Anthropic models
-- `OPENAI_API_KEY` - For OpenAI models
-- `OPENROUTER_API_KEY` - For OpenRouter models
-- `CONTEXT_COMPACTION` - Enable/disable context compaction (default: enabled, set to 'false' to disable)
-- `COMPACTION_THRESHOLD` - Token threshold for compaction (default: varies by model)
-- `COMPACTION_KEEP_RECENT` - Number of recent messages to keep during compaction (default: varies)
+<Card title="Environment Variables Reference" icon="gear" href="/reference/environment-variables">
+  See the complete reference for API keys, behavior control, MCP server configuration, and security best practices.
+</Card>
 
 ## Runtime Customization
 
@@ -245,38 +195,13 @@ my-agent-project/
     └── custom-mcp-server  # Custom MCP server executable
 ```
 
-### Path Resolution Examples
+### Path Resolution
 
-```yaml
-# In agents/main.agentuse
----
-model: anthropic:claude-sonnet-4-5
-subagents:
-  # Paths relative to agents/main.agentuse location
-  - path: ./research/web.agentuse      # → agents/research/web.agentuse
-  - path: ../utils/helper.agentuse     # → utils/helper.agentuse
-mcpServers:
-  custom:
-    # Command paths relative to agents/main.agentuse location
-    command: ../tools/custom-mcp-server  # → tools/custom-mcp-server
----
-```
+All paths (subagents, MCP server commands) are resolved relative to the **agent file's directory**, ensuring portability.
 
-You can run this from anywhere:
-```bash
-# From project root
-agentuse run agents/main.agentuse
-
-# From any subdirectory
-cd agents/research
-agentuse run ../main.agentuse
-
-# From outside the project
-agentuse run /path/to/project/agents/main.agentuse
-
-# Override project root if needed
-agentuse run agent.agentuse -C /different/project
-```
+<Info>
+  See [Agent Syntax - Subagents](/reference/agent-syntax#subagents) for complete path resolution examples.
+</Info>
 
 ### Benefits of This Structure
 

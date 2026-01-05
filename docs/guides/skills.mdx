@@ -156,12 +156,12 @@ allowed-tools: Read Bash(git:*) mcp__github
 model: anthropic:claude-sonnet-4-5
 tools:
   filesystem:
-    - path: ${root}
+    - path: ${root}             # Grants access to all files under project root
       permissions: [read]
   bash:
     commands:
       - "git *"
-    allowedPaths:           # Optional: directories beyond projectRoot
+    allowedPaths:               # Optional: directories beyond projectRoot
       - ~/workspace/other-repo
       - /tmp
 mcpServers:

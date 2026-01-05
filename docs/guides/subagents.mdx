@@ -88,51 +88,11 @@ subagents:
 
 ## Path Resolution
 
+All sub-agent paths are resolved relative to the **parent agent file's directory**, ensuring portability across different execution contexts.
+
 <Info>
-  **Important**: All sub-agent paths are resolved relative to the **parent agent file's directory**, not the current working directory. This ensures your agent compositions work consistently regardless of where you run them.
+  See [Agent Syntax - Subagents](/reference/agent-syntax#subagents) for complete path resolution examples and directory structure recommendations.
 </Info>
-
-### How Path Resolution Works
-
-When you define a sub-agent path, it's always relative to the location of the parent agent file:
-
-```yaml
-# File: /project/agents/orchestrator.agentuse
----
-model: anthropic:claude-sonnet-4-5
-subagents:
-  - path: ./researcher.agentuse          # → /project/agents/researcher.agentuse
-  - path: ../utils/helper.agentuse       # → /project/utils/helper.agentuse
-  - path: ./team/specialist.agentuse     # → /project/agents/team/specialist.agentuse
----
-```
-
-### Directory Structure Example
-
-```
-project/
-├── agents/
-│   ├── orchestrator.agentuse
-│   ├── researcher.agentuse
-│   └── team/
-│       └── specialist.agentuse
-└── utils/
-    └── helper.agentuse
-```
-
-You can run the orchestrator from any directory:
-```bash
-# From project root
-agentuse run agents/orchestrator.agentuse
-
-# From agents directory
-cd agents && agentuse run orchestrator.agentuse
-
-# From anywhere with absolute path
-agentuse run /full/path/to/project/agents/orchestrator.agentuse
-```
-
-In all cases, the sub-agent paths resolve correctly based on the orchestrator's location.
 
 ## Remote Sub-Agents
 
@@ -365,25 +325,15 @@ subagents:
 
 ### Model Override Inheritance
 
-<Info>
-  When you use the `--model` CLI flag, it overrides the model for both the parent agent
-  and ALL sub-agents. This allows you to test entire agent hierarchies with different
-  models without editing any files.
-</Info>
+When you use `--model`, it overrides the model for both the parent and ALL sub-agents:
 
 ```bash
-# Override all agents to use GPT-5-mini (parent + all sub-agents)
 agentuse run orchestrator.agentuse --model openai:gpt-5-mini
-
-# All agents will use claude-3-5-haiku regardless of their configured models
-agentuse run complex-system.agentuse -m anthropic:claude-haiku-4-5
 ```
 
-This is particularly useful for:
-- **Cost optimization**: Use cheaper models for development/testing
-- **A/B testing**: Compare entire workflows with different models
-- **Environment-specific deployments**: Different models for dev/staging/prod
-- **Quick experiments**: Try new models without modifying agent files
+<Info>
+  See [CLI Commands - Model Override](/reference/cli-commands#model-override) for complete details on model override behavior and sub-agent inheritance.
+</Info>
 
 ### Step Limits
 
