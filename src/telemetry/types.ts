@@ -21,7 +21,7 @@ export interface FeatureUsage {
   /** Whether skills were used */
   skillsUsed: boolean;
   /** Execution mode */
-  mode: 'cli' | 'serve';
+  mode: 'cli' | 'schedule' | 'webhook';
 }
 
 export interface ConfigPatterns {
@@ -107,4 +107,28 @@ export interface TelemetryConfig {
   host: string;
   /** Whether telemetry is enabled */
   enabled: boolean;
+}
+
+export interface ServerStartConfig {
+  /** Server port */
+  port: number;
+  /** Server host */
+  host: string;
+  /** Number of scheduled agents */
+  scheduledAgents: number;
+  /** Total number of agents discovered */
+  totalAgents: number;
+  /** Whether API key auth is enabled */
+  authEnabled: boolean;
+}
+
+export interface ServerShutdownStats {
+  /** Server uptime in milliseconds */
+  uptimeMs: number;
+  /** Total number of executions */
+  totalExecutions: number;
+  /** Number of successful executions */
+  successfulExecutions: number;
+  /** Number of failed executions */
+  failedExecutions: number;
 }

@@ -9,7 +9,7 @@
 
 import { PostHog } from 'posthog-node';
 import { getOrCreateAnonymousId, isFirstRun, markFirstRunComplete } from './id';
-import type { ExecutionResult, ToolCallMetrics, StartupError } from './types';
+import type { ExecutionResult, ToolCallMetrics, StartupError, ServerStartConfig, ServerShutdownStats } from './types';
 import type { ToolCallTrace } from '../plugin/types';
 
 // PostHog configuration
@@ -376,6 +376,81 @@ class TelemetryManager {
   }
 
   /**
+   * Capture a server start event (for serve mode)
+   */
+  captureServerStart(config: ServerStartConfig): void {
+    if (!this.enabled || !this.initialized || !this.client || !this.anonymousId) {
+      return;
+    }
+
+    try {
+      this.client.capture({
+        distinctId: this.anonymousId,
+        event: 'server_start',
+        properties: {
+          $process_person_profile: false,
+
+          // Version and environment
+          version: VERSION,
+          os: process.platform,
+          arch: process.arch,
+          node_version: process.version,
+          is_ci: isCI(),
+          is_docker: isDocker(),
+          is_npx: isNpx(),
+          is_local_dev: isLocalDev(),
+
+          // Server configuration
+          port: config.port,
+          host: config.host,
+          scheduled_agents: config.scheduledAgents,
+          total_agents: config.totalAgents,
+          auth_enabled: config.authEnabled,
+        },
+      });
+    } catch {
+      // Silently ignore capture errors
+    }
+  }
+
+  /**
+   * Capture a server shutdown event (for serve mode)
+   */
+  captureServerShutdown(stats: ServerShutdownStats): void {
+    if (!this.enabled || !this.initialized || !this.client || !this.anonymousId) {
+      return;
+    }
+
+    try {
+      this.client.capture({
+        distinctId: this.anonymousId,
+        event: 'server_shutdown',
+        properties: {
+          $process_person_profile: false,
+
+          // Version and environment
+          version: VERSION,
+          os: process.platform,
+          arch: process.arch,
+          node_version: process.version,
+          is_ci: isCI(),
+          is_docker: isDocker(),
+          is_npx: isNpx(),
+          is_local_dev: isLocalDev(),
+
+          // Server stats
+          uptime_ms: stats.uptimeMs,
+          total_executions: stats.totalExecutions,
+          successful_executions: stats.successfulExecutions,
+          failed_executions: stats.failedExecutions,
+        },
+      });
+    } catch {
+      // Silently ignore capture errors
+    }
+  }
+
+  /**
    * Shutdown the telemetry client
    * Should be called before process exit to flush pending events
    */
@@ -401,4 +476,4 @@ class TelemetryManager {
 export const telemetry = new TelemetryManager();
 
 // Re-export types
-export type { ExecutionResult, StartupError } from './types';
+export type { ExecutionResult, StartupError, ServerStartConfig, ServerShutdownStats } from './types';

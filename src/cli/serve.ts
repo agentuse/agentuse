@@ -14,6 +14,8 @@ import { printLogo } from "../utils/branding";
 import { SessionManager } from "../session";
 import { initStorage } from "../storage/index.js";
 import { Scheduler, type Schedule } from "../scheduler";
+import { telemetry, parseModel, aggregateToolCalls, countSteps, categorizeError } from "../telemetry";
+import { version as packageVersion } from "../../package.json";
 import * as dotenv from "dotenv";
 
 interface RunRequest {
@@ -162,6 +164,15 @@ export function createServeCommand(): Command {
         logger.warn(`Failed to initialize session storage: ${(err as Error).message}`);
       }
 
+      // Initialize telemetry
+      await telemetry.init(packageVersion);
+
+      // Execution stats tracking
+      const serverStartTime = Date.now();
+      let totalExecutions = 0;
+      let successfulExecutions = 0;
+      let failedExecutions = 0;
+
       // Helper function to execute an agent (used by both API and scheduler)
       const executeScheduledAgent = async (
         schedule: Schedule
@@ -169,9 +180,10 @@ export function createServeCommand(): Command {
         const startTime = Date.now();
         const agentPath = resolve(projectContext.projectRoot, schedule.agentPath);
         let mcp: MCPConnection[] = [];
+        let agent: Awaited<ReturnType<typeof parseAgent>> | undefined;
 
         try {
-          const agent = await parseAgent(agentPath);
+          agent = await parseAgent(agentPath);
           const mcpBasePath = dirname(agentPath);
           mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, mcpBasePath);
 
@@ -193,14 +205,61 @@ export function createServeCommand(): Command {
             true // quiet mode for serve
           );
 
+          const duration = Date.now() - startTime;
+          totalExecutions++;
+          successfulExecutions++;
+
+          // Capture telemetry for scheduled execution
+          telemetry.captureExecution({
+            ...parseModel(agent.config.model),
+            durationMs: duration,
+            inputTokens: 0,
+            outputTokens: 0,
+            success: true,
+            features: {
+              mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
+              subagentsConfigured: agent.config.subagents?.length ?? 0,
+              skillsUsed: false,
+              mode: 'schedule',
+            },
+            config: {
+              timeoutCustom: agent.config.timeout !== undefined,
+              maxStepsCustom: agent.config.maxSteps !== undefined,
+              quietMode: true,
+              debugMode: options.debug ?? false,
+            },
+          });
+
           return {
             success: true,
-            duration: Date.now() - startTime,
+            duration,
           };
         } catch (error) {
+          const duration = Date.now() - startTime;
+          totalExecutions++;
+          failedExecutions++;
+
+          // Capture telemetry for failed scheduled execution
+          if (agent) {
+            telemetry.captureExecution({
+              ...parseModel(agent.config.model),
+              durationMs: duration,
+              inputTokens: 0,
+              outputTokens: 0,
+              success: false,
+              errorType: categorizeError(error) ?? 'unknown',
+              features: {
+                mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
+                subagentsConfigured: agent.config.subagents?.length ?? 0,
+                skillsUsed: false,
+                mode: 'schedule',
+              },
+            });
+          }
+
           return {
             success: false,
-            duration: Date.now() - startTime,
+            duration,
             error: (error as Error).message,
           };
         } finally {
@@ -361,6 +420,28 @@ export function createServeCommand(): Command {
               };
               res.write(JSON.stringify({ ...finishChunk, duration: streamDuration }) + "\n");
               executionLog.complete(body.agent, streamDuration);
+
+              totalExecutions++;
+              successfulExecutions++;
+              telemetry.captureExecution({
+                ...parseModel(agent.config.model),
+                durationMs: streamDuration,
+                inputTokens: 0,
+                outputTokens: 0,
+                success: true,
+                features: {
+                  mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
+                  subagentsConfigured: agent.config.subagents?.length ?? 0,
+                  skillsUsed: false,
+                  mode: 'webhook',
+                },
+                config: {
+                  timeoutCustom: body.timeout !== undefined || agent.config.timeout !== undefined,
+                  maxStepsCustom: body.maxSteps !== undefined || agent.config.maxSteps !== undefined,
+                  quietMode: true,
+                  debugMode: options.debug ?? false,
+                },
+              });
             } catch (err) {
               const errorDuration = Date.now() - startTime;
               const errorChunk: AgentChunk = {
@@ -369,6 +450,23 @@ export function createServeCommand(): Command {
               };
               res.write(JSON.stringify(errorChunk) + "\n");
               executionLog.failed(body.agent, errorDuration, (err as Error).message);
+
+              totalExecutions++;
+              failedExecutions++;
+              telemetry.captureExecution({
+                ...parseModel(agent.config.model),
+                durationMs: errorDuration,
+                inputTokens: 0,
+                outputTokens: 0,
+                success: false,
+                errorType: categorizeError(err) ?? 'unknown',
+                features: {
+                  mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
+                  subagentsConfigured: agent.config.subagents?.length ?? 0,
+                  skillsUsed: false,
+                  mode: 'webhook',
+                },
+              });
             } finally {
               clearTimeout(timeoutId);
               res.end();
@@ -408,16 +506,73 @@ export function createServeCommand(): Command {
 
               sendJSON(res, 200, response);
               executionLog.complete(body.agent, nonStreamDuration);
+
+              totalExecutions++;
+              successfulExecutions++;
+              telemetry.captureExecution({
+                ...parseModel(agent.config.model),
+                durationMs: nonStreamDuration,
+                inputTokens: result.usage?.inputTokens ?? 0,
+                outputTokens: result.usage?.outputTokens ?? 0,
+                success: true,
+                toolCalls: aggregateToolCalls(result.toolCallTraces),
+                steps: countSteps(result.toolCallTraces),
+                ...(result.finishReason && { finishReason: result.finishReason }),
+                hasTextOutput: result.hasTextOutput,
+                features: {
+                  mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
+                  subagentsConfigured: agent.config.subagents?.length ?? 0,
+                  skillsUsed: false,
+                  mode: 'webhook',
+                },
+                config: {
+                  timeoutCustom: body.timeout !== undefined || agent.config.timeout !== undefined,
+                  maxStepsCustom: body.maxSteps !== undefined || agent.config.maxSteps !== undefined,
+                  quietMode: true,
+                  debugMode: options.debug ?? false,
+                },
+              });
             } catch (err) {
               clearTimeout(timeoutId);
 
               const errorDuration = Date.now() - startTime;
+              totalExecutions++;
+              failedExecutions++;
+
               if (abortController.signal.aborted) {
                 sendError(res, 504, "TIMEOUT", `Agent execution timed out after ${timeoutSeconds}s`);
                 executionLog.timeout(body.agent, errorDuration);
+                telemetry.captureExecution({
+                  ...parseModel(agent.config.model),
+                  durationMs: errorDuration,
+                  inputTokens: 0,
+                  outputTokens: 0,
+                  success: false,
+                  errorType: 'timeout',
+                  features: {
+                    mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
+                    subagentsConfigured: agent.config.subagents?.length ?? 0,
+                    skillsUsed: false,
+                    mode: 'webhook',
+                  },
+                });
               } else {
                 sendError(res, 500, "EXECUTION_ERROR", (err as Error).message);
                 executionLog.failed(body.agent, errorDuration, (err as Error).message);
+                telemetry.captureExecution({
+                  ...parseModel(agent.config.model),
+                  durationMs: errorDuration,
+                  inputTokens: 0,
+                  outputTokens: 0,
+                  success: false,
+                  errorType: categorizeError(err) ?? 'unknown',
+                  features: {
+                    mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
+                    subagentsConfigured: agent.config.subagents?.length ?? 0,
+                    skillsUsed: false,
+                    mode: 'webhook',
+                  },
+                });
               }
             }
           }
@@ -449,6 +604,16 @@ export function createServeCommand(): Command {
       const shutdown = async () => {
         console.log("\nShutting down...");
         scheduler.shutdown();
+
+        // Capture server shutdown telemetry
+        telemetry.captureServerShutdown({
+          uptimeMs: Date.now() - serverStartTime,
+          totalExecutions,
+          successfulExecutions,
+          failedExecutions,
+        });
+        await telemetry.shutdown();
+
         server.close(() => {
           console.log("Server closed");
           process.exit(0);
@@ -497,6 +662,15 @@ export function createServeCommand(): Command {
         }
 
         console.log();
+
+        // Capture server start telemetry
+        telemetry.captureServerStart({
+          port,
+          host: options.host,
+          scheduledAgents: schedules.length,
+          totalAgents: agentFiles.length,
+          authEnabled: !!apiKey,
+        });
       });
     });
 
