@@ -121,7 +121,8 @@ export class CommandValidator {
   }
 
   /**
-   * Resolve a path to absolute, handling ~ and relative paths
+   * Resolve a path to absolute, handling ~ and relative paths.
+   * Also resolves symlinks for consistent comparison with allowedPaths.
    */
   private resolvePath(filePath: string): string {
     // Handle ~ for home directory
@@ -135,7 +136,8 @@ export class CommandValidator {
       filePath = path.resolve(base, filePath);
     }
 
-    return path.normalize(filePath);
+    // Resolve symlinks for consistent comparison (e.g., /var -> /private/var on macOS)
+    return resolveRealPath(filePath);
   }
 
   /**
@@ -144,11 +146,11 @@ export class CommandValidator {
   private isPathWithin(filePath: string, rootDir: string): boolean {
     try {
       const resolvedPath = this.resolvePath(filePath);
-      const normalizedRoot = path.normalize(rootDir);
-      const normalizedPath = path.normalize(resolvedPath);
+      // Also resolve symlinks for rootDir for consistent comparison
+      const normalizedRoot = resolveRealPath(rootDir);
 
       // Check if the path is within root
-      const relative = path.relative(normalizedRoot, normalizedPath);
+      const relative = path.relative(normalizedRoot, resolvedPath);
 
       // Path is within if:
       // 1. relative path doesn't start with '..' (not going up)

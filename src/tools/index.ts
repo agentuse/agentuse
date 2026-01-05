@@ -44,7 +44,7 @@ export function getTools(
 
   // Create bash tool if configured
   if (config.bash && config.bash.commands.length > 0) {
-    tools['tools__bash'] = createBashTool(config.bash, context.projectRoot);
+    tools['tools__bash'] = createBashTool(config.bash, context.projectRoot, context);
   }
 
   return tools;

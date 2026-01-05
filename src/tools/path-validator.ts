@@ -32,12 +32,30 @@ export interface PathResolverContext {
 /**
  * Resolve a path to its real path, following symlinks.
  * Handles macOS /var -> /private/var and similar symlinks.
- * Returns the original path if resolution fails (e.g., path doesn't exist).
+ * For non-existent paths, resolves the nearest existing ancestor directory.
  */
 export function resolveRealPath(inputPath: string): string {
   try {
+    // For existing paths, resolve symlinks directly
     return fs.realpathSync(inputPath);
   } catch {
+    // For non-existing paths, traverse up to find the nearest existing ancestor
+    const parts: string[] = [];
+    let current = inputPath;
+
+    while (current !== path.dirname(current)) {
+      parts.unshift(path.basename(current));
+      current = path.dirname(current);
+
+      try {
+        const realAncestor = fs.realpathSync(current);
+        return path.join(realAncestor, ...parts);
+      } catch {
+        // Keep traversing up
+      }
+    }
+
+    // Reached root without finding an existing ancestor
     return inputPath;
   }
 }

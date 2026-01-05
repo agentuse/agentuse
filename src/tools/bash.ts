@@ -6,6 +6,7 @@ import * as os from 'os';
 import { CommandValidator } from './command-validator.js';
 import type { BashConfig, ToolOutput, ToolErrorOutput } from './types.js';
 import { resolveRealPath, type PathResolverContext } from './path-validator.js';
+import { logger } from '../utils/logger.js';
 
 const DEFAULT_TIMEOUT = 120000; // 2 minutes
 const DEFAULT_MAX_OUTPUT = 30 * 1024; // 30KB
@@ -186,12 +187,28 @@ export function createBashTool(
   const validator = new CommandValidator(config.commands, projectRoot, allowedPaths, resolverContext);
   const defaultTimeout = config.timeout || DEFAULT_TIMEOUT;
 
-  // Build description with allowed commands
+  // Build description with allowed commands and paths
   const allowedCommandsList = config.commands.map(cmd => `  - ${cmd}`).join('\n');
+
+  // Resolve allowed paths for display
+  const allowedPathsList = allowedPaths.length > 0
+    ? allowedPaths.map(p => {
+        const resolved = resolveAllowedPath(p, resolverContext);
+        // If path contains ${tmpDir}, show the resolved path for clarity
+        if (p.includes('${tmpDir}')) {
+          return `  - ${resolved} (use this for temporary files)`;
+        }
+        return `  - ${resolved}`;
+      }).join('\n')
+    : `  - ${projectRoot} (project root)`;
+
   const description = `Execute a shell command. Only commands matching the configured allowlist patterns are permitted.
 
 Allowed command patterns:
 ${allowedCommandsList}
+
+Allowed file paths (use these for any file operations):
+${allowedPathsList}
 
 Commands not matching these patterns will be rejected.`;
 
@@ -214,6 +231,12 @@ Commands not matching these patterns will be rejected.`;
           success: false,
           error: validation.error || 'Command validation failed',
         };
+
+        // Log warning after tool result is displayed (next tick)
+        setImmediate(() => {
+          logger.warn(`Bash command blocked: "${command}"`);
+        });
+
         return { output: JSON.stringify(error) };
       }
 
