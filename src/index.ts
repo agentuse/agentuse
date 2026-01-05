@@ -30,6 +30,7 @@ import { existsSync } from 'fs';
 import { resolveProjectContext } from './utils/project';
 import { resolveTimeout } from './utils/config';
 import { printLogo, type BrandingStyle } from './utils/branding';
+import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
 import { telemetry, categorizeError, aggregateToolCalls, countSteps, parseModel } from './telemetry';
 
 const program = new Command();
@@ -322,6 +323,16 @@ program
         if (agent.config.openai && provider !== 'openai') {
           logger.warn(`Warning: OpenAI-specific options in config will be ignored with ${provider} model`);
         }
+      }
+
+      // Pre-flight environment variable validation
+      const envValidation = validateAgentEnvVars(agent.config);
+      if (!envValidation.valid) {
+        logger.error(formatEnvValidationError(envValidation));
+        process.exit(1);
+      }
+      if (envValidation.missingOptional.length > 0) {
+        logger.warn(formatEnvValidationError(envValidation));
       }
 
       // Determine effective timeout (precedence: CLI > agent YAML > default)

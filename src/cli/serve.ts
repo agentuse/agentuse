@@ -16,6 +16,7 @@ import { initStorage } from "../storage/index.js";
 import { Scheduler, type Schedule } from "../scheduler";
 import { telemetry, parseModel, aggregateToolCalls, countSteps, categorizeError } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
+import { validateAgentEnvVars, formatEnvValidationError } from "../utils/env-validation";
 import * as dotenv from "dotenv";
 
 interface RunRequest {
@@ -184,6 +185,13 @@ export function createServeCommand(): Command {
 
         try {
           agent = await parseAgent(agentPath);
+
+          // Pre-flight environment variable validation
+          const envValidation = validateAgentEnvVars(agent.config);
+          if (!envValidation.valid) {
+            throw new Error(formatEnvValidationError(envValidation));
+          }
+
           const mcpBasePath = dirname(agentPath);
           mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, mcpBasePath);
 
@@ -346,6 +354,13 @@ export function createServeCommand(): Command {
 
           // Parse agent
           const agent = await parseAgent(agentPath);
+
+          // Pre-flight environment variable validation
+          const envValidation = validateAgentEnvVars(agent.config);
+          if (!envValidation.valid) {
+            sendError(res, 500, "ENV_MISSING", formatEnvValidationError(envValidation));
+            return;
+          }
 
           // Override model if specified
           if (body.model) {
