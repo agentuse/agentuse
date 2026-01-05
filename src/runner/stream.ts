@@ -20,6 +20,8 @@ export async function processAgentStream(
     messageID?: string;
     agentName?: string;
     doomLoopDetector?: DoomLoopDetector;
+    /** Suppress console output (for serve mode) */
+    quiet?: boolean;
   }
 ): Promise<{
   text: string;
@@ -91,7 +93,9 @@ export async function processAgentStream(
         if (chunk.text && chunk.text.trim()) {
           hasTextOutput = true;
         }
-        logger.response(chunk.text!);
+        if (!options?.quiet) {
+          logger.response(chunk.text!);
+        }
 
         // Log to session with debounced writes to prevent race conditions
         if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
@@ -147,7 +151,7 @@ export async function processAgentStream(
 
       case 'llm-start':
         // Track the start of an LLM generation
-        if (chunk.llmModel) {
+        if (chunk.llmModel && !options?.quiet) {
           logger.llmStart(chunk.llmModel);
         }
 
@@ -164,7 +168,7 @@ export async function processAgentStream(
         // Track time to first token
         if (currentLlmCall && chunk.llmFirstTokenTime) {
           currentLlmCall.firstTokenTime = chunk.llmFirstTokenTime;
-          if (currentLlmCall.startTime) {
+          if (currentLlmCall.startTime && !options?.quiet) {
             const latency = chunk.llmFirstTokenTime - currentLlmCall.startTime;
             logger.llmFirstToken(currentLlmCall.model, latency);
           }
@@ -187,7 +191,9 @@ export async function processAgentStream(
           args: chunk.toolInput,
           timestamp: Date.now()
         });
-        logger.tool(chunk.toolName!, chunk.toolInput, undefined, chunk.isSubAgent);
+        if (!options?.quiet) {
+          logger.tool(chunk.toolName!, chunk.toolInput, undefined, chunk.isSubAgent);
+        }
         if (options?.collectToolCalls) {
           toolCalls.push({ tool: chunk.toolName!, args: chunk.toolInput });
         }
@@ -306,17 +312,19 @@ export async function processAgentStream(
 
         // Log the result with timing info
         // For skill tool, show a simple "Loaded" message instead of the full skill content
-        if (chunk.toolName === 'tools__skill') {
-          logger.toolResult('Skill loaded', {
-            ...(toolDuration !== undefined && { duration: toolDuration }),
-            success: toolSuccess
-          });
-        } else {
-          logger.toolResult(chunk.toolResult || 'No result', {
-            ...(toolDuration !== undefined && { duration: toolDuration }),
-            success: toolSuccess,
-            ...(tokens && { tokens })
-          });
+        if (!options?.quiet) {
+          if (chunk.toolName === 'tools__skill') {
+            logger.toolResult('Skill loaded', {
+              ...(toolDuration !== undefined && { duration: toolDuration }),
+              success: toolSuccess
+            });
+          } else {
+            logger.toolResult(chunk.toolResult || 'No result', {
+              ...(toolDuration !== undefined && { duration: toolDuration }),
+              success: toolSuccess,
+              ...(tokens && { tokens })
+            });
+          }
         }
 
         // Find and complete the tool call trace using toolCallId
@@ -405,7 +413,7 @@ export async function processAgentStream(
           currentLlmCall = null;
         }
 
-        if (finalText.trim()) {
+        if (finalText.trim() && !options?.quiet) {
           logger.responseComplete();
         }
         break;

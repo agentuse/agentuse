@@ -4,6 +4,7 @@ import { readFile } from 'fs/promises';
 import { resolve, basename } from 'path';
 import { logger } from './utils/logger';
 import { ToolsConfigSchema } from './tools/index.js';
+import { ScheduleConfigSchema } from './scheduler/index.js';
 
 /**
  * Error thrown when agent configuration is invalid
@@ -69,7 +70,8 @@ const AgentSchema = z.object({
     name: z.string().optional(),
     maxSteps: z.number().optional()
   })).optional(),
-  tools: ToolsConfigSchema.optional()
+  tools: ToolsConfigSchema.optional(),
+  schedule: ScheduleConfigSchema.optional()
 }).transform((data) => {
   // Handle backward compatibility: support both mcp_servers and mcpServers
   if (data.mcp_servers && data.mcpServers) {

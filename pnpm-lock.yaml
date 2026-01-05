@@ -32,6 +32,9 @@ importers:
       commander:
         specifier: ^12.0.0
         version: 12.1.0
+      croner:
+        specifier: ^9.1.0
+        version: 9.1.0
       dotenv:
         specifier: ^17.2.1
         version: 17.2.1
@@ -637,6 +640,10 @@ packages:
     peerDependenciesMeta:
       typescript:
         optional: true
+
+  croner@9.1.0:
+    resolution: {integrity: sha512-p9nwwR4qyT5W996vBZhdvBCnMhicY5ytZkR4D1Xj0wuTDEiMnjwR57Q3RXYY/s0EpX6Ay3vgIcfaR+ewGHsi+g==}
+    engines: {node: '>=18.0'}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -2485,6 +2492,8 @@ snapshots:
       path-type: 4.0.0
     optionalDependencies:
       typescript: 5.9.2
+
+  croner@9.1.0: {}
 
   cross-spawn@7.0.6:
     dependencies:

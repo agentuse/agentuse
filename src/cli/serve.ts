@@ -2,14 +2,17 @@ import { Command } from "commander";
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import { resolve, dirname } from "path";
 import { existsSync } from "fs";
+import { glob } from "glob";
+import chalk from "chalk";
 import { parseAgent } from "../parser";
 import { runAgent, executeAgentCore, prepareAgentExecution, type AgentChunk } from "../runner";
 import { connectMCP, type MCPConnection } from "../mcp";
 import { resolveProjectContext } from "../utils/project";
-import { logger, LogLevel } from "../utils/logger";
+import { logger, LogLevel, executionLog } from "../utils/logger";
 import { printLogo } from "../utils/branding";
 import { SessionManager } from "../session";
 import { initStorage } from "../storage/index.js";
+import { Scheduler, type Schedule } from "../scheduler";
 import * as dotenv from "dotenv";
 
 interface RunRequest {
@@ -114,6 +117,83 @@ export function createServeCommand(): Command {
         logger.warn(`Failed to initialize session storage: ${(err as Error).message}`);
       }
 
+      // Helper function to execute an agent (used by both API and scheduler)
+      const executeScheduledAgent = async (
+        schedule: Schedule
+      ): Promise<{ success: boolean; duration: number; error?: string; sessionId?: string }> => {
+        const startTime = Date.now();
+        const agentPath = resolve(projectContext.projectRoot, schedule.agentPath);
+        let mcp: MCPConnection[] = [];
+
+        try {
+          const agent = await parseAgent(agentPath);
+          const mcpBasePath = dirname(agentPath);
+          mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, mcpBasePath);
+
+          const sessionManager = new SessionManager();
+
+          await runAgent(
+            agent,
+            mcp,
+            options.debug ?? false,
+            undefined, // no abort signal for scheduled runs
+            startTime,
+            false, // not verbose for scheduled runs
+            agentPath,
+            undefined,
+            sessionManager,
+            { projectRoot: projectContext.projectRoot, cwd: workDir },
+            undefined, // userPrompt
+            undefined, // preparedExecution
+            true // quiet mode for serve
+          );
+
+          return {
+            success: true,
+            duration: Date.now() - startTime,
+          };
+        } catch (error) {
+          return {
+            success: false,
+            duration: Date.now() - startTime,
+            error: (error as Error).message,
+          };
+        } finally {
+          for (const conn of mcp) {
+            try {
+              await conn.client.close();
+            } catch {
+              // Ignore cleanup errors
+            }
+          }
+        }
+      };
+
+      // Initialize scheduler
+      const scheduler = new Scheduler({
+        onExecute: executeScheduledAgent,
+      });
+
+      // Scan for agents with schedule config
+      const agentFiles = await glob("**/*.agentuse", {
+        cwd: projectContext.projectRoot,
+        ignore: ["node_modules/**", "tmp/**", ".git/**"],
+      });
+
+      for (const agentFile of agentFiles) {
+        try {
+          const agentPath = resolve(projectContext.projectRoot, agentFile);
+          const agent = await parseAgent(agentPath);
+
+          if (agent.config.schedule) {
+            scheduler.add(agentFile, agent.config.schedule);
+            logger.debug(`Loaded schedule for: ${agentFile}`);
+          }
+        } catch (err) {
+          logger.warn(`Failed to load agent ${agentFile}: ${(err as Error).message}`);
+        }
+      }
+
       const server = createServer(async (req, res) => {
         // CORS headers
         res.setHeader("Access-Control-Allow-Origin", "*");
@@ -151,6 +231,8 @@ export function createServeCommand(): Command {
             sendError(res, 400, "INVALID_PATH", "Agent path must be within project root");
             return;
           }
+
+          executionLog.start(body.agent);
 
           // Parse agent
           const agent = await parseAgent(agentPath);
@@ -221,17 +303,21 @@ export function createServeCommand(): Command {
               }
 
               // Write final finish chunk with duration
+              const streamDuration = Date.now() - startTime;
               const finishChunk: AgentChunk = {
                 type: "finish",
                 finishReason: "end-turn",
               };
-              res.write(JSON.stringify({ ...finishChunk, duration: Date.now() - startTime }) + "\n");
+              res.write(JSON.stringify({ ...finishChunk, duration: streamDuration }) + "\n");
+              executionLog.complete(body.agent, streamDuration);
             } catch (err) {
+              const errorDuration = Date.now() - startTime;
               const errorChunk: AgentChunk = {
                 type: "error",
                 error: (err as Error).message,
               };
               res.write(JSON.stringify(errorChunk) + "\n");
+              executionLog.failed(body.agent, errorDuration, (err as Error).message);
             } finally {
               clearTimeout(timeoutId);
               res.end();
@@ -250,30 +336,37 @@ export function createServeCommand(): Command {
                 body.maxSteps,
                 sessionManager,
                 { projectRoot: projectContext.projectRoot, cwd: workDir },
-                body.prompt
+                body.prompt,
+                undefined, // preparedExecution
+                true // quiet mode for serve
               );
 
               clearTimeout(timeoutId);
 
+              const nonStreamDuration = Date.now() - startTime;
               const response: RunResponse = {
                 success: true,
                 result: {
                   text: result.text,
                   ...(result.finishReason && { finishReason: result.finishReason }),
-                  duration: Date.now() - startTime,
+                  duration: nonStreamDuration,
                   ...(result.usage && { tokens: { input: result.usage.inputTokens || 0, output: result.usage.outputTokens || 0 } }),
                   toolCalls: result.toolCallCount,
                 },
               };
 
               sendJSON(res, 200, response);
+              executionLog.complete(body.agent, nonStreamDuration);
             } catch (err) {
               clearTimeout(timeoutId);
 
+              const errorDuration = Date.now() - startTime;
               if (abortController.signal.aborted) {
                 sendError(res, 504, "TIMEOUT", `Agent execution timed out after ${timeoutSeconds}s`);
+                executionLog.timeout(body.agent, errorDuration);
               } else {
                 sendError(res, 500, "EXECUTION_ERROR", (err as Error).message);
+                executionLog.failed(body.agent, errorDuration, (err as Error).message);
               }
             }
           }
@@ -304,6 +397,7 @@ export function createServeCommand(): Command {
       // Graceful shutdown
       const shutdown = async () => {
         console.log("\nShutting down...");
+        scheduler.shutdown();
         server.close(() => {
           console.log("Server closed");
           process.exit(0);
@@ -314,18 +408,36 @@ export function createServeCommand(): Command {
       process.on("SIGTERM", shutdown);
 
       server.listen(port, options.host, () => {
+        const serverUrl = `http://${options.host}:${port}`;
+        const firstAgent = agentFiles[0] || "path/to/agent.agentuse";
+
         printLogo();
-        console.log(`Server running at http://${options.host}:${port}`);
-        console.log(`Working directory: ${projectContext.projectRoot}`);
-        console.log(`\nExample:`);
-        console.log(`  curl -X POST http://${options.host}:${port}/run \\`);
-        console.log(`    -H "Content-Type: application/json" \\`);
-        console.log(`    -d '{"agent": "path/to/agent.agentuse"}'`);
-        console.log(`\nStreaming (NDJSON):`);
-        console.log(`  curl -N -X POST http://${options.host}:${port}/run \\`);
-        console.log(`    -H "Content-Type: application/json" \\`);
-        console.log(`    -H "Accept: application/x-ndjson" \\`);
-        console.log(`    -d '{"agent": "path/to/agent.agentuse"}'`);
+
+        // Server info
+        console.log(`  ${chalk.dim("Server")}    ${chalk.cyan(serverUrl)}`);
+        console.log(`  ${chalk.dim("Directory")} ${projectContext.projectRoot}`);
+
+        // Loaded agents
+        if (agentFiles.length > 0) {
+          console.log(`\n  ${chalk.dim(`Agents (${agentFiles.length})`)}`);
+          for (const agent of agentFiles) {
+            console.log(`    ${agent}`);
+          }
+        }
+
+        // Webhooks
+        console.log(`\n  ${chalk.dim("Webhooks")}`);
+        console.log(`    curl -X POST ${serverUrl}/run -H "Content-Type: application/json" -d '{"agent": "${firstAgent}"}'`);
+        console.log(`    ${chalk.dim(`curl -N ... -H "Accept: application/x-ndjson" -d '{"agent": "..."}' (streaming)`)}`);
+
+        // Scheduled agents
+        const schedules = scheduler.list();
+        if (schedules.length > 0) {
+          console.log(`\n  ${chalk.dim(`Scheduled (${schedules.length})`)}`);
+          console.log(scheduler.formatScheduleTable());
+        }
+
+        console.log();
       });
     });
 

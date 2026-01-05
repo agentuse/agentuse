@@ -1,0 +1,184 @@
+import { Cron } from "croner";
+import { randomUUID } from "crypto";
+import type { Schedule, ScheduleConfig } from "./types";
+import { parseScheduleExpression } from "./parser";
+import { logger, executionLog } from "../utils/logger";
+
+export interface SchedulerOptions {
+  onExecute: (schedule: Schedule) => Promise<{ success: boolean; duration: number; error?: string; sessionId?: string }>;
+}
+
+/**
+ * In-memory scheduler for running agents on cron schedules
+ */
+export class Scheduler {
+  private schedules: Map<string, Schedule> = new Map();
+  private jobs: Map<string, Cron> = new Map();
+  private onExecute: SchedulerOptions["onExecute"];
+
+  constructor(options: SchedulerOptions) {
+    this.onExecute = options.onExecute;
+  }
+
+  /**
+   * Add a schedule for an agent
+   */
+  add(agentPath: string, config: ScheduleConfig): Schedule {
+    const id = randomUUID();
+    const parseConfig: { cron?: string; interval?: string; every?: string } = {};
+    if (config.cron) parseConfig.cron = config.cron;
+    if (config.interval) parseConfig.interval = config.interval;
+    if (config.every) parseConfig.every = config.every;
+    const expression = parseScheduleExpression(parseConfig);
+    const timezone = config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    const schedule: Schedule = {
+      id,
+      agentPath,
+      expression,
+      timezone,
+      enabled: config.enabled ?? true,
+      source: "yaml",
+      nextRun: null,
+      createdAt: new Date(),
+    };
+
+    this.schedules.set(id, schedule);
+
+    if (schedule.enabled) {
+      this.startJob(schedule);
+    }
+
+    return schedule;
+  }
+
+  /**
+   * Start a cron job for a schedule
+   */
+  private startJob(schedule: Schedule): void {
+    const job = new Cron(
+      schedule.expression,
+      {
+        timezone: schedule.timezone,
+      },
+      async () => {
+        await this.runSchedule(schedule.id);
+      }
+    );
+
+    this.jobs.set(schedule.id, job);
+    schedule.nextRun = job.nextRun() || null;
+  }
+
+  /**
+   * Execute a scheduled agent run
+   */
+  private async runSchedule(scheduleId: string): Promise<void> {
+    const schedule = this.schedules.get(scheduleId);
+    if (!schedule || !schedule.enabled) return;
+
+    executionLog.start(schedule.agentPath);
+
+    const startTime = Date.now();
+
+    try {
+      const result = await this.onExecute(schedule);
+
+      schedule.lastRun = new Date();
+      schedule.lastResult = result;
+
+      // Update next run time
+      const job = this.jobs.get(scheduleId);
+      schedule.nextRun = job?.nextRun() || null;
+
+      if (result.success) {
+        executionLog.complete(schedule.agentPath, result.duration);
+      } else {
+        executionLog.failed(schedule.agentPath, result.duration, result.error);
+      }
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      schedule.lastRun = new Date();
+      schedule.lastResult = {
+        success: false,
+        duration,
+        error: (error as Error).message,
+      };
+
+      // Update next run time
+      const job = this.jobs.get(scheduleId);
+      schedule.nextRun = job?.nextRun() || null;
+
+      executionLog.failed(schedule.agentPath, duration, (error as Error).message);
+      logger.debug(`Schedule ${scheduleId} failed: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * Trigger immediate execution of a schedule
+   */
+  async trigger(scheduleId: string): Promise<void> {
+    await this.runSchedule(scheduleId);
+  }
+
+  /**
+   * Get a schedule by ID
+   */
+  get(scheduleId: string): Schedule | undefined {
+    return this.schedules.get(scheduleId);
+  }
+
+  /**
+   * List all schedules
+   */
+  list(): Schedule[] {
+    return Array.from(this.schedules.values());
+  }
+
+  /**
+   * Get count of enabled schedules
+   */
+  get count(): number {
+    return this.schedules.size;
+  }
+
+  /**
+   * Stop all jobs (for graceful shutdown)
+   */
+  shutdown(): void {
+    for (const job of this.jobs.values()) {
+      job.stop();
+    }
+    this.jobs.clear();
+    logger.debug("Scheduler: All scheduled jobs stopped");
+  }
+
+  /**
+   * Format schedules for display on server startup
+   */
+  formatScheduleTable(): string {
+    const schedules = this.list();
+    if (schedules.length === 0) {
+      return "";
+    }
+
+    const lines: string[] = [];
+
+    for (const schedule of schedules) {
+      const nextRunStr = schedule.nextRun
+        ? schedule.nextRun.toLocaleString("en-US", {
+            month: "short",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          })
+        : "N/A";
+
+      lines.push(`    ${schedule.agentPath}`);
+      lines.push(`    ${schedule.expression}  next: ${nextRunStr}`);
+    }
+
+    return lines.join("\n");
+  }
+}

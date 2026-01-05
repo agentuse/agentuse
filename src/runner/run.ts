@@ -47,7 +47,9 @@ export async function runAgent(
    * Pre-computing allows the caller to inspect this context (e.g., for UI display)
    * and then reuse it for execution, avoiding duplicate expensive operations.
    */
-  preparedExecution?: PreparedAgentExecution
+  preparedExecution?: PreparedAgentExecution,
+  /** Suppress console output (for serve mode) */
+  quiet: boolean = false
 ): Promise<RunAgentResult> {
   try {
     // Log initialization time if verbose
@@ -99,10 +101,12 @@ export async function runAgent(
         sessionID,
         messageID: assistantMsgID,
         agentName: agent.name,
-        doomLoopDetector
+        doomLoopDetector,
+        quiet
       } : {
         collectToolCalls: true,
-        doomLoopDetector
+        doomLoopDetector,
+        quiet
       }
     );
 
@@ -116,13 +120,15 @@ export async function runAgent(
     const durationMs = startTime ? Date.now() - startTime : 0;
     const toolCallCount = result.toolCalls?.length || 0;
 
-    logger.separator();
-    logger.summary({
-      success: true,
-      durationMs,
-      ...(totalTokens > 0 && { tokensUsed: totalTokens }),
-      ...(toolCallCount > 0 && { toolCallCount }),
-    });
+    if (!quiet) {
+      logger.separator();
+      logger.summary({
+        success: true,
+        durationMs,
+        ...(totalTokens > 0 && { tokensUsed: totalTokens }),
+        ...(toolCallCount > 0 && { toolCallCount }),
+      });
+    }
 
     // Update session message with final token usage
     if (sessionManager && sessionID && assistantMsgID && result.usage) {

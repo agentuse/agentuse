@@ -998,9 +998,42 @@ class Logger {
 }
 
 export const logger = new Logger({
-  level: process.env.LOG_LEVEL ? 
-    (LogLevel[process.env.LOG_LEVEL as keyof typeof LogLevel] ?? LogLevel.INFO) : 
+  level: process.env.LOG_LEVEL ?
+    (LogLevel[process.env.LOG_LEVEL as keyof typeof LogLevel] ?? LogLevel.INFO) :
     LogLevel.INFO,
   enableDebug: isEnvDebugFlagEnabled(),
   disableTUI: process.env.NO_TTY === 'true',
 });
+
+/**
+ * Utility functions for agent execution logging (used by serve and scheduler)
+ */
+export const executionLog = {
+  formatTimestamp(): string {
+    const now = new Date();
+    return `[${now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}]`;
+  },
+
+  formatDuration(ms: number): string {
+    if (ms < 1000) return `${ms}ms`;
+    const seconds = Math.round(ms / 1000);
+    return `${seconds}s`;
+  },
+
+  start(agentPath: string): void {
+    console.log(`${this.formatTimestamp()} ${chalk.cyan('Starting:')} ${agentPath}`);
+  },
+
+  complete(agentPath: string, durationMs: number): void {
+    console.log(`${this.formatTimestamp()} ${chalk.green('Completed:')} ${agentPath} (${this.formatDuration(durationMs)})`);
+  },
+
+  failed(agentPath: string, durationMs: number, error?: string): void {
+    const errorSuffix = error ? ` - ${error}` : '';
+    console.log(`${this.formatTimestamp()} ${chalk.red('Failed:')} ${agentPath} (${this.formatDuration(durationMs)})${errorSuffix}`);
+  },
+
+  timeout(agentPath: string, durationMs: number): void {
+    console.log(`${this.formatTimestamp()} ${chalk.red('Timeout:')} ${agentPath} (${this.formatDuration(durationMs)})`);
+  },
+};
