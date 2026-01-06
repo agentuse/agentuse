@@ -356,11 +356,11 @@ export function createSessionsCommand(): Command {
   const sessionsCmd = new Command("sessions")
     .description("View session logs")
     .argument("[id]", "Session ID to show details (supports partial match)")
-    .option("-a, --all", "Show all sessions including subagents")
+    .option("-s, --subagents", "Include subagent sessions")
     .option("-n, --limit <n>", "Limit number of sessions to show", "10")
     .option("-j, --json", "Output as JSON")
     .option("-f, --full", "Show full tool input/output (not truncated)")
-    .action(async (sessionId?: string, options?: { all?: boolean; limit?: string; json?: boolean; full?: boolean }) => {
+    .action(async (sessionId?: string, options?: { subagents?: boolean; limit?: string; json?: boolean; full?: boolean }) => {
       const projectContext = resolveProjectContext(process.cwd());
 
       if (sessionId) {
@@ -380,10 +380,10 @@ export function createSessionsCommand(): Command {
     .command("list")
     .alias("ls")
     .description("List all sessions")
-    .option("-a, --all", "Show all sessions including subagents")
+    .option("-s, --subagents", "Include subagent sessions")
     .option("-n, --limit <n>", "Limit number of sessions to show", "10")
     .option("-j, --json", "Output as JSON")
-    .action(async (options: { all?: boolean; limit?: string; json?: boolean }) => {
+    .action(async (options: { subagents?: boolean; limit?: string; json?: boolean }) => {
       const projectContext = resolveProjectContext(process.cwd());
       await listSessionsCommand(projectContext.projectRoot, options);
     });
@@ -417,12 +417,12 @@ export function createSessionsCommand(): Command {
 
 async function listSessionsCommand(
   projectRoot: string,
-  options?: { all?: boolean; limit?: string; json?: boolean }
+  options?: { subagents?: boolean; limit?: string; json?: boolean }
 ): Promise<void> {
   let sessions = await listSessions(projectRoot);
 
-  // Filter out subagents unless --all is specified
-  if (!options?.all) {
+  // Filter out subagents unless --subagents is specified
+  if (!options?.subagents) {
     sessions = sessions.filter((s) => !s.isSubAgent);
   }
 
