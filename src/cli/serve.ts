@@ -153,7 +153,7 @@ export function createServeCommand(): Command {
 
       // Load environment
       if (existsSync(projectContext.envFile)) {
-        dotenv.config({ path: projectContext.envFile });
+        dotenv.config({ path: projectContext.envFile, quiet: true });
         logger.debug(`Loaded env from: ${projectContext.envFile}`);
       }
 
@@ -655,20 +655,19 @@ export function createServeCommand(): Command {
           console.log(`  ${chalk.dim("Auth")}      ${chalk.dim("None (localhost)")}`);
         }
 
-        // Loaded agents
-        if (agentFiles.length > 0) {
-          console.log(`\n  ${chalk.dim(`Agents (${agentFiles.length})`)}`);
-          for (const agent of agentFiles) {
-            console.log(`    ${agent}`);
-          }
-        }
-
         // Webhooks
         console.log(`\n  ${chalk.dim("Webhooks")}`);
         const authHeader = apiKey ? ` -H "Authorization: Bearer $AGENTUSE_API_KEY"` : "";
         console.log(`    curl -X POST ${serverUrl}/run${authHeader} -H "Content-Type: application/json" -d '{"agent": "${firstAgent}"}'`);
         console.log(`    ${chalk.dim(`curl -N ... -H "Accept: application/x-ndjson" -d '{"agent": "..."}' (streaming)`)}`);
 
+        // Available agents for webhooks
+        if (agentFiles.length > 0) {
+          console.log(`\n    ${chalk.dim(`Agents (${agentFiles.length})`)}`);
+          for (const agent of agentFiles) {
+            console.log(`      ${agent}`);
+          }
+        }
         // Scheduled agents
         const schedules = scheduler.list();
         if (schedules.length > 0) {
