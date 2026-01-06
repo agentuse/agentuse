@@ -25,29 +25,22 @@ export class Scheduler {
    */
   add(agentPath: string, config: ScheduleConfig): Schedule {
     const id = randomUUID();
-    const parseConfig: { cron?: string; interval?: string; every?: string } = {};
-    if (config.cron) parseConfig.cron = config.cron;
-    if (config.interval) parseConfig.interval = config.interval;
-    if (config.every) parseConfig.every = config.every;
-    const expression = parseScheduleExpression(parseConfig);
-    const timezone = config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const expression = parseScheduleExpression(config);
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     const schedule: Schedule = {
       id,
       agentPath,
       expression,
       timezone,
-      enabled: config.enabled ?? true,
+      enabled: true,
       source: "yaml",
       nextRun: null,
       createdAt: new Date(),
     };
 
     this.schedules.set(id, schedule);
-
-    if (schedule.enabled) {
-      this.startJob(schedule);
-    }
+    this.startJob(schedule);
 
     return schedule;
   }
@@ -162,6 +155,10 @@ export class Scheduler {
       return "";
     }
 
+    // Calculate column widths for alignment
+    const maxAgentWidth = Math.max(...schedules.map((s) => s.agentPath.length));
+    const maxExprWidth = Math.max(...schedules.map((s) => s.expression.length));
+
     const lines: string[] = [];
 
     for (const schedule of schedules) {
@@ -175,8 +172,10 @@ export class Scheduler {
           })
         : "N/A";
 
-      lines.push(`    ${schedule.agentPath}`);
-      lines.push(`    ${schedule.expression}  next: ${nextRunStr}`);
+      const agentCol = schedule.agentPath.padEnd(maxAgentWidth);
+      const exprCol = schedule.expression.padEnd(maxExprWidth);
+
+      lines.push(`    ${agentCol}  ${exprCol}  next: ${nextRunStr}`);
     }
 
     return lines.join("\n");

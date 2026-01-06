@@ -145,31 +145,16 @@ Additional instructions or context.
   </Note>
 </ParamField>
 
-<ParamField path="schedule" type="object" required={false}>
-  Cron-based scheduling for automatic agent execution in serve mode.
+<ParamField path="schedule" type="string" required={false}>
+  Schedule for automatic agent execution in serve mode. The format is auto-detected.
 
-  **Schedule Types (mutually exclusive):**
-  - `cron`: Standard cron expression (e.g., `"0 * * * *"`)
-  - `interval`: Simple interval format (`5s`, `10m`, `2h`, `1d`)
-  - `every`: Natural language aliases (`"every 5 minutes"`, `"hourly"`, `"daily"`)
-
-  **Additional Options:**
-  - `enabled`: Enable/disable the schedule (default: `true`)
-  - `timezone`: Timezone for schedule execution (default: system timezone)
+  **Supported Formats:**
+  - **Interval**: `5s`, `10m`, `2h` (sub-daily)
+  - **Cron**: `"0 * * * *"`, `"0 9 * * 1-5"` (daily+)
 
   ```yaml
-  # Using cron expression
-  schedule:
-    cron: "0 9 * * 1-5"    # Weekdays at 9am
-    timezone: "America/New_York"
-
-  # Using interval
-  schedule:
-    interval: "30m"        # Every 30 minutes
-
-  # Using natural language
-  schedule:
-    every: "hourly"        # Supported: every minute, every 5/10/15/30 minutes, hourly, daily, weekly, monthly
+  schedule: "30m"              # Every 30 minutes (interval)
+  schedule: "0 9 * * 1-5"      # Weekdays at 9am (cron)
   ```
 
   <Note>

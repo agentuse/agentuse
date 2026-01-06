@@ -1,4 +1,4 @@
-import { SCHEDULE_ALIASES, INTERVAL_REGEX } from "./types";
+import { INTERVAL_REGEX, CRON_REGEX } from "./types";
 
 /**
  * Convert interval string to cron expression
@@ -7,7 +7,7 @@ import { SCHEDULE_ALIASES, INTERVAL_REGEX } from "./types";
 function intervalToCron(interval: string): string {
   const match = interval.match(INTERVAL_REGEX);
   if (!match) {
-    throw new Error(`Invalid interval format: ${interval}. Expected: 5s, 10m, 2h, 1d`);
+    throw new Error(`Invalid interval format: ${interval}. Expected: 5s, 10m, 2h`);
   }
 
   const [, value, unit] = match;
@@ -24,93 +24,36 @@ function intervalToCron(interval: string): string {
     case "h":
       if (num >= 24) throw new Error("Hours interval must be less than 24");
       return `0 */${num} * * *`;
-    case "d":
-      return `0 0 */${num} * *`;
     default:
       throw new Error(`Unknown interval unit: ${unit}`);
   }
 }
 
 /**
- * Parse natural language schedule expression
- * @example "daily at 9am", "every weekday at 10:30"
+ * Parse schedule expression into normalized cron expression
+ *
+ * Supports two formats (auto-detected):
+ * - Interval: "5s", "10m", "2h", "1d"
+ * - Cron: "0 9 * * *"
  */
-function parseNaturalLanguage(expr: string): string {
-  const normalized = expr.toLowerCase().trim();
+export function parseScheduleExpression(value: string): string {
+  const trimmed = value.trim();
 
-  // Check simple aliases first
-  if (SCHEDULE_ALIASES[normalized]) {
-    return SCHEDULE_ALIASES[normalized];
+  if (!trimmed) {
+    throw new Error("Schedule expression cannot be empty");
   }
 
-  // Parse "daily at HH:MM" or "daily at Ham/Hpm"
-  const dailyAtMatch = normalized.match(/^daily at (\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
-  if (dailyAtMatch) {
-    let hour = parseInt(dailyAtMatch[1], 10);
-    const minute = dailyAtMatch[2] ? parseInt(dailyAtMatch[2], 10) : 0;
-    const meridiem = dailyAtMatch[3];
-
-    if (meridiem === "pm" && hour < 12) hour += 12;
-    if (meridiem === "am" && hour === 12) hour = 0;
-
-    return `${minute} ${hour} * * *`;
+  // 1. Check if it's an interval format (e.g., "5m", "1h")
+  if (INTERVAL_REGEX.test(trimmed)) {
+    return intervalToCron(trimmed);
   }
 
-  // Parse "every N minutes/hours/days"
-  const everyNMatch = normalized.match(/^every (\d+) (second|minute|hour|day)s?$/);
-  if (everyNMatch) {
-    const num = parseInt(everyNMatch[1], 10);
-    const unit = everyNMatch[2];
-
-    switch (unit) {
-      case "second":
-        return `*/${num} * * * * *`;
-      case "minute":
-        return `*/${num} * * * *`;
-      case "hour":
-        return `0 */${num} * * *`;
-      case "day":
-        return `0 0 */${num} * *`;
-    }
-  }
-
-  // Parse "every weekday at HH:MM"
-  const weekdayAtMatch = normalized.match(/^every weekday at (\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
-  if (weekdayAtMatch) {
-    let hour = parseInt(weekdayAtMatch[1], 10);
-    const minute = weekdayAtMatch[2] ? parseInt(weekdayAtMatch[2], 10) : 0;
-    const meridiem = weekdayAtMatch[3];
-
-    if (meridiem === "pm" && hour < 12) hour += 12;
-    if (meridiem === "am" && hour === 12) hour = 0;
-
-    return `${minute} ${hour} * * 1-5`;
+  // 2. Check if it's a cron expression (5 or 6 space-separated fields)
+  if (CRON_REGEX.test(trimmed)) {
+    return trimmed;
   }
 
   throw new Error(
-    `Cannot parse schedule expression: "${expr}". Use cron format, interval (5m, 1h), or supported patterns like "daily at 9am".`
+    `Invalid schedule format: "${value}". Use interval (e.g., "5m", "2h") or cron (e.g., "0 0 * * *").`
   );
-}
-
-/**
- * Parse schedule config into normalized cron expression
- */
-export function parseScheduleExpression(config: {
-  cron?: string;
-  interval?: string;
-  every?: string;
-}): string {
-  if (config.cron) {
-    return config.cron;
-  }
-
-  if (config.interval) {
-    return intervalToCron(config.interval);
-  }
-
-  if (config.every) {
-    return parseNaturalLanguage(config.every);
-  }
-
-  throw new Error("No schedule expression provided");
 }

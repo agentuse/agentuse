@@ -3,7 +3,7 @@ title: Scheduled Agents
 description: Run agents on a recurring schedule using cron expressions or intervals
 ---
 
-Run agents automatically on a schedule using `agentuse serve`. Configure schedules in agent frontmatter with cron expressions, intervals, or natural language aliases.
+Run agents automatically on a schedule using `agentuse serve`. Configure schedules in agent frontmatter with cron expressions or intervals.
 
 ## Quick Start
 
@@ -12,8 +12,7 @@ Run agents automatically on a schedule using `agentuse serve`. Configure schedul
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-5
-schedule:
-  every: "hourly"
+schedule: "1h"
 ---
 
 Check the system status and send a summary report.
@@ -30,21 +29,39 @@ The server displays scheduled agents on startup:
 ```
 Scheduled (1)
   Agent                  Schedule    Next Run
-  monitor.agentuse       0 * * * *   2024-01-01 12:00:00
+  monitor.agentuse       0 * * * *   Jan 01, 12:00
 ```
 
-## Schedule Configuration
+## Schedule Formats
 
-Add the `schedule` field to your agent's frontmatter. Choose one of three schedule types:
+The `schedule` field accepts a single string value. The format is auto-detected:
+
+### Intervals
+
+Simple duration format for recurring tasks:
+
+```yaml
+schedule: "30m"
+```
+
+Supported units:
+
+| Unit | Example | Max | Description |
+|------|---------|-----|-------------|
+| `s` | `30s` | 59 | Seconds |
+| `m` | `10m` | 59 | Minutes |
+| `h` | `2h` | 23 | Hours |
+
+<Note>
+  For daily or longer schedules, use cron expressions.
+</Note>
 
 ### Cron Expressions
 
 Standard cron syntax for precise control:
 
 ```yaml
-schedule:
-  cron: "0 9 * * 1-5"    # Weekdays at 9am
-  timezone: "America/New_York"
+schedule: "0 9 * * 1-5"    # Weekdays at 9am
 ```
 
 Common patterns:
@@ -56,70 +73,21 @@ Common patterns:
 | `0 9 * * *` | Daily at 9am |
 | `0 0 * * 0` | Weekly on Sunday |
 | `0 0 1 * *` | Monthly on the 1st |
+| `0 9 * * 1-5` | Weekdays at 9am |
 
-### Intervals
-
-Simple duration format:
-
-```yaml
-schedule:
-  interval: "30m"
-```
-
-Supported units:
-
-| Unit | Example | Description |
-|------|---------|-------------|
-| `s` | `30s` | Seconds |
-| `m` | `10m` | Minutes |
-| `h` | `2h` | Hours |
-| `d` | `1d` | Days |
-
-### Natural Language
-
-Human-readable aliases:
-
-```yaml
-schedule:
-  every: "hourly"
-```
-
-Available aliases:
-
-| Alias | Equivalent |
-|-------|------------|
-| `every minute` | `* * * * *` |
-| `every 5 minutes` | `*/5 * * * *` |
-| `every 10 minutes` | `*/10 * * * *` |
-| `every 15 minutes` | `*/15 * * * *` |
-| `every 30 minutes` | `*/30 * * * *` |
-| `hourly` | `0 * * * *` |
-| `daily` | `0 0 * * *` |
-| `weekly` | `0 0 * * 0` |
-| `monthly` | `0 0 1 * *` |
-
-### Additional Options
-
-```yaml
-schedule:
-  cron: "0 9 * * *"
-  enabled: true          # Enable/disable (default: true)
-  timezone: "UTC"        # Timezone for schedule (default: system)
-```
+<Tip>
+  Use [crontab.guru](https://crontab.guru) to build and validate cron expressions.
+</Tip>
 
 ## Example
 
-A comprehensive scheduled agent demonstrating different schedule types:
+A scheduled agent for daily reports:
 
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-5
 description: Generate daily analytics report
-schedule:
-  cron: "0 8 * * 1-5"       # Weekdays at 8am
-  # interval: "5m"          # Or: every 5 minutes
-  # every: "hourly"         # Or: natural language
-  timezone: "America/New_York"
+schedule: "0 8 * * 1-5"    # Weekdays at 8am
 tools:
   filesystem:
     - path: ${root}/data
@@ -133,7 +101,7 @@ Generate the daily analytics report and save it to reports/daily.md.
 ```
 
 <Tip>
-  Use `openrouter:minimax/minimax-m2.1` for frequent, straightforward tasks (health checks, simple monitoring). Reserve `claude-sonnet-4-5` and `claude-opus-4-5` for complex creative tasks requiring nuanced reasoning.
+  Use cheaper models like `openrouter:minimax/minimax-m2.1` for frequent, straightforward tasks (health checks, simple monitoring). Reserve `claude-sonnet-4-5` and `claude-opus-4-5` for complex creative tasks.
 </Tip>
 
 ## Server Options

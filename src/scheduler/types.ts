@@ -1,43 +1,24 @@
 import { z } from "zod";
 
 /**
- * Natural language schedule aliases that map to cron expressions
+ * Regex for interval format: 5s, 10m, 2h (sub-daily only)
  */
-export const SCHEDULE_ALIASES: Record<string, string> = {
-  "every minute": "* * * * *",
-  "every 5 minutes": "*/5 * * * *",
-  "every 10 minutes": "*/10 * * * *",
-  "every 15 minutes": "*/15 * * * *",
-  "every 30 minutes": "*/30 * * * *",
-  "every hour": "0 * * * *",
-  "hourly": "0 * * * *",
-  "daily": "0 0 * * *",
-  "weekly": "0 0 * * 0",
-  "monthly": "0 0 1 * *",
-};
+export const INTERVAL_REGEX = /^(\d+)(s|m|h)$/;
 
 /**
- * Regex for interval format: 5s, 10m, 2h, 1d
+ * Regex to detect cron expressions (5 or 6 space-separated fields)
  */
-export const INTERVAL_REGEX = /^(\d+)(s|m|h|d)$/;
+export const CRON_REGEX = /^[\d*\/,-]+(\s+[\d*\/,-]+){4,5}$/;
 
 /**
  * Zod schema for schedule configuration in .agentuse files
+ *
+ * Supports:
+ *   schedule: "5m"           # interval
+ *   schedule: "0 9 * * *"    # cron
+ *   schedule: "daily at 9am" # natural language
  */
-export const ScheduleConfigSchema = z
-  .object({
-    cron: z.string().optional(),
-    interval: z.string().regex(INTERVAL_REGEX, "Invalid interval format. Use: 5s, 10m, 2h, 1d").optional(),
-    every: z.string().optional(),
-    enabled: z.boolean().default(true),
-    timezone: z.string().optional(),
-  })
-  .refine((data) => data.cron || data.interval || data.every, {
-    message: "Must specify one of: cron, interval, or every",
-  })
-  .refine((data) => [data.cron, data.interval, data.every].filter(Boolean).length === 1, {
-    message: "Cannot specify multiple schedule types (cron, interval, every)",
-  });
+export const ScheduleConfigSchema = z.string().min(1, "Schedule value is required");
 
 export type ScheduleConfig = z.infer<typeof ScheduleConfigSchema>;
 

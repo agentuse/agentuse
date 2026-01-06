@@ -1,8 +1,7 @@
 ---
 model: anthropic:claude-sonnet-4-5
 description: Test scheduled agent
-schedule:
-  interval: "1m"
+schedule: "1m"
 ---
 
 Say "Hello from scheduled agent!" and nothing else.

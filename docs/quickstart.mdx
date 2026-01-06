@@ -163,8 +163,7 @@ Add a `schedule` to run agents automatically:
 ```markdown
 ---
 model: anthropic:claude-sonnet-4-5
-schedule:
-  every: "hourly"        # Or: cron: "0 * * * *" or interval: "30m"
+schedule: "1h"    # Or cron: "0 * * * *"
 ---
 
 Check system status and send a summary report.
