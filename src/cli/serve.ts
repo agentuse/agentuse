@@ -14,6 +14,7 @@ import { printLogo } from "../utils/branding";
 import { SessionManager } from "../session";
 import { initStorage } from "../storage/index.js";
 import { Scheduler, type Schedule } from "../scheduler";
+import { FileWatcher } from "../watcher";
 import { telemetry, parseModel, aggregateToolCalls, countSteps, categorizeError } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { validateAgentEnvVars, formatEnvValidationError } from "../utils/env-validation";
@@ -305,6 +306,68 @@ export function createServeCommand(): Command {
           logger.warn(`Failed to load agent ${agentFile}: ${(err as Error).message}`);
         }
       }
+
+      // Helper to print hot reload messages
+      const printHotReload = (action: "added" | "changed" | "removed", path: string, schedule?: Schedule) => {
+        const actionColor = action === "added" ? chalk.green : action === "removed" ? chalk.red : chalk.yellow;
+        console.log(`  ${chalk.cyan("Hot reload")} Agent ${actionColor(action)}: ${chalk.dim(path)}`);
+        if (schedule) {
+          const nextRun = schedule.nextRun?.toLocaleString("en-US", {
+            month: "short",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          }) || "N/A";
+          console.log(`             Schedule: ${chalk.dim(schedule.expression)} ${chalk.dim(`(next: ${nextRun})`)}`);
+        }
+      };
+
+      // Initialize file watcher for hot reload
+      const fileWatcher = new FileWatcher({
+        projectRoot: projectContext.projectRoot,
+        envFile: projectContext.envFile,
+
+        onAgentAdded: async (relativePath: string) => {
+          try {
+            const agentPath = resolve(projectContext.projectRoot, relativePath);
+            const agent = await parseAgent(agentPath);
+
+            const schedule = agent.config.schedule ? scheduler.add(relativePath, agent.config.schedule) : undefined;
+            printHotReload("added", relativePath, schedule);
+          } catch (err) {
+            logger.warn(`Hot reload: Failed to parse new agent ${relativePath}: ${(err as Error).message}`);
+          }
+        },
+
+        onAgentChanged: async (relativePath: string) => {
+          try {
+            const agentPath = resolve(projectContext.projectRoot, relativePath);
+            const agent = await parseAgent(agentPath);
+
+            const schedule = scheduler.update(relativePath, agent.config.schedule);
+            printHotReload("changed", relativePath, schedule);
+          } catch (err) {
+            logger.warn(`Hot reload: Failed to parse changed agent ${relativePath}: ${(err as Error).message}`);
+          }
+        },
+
+        onAgentRemoved: (relativePath: string) => {
+          const hadSchedule = scheduler.removeByAgentPath(relativePath);
+          printHotReload("removed", relativePath);
+          if (hadSchedule) {
+            logger.debug(`Hot reload: Unregistered schedule for ${relativePath}`);
+          }
+        },
+
+        onEnvReloaded: () => {
+          // Environment variables are reloaded in process.env
+          // New requests will pick up the changes automatically
+        },
+      });
+
+      // Start watching for file changes
+      fileWatcher.start();
 
       const server = createServer(async (req, res) => {
         // CORS headers
@@ -618,6 +681,7 @@ export function createServeCommand(): Command {
       // Graceful shutdown
       const shutdown = async () => {
         console.log("\nShutting down...");
+
         scheduler.shutdown();
 
         // Capture server shutdown telemetry
@@ -654,6 +718,7 @@ export function createServeCommand(): Command {
         } else {
           console.log(`  ${chalk.dim("Auth")}      ${chalk.dim("None (localhost)")}`);
         }
+        console.log(`  ${chalk.dim("Hot reload")} ${chalk.green("enabled")}`);
 
         // Webhooks
         console.log(`\n  ${chalk.dim("Webhooks")}`);

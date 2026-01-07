@@ -65,6 +65,7 @@
     "@openauthjs/openauth": "^0.4.3",
     "ai": "6.0.3",
     "chalk": "^5.5.0",
+    "chokidar": "^5.0.0",
     "commander": "^12.0.0",
     "croner": "^9.1.0",
     "dotenv": "^17.2.1",

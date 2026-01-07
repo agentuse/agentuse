@@ -129,6 +129,58 @@ export class Scheduler {
   }
 
   /**
+   * Find a schedule by agent path
+   */
+  getByAgentPath(agentPath: string): Schedule | undefined {
+    for (const schedule of this.schedules.values()) {
+      if (schedule.agentPath === agentPath) {
+        return schedule;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Remove a schedule by agent path
+   * @returns true if a schedule was removed, false if not found
+   */
+  removeByAgentPath(agentPath: string): boolean {
+    const schedule = this.getByAgentPath(agentPath);
+    if (!schedule) {
+      return false;
+    }
+
+    // Stop the cron job
+    const job = this.jobs.get(schedule.id);
+    if (job) {
+      job.stop();
+      this.jobs.delete(schedule.id);
+    }
+
+    // Remove the schedule
+    this.schedules.delete(schedule.id);
+
+    logger.debug(`Scheduler: Removed schedule for ${agentPath}`);
+    return true;
+  }
+
+  /**
+   * Update a schedule for an agent (removes old, adds new)
+   * @returns The new schedule, or undefined if no schedule config provided
+   */
+  update(agentPath: string, config: ScheduleConfig | undefined): Schedule | undefined {
+    // Always remove existing schedule first
+    this.removeByAgentPath(agentPath);
+
+    // Add new schedule if config provided
+    if (config) {
+      return this.add(agentPath, config);
+    }
+
+    return undefined;
+  }
+
+  /**
    * Get count of enabled schedules
    */
   get count(): number {
