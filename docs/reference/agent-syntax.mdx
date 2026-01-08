@@ -106,6 +106,26 @@ Additional instructions or context.
   ```
 </ParamField>
 
+<ParamField path="version" type="string" required={false}>
+  Version identifier for the agent. For developer documentation only - not displayed or used at runtime.
+
+  ```yaml
+  version: "1.0.0"
+  version: "2024-01-15"
+  ```
+</ParamField>
+
+<ParamField path="notes" type="string" required={false}>
+  Developer notes for setup instructions, requirements, or other documentation. Not displayed at runtime.
+
+  ```yaml
+  notes: |
+    Setup:
+    1. Set NEWS_API_KEY environment variable
+    2. Install jq: brew install jq
+  ```
+</ParamField>
+
 <ParamField path="mcpServers" type="object" required={false}>
   Configuration for Model Context Protocol (MCP) servers that provide tools and resources to the agent.
 
