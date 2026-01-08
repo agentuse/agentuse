@@ -314,25 +314,32 @@ Commands not matching these patterns will be rejected.`;
 
           if (stdout) {
             output += stdout;
-            if (stdoutTruncated) {
-              output += '\n... (stdout truncated)';
-            }
           }
 
           if (stderr) {
             if (output) output += '\n\n';
             output += `[stderr]\n${stderr}`;
-            if (stderrTruncated) {
-              output += '\n... (stderr truncated)';
-            }
+          }
+
+          // Build metadata hints for LLM (OpenCode pattern)
+          const resultMetadata: string[] = ['<bash_metadata>'];
+
+          if (stdoutTruncated || stderrTruncated) {
+            resultMetadata.push(`bash tool truncated output as it exceeded ${DEFAULT_MAX_OUTPUT} byte limit`);
           }
 
           if (timedOut) {
-            output += `\n\n[Process timed out after ${timeoutMs}ms and was killed]`;
+            resultMetadata.push(`bash tool terminated command after exceeding timeout ${timeoutMs}ms`);
           }
 
           if (code !== 0 && code !== null) {
-            output += `\n\n[Exit code: ${code}]`;
+            resultMetadata.push(`exit code: ${code}`);
+          }
+
+          // Append metadata if any warnings/info
+          if (resultMetadata.length > 1) {
+            resultMetadata.push('</bash_metadata>');
+            output += '\n\n' + resultMetadata.join('\n');
           }
 
           resolve({

@@ -212,7 +212,11 @@ export async function processAgentStream(
             type: 'tool',
             callID: chunk.toolCallId,
             tool: chunk.toolName!,
-            state: { status: 'pending' }  // Use discriminated union
+            state: {
+              status: 'running',
+              input: chunk.toolInput,
+              time: { start: chunk.toolStartTime || Date.now() }
+            }
           } as any).then(partID => {
             // Track partID so we can update it when result comes in
             const pending = pendingToolCalls.get(chunk.toolCallId!);
