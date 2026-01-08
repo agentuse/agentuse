@@ -909,8 +909,11 @@ async function runInternalWorker() {
     try {
       const request = JSON.parse(line) as ExecuteRequest;
       if (request.type === 'execute') {
-        const response = await executeAgent(request);
-        console.log(JSON.stringify(response));
+        // Don't await - handle requests concurrently
+        // Each request runs in parallel, response sent when complete
+        executeAgent(request).then((response) => {
+          console.log(JSON.stringify(response));
+        });
       } else {
         console.log(JSON.stringify({
           id: (request as any).id || 'unknown',
