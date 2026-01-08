@@ -1,21 +1,21 @@
 import { Command } from "commander";
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import { timingSafeEqual } from "crypto";
-import { resolve, dirname } from "path";
+import { spawn, type ChildProcess } from "child_process";
+import { resolve } from "path";
 import { existsSync } from "fs";
 import { glob } from "glob";
+import { createInterface, type Interface as ReadlineInterface } from "readline";
 import chalk from "chalk";
 import { parseAgent } from "../parser";
-import { runAgent, executeAgentCore, prepareAgentExecution, type AgentChunk } from "../runner";
-import { connectMCP, type MCPConnection } from "../mcp";
+import { type AgentChunk } from "../runner";
 import { resolveProjectContext } from "../utils/project";
 import { logger, LogLevel, executionLog } from "../utils/logger";
 import { printLogo } from "../utils/branding";
-import { SessionManager } from "../session";
 import { initStorage } from "../storage/index.js";
 import { Scheduler, type Schedule } from "../scheduler";
 import { FileWatcher } from "../watcher";
-import { telemetry, parseModel, aggregateToolCalls, countSteps, categorizeError } from "../telemetry";
+import { telemetry, parseModel } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { validateAgentEnvVars, formatEnvValidationError } from "../utils/env-validation";
 import * as dotenv from "dotenv";
@@ -46,6 +46,228 @@ interface RunErrorResponse {
     code: string;
     message: string;
   };
+}
+
+interface WorkerExecuteOptions {
+  agentPath: string;
+  projectRoot: string;
+  prompt?: string | undefined;
+  model?: string | undefined;
+  timeout?: number | undefined;
+  maxSteps?: number | undefined;
+  debug?: boolean | undefined;
+}
+
+interface WorkerExecuteResult {
+  success: true;
+  result: {
+    text: string;
+    finishReason?: string;
+    duration: number;
+    tokens?: { input: number; output: number };
+    toolCalls: number;
+  };
+}
+
+interface WorkerExecuteError {
+  success: false;
+  error: {
+    code: string;
+    message: string;
+  };
+}
+
+/**
+ * Agent Worker Manager
+ *
+ * Spawns and manages a worker process for agent execution.
+ * The worker is spawned at serve startup (sync context) where spawn works,
+ * and stays alive to handle execution requests via stdin/stdout IPC.
+ *
+ * This works around the EBADF issue where spawn() fails in async callback
+ * contexts (HTTP handlers, scheduler callbacks) in bundled Node.js code.
+ */
+class AgentWorker {
+  private process: ChildProcess | null = null;
+  private readline: ReadlineInterface | null = null;
+  private pendingRequests: Map<string, {
+    resolve: (value: WorkerExecuteResult | WorkerExecuteError) => void;
+    timeoutId?: NodeJS.Timeout;
+  }> = new Map();
+  private requestCounter = 0;
+  private ready = false;
+  private readyPromise: Promise<void> | null = null;
+  private readyResolve: (() => void) | null = null;
+
+  /**
+   * Spawn the worker process. Must be called during server startup (sync context).
+   */
+  spawn(): Promise<void> {
+    // Fork the same CLI with --internal-worker flag
+    // This avoids needing a separate worker bundle - more elegant for npm package
+    const cliPath = process.argv[1];
+
+    this.readyPromise = new Promise((resolve, reject) => {
+      this.readyResolve = resolve;
+
+      // Timeout if worker doesn't become ready within 10 seconds
+      const startupTimeout = setTimeout(() => {
+        if (!this.ready) {
+          reject(new Error("Worker failed to start within 10 seconds"));
+          this.shutdown();
+        }
+      }, 10000);
+
+      // Clear timeout when ready
+      const originalResolve = this.readyResolve;
+      this.readyResolve = () => {
+        clearTimeout(startupTimeout);
+        originalResolve?.();
+      };
+    });
+
+    this.process = spawn(process.execPath, [cliPath, "--internal-worker"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: process.env,
+    });
+
+    this.readline = createInterface({
+      input: this.process.stdout!,
+      terminal: false,
+    });
+
+    this.readline.on("line", (line) => {
+      this.handleWorkerMessage(line);
+    });
+
+    this.process.stderr?.on("data", (data) => {
+      logger.debug(`[Worker stderr] ${data.toString().trim()}`);
+    });
+
+    this.process.on("error", (err) => {
+      logger.error(`Worker process error: ${err.message}`);
+      this.handleWorkerDeath();
+    });
+
+    this.process.on("exit", (code) => {
+      logger.warn(`Worker process exited with code ${code}`);
+      this.handleWorkerDeath();
+    });
+
+    return this.readyPromise;
+  }
+
+  private handleWorkerMessage(line: string) {
+    if (!line.trim()) return;
+
+    try {
+      const message = JSON.parse(line);
+
+      // Handle ready signal
+      if (message.type === "ready") {
+        this.ready = true;
+        if (this.readyResolve) {
+          this.readyResolve();
+          this.readyResolve = null;
+        }
+        return;
+      }
+
+      // Handle response
+      const pending = this.pendingRequests.get(message.id);
+      if (pending) {
+        if (pending.timeoutId) {
+          clearTimeout(pending.timeoutId);
+        }
+        this.pendingRequests.delete(message.id);
+        pending.resolve(message);
+      }
+    } catch (err) {
+      logger.debug(`Failed to parse worker message: ${line}`);
+    }
+  }
+
+  private handleWorkerDeath() {
+    this.ready = false;
+    this.process = null;
+    this.readline = null;
+
+    // Reject all pending requests
+    for (const pending of this.pendingRequests.values()) {
+      if (pending.timeoutId) {
+        clearTimeout(pending.timeoutId);
+      }
+      pending.resolve({
+        success: false,
+        error: { code: "WORKER_DIED", message: "Worker process died unexpectedly" },
+      });
+    }
+    this.pendingRequests.clear();
+  }
+
+  /**
+   * Execute an agent via the worker process.
+   */
+  execute(options: WorkerExecuteOptions): Promise<WorkerExecuteResult | WorkerExecuteError> {
+    return new Promise((resolve) => {
+      if (!this.process || !this.ready) {
+        resolve({
+          success: false,
+          error: { code: "WORKER_NOT_READY", message: "Worker process not ready" },
+        });
+        return;
+      }
+
+      const id = `req-${++this.requestCounter}`;
+      const timeoutMs = (options.timeout ?? 300) * 1000 + 5000; // Add 5s buffer
+
+      const timeoutId = setTimeout(() => {
+        const pending = this.pendingRequests.get(id);
+        if (pending) {
+          this.pendingRequests.delete(id);
+          pending.resolve({
+            success: false,
+            error: { code: "TIMEOUT", message: `Request timed out after ${options.timeout ?? 300}s` },
+          });
+        }
+      }, timeoutMs);
+
+      this.pendingRequests.set(id, { resolve, timeoutId });
+
+      const request = {
+        id,
+        type: "execute",
+        agentPath: options.agentPath,
+        projectRoot: options.projectRoot,
+        prompt: options.prompt,
+        model: options.model,
+        timeout: options.timeout,
+        maxSteps: options.maxSteps,
+        debug: options.debug,
+      };
+
+      this.process.stdin!.write(JSON.stringify(request) + "\n");
+    });
+  }
+
+  /**
+   * Shutdown the worker process.
+   */
+  shutdown() {
+    if (this.process) {
+      this.process.kill("SIGTERM");
+      this.process = null;
+    }
+    if (this.readline) {
+      this.readline.close();
+      this.readline = null;
+    }
+    this.ready = false;
+  }
+
+  isReady(): boolean {
+    return this.ready;
+  }
 }
 
 function parseRequestBody(req: IncomingMessage): Promise<RunRequest> {
@@ -169,21 +391,33 @@ export function createServeCommand(): Command {
       // Initialize telemetry
       await telemetry.init(packageVersion);
 
+      // Spawn agent worker at startup (sync context where spawn works)
+      // This worker handles agent execution to work around EBADF in async callbacks
+      const worker = new AgentWorker();
+      try {
+        await worker.spawn();
+        logger.debug("Agent worker spawned successfully");
+      } catch (err) {
+        console.error(chalk.red(`Failed to spawn agent worker: ${(err as Error).message}`));
+        process.exit(1);
+      }
+
       // Execution stats tracking
       const serverStartTime = Date.now();
       let totalExecutions = 0;
       let successfulExecutions = 0;
       let failedExecutions = 0;
 
-      // Helper function to execute an agent (used by both API and scheduler)
+      // Helper function to execute an agent (used by scheduler)
+      // Uses subprocess to work around EBADF issue when spawning from async callbacks
       const executeScheduledAgent = async (
         schedule: Schedule
       ): Promise<{ success: boolean; duration: number; error?: string; sessionId?: string }> => {
         const startTime = Date.now();
         const agentPath = resolve(projectContext.projectRoot, schedule.agentPath);
-        let mcp: MCPConnection[] = [];
-        let agent: Awaited<ReturnType<typeof parseAgent>> | undefined;
 
+        // Parse agent for telemetry and validation
+        let agent: Awaited<ReturnType<typeof parseAgent>> | undefined;
         try {
           agent = await parseAgent(agentPath);
 
@@ -192,29 +426,29 @@ export function createServeCommand(): Command {
           if (!envValidation.valid) {
             throw new Error(formatEnvValidationError(envValidation));
           }
-
-          const mcpBasePath = dirname(agentPath);
-          mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, mcpBasePath);
-
-          const sessionManager = new SessionManager();
-
-          await runAgent(
-            agent,
-            mcp,
-            options.debug ?? false,
-            undefined, // no abort signal for scheduled runs
-            startTime,
-            false, // not verbose for scheduled runs
-            agentPath,
-            undefined,
-            sessionManager,
-            { projectRoot: projectContext.projectRoot, cwd: workDir },
-            undefined, // userPrompt
-            undefined, // preparedExecution
-            true // quiet mode for serve
-          );
-
+        } catch (parseError) {
           const duration = Date.now() - startTime;
+          totalExecutions++;
+          failedExecutions++;
+          return {
+            success: false,
+            duration,
+            error: (parseError as Error).message,
+          };
+        }
+
+        // Execute via worker process to work around EBADF issue in async callbacks
+        const spawnResult = await worker.execute({
+          agentPath: schedule.agentPath, // Use relative path
+          projectRoot: projectContext.projectRoot,
+          timeout: agent.config.timeout,
+          maxSteps: agent.config.maxSteps,
+          debug: options.debug,
+        });
+
+        const duration = Date.now() - startTime;
+
+        if (spawnResult.success) {
           totalExecutions++;
           successfulExecutions++;
 
@@ -222,8 +456,8 @@ export function createServeCommand(): Command {
           telemetry.captureExecution({
             ...parseModel(agent.config.model),
             durationMs: duration,
-            inputTokens: 0,
-            outputTokens: 0,
+            inputTokens: spawnResult.result.tokens?.input ?? 0,
+            outputTokens: spawnResult.result.tokens?.output ?? 0,
             success: true,
             features: {
               mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
@@ -243,42 +477,31 @@ export function createServeCommand(): Command {
             success: true,
             duration,
           };
-        } catch (error) {
-          const duration = Date.now() - startTime;
+        } else {
           totalExecutions++;
           failedExecutions++;
 
           // Capture telemetry for failed scheduled execution
-          if (agent) {
-            telemetry.captureExecution({
-              ...parseModel(agent.config.model),
-              durationMs: duration,
-              inputTokens: 0,
-              outputTokens: 0,
-              success: false,
-              errorType: categorizeError(error) ?? 'unknown',
-              features: {
-                mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
-                subagentsConfigured: agent.config.subagents?.length ?? 0,
-                skillsUsed: false,
-                mode: 'schedule',
-              },
-            });
-          }
+          telemetry.captureExecution({
+            ...parseModel(agent.config.model),
+            durationMs: duration,
+            inputTokens: 0,
+            outputTokens: 0,
+            success: false,
+            errorType: spawnResult.error.code === 'TIMEOUT' ? 'timeout' : 'unknown',
+            features: {
+              mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
+              subagentsConfigured: agent.config.subagents?.length ?? 0,
+              skillsUsed: false,
+              mode: 'schedule',
+            },
+          });
 
           return {
             success: false,
             duration,
-            error: (error as Error).message,
+            error: spawnResult.error.message,
           };
-        } finally {
-          for (const conn of mcp) {
-            try {
-              await conn.client.close();
-            } catch {
-              // Ignore cleanup errors
-            }
-          }
         }
       };
 
@@ -393,7 +616,6 @@ export function createServeCommand(): Command {
         }
 
         const startTime = Date.now();
-        let mcp: MCPConnection[] = [];
 
         try {
           // Parse request
@@ -415,7 +637,7 @@ export function createServeCommand(): Command {
 
           executionLog.start(body.agent);
 
-          // Parse agent
+          // Parse agent for validation and telemetry
           const agent = await parseAgent(agentPath);
 
           // Pre-flight environment variable validation
@@ -425,233 +647,143 @@ export function createServeCommand(): Command {
             return;
           }
 
-          // Override model if specified
-          if (body.model) {
-            agent.config.model = body.model;
-          }
-
-          // Connect MCP servers
-          const mcpBasePath = dirname(agentPath);
-          mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, mcpBasePath);
-
           // Create abort controller for timeout
           const timeoutSeconds = body.timeout ?? agent.config.timeout ?? 300;
           const abortController = new AbortController();
           const timeoutId = setTimeout(() => abortController.abort(), timeoutSeconds * 1000);
 
-          // Initialize session manager
-          const sessionManager = new SessionManager();
+          // Handle client disconnect
+          req.on("close", () => {
+            abortController.abort();
+          });
 
-          if (wantsStream) {
-            // NDJSON streaming response
-            res.writeHead(200, {
-              "Content-Type": "application/x-ndjson",
-              "Transfer-Encoding": "chunked",
-              "Cache-Control": "no-cache",
-              "Connection": "keep-alive",
+          // Execute via worker process to work around EBADF issue in async callbacks
+          // MCP server spawning fails in HTTP handlers due to bundler/Node.js fd issues
+          const spawnResult = await worker.execute({
+            agentPath: body.agent, // Use relative path, worker resolves from projectRoot
+            projectRoot: projectContext.projectRoot,
+            prompt: body.prompt,
+            model: body.model,
+            timeout: timeoutSeconds,
+            maxSteps: body.maxSteps,
+            debug: options.debug,
+          });
+
+          clearTimeout(timeoutId);
+          const duration = Date.now() - startTime;
+
+          if (spawnResult.success) {
+            totalExecutions++;
+            successfulExecutions++;
+
+            // Capture telemetry
+            telemetry.captureExecution({
+              ...parseModel(body.model || agent.config.model),
+              durationMs: duration,
+              inputTokens: spawnResult.result.tokens?.input ?? 0,
+              outputTokens: spawnResult.result.tokens?.output ?? 0,
+              success: true,
+              features: {
+                mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
+                subagentsConfigured: agent.config.subagents?.length ?? 0,
+                skillsUsed: false,
+                mode: 'webhook',
+              },
+              config: {
+                timeoutCustom: body.timeout !== undefined || agent.config.timeout !== undefined,
+                maxStepsCustom: body.maxSteps !== undefined || agent.config.maxSteps !== undefined,
+                quietMode: true,
+                debugMode: options.debug ?? false,
+              },
             });
 
-            // Handle client disconnect
-            req.on("close", () => {
-              abortController.abort();
-            });
+            executionLog.complete(body.agent, duration);
 
-            try {
-              // Use shared preparation logic
-              const {
-                tools,
-                systemMessages,
-                userMessage,
-                maxSteps,
-                subAgentNames
-              } = await prepareAgentExecution({
-                agent,
-                mcpClients: mcp,
-                agentFilePath: agentPath,
-                cliMaxSteps: body.maxSteps,
-                sessionManager,
-                projectContext: { projectRoot: projectContext.projectRoot, cwd: workDir },
-                userPrompt: body.prompt,
-                abortSignal: abortController.signal,
-                verbose: options.debug
+            if (wantsStream) {
+              // NDJSON streaming response - send result as text chunk then finish
+              res.writeHead(200, {
+                "Content-Type": "application/x-ndjson",
+                "Transfer-Encoding": "chunked",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
               });
 
-              // Execute agent and stream chunks
-              const generator = executeAgentCore(agent, tools, {
-                userMessage,
-                systemMessages,
-                maxSteps,
-                abortSignal: abortController.signal,
-                subAgentNames,
-              });
+              // Send text chunk
+              const textChunk: AgentChunk = {
+                type: "text",
+                text: spawnResult.result.text,
+              };
+              res.write(JSON.stringify(textChunk) + "\n");
 
-              for await (const chunk of generator) {
-                const line = JSON.stringify(chunk) + "\n";
-                res.write(line);
-              }
-
-              // Write final finish chunk with duration
-              const streamDuration = Date.now() - startTime;
+              // Send finish chunk
               const finishChunk: AgentChunk = {
                 type: "finish",
-                finishReason: "end-turn",
+                finishReason: spawnResult.result.finishReason || "end-turn",
               };
-              res.write(JSON.stringify({ ...finishChunk, duration: streamDuration }) + "\n");
-              executionLog.complete(body.agent, streamDuration);
-
-              totalExecutions++;
-              successfulExecutions++;
-              telemetry.captureExecution({
-                ...parseModel(agent.config.model),
-                durationMs: streamDuration,
-                inputTokens: 0,
-                outputTokens: 0,
-                success: true,
-                features: {
-                  mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
-                  subagentsConfigured: agent.config.subagents?.length ?? 0,
-                  skillsUsed: false,
-                  mode: 'webhook',
-                },
-                config: {
-                  timeoutCustom: body.timeout !== undefined || agent.config.timeout !== undefined,
-                  maxStepsCustom: body.maxSteps !== undefined || agent.config.maxSteps !== undefined,
-                  quietMode: true,
-                  debugMode: options.debug ?? false,
-                },
-              });
-            } catch (err) {
-              const errorDuration = Date.now() - startTime;
-              const errorChunk: AgentChunk = {
-                type: "error",
-                error: (err as Error).message,
-              };
-              res.write(JSON.stringify(errorChunk) + "\n");
-              executionLog.failed(body.agent, errorDuration, (err as Error).message);
-
-              totalExecutions++;
-              failedExecutions++;
-              telemetry.captureExecution({
-                ...parseModel(agent.config.model),
-                durationMs: errorDuration,
-                inputTokens: 0,
-                outputTokens: 0,
-                success: false,
-                errorType: categorizeError(err) ?? 'unknown',
-                features: {
-                  mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
-                  subagentsConfigured: agent.config.subagents?.length ?? 0,
-                  skillsUsed: false,
-                  mode: 'webhook',
-                },
-              });
-            } finally {
-              clearTimeout(timeoutId);
+              res.write(JSON.stringify({ ...finishChunk, duration }) + "\n");
               res.end();
-            }
-          } else {
-            // Non-streaming JSON response
-            try {
-              const result = await runAgent(
-                agent,
-                mcp,
-                options.debug ?? false,
-                abortController.signal,
-                startTime,
-                options.debug ?? false,
-                agentPath,
-                body.maxSteps,
-                sessionManager,
-                { projectRoot: projectContext.projectRoot, cwd: workDir },
-                body.prompt,
-                undefined, // preparedExecution
-                true // quiet mode for serve
-              );
-
-              clearTimeout(timeoutId);
-
-              const nonStreamDuration = Date.now() - startTime;
+            } else {
+              // JSON response
               const response: RunResponse = {
                 success: true,
                 result: {
-                  text: result.text,
-                  ...(result.finishReason && { finishReason: result.finishReason }),
-                  duration: nonStreamDuration,
-                  ...(result.usage && { tokens: { input: result.usage.inputTokens || 0, output: result.usage.outputTokens || 0 } }),
-                  toolCalls: result.toolCallCount,
+                  text: spawnResult.result.text,
+                  ...(spawnResult.result.finishReason && { finishReason: spawnResult.result.finishReason }),
+                  duration,
+                  ...(spawnResult.result.tokens && { tokens: spawnResult.result.tokens }),
+                  toolCalls: spawnResult.result.toolCalls,
                 },
               };
-
               sendJSON(res, 200, response);
-              executionLog.complete(body.agent, nonStreamDuration);
+            }
+          } else {
+            totalExecutions++;
+            failedExecutions++;
 
-              totalExecutions++;
-              successfulExecutions++;
-              telemetry.captureExecution({
-                ...parseModel(agent.config.model),
-                durationMs: nonStreamDuration,
-                inputTokens: result.usage?.inputTokens ?? 0,
-                outputTokens: result.usage?.outputTokens ?? 0,
-                success: true,
-                toolCalls: aggregateToolCalls(result.toolCallTraces),
-                steps: countSteps(result.toolCallTraces),
-                ...(result.finishReason && { finishReason: result.finishReason }),
-                hasTextOutput: result.hasTextOutput,
-                features: {
-                  mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
-                  subagentsConfigured: agent.config.subagents?.length ?? 0,
-                  skillsUsed: false,
-                  mode: 'webhook',
-                },
-                config: {
-                  timeoutCustom: body.timeout !== undefined || agent.config.timeout !== undefined,
-                  maxStepsCustom: body.maxSteps !== undefined || agent.config.maxSteps !== undefined,
-                  quietMode: true,
-                  debugMode: options.debug ?? false,
-                },
+            const errorCode = spawnResult.error.code;
+            const errorMessage = spawnResult.error.message;
+
+            // Capture telemetry
+            telemetry.captureExecution({
+              ...parseModel(body.model || agent.config.model),
+              durationMs: duration,
+              inputTokens: 0,
+              outputTokens: 0,
+              success: false,
+              errorType: errorCode === 'TIMEOUT' ? 'timeout' : 'unknown',
+              features: {
+                mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
+                subagentsConfigured: agent.config.subagents?.length ?? 0,
+                skillsUsed: false,
+                mode: 'webhook',
+              },
+            });
+
+            if (errorCode === 'TIMEOUT') {
+              executionLog.timeout(body.agent, duration);
+            } else {
+              executionLog.failed(body.agent, duration, errorMessage);
+            }
+
+            if (wantsStream) {
+              // NDJSON streaming response - send error chunk
+              res.writeHead(200, {
+                "Content-Type": "application/x-ndjson",
+                "Transfer-Encoding": "chunked",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
               });
-            } catch (err) {
-              clearTimeout(timeoutId);
 
-              const errorDuration = Date.now() - startTime;
-              totalExecutions++;
-              failedExecutions++;
-
-              if (abortController.signal.aborted) {
-                sendError(res, 504, "TIMEOUT", `Agent execution timed out after ${timeoutSeconds}s`);
-                executionLog.timeout(body.agent, errorDuration);
-                telemetry.captureExecution({
-                  ...parseModel(agent.config.model),
-                  durationMs: errorDuration,
-                  inputTokens: 0,
-                  outputTokens: 0,
-                  success: false,
-                  errorType: 'timeout',
-                  features: {
-                    mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
-                    subagentsConfigured: agent.config.subagents?.length ?? 0,
-                    skillsUsed: false,
-                    mode: 'webhook',
-                  },
-                });
-              } else {
-                sendError(res, 500, "EXECUTION_ERROR", (err as Error).message);
-                executionLog.failed(body.agent, errorDuration, (err as Error).message);
-                telemetry.captureExecution({
-                  ...parseModel(agent.config.model),
-                  durationMs: errorDuration,
-                  inputTokens: 0,
-                  outputTokens: 0,
-                  success: false,
-                  errorType: categorizeError(err) ?? 'unknown',
-                  features: {
-                    mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
-                    subagentsConfigured: agent.config.subagents?.length ?? 0,
-                    skillsUsed: false,
-                    mode: 'webhook',
-                  },
-                });
-              }
+              const errorChunk: AgentChunk = {
+                type: "error",
+                error: errorMessage,
+              };
+              res.write(JSON.stringify(errorChunk) + "\n");
+              res.end();
+            } else {
+              // JSON error response
+              const httpStatus = errorCode === 'TIMEOUT' ? 504 : 500;
+              sendError(res, httpStatus, errorCode, errorMessage);
             }
           }
         } catch (err) {
@@ -666,15 +798,6 @@ export function createServeCommand(): Command {
           } else {
             sendError(res, 500, "INTERNAL_ERROR", message);
           }
-        } finally {
-          // Cleanup MCP connections
-          for (const conn of mcp) {
-            try {
-              await conn.client.close();
-            } catch {
-              // Ignore cleanup errors
-            }
-          }
         }
       });
 
@@ -683,6 +806,7 @@ export function createServeCommand(): Command {
         console.log("\nShutting down...");
 
         scheduler.shutdown();
+        worker.shutdown();
 
         // Capture server shutdown telemetry
         telemetry.captureServerShutdown({

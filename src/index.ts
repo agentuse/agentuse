@@ -128,14 +128,19 @@ program
   .option('-C, --directory <path>', 'Run as if agentuse was started in <path> instead of the current directory')
   .option('--env-file <path>', 'Path to custom .env file')
   .option('-m, --model <model>', 'Override the model specified in the agent file')
-  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string }) => {
+  .option('--json', 'Output result as JSON (implies --quiet --no-tty)')
+  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string, json?: boolean }) => {
     const startTime = Date.now();
     let originalCwd: string | undefined;
 
     try {
       // Configure logger based on flags
-      if (options.quiet && options.debug) {
-        throw new Error('Cannot use --quiet and --debug together');
+      // --json implies --quiet and --no-tty
+      const jsonMode = options.json === true;
+      const effectiveQuiet = options.quiet || jsonMode;
+
+      if (effectiveQuiet && options.debug) {
+        throw new Error('Cannot use --quiet/--json and --debug together');
       }
 
       process.env.AGENTUSE_DEBUG = options.debug ? 'true' : 'false';
@@ -144,9 +149,9 @@ program
       let quietMode = false;
 
       // Commander maps --no-tty to options.tty === false (noTty isn't guaranteed), so check both
-      const disableTUI = options.tty === false || options.noTty === true || (options as any)['no-tty'] === true;
+      const disableTUI = options.tty === false || options.noTty === true || (options as any)['no-tty'] === true || jsonMode;
 
-      if (options.quiet) {
+      if (effectiveQuiet) {
         loggerConfig.level = LogLevel.WARN;
         quietMode = true;
       } else if (options.debug) {
@@ -164,8 +169,8 @@ program
       // Initialize telemetry
       await telemetry.init(packageVersion);
 
-      // Show ASCII logo (unless in quiet mode)
-      if (!options.quiet) {
+      // Show ASCII logo (unless in quiet/json mode)
+      if (!effectiveQuiet) {
         const brandingStyle: BrandingStyle = options.compact ? 'compact' : 'full';
         printLogo(brandingStyle);
 
@@ -436,7 +441,7 @@ program
       });
 
       // Display agent metadata in clean format
-      if (!options.quiet) {
+      if (!effectiveQuiet) {
         logger.separator();
         const metadataLines = [
           `Agent: ${agent.name}`,
@@ -488,7 +493,9 @@ program
         if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
           if (wasInterrupted) {
             // User pressed Ctrl-C - clean exit with standard interrupt code
-            logger.info('Agent execution interrupted by user.');
+            if (!jsonMode) {
+              logger.info('Agent execution interrupted by user.');
+            }
             // Capture telemetry for user abort
             telemetry.captureExecution({
               ...parseModel(agent.config.model),
@@ -499,10 +506,17 @@ program
               errorType: 'user_abort',
             });
             await telemetry.shutdown();
+            if (jsonMode) {
+              console.log(JSON.stringify({
+                success: false,
+                error: { code: 'USER_ABORT', message: 'Agent execution interrupted by user' },
+              }));
+            }
             process.exit(130);
           } else {
             // Actual timeout
-            logger.error(`
+            if (!jsonMode) {
+              logger.error(`
 ⚠️  EXECUTION TIMEOUT
 
 Agent execution timed out after ${effectiveTimeoutSeconds} seconds (${Math.floor(effectiveTimeoutSeconds / 60)} minutes).
@@ -522,6 +536,7 @@ The task may require more time to complete. Try one of these solutions:
 4. Optimize your agent to use fewer tool calls
 
 Current timeout: ${effectiveTimeoutSeconds}s`);
+            }
             // Capture telemetry for timeout
             telemetry.captureExecution({
               ...parseModel(agent.config.model),
@@ -532,6 +547,12 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
               errorType: 'timeout',
             });
             await telemetry.shutdown();
+            if (jsonMode) {
+              console.log(JSON.stringify({
+                success: false,
+                error: { code: 'TIMEOUT', message: `Agent execution timed out after ${effectiveTimeoutSeconds}s` },
+              }));
+            }
             process.exit(1);
           }
         }
@@ -616,6 +637,22 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       // Shutdown telemetry before exit
       await telemetry.shutdown();
 
+      // Output JSON result if --json mode
+      if (jsonMode) {
+        const duration = Date.now() - startTime;
+        const jsonOutput = {
+          success: true,
+          result: {
+            text: result.text || '',
+            ...(result.finishReason && { finishReason: result.finishReason }),
+            duration,
+            ...(result.usage && { tokens: { input: result.usage.inputTokens || 0, output: result.usage.outputTokens || 0 } }),
+            toolCalls: result.toolCallCount || 0,
+          },
+        };
+        console.log(JSON.stringify(jsonOutput));
+      }
+
       // Exit successfully after agent completes
       process.exit(0);
     } catch (error) {
@@ -623,6 +660,16 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       if (options.directory && originalCwd && originalCwd !== process.cwd()) {
         process.chdir(originalCwd);
       }
+
+      // Helper to output JSON error and exit
+      const outputJsonError = (code: string, message: string) => {
+        if (options.json) {
+          console.log(JSON.stringify({
+            success: false,
+            error: { code, message },
+          }));
+        }
+      };
 
       // Capture telemetry for startup errors (auth, config) or execution errors
       if (error instanceof AuthenticationError) {
@@ -632,15 +679,19 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         });
         await telemetry.shutdown();
 
-        console.error(`\n[ERROR] ${error.message}`);
-        console.error('');
-        console.error('To authenticate, run:');
-        console.error('  agentuse auth login');
-        console.error('');
-        console.error('Or set your API key:');
-        console.error(`  export ${error.envVar}='your-key-here'`);
-        console.error('');
-        console.error('For more options: agentuse auth --help');
+        if (options.json) {
+          outputJsonError('AUTH_ERROR', error.message);
+        } else {
+          console.error(`\n[ERROR] ${error.message}`);
+          console.error('');
+          console.error('To authenticate, run:');
+          console.error('  agentuse auth login');
+          console.error('');
+          console.error('Or set your API key:');
+          console.error(`  export ${error.envVar}='your-key-here'`);
+          console.error('');
+          console.error('For more options: agentuse auth --help');
+        }
         process.exit(1);
       }
 
@@ -652,7 +703,11 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         });
         await telemetry.shutdown();
 
-        logger.error('Error', error);
+        if (options.json) {
+          outputJsonError('CONFIG_ERROR', error.message);
+        } else {
+          logger.error('Error', error);
+        }
         process.exit(1);
       }
 
@@ -669,16 +724,206 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       });
       await telemetry.shutdown();
 
-      logger.error('Error', error as Error);
+      if (options.json) {
+        outputJsonError(errorType ?? 'EXECUTION_ERROR', (error as Error).message);
+      } else {
+        logger.error('Error', error as Error);
+      }
       process.exit(1);
     }
   });
 
 
-// Parse command line arguments
-program.parse(process.argv);
+// Handle internal worker mode (used by serve command)
+// This must be checked before program.parse() to avoid Commander processing
+if (process.argv[2] === '--internal-worker') {
+  runInternalWorker();
+} else {
+  // Parse command line arguments
+  program.parse(process.argv);
 
-// Show help if no command provided
-if (!process.argv.slice(2).length) {
-  program.outputHelp();
+  // Show help if no command provided
+  if (!process.argv.slice(2).length) {
+    program.outputHelp();
+  }
+}
+
+/**
+ * Internal worker mode for serve command.
+ * Listens for JSON requests on stdin, executes agents, returns JSON on stdout.
+ * This works around EBADF issues when spawning from async callbacks.
+ */
+async function runInternalWorker() {
+  const { createInterface } = await import('readline');
+  const { SessionManager } = await import('./session/index.js');
+  const { initStorage } = await import('./storage/index.js');
+
+  // Configure logger to be quiet
+  logger.configure({ level: LogLevel.ERROR, quiet: true, disableTUI: true });
+
+  interface ExecuteRequest {
+    id: string;
+    type: 'execute';
+    agentPath: string;
+    projectRoot: string;
+    prompt?: string;
+    model?: string;
+    timeout?: number;
+    maxSteps?: number;
+    debug?: boolean;
+  }
+
+  async function executeAgent(req: ExecuteRequest) {
+    const startTime = Date.now();
+    let mcp: Awaited<ReturnType<typeof connectMCP>> = [];
+
+    try {
+      const agentPath = resolve(req.projectRoot, req.agentPath);
+      if (!existsSync(agentPath)) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'AGENT_NOT_FOUND', message: `Agent file not found: ${req.agentPath}` },
+        };
+      }
+
+      // Load environment from project root
+      const envFile = resolve(req.projectRoot, '.env');
+      const envLocalFile = resolve(req.projectRoot, '.env.local');
+      if (existsSync(envLocalFile)) {
+        dotenv.config({ path: envLocalFile });
+      } else if (existsSync(envFile)) {
+        dotenv.config({ path: envFile });
+      }
+
+      try {
+        await initStorage(req.projectRoot);
+      } catch {
+        // Ignore storage init errors
+      }
+
+      const agent = await parseAgent(agentPath);
+
+      const envValidation = validateAgentEnvVars(agent.config);
+      if (!envValidation.valid) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'ENV_MISSING', message: formatEnvValidationError(envValidation) },
+        };
+      }
+
+      if (req.model) {
+        agent.config.model = req.model;
+      }
+
+      const mcpBasePath = dirname(agentPath);
+      mcp = await connectMCP(agent.config.mcpServers, req.debug ?? false, mcpBasePath);
+
+      const timeoutSeconds = req.timeout ?? agent.config.timeout ?? 300;
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), timeoutSeconds * 1000);
+
+      const sessionManager = new SessionManager();
+
+      try {
+        const result = await runAgent(
+          agent,
+          mcp,
+          req.debug ?? false,
+          abortController.signal,
+          startTime,
+          false,
+          agentPath,
+          req.maxSteps,
+          sessionManager,
+          { projectRoot: req.projectRoot, cwd: req.projectRoot },
+          req.prompt,
+          undefined,
+          true
+        );
+
+        clearTimeout(timeoutId);
+        const duration = Date.now() - startTime;
+
+        return {
+          id: req.id,
+          success: true,
+          result: {
+            text: result.text || '',
+            ...(result.finishReason && { finishReason: result.finishReason }),
+            duration,
+            ...(result.usage && {
+              tokens: {
+                input: result.usage.inputTokens || 0,
+                output: result.usage.outputTokens || 0,
+              },
+            }),
+            toolCalls: result.toolCallCount || 0,
+          },
+        };
+      } catch (err) {
+        clearTimeout(timeoutId);
+        if (abortController.signal.aborted) {
+          return {
+            id: req.id,
+            success: false,
+            error: { code: 'TIMEOUT', message: `Agent execution timed out after ${timeoutSeconds}s` },
+          };
+        }
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'EXECUTION_ERROR', message: (err as Error).message },
+        };
+      }
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: (err as Error).message },
+      };
+    } finally {
+      for (const conn of mcp) {
+        try {
+          await conn.client.close();
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+    }
+  }
+
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: false,
+  });
+
+  // Signal ready
+  console.log(JSON.stringify({ type: 'ready' }));
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+
+    try {
+      const request = JSON.parse(line) as ExecuteRequest;
+      if (request.type === 'execute') {
+        const response = await executeAgent(request);
+        console.log(JSON.stringify(response));
+      } else {
+        console.log(JSON.stringify({
+          id: (request as any).id || 'unknown',
+          success: false,
+          error: { code: 'UNKNOWN_REQUEST', message: 'Unknown request type' },
+        }));
+      }
+    } catch (err) {
+      console.log(JSON.stringify({
+        id: 'unknown',
+        success: false,
+        error: { code: 'PARSE_ERROR', message: (err as Error).message },
+      }));
+    }
+  }
 }
