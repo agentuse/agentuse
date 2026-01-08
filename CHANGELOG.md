@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.1] - 2026-01-08
+
+### Fixed
+
+- Handle agent requests concurrently instead of sequentially in worker
+- Execute agents in subprocess to avoid EBADF in async callbacks
+
+---
+
 ## [0.5.0] - 2026-01-04
 
 ### Added
