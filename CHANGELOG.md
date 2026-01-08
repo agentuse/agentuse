@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.5.0] - 2026-01-04
+
+### Added
+
+- Cron-based agent scheduling for serve mode (`scheduler` config in agent YAML)
+- API key authentication for exposed hosts (`AGENTUSE_API_KEY` environment variable)
+- Hot reload for agent and environment files in serve mode
+- Telemetry for server events and executions
+- Pre-flight environment variable validation for agents
+- Path variable resolution in tool validators
+
+### Changed
+
+- Simplify scheduler config to single string format
+- Rename `--all` flag to `--subagents` in sessions command
+- Improve serve startup output and quiet dotenv config
+- Display allowed file paths in Bash tool description
+
+### Fixed
+
+- Use explicit directory as project root in serve mode
+- Resolve symlinks for Bash path validation consistency
+
+### Documentation
+
+- Add scheduler feature documentation and tests
+- Add schedule and webhooks guides
+- Add built-in tools reference documentation
+- Reorganize guides into Building and Running sections
+- Consolidate production deployment into self-hosting guide
+- Consolidate duplicate content with cross-references
+
+---
+
+## [0.4.3] - 2026-01-02
+
+### Added
+
+- Agent benchmarking system with evaluation and reporting (`agentuse benchmark` command)
+
+### Documentation
+
+- Update model names and examples in documentation
+
+---
+
 ## [0.4.2] - 2025-12-30
 
 ### Added
