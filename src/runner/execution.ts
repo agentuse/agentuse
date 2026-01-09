@@ -544,9 +544,9 @@ function parseToolResult(chunk: any): string {
   const resultStr = typeof output === 'string' ? output : JSON.stringify(output);
 
   // Detect if the result looks like an error message
-  // Skip error detection for tools__skill since skill content often contains
+  // Skip error detection for skill tools since skill content often contains
   // documentation about errors (e.g., "not found" troubleshooting guides)
-  const isSkillTool = chunk.toolName === 'tools__skill';
+  const isSkillTool = chunk.toolName === 'tools__skill_load' || chunk.toolName === 'tools__skill_read';
 
   if (resultStr && typeof resultStr === 'string' && !isSkillTool) {
     const errorPatterns = [

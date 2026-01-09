@@ -781,10 +781,16 @@ class Logger {
   private formatBuiltinTool(name: string, args: unknown, useTUI: boolean): { badge: string; detail: string } | null {
     const argsObj = args as Record<string, unknown>;
 
-    // Skill tool
-    if (name === 'tools__skill' && argsObj?.name) {
+    // Skill load tool
+    if (name === 'tools__skill_load' && argsObj?.name) {
       const badge = useTUI ? chalk.bgMagenta.white.bold(' Skill ') : 'Skill';
       return { badge, detail: `Loading "${argsObj.name}"` };
+    }
+
+    // Skill read tool
+    if (name === 'tools__skill_read' && argsObj?.skill && argsObj?.path) {
+      const badge = useTUI ? chalk.bgMagenta.white.bold(' Skill ') : 'Skill';
+      return { badge, detail: `Reading "${argsObj.path}" from "${argsObj.skill}"` };
     }
 
     // Bash tool

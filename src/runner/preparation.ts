@@ -9,7 +9,7 @@ import {
 } from '../tools/index.js';
 import { logger } from '../utils/logger';
 import { resolveMaxSteps, DEFAULT_MAX_STEPS } from '../utils/config';
-import { createSkillTool } from '../skill/index.js';
+import { createSkillTools } from '../skill/index.js';
 import { buildAutonomousAgentPrompt } from './prompt';
 import type { PrepareAgentOptions, PreparedAgentExecution } from './types';
 import type { ToolSet } from 'ai';
@@ -164,13 +164,14 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     }
   }
 
-  // Load skill tool if project context is available
+  // Load skill tools if project context is available
   let skillTools: Record<string, ToolSet[string]> = {};
   if (projectContext) {
     try {
-      const { tool, skills } = await createSkillTool(projectContext.projectRoot, agent.config.tools);
+      const { skillTool, skillReadTool, skills } = await createSkillTools(projectContext.projectRoot, agent.config.tools);
       if (skills.length > 0) {
-        skillTools['tools__skill'] = tool;
+        skillTools['tools__skill_load'] = skillTool;
+        skillTools['tools__skill_read'] = skillReadTool;
         logger.debug(`Loaded ${skills.length} skill(s): ${skills.map(s => s.name).join(', ')}`);
       }
     } catch (error) {

@@ -315,10 +315,15 @@ export async function processAgentStream(
         });
 
         // Log the result with timing info
-        // For skill tool, show a simple "Loaded" message instead of the full skill content
+        // For skill tools, show a simple message instead of the full content
         if (!options?.quiet) {
-          if (chunk.toolName === 'tools__skill') {
+          if (chunk.toolName === 'tools__skill_load') {
             logger.toolResult('Skill loaded', {
+              ...(toolDuration !== undefined && { duration: toolDuration }),
+              success: toolSuccess
+            });
+          } else if (chunk.toolName === 'tools__skill_read') {
+            logger.toolResult('File read', {
               ...(toolDuration !== undefined && { duration: toolDuration }),
               success: toolSuccess
             });

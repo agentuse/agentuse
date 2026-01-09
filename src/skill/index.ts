@@ -17,4 +17,5 @@ export { parseSkillFrontmatter, parseSkillContent } from './parser.js';
 export { validateAllowedTools, formatToolsWarning } from './validate.js';
 
 // Tool
-export { createSkillTool } from './tool.js';
+export { createSkillTool, createSkillTools } from './tool.js';
+export type { SkillToolsResult } from './tool.js';
