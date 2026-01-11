@@ -199,6 +199,61 @@ export class Scheduler {
   }
 
   /**
+   * Convert cron expression to human-readable format
+   */
+  private cronToHuman(expression: string): string {
+    const parts = expression.split(" ");
+    if (parts.length !== 5) return expression;
+
+    const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+
+    const dayNames: Record<string, string> = {
+      "0": "Sun",
+      "1": "Mon",
+      "2": "Tue",
+      "3": "Wed",
+      "4": "Thu",
+      "5": "Fri",
+      "6": "Sat",
+      "7": "Sun",
+    };
+
+    const formatTime = (h: string, m: string): string => {
+      const hourNum = parseInt(h, 10);
+      const minNum = parseInt(m, 10);
+      const period = hourNum >= 12 ? "pm" : "am";
+      const hour12 = hourNum === 0 ? 12 : hourNum > 12 ? hourNum - 12 : hourNum;
+      return minNum === 0 ? `${hour12}${period}` : `${hour12}:${m.padStart(2, "0")}${period}`;
+    };
+
+    const formatDays = (dow: string): string => {
+      if (dow === "*") return "";
+      const days = dow.split(",").map((d) => dayNames[d] || d);
+      return days.join(", ");
+    };
+
+    // Every N hours pattern: 0 */N * * *
+    if (hour.startsWith("*/") && minute === "0" && dayOfMonth === "*" && month === "*" && dayOfWeek === "*") {
+      const interval = hour.slice(2);
+      return `Every ${interval}h`;
+    }
+
+    // Daily pattern: M H * * *
+    if (dayOfMonth === "*" && month === "*" && dayOfWeek === "*" && !hour.includes("*") && !minute.includes("*")) {
+      return `Daily ${formatTime(hour, minute)}`;
+    }
+
+    // Specific days pattern: M H * * D,D
+    if (dayOfMonth === "*" && month === "*" && dayOfWeek !== "*" && !hour.includes("*") && !minute.includes("*")) {
+      const days = formatDays(dayOfWeek);
+      return `${days} ${formatTime(hour, minute)}`;
+    }
+
+    // Fallback to original expression
+    return expression;
+  }
+
+  /**
    * Format schedules for display on server startup
    */
   formatScheduleTable(): string {
@@ -207,27 +262,39 @@ export class Scheduler {
       return "";
     }
 
-    // Calculate column widths for alignment
-    const maxAgentWidth = Math.max(...schedules.map((s) => s.agentPath.length));
-    const maxExprWidth = Math.max(...schedules.map((s) => s.expression.length));
+    // Sort by next run time (soonest first, null/disabled at end)
+    schedules.sort((a, b) => {
+      if (!a.nextRun) return 1;
+      if (!b.nextRun) return -1;
+      return a.nextRun.getTime() - b.nextRun.getTime();
+    });
 
-    const lines: string[] = [];
-
-    for (const schedule of schedules) {
-      const nextRunStr = schedule.nextRun
-        ? schedule.nextRun.toLocaleString("en-US", {
+    // Pre-calculate human-readable schedules for width calculation
+    const schedulesWithHuman = schedules.map((s) => ({
+      schedule: s,
+      humanSchedule: this.cronToHuman(s.expression),
+      nextRunStr: s.nextRun
+        ? s.nextRun.toLocaleString("en-US", {
             month: "short",
             day: "2-digit",
             hour: "2-digit",
             minute: "2-digit",
             hour12: false,
           })
-        : "N/A";
+        : "N/A",
+    }));
 
+    // Calculate column widths for alignment
+    const maxNextRunWidth = Math.max(...schedulesWithHuman.map((s) => s.nextRunStr.length));
+    const maxAgentWidth = Math.max(...schedulesWithHuman.map((s) => s.schedule.agentPath.length));
+
+    const lines: string[] = [];
+
+    for (const { schedule, humanSchedule, nextRunStr } of schedulesWithHuman) {
+      const nextRunCol = nextRunStr.padEnd(maxNextRunWidth);
       const agentCol = schedule.agentPath.padEnd(maxAgentWidth);
-      const exprCol = schedule.expression.padEnd(maxExprWidth);
 
-      lines.push(`    ${agentCol}  ${exprCol}  next: ${nextRunStr}`);
+      lines.push(`    ${nextRunCol}  ${agentCol}  ${humanSchedule}`);
     }
 
     return lines.join("\n");
