@@ -51,6 +51,14 @@ export async function processAgentStream(
   let textUpdateTimer: NodeJS.Timeout | null = null;
   const TEXT_UPDATE_DEBOUNCE_MS = 500; // Write to disk every 500ms max
 
+  // Track pending session updates to ensure they complete before returning
+  // Use Set with self-cleanup to avoid holding references to resolved promises
+  const pendingSessionUpdates = new Set<Promise<unknown>>();
+  const trackSessionUpdate = (promise: Promise<unknown>) => {
+    pendingSessionUpdates.add(promise);
+    promise.finally(() => pendingSessionUpdates.delete(promise));
+  };
+
   // Helper to finalize current text part
   const finalizeTextPart = async () => {
     // Clear any pending debounced update
@@ -102,7 +110,7 @@ export async function processAgentStream(
           if (!currentTextPart) {
             // First text chunk: create new part (await to ensure partID is available)
             const startTime = Date.now();
-            options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
+            const addPromise = options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
               type: 'text',
               text: chunk.text!,
               time: { start: startTime }
@@ -113,6 +121,7 @@ export async function processAgentStream(
                 startTime
               };
             }).catch(err => logger.debug(`Failed to create text part: ${err.message}`));
+            trackSessionUpdate(addPromise);
           } else {
             // Subsequent chunks: update in-memory immediately, debounce disk writes
             // TypeScript can't track that currentTextPart is set in the async .then() above,
@@ -132,7 +141,7 @@ export async function processAgentStream(
 
               textUpdateTimer = setTimeout(() => {
                 if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
-                  options.sessionManager.updatePart(
+                  const updatePromise = options.sessionManager.updatePart(
                     options.sessionID,
                     options.agentName,
                     options.messageID,
@@ -141,6 +150,7 @@ export async function processAgentStream(
                       text: getText()
                     }
                   ).catch(err => logger.debug(`Failed to update text part: ${err.message}`));
+                  trackSessionUpdate(updatePromise);
                 }
                 textUpdateTimer = null;
               }, TEXT_UPDATE_DEBOUNCE_MS);
@@ -208,7 +218,7 @@ export async function processAgentStream(
 
         // Log to session and track partID for later update
         if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName && chunk.toolCallId) {
-          options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
+          const addPromise = options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
             type: 'tool',
             callID: chunk.toolCallId,
             tool: chunk.toolName!,
@@ -224,6 +234,7 @@ export async function processAgentStream(
               pendingToolCalls.set(chunk.toolCallId!, { ...pending, partID });
             }
           }).catch(err => logger.debug(`Failed to log tool-call part: ${err.message}`));
+          trackSessionUpdate(addPromise);
         }
         break;
 
@@ -369,9 +380,10 @@ export async function processAgentStream(
                 ...(tokens && { metadata: { tokens } })
               };
 
-              options.sessionManager.updatePart(options.sessionID, options.agentName, options.messageID, pending.partID, {
+              const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentName, options.messageID, pending.partID, {
                 state: completedState
               }).catch(err => logger.debug(`Failed to update tool part: ${err.message}`));
+              trackSessionUpdate(updatePromise);
             }
 
             pendingToolCalls.delete(chunk.toolCallId);
@@ -436,6 +448,12 @@ export async function processAgentStream(
 
   // Finalize any pending text part before returning (safety fallback)
   await finalizeTextPart();
+
+  // Wait for all pending session updates to complete before returning
+  // This ensures tool states are persisted (e.g., "running" -> "completed")
+  if (pendingSessionUpdates.size > 0) {
+    await Promise.allSettled(pendingSessionUpdates);
+  }
 
   return {
     text: finalText,
