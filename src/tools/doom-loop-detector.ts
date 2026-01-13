@@ -29,16 +29,34 @@ export class DoomLoopDetector {
   }
 
   /**
+   * Recursively sort object keys for consistent comparison
+   * Handles nested objects and arrays
+   */
+  private sortDeep(obj: unknown): unknown {
+    if (Array.isArray(obj)) {
+      return obj.map(item => this.sortDeep(item));
+    }
+    if (obj !== null && typeof obj === 'object') {
+      const sorted: Record<string, unknown> = {};
+      for (const key of Object.keys(obj as Record<string, unknown>).sort()) {
+        sorted[key] = this.sortDeep((obj as Record<string, unknown>)[key]);
+      }
+      return sorted;
+    }
+    return obj;
+  }
+
+  /**
    * Normalize arguments for comparison
-   * Handles undefined, null, and object ordering
+   * Handles undefined, null, and deep object ordering
    */
   private normalizeArgs(args: unknown): string {
     if (args === undefined || args === null) {
       return 'null';
     }
     try {
-      // Sort object keys for consistent comparison
-      return JSON.stringify(args, Object.keys(args as object).sort());
+      // Deep sort object keys for consistent comparison
+      return JSON.stringify(this.sortDeep(args));
     } catch {
       return String(args);
     }
