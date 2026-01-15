@@ -1,6 +1,7 @@
 import { streamText, stepCountIs, type ToolSet } from 'ai';
 import type { ParsedAgent } from '../parser';
 import { createModel, AuthenticationError } from '../models';
+import { CodexAuth } from '../auth/codex';
 import { logger } from '../utils/logger';
 import { ContextManager } from '../context-manager';
 import { compactMessages } from '../compactor';
@@ -67,8 +68,27 @@ export async function* executeAgentCore(
 
     // Only include provider options if they exist and match the model provider
     let providerOptions: any = undefined;
-    if (provider === 'openai' && agent.config.openai) {
-      providerOptions = { openai: agent.config.openai };
+    if (provider === 'openai') {
+      // Check if using Codex OAuth (Responses API) vs regular API key (Chat Completions API)
+      const codexAccess = await CodexAuth.access();
+      if (codexAccess) {
+        // Codex OAuth uses Responses API which requires `instructions` field
+        const systemMessage = messages.find(m => m.role === 'system');
+        const instructions = typeof systemMessage?.content === 'string'
+          ? systemMessage.content
+          : 'You are a helpful assistant.';
+
+        providerOptions = {
+          openai: {
+            instructions,
+            store: false,
+            ...agent.config.openai
+          }
+        };
+      } else if (agent.config.openai) {
+        // Regular OpenAI API key - only pass custom config if provided
+        providerOptions = { openai: agent.config.openai };
+      }
     }
     // Future: Add other providers here
     // if (provider === 'anthropic' && agent.config.anthropic) {

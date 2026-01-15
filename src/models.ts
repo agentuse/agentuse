@@ -2,6 +2,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { wrapLanguageModel } from 'ai';
 import { AnthropicAuth } from './auth/anthropic';
+import { CodexAuth } from './auth/codex';
 import { AuthStorage } from './auth/storage';
 import { logger } from './utils/logger';
 import { warnIfModelNotInRegistry } from './utils/model-utils';
@@ -211,8 +212,48 @@ export async function createModel(modelString: string) {
     return await maybeWrapWithDevTools(anthropic.chat(config.modelName));
 
   } else if (config.provider === 'openai') {
+    // Check for Codex OAuth token first (handles refresh automatically)
+    const codexAccess = await CodexAuth.access();
+    if (codexAccess && !config.envVar && !config.envSuffix) {
+      logger.debug('Using Codex OAuth token for OpenAI authentication');
+
+      // Simple fetch wrapper that only handles OAuth headers - no stream transformation needed
+      // The AI SDK's openai.responses() speaks the Responses API format natively
+      const codexFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const access = await CodexAuth.access();
+        if (!access) {
+          throw new Error('Codex OAuth token expired');
+        }
+
+        // Build headers from init
+        const headers = new Headers(init?.headers);
+
+        // Set Bearer token (remove any existing authorization header first)
+        headers.delete('authorization');
+        headers.delete('Authorization');
+        headers.set('authorization', `Bearer ${access.token}`);
+
+        // Set ChatGPT-Account-Id header for organization subscriptions
+        if (access.accountId) {
+          headers.set('ChatGPT-Account-Id', access.accountId);
+        }
+
+        return fetch(input, { ...init, headers });
+      };
+
+      const openai = createOpenAI({
+        apiKey: 'codex-oauth', // Placeholder, custom fetch overrides auth
+        baseURL: 'https://chatgpt.com/backend-api/codex',
+        fetch: codexFetch as typeof fetch,
+      });
+
+      // Use openai.responses() which speaks the Responses API format natively
+      return await maybeWrapWithDevTools(openai.responses(config.modelName));
+    }
+
+    // Fall back to API key authentication
     let apiKey: string | undefined;
-    
+
     if (config.envVar) {
       apiKey = process.env[config.envVar];
       if (!apiKey) {

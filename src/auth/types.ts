@@ -7,6 +7,14 @@ export const OAuthTokens = z.object({
   expires: z.number(),
 });
 
+export const CodexOAuthTokens = z.object({
+  type: z.literal("codex-oauth"),
+  refresh: z.string(),
+  access: z.string(),
+  expires: z.number(),
+  accountId: z.string().optional(),
+});
+
 export const ApiKeyAuth = z.object({
   type: z.literal("api"),
   key: z.string(),
@@ -20,11 +28,13 @@ export const WellKnownAuth = z.object({
 
 export const AuthInfo = z.discriminatedUnion("type", [
   OAuthTokens,
+  CodexOAuthTokens,
   ApiKeyAuth,
   WellKnownAuth,
 ]);
 
 export type AuthInfo = z.infer<typeof AuthInfo>;
 export type OAuthTokens = z.infer<typeof OAuthTokens>;
+export type CodexOAuthTokens = z.infer<typeof CodexOAuthTokens>;
 export type ApiKeyAuth = z.infer<typeof ApiKeyAuth>;
 export type WellKnownAuth = z.infer<typeof WellKnownAuth>;

@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { AnthropicAuth, AuthStorage } from "../auth/index.js";
+import { AnthropicAuth, AuthStorage, CodexAuth } from "../auth/index.js";
 import readline from "readline";
 import { logger } from "../utils/logger";
 
@@ -72,7 +72,7 @@ export function createAuthCommand(): Command {
       
       process.stdout.write("PRIORITY ORDER:\n");
       process.stdout.write("─".repeat(40) + "\n");
-      process.stdout.write("1. OAuth tokens (for Anthropic)\n");
+      process.stdout.write("1. OAuth tokens (Anthropic OAuth or OpenAI Codex OAuth)\n");
       process.stdout.write("2. Stored API keys (via auth login)\n");
       process.stdout.write("3. Environment variables\n\n");
       
@@ -128,7 +128,7 @@ export function createAuthCommand(): Command {
             await handleAnthropicLogin();
             break;
           case "openai":
-            await handleGenericLogin("openai", "OpenAI API Key");
+            await handleOpenAILogin();
             break;
           case "openrouter":
             await handleGenericLogin("openrouter", "OpenRouter API Key");
@@ -190,44 +190,113 @@ export function createAuthCommand(): Command {
       const credentials = await AuthStorage.all();
       const authPath = AuthStorage.getFilePath();
       const homedir = process.env.HOME || process.env.USERPROFILE || "";
-      const displayPath = authPath.startsWith(homedir) 
-        ? authPath.replace(homedir, "~") 
+      const displayPath = authPath.startsWith(homedir)
+        ? authPath.replace(homedir, "~")
         : authPath;
 
       process.stdout.write(`📁 Credentials stored in: ${displayPath}\n\n`);
 
-      if (Object.keys(credentials).length === 0) {
-        process.stdout.write("No stored credentials\n");
-        return;
-      }
-
-      process.stdout.write("Stored credentials:\n");
-      for (const [provider, auth] of Object.entries(credentials)) {
-        const typeIcon = auth.type === "oauth" ? "🔑" : auth.type === "api" ? "🎫" : "🔧";
-        process.stdout.write(`  ${typeIcon} ${provider} (${auth.type})\n`);
-      }
-
-      // Show environment variables
-      const envVars = [
-        { name: "ANTHROPIC_API_KEY", provider: "anthropic" },
-        { name: "OPENAI_API_KEY", provider: "openai" },
-        { name: "OPENROUTER_API_KEY", provider: "openrouter" },
+      // Define providers and their auth sources in priority order
+      const providers = [
+        {
+          name: "anthropic",
+          display: "Anthropic",
+          envVars: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+        },
+        {
+          name: "openai",
+          display: "OpenAI",
+          envVars: ["OPENAI_API_KEY"],
+        },
+        {
+          name: "openrouter",
+          display: "OpenRouter",
+          envVars: ["OPENROUTER_API_KEY"],
+        },
       ];
 
-      const activeEnvVars = envVars.filter(({ name }) => process.env[name]);
-      if (activeEnvVars.length > 0) {
-        process.stdout.write("\nEnvironment variables:\n");
-        activeEnvVars.forEach(({ name, provider }) => {
-          process.stdout.write(`  🌍 ${provider} (${name})\n`);
-        });
+      process.stdout.write("Authentication (in priority order):\n");
+      process.stdout.write("─".repeat(50) + "\n\n");
+
+      for (const provider of providers) {
+        const storedAuth = credentials[provider.name];
+        const sources: { priority: number; source: string; type: string; active: boolean }[] = [];
+
+        // Priority 1: OAuth tokens (stored)
+        if (storedAuth && (storedAuth.type === "oauth" || storedAuth.type === "codex-oauth")) {
+          sources.push({
+            priority: 1,
+            source: storedAuth.type === "codex-oauth" ? "ChatGPT OAuth" : "OAuth",
+            type: storedAuth.type,
+            active: true,
+          });
+        }
+
+        // Priority 1 (Anthropic only): CLAUDE_CODE_OAUTH_TOKEN
+        if (provider.name === "anthropic" && process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+          // If no stored OAuth, this takes priority
+          if (!storedAuth || storedAuth.type !== "oauth") {
+            sources.push({
+              priority: 1,
+              source: "CLAUDE_CODE_OAUTH_TOKEN",
+              type: "env",
+              active: true,
+            });
+          }
+        }
+
+        // Priority 2: Stored API keys
+        if (storedAuth && storedAuth.type === "api") {
+          sources.push({
+            priority: 2,
+            source: "Stored API key",
+            type: "api",
+            active: !sources.some(s => s.priority === 1),
+          });
+        }
+
+        // Priority 3: Environment variables
+        for (const envVar of provider.envVars) {
+          if (envVar === "CLAUDE_CODE_OAUTH_TOKEN") continue; // Already handled
+          if (process.env[envVar]) {
+            sources.push({
+              priority: 3,
+              source: envVar,
+              type: "env",
+              active: sources.length === 0,
+            });
+          }
+        }
+
+        // Display provider section
+        if (sources.length > 0) {
+          process.stdout.write(`${provider.display}:\n`);
+          for (const source of sources.sort((a, b) => a.priority - b.priority)) {
+            const icon = source.type === "oauth" || source.type === "codex-oauth" ? "🔑" : source.type === "api" ? "🎫" : "🌍";
+            const activeMarker = source.active ? " ← active" : "";
+            const priorityLabel = `[${source.priority}]`;
+            process.stdout.write(`  ${priorityLabel} ${icon} ${source.source}${activeMarker}\n`);
+          }
+          process.stdout.write("\n");
+        }
       }
 
-      // Show CLAUDE_CODE_OAUTH_TOKEN (long-lived)
-      if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-        process.stdout.write("\nClaude Code OAuth (long-lived, 1 year):\n");
-        const token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-        process.stdout.write(`  🔑 CLAUDE_CODE_OAUTH_TOKEN: ${token.substring(0, 8)}...${token.substring(token.length - 4)}\n`);
+      // Show providers with no auth configured
+      const unconfigured = providers.filter(p => {
+        const stored = credentials[p.name];
+        const hasEnv = p.envVars.some(e => process.env[e]);
+        return !stored && !hasEnv;
+      });
+
+      if (unconfigured.length > 0) {
+        process.stdout.write("Not configured:\n");
+        for (const p of unconfigured) {
+          process.stdout.write(`  ⚠️  ${p.display} - run \`agentuse auth login ${p.name}\`\n`);
+        }
+        process.stdout.write("\n");
       }
+
+      process.stdout.write("Priority: [1] OAuth → [2] Stored API key → [3] Environment variable\n");
     });
 
   authCmd
@@ -354,6 +423,93 @@ async function handleAnthropicLogin() {
       break;
     default:
       logger.warn("Invalid selection");
+  }
+}
+
+async function handleOpenAILogin() {
+  process.stdout.write("OpenAI login methods:\n");
+  process.stdout.write("  1. ChatGPT Pro/Plus (OAuth) - Uses your ChatGPT subscription\n");
+  process.stdout.write("  2. Manual API Key\n");
+  process.stdout.write("\n");
+
+  const method = await promptInput("Select method (1-2): ");
+
+  switch (method) {
+    case "1":
+      await handleCodexOAuth();
+      break;
+    case "2":
+      await handleGenericLogin("openai", "OpenAI API Key");
+      break;
+    default:
+      logger.warn("Invalid selection");
+  }
+}
+
+async function handleCodexOAuth() {
+  // Some weird bug where program exits without this delay (from OpenCode)
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  process.stdout.write("\n🔄 Starting ChatGPT OAuth flow...\n\n");
+
+  try {
+    const { url, pkce } = await CodexAuth.authorize();
+
+    process.stdout.write(`${"=".repeat(80)}\n`);
+    process.stdout.write(`📋 AUTHORIZATION URL:\n`);
+    process.stdout.write(`${url}\n`);
+    process.stdout.write(`${"=".repeat(80)}\n\n`);
+
+    process.stdout.write("📝 Steps:\n");
+    process.stdout.write("   1. Visit the URL above in your browser\n");
+    process.stdout.write("   2. Sign in to ChatGPT and authorize the application\n");
+    process.stdout.write("   3. You'll be redirected to a page (it may show an error - that's OK)\n");
+    process.stdout.write("   4. Copy the FULL URL from your browser's address bar\n");
+    process.stdout.write("   5. Paste it below\n\n");
+
+    const callbackUrl = await promptInput("📝 Paste the callback URL here: ");
+
+    if (!callbackUrl || callbackUrl.length === 0) {
+      logger.warn("No URL provided");
+      return;
+    }
+
+    // Extract code from callback URL
+    let code: string | null = null;
+    try {
+      const parsed = new URL(callbackUrl);
+      code = parsed.searchParams.get("code");
+    } catch {
+      // Maybe they just pasted the code directly
+      code = callbackUrl.trim();
+    }
+
+    if (!code) {
+      logger.warn("Could not extract authorization code from URL");
+      return;
+    }
+
+    process.stdout.write("🔄 Exchanging code for tokens...\n");
+
+    try {
+      const credentials = await CodexAuth.exchange(code, pkce);
+      await AuthStorage.set("openai", {
+        type: "codex-oauth",
+        refresh: credentials.refresh,
+        access: credentials.access,
+        expires: credentials.expires,
+        accountId: credentials.accountId,
+      });
+
+      process.stdout.write("✅ Successfully authenticated with ChatGPT!\n");
+      if (credentials.accountId) {
+        process.stdout.write(`📋 Account ID: ${credentials.accountId}\n`);
+      }
+    } catch {
+      logger.warn("Invalid code or authorization failed");
+    }
+  } catch (error) {
+    logger.error("Authentication failed", error as Error);
   }
 }
 
