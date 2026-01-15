@@ -302,7 +302,15 @@ program
         agent = parseAgentContent(content!, agentName);
       } else {
         // Parse agent specification from local markdown file
-        agent = await parseAgent(file);
+        // Auto-append .agentuse extension if not specified
+        let agentFile = file;
+        if (!file.endsWith('.agentuse') && !existsSync(file)) {
+          const withExt = `${file}.agentuse`;
+          if (existsSync(withExt)) {
+            agentFile = withExt;
+          }
+        }
+        agent = await parseAgent(agentFile);
       }
       
       // Keep additional prompt separate (don't concatenate)
