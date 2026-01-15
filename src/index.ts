@@ -9,6 +9,7 @@ import { createServeCommand } from './cli/serve';
 import { createModelsCommand } from './cli/models';
 import { createSkillsCommand } from './cli/skills';
 import { createBenchmarkCommand } from './cli/benchmark';
+import { createAgentsCommand } from './cli/agents';
 import { logger, LogLevel } from './utils/logger';
 import { basename, resolve, dirname, join } from 'path';
 import * as readline from 'readline';
@@ -113,6 +114,9 @@ program.addCommand(createModelsCommand());
 
 // Add skills command
 program.addCommand(createSkillsCommand());
+
+// Add agents command
+program.addCommand(createAgentsCommand());
 
 // Add benchmark command (hidden from help)
 program.addCommand(createBenchmarkCommand(), { hidden: true });
