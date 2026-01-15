@@ -147,38 +147,126 @@ export function createAuthCommand(): Command {
     .command("logout")
     .description("Logout from a provider")
     .argument("[provider]", "Provider to logout from")
-    .action(async (provider?: string) => {
-      const credentials = await AuthStorage.all();
-      const providers = Object.keys(credentials);
+    .option("--oauth", "Remove only OAuth credentials")
+    .option("--api", "Remove only API key credentials")
+    .action(async (provider?: string, options?: { oauth?: boolean; api?: boolean }) => {
+      const knownProviders = ["anthropic", "openai", "openrouter"];
 
-      if (providers.length === 0) {
+      // Build list of stored credentials
+      const storedList: { provider: string; type: string; key: string }[] = [];
+      for (const p of knownProviders) {
+        const providerAuth = await AuthStorage.getProviderAuth(p);
+        if (providerAuth.oauth) {
+          storedList.push({
+            provider: p,
+            type: providerAuth.oauth.type === "codex-oauth" ? "ChatGPT OAuth" : "OAuth",
+            key: `${p}:oauth`,
+          });
+        }
+        if (providerAuth.api) {
+          storedList.push({
+            provider: p,
+            type: "API key",
+            key: `${p}:api`,
+          });
+        }
+      }
+
+      if (storedList.length === 0) {
         logger.warn("No stored credentials found");
         return;
       }
 
       if (!provider) {
         process.stdout.write("Stored credentials:\n");
-        providers.forEach((p, i) => {
-          const auth = credentials[p];
-          process.stdout.write(`  ${i + 1}. ${p} (${auth.type})\n`);
+        storedList.forEach((item, i) => {
+          process.stdout.write(`  ${i + 1}. ${item.provider} (${item.type})\n`);
         });
         process.stdout.write("\n");
-        
-        const selection = await promptInput("Select provider to logout from: ");
+
+        const selection = await promptInput("Select credential to remove: ");
         const index = parseInt(selection) - 1;
-        
-        if (index >= 0 && index < providers.length) {
-          provider = providers[index];
+
+        if (index >= 0 && index < storedList.length) {
+          const item = storedList[index];
+          if (item.key.endsWith(":oauth")) {
+            await AuthStorage.removeOAuth(item.provider);
+          } else {
+            await AuthStorage.removeApiKey(item.provider);
+          }
+          process.stdout.write(`✅ Removed ${item.type} from ${item.provider}\n`);
+          return;
         } else {
           provider = selection;
         }
       }
 
-      if (providers.includes(provider)) {
-        await AuthStorage.remove(provider);
-        process.stdout.write(`✅ Logged out from ${provider}\n`);
-      } else {
+      // Handle provider-specific logout
+      const providerAuth = await AuthStorage.getProviderAuth(provider);
+      const hasOAuth = !!providerAuth.oauth;
+      const hasApiKey = !!providerAuth.api;
+
+      if (!hasOAuth && !hasApiKey) {
         logger.warn(`No credentials found for ${provider}`);
+        return;
+      }
+
+      // If specific flag is set, remove only that type
+      if (options?.oauth) {
+        if (hasOAuth) {
+          await AuthStorage.removeOAuth(provider);
+          process.stdout.write(`✅ Removed OAuth from ${provider}\n`);
+        } else {
+          logger.warn(`No OAuth credentials found for ${provider}`);
+        }
+        return;
+      }
+
+      if (options?.api) {
+        if (hasApiKey) {
+          await AuthStorage.removeApiKey(provider);
+          process.stdout.write(`✅ Removed API key from ${provider}\n`);
+        } else {
+          logger.warn(`No API key found for ${provider}`);
+        }
+        return;
+      }
+
+      // If both exist, ask which to remove
+      if (hasOAuth && hasApiKey) {
+        process.stdout.write(`${provider} has both OAuth and API key configured:\n`);
+        process.stdout.write("  1. OAuth\n");
+        process.stdout.write("  2. API key\n");
+        process.stdout.write("  3. Both\n\n");
+
+        const selection = await promptInput("Select what to remove (1-3): ");
+
+        switch (selection) {
+          case "1":
+            await AuthStorage.removeOAuth(provider);
+            process.stdout.write(`✅ Removed OAuth from ${provider}\n`);
+            break;
+          case "2":
+            await AuthStorage.removeApiKey(provider);
+            process.stdout.write(`✅ Removed API key from ${provider}\n`);
+            break;
+          case "3":
+            await AuthStorage.removeOAuth(provider);
+            await AuthStorage.removeApiKey(provider);
+            process.stdout.write(`✅ Removed all credentials from ${provider}\n`);
+            break;
+          default:
+            logger.warn("Invalid selection");
+        }
+      } else {
+        // Only one type exists, remove it
+        if (hasOAuth) {
+          await AuthStorage.removeOAuth(provider);
+          process.stdout.write(`✅ Removed OAuth from ${provider}\n`);
+        } else {
+          await AuthStorage.removeApiKey(provider);
+          process.stdout.write(`✅ Removed API key from ${provider}\n`);
+        }
       }
     });
 
@@ -187,7 +275,6 @@ export function createAuthCommand(): Command {
     .alias("ls")
     .description("List stored credentials")
     .action(async () => {
-      const credentials = await AuthStorage.all();
       const authPath = AuthStorage.getFilePath();
       const homedir = process.env.HOME || process.env.USERPROFILE || "";
       const displayPath = authPath.startsWith(homedir)
@@ -219,15 +306,16 @@ export function createAuthCommand(): Command {
       process.stdout.write("─".repeat(50) + "\n\n");
 
       for (const provider of providers) {
-        const storedAuth = credentials[provider.name];
+        // Use new getProviderAuth to get both OAuth and API key
+        const providerAuth = await AuthStorage.getProviderAuth(provider.name);
         const sources: { priority: number; source: string; type: string; active: boolean }[] = [];
 
         // Priority 1: OAuth tokens (stored)
-        if (storedAuth && (storedAuth.type === "oauth" || storedAuth.type === "codex-oauth")) {
+        if (providerAuth.oauth) {
           sources.push({
             priority: 1,
-            source: storedAuth.type === "codex-oauth" ? "ChatGPT OAuth" : "OAuth",
-            type: storedAuth.type,
+            source: providerAuth.oauth.type === "codex-oauth" ? "ChatGPT OAuth" : "OAuth",
+            type: providerAuth.oauth.type,
             active: true,
           });
         }
@@ -235,7 +323,7 @@ export function createAuthCommand(): Command {
         // Priority 1 (Anthropic only): CLAUDE_CODE_OAUTH_TOKEN
         if (provider.name === "anthropic" && process.env.CLAUDE_CODE_OAUTH_TOKEN) {
           // If no stored OAuth, this takes priority
-          if (!storedAuth || storedAuth.type !== "oauth") {
+          if (!providerAuth.oauth) {
             sources.push({
               priority: 1,
               source: "CLAUDE_CODE_OAUTH_TOKEN",
@@ -246,7 +334,7 @@ export function createAuthCommand(): Command {
         }
 
         // Priority 2: Stored API keys
-        if (storedAuth && storedAuth.type === "api") {
+        if (providerAuth.api) {
           sources.push({
             priority: 2,
             source: "Stored API key",
@@ -282,15 +370,18 @@ export function createAuthCommand(): Command {
       }
 
       // Show providers with no auth configured
-      const unconfigured = providers.filter(p => {
-        const stored = credentials[p.name];
+      const unconfiguredProviders: typeof providers = [];
+      for (const p of providers) {
+        const providerAuth = await AuthStorage.getProviderAuth(p.name);
         const hasEnv = p.envVars.some(e => process.env[e]);
-        return !stored && !hasEnv;
-      });
+        if (!providerAuth.oauth && !providerAuth.api && !hasEnv) {
+          unconfiguredProviders.push(p);
+        }
+      }
 
-      if (unconfigured.length > 0) {
+      if (unconfiguredProviders.length > 0) {
         process.stdout.write("Not configured:\n");
-        for (const p of unconfigured) {
+        for (const p of unconfiguredProviders) {
           process.stdout.write(`  ⚠️  ${p.display} - run \`agentuse auth login ${p.name}\`\n`);
         }
         process.stdout.write("\n");
@@ -493,7 +584,7 @@ async function handleCodexOAuth() {
 
     try {
       const credentials = await CodexAuth.exchange(code, pkce);
-      await AuthStorage.set("openai", {
+      await AuthStorage.setOAuth("openai", {
         type: "codex-oauth",
         refresh: credentials.refresh,
         access: credentials.access,
@@ -542,17 +633,17 @@ async function handleAnthropicOAuth(mode: "max" | "console") {
     }
 
     process.stdout.write("🔄 Exchanging code for tokens...\n");
-    
+
     try {
       const credentials = await AnthropicAuth.exchange(code, verifier);
-      await AuthStorage.set("anthropic", {
+      await AuthStorage.setOAuth("anthropic", {
         type: "oauth",
         refresh: credentials.refresh,
         access: credentials.access,
         expires: credentials.expires,
       });
       process.stdout.write("✅ Login successful\n");
-      
+
       if (mode === "max") {
         process.stdout.write("🎉 Successfully authenticated with Claude Max!\n");
       }
@@ -567,17 +658,17 @@ async function handleAnthropicOAuth(mode: "max" | "console") {
 
 async function handleGenericLogin(provider: string, keyName: string) {
   process.stdout.write(`\n🔑 Please enter your ${keyName}:\n`);
-  
+
   // Use simple input instead of password masking for easier debugging
   const key = await promptInput("API Key: ");
-  
+
   if (!key || key.length === 0) {
     logger.warn("No API key provided");
     return;
   }
 
   try {
-    await AuthStorage.set(provider, {
+    await AuthStorage.setApiKey(provider, {
       type: "api",
       key,
     });

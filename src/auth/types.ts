@@ -38,3 +38,9 @@ export type OAuthTokens = z.infer<typeof OAuthTokens>;
 export type CodexOAuthTokens = z.infer<typeof CodexOAuthTokens>;
 export type ApiKeyAuth = z.infer<typeof ApiKeyAuth>;
 export type WellKnownAuth = z.infer<typeof WellKnownAuth>;
+
+// Combined provider auth supporting both OAuth and API key
+export interface ProviderAuth {
+  oauth?: OAuthTokens | CodexOAuthTokens;
+  api?: ApiKeyAuth;
+}

@@ -1003,13 +1003,24 @@ class Logger {
   }
 }
 
-export const logger = new Logger({
-  level: process.env.LOG_LEVEL ?
-    (LogLevel[process.env.LOG_LEVEL as keyof typeof LogLevel] ?? LogLevel.INFO) :
-    LogLevel.INFO,
-  enableDebug: isEnvDebugFlagEnabled(),
-  disableTUI: process.env.NO_TTY === 'true',
-});
+// Use globalThis to ensure singleton across bundler chunks
+const LOGGER_SYMBOL = Symbol.for('agentuse.logger');
+
+function getOrCreateLogger(): Logger {
+  const globalAny = globalThis as any;
+  if (!globalAny[LOGGER_SYMBOL]) {
+    globalAny[LOGGER_SYMBOL] = new Logger({
+      level: process.env.LOG_LEVEL ?
+        (LogLevel[process.env.LOG_LEVEL as keyof typeof LogLevel] ?? LogLevel.INFO) :
+        LogLevel.INFO,
+      enableDebug: isEnvDebugFlagEnabled(),
+      disableTUI: process.env.NO_TTY === 'true',
+    });
+  }
+  return globalAny[LOGGER_SYMBOL];
+}
+
+export const logger = getOrCreateLogger();
 
 /**
  * Utility functions for agent execution logging (used by serve and scheduler)

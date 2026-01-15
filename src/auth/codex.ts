@@ -155,7 +155,7 @@ export namespace CodexAuth {
   }
 
   export async function access(): Promise<{ token: string; accountId: string | undefined } | undefined> {
-    const info = await AuthStorage.get("openai");
+    const info = await AuthStorage.getOAuth("openai");
     if (!info || info.type !== "codex-oauth") return undefined;
 
     // Check if token is still valid (with 5 minute buffer)
@@ -174,7 +174,7 @@ export namespace CodexAuth {
         expires: Date.now() + (tokens.expires_in ?? 3600) * 1000,
         accountId,
       };
-      await AuthStorage.set("openai", newInfo);
+      await AuthStorage.setOAuth("openai", newInfo);
       return { token: tokens.access_token, accountId };
     } catch {
       return undefined;

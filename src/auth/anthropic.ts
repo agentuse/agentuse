@@ -60,14 +60,14 @@ export namespace AnthropicAuth {
     }
 
     // Priority 2: Fall back to file-based storage
-    const info = await AuthStorage.get("anthropic");
+    const info = await AuthStorage.getOAuth("anthropic");
     if (!info || info.type !== "oauth") return;
     if (info.access && info.expires > Date.now()) return info.access;
 
     const refreshed = await refreshToken(info.refresh);
     if (!refreshed) return;
 
-    await AuthStorage.set("anthropic", {
+    await AuthStorage.setOAuth("anthropic", {
       type: "oauth",
       refresh: refreshed.refresh,
       access: refreshed.access,

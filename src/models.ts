@@ -191,12 +191,26 @@ export async function createModel(modelString: string) {
       }
       logger.debug(`Using ANTHROPIC_API_KEY${suffix} for authentication`);
     } else {
+      // Check environment variable first
       apiKey = process.env.ANTHROPIC_API_KEY;
+      if (apiKey) {
+        logger.debug('Using ANTHROPIC_API_KEY for authentication');
+      }
+
+      // Fall back to stored credentials from `agentuse auth login`
+      if (!apiKey) {
+        const storedApiKey = await AuthStorage.getApiKey('anthropic');
+        if (storedApiKey) {
+          apiKey = storedApiKey.key;
+          logger.debug('Using stored API key for Anthropic authentication');
+        }
+      }
+
       if (!apiKey) {
         throw new AuthenticationError(
           'anthropic',
           'ANTHROPIC_API_KEY',
-          'No authentication found for Anthropic'
+          'No authentication found for Anthropic. Run `agentuse auth login anthropic` or set ANTHROPIC_API_KEY'
         );
       }
     }
@@ -215,7 +229,7 @@ export async function createModel(modelString: string) {
     // Check for Codex OAuth token first (handles refresh automatically)
     const codexAccess = await CodexAuth.access();
     if (codexAccess && !config.envVar && !config.envSuffix) {
-      logger.debug('Using Codex OAuth token for OpenAI authentication');
+      logger.debug('Using ChatGPT OAuth for OpenAI authentication');
 
       // Simple fetch wrapper that only handles OAuth headers - no stream transformation needed
       // The AI SDK's openai.responses() speaks the Responses API format natively
@@ -278,12 +292,15 @@ export async function createModel(modelString: string) {
     } else {
       // Check environment variable first
       apiKey = process.env.OPENAI_API_KEY;
+      if (apiKey) {
+        logger.debug('Using OPENAI_API_KEY for authentication');
+      }
 
       // Fall back to stored credentials from `agentuse auth login`
       if (!apiKey) {
-        const storedAuth = await AuthStorage.get('openai');
-        if (storedAuth && storedAuth.type === 'api') {
-          apiKey = storedAuth.key;
+        const storedApiKey = await AuthStorage.getApiKey('openai');
+        if (storedApiKey) {
+          apiKey = storedApiKey.key;
           logger.debug('Using stored API key for OpenAI authentication');
         }
       }
@@ -335,12 +352,15 @@ export async function createModel(modelString: string) {
     } else {
       // Check environment variable first
       apiKey = process.env.OPENROUTER_API_KEY;
+      if (apiKey) {
+        logger.debug('Using OPENROUTER_API_KEY for authentication');
+      }
 
       // Fall back to stored credentials from `agentuse auth login`
       if (!apiKey) {
-        const storedAuth = await AuthStorage.get('openrouter');
-        if (storedAuth && storedAuth.type === 'api') {
-          apiKey = storedAuth.key;
+        const storedApiKey = await AuthStorage.getApiKey('openrouter');
+        if (storedApiKey) {
+          apiKey = storedApiKey.key;
           logger.debug('Using stored API key for OpenRouter authentication');
         }
       }
