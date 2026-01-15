@@ -33,8 +33,6 @@ export function findProjectRoot(startPath: string): string {
   while (currentDir !== root) {
     // Check for project markers in priority order
     const markers = [
-      'agentuse.json',        // Future: Agentuse-specific config (not implemented yet)
-      'agentuse.toml',        // Future: Alternative config format (not implemented yet)
       '.agentuse',            // Agentuse plugins directory (if using plugins)
       '.git',                 // Git repository root (most common)
       'package.json',         // Node.js project
