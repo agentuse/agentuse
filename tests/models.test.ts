@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { createModel } from '../src/models';
 import { AnthropicAuth } from '../src/auth/anthropic';
+import { CodexAuth } from '../src/auth/codex';
 
 async function withEnv(env: Record<string, string | undefined>, callback: () => Promise<void>) {
   const snapshot = new Map<string, string | undefined>();
@@ -31,20 +32,34 @@ async function withEnv(env: Record<string, string | undefined>, callback: () => 
 describe('createModel base URL configuration', () => {
   describe('OpenAI', () => {
     it('uses default base URL when not configured', async () => {
-      await withEnv({ OPENAI_API_KEY: 'test-key' }, async () => {
-        const model = await createModel('openai:gpt-4o-mini');
-        expect(model.config.url({ path: '' })).toBe('https://api.openai.com/v1');
-      });
+      const originalAccess = CodexAuth.access;
+      CodexAuth.access = async () => undefined;
+
+      try {
+        await withEnv({ OPENAI_API_KEY: 'test-key' }, async () => {
+          const model = await createModel('openai:gpt-4o-mini');
+          expect(model.config.url({ path: '' })).toBe('https://api.openai.com/v1');
+        });
+      } finally {
+        CodexAuth.access = originalAccess;
+      }
     });
 
     it('respects OPENAI_BASE_URL', async () => {
-      await withEnv({
-        OPENAI_API_KEY: 'test-key',
-        OPENAI_BASE_URL: 'https://openai.example.com',
-      }, async () => {
-        const model = await createModel('openai:gpt-4o');
-        expect(model.config.url({ path: '' })).toBe('https://openai.example.com');
-      });
+      const originalAccess = CodexAuth.access;
+      CodexAuth.access = async () => undefined;
+
+      try {
+        await withEnv({
+          OPENAI_API_KEY: 'test-key',
+          OPENAI_BASE_URL: 'https://openai.example.com',
+        }, async () => {
+          const model = await createModel('openai:gpt-4o');
+          expect(model.config.url({ path: '' })).toBe('https://openai.example.com');
+        });
+      } finally {
+        CodexAuth.access = originalAccess;
+      }
     });
 
     it('supports suffix-based base URL', async () => {
