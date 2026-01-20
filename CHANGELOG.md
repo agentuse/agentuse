@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.6.0] - 2026-01-20
+
+### Added
+
+- OpenAI ChatGPT OAuth (Codex) authentication support
+- `agentuse agents` command to discover and list project agents
+- File reader tool for loaded skill directories
+- Human-readable cron format display in scheduler
+- Version and notes fields in agent schema
+
+### Changed
+
+- Refactor auth storage to support separate OAuth and API key management
+
+### Fixed
+
+- Remove unimplemented config markers from project root search
+- Auto-append `.agentuse` extension when resolving agent files
+- Ensure session updates complete before returning
+- Deep sort nested objects in doom loop detector for consistent comparison
+- Improve tool call feedback with running state and metadata hints
+
+---
+
 ## [0.5.1] - 2026-01-08
 
 ### Fixed

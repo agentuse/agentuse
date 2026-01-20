@@ -190,6 +190,21 @@ When the agent loads a skill, it receives:
 - Any tool warnings (if required tools are missing)
 - The full markdown content with instructions
 
+### Skill File Reader
+
+After loading a skill, agents can read additional files from the skill directory using the `skill_read` tool. This is useful for accessing:
+- Helper scripts bundled with the skill
+- Data files or templates
+- Configuration examples
+
+```
+skill_read(skill: "code-review", path: "templates/pr-template.md")
+```
+
+<Note>
+The skill must be loaded first before reading files from its directory.
+</Note>
+
 ## Example Skills
 
 ### Git Commit Guidelines

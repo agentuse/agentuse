@@ -15,8 +15,8 @@ AgentUse supports multiple AI providers. You need to authenticate with at least 
     Supports OAuth and API keys
   </Card>
   <Card title="OpenAI">
-    GPT models including GPT-5, GPT-4, GPT-4o, GPT-3.5
-    API key authentication
+    GPT models including GPT-5, GPT-4, GPT-4o
+    Supports OAuth and API keys
   </Card>
   <Card title="OpenRouter">
     Access to 100+ models via unified API
@@ -39,10 +39,6 @@ agentuse auth login anthropic
 agentuse auth login openai
 agentuse auth login openrouter
 ```
-
-<Info>
-  Anthropic supports OAuth login for both Claude Max and Console users - no API key needed!
-</Info>
 
 ### 2. Environment Variables
 
@@ -128,45 +124,7 @@ agentuse auth logout openai
 agentuse auth login openai
 ```
 
-## OAuth Authentication (Anthropic)
-
-Both Claude Max and Console users can use OAuth for seamless authentication:
-
-<Steps>
-  <Step title="Run OAuth Login">
-    ```bash
-    agentuse auth login anthropic
-    ```
-    Select from:
-    - **Claude Pro/Max Plan** (OAuth) - For claude.ai users
-    - **Anthropic Console** (OAuth) - For console.anthropic.com users  
-    - **Manual API Key** - Traditional API key method
-  </Step>
-  <Step title="Authorization URL">
-    Copy the authorization URL shown in terminal and visit in your browser
-  </Step>
-  <Step title="Authorize">
-    Sign in and click "Authorize" to grant AgentUse access
-  </Step>
-  <Step title="Copy Code">
-    Copy the authorization code from the browser
-  </Step>
-  <Step title="Paste Code">
-    Paste the code in terminal - you're authenticated!
-  </Step>
-</Steps>
-
-### OAuth Benefits
-
-- No API key management required
-- Automatic token refresh
-- Secure PKCE authentication flow  
-- Works with both Claude Max and Console accounts
-- Tokens stored securely in `~/.local/share/agentuse/auth.json` with restricted permissions
-
-## API Key Authentication
-
-### Getting API Keys
+## Getting API Keys
 
 Get API keys from provider consoles:
 
@@ -182,33 +140,10 @@ Get API keys from provider consoles:
 
 AgentUse checks authentication sources in this order:
 
-1. **OAuth tokens** (Anthropic only) - Checked first and refreshed automatically
+1. **OAuth tokens** - Checked first and refreshed automatically
 2. **Stored API keys** (via `agentuse auth login`) - Stored in `~/.local/share/agentuse/auth.json`
 3. **Environment variables** - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`
 4. **Custom environment variables** - Using suffix patterns (e.g., `ANTHROPIC_API_KEY_DEV`) or full variable names
-
-## Security Best Practices
-
-<AccordionGroup>
-  <Accordion title="Use OAuth When Possible">
-    OAuth is more secure than API keys as tokens can be revoked and rotated automatically. AgentUse uses PKCE flow for enhanced security.
-  </Accordion>
-  <Accordion title="Secure File Storage">
-    Stored credentials in `~/.local/share/agentuse/auth.json` are automatically set to user read/write only (`0600` permissions).
-  </Accordion>
-  <Accordion title="Rotate Keys Regularly">
-    Change API keys every 90 days or immediately if compromised.
-  </Accordion>
-  <Accordion title="Limit Key Permissions">
-    Create keys with minimal required permissions.
-  </Accordion>
-  <Accordion title="Use Environment Variables">
-    Never hardcode keys in your agent files or code.
-  </Accordion>
-  <Accordion title="Monitor Usage">
-    Regularly check API usage to detect unusual activity.
-  </Accordion>
-</AccordionGroup>
 
 ## Runtime Model Override
 
@@ -299,14 +234,6 @@ These options help you optimize for:
     - Implement exponential backoff
     - Consider upgrading your plan
     - Use different keys for different projects
-  </Accordion>
-  <Accordion title="OAuth issues">
-    - Clear browser cookies
-    - Try a different browser
-    - Ensure you're using the correct OAuth mode (Max vs Console)
-    - Check that your Claude subscription is active (for Max mode)
-    - Verify you have console access (for Console mode)
-    - Try manual API key authentication as fallback
   </Accordion>
 </AccordionGroup>
 

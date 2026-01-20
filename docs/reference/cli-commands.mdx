@@ -567,6 +567,48 @@ Found 2 skill(s):
 
 ---
 
+## agentuse agents
+
+Discover and list all agent files in the current project.
+
+### Syntax
+
+```bash
+agentuse agents [options]
+```
+
+### Options
+
+```bash
+-v, --verbose    Show agent file paths
+```
+
+### Examples
+
+```bash
+# List all agents in the project
+agentuse agents
+
+# Show verbose output with file paths
+agentuse agents -v
+```
+
+### Output Example
+
+```
+Found 3 agent(s):
+
+agents/
+  assistant
+    General-purpose AI assistant
+  code-reviewer
+    Reviews code for quality and security
+  researcher
+    Researches topics and summarizes findings
+```
+
+---
+
 ## agentuse help
 
 Show help information.
@@ -643,6 +685,7 @@ agentuse auth logout [provider]   # Remove stored credentials
 agentuse auth list                # Show authentication status
 agentuse auth help                # Show detailed auth help
 agentuse skills [options]         # List available skills
+agentuse agents [options]         # Discover and list project agents
 agentuse --version                # Show version
 agentuse --help                   # Show help
 ```
