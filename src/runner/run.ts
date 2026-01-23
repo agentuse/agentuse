@@ -1,6 +1,7 @@
 import type { ParsedAgent } from '../parser';
 import type { MCPConnection } from '../mcp';
 import type { SessionManager } from '../session';
+import { AuthenticationError } from '../models';
 import { logger } from '../utils/logger';
 import { executeAgentCore } from './execution';
 import { prepareAgentExecution } from './preparation';
@@ -51,6 +52,10 @@ export async function runAgent(
   /** Suppress console output (for serve mode) */
   quiet: boolean = false
 ): Promise<RunAgentResult> {
+  // Track session info for error logging (set during preparation)
+  let sessionID: string | undefined;
+  let agentName: string | undefined;
+
   try {
     // Log initialization time if verbose
     if (verbose && startTime) {
@@ -79,10 +84,14 @@ export async function runAgent(
       userMessage,
       maxSteps,
       subAgentNames,
-      sessionID,
+      sessionID: prepSessionID,
       assistantMsgID,
       doomLoopDetector
     } = preparation;
+
+    // Set outer scope variables for error logging
+    sessionID = prepSessionID;
+    agentName = agent.name;
 
     // Execute using the core generator
     const coreOptions = {
@@ -95,10 +104,10 @@ export async function runAgent(
 
     const result = await processAgentStream(
       executeAgentCore(agent, tools, coreOptions),
-      sessionManager && sessionID && assistantMsgID ? {
+      sessionManager && prepSessionID && assistantMsgID ? {
         collectToolCalls: true,
         sessionManager,
-        sessionID,
+        sessionID: prepSessionID,
         messageID: assistantMsgID,
         agentName: agent.name,
         doomLoopDetector,
@@ -131,9 +140,9 @@ export async function runAgent(
     }
 
     // Update session message with final token usage
-    if (sessionManager && sessionID && assistantMsgID && result.usage) {
+    if (sessionManager && prepSessionID && assistantMsgID && result.usage) {
       try {
-        await sessionManager.updateMessage(sessionID, agent.name, assistantMsgID, {
+        await sessionManager.updateMessage(prepSessionID, agent.name, assistantMsgID, {
           time: { completed: Date.now() },
           assistant: {
             tokens: {
@@ -158,6 +167,22 @@ export async function runAgent(
       hasTextOutput: result.hasTextOutput
     };
   } catch (error: unknown) {
+    // Log error to session if available (for visibility in `agentuse sessions`)
+    if (sessionManager && sessionID && agentName) {
+      try {
+        const errorCode = error instanceof AuthenticationError ? 'AUTH_ERROR' :
+          (error instanceof Error && error.name === 'AbortError') ? 'TIMEOUT' :
+          'EXECUTION_ERROR';
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        await sessionManager.setSessionError(sessionID, agentName, {
+          code: errorCode,
+          message: errorMessage
+        });
+      } catch {
+        // Ignore error logging failures
+      }
+    }
+
     // Check if it's an abort error from timeout
     if ((error instanceof Error && error.name === 'AbortError') || (abortSignal && abortSignal.aborted)) {
       // Timeout already handled by caller

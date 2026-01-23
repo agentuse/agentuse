@@ -538,6 +538,14 @@ async function showSession(
   process.stdout.write(`\nProject:     ${s.project.root}\n`);
   process.stdout.write(`Working Dir: ${s.project.cwd}\n`);
 
+  // Display session-level error (failures before LLM calls - auth, MCP, etc.)
+  if (s.error) {
+    process.stdout.write(`\n${"─".repeat(60)}\n`);
+    process.stdout.write(`✗ ERROR: ${s.error.code}\n`);
+    process.stdout.write(`  ${s.error.message}\n`);
+    process.stdout.write(`  Time: ${new Date(s.error.time).toLocaleString()}\n`);
+  }
+
   // Display messages
   if (details.messages.length > 0) {
     process.stdout.write(`\n${"─".repeat(60)}\n`);

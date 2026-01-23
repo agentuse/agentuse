@@ -237,6 +237,22 @@ export class SessionManager {
   }
 
   /**
+   * Set error on session (for failures before LLM calls - auth, MCP, etc.)
+   */
+  async setSessionError(
+    sessionID: string,
+    agentName: string,
+    error: { message: string; code: string }
+  ): Promise<void> {
+    await this.updateSession(sessionID, agentName, {
+      error: {
+        ...error,
+        time: Date.now()
+      }
+    });
+  }
+
+  /**
    * Get the full path to this session's directory
    */
   getFullPath(): string | null {

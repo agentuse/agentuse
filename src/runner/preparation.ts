@@ -11,6 +11,7 @@ import { logger } from '../utils/logger';
 import { resolveMaxSteps, DEFAULT_MAX_STEPS } from '../utils/config';
 import { createSkillTools } from '../skill/index.js';
 import { buildAutonomousAgentPrompt } from './prompt';
+import { version as packageVersion } from '../../package.json';
 import type { PrepareAgentOptions, PreparedAgentExecution } from './types';
 import type { ToolSet } from 'ai';
 
@@ -128,7 +129,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       sessionID = await sessionManager.createSession({
         agent: agentConfig,
         model: agent.config.model,
-        version: '0.1.4', // TODO: import from package.json
+        version: packageVersion,
         config: sessionConfig,
         project: {
           root: projectContext.projectRoot,

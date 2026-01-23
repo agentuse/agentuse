@@ -44,6 +44,13 @@ export interface SessionInfo {
     created: number;                 // Unix timestamp (ms)
     updated: number;                 // Unix timestamp (ms)
   };
+
+  // Error (for failures before LLM calls - auth, MCP, etc.)
+  error?: {
+    message: string;
+    code: string;                    // 'AUTH_ERROR', 'MCP_ERROR', 'CONFIG_ERROR', etc.
+    time: number;                    // Unix timestamp (ms)
+  };
 }
 
 // Message Schema (contains both user input and assistant response in one exchange)
