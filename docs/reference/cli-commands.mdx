@@ -400,6 +400,25 @@ schedule: "1h"
   The server enables CORS by default. For production, run behind a reverse proxy with authentication.
 </Info>
 
+### serve ps
+
+List running `agentuse serve` instances.
+
+```bash
+agentuse serve ps [--json]
+```
+
+Shows PID, port, project directory, agent/schedule counts, and uptime for each server.
+
+```
+PID      PORT     PROJECT                        AGENTS   SCHEDULES   UPTIME
+────────────────────────────────────────────────────────────────────────────
+63398    12233    ~/workspace/agentuse           9        1           2h 15m
+71245    12234    ~/workspace/another-project    5        0           45m
+```
+
+Use `--json` for scripting. Stale entries are automatically cleaned up.
+
 ---
 
 ## agentuse auth
@@ -680,6 +699,7 @@ AgentUse currently supports these commands:
 ```bash
 agentuse run <file> [prompt...]   # Run an agent with optional prompt
 agentuse serve [options]          # Start HTTP server to run agents via API
+agentuse serve ps [--json]        # List running serve instances
 agentuse auth login [provider]    # Authenticate with a provider
 agentuse auth logout [provider]   # Remove stored credentials
 agentuse auth list                # Show authentication status

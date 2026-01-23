@@ -106,7 +106,7 @@ program.addCommand(createAuthCommand());
 // Add sessions command
 program.addCommand(createSessionsCommand());
 
-// Add serve command
+// Add serve command (includes ps subcommand)
 program.addCommand(createServeCommand());
 
 // Add models command

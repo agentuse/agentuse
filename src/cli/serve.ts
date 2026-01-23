@@ -18,6 +18,8 @@ import { FileWatcher } from "../watcher";
 import { telemetry, parseModel } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { validateAgentEnvVars, formatEnvValidationError } from "../utils/env-validation";
+import { registerServer, unregisterServer, updateServer, listServers, formatUptime, type ServerEntry } from "../utils/server-registry";
+import { homedir } from "os";
 import * as dotenv from "dotenv";
 
 interface RunRequest {
@@ -516,6 +518,17 @@ export function createServeCommand(): Command {
         ignore: ["node_modules/**", "tmp/**", ".git/**"],
       });
 
+      // Track agent count for registry updates (mutable for hot reload)
+      let currentAgentCount = agentFiles.length;
+
+      // Helper to update the server registry after hot reload changes
+      const updateRegistryCounts = () => {
+        updateServer({
+          agentCount: currentAgentCount,
+          scheduleCount: scheduler.list().length,
+        });
+      };
+
       for (const agentFile of agentFiles) {
         try {
           const agentPath = resolve(projectContext.projectRoot, agentFile);
@@ -558,6 +571,10 @@ export function createServeCommand(): Command {
 
             const schedule = agent.config.schedule ? scheduler.add(relativePath, agent.config.schedule) : undefined;
             printHotReload("added", relativePath, schedule);
+
+            // Update registry
+            currentAgentCount++;
+            updateRegistryCounts();
           } catch (err) {
             logger.warn(`Hot reload: Failed to parse new agent ${relativePath}: ${(err as Error).message}`);
           }
@@ -570,6 +587,9 @@ export function createServeCommand(): Command {
 
             const schedule = scheduler.update(relativePath, agent.config.schedule);
             printHotReload("changed", relativePath, schedule);
+
+            // Update registry (schedule count may have changed)
+            updateRegistryCounts();
           } catch (err) {
             logger.warn(`Hot reload: Failed to parse changed agent ${relativePath}: ${(err as Error).message}`);
           }
@@ -581,6 +601,10 @@ export function createServeCommand(): Command {
           if (hadSchedule) {
             logger.debug(`Hot reload: Unregistered schedule for ${relativePath}`);
           }
+
+          // Update registry
+          currentAgentCount--;
+          updateRegistryCounts();
         },
 
         onEnvReloaded: () => {
@@ -805,6 +829,9 @@ export function createServeCommand(): Command {
       const shutdown = async () => {
         console.log("\nShutting down...");
 
+        // Unregister from process registry
+        unregisterServer();
+
         scheduler.shutdown();
         worker.shutdown();
 
@@ -829,6 +856,18 @@ export function createServeCommand(): Command {
       server.listen(port, options.host, () => {
         const serverUrl = `http://${options.host}:${port}`;
         const firstAgent = agentFiles[0] || "path/to/agent.agentuse";
+        const schedules = scheduler.list();
+
+        // Register server in the process registry
+        registerServer({
+          port,
+          host: options.host,
+          projectRoot: projectContext.projectRoot,
+          startTime: serverStartTime,
+          agentCount: agentFiles.length,
+          scheduleCount: schedules.length,
+          version: packageVersion,
+        });
 
         printLogo();
 
@@ -858,7 +897,6 @@ export function createServeCommand(): Command {
           }
         }
         // Scheduled agents
-        const schedules = scheduler.list();
         if (schedules.length > 0) {
           console.log(`\n  ${chalk.dim(`Scheduled (${schedules.length})`)}`);
           console.log(scheduler.formatScheduleTable());
@@ -877,5 +915,63 @@ export function createServeCommand(): Command {
       });
     });
 
+  // Add ps subcommand
+  serveCmd.addCommand(createPsSubcommand());
+
   return serveCmd;
+}
+
+// Helper functions for ps subcommand
+function truncatePath(path: string, maxLen: number): string {
+  const homeDir = homedir();
+  let displayPath = path.startsWith(homeDir) ? "~" + path.slice(homeDir.length) : path;
+  if (displayPath.length <= maxLen) {
+    return displayPath;
+  }
+  return "..." + displayPath.slice(-(maxLen - 3));
+}
+
+function formatPsTable(servers: ServerEntry[]): string {
+  if (servers.length === 0) return "";
+
+  const headers = ["PID", "PORT", "PROJECT", "AGENTS", "SCHEDULES", "UPTIME"];
+  const widths = [7, 7, 40, 7, 10, 10];
+
+  const headerRow = headers.map((h, i) => h.padEnd(widths[i])).join("  ");
+  const separator = widths.map((w) => "─".repeat(w)).join("──");
+
+  const rows = servers.map((s) => [
+    String(s.pid).padEnd(widths[0]),
+    String(s.port).padEnd(widths[1]),
+    truncatePath(s.projectRoot, widths[2]).padEnd(widths[2]),
+    String(s.agentCount).padEnd(widths[3]),
+    String(s.scheduleCount).padEnd(widths[4]),
+    formatUptime(s.startTime).padEnd(widths[5]),
+  ].join("  "));
+
+  return [chalk.dim(headerRow), chalk.dim(separator), ...rows].join("\n");
+}
+
+function createPsSubcommand(): Command {
+  return new Command("ps")
+    .description("List running agentuse serve instances")
+    .option("--json", "Output as JSON")
+    .action((options: { json?: boolean }) => {
+      const servers = listServers();
+
+      if (options.json) {
+        console.log(JSON.stringify(servers, null, 2));
+        return;
+      }
+
+      if (servers.length === 0) {
+        console.log(chalk.dim("No running agentuse serve instances found."));
+        console.log(chalk.dim("\nStart a server with: agentuse serve"));
+        return;
+      }
+
+      console.log(formatPsTable(servers));
+      console.log();
+      console.log(chalk.dim(`${servers.length} server${servers.length === 1 ? "" : "s"} running`));
+    });
 }
