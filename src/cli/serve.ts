@@ -376,6 +376,17 @@ export function createServeCommand(): Command {
         : resolveProjectContext(workDir);
       logger.info(`Project root: ${projectContext.projectRoot}`);
 
+      // Check if a server is already running for this project
+      const existingServers = listServers();
+      const existingServer = existingServers.find(s => s.projectRoot === projectContext.projectRoot);
+      if (existingServer) {
+        console.error(chalk.red(`\nError: A server is already running for this project.`));
+        console.error(chalk.dim(`\n  PID:  ${existingServer.pid}`));
+        console.error(chalk.dim(`  Port: ${existingServer.port}`));
+        console.error(chalk.dim(`\nTo see all running servers: agentuse serve ps`));
+        process.exit(1);
+      }
+
       // Load environment
       if (existsSync(projectContext.envFile)) {
         dotenv.config({ path: projectContext.envFile, quiet: true });
@@ -852,6 +863,19 @@ export function createServeCommand(): Command {
 
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
+
+      // Handle server errors (e.g., port already in use)
+      server.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EADDRINUSE") {
+          console.error(chalk.red(`\nError: Port ${port} is already in use.`));
+          console.error(chalk.dim(`\nTry one of these:`));
+          console.error(chalk.dim(`  • Use a different port: agentuse serve --port ${port + 1}`));
+          console.error(chalk.dim(`  • See running servers:  agentuse serve ps`));
+          process.exit(1);
+        }
+        // Re-throw other errors
+        throw err;
+      });
 
       server.listen(port, options.host, () => {
         const serverUrl = `http://${options.host}:${port}`;

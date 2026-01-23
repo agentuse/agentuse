@@ -2,14 +2,14 @@
  * Server Registry
  *
  * Tracks running `agentuse serve` instances using PID files.
- * Each server writes a JSON file to ~/.agentuse/servers/<pid>.json on startup,
+ * Each server writes a JSON file to {XDG_DATA_HOME}/agentuse/servers/<pid>.json on startup,
  * which is removed on graceful shutdown. Stale entries (where PID no longer exists)
  * are cleaned up automatically.
  */
 
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from "fs";
-import { homedir } from "os";
 import { join } from "path";
+import { getXdgDataDir } from "../storage/paths";
 
 export interface ServerEntry {
   pid: number;
@@ -22,7 +22,7 @@ export interface ServerEntry {
   version: string;
 }
 
-const REGISTRY_DIR = join(homedir(), ".agentuse", "servers");
+const REGISTRY_DIR = join(getXdgDataDir(), "agentuse", "servers");
 
 /**
  * Ensure the registry directory exists.

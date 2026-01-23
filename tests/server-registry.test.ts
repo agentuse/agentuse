@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import * as fs from "fs";
 import * as path from "path";
-import { homedir } from "os";
 import {
   registerServer,
   unregisterServer,
@@ -10,8 +9,9 @@ import {
   formatUptime,
   type ServerEntry,
 } from "../src/utils/server-registry";
+import { getXdgDataDir } from "../src/storage/paths";
 
-const REGISTRY_DIR = path.join(homedir(), ".agentuse", "servers");
+const REGISTRY_DIR = path.join(getXdgDataDir(), "agentuse", "servers");
 
 describe("Server Registry", () => {
   // Clean up test entries before and after each test
