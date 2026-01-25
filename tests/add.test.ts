@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, mkdir, rm, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { resolveSource, add } from '../src/cli/add';
+import { resolveSource, add, discoverItems } from '../src/cli/add';
 
 describe('agentuse add', () => {
   let projectDir: string;
@@ -247,6 +247,96 @@ description: Skill A
 
       expect(result.skills).toHaveLength(0);
       expect(result.agents).toHaveLength(0);
+    });
+  });
+
+  describe('discoverItems', () => {
+    it('discovers skills with descriptions', async () => {
+      await mkdir(join(sourceDir, 'skills', 'my-skill'), { recursive: true });
+      await writeFile(join(sourceDir, 'skills', 'my-skill', 'SKILL.md'), `---
+name: my-skill
+description: A helpful skill
+---
+# Content`);
+
+      const { skills, agents } = await discoverItems(sourceDir);
+
+      expect(skills).toHaveLength(1);
+      expect(skills[0].name).toBe('my-skill');
+      expect(skills[0].description).toBe('A helpful skill');
+      expect(agents).toHaveLength(0);
+    });
+
+    it('discovers agents', async () => {
+      await writeFile(join(sourceDir, 'my-agent.agentuse'), `model: anthropic:claude-sonnet-4-5
+---`);
+
+      const { skills, agents } = await discoverItems(sourceDir);
+
+      expect(skills).toHaveLength(0);
+      expect(agents).toHaveLength(1);
+      expect(agents[0].path).toBe('my-agent.agentuse');
+      expect(agents[0].name).toBe('my-agent');
+    });
+  });
+
+  describe('add - selective installation', () => {
+    it('installs only selected skills', async () => {
+      await mkdir(join(sourceDir, 'skills', 'skill-a'), { recursive: true });
+      await mkdir(join(sourceDir, 'skills', 'skill-b'), { recursive: true });
+      await writeFile(join(sourceDir, 'skills', 'skill-a', 'SKILL.md'), `---
+name: skill-a
+description: Skill A
+---`);
+      await writeFile(join(sourceDir, 'skills', 'skill-b', 'SKILL.md'), `---
+name: skill-b
+description: Skill B
+---`);
+
+      const result = await add(sourceDir, projectDir, {
+        force: true,
+        selectedSkills: ['skill-a'],
+      });
+
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0].name).toBe('skill-a');
+      expect(existsSync(join(projectDir, '.agentuse', 'skills', 'skill-a'))).toBe(true);
+      expect(existsSync(join(projectDir, '.agentuse', 'skills', 'skill-b'))).toBe(false);
+    });
+
+    it('installs only selected agents', async () => {
+      await mkdir(join(sourceDir, 'agents'), { recursive: true });
+      await writeFile(join(sourceDir, 'agents', 'agent-a.agentuse'), `model: anthropic:claude-sonnet-4-5
+---`);
+      await writeFile(join(sourceDir, 'agents', 'agent-b.agentuse'), `model: anthropic:claude-sonnet-4-5
+---`);
+
+      const result = await add(sourceDir, projectDir, {
+        force: true,
+        selectedAgents: ['agents/agent-a.agentuse'],
+      });
+
+      expect(result.agents).toHaveLength(1);
+      expect(result.agents[0].path).toBe('agents/agent-a.agentuse');
+      expect(existsSync(join(projectDir, 'agents', 'agent-a.agentuse'))).toBe(true);
+      expect(existsSync(join(projectDir, 'agents', 'agent-b.agentuse'))).toBe(false);
+    });
+
+    it('installs all when no selection provided', async () => {
+      await mkdir(join(sourceDir, 'skills', 'skill-a'), { recursive: true });
+      await mkdir(join(sourceDir, 'skills', 'skill-b'), { recursive: true });
+      await writeFile(join(sourceDir, 'skills', 'skill-a', 'SKILL.md'), `---
+name: skill-a
+description: Skill A
+---`);
+      await writeFile(join(sourceDir, 'skills', 'skill-b', 'SKILL.md'), `---
+name: skill-b
+description: Skill B
+---`);
+
+      const result = await add(sourceDir, projectDir, { force: true });
+
+      expect(result.skills).toHaveLength(2);
     });
   });
 });

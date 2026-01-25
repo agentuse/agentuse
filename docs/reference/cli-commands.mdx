@@ -651,8 +651,11 @@ agentuse add <source> [options]
 ### Options
 
 ```bash
---force      Overwrite existing skills/agents without prompting
---dry-run    Preview what would be added without making changes
+--force              Overwrite existing skills/agents without prompting
+--all                Install all skills and agents without prompting
+--list               List available skills and agents without installing
+-s, --skill <name>   Install specific skill(s) by name (repeatable)
+-a, --agent <path>   Install specific agent(s) by path (repeatable)
 ```
 
 ### What Gets Added
@@ -665,19 +668,29 @@ agentuse add <source> [options]
 ### Examples
 
 ```bash
-# Add from GitHub
+# Add from GitHub (interactive selection)
 agentuse add vercel-labs/agent-skills
 agentuse add vercel-labs/agent-skills#v1.0.0
+
+# List available skills/agents without installing
+agentuse add vercel-labs/agent-skills --list
+
+# Install specific skills
+agentuse add vercel-labs/agent-skills --skill react-best-practices
+agentuse add vercel-labs/agent-skills -s skill-a -s skill-b
+
+# Install specific agents
+agentuse add user/repo --agent deploy.agentuse
+
+# Install all without prompting
+agentuse add user/repo --all
+
+# Overwrite existing without prompting
+agentuse add user/repo --force
 
 # Add from local path
 agentuse add ./my-skills-repo
 agentuse add ./path/to/single-skill
-
-# Preview first
-agentuse add user/repo --dry-run
-
-# Overwrite without prompting
-agentuse add user/repo --force
 ```
 
 ### Conflict Handling

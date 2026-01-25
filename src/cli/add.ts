@@ -1,11 +1,12 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
-import { existsSync, rmSync, mkdirSync, cpSync, statSync } from 'fs';
+import { existsSync, rmSync, mkdirSync, cpSync, statSync, readFileSync } from 'fs';
 import { glob } from 'glob';
 import { join, basename, dirname, resolve } from 'path';
 import { tmpdir } from 'os';
 import * as readline from 'readline';
+import * as p from '@clack/prompts';
 import { resolveProjectContext } from '../utils/project.js';
 
 type SourceType = 'github' | 'git' | 'local' | 'skill';
@@ -15,6 +16,17 @@ interface ResolvedSource {
   path: string;
   ref?: string;
   needsClone: boolean;
+}
+
+interface SkillInfo {
+  name: string;
+  description: string;
+  path: string;
+}
+
+interface AgentInfo {
+  path: string;
+  name: string;
 }
 
 interface CopyResult {
@@ -46,6 +58,59 @@ export function resolveSource(source: string): ResolvedSource {
   // GitHub shorthand (user/repo or user/repo#ref)
   const [repo, ref] = source.split('#');
   return { type: 'github', path: `https://github.com/${repo}.git`, ref, needsClone: true };
+}
+
+/**
+ * Parse skill description from SKILL.md frontmatter
+ */
+function parseSkillDescription(skillMdPath: string): string {
+  try {
+    const content = readFileSync(skillMdPath, 'utf-8');
+    const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
+    if (match) {
+      const frontmatter = match[1];
+      const descMatch = frontmatter.match(/description:\s*(.+)/);
+      if (descMatch) {
+        return descMatch[1].trim().replace(/^["']|["']$/g, '');
+      }
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return '';
+}
+
+/**
+ * Discover available skills and agents in a directory
+ */
+export async function discoverItems(workDir: string): Promise<{ skills: SkillInfo[]; agents: AgentInfo[] }> {
+  const skills: SkillInfo[] = [];
+  const agents: AgentInfo[] = [];
+
+  // Find skills
+  const skillFiles = await glob('**/SKILL.md', {
+    cwd: workDir,
+    ignore: ['node_modules/**', '.git/**', 'docs/**', 'tests/**'],
+  });
+
+  for (const skillMd of skillFiles) {
+    const skillDir = dirname(skillMd);
+    const skillName = basename(skillDir);
+    const description = parseSkillDescription(join(workDir, skillMd));
+    skills.push({ name: skillName, description, path: skillDir });
+  }
+
+  // Find agents
+  const agentFiles = await glob('**/*.agentuse', {
+    cwd: workDir,
+    ignore: ['node_modules/**', '.git/**', 'docs/**', 'tests/**'],
+  });
+
+  for (const agent of agentFiles) {
+    agents.push({ path: agent, name: basename(agent, '.agentuse') });
+  }
+
+  return { skills, agents };
 }
 
 /**
@@ -133,10 +198,20 @@ async function copyWithConflictHandling(
   return { action: 'added' };
 }
 
+interface AddOptions {
+  force?: boolean;
+  selectedSkills?: string[] | undefined;
+  selectedAgents?: string[] | undefined;
+}
+
 /**
  * Main add function
  */
-export async function add(source: string, projectRoot: string, options: { force?: boolean } = {}): Promise<CopyResult> {
+export async function add(
+  source: string,
+  projectRoot: string,
+  options: AddOptions = {}
+): Promise<CopyResult> {
   const resolved = resolveSource(source);
   let workDir: string;
   let shouldCleanup = false;
@@ -171,36 +246,39 @@ export async function add(source: string, projectRoot: string, options: { force?
       return result;
     }
 
-    // 3. Find and copy skills (any SKILL.md in the repo)
-    const skillFiles = await glob('**/SKILL.md', {
-      cwd: workDir,
-      ignore: ['node_modules/**', '.git/**', 'docs/**', 'tests/**'],
-    });
+    // 3. Find available items
+    const { skills, agents } = await discoverItems(workDir);
 
-    for (const skillMd of skillFiles) {
-      const skillDir = dirname(skillMd);
-      const skillName = basename(skillDir);
-      const src = join(workDir, skillDir);
-      const dest = join(projectRoot, '.agentuse', 'skills', skillName);
+    // 4. Filter by selection if provided
+    const selectedSkills = options.selectedSkills;
+    const selectedAgents = options.selectedAgents;
 
-      const { action, newMode } = await copyWithConflictHandling(src, dest, 'skill', skillName, conflictMode);
+    // Copy skills
+    for (const skill of skills) {
+      if (selectedSkills && !selectedSkills.includes(skill.name)) {
+        continue;
+      }
+
+      const src = join(workDir, skill.path);
+      const dest = join(projectRoot, '.agentuse', 'skills', skill.name);
+
+      const { action, newMode } = await copyWithConflictHandling(src, dest, 'skill', skill.name, conflictMode);
       if (newMode) conflictMode = newMode;
-      result.skills.push({ name: skillName, action });
+      result.skills.push({ name: skill.name, action });
     }
 
-    // 4. Find and copy agents (preserve directory structure)
-    const agentFiles = await glob('**/*.agentuse', {
-      cwd: workDir,
-      ignore: ['node_modules/**', '.git/**', 'docs/**', 'tests/**'],
-    });
+    // Copy agents
+    for (const agent of agents) {
+      if (selectedAgents && !selectedAgents.includes(agent.path)) {
+        continue;
+      }
 
-    for (const agent of agentFiles) {
-      const src = join(workDir, agent);
-      const dest = join(projectRoot, agent);
+      const src = join(workDir, agent.path);
+      const dest = join(projectRoot, agent.path);
 
-      const { action, newMode } = await copyWithConflictHandling(src, dest, 'agent', agent, conflictMode);
+      const { action, newMode } = await copyWithConflictHandling(src, dest, 'agent', agent.path, conflictMode);
       if (newMode) conflictMode = newMode;
-      result.agents.push({ path: agent, action });
+      result.agents.push({ path: agent.path, action });
     }
 
     return result;
@@ -224,20 +302,19 @@ function printSummary(result: CopyResult): void {
   const agentsOverwritten = result.agents.filter((a) => a.action === 'overwritten').length;
   const agentsSkipped = result.agents.filter((a) => a.action === 'skipped').length;
 
-  console.log();
-  console.log(chalk.bold('Summary:'));
+  const lines: string[] = [];
 
   if (result.skills.length > 0) {
     const parts: string[] = [];
     if (skillsAdded > 0) parts.push(chalk.green(`${skillsAdded} added`));
     if (skillsOverwritten > 0) parts.push(chalk.yellow(`${skillsOverwritten} overwritten`));
     if (skillsSkipped > 0) parts.push(chalk.gray(`${skillsSkipped} skipped`));
-    console.log(`  Skills: ${parts.join(', ')}`);
+    lines.push(`Skills: ${parts.join(', ')}`);
 
     for (const skill of result.skills) {
       const icon =
         skill.action === 'added' ? chalk.green('+') : skill.action === 'overwritten' ? chalk.yellow('~') : chalk.gray('-');
-      console.log(`    ${icon} ${skill.name}`);
+      lines.push(`  ${icon} ${skill.name}`);
     }
   }
 
@@ -246,18 +323,75 @@ function printSummary(result: CopyResult): void {
     if (agentsAdded > 0) parts.push(chalk.green(`${agentsAdded} added`));
     if (agentsOverwritten > 0) parts.push(chalk.yellow(`${agentsOverwritten} overwritten`));
     if (agentsSkipped > 0) parts.push(chalk.gray(`${agentsSkipped} skipped`));
-    console.log(`  Agents: ${parts.join(', ')}`);
+    lines.push(`Agents: ${parts.join(', ')}`);
 
     for (const agent of result.agents) {
       const icon =
         agent.action === 'added' ? chalk.green('+') : agent.action === 'overwritten' ? chalk.yellow('~') : chalk.gray('-');
-      console.log(`    ${icon} ${agent.path}`);
+      lines.push(`  ${icon} ${agent.path}`);
     }
   }
 
   if (result.skills.length === 0 && result.agents.length === 0) {
-    console.log(chalk.gray('  No skills or agents found in the source.'));
+    lines.push(chalk.gray('No skills or agents found in the source.'));
   }
+
+  if (lines.length > 0) {
+    p.log.success(lines.join('\n'));
+  }
+}
+
+/**
+ * Interactive selection prompt - combined skills and agents
+ */
+async function promptSelection(
+  skills: SkillInfo[],
+  agents: AgentInfo[],
+  projectRoot: string
+): Promise<{ selectedSkills: string[]; selectedAgents: string[] } | null> {
+  // Build combined options with type prefixes
+  const options: { value: string; label: string }[] = [];
+
+  for (const s of skills) {
+    const exists = existsSync(join(projectRoot, '.agentuse', 'skills', s.name));
+    const marker = exists ? chalk.yellow(' (exists)') : '';
+    options.push({ value: `skill:${s.name}`, label: `${chalk.blue('[skill]')} ${s.name}${marker}` });
+  }
+
+  for (const a of agents) {
+    const exists = existsSync(join(projectRoot, a.path));
+    const marker = exists ? chalk.yellow(' (exists)') : '';
+    options.push({ value: `agent:${a.path}`, label: `${chalk.magenta('[agent]')} ${a.path}${marker}` });
+  }
+
+  if (options.length === 0) {
+    return { selectedSkills: [], selectedAgents: [] };
+  }
+
+  const selection = await p.multiselect({
+    message: 'Select items to install (use --list to see descriptions)',
+    options,
+    initialValues: options.map((o) => o.value),
+    required: false,
+  });
+
+  if (p.isCancel(selection)) {
+    return null;
+  }
+
+  const selected = selection as string[];
+  const selectedSkills = selected.filter((v) => v.startsWith('skill:')).map((v) => v.slice(6));
+  const selectedAgents = selected.filter((v) => v.startsWith('agent:')).map((v) => v.slice(6));
+
+  return { selectedSkills, selectedAgents };
+}
+
+interface CliOptions {
+  force?: boolean;
+  all?: boolean;
+  list?: boolean;
+  skill?: string[];
+  agent?: string[];
 }
 
 export function createAddCommand(): Command {
@@ -265,22 +399,18 @@ export function createAddCommand(): Command {
     .description('Add skills and agents from a GitHub repo, git URL, or local path')
     .argument('<source>', 'Source to add (user/repo, git URL, or local path)')
     .option('--force', 'Overwrite existing skills/agents without prompting')
-    .option('--dry-run', 'Preview what would be added without making changes')
-    .action(async (source: string, options: { force?: boolean; dryRun?: boolean }) => {
+    .option('--all', 'Install all skills and agents without prompting')
+    .option('--list', 'List available skills and agents without installing')
+    .option('-s, --skill <name...>', 'Install specific skill(s) by name')
+    .option('-a, --agent <path...>', 'Install specific agent(s) by path')
+    .action(async (source: string, options: CliOptions) => {
       const projectContext = resolveProjectContext(process.cwd());
 
-      console.log();
-      console.log(chalk.bold.blue('◆ AgentUse Add'));
-      console.log(chalk.gray(`  Project: ${projectContext.projectRoot}`));
-      console.log();
-
-      if (options.dryRun) {
-        console.log(chalk.yellow('Dry run mode - no files will be modified'));
-        console.log();
-      }
+      p.intro(chalk.bold.blue('AgentUse Add'));
+      p.log.info(chalk.gray(`Project: ${projectContext.projectRoot}`));
 
       try {
-        // For dry-run, we still need to clone/resolve to see what's there
+        // 1. Resolve and clone/access source
         const resolved = resolveSource(source);
         let workDir: string;
         let shouldCleanup = false;
@@ -291,74 +421,123 @@ export function createAddCommand(): Command {
             ? `git clone --depth 1 --branch ${resolved.ref} "${resolved.path}" "${workDir}"`
             : `git clone --depth 1 "${resolved.path}" "${workDir}"`;
 
-          console.log(chalk.gray(`Cloning ${resolved.path}...`));
-          execSync(cloneCmd, { stdio: 'pipe' });
+          const spinner = p.spinner();
+          spinner.start(`Cloning ${resolved.path}`);
+          try {
+            execSync(cloneCmd, { stdio: 'pipe' });
+            spinner.stop('Repository cloned');
+          } catch (error) {
+            spinner.stop('Clone failed');
+            throw new Error(`Failed to clone repository: ${(error as Error).message}`);
+          }
           shouldCleanup = true;
         } else {
           workDir = resolved.path;
         }
 
         try {
-          if (options.dryRun) {
-            // Preview mode - just list what would be added
-            const result: CopyResult = { skills: [], agents: [] };
-
-            if (resolved.type === 'skill') {
-              const skillName = basename(workDir);
-              const dest = join(projectContext.projectRoot, '.agentuse', 'skills', skillName);
-              const exists = existsSync(dest);
-              result.skills.push({ name: skillName, action: exists ? 'overwritten' : 'added' });
-            } else {
-              const skillFiles = await glob('**/SKILL.md', {
-                cwd: workDir,
-                ignore: ['node_modules/**', '.git/**', 'docs/**', 'tests/**'],
-              });
-
-              for (const skillMd of skillFiles) {
-                const skillDir = dirname(skillMd);
-                const skillName = basename(skillDir);
-                const dest = join(projectContext.projectRoot, '.agentuse', 'skills', skillName);
-                const exists = existsSync(dest);
-                result.skills.push({ name: skillName, action: exists ? 'overwritten' : 'added' });
-              }
-
-              const agentFiles = await glob('**/*.agentuse', {
-                cwd: workDir,
-                ignore: ['node_modules/**', '.git/**', 'docs/**', 'tests/**'],
-              });
-
-              for (const agent of agentFiles) {
-                const dest = join(projectContext.projectRoot, agent);
-                const exists = existsSync(dest);
-                result.agents.push({ path: agent, action: exists ? 'overwritten' : 'added' });
-              }
-            }
-
-            console.log(chalk.bold('Would add:'));
-            for (const skill of result.skills) {
-              const exists = skill.action === 'overwritten';
-              console.log(`  ${exists ? chalk.yellow('~') : chalk.green('+')} skill: ${skill.name}${exists ? ' (exists)' : ''}`);
-            }
-            for (const agent of result.agents) {
-              const exists = agent.action === 'overwritten';
-              console.log(`  ${exists ? chalk.yellow('~') : chalk.green('+')} agent: ${agent.path}${exists ? ' (exists)' : ''}`);
-            }
-
-            if (result.skills.length === 0 && result.agents.length === 0) {
-              console.log(chalk.gray('  No skills or agents found in the source.'));
-            }
-          } else {
-            // Actual add
+          // Handle direct skill path
+          if (resolved.type === 'skill') {
             const result = await add(source, projectContext.projectRoot, { force: options.force ?? false });
             printSummary(result);
+            p.outro('Done');
+            return;
           }
+
+          // 2. Discover available items
+          const { skills, agents } = await discoverItems(workDir);
+
+          if (skills.length === 0 && agents.length === 0) {
+            p.outro(chalk.gray('No skills or agents found in the source.'));
+            return;
+          }
+
+          p.log.info(chalk.gray(`Found ${skills.length} skill(s), ${agents.length} agent(s)`));
+
+          // 3. Handle --list mode
+          if (options.list) {
+            if (skills.length > 0) {
+              const skillLines = skills.map((skill) => {
+                const exists = existsSync(join(projectContext.projectRoot, '.agentuse', 'skills', skill.name));
+                const marker = exists ? chalk.yellow(' (exists)') : '';
+                const desc = skill.description ? `\n    ${chalk.gray(skill.description)}` : '';
+                return `  ${chalk.cyan(skill.name)}${marker}${desc}`;
+              });
+              p.log.message(`${chalk.bold('Skills:')}\n${skillLines.join('\n')}`);
+            }
+
+            if (agents.length > 0) {
+              const agentLines = agents.map((agent) => {
+                const exists = existsSync(join(projectContext.projectRoot, agent.path));
+                const marker = exists ? chalk.yellow(' (exists)') : '';
+                return `  ${chalk.cyan(agent.path)}${marker}`;
+              });
+              p.log.message(`${chalk.bold('Agents:')}\n${agentLines.join('\n')}`);
+            }
+
+            p.outro('Use --skill or --agent to install specific items');
+            return;
+          }
+
+          // 4. Determine what to install
+          let selectedSkills: string[] | undefined;
+          let selectedAgents: string[] | undefined;
+
+          if (options.skill || options.agent) {
+            // Explicit selection via flags
+            selectedSkills = options.skill;
+            selectedAgents = options.agent;
+
+            // Validate selections
+            if (selectedSkills) {
+              const availableSkillNames = skills.map((s) => s.name);
+              for (const name of selectedSkills) {
+                if (!availableSkillNames.includes(name)) {
+                  throw new Error(`Skill "${name}" not found. Available: ${availableSkillNames.join(', ')}`);
+                }
+              }
+            }
+            if (selectedAgents) {
+              const availableAgentPaths = agents.map((a) => a.path);
+              for (const path of selectedAgents) {
+                if (!availableAgentPaths.includes(path)) {
+                  throw new Error(`Agent "${path}" not found. Available: ${availableAgentPaths.join(', ')}`);
+                }
+              }
+            }
+          } else if (!options.all) {
+            // Interactive selection
+            const selection = await promptSelection(skills, agents, projectContext.projectRoot);
+            if (!selection) {
+              p.outro('Cancelled');
+              return;
+            }
+            selectedSkills = selection.selectedSkills;
+            selectedAgents = selection.selectedAgents;
+
+            if (selectedSkills.length === 0 && selectedAgents.length === 0) {
+              p.outro('Nothing selected');
+              return;
+            }
+          }
+          // If --all, selectedSkills and selectedAgents remain undefined (install all)
+
+          // 5. Install selected items
+          const result = await add(source, projectContext.projectRoot, {
+            force: options.force ?? false,
+            selectedSkills,
+            selectedAgents,
+          });
+
+          printSummary(result);
+          p.outro('Done');
         } finally {
           if (shouldCleanup) {
             rmSync(workDir, { recursive: true, force: true });
           }
         }
       } catch (error) {
-        console.error(chalk.red(`Error: ${(error as Error).message}`));
+        p.outro(chalk.red(`Error: ${(error as Error).message}`));
         process.exit(1);
       }
     });
