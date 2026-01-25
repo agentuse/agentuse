@@ -628,6 +628,69 @@ agents/
 
 ---
 
+## agentuse add
+
+Add skills and agents from GitHub repos or local paths.
+
+### Syntax
+
+```bash
+agentuse add <source> [options]
+```
+
+### Arguments
+
+<ParamField path="source" type="string" required>
+  Source to add. Supports:
+  - GitHub shorthand: `user/repo` or `user/repo#branch`
+  - Git URL: `https://github.com/user/repo.git`
+  - Local path: `./path/to/repo`
+  - Direct skill: `./path/to/skill` (directory containing SKILL.md)
+</ParamField>
+
+### Options
+
+```bash
+--force      Overwrite existing skills/agents without prompting
+--dry-run    Preview what would be added without making changes
+```
+
+### What Gets Added
+
+| Source Pattern | Destination |
+|---------------|-------------|
+| `**/SKILL.md` (parent dir) | `.agentuse/skills/{skill-name}/` |
+| `**/*.agentuse` | Same relative path in project |
+
+### Examples
+
+```bash
+# Add from GitHub
+agentuse add vercel-labs/agent-skills
+agentuse add vercel-labs/agent-skills#v1.0.0
+
+# Add from local path
+agentuse add ./my-skills-repo
+agentuse add ./path/to/single-skill
+
+# Preview first
+agentuse add user/repo --dry-run
+
+# Overwrite without prompting
+agentuse add user/repo --force
+```
+
+### Conflict Handling
+
+When a skill or agent already exists, you'll be prompted:
+
+```
+Skill "my-skill" already exists.
+  [s] Skip  [o] Overwrite  [a] Skip all  [O] Overwrite all
+```
+
+---
+
 ## agentuse help
 
 Show help information.
@@ -706,6 +769,7 @@ agentuse auth list                # Show authentication status
 agentuse auth help                # Show detailed auth help
 agentuse skills [options]         # List available skills
 agentuse agents [options]         # Discover and list project agents
+agentuse add <source> [options]   # Add skills/agents from GitHub or local path
 agentuse --version                # Show version
 agentuse --help                   # Show help
 ```

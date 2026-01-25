@@ -46,7 +46,7 @@
     "watch": "bun build ./src/index.ts --outdir ./dist --target node --format esm --splitting --sourcemap --packages external --watch",
     "link": "npm link",
     "unlink": "npm unlink",
-    "test": "bun test tests/compaction.test.ts tests/error-recovery.test.ts tests/parser.test.ts tests/bash-security.test.ts tests/bash-workdir.test.ts tests/edit-replacers.test.ts tests/path-validator.test.ts tests/command-validator.test.ts tests/integration-security.test.ts && bun test tests/plugin-manager.test.ts && bun test tests/plugin-integration.test.ts tests/models.test.ts tests/subagent.test.ts tests/precedence.test.ts tests/skill-system.test.ts tests/devtools-integration.test.ts tests/spinner-cleanup.test.ts",
+    "test": "bun test tests/compaction.test.ts tests/error-recovery.test.ts tests/parser.test.ts tests/bash-security.test.ts tests/bash-workdir.test.ts tests/edit-replacers.test.ts tests/path-validator.test.ts tests/command-validator.test.ts tests/integration-security.test.ts tests/add.test.ts && bun test tests/plugin-manager.test.ts && bun test tests/plugin-integration.test.ts tests/models.test.ts tests/subagent.test.ts tests/precedence.test.ts tests/skill-system.test.ts tests/devtools-integration.test.ts tests/spinner-cleanup.test.ts",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build && bun run test",
     "pack-dry": "bun run build && npm pack --dry-run",
