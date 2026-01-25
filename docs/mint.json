@@ -80,12 +80,12 @@
   },
   "backgroundImage": "/static/background.png",
   "metadata": {
-    "og:title": "AgentUse - AI Agents on Autopilot",
-    "og:description": "Define in markdown. Run on cron, CI/CD, or serverless. No SDK. No flowcharts. Just AI agents that run themselves.",
+    "og:title": "AgentUse - Autonomous Agents That Work Without You",
+    "og:description": "Define in markdown. Run on cron, CI/CD, or serverless. No SDK. No flowcharts. Just autonomous AI agents.",
     "og:image": "/static/agentuse-logo.png",
     "twitter:card": "summary_large_image",
     "twitter:title": "AgentUse Documentation",
-    "twitter:description": "AI agents on autopilot. Define in markdown, run on cron, CI/CD, or serverless.",
+    "twitter:description": "Autonomous agents that work without you. Define in markdown, run on cron, CI/CD, or serverless.",
     "twitter:image": "/static/agentuse-logo.png"
   },
   "search": {

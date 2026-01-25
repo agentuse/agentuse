@@ -4,7 +4,7 @@
   <img alt="AgentUse Logo" src="./static/agentuse-logo.png" width="full">
 </picture>
 
-<h1 align="center">AI Agents on Autopilot</h1>
+<h1 align="center">Autonomous Agents That Work Without You</h1>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/agentuse"><img alt="NPM Version" src="https://img.shields.io/npm/v/agentuse?style=flat-square&color=00DC82&label=version"></a>
