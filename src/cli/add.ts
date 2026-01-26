@@ -8,8 +8,48 @@ import { tmpdir } from 'os';
 import * as readline from 'readline';
 import * as p from '@clack/prompts';
 import { resolveProjectContext } from '../utils/project.js';
+import { telemetry, type AddCommandResult } from '../telemetry/index.js';
 
 type SourceType = 'github' | 'git' | 'local' | 'skill';
+
+/**
+ * Extract a privacy-safe source identifier for telemetry
+ * - GitHub: user/repo format
+ * - Git URLs: extracts user/repo from common formats
+ * - Local paths: returns undefined (privacy)
+ */
+function sanitizeSourceForTelemetry(source: string, type: SourceType): string | undefined {
+  if (type === 'local' || type === 'skill') {
+    // Don't track local paths for privacy
+    return undefined;
+  }
+
+  if (type === 'github') {
+    // GitHub shorthand: user/repo or user/repo#ref
+    return source.split('#')[0];
+  }
+
+  if (type === 'git') {
+    // Extract user/repo from git URLs
+    // https://github.com/user/repo.git -> user/repo
+    // git@github.com:user/repo.git -> user/repo
+    const httpsMatch = source.match(/github\.com\/([^/]+\/[^/.]+)/);
+    if (httpsMatch) return httpsMatch[1];
+
+    const sshMatch = source.match(/github\.com:([^/]+\/[^/.]+)/);
+    if (sshMatch) return sshMatch[1];
+
+    // For other git hosts, just return the hostname
+    try {
+      const url = new URL(source);
+      return url.hostname;
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
 
 interface ResolvedSource {
   type: SourceType;
@@ -405,6 +445,17 @@ export function createAddCommand(): Command {
     .option('-a, --agent <path...>', 'Install specific agent(s) by path')
     .action(async (source: string, options: CliOptions) => {
       const projectContext = resolveProjectContext(process.cwd());
+      const startTime = Date.now();
+
+      // Telemetry state - will be updated as we progress
+      let telemetryData: Partial<AddCommandResult> = {
+        sourceType: 'github', // Will be updated after resolving
+        mode: options.list ? 'list' : options.all ? 'all' : options.skill || options.agent ? 'explicit' : 'interactive',
+        force: options.force ?? false,
+        success: false,
+      };
+      // Track if source is trackable (non-local)
+      let isTrackableSource = false;
 
       p.intro(chalk.bold.blue('AgentUse Add'));
       p.log.info(chalk.gray(`Project: ${projectContext.projectRoot}`));
@@ -412,6 +463,13 @@ export function createAddCommand(): Command {
       try {
         // 1. Resolve and clone/access source
         const resolved = resolveSource(source);
+        telemetryData.sourceType = resolved.type;
+        const sanitizedSource = sanitizeSourceForTelemetry(source, resolved.type);
+        if (sanitizedSource) {
+          telemetryData.source = sanitizedSource;
+          isTrackableSource = true;
+        }
+
         let workDir: string;
         let shouldCleanup = false;
 
@@ -428,6 +486,7 @@ export function createAddCommand(): Command {
             spinner.stop('Repository cloned');
           } catch (error) {
             spinner.stop('Clone failed');
+            telemetryData.errorType = 'clone_failed';
             throw new Error(`Failed to clone repository: ${(error as Error).message}`);
           }
           shouldCleanup = true;
@@ -439,6 +498,14 @@ export function createAddCommand(): Command {
           // Handle direct skill path
           if (resolved.type === 'skill') {
             const result = await add(source, projectContext.projectRoot, { force: options.force ?? false });
+            // Track installed skills (only for non-local sources)
+            if (isTrackableSource) {
+              const installed = result.skills.filter((s) => s.action === 'added' || s.action === 'overwritten');
+              if (installed.length > 0) {
+                telemetryData.skillsInstalled = installed.map((s) => s.name);
+              }
+            }
+            telemetryData.success = true;
             printSummary(result);
             p.outro('Done');
             return;
@@ -448,6 +515,7 @@ export function createAddCommand(): Command {
           const { skills, agents } = await discoverItems(workDir);
 
           if (skills.length === 0 && agents.length === 0) {
+            telemetryData.success = true;
             p.outro(chalk.gray('No skills or agents found in the source.'));
             return;
           }
@@ -475,6 +543,7 @@ export function createAddCommand(): Command {
               p.log.message(`${chalk.bold('Agents:')}\n${agentLines.join('\n')}`);
             }
 
+            telemetryData.success = true;
             p.outro('Use --skill or --agent to install specific items');
             return;
           }
@@ -493,6 +562,7 @@ export function createAddCommand(): Command {
               const availableSkillNames = skills.map((s) => s.name);
               for (const name of selectedSkills) {
                 if (!availableSkillNames.includes(name)) {
+                  telemetryData.errorType = 'validation_failed';
                   throw new Error(`Skill "${name}" not found. Available: ${availableSkillNames.join(', ')}`);
                 }
               }
@@ -501,6 +571,7 @@ export function createAddCommand(): Command {
               const availableAgentPaths = agents.map((a) => a.path);
               for (const path of selectedAgents) {
                 if (!availableAgentPaths.includes(path)) {
+                  telemetryData.errorType = 'validation_failed';
                   throw new Error(`Agent "${path}" not found. Available: ${availableAgentPaths.join(', ')}`);
                 }
               }
@@ -509,6 +580,8 @@ export function createAddCommand(): Command {
             // Interactive selection
             const selection = await promptSelection(skills, agents, projectContext.projectRoot);
             if (!selection) {
+              telemetryData.errorType = 'cancelled';
+              telemetryData.success = false;
               p.outro('Cancelled');
               return;
             }
@@ -516,6 +589,7 @@ export function createAddCommand(): Command {
             selectedAgents = selection.selectedAgents;
 
             if (selectedSkills.length === 0 && selectedAgents.length === 0) {
+              telemetryData.success = true;
               p.outro('Nothing selected');
               return;
             }
@@ -529,6 +603,23 @@ export function createAddCommand(): Command {
             selectedAgents,
           });
 
+          // Update telemetry with results (only for non-local sources)
+          if (isTrackableSource) {
+            const installedSkills = result.skills
+              .filter((s) => s.action === 'added' || s.action === 'overwritten')
+              .map((s) => s.name);
+            const installedAgents = result.agents
+              .filter((a) => a.action === 'added' || a.action === 'overwritten')
+              .map((a) => basename(a.path, '.agentuse'));
+            if (installedSkills.length > 0) {
+              telemetryData.skillsInstalled = installedSkills;
+            }
+            if (installedAgents.length > 0) {
+              telemetryData.agentsInstalled = installedAgents;
+            }
+          }
+          telemetryData.success = true;
+
           printSummary(result);
           p.outro('Done');
         } finally {
@@ -537,8 +628,15 @@ export function createAddCommand(): Command {
           }
         }
       } catch (error) {
+        if (!telemetryData.errorType) {
+          telemetryData.errorType = 'unknown';
+        }
         p.outro(chalk.red(`Error: ${(error as Error).message}`));
         process.exit(1);
+      } finally {
+        // Capture telemetry
+        telemetryData.durationMs = Date.now() - startTime;
+        telemetry.captureAddCommand(telemetryData as AddCommandResult);
       }
     });
 

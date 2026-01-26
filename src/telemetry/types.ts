@@ -132,3 +132,24 @@ export interface ServerShutdownStats {
   /** Number of failed executions */
   failedExecutions: number;
 }
+
+export interface AddCommandResult {
+  /** Source type: 'github', 'git', 'local', or 'skill' */
+  sourceType: 'github' | 'git' | 'local' | 'skill';
+  /** Source identifier (user/repo for GitHub, hostname for git, omitted for local) */
+  source?: string;
+  /** Names of skills installed (only for non-local sources) */
+  skillsInstalled?: string[];
+  /** Names of agents installed (only for non-local sources) */
+  agentsInstalled?: string[];
+  /** Selection mode: 'interactive', 'all', 'explicit', or 'list' */
+  mode: 'interactive' | 'all' | 'explicit' | 'list';
+  /** Whether --force flag was used */
+  force: boolean;
+  /** Duration in milliseconds */
+  durationMs: number;
+  /** Whether the command completed successfully */
+  success: boolean;
+  /** Error type if failed */
+  errorType?: 'clone_failed' | 'validation_failed' | 'cancelled' | 'unknown';
+}

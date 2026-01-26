@@ -9,7 +9,7 @@
 
 import { PostHog } from 'posthog-node';
 import { getOrCreateAnonymousId, isFirstRun, markFirstRunComplete } from './id';
-import type { ExecutionResult, ToolCallMetrics, StartupError, ServerStartConfig, ServerShutdownStats } from './types';
+import type { ExecutionResult, ToolCallMetrics, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult } from './types';
 import type { ToolCallTrace } from '../plugin/types';
 
 // PostHog configuration
@@ -451,6 +451,48 @@ class TelemetryManager {
   }
 
   /**
+   * Capture an add command event (for agentuse add)
+   */
+  captureAddCommand(result: AddCommandResult): void {
+    if (!this.enabled || !this.initialized || !this.client || !this.anonymousId) {
+      return;
+    }
+
+    try {
+      this.client.capture({
+        distinctId: this.anonymousId,
+        event: 'add_command',
+        properties: {
+          $process_person_profile: false,
+
+          // Version and environment
+          version: VERSION,
+          os: process.platform,
+          arch: process.arch,
+          node_version: process.version,
+          is_ci: isCI(),
+          is_docker: isDocker(),
+          is_npx: isNpx(),
+          is_local_dev: isLocalDev(),
+
+          // Add command metrics
+          source_type: result.sourceType,
+          ...(result.source && { source: result.source }),
+          ...(result.skillsInstalled?.length && { skills_installed: result.skillsInstalled }),
+          ...(result.agentsInstalled?.length && { agents_installed: result.agentsInstalled }),
+          mode: result.mode,
+          force: result.force,
+          duration_ms: result.durationMs,
+          success: result.success,
+          ...(result.errorType && { error_type: result.errorType }),
+        },
+      });
+    } catch {
+      // Silently ignore capture errors
+    }
+  }
+
+  /**
    * Shutdown the telemetry client
    * Should be called before process exit to flush pending events
    */
@@ -476,4 +518,4 @@ class TelemetryManager {
 export const telemetry = new TelemetryManager();
 
 // Re-export types
-export type { ExecutionResult, StartupError, ServerStartConfig, ServerShutdownStats } from './types';
+export type { ExecutionResult, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult } from './types';
