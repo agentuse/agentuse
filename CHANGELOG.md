@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.7.0] - 2026-01-27
+
+### Added
+
+- `agentuse add` command for installing skills and agents from GitHub or local sources
+- Interactive selection and filtering options for add command
+- `agentuse serve ps` subcommand to list running servers with process registry
+- Session-level error tracking for pre-execution failures
+
+### Fixed
+
+- Prevent duplicate server instances in serve mode with improved error handling
+- Make Bash tool timeout input schema dynamic based on user config
+
+---
+
 ## [0.6.0] - 2026-01-20
 
 ### Added
