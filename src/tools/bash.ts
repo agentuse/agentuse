@@ -185,7 +185,8 @@ export function createBashTool(
   const allowedPaths = config.allowedPaths ?? [];
   const resolverContext: PathResolverContext = context ?? { projectRoot };
   const validator = new CommandValidator(config.commands, projectRoot, allowedPaths, resolverContext);
-  const defaultTimeout = config.timeout || DEFAULT_TIMEOUT;
+  const timeoutConfigured = config.timeout !== undefined;
+  const defaultTimeout = config.timeout ?? DEFAULT_TIMEOUT;
 
   // Build description with allowed commands and paths
   const allowedCommandsList = config.commands.map(cmd => `  - ${cmd}`).join('\n');
@@ -212,17 +213,26 @@ ${allowedPathsList}
 
 Commands not matching these patterns will be rejected.`;
 
+  // Build input schema - only expose timeout if not configured by user
+  const baseSchema = {
+    command: z.string().describe('The shell command to execute'),
+    workdir: z.string().optional().describe(`Working directory for command execution. Must be within the project. Defaults to project root. Use this instead of 'cd' commands.`),
+  };
+
+  const inputSchema = timeoutConfigured
+    ? z.object(baseSchema)
+    : z.object({
+        ...baseSchema,
+        timeout: z.number().optional().describe(`Optional timeout in milliseconds (default: ${DEFAULT_TIMEOUT}ms)`),
+      });
+
   return {
     description,
-    inputSchema: z.object({
-      command: z.string().describe('The shell command to execute'),
-      timeout: z.number().optional().describe(`Timeout in milliseconds (default: ${defaultTimeout})`),
-      workdir: z.string().optional().describe(`Working directory for command execution. Must be within the project. Defaults to project root. Use this instead of 'cd' commands.`),
-    }),
-    execute: async ({ command, timeout, workdir }: {
+    inputSchema,
+    execute: async ({ command, workdir, timeout }: {
       command: string;
-      timeout?: number;
       workdir?: string;
+      timeout?: number;
     }): Promise<ToolOutput> => {
       // Validate command (async with tree-sitter)
       const validation = await validator.validate(command);
@@ -258,7 +268,10 @@ Commands not matching these patterns will be rejected.`;
         cwd = resolvedWorkdir;
       }
 
-      const timeoutMs = timeout || defaultTimeout;
+      // If user configured timeout, use it strictly; otherwise let model decide
+      const timeoutMs = timeoutConfigured
+        ? defaultTimeout
+        : (timeout ?? defaultTimeout);
 
       return new Promise((resolve) => {
         let stdout = '';
