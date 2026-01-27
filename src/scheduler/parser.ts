@@ -1,3 +1,4 @@
+import cronstrue from "cronstrue";
 import { INTERVAL_REGEX, CRON_REGEX } from "./types";
 
 /**
@@ -56,4 +57,39 @@ export function parseScheduleExpression(value: string): string {
   throw new Error(
     `Invalid schedule format: "${value}". Use interval (e.g., "5m", "2h") or cron (e.g., "0 0 * * *").`
   );
+}
+
+/**
+ * Format a schedule expression into human-readable text
+ * @example "5m" -> "Every 5 minutes", "0 9 * * *" -> "At 09:00 AM"
+ */
+export function formatScheduleHuman(value: string): string {
+  const trimmed = value.trim();
+
+  // Handle interval format
+  if (INTERVAL_REGEX.test(trimmed)) {
+    const match = trimmed.match(INTERVAL_REGEX);
+    if (match) {
+      const [, num, unit] = match;
+      const n = parseInt(num, 10);
+      const unitNames: Record<string, [string, string]> = {
+        s: ["second", "seconds"],
+        m: ["minute", "minutes"],
+        h: ["hour", "hours"],
+      };
+      const [singular, plural] = unitNames[unit] || [unit, unit];
+      return n === 1 ? `Every ${singular}` : `Every ${n} ${plural}`;
+    }
+  }
+
+  // Handle cron format using cronstrue
+  if (CRON_REGEX.test(trimmed)) {
+    try {
+      return cronstrue.toString(trimmed, { use24HourTimeFormat: false });
+    } catch {
+      return trimmed;
+    }
+  }
+
+  return trimmed;
 }

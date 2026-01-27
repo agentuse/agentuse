@@ -69,6 +69,7 @@
     "chokidar": "^5.0.0",
     "commander": "^12.0.0",
     "croner": "^9.1.0",
+    "cronstrue": "^3.9.0",
     "dotenv": "^17.2.1",
     "esbuild-wasm": "0.23.1",
     "fuzzysort": "^3.1.0",

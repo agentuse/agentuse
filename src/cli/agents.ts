@@ -4,6 +4,7 @@ import { relative, dirname } from 'path';
 import { glob } from 'glob';
 import { resolveProjectContext } from '../utils/project.js';
 import { parseAgent } from '../parser.js';
+import { formatScheduleHuman } from '../scheduler/parser.js';
 
 interface AgentInfo {
   name: string;
@@ -12,6 +13,7 @@ interface AgentInfo {
   dir: string;
   description: string | undefined;
   model: string;
+  schedule: string | undefined;
 }
 
 /**
@@ -38,6 +40,7 @@ async function discoverAgents(projectRoot: string): Promise<AgentInfo[]> {
           dir: dirname(relativePath) || '.',
           description: parsed.description,
           model: parsed.config.model,
+          schedule: parsed.config.schedule,
         });
       } catch {
         // Skip files that fail to parse
@@ -69,6 +72,7 @@ export function createAgentsCommand(): Command {
             path: a.relativePath,
             description: a.description ?? null,
             model: a.model,
+            schedule: a.schedule ?? null,
           })),
         };
         console.log(JSON.stringify(output, null, 2));
@@ -108,8 +112,9 @@ export function createAgentsCommand(): Command {
 
         for (const agent of dirAgents) {
           const path = chalk.cyan(agent.relativePath);
+          const schedule = agent.schedule ? chalk.yellow(` ⏱ ${formatScheduleHuman(agent.schedule)}`) : '';
           const desc = agent.description ? chalk.gray(` · ${agent.description}`) : '';
-          console.log(`  ${path}${desc}`);
+          console.log(`  ${path}${schedule}${desc}`);
           if (options.verbose) {
             console.log(chalk.gray(`    model: ${agent.model}`));
           }
