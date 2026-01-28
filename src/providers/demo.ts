@@ -28,7 +28,7 @@ AgentUse lets you build autonomous AI agents using simple Markdown files.
 
 1. **Authenticate with your preferred provider:**
    \`\`\`bash
-   agentuse auth login openai
+   agentuse auth login
    \`\`\`
 
 2. **Create an autonomous agent** (e.g., \`domain-check.agentuse\`):

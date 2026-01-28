@@ -132,7 +132,10 @@ You can call the helper agent using the sub-agent tools.
 You can run agents directly from HTTPS URLs:
 
 ```bash
-# AgentUse will prompt for confirmation before executing remote agents
+# Run from trusted sources (agentuse.io) without prompts
+agentuse run https://agentuse.io/hello.agentuse
+
+# Other URLs will prompt for confirmation
 agentuse run https://example.com/path/to/agent.agentuse
 
 # Preview the agent content first
