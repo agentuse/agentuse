@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.1] - 2026-01-27
+
+### Added
+
+- Demo provider (`demo:hello`, `demo:welcome`) for zero-config trials - no API keys required
+
+### Changed
+
+- Update hello-world template to use demo provider
+
+---
+
 ## [0.7.0] - 2026-01-27
 
 ### Added

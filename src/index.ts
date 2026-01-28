@@ -262,43 +262,54 @@ program
         if (!file.startsWith('https://')) {
           throw new Error('Only HTTPS URLs are allowed for security reasons');
         }
-        
+
         // Validate .agentuse extension
         if (!file.endsWith('.agentuse')) {
           throw new Error('Remote agents must have .agentuse extension');
         }
-        
-        // Show warning and prompt
-        console.log('\n⚠️  WARNING: You are about to execute an agent from:');
-        console.log(file);
-        console.log('\nOnly continue if you trust the source and have audited the agent.');
-        
-        const answer = await prompt('[p]review / [y]es / [N]o: ');
-        
+
+        // Trusted domains that skip the security prompt
+        const trustedDomains = ['agentuse.io', 'www.agentuse.io'];
+        const urlHost = new URL(file).hostname;
+        const isTrustedDomain = trustedDomains.includes(urlHost);
+
         let content: string;
-        
-        if (answer === 'p' || answer === 'preview') {
-          // Fetch and show content
-          logger.info('Fetching agent for preview...');
+
+        if (isTrustedDomain) {
+          // Trusted domain - fetch directly without prompt
+          logger.info('Fetching agent from trusted source...');
           content = await fetchRemoteAgent(file);
-          console.log('\n--- Agent Content ---');
-          console.log(content);
-          console.log('--- End of Content ---\n');
-          
-          // Ask again after preview
-          const confirmAnswer = await prompt('Execute this agent? [y]es / [N]o: ');
-          if (confirmAnswer !== 'y' && confirmAnswer !== 'yes') {
+        } else {
+          // Show warning and prompt for untrusted domains
+          console.log('\n⚠️  WARNING: You are about to execute an agent from:');
+          console.log(file);
+          console.log('\nOnly continue if you trust the source and have audited the agent.');
+
+          const answer = await prompt('[p]review / [y]es / [N]o: ');
+
+          if (answer === 'p' || answer === 'preview') {
+            // Fetch and show content
+            logger.info('Fetching agent for preview...');
+            content = await fetchRemoteAgent(file);
+            console.log('\n--- Agent Content ---');
+            console.log(content);
+            console.log('--- End of Content ---\n');
+
+            // Ask again after preview
+            const confirmAnswer = await prompt('Execute this agent? [y]es / [N]o: ');
+            if (confirmAnswer !== 'y' && confirmAnswer !== 'yes') {
+              console.log('Aborted.');
+              process.exit(0);
+            }
+          } else if (answer === 'y' || answer === 'yes') {
+            // Fetch content
+            logger.info('Fetching remote agent...');
+            content = await fetchRemoteAgent(file);
+          } else {
+            // Default to No
             console.log('Aborted.');
             process.exit(0);
           }
-        } else if (answer === 'y' || answer === 'yes') {
-          // Fetch content
-          logger.info('Fetching remote agent...');
-          content = await fetchRemoteAgent(file);
-        } else {
-          // Default to No
-          console.log('Aborted.');
-          process.exit(0);
         }
         
         // Parse agent from content
@@ -331,7 +342,7 @@ program
         }
 
         const [provider] = modelParts;
-        const validProviders = ['anthropic', 'openai', 'openrouter'];
+        const validProviders = ['anthropic', 'openai', 'openrouter', 'demo'];
         if (!validProviders.includes(provider)) {
           throw new Error(`Invalid model provider '${provider}'. Supported providers: ${validProviders.join(', ')}`);
         }

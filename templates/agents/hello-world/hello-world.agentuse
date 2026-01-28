@@ -1,5 +1,5 @@
 ---
-model: anthropic:claude-sonnet-4-5
-description: "Creates a poetic Hello World message in Markdown format"
+model: demo:hello
+description: "Welcome message demonstrating AgentUse capabilities"
 ---
-Write a hello world poem in Markdown format but without the code block
+Welcome the user to AgentUse and explain its capabilities.

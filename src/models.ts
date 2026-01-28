@@ -6,6 +6,7 @@ import { CodexAuth } from './auth/codex';
 import { AuthStorage } from './auth/storage';
 import { logger } from './utils/logger';
 import { warnIfModelNotInRegistry } from './utils/model-utils';
+import { createDemoModel } from './providers/demo';
 
 /**
  * Check if DevTools is enabled via environment variable
@@ -384,6 +385,11 @@ export async function createModel(modelString: string) {
       baseURL: 'https://openrouter.ai/api/v1',
     });
     return await maybeWrapWithDevTools(openrouter.chat(config.modelName));
+
+  } else if (config.provider === 'demo') {
+    // Demo provider - no authentication required
+    logger.debug('Using demo provider (no API key required)');
+    return await maybeWrapWithDevTools(createDemoModel(config.modelName));
 
   } else {
     throw new Error(`Unsupported provider: ${config.provider}`);

@@ -23,7 +23,7 @@ export interface ModelInfo {
   };
 }
 
-export type Provider = 'anthropic' | 'openai' | 'openrouter';
+export type Provider = 'anthropic' | 'openai' | 'openrouter' | 'demo';
 
 export const MODELS: Record<Provider, Record<string, ModelInfo>> = {
   anthropic: {
@@ -535,6 +535,44 @@ export const MODELS: Record<Provider, Record<string, ModelInfo>> = {
         output: 1.2,
       },
     }
+  },
+  demo: {
+    'hello': {
+      id: 'hello',
+      name: 'Demo Hello',
+      reasoning: false,
+      toolCall: false,
+      modalities: {
+        input: ["text"],
+        output: ["text"],
+      },
+      limit: {
+        context: 1000,
+        output: 1000,
+      },
+      cost: {
+        input: 0,
+        output: 0,
+      },
+    },
+    'welcome': {
+      id: 'welcome',
+      name: 'Demo Welcome',
+      reasoning: false,
+      toolCall: false,
+      modalities: {
+        input: ["text"],
+        output: ["text"],
+      },
+      limit: {
+        context: 1000,
+        output: 1000,
+      },
+      cost: {
+        input: 0,
+        output: 0,
+      },
+    },
   },
 };
 
