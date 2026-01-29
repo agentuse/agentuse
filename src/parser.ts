@@ -5,6 +5,7 @@ import { resolve, basename } from 'path';
 import { logger } from './utils/logger';
 import { ToolsConfigSchema } from './tools/index.js';
 import { ScheduleConfigSchema } from './scheduler/index.js';
+import { StoreConfigSchema } from './store/index.js';
 
 /**
  * Error thrown when agent configuration is invalid
@@ -73,7 +74,11 @@ const AgentSchema = z.object({
     maxSteps: z.number().optional()
   })).optional(),
   tools: ToolsConfigSchema.optional(),
-  schedule: ScheduleConfigSchema.optional()
+  schedule: ScheduleConfigSchema.optional(),
+  // Store configuration: true for isolated store, string for shared store
+  store: StoreConfigSchema.optional(),
+  // Agent type: currently only 'manager' is supported
+  type: z.enum(['manager']).optional()
 }).transform((data) => {
   // Handle backward compatibility: support both mcp_servers and mcpServers
   if (data.mcp_servers && data.mcpServers) {

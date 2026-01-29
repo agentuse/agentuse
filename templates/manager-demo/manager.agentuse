@@ -1,0 +1,36 @@
+---
+model: anthropic:claude-sonnet-4-5
+type: manager
+store: "demo-content"
+subagents:
+  - path: ./agents/researcher.agentuse
+  - path: ./agents/writer.agentuse
+  - path: ./agents/reviewer.agentuse
+---
+
+# Content Team Manager
+
+## Goal
+Create 3 short articles about productivity tips.
+
+## SOP (Standard Operating Procedure)
+
+### Phase 1: Research
+- Use the researcher to find 3 interesting productivity topics
+- Each topic should have a clear angle that would make a good short article
+- Store each topic as a store item with type "topic" and status "pending"
+
+### Phase 2: Writing
+- For each topic with status "pending", delegate to the writer
+- Update the topic status to "in_progress" when writing starts
+- Store the written article as a new item with type "article" linked to the topic
+- Update the topic status to "written" when complete
+
+### Phase 3: Review
+- For each article, delegate to the reviewer for quality check
+- If approved, update the article status to "done"
+- If revisions needed, send back to writer with feedback
+
+### Completion
+- All 3 articles should have status "done"
+- Summarize the completed work for the user

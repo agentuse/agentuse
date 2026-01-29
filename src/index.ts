@@ -13,6 +13,7 @@ import { createAgentsCommand } from './cli/agents';
 import { createAddCommand } from './cli/add';
 import { logger, LogLevel } from './utils/logger';
 import { basename, resolve, dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
 import { version as packageVersion } from '../package.json';
@@ -20,6 +21,8 @@ import { existsSync as existsSyncFs } from 'fs';
 
 // Detect if running from a linked/local development build
 function getVersionString(): string {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
   const packageRoot = join(__dirname, '..');
   const isLocalDev = existsSyncFs(join(packageRoot, '.git'));
   return isLocalDev ? `${packageVersion} (local)` : packageVersion;
