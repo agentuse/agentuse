@@ -2,6 +2,7 @@
 model: anthropic:claude-sonnet-4-5
 type: manager
 store: "demo-content"
+# schedule: "0 * * * *"  # Uncomment to run every hour
 subagents:
   - path: ./agents/researcher.agentuse
   - path: ./agents/writer.agentuse

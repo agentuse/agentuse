@@ -11,7 +11,8 @@ import { logger } from '../utils/logger';
 import { resolveMaxSteps, DEFAULT_MAX_STEPS } from '../utils/config';
 import { createSkillTools } from '../skill/index.js';
 import { createStore, createStoreTools } from '../store/index.js';
-import { buildManagerPrompt, type SubagentInfo } from '../manager/index.js';
+import { buildManagerPrompt, type SubagentInfo, type ScheduleInfo } from '../manager/index.js';
+import { parseScheduleExpression, formatScheduleHuman } from '../scheduler/parser.js';
 import { parseAgent } from '../parser';
 import { buildAutonomousAgentPrompt } from './prompt';
 import { version as packageVersion } from '../../package.json';
@@ -124,10 +125,23 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       storeName = agent.config.store === true ? agent.name : agent.config.store;
     }
 
+    // Determine schedule info for the manager prompt
+    let scheduleInfo: ScheduleInfo | undefined;
+    if (agent.config.schedule) {
+      try {
+        const cron = parseScheduleExpression(agent.config.schedule);
+        const humanReadable = formatScheduleHuman(agent.config.schedule);
+        scheduleInfo = { cron, humanReadable };
+      } catch (error) {
+        logger.debug(`[Manager] Could not parse schedule: ${(error as Error).message}`);
+      }
+    }
+
     // Build and inject manager prompt
     const managerPrompt = buildManagerPrompt({
       subagents: subagentInfo,
       storeName,
+      schedule: scheduleInfo,
     });
 
     systemMessages.push({

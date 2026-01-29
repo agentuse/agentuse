@@ -52,6 +52,20 @@ The manager uses `type: manager` which automatically injects orchestration promp
 - Understand its role as coordinator
 - Know how to delegate effectively
 - Track progress using the store
+- Pace work based on schedule (if configured)
+
+### Schedule Awareness
+When a manager has a `schedule:` configured, it receives context about how often it runs:
+```yaml
+schedule: "0 * * * *"  # Every hour
+```
+The manager prompt will include:
+```
+## Schedule Context
+You run: Every hour (0 * * * *)
+Consider this frequency when pacing work toward your goals.
+```
+This helps the manager avoid rushing to complete everything in one run.
 
 ### Subagents
 Subagents are defined in the manager's config and automatically become available as tools:

@@ -3,4 +3,4 @@
  */
 
 export { buildManagerPrompt } from './prompt';
-export type { ManagerPromptContext, SubagentInfo } from './types';
+export type { ManagerPromptContext, SubagentInfo, ScheduleInfo } from './types';

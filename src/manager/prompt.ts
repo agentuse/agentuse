@@ -2,7 +2,7 @@
  * Manager agent system prompt template
  */
 
-import type { ManagerPromptContext, SubagentInfo } from './types';
+import type { ManagerPromptContext, SubagentInfo, ScheduleInfo } from './types';
 
 /**
  * Format a single subagent for the prompt
@@ -10,6 +10,25 @@ import type { ManagerPromptContext, SubagentInfo } from './types';
 function formatSubagent(subagent: SubagentInfo): string {
   const desc = subagent.description || 'No description available';
   return `- **${subagent.name}**: ${desc}`;
+}
+
+/**
+ * Build the schedule context section
+ */
+function buildScheduleSection(schedule?: ScheduleInfo): string {
+  if (!schedule) {
+    return `## Schedule Context
+You are being run manually or on-demand. Complete your work in this session.`;
+  }
+
+  return `## Schedule Context
+You run: **${schedule.humanReadable}** (\`${schedule.cron}\`)
+
+Consider this frequency when pacing work toward your goals:
+- Don't rush to complete everything in one run if you have time
+- Check current progress vs targets before starting new work
+- If on track, report status and stop
+- If behind, delegate work to catch up`;
 }
 
 /**
@@ -43,8 +62,11 @@ export function buildManagerPrompt(context: ManagerPromptContext): string {
     : '(No subagents configured)';
 
   const workTrackingSection = buildWorkTrackingSection(context.storeName);
+  const scheduleSection = buildScheduleSection(context.schedule);
 
   return `You are a team manager agent. Your job is to coordinate work and delegate to your team.
+
+${scheduleSection}
 
 ## Your Responsibilities
 
