@@ -42,6 +42,8 @@
         "guides/creating-agents",
         "guides/model-configuration",
         "guides/subagents",
+        "guides/manager-agents",
+        "guides/store",
         "guides/skills",
         "guides/plugins",
         "guides/agent-design-patterns",

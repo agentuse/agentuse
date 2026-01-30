@@ -1,0 +1,333 @@
+---
+title: Manager Agents
+description: Orchestrate teams of agents with delegation, tracking, and scheduling
+---
+
+## What are Manager Agents?
+
+Manager agents are specialized agents designed for orchestration. Instead of doing work directly, they coordinate teams of subagents, track progress, and make decisions about what work to delegate next.
+
+
+## When to Use Manager Agents
+
+Use a manager agent when you need to:
+
+- **Coordinate multiple specialists** - Different agents for research, writing, review, etc.
+- **Track complex workflows** - Multi-phase projects with dependencies
+- **Run scheduled operations** - Regular tasks that span multiple runs
+- **Maintain state across runs** - Track what's done, what's pending, what's blocked
+
+## Basic Configuration
+
+Set `type: manager` in your agent frontmatter:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+type: manager
+subagents:
+  - path: ./researcher.agentuse
+  - path: ./writer.agentuse
+---
+
+# Content Manager
+
+## Goal
+Create articles on trending topics.
+
+## SOP
+1. Research trending topics
+2. Write articles for each topic
+3. Review and publish
+```
+
+## Configuration Options
+
+### Required
+- `type: manager` - Enables manager mode with orchestration prompts
+
+### Recommended
+- `subagents` - Team of agents to delegate to
+- `store` - Persistent storage for tracking work items
+
+### Optional
+- `schedule` - Cron expression for scheduled runs
+
+## The Manager Prompt
+
+When `type: manager` is set, your agent automatically receives instructions with orchestration guidelines. You don't need to write these yourself - they're included automatically.
+
+### Automatic Orchestration Loop
+
+The manager follows this loop automatically (shown for reference - you don't need to include this in your agent file):
+
+1. **UNDERSTAND** - Parse goal and SOP from your instructions
+2. **CHECK** - Review current state (pending work, in-progress items)
+3. **DECIDE** - Determine what needs to happen next based on goal and state
+4. **DELEGATE** - Call subagents with clear, specific instructions
+5. **TRACK** - Update store items with outcomes from delegation
+6. **REPEAT** - Continue until the goal is achieved or no further progress can be made
+
+This means you only need to define your **Goal** and **SOP** - the manager handles the orchestration mechanics.
+
+### Schedule Awareness
+If your manager has a `schedule`, it receives context about run frequency:
+
+```yaml
+---
+type: manager
+schedule: "0 9 * * *"  # Daily at 9 AM
+---
+```
+
+The manager learns to pace work appropriately - not rushing to complete everything in one run if there's time, checking progress vs targets before starting new work.
+
+## Work Tracking with Store
+
+Managers work best with a persistent store:
+
+```yaml
+---
+type: manager
+store: "my-project"  # Shared store name
+subagents:
+  - path: ./researcher.agentuse
+  - path: ./writer.agentuse
+---
+```
+
+<Note>
+  All subagents can share the same store by using the same store name. This enables coordination without explicit communication.
+</Note>
+
+See [Store Guide](/guides/store) for available store tools.
+
+## Writing SOPs (Standard Operating Procedures)
+
+A good SOP clearly defines the workflow phases:
+
+```markdown
+## SOP (Standard Operating Procedure)
+
+### Phase 1: Research
+- Use the researcher to find 3 interesting topics
+- Store each topic with type "topic" and status "pending"
+
+### Phase 2: Writing
+- For each pending topic, delegate to the writer
+- Update status to "in_progress" when started
+- Update status to "written" when complete
+
+### Phase 3: Review
+- For each written article, delegate to the reviewer
+- If approved, update status to "done"
+- If revisions needed, send back to writer
+
+### Completion
+- All items should have status "done"
+- Summarize completed work
+```
+
+## Complete Example: Content Team
+
+### Manager Agent
+
+```yaml
+# manager.agentuse
+---
+model: anthropic:claude-sonnet-4-5
+type: manager
+store: "content-pipeline"
+schedule: "0 * * * *"  # Every hour
+subagents:
+  - path: ./agents/researcher.agentuse
+  - path: ./agents/writer.agentuse
+  - path: ./agents/reviewer.agentuse
+---
+
+# Content Team Manager
+
+## Goal
+Produce 3 high-quality articles per day.
+
+## SOP
+
+### Phase 1: Topic Discovery
+- Check store for pending topics
+- If fewer than 3 pending topics, use researcher to find more
+- Store topics with type "topic", status "pending"
+
+### Phase 2: Writing
+- For each pending topic, delegate to writer
+- Pass topic context and target word count (500 words)
+- Store article with type "article", parentId = topic id
+
+### Phase 3: Review
+- For each unreviewed article, delegate to reviewer
+- If approved, mark article as "done"
+- If revisions needed, mark as "needs_revision" with feedback
+
+### Completion Criteria
+- 3 articles with status "done" today
+- Report progress and any blockers
+```
+
+### Researcher Subagent
+
+```yaml
+# agents/researcher.agentuse
+---
+model: anthropic:claude-haiku-4-5
+store: "content-pipeline"
+---
+
+You are a research specialist. Find trending topics.
+
+When given a research task:
+1. Search for trending topics in the specified area
+2. Evaluate each topic for article potential
+3. Create store items for promising topics
+
+Return a summary of topics found.
+```
+
+### Writer Subagent
+
+```yaml
+# agents/writer.agentuse
+---
+model: anthropic:claude-sonnet-4-5
+store: "content-pipeline"
+---
+
+You are a content writer. Create engaging articles.
+
+When given a writing task:
+1. Get the topic from the store using the provided ID
+2. Research and write a compelling article
+3. Create a store item for the article linked to the topic
+4. Update the topic status to "written"
+
+Return the completed article.
+```
+
+### Reviewer Subagent
+
+```yaml
+# agents/reviewer.agentuse
+---
+model: anthropic:claude-haiku-4-5
+store: "content-pipeline"
+---
+
+You are an editor. Review articles for quality.
+
+When given a review task:
+1. Get the article from the store
+2. Check for: accuracy, clarity, engagement, grammar
+3. Either approve (update status to "done") or request revisions
+
+Return your review decision with feedback.
+```
+
+## Delegation Guidelines
+
+When managers delegate to subagents:
+
+<AccordionGroup>
+  <Accordion title="Provide Clear Instructions">
+    Be specific about what you need. Include context from previous work.
+    ```
+    writer({
+      task: "Write a 500-word article about AI productivity tools",
+      context: { topicId: "...", keywords: [...], targetAudience: "..." }
+    })
+    ```
+  </Accordion>
+  <Accordion title="Pass Store Item IDs">
+    So subagents can update the same items:
+    ```
+    reviewer({
+      task: "Review article for publication",
+      context: { articleId: "01HX...", topicId: "01HW..." }
+    })
+    ```
+  </Accordion>
+  <Accordion title="Set Clear Expectations">
+    What output do you expect? What quality bar?
+    ```
+    task: "Write article. Must include: 3 actionable tips, real examples, conclusion with CTA"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Handling Blockers
+
+Managers should stop and report when blocked:
+
+```markdown
+## When Blocked
+
+If I need human input, I will:
+1. State what I'm blocked on
+2. Explain what decision/input I need
+3. List available options if applicable
+
+Example blockers:
+- Need approval for topic selection
+- External resource required (API key, credentials)
+- Quality issue that requires human judgment
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Single Responsibility" icon="bullseye">
+    Each subagent should have one clear purpose
+  </Card>
+  <Card title="State in Store" icon="database">
+    Track all work items in the store, not in prompts
+  </Card>
+  <Card title="Clear SOPs" icon="list-check">
+    Define phases, transitions, and completion criteria
+  </Card>
+  <Card title="Pace with Schedule" icon="clock">
+    Don't rush if you run frequently
+  </Card>
+</CardGroup>
+
+## Debugging Manager Agents
+
+### Enable Verbose Logging
+```bash
+agentuse run manager.agentuse --verbose
+```
+
+### Check Store State
+```bash
+# View store contents
+cat .agentuse/store/content-pipeline/items.json | jq
+```
+
+### Test Subagents Independently
+```bash
+# Run subagent directly
+agentuse run ./agents/writer.agentuse "Write about AI tools"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Store Guide" icon="database" href="/guides/store">
+    Learn about persistent data storage
+  </Card>
+  <Card title="Scheduling" icon="calendar" href="/guides/schedule">
+    Run managers on a schedule
+  </Card>
+  <Card title="Sub-Agents" icon="users" href="/guides/subagents">
+    Deep dive into subagent configuration
+  </Card>
+  <Card title="Examples" icon="code" href="https://github.com/agentuse/agentuse/tree/main/templates/manager-demo">
+    See complete manager examples
+  </Card>
+</CardGroup>

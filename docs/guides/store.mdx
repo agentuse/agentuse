@@ -1,0 +1,231 @@
+---
+title: Store
+description: Persistent data storage for tracking work items across agent runs
+---
+
+## What is the Store?
+
+The store is a local file-based storage system that allows agents to track work items and remember information across multiple runs. It's particularly useful for:
+
+- **Multi-run workflows** - Track progress when agents run on a schedule
+- **Multi-agent coordination** - Share state between agents working together
+- **Task management** - Track tasks through status workflows
+- **Agent memory** - Remember facts, preferences, and context across runs
+
+<Info>
+  When you enable the store, your agent automatically gets tools for creating, reading, updating, deleting, and listing items. Tell the agent what to store and when in your agent file's instructions.
+</Info>
+
+## Configuration
+
+### Isolated Store
+
+Use `store: true` for a store that's private to one agent:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+store: true
+---
+```
+
+The store is named after the agent (e.g., `myagent` from `myagent.agentuse`).
+
+### Shared Store
+
+Use a string name to share a store across multiple agents:
+
+```yaml
+# manager.agentuse
+---
+type: manager
+store: "my-project"
+subagents:
+  - path: ./writer.agentuse
+---
+
+# writer.agentuse
+---
+store: "my-project"  # Same store as manager
+---
+```
+
+<Note>
+  All agents using the same store name can read and write to the same data, enabling coordination without explicit communication.
+</Note>
+
+## Capabilities
+
+When `store` is configured, your agent can:
+
+| Operation | Description |
+|-----------|-------------|
+| **Create** | Add new items with type, title, status, data, and tags |
+| **Get** | Retrieve a single item by ID |
+| **Update** | Modify existing items (merges changes, doesn't replace) |
+| **Delete** | Remove items by ID |
+| **List** | Query items with filters (type, status, parent, tag) |
+
+## Writing Instructions
+
+Guide your agent's store usage through clear SOP instructions. Here are common patterns:
+
+### State Machine
+
+```markdown
+## Workflow
+
+1. Create items with status "pending"
+2. When starting work, update to "in_progress"
+3. When complete, update to "done"
+4. For failures, update to "failed" with error in data
+
+## Progress Check
+- List items with status "pending" to find work
+- List items with status "in_progress" to check active work
+```
+
+### Parent-Child Relationships
+
+```markdown
+## Structure
+
+- Topic (parent)
+  - Article (child linked to topic)
+    - Review (child linked to article)
+
+## Finding Related Items
+- List articles filtered by parent topic ID
+- List reviews filtered by parent article ID
+```
+
+### Tagging for Priorities
+
+```markdown
+## Priority Handling
+
+- Tag urgent items with "urgent"
+- When checking for work, prioritize items tagged "urgent"
+- Use tags like "bug", "feature", "review" for categorization
+```
+
+### Agent Memory
+
+```markdown
+## Memory Management
+
+- Store important facts with type "memory"
+- Use tags to categorize: "user-preference", "learned-fact", "context"
+- Before starting work, list recent memories for relevant context
+- When learning something important, store it for future runs
+
+## What to Remember
+- User preferences discovered during tasks
+- Decisions made and their reasoning
+- Facts that will be useful in future runs
+- Corrections or feedback received
+```
+
+## Storage Location
+
+Stores are saved to:
+```
+.agentuse/
+  store/
+    {storeName}/
+      items.json    # The data
+      lock          # Process lock file
+```
+
+<Warning>
+  Don't edit `items.json` directly while an agent is running. The lock file prevents corruption from concurrent access.
+</Warning>
+
+## Example: Content Pipeline
+
+```yaml
+# manager.agentuse
+---
+type: manager
+store: "content"
+subagents:
+  - path: ./researcher.agentuse
+  - path: ./writer.agentuse
+---
+
+## SOP
+
+### Research Phase
+1. Delegate to researcher to find topics
+2. Store each topic with type "topic" and status "pending"
+
+### Writing Phase
+1. List pending topics from the store
+2. For each topic, delegate to writer with the topic ID
+3. Writer creates an article linked to the topic (as parent)
+4. Update topic status to "written"
+
+### Status Workflow
+- Topics: pending → in_progress → written
+- Articles: draft → review → done
+```
+
+## Debugging
+
+### View Store Contents
+
+```bash
+# Pretty print store
+cat .agentuse/store/my-project/items.json | jq
+
+# Count items by status
+cat .agentuse/store/my-project/items.json | jq '.items | group_by(.status) | map({status: .[0].status, count: length})'
+```
+
+### Check Lock Status
+
+```bash
+# See who holds the lock
+cat .agentuse/store/my-project/lock
+
+# Remove stale lock (only if agent crashed)
+rm .agentuse/store/my-project/lock
+```
+
+### Reset Store
+
+```bash
+# Clear all items (be careful!)
+rm -rf .agentuse/store/my-project
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Meaningful Types">
+    Name your types clearly: "topic", "article", "review" instead of "item1", "item2".
+  </Accordion>
+  <Accordion title="Define Status Transitions">
+    Document valid status values and transitions in your SOP.
+  </Accordion>
+  <Accordion title="Store Results in Data">
+    Put operation results in the `data` field for later reference.
+  </Accordion>
+  <Accordion title="Clean Up Old Items">
+    Periodically delete completed items to keep the store manageable.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Manager Agents" icon="users-gear" href="/guides/manager-agents">
+    Build orchestrating agents with store integration
+  </Card>
+  <Card title="Scheduling" icon="calendar" href="/guides/schedule">
+    Run agents on schedules with persistent state
+  </Card>
+  <Card title="Sub-Agents" icon="users" href="/guides/subagents">
+    Coordinate teams sharing a store
+  </Card>
+</CardGroup>
