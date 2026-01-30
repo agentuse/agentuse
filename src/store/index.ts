@@ -1,5 +1,6 @@
 /**
  * Store module - persistent data storage for agents
+ * @experimental This feature is experimental and may change in future versions.
  */
 
 export { Store, createStore } from './store';

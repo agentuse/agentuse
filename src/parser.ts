@@ -95,6 +95,14 @@ const AgentSchema = z.object({
     };
   }
 
+  // Experimental feature warnings
+  if (data.type === 'manager') {
+    logger.warn('[Experimental] Manager agents (type: manager) are experimental and may change in future versions.');
+  }
+  if (data.store) {
+    logger.warn('[Experimental] Store feature is experimental and may change in future versions.');
+  }
+
   return data;
 });
 
