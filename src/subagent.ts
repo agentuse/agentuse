@@ -1,12 +1,14 @@
 import type { Tool } from 'ai';
 import { z } from 'zod';
 import { parseAgent } from './parser';
-import { connectMCP, getMCPTools, type MCPServersConfig } from './mcp';
+import { connectMCP, type MCPServersConfig } from './mcp';
 import { logger } from './utils/logger';
-import { executeAgentCore, processAgentStream, buildAutonomousAgentPrompt } from './runner';
+import { executeAgentCore, processAgentStream } from './runner';
 import { DoomLoopDetector } from './tools/index.js';
 import { resolve, dirname } from 'path';
 import { SessionManager } from './session/manager';
+import { loadAgentTools } from './runner/tools-loader';
+import { buildSystemMessages } from './runner/system-messages';
 
 // Constants
 const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
@@ -92,7 +94,14 @@ export async function createSubAgentTool(
           ? await connectMCP(agent.config.mcpServers as MCPServersConfig, false, subAgentBasePath)
           : [];
 
-        const mcpTools = await getMCPTools(mcpConnections);
+        // Load all agent tools (MCP, configured, skill, store) using shared logic
+        const loadedTools = await loadAgentTools({
+          agent,
+          projectContext,
+          agentDir: subAgentBasePath,
+          mcpConnections,
+          logPrefix: '[SubAgent] ',
+        });
 
         // Load nested sub-agents if within depth limit (will be populated after session creation)
         const maxDepth = getMaxSubAgentDepth();
@@ -111,27 +120,15 @@ export async function createSubAgentTool(
           logger.warn(`[SubAgent:depth=${depth}] Max depth ${maxDepth} reached, skipping ${agent.config.subagents.length} nested sub-agent(s) for ${agent.name}`);
         }
 
-        // Initially just MCP tools (nested subagents will be added after session creation)
-        let tools = { ...mcpTools };
+        // Initially all loaded tools (nested subagents will be added after session creation)
+        let tools = { ...loadedTools.all };
 
         try {
-          // Build system messages (same as main agent)
-          const systemMessages: Array<{role: string, content: string}> = [];
-
-          if (agent.config.model.includes('anthropic')) {
-            systemMessages.push({
-              role: 'system',
-              content: 'You are Claude Code, Anthropic\'s official CLI for Claude.'
-            });
-          }
-
-          const todayDate = new Date().toLocaleDateString('en-US', {
-            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-          });
-
-          systemMessages.push({
-            role: 'system',
-            content: buildAutonomousAgentPrompt(todayDate, true)
+          // Build system messages using shared logic
+          const systemMessages = await buildSystemMessages({
+            agent,
+            isSubAgent: true,
+            agentFilePath: resolvedPath,
           });
 
           // Build user message: agent instructions + optional parent task
@@ -232,7 +229,7 @@ export async function createSubAgentTool(
             );
 
             // Merge nested subagent tools into tools
-            tools = { ...mcpTools, ...nestedSubAgentTools };
+            tools = { ...loadedTools.all, ...nestedSubAgentTools };
           }
 
           // Create doom loop detector for sub-agent
@@ -261,7 +258,7 @@ export async function createSubAgentTool(
               doomLoopDetector
             }
           );
-          
+
           const duration = Date.now() - startTime;
           logger.info(`[SubAgent:depth=${depth}] ${agent.name} completed in ${(duration / 1000).toFixed(2)}s`);
 
@@ -306,7 +303,7 @@ export async function createSubAgentTool(
             }
           }
         }
-        
+
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         logger.error(`[SubAgent] ${agent.name} failed: ${errorMsg}`);
@@ -368,7 +365,7 @@ export async function createSubAgentTools(
         // Replace all non-alphanumeric characters (except underscore and hyphen) with underscore
         name = filename.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/-/g, '_');
       }
-      
+
       // Ensure the name is valid for API requirements (only alphanumeric, underscore, hyphen)
       name = name.replace(/[^a-zA-Z0-9_-]/g, '_');
 
@@ -376,20 +373,20 @@ export async function createSubAgentTools(
       const prefixedName = `subagent__${name}`;
       tools[prefixedName] = tool;
       logger.info(`[SubAgent] Registered sub-agent: ${prefixedName}`);
-      
+
       // Note: @ symbol is not allowed in tool names by the API
       // So we won't register @-prefixed versions anymore
       // Users can still reference them with @ in instructions, but the actual tool name won't have @
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(`Failed to load sub-agent from ${config.path}: ${errorMsg}`);
-      
+
       // Provide helpful error messages for common issues
       if (errorMsg.includes('File not found')) {
         const resolvedPath = basePath ? resolve(basePath, config.path) : config.path;
         logger.error(`  Attempted to load from: ${resolvedPath}`);
         logger.error(`  Make sure the file exists and the path is correct`);
-        
+
         // Check for special characters that might cause issues
         if (config.path.includes(':')) {
           logger.error(`  Note: The path contains ':' which may cause file system issues`);
@@ -398,6 +395,6 @@ export async function createSubAgentTools(
       }
     }
   }
-  
+
   return tools;
 }

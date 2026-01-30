@@ -1,23 +1,17 @@
-import { dirname, resolve } from 'path';
-import { getMCPTools } from '../mcp';
+import { dirname } from 'path';
 import { createSubAgentTools } from '../subagent';
 import {
-  getTools as getConfiguredTools,
   DoomLoopDetector,
   resolveSafeVariables,
   type PathResolverContext
 } from '../tools/index.js';
 import { logger } from '../utils/logger';
 import { resolveMaxSteps, DEFAULT_MAX_STEPS } from '../utils/config';
-import { createSkillTools } from '../skill/index.js';
-import { createStore, createStoreTools } from '../store/index.js';
-import { buildManagerPrompt, type SubagentInfo, type ScheduleInfo } from '../manager/index.js';
-import { parseScheduleExpression, formatScheduleHuman } from '../scheduler/parser.js';
-import { parseAgent } from '../parser';
-import { buildAutonomousAgentPrompt } from './prompt';
 import { version as packageVersion } from '../../package.json';
 import type { PrepareAgentOptions, PreparedAgentExecution } from './types';
 import type { ToolSet } from 'ai';
+import { loadAgentTools } from './tools-loader';
+import { buildSystemMessages } from './system-messages';
 
 /**
  * Prepare agent execution - shared setup logic for both streaming and non-streaming modes
@@ -36,20 +30,13 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     verbose = false
   } = options;
 
-  // Convert MCP tools to AI SDK format
-  const mcpTools = await getMCPTools(mcpClients);
-
-  // Get configured builtin tools (filesystem, bash)
-  const configuredTools = agent.config.tools && projectContext
-    ? getConfiguredTools(agent.config.tools, {
-        projectRoot: projectContext.projectRoot,
-        agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
-      } as PathResolverContext)
-    : {};
-
-  if (Object.keys(configuredTools).length > 0) {
-    logger.debug(`Loaded ${Object.keys(configuredTools).length} configured tool(s): ${Object.keys(configuredTools).join(', ')}`);
-  }
+  // Load all agent tools (MCP, configured, skill, store)
+  const loadedTools = await loadAgentTools({
+    agent,
+    projectContext,
+    agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
+    mcpConnections: mcpClients,
+  });
 
   // Resolve safe variables in instructions (${root}, ${agentDir}, ${tmpDir} - NOT ${env:*})
   const pathContext: PathResolverContext = {
@@ -66,91 +53,12 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
 
   logger.debug(`Running agent with model: ${agent.config.model}`);
 
-  // Build today's date for system prompt
-  const todayDate = new Date().toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
+  // Build system messages (Anthropic prompt, autonomous prompt, manager prompt if applicable)
+  const systemMessages = await buildSystemMessages({
+    agent,
+    isSubAgent: false,
+    agentFilePath,
   });
-
-  // Build system messages array
-  const systemMessages: Array<{ role: string; content: string }> = [];
-
-  // For Anthropic, add the Claude Code prompt as FIRST system message
-  if (agent.config.model.includes('anthropic')) {
-    systemMessages.push({
-      role: 'system',
-      content: 'You are Claude Code, Anthropic\'s official CLI for Claude.'
-    });
-    logger.debug("Using Anthropic system prompt: You are Claude Code...");
-  }
-
-  // Add main system prompt as second message
-  systemMessages.push({
-    role: 'system',
-    content: buildAutonomousAgentPrompt(todayDate, false)
-  });
-
-  // If this is a manager agent, inject the manager prompt
-  if (agent.config.type === 'manager') {
-    // Build subagent info for the manager prompt
-    const subagentInfo: SubagentInfo[] = [];
-    if (agent.config.subagents && agentFilePath) {
-      const basePath = dirname(agentFilePath);
-      for (const sa of agent.config.subagents) {
-        try {
-          const subagentPath = resolve(basePath, sa.path);
-          const subagent = await parseAgent(subagentPath);
-          subagentInfo.push({
-            name: sa.name || subagent.name,
-            description: subagent.description,
-            path: sa.path,
-          });
-        } catch (error) {
-          // If we can't parse the subagent, add basic info
-          const name = sa.name || sa.path.split('/').pop()?.replace(/\.agentuse$/, '') || 'unknown';
-          subagentInfo.push({
-            name,
-            path: sa.path,
-          });
-          logger.debug(`[Manager] Could not parse subagent ${sa.path}: ${(error as Error).message}`);
-        }
-      }
-    }
-
-    // Determine store name for the manager prompt
-    let storeName: string | undefined;
-    if (agent.config.store) {
-      storeName = agent.config.store === true ? agent.name : agent.config.store;
-    }
-
-    // Determine schedule info for the manager prompt
-    let scheduleInfo: ScheduleInfo | undefined;
-    if (agent.config.schedule) {
-      try {
-        const cron = parseScheduleExpression(agent.config.schedule);
-        const humanReadable = formatScheduleHuman(agent.config.schedule);
-        scheduleInfo = { cron, humanReadable };
-      } catch (error) {
-        logger.debug(`[Manager] Could not parse schedule: ${(error as Error).message}`);
-      }
-    }
-
-    // Build and inject manager prompt
-    const managerPrompt = buildManagerPrompt({
-      subagents: subagentInfo,
-      storeName,
-      schedule: scheduleInfo,
-    });
-
-    systemMessages.push({
-      role: 'system',
-      content: managerPrompt,
-    });
-
-    logger.debug(`[Manager] Injected manager prompt with ${subagentInfo.length} subagent(s)`);
-  }
 
   // Create session if session manager is provided
   let sessionID: string | undefined;
@@ -229,34 +137,6 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     }
   }
 
-  // Load skill tools if project context is available
-  let skillTools: Record<string, ToolSet[string]> = {};
-  if (projectContext) {
-    try {
-      const { skillTool, skillReadTool, skills } = await createSkillTools(projectContext.projectRoot, agent.config.tools);
-      if (skills.length > 0) {
-        skillTools['tools__skill_load'] = skillTool;
-        skillTools['tools__skill_read'] = skillReadTool;
-        logger.debug(`Loaded ${skills.length} skill(s): ${skills.map(s => s.name).join(', ')}`);
-      }
-    } catch (error) {
-      logger.warn(`Failed to load skills: ${(error as Error).message}`);
-    }
-  }
-
-  // Load store tools if store is configured
-  let storeTools: Record<string, ToolSet[string]> = {};
-  if (agent.config.store && projectContext) {
-    try {
-      const store = createStore(projectContext.projectRoot, agent.config.store, agent.name);
-      storeTools = createStoreTools(store);
-      const storeName = store.getStoreName();
-      logger.debug(`Loaded store tools for "${storeName}"`);
-    } catch (error) {
-      logger.warn(`Failed to create store: ${(error as Error).message}`);
-    }
-  }
-
   // Load sub-agent tools if configured
   let subAgentTools: Record<string, ToolSet[string]> = {};
   if (agent.config.subagents && agent.config.subagents.length > 0) {
@@ -284,8 +164,8 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     }
   }
 
-  // Merge all tools
-  const tools = { ...mcpTools, ...configuredTools, ...skillTools, ...storeTools, ...subAgentTools };
+  // Merge all tools (loadedTools.all contains MCP, configured, skill, store)
+  const tools = { ...loadedTools.all, ...subAgentTools };
 
   if (Object.keys(tools).length > 0) {
     logger.debug(`Available tools: ${Object.keys(tools).join(', ')}`);
