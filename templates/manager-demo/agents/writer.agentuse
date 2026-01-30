@@ -1,5 +1,5 @@
 ---
-model: anthropic:claude-haiku-3-5
+model: anthropic:claude-haiku-4-5
 description: Writes concise, engaging articles from topic briefs
 store: "demo-content"
 ---

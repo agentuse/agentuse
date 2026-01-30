@@ -8,6 +8,7 @@ import { join, dirname } from 'path';
 import process from 'node:process';
 import { randomBytes } from 'crypto';
 import { ulid } from 'ulid';
+import { logger } from '../utils/logger';
 import { StoreFileSchema } from './schema';
 import type {
   StoreItem,
@@ -99,13 +100,13 @@ export class Store {
         }
 
         // Stale lock from dead process - we can steal it
-        console.warn(`[Store] Removing stale lock from PID ${pid}`);
+        logger.warn(`[Store] Removing stale lock from PID ${pid}`);
       } catch (error) {
         if ((error as Error).message.includes('is locked by another process')) {
           throw error;
         }
         // Lock file is corrupted, remove it
-        console.warn(`[Store] Removing corrupted lock file`);
+        logger.warn(`[Store] Removing corrupted lock file`);
       }
     }
 
@@ -153,7 +154,7 @@ export class Store {
         this.items = validated.items as StoreItem[];
       } catch (error) {
         // If file is corrupted, start fresh but log warning
-        console.warn(`[Store] Failed to load store from ${this.storePath}: ${(error as Error).message}`);
+        logger.warn(`[Store] Failed to load store from ${this.storePath}: ${(error as Error).message}`);
         this.items = [];
       }
     }
