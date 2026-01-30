@@ -2,7 +2,7 @@ import type { Tool } from 'ai';
 import { getMCPTools, type MCPConnection } from '../mcp';
 import { getTools as getConfiguredTools, type PathResolverContext } from '../tools/index.js';
 import { createSkillTools } from '../skill/index.js';
-import { createStore, createStoreTools } from '../store/index.js';
+import { createStore, createStoreTools, type Store } from '../store/index.js';
 import { logger } from '../utils/logger';
 import type { ParsedAgent } from '../parser';
 
@@ -32,6 +32,8 @@ export interface LoadedAgentTools {
   storeTools: Record<string, Tool>;
   /** All tools merged together */
   all: Record<string, Tool>;
+  /** Store instance (if configured) - caller must call store.releaseLock() when done */
+  store?: Store | undefined;
 }
 
 /**
@@ -84,9 +86,10 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
 
   // Load store tools if store is configured
   let storeTools: Record<string, Tool> = {};
+  let store: Store | undefined;
   if (agent.config.store && projectContext) {
     try {
-      const store = createStore(projectContext.projectRoot, agent.config.store, agent.name);
+      store = createStore(projectContext.projectRoot, agent.config.store, agent.name);
       storeTools = createStoreTools(store);
       const storeName = store.getStoreName();
       logger.debug(`${logPrefix}Loaded store tools for "${storeName}"`);
@@ -100,6 +103,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     configuredTools,
     skillTools,
     storeTools,
-    all: { ...mcpTools, ...configuredTools, ...skillTools, ...storeTools }
+    all: { ...mcpTools, ...configuredTools, ...skillTools, ...storeTools },
+    store,
   };
 }

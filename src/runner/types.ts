@@ -26,6 +26,8 @@ export interface PreparedAgentExecution {
   sessionID?: string | undefined;
   assistantMsgID?: string | undefined;
   doomLoopDetector: DoomLoopDetector;
+  /** Cleanup function to release resources (store locks, etc.) - call when agent execution completes */
+  cleanup: () => Promise<void>;
 }
 
 export interface AgentChunk {

@@ -55,6 +55,7 @@ export async function runAgent(
   // Track session info for error logging (set during preparation)
   let sessionID: string | undefined;
   let agentName: string | undefined;
+  let preparation: PreparedAgentExecution | undefined;
 
   try {
     // Log initialization time if verbose
@@ -66,7 +67,7 @@ export async function runAgent(
     // Use shared preparation logic (allow caller to precompute to avoid duplicate work)
     // If preparedExecution is provided, use it directly (CLI path).
     // If not provided, compute it fresh (API/test path).
-    const preparation = preparedExecution ?? await prepareAgentExecution({
+    preparation = preparedExecution ?? await prepareAgentExecution({
       agent,
       mcpClients,
       agentFilePath,
@@ -191,6 +192,11 @@ export async function runAgent(
     logger.error('Agent execution failed', error as Error);
     throw error;
   } finally {
+    // Clean up preparation resources (store locks, etc.)
+    if (preparation) {
+      await preparation.cleanup();
+    }
+
     // Clean up MCP clients (like opencode does)
     for (const connection of mcpClients) {
       try {

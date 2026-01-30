@@ -2,9 +2,11 @@
  * Store class for persistent agent data storage
  */
 
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, writeFile, mkdir, unlink, rename } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
+import process from 'node:process';
+import { randomBytes } from 'crypto';
 import { ulid } from 'ulid';
 import { StoreFileSchema } from './schema';
 import type {
@@ -16,12 +18,27 @@ import type {
 } from './types';
 
 /**
+ * Check if a process with given PID is running
+ */
+function isProcessRunning(pid: number): boolean {
+  try {
+    // Sending signal 0 checks if process exists without actually sending a signal
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Store class that manages persistent data for agents
  */
 export class Store {
   private storePath: string;
+  private lockPath: string;
   private items: StoreItem[] = [];
   private loaded = false;
+  private locked = false;
   private agentName: string | undefined;
   private storeName: string;
 
@@ -36,9 +53,86 @@ export class Store {
     storeName: string,
     agentName?: string
   ) {
-    this.storePath = join(projectRoot, '.agentuse', 'store', storeName, 'items.json');
+    const storeDir = join(projectRoot, '.agentuse', 'store', storeName);
+    this.storePath = join(storeDir, 'items.json');
+    this.lockPath = join(storeDir, 'lock');
     this.storeName = storeName;
     this.agentName = agentName;
+  }
+
+  /**
+   * Acquire exclusive lock on the store
+   * @throws Error if store is already locked by another process
+   */
+  private async acquireLock(): Promise<void> {
+    if (this.locked) return;
+
+    const storeDir = dirname(this.lockPath);
+
+    // Ensure directory exists
+    if (!existsSync(storeDir)) {
+      await mkdir(storeDir, { recursive: true });
+    }
+
+    // Check for existing lock
+    if (existsSync(this.lockPath)) {
+      try {
+        const lockContent = await readFile(this.lockPath, 'utf-8');
+        const lockData = JSON.parse(lockContent);
+        const { pid, agent, timestamp } = lockData;
+
+        if (isProcessRunning(pid)) {
+          // Lock is held by a running process
+          const lockAge = Date.now() - new Date(timestamp).getTime();
+          const lockAgeStr = lockAge > 60000
+            ? `${Math.round(lockAge / 60000)}m ago`
+            : `${Math.round(lockAge / 1000)}s ago`;
+
+          throw new Error(
+            `Store "${this.storeName}" is locked by another process.\n` +
+            `  PID: ${pid}\n` +
+            `  Agent: ${agent || 'unknown'}\n` +
+            `  Locked: ${lockAgeStr}\n` +
+            `Wait for it to complete, or remove the lock file:\n` +
+            `  rm "${this.lockPath}"`
+          );
+        }
+
+        // Stale lock from dead process - we can steal it
+        console.warn(`[Store] Removing stale lock from PID ${pid}`);
+      } catch (error) {
+        if ((error as Error).message.includes('is locked by another process')) {
+          throw error;
+        }
+        // Lock file is corrupted, remove it
+        console.warn(`[Store] Removing corrupted lock file`);
+      }
+    }
+
+    // Write our lock
+    const lockData = {
+      pid: process.pid,
+      agent: this.agentName,
+      timestamp: new Date().toISOString(),
+    };
+    await writeFile(this.lockPath, JSON.stringify(lockData, null, 2), 'utf-8');
+    this.locked = true;
+  }
+
+  /**
+   * Release the lock on the store
+   */
+  async releaseLock(): Promise<void> {
+    if (!this.locked) return;
+
+    try {
+      if (existsSync(this.lockPath)) {
+        await unlink(this.lockPath);
+      }
+    } catch {
+      // Ignore errors when releasing lock
+    }
+    this.locked = false;
   }
 
   /**
@@ -46,6 +140,9 @@ export class Store {
    */
   private async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
+
+    // Acquire lock before loading
+    await this.acquireLock();
 
     if (existsSync(this.storePath)) {
       try {
@@ -65,7 +162,8 @@ export class Store {
   }
 
   /**
-   * Save the store to disk
+   * Save the store to disk using atomic write (write to temp, then rename)
+   * This prevents data corruption if the process is killed mid-write
    */
   private async save(): Promise<void> {
     const storeDir = dirname(this.storePath);
@@ -80,7 +178,10 @@ export class Store {
       items: this.items,
     };
 
-    await writeFile(this.storePath, JSON.stringify(storeFile, null, 2), 'utf-8');
+    // Atomic write: write to temp file, then rename
+    const tempPath = `${this.storePath}.${randomBytes(4).toString('hex')}.tmp`;
+    await writeFile(tempPath, JSON.stringify(storeFile, null, 2), 'utf-8');
+    await rename(tempPath, this.storePath);
   }
 
   /**

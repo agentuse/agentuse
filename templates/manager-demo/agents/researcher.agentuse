@@ -1,5 +1,5 @@
 ---
-model: anthropic:claude-haiku-3-5
+model: anthropic:claude-haiku-4-5
 description: Researches interesting topics and finds specific angles for articles
 store: "demo-content"
 ---

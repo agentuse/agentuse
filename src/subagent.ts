@@ -294,6 +294,11 @@ export async function createSubAgentTool(
             }
           };
         } finally {
+          // Clean up store lock
+          if (loadedTools.store) {
+            await loadedTools.store.releaseLock();
+          }
+
           // Clean up MCP connections
           for (const conn of mcpConnections) {
             try {

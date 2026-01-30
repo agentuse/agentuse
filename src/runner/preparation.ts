@@ -184,6 +184,13 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     ? `${resolvedInstructions}\n\n${userPrompt}`
     : resolvedInstructions;
 
+  // Create cleanup function to release resources
+  const cleanup = async () => {
+    if (loadedTools.store) {
+      await loadedTools.store.releaseLock();
+    }
+  };
+
   return {
     tools,
     systemMessages,
@@ -192,6 +199,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     subAgentNames,
     sessionID,
     assistantMsgID,
-    doomLoopDetector
+    doomLoopDetector,
+    cleanup
   };
 }
