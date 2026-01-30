@@ -333,6 +333,15 @@ export async function processAgentStream(
               ...(toolDuration !== undefined && { duration: toolDuration }),
               success: toolSuccess
             });
+            // Check for warnings in skill output and log them after "Skill loaded"
+            const result = chunk.toolResult || '';
+            const warningMatch = result.match(/> ⚠️ WARNING: (.+)/g);
+            if (warningMatch) {
+              for (const warning of warningMatch) {
+                const msg = warning.replace(/^> ⚠️ WARNING: /, '');
+                logger.warn(msg);
+              }
+            }
           } else if (chunk.toolName === 'tools__skill_read') {
             logger.toolResult('File read', {
               ...(toolDuration !== undefined && { duration: toolDuration }),

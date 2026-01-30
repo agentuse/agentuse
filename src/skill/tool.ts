@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import * as os from 'os';
 import type { Tool } from 'ai';
 import { discoverSkills } from './discovery.js';
 import { parseSkillContent } from './parser.js';
@@ -8,7 +9,83 @@ import { validateAllowedTools } from './validate.js';
 import type { SkillInfo } from './types.js';
 import type { ToolsConfig } from '../tools/types.js';
 import { PathValidator, resolveRealPath } from '../tools/path-validator.js';
-import { logger } from '../utils/logger.js';
+
+// Script file extensions that would need bash access
+const SCRIPT_EXTENSIONS = ['.sh', '.py', '.js', '.ts', '.rb', '.pl', '.php'];
+
+/**
+ * Check if a directory contains any script files
+ */
+async function hasScriptFiles(dir: string): Promise<boolean> {
+  try {
+    const files = await fs.readdir(dir, { withFileTypes: true });
+    for (const file of files) {
+      if (file.isFile()) {
+        const ext = path.extname(file.name).toLowerCase();
+        if (SCRIPT_EXTENSIONS.includes(ext)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if a skill directory is accessible via bash allowedPaths.
+ * Only warns if the skill contains script files.
+ * Returns warning message if not accessible, null if OK.
+ */
+async function checkSkillPathAccess(
+  skillDir: string,
+  toolsConfig: ToolsConfig | undefined,
+  projectRoot: string
+): Promise<string | null> {
+  // If no bash configured, no warning needed
+  if (!toolsConfig?.bash) {
+    return null;
+  }
+
+  // Check if skill has any script files - if not, no warning needed
+  if (!(await hasScriptFiles(skillDir))) {
+    return null;
+  }
+
+  // Check if skillDir is within projectRoot (always allowed)
+  const relativeToProject = path.relative(projectRoot, skillDir);
+  if (!relativeToProject.startsWith('..') && !path.isAbsolute(relativeToProject)) {
+    return null;
+  }
+
+  // Check allowedPaths
+  const allowedPaths = toolsConfig.bash.allowedPaths ?? [];
+
+  // Check if skill directory is covered by any allowedPath
+  for (const allowedPath of allowedPaths) {
+    // Resolve ~ and ${...} placeholders
+    let resolved = allowedPath;
+
+    if (resolved.startsWith('~')) {
+      resolved = resolved.replace(/^~/, os.homedir());
+    }
+
+    // Check if skillDir is within this allowed path
+    const relative = path.relative(resolved, skillDir);
+    if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+      return null;
+    }
+  }
+
+  // Convert to ~ notation if it's in home directory
+  const homeDir = os.homedir();
+  const displayPath = skillDir.startsWith(homeDir)
+    ? skillDir.replace(homeDir, '~')
+    : skillDir;
+
+  return `Skill directory outside allowed bash paths. Add "${displayPath}" to tools.bash.allowedPaths`;
+}
 
 /**
  * Build the available skills XML block for tool description
@@ -129,22 +206,29 @@ export async function createSkillTools(
       // Track loaded skill directory for skill_read tool
       loadedSkills.set(name, skillContent.directory);
 
+      // Check if skill directory is accessible via bash allowedPaths
+      const pathWarning = await checkSkillPathAccess(
+        skillContent.directory,
+        agentToolsConfig,
+        projectRoot
+      );
+
       // Validate allowed-tools
       const unsatisfied = validateAllowedTools(skillContent.allowedTools, agentToolsConfig);
 
-      // Log warning to console for user visibility
-      if (unsatisfied.length > 0) {
-        const toolsList = unsatisfied.map(r => r.pattern).join(', ');
-        logger.warn(`Skill "${name}" requires tools not configured: ${toolsList}`);
-        for (const r of unsatisfied) {
-          logger.warn(`  - ${r.pattern}: ${r.reason}`);
-        }
+      // Collect all warnings (included in skill output for LLM visibility)
+      const warnings: string[] = [];
+
+      if (pathWarning) {
+        warnings.push(`> ⚠️ WARNING: ${pathWarning}`);
       }
 
-      // Format output with simple flag for LLM
-      const warning = unsatisfied.length > 0
-        ? `> ⚠️ WARNING: This skill requires tools not available: ${unsatisfied.map(r => r.pattern).join(', ')}. Do not attempt to use these tools.`
-        : null;
+      if (unsatisfied.length > 0) {
+        warnings.push(`> ⚠️ WARNING: This skill requires tools not available: ${unsatisfied.map(r => r.pattern).join(', ')}. Do not attempt to use these tools.`);
+      }
+
+      // Combine warnings for output
+      const warning = warnings.length > 0 ? warnings.join('\n\n') : null;
 
       const output = formatSkillOutput(
         skillContent.name,

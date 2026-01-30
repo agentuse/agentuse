@@ -197,7 +197,8 @@ export class CommandValidator {
 
     for (const p of paths) {
       if (!this.isWithinAllowedPaths(p)) {
-        return `Access to path outside allowed directories: ${p}`;
+        const dir = path.dirname(p);
+        return `Path outside allowed directories. Add "${dir}" to tools.bash.allowedPaths`;
       }
     }
 

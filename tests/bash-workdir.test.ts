@@ -128,7 +128,7 @@ describe('Bash Tool - Workdir Parameter', () => {
 
       const output = JSON.parse(result.output);
       expect(output.success).toBe(false);
-      expect(output.error).toContain('Working directory must be within allowed paths');
+      expect(output.error).toContain('Working directory outside allowed paths');
     });
 
     it('should reject absolute path outside project root', async () => {
@@ -144,7 +144,7 @@ describe('Bash Tool - Workdir Parameter', () => {
 
       const output = JSON.parse(result.output);
       expect(output.success).toBe(false);
-      expect(output.error).toContain('Working directory must be within allowed paths');
+      expect(output.error).toContain('Working directory outside allowed paths');
     });
 
     it('should reject path traversal with ../ in the middle', async () => {
@@ -160,7 +160,7 @@ describe('Bash Tool - Workdir Parameter', () => {
 
       const output = JSON.parse(result.output);
       expect(output.success).toBe(false);
-      expect(output.error).toContain('Working directory must be within allowed paths');
+      expect(output.error).toContain('Working directory outside allowed paths');
     });
 
     it('should reject symlink-based path traversal attempts', async () => {
@@ -332,7 +332,7 @@ describe('Bash Tool - Workdir Parameter', () => {
 
       const output = JSON.parse(result.output);
       expect(output.success).toBe(false);
-      expect(output.error).toContain('Working directory must be within allowed paths');
+      expect(output.error).toContain('Working directory outside allowed paths');
     });
 
     it('should work with multiple allowedPaths', async () => {

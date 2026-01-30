@@ -688,10 +688,23 @@ class Logger {
         ? chalk.green('✓')
         : chalk.gray('↳');
 
-    // Format result - truncate if too long
+    // Format result
     const MAX_RESULT_LENGTH = 100;
     let resultStr = result;
-    if (!debugMode && result.length > MAX_RESULT_LENGTH) {
+    const isError = options?.success === false;
+
+    // For errors, try to extract the error message from JSON
+    if (isError) {
+      try {
+        const parsed = JSON.parse(result);
+        if (parsed.error) {
+          resultStr = parsed.error;
+        }
+      } catch {
+        // Not JSON, use as-is
+      }
+    } else if (!debugMode && result.length > MAX_RESULT_LENGTH) {
+      // Truncate non-error results
       resultStr = result.substring(0, MAX_RESULT_LENGTH) + '...';
     }
 

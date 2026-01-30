@@ -261,7 +261,7 @@ Commands not matching these patterns will be rejected.`;
         if (!isPathWithinAllowed(resolvedWorkdir, projectRoot, allowedPaths, resolverContext)) {
           const error: ToolErrorOutput = {
             success: false,
-            error: `Working directory must be within allowed paths: ${workdir}`,
+            error: `Working directory outside allowed paths. Add "${workdir}" to tools.bash.allowedPaths`,
           };
           return { output: JSON.stringify(error) };
         }
