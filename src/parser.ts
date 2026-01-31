@@ -6,6 +6,7 @@ import { logger } from './utils/logger';
 import { ToolsConfigSchema } from './tools/index.js';
 import { ScheduleConfigSchema } from './scheduler/index.js';
 import { StoreConfigSchema } from './store/index.js';
+import { LearningConfigSchema } from './learning/index.js';
 
 /**
  * Error thrown when agent configuration is invalid
@@ -78,7 +79,9 @@ const AgentSchema = z.object({
   // Store configuration: true for isolated store, string for shared store
   store: StoreConfigSchema.optional(),
   // Agent type: currently only 'manager' is supported
-  type: z.enum(['manager']).optional()
+  type: z.enum(['manager']).optional(),
+  // Learning configuration: extract and apply learnings from execution
+  learning: LearningConfigSchema.optional()
 }).transform((data) => {
   // Handle backward compatibility: support both mcp_servers and mcpServers
   if (data.mcp_servers && data.mcpServers) {

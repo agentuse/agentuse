@@ -54,11 +54,13 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   logger.debug(`Running agent with model: ${agent.config.model}`);
 
   // Build system messages (Anthropic prompt, autonomous prompt, manager prompt if applicable)
-  const systemMessages = await buildSystemMessages({
+  const systemMessagesResult = await buildSystemMessages({
     agent,
     isSubAgent: false,
     agentFilePath,
   });
+  const systemMessages = systemMessagesResult.messages;
+  const learningsApplied = systemMessagesResult.learningsApplied;
 
   // Create session if session manager is provided
   let sessionID: string | undefined;
@@ -200,6 +202,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     sessionID,
     assistantMsgID,
     doomLoopDetector,
-    cleanup
+    cleanup,
+    learningsApplied
   };
 }

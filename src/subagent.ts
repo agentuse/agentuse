@@ -125,11 +125,12 @@ export async function createSubAgentTool(
 
         try {
           // Build system messages using shared logic
-          const systemMessages = await buildSystemMessages({
+          const systemMessagesResult = await buildSystemMessages({
             agent,
             isSubAgent: true,
             agentFilePath: resolvedPath,
           });
+          const systemMessages = systemMessagesResult.messages;
 
           // Build user message: agent instructions + optional parent task
           let userMessage = agent.instructions;

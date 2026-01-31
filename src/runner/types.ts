@@ -28,6 +28,8 @@ export interface PreparedAgentExecution {
   doomLoopDetector: DoomLoopDetector;
   /** Cleanup function to release resources (store locks, etc.) - call when agent execution completes */
   cleanup: () => Promise<void>;
+  /** Number of learnings applied to this run (0 if learning.apply is disabled) */
+  learningsApplied: number;
 }
 
 export interface AgentChunk {

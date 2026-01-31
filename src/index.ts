@@ -16,6 +16,7 @@ import { basename, resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
+import { extractLearnings } from './learning/index.js';
 import { version as packageVersion } from '../package.json';
 import { existsSync as existsSyncFs } from 'fs';
 
@@ -483,6 +484,10 @@ program
         // Count available tools from prepared execution (this is why we prepare early)
         const toolCount = Object.keys(preparedExecution.tools).length;
         metadataLines.push(`Tools: ${toolCount} available`);
+        // Show learnings count if any were applied
+        if (preparedExecution.learningsApplied > 0) {
+          metadataLines.push(`Learnings: ${preparedExecution.learningsApplied} applied`);
+        }
         logger.metadata(metadataLines);
         logger.separator();
       }
@@ -624,6 +629,42 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         } catch (pluginError) {
           // Don't fail the agent execution if plugins fail
           logger.warn(`Plugin event error: ${(pluginError as Error).message}`);
+        }
+      }
+
+      // Extract learnings if learning.evaluate is enabled
+      if (agent.config.learning?.evaluate && agentFilePath) {
+        try {
+          const duration = startTime ? (Date.now() - startTime) / 1000 : 0;
+          await extractLearnings({
+            event: {
+              agent: {
+                name: agent.name,
+                model: agent.config.model,
+                ...(agent.description && { description: agent.description }),
+                filePath: agentFilePath
+              },
+              result: {
+                text: result.text || '',
+                duration,
+                tokens: result.usage?.totalTokens,
+                toolCalls: result.toolCallCount || 0,
+                ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
+                ...(result.finishReason && { finishReason: result.finishReason }),
+                ...(result.finishReasons && { finishReasons: result.finishReasons }),
+                hasTextOutput: result.hasTextOutput
+              },
+              isSubAgent: false,
+              consoleOutput
+            },
+            agentInstructions: agent.instructions,
+            agentModel: agent.config.model,
+            agentFilePath,
+            config: agent.config.learning,
+          });
+        } catch (learningError) {
+          // Don't fail the agent execution if learning extraction fails
+          logger.debug(`[Learning] Extraction failed: ${(learningError as Error).message}`);
         }
       }
 

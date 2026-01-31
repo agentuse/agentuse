@@ -4,6 +4,7 @@ import { buildManagerPrompt, type SubagentInfo, type ScheduleInfo } from '../man
 import { parseScheduleExpression, formatScheduleHuman } from '../scheduler/parser.js';
 import { parseAgent, type ParsedAgent } from '../parser';
 import { logger } from '../utils/logger';
+import { LearningStore } from '../learning/index.js';
 
 /**
  * Options for building system messages
@@ -18,14 +19,25 @@ export interface BuildSystemMessagesOptions {
 }
 
 /**
+ * Result from building system messages
+ */
+export interface BuildSystemMessagesResult {
+  /** The system messages to send to the model */
+  messages: Array<{ role: string; content: string }>;
+  /** Number of learnings applied (0 if learning.apply is disabled) */
+  learningsApplied: number;
+}
+
+/**
  * Build system messages for an agent
  *
  * This is shared logic between main agent (preparation.ts) and subagents (subagent.ts)
  */
-export async function buildSystemMessages(options: BuildSystemMessagesOptions): Promise<Array<{ role: string; content: string }>> {
+export async function buildSystemMessages(options: BuildSystemMessagesOptions): Promise<BuildSystemMessagesResult> {
   const { agent, isSubAgent = false, agentFilePath } = options;
 
   const systemMessages: Array<{ role: string; content: string }> = [];
+  let learningsApplied = 0;
 
   // For Anthropic, add the Claude Code prompt as FIRST system message
   if (agent.config.model.includes('anthropic')) {
@@ -64,7 +76,19 @@ export async function buildSystemMessages(options: BuildSystemMessagesOptions): 
     }
   }
 
-  return systemMessages;
+  // Inject learnings if apply is enabled
+  if (agent.config.learning?.apply && agentFilePath) {
+    const learningResult = await buildLearningPrompt(agent, agentFilePath);
+    if (learningResult) {
+      systemMessages.push({
+        role: 'system',
+        content: learningResult.prompt,
+      });
+      learningsApplied = learningResult.count;
+    }
+  }
+
+  return { messages: systemMessages, learningsApplied };
 }
 
 /**
@@ -120,4 +144,51 @@ async function buildManagerSystemPrompt(agent: ParsedAgent, agentFilePath?: stri
     storeName,
     schedule: scheduleInfo,
   });
+}
+
+/**
+ * Result from building learning prompt
+ */
+interface LearningPromptResult {
+  prompt: string;
+  count: number;
+}
+
+/**
+ * Build the learning-specific system prompt
+ * Injects learnings from previous runs when learning.apply is enabled
+ */
+async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: string): Promise<LearningPromptResult | undefined> {
+  try {
+    const store = LearningStore.fromAgentFile(
+      agentFilePath,
+      agent.name,
+      agent.config.learning?.file
+    );
+    const learnings = await store.load();
+
+    if (learnings.length === 0) {
+      return undefined;
+    }
+
+    const maxLearnings = 10; // Prevent context bloat
+    const toInject = learnings.slice(0, maxLearnings);
+
+    const prompt = `## Learned Guidelines
+
+Based on previous runs, follow these guidelines:
+
+${toInject.map(l => `- [${l.category}] ${l.instruction}`).join('\n')}`;
+
+    // Track usage (non-blocking)
+    store.incrementApplied(toInject.map(l => l.id)).catch(err => {
+      logger.debug(`[Learning] Failed to increment applied count: ${err.message}`);
+    });
+
+    logger.debug(`[Learning] Injected ${toInject.length} learning(s)`);
+    return { prompt, count: toInject.length };
+  } catch (error) {
+    logger.debug(`[Learning] Failed to load learnings: ${(error as Error).message}`);
+    return undefined;
+  }
 }
