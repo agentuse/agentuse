@@ -42,6 +42,7 @@ export class Store {
   private locked = false;
   private agentName: string | undefined;
   private storeName: string;
+  private static lockRefCounts: Map<string, number> = new Map();
 
   /**
    * Create a new Store instance
@@ -83,7 +84,15 @@ export class Store {
         const { pid, agent, timestamp } = lockData;
 
         if (isProcessRunning(pid)) {
-          // Lock is held by a running process
+          if (pid === process.pid) {
+            // Re-entrant access from same process: bump ref count and reuse lock
+            const currentCount = Store.lockRefCounts.get(this.lockPath) ?? 1;
+            Store.lockRefCounts.set(this.lockPath, currentCount + 1);
+            this.locked = true;
+            return;
+          }
+
+          // Lock is held by a different running process
           const lockAge = Date.now() - new Date(timestamp).getTime();
           const lockAgeStr = lockAge > 60000
             ? `${Math.round(lockAge / 60000)}m ago`
@@ -118,6 +127,7 @@ export class Store {
     };
     await writeFile(this.lockPath, JSON.stringify(lockData, null, 2), 'utf-8');
     this.locked = true;
+    Store.lockRefCounts.set(this.lockPath, 1);
   }
 
   /**
@@ -127,8 +137,22 @@ export class Store {
     if (!this.locked) return;
 
     try {
+      const currentCount = (Store.lockRefCounts.get(this.lockPath) ?? 1) - 1;
+      if (currentCount > 0) {
+        Store.lockRefCounts.set(this.lockPath, currentCount);
+        this.locked = false;
+        return;
+      }
+
+      Store.lockRefCounts.delete(this.lockPath);
+
       if (existsSync(this.lockPath)) {
-        await unlink(this.lockPath);
+        // Only remove if we still own the lock
+        const lockContent = await readFile(this.lockPath, 'utf-8').catch(() => null);
+        const lockData = lockContent ? JSON.parse(lockContent) : null;
+        if (!lockData || lockData.pid === process.pid) {
+          await unlink(this.lockPath);
+        }
       }
     } catch {
       // Ignore errors when releasing lock

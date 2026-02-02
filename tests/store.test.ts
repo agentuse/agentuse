@@ -358,6 +358,23 @@ describe("Store Locking", () => {
     expect(item.data.from).toBe("store2");
     await store2.releaseLock();
   });
+
+  it("supports reentrant locking in same process without breaking existing users", async () => {
+    const store1 = new Store(tempDir, "lock-test", "manager");
+    await store1.create({ data: { from: "manager" } });
+
+    // Second store instance in same process should reuse lock, not throw
+    const store2 = new Store(tempDir, "lock-test", "subagent");
+    await expect(store2.create({ data: { from: "subagent" } })).resolves.toBeDefined();
+
+    // Releasing one instance shouldn't remove lock while another still holds it
+    await store2.releaseLock();
+    const lockPath = join(tempDir, ".agentuse", "store", "lock-test", "lock");
+    expect(existsSync(lockPath)).toBe(true);
+
+    await store1.releaseLock();
+    expect(existsSync(lockPath)).toBe(false);
+  });
 });
 
 describe("Store Atomic Writes", () => {
