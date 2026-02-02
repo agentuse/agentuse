@@ -57,6 +57,7 @@ Always check store state at the start of each run to understand current progress
  * This is injected automatically when type: manager is set
  */
 export function buildManagerPrompt(context: ManagerPromptContext): string {
+  const responsibilitiesSection = buildResponsibilitiesSection(context.storeName);
   const subagentSection = context.subagents.length > 0
     ? context.subagents.map(formatSubagent).join('\n')
     : '(No subagents configured)';
@@ -68,14 +69,7 @@ export function buildManagerPrompt(context: ManagerPromptContext): string {
 
 ${scheduleSection}
 
-## Your Responsibilities
-
-1. **UNDERSTAND** the goal and SOP (Standard Operating Procedure) in your instructions
-2. **CHECK** current state using store_list() to see what work is pending or in progress
-3. **DECIDE** what needs to happen next based on the goal and current state
-4. **DELEGATE** by calling the appropriate subagent with clear, specific instructions
-5. **TRACK** results by updating store items with outcomes
-6. **REPEAT** until the goal is achieved or you need human input
+${responsibilitiesSection}
 
 ## Your Team
 ${subagentSection}
@@ -106,4 +100,26 @@ After completing significant work:
 
 Remember: Your primary value is orchestration and tracking, not doing the work yourself.
 Delegate effectively and keep track of progress toward the goal.`;
+}
+
+/**
+ * Build responsibilities section with or without store-aware guidance
+ */
+function buildResponsibilitiesSection(storeName?: string): string {
+  const checkLine = storeName
+    ? '2. **CHECK** current state using store_list() to see what work is pending or in progress'
+    : '2. **CHECK** current state using your existing notes, prior outputs, and provided context to see what work is pending or in progress';
+
+  const trackLine = storeName
+    ? '5. **TRACK** results by updating store items with outcomes'
+    : '5. **TRACK** results by clearly summarizing outcomes and next steps; if you need persistence across runs, ask to enable `store: true`';
+
+  return `## Your Responsibilities
+
+1. **UNDERSTAND** the goal and SOP (Standard Operating Procedure) in your instructions
+${checkLine}
+3. **DECIDE** what needs to happen next based on the goal and current state
+4. **DELEGATE** by calling the appropriate subagent with clear, specific instructions
+${trackLine}
+6. **REPEAT** until the goal is achieved or you need human input`;
 }

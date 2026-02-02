@@ -9,6 +9,7 @@ import { resolve, dirname } from 'path';
 import { SessionManager } from './session/manager';
 import { loadAgentTools } from './runner/tools-loader';
 import { buildSystemMessages } from './runner/system-messages';
+import { createSessionAndMessage } from './runner/session-helper';
 
 // Constants
 const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
@@ -157,55 +158,34 @@ export async function createSubAgentTool(
                 subagentSessionManager.setParentPath(parentFullPath);
               }
 
-              // Create subagent session using the NEW instance
-              subagentSessionID = await subagentSessionManager.createSession({
-                agent: {
-                  name: agent.name,
-                  ...(resolvedPath && { filePath: resolvedPath }),
-                  ...(agent.description && { description: agent.description }),
-                  isSubAgent: true
-                },
-                model: agent.config.model,
-                version: process.env.npm_package_version || 'unknown',
-                config: {
-                  ...(agent.config.timeout !== undefined && { timeout: agent.config.timeout }),
-                  ...(agent.config.maxSteps !== undefined && { maxSteps: agent.config.maxSteps }),
-                  ...(agent.config.mcpServers && { mcpServers: Object.keys(agent.config.mcpServers) }),
-                  ...(agent.config.subagents && {
-                    subagents: agent.config.subagents.map(s => ({
-                      path: s.path,
-                      ...(s.name && { name: s.name })
-                    }))
-                  })
-                },
-                project: {
-                  root: projectContext.projectRoot,
-                  cwd: projectContext.cwd
-                }
-              });
-
-              // Create message exchange
               const taskPrompt = task && task.trim() && !task.match(/^(run|execute|perform|do)$/i)
                 ? task
                 : undefined;
 
-              subagentMsgID = await subagentSessionManager.createMessage(subagentSessionID, agent.name, {
-                user: {
-                  prompt: {
-                    task: agent.instructions,
-                    ...(taskPrompt && { user: taskPrompt })
-                  }
+              const sessionResult = await createSessionAndMessage({
+                sessionManager: subagentSessionManager,
+                agent,
+                agentFilePath: resolvedPath,
+                systemMessages: systemMessages.map(m => m.content),
+                task: agent.instructions,
+                userPrompt: taskPrompt,
+                projectContext,
+                version: process.env.npm_package_version || 'unknown',
+                config: {
+                  timeout: agent.config.timeout,
+                  maxSteps: agent.config.maxSteps,
+                  mcpServers: agent.config.mcpServers ? Object.keys(agent.config.mcpServers) : undefined,
+                  subagents: agent.config.subagents?.map(s => ({
+                    path: s.path,
+                    ...(s.name && { name: s.name })
+                  })),
                 },
-                assistant: {
-                  system: systemMessages.map(m => m.content),
-                  modelID: agent.config.model,
-                  providerID: agent.config.model.split(':')[0],
-                  mode: 'build',
-                  path: { cwd: projectContext.cwd, root: projectContext.projectRoot },
-                  cost: 0,
-                  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
-                }
+                isSubAgent: true,
+                parentSessionID,
               });
+
+              subagentSessionID = sessionResult.sessionID;
+              subagentMsgID = sessionResult.messageID;
 
               logger.debug(`[SubAgent] Created session ${subagentSessionID} for ${agent.name}`);
             } catch (error) {

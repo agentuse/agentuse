@@ -1,6 +1,7 @@
 import { generateText } from 'ai';
 import { createModel } from '../../models.js';
 import type { OutputValidation } from '../types.js';
+import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../../utils/anthropic.js';
 
 export interface CompletionEvalResult {
   valid: boolean;
@@ -90,12 +91,12 @@ Respond ONLY with the JSON object, no other text.`;
     const judgeModel = await createModel(judgeModelString);
 
     // For Anthropic models, we need the Claude Code system prompt for OAuth credentials
-    const isAnthropic = judgeModelString.includes('anthropic');
+    const isAnthropic = isAnthropicModel(judgeModelString);
 
     const result = await generateText({
       model: judgeModel,
       ...(isAnthropic && {
-        system: "You are Claude Code, Anthropic's official CLI for Claude.",
+        system: ANTHROPIC_IDENTITY_PROMPT,
       }),
       prompt: userPrompt,
       temperature: 0,
