@@ -3,6 +3,7 @@ import { createModel } from '../models';
 import type { AgentCompleteEvent, ToolCallTrace } from '../plugin/types';
 import type { Learning, LearningCategory } from './types';
 import { logger } from '../utils/logger';
+import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic';
 
 /**
  * Format tool calls with inputs for evaluation
@@ -110,10 +111,10 @@ If no learnings are applicable, respond with an empty array: []`;
   const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
 
   // Add Claude Code identity prompt for Anthropic models (required for OAuth)
-  if (agentModel.includes('anthropic')) {
+  if (isAnthropicModel(agentModel)) {
     messages.push({
       role: 'system',
-      content: "You are Claude Code, Anthropic's official CLI for Claude."
+      content: ANTHROPIC_IDENTITY_PROMPT
     });
   }
 
