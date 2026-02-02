@@ -1,5 +1,5 @@
 import chokidar, { type FSWatcher } from "chokidar";
-import { resolve, relative } from "path";
+import { resolve, relative, join } from "path";
 import { logger } from "../utils/logger";
 import * as dotenv from "dotenv";
 
@@ -40,10 +40,6 @@ export class FileWatcher {
     logger.debug("FileWatcher: Hot reload enabled");
   }
 
-  private isAgentFile(path: string): boolean {
-    return path.endsWith(".agentuse");
-  }
-
   private shouldIgnore(path: string): boolean {
     return (
       path.includes("node_modules") ||
@@ -56,9 +52,8 @@ export class FileWatcher {
   private startAgentWatcher(): void {
     const { projectRoot, onAgentAdded, onAgentChanged, onAgentRemoved } = this.options;
 
-    // Watch the project root directory for all changes
-    // and filter for .agentuse files manually
-    this.agentWatcher = chokidar.watch(projectRoot, {
+    // Watch only .agentuse files to minimize file descriptors
+    this.agentWatcher = chokidar.watch(join(projectRoot, "**/*.agentuse"), {
       ignored: [
         "**/node_modules/**",
         "**/tmp/**",
@@ -66,6 +61,7 @@ export class FileWatcher {
       ],
       persistent: true,
       ignoreInitial: true,
+      followSymlinks: false,
       awaitWriteFinish: {
         stabilityThreshold: 100,
         pollInterval: 50,
@@ -75,8 +71,6 @@ export class FileWatcher {
     this.agentWatcher
       .on("add", async (absolutePath) => {
         if (this.closed) return;
-        if (!this.isAgentFile(absolutePath)) return;
-
         const relativePath = relative(projectRoot, absolutePath);
         if (this.shouldIgnore(relativePath)) return;
 
@@ -88,8 +82,6 @@ export class FileWatcher {
       })
       .on("change", async (absolutePath) => {
         if (this.closed) return;
-        if (!this.isAgentFile(absolutePath)) return;
-
         const relativePath = relative(projectRoot, absolutePath);
         if (this.shouldIgnore(relativePath)) return;
 
@@ -101,8 +93,6 @@ export class FileWatcher {
       })
       .on("unlink", (absolutePath) => {
         if (this.closed) return;
-        if (!this.isAgentFile(absolutePath)) return;
-
         const relativePath = relative(projectRoot, absolutePath);
         if (this.shouldIgnore(relativePath)) return;
 
