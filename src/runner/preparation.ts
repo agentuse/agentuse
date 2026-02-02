@@ -11,7 +11,7 @@ import { version as packageVersion } from '../../package.json';
 import type { PrepareAgentOptions, PreparedAgentExecution } from './types';
 import type { ToolSet } from 'ai';
 import { loadAgentTools } from './tools-loader';
-import { buildSystemMessages } from './system-messages';
+import { buildSystemMessages, buildLearningPrompt } from './system-messages';
 
 /**
  * Prepare agent execution - shared setup logic for both streaming and non-streaming modes
@@ -43,7 +43,18 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     projectRoot: projectContext?.projectRoot ?? process.cwd(),
     agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
   };
-  const resolvedInstructions = resolveSafeVariables(agent.instructions, pathContext);
+  let resolvedInstructions = resolveSafeVariables(agent.instructions, pathContext);
+
+  // Append learnings to instructions if apply is enabled
+  let learningsApplied = 0;
+  if (agent.config.learning?.apply && agentFilePath) {
+    const learningResult = await buildLearningPrompt(agent, agentFilePath);
+    if (learningResult) {
+      resolvedInstructions = `${resolvedInstructions}\n\n${learningResult.prompt}`;
+      learningsApplied = learningResult.count;
+      logger.debug(`[Learning] Appended ${learningsApplied} learning(s) to instructions`);
+    }
+  }
 
   // Precedence: CLI > Agent YAML > Default
   const maxSteps = resolveMaxSteps(cliMaxSteps, agent.config.maxSteps);
@@ -60,7 +71,6 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     agentFilePath,
   });
   const systemMessages = systemMessagesResult.messages;
-  const learningsApplied = systemMessagesResult.learningsApplied;
 
   // Create session if session manager is provided
   let sessionID: string | undefined;

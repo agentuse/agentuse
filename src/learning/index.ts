@@ -1,3 +1,8 @@
+/**
+ * Learning module - extract and apply learnings from agent executions
+ * @experimental This feature is experimental and may change in future versions.
+ */
+
 import ora from 'ora';
 import type { AgentCompleteEvent } from '../plugin/types';
 import type { LearningConfig } from './types';

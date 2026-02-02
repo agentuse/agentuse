@@ -37,7 +37,6 @@ export async function buildSystemMessages(options: BuildSystemMessagesOptions): 
   const { agent, isSubAgent = false, agentFilePath } = options;
 
   const systemMessages: Array<{ role: string; content: string }> = [];
-  let learningsApplied = 0;
 
   // For Anthropic, add the Claude Code prompt as FIRST system message
   if (agent.config.model.includes('anthropic')) {
@@ -76,19 +75,8 @@ export async function buildSystemMessages(options: BuildSystemMessagesOptions): 
     }
   }
 
-  // Inject learnings if apply is enabled
-  if (agent.config.learning?.apply && agentFilePath) {
-    const learningResult = await buildLearningPrompt(agent, agentFilePath);
-    if (learningResult) {
-      systemMessages.push({
-        role: 'system',
-        content: learningResult.prompt,
-      });
-      learningsApplied = learningResult.count;
-    }
-  }
-
-  return { messages: systemMessages, learningsApplied };
+  // learningsApplied is now tracked in preparation.ts where learnings are appended to instructions
+  return { messages: systemMessages, learningsApplied: 0 };
 }
 
 /**
@@ -149,16 +137,16 @@ async function buildManagerSystemPrompt(agent: ParsedAgent, agentFilePath?: stri
 /**
  * Result from building learning prompt
  */
-interface LearningPromptResult {
+export interface LearningPromptResult {
   prompt: string;
   count: number;
 }
 
 /**
- * Build the learning-specific system prompt
- * Injects learnings from previous runs when learning.apply is enabled
+ * Build the learning prompt to append to agent instructions
+ * Called when learning.apply is enabled
  */
-async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: string): Promise<LearningPromptResult | undefined> {
+export async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: string): Promise<LearningPromptResult | undefined> {
   try {
     const store = LearningStore.fromAgentFile(
       agentFilePath,

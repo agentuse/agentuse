@@ -105,6 +105,9 @@ const AgentSchema = z.object({
   if (data.store) {
     logger.warn('[Experimental] Store feature is experimental and may change in future versions.');
   }
+  if (data.learning) {
+    logger.warn('[Experimental] Learning feature is experimental and may change in future versions.');
+  }
 
   return data;
 });
