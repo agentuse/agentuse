@@ -233,6 +233,13 @@ class TelemetryManager {
         // CLI: send events immediately, don't batch
         flushAt: 1,
         flushInterval: 0,
+        // Suppress network error logs - telemetry failures shouldn't pollute output
+        disableGeoip: true,
+      });
+
+      // Suppress PostHog error logging
+      this.client.on('error', () => {
+        // Silently ignore - telemetry errors are not important
       });
 
       this.initialized = true;
@@ -500,9 +507,13 @@ class TelemetryManager {
     if (!this.client) return;
 
     try {
-      await this.client.shutdown();
+      // Use a short timeout to avoid blocking process exit
+      await Promise.race([
+        this.client.shutdown(),
+        new Promise(resolve => setTimeout(resolve, 2000)),
+      ]);
     } catch {
-      // Ignore shutdown errors
+      // Ignore shutdown errors - telemetry is best-effort
     }
   }
 
