@@ -12,6 +12,7 @@ import type { PrepareAgentOptions, PreparedAgentExecution } from './types';
 import type { ToolSet } from 'ai';
 import { loadAgentTools } from './tools-loader';
 import { buildSystemMessages, buildLearningPrompt } from './system-messages';
+import { createSessionAndMessage } from './session-helper';
 
 /**
  * Prepare agent execution - shared setup logic for both streaming and non-streaming modes
@@ -80,66 +81,29 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
 
   if (sessionManager && projectContext) {
     try {
-      // Create session
-      const agentConfig: {
-        name: string;
-        filePath?: string;
-        description?: string;
-        isSubAgent: boolean;
-      } = {
-        name: agent.name,
-        isSubAgent: false
-      };
-      if (agentFilePath) agentConfig.filePath = agentFilePath;
-      if (agent.description) agentConfig.description = agent.description;
-
-      const sessionConfig: {
-        timeout?: number;
-        maxSteps?: number;
-        mcpServers?: string[];
-        subagents?: Array<{ path: string; name?: string }>;
-      } = {};
-      if (agent.config.timeout) sessionConfig.timeout = agent.config.timeout;
-      if (maxSteps) sessionConfig.maxSteps = maxSteps;
-      if (agent.config.mcpServers) sessionConfig.mcpServers = Object.keys(agent.config.mcpServers);
-      if (agent.config.subagents) {
-        sessionConfig.subagents = agent.config.subagents.map(sa => {
-          const result: { path: string; name?: string } = { path: sa.path };
-          if (sa.name) result.name = sa.name;
-          return result;
-        });
-      }
-
-      sessionID = await sessionManager.createSession({
-        agent: agentConfig,
-        model: agent.config.model,
+      const { sessionID: createdSessionID, messageID } = await createSessionAndMessage({
+        sessionManager,
+        agent,
+        agentFilePath,
+        systemMessages: systemMessages.map(m => m.content),
+        task: resolvedInstructions,
+        userPrompt,
+        projectContext,
         version: packageVersion,
-        config: sessionConfig,
-        project: {
-          root: projectContext.projectRoot,
-          cwd: projectContext.cwd
-        }
-      });
-
-      // Create message exchange (user + assistant in one)
-      assistantMsgID = await sessionManager.createMessage(sessionID, agent.name, {
-        user: {
-          prompt: {
-            task: resolvedInstructions,
-            ...(userPrompt && { user: userPrompt })
-          }
+        config: {
+          timeout: agent.config.timeout,
+          maxSteps,
+          mcpServers: agent.config.mcpServers ? Object.keys(agent.config.mcpServers) : undefined,
+          subagents: agent.config.subagents?.map(sa => ({
+            path: sa.path,
+            ...(sa.name && { name: sa.name })
+          })),
         },
-        assistant: {
-          system: systemMessages.map(m => m.content),
-          modelID: agent.config.model,
-          providerID: agent.config.model.split(':')[0],
-          mode: 'build',
-          path: { cwd: projectContext.cwd, root: projectContext.projectRoot },
-          cost: 0,
-          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
-        }
+        isSubAgent: false,
       });
 
+      sessionID = createdSessionID;
+      assistantMsgID = messageID;
       logger.debug(`Session created: ${sessionID}`);
     } catch (error) {
       logger.warn(`Failed to create session: ${(error as Error).message}`);

@@ -5,6 +5,7 @@ import { parseScheduleExpression, formatScheduleHuman } from '../scheduler/parse
 import { parseAgent, type ParsedAgent } from '../parser';
 import { logger } from '../utils/logger';
 import { LearningStore } from '../learning/index.js';
+import { addAnthropicIdentity, isAnthropicModel } from '../utils/anthropic';
 
 /**
  * Options for building system messages
@@ -24,8 +25,6 @@ export interface BuildSystemMessagesOptions {
 export interface BuildSystemMessagesResult {
   /** The system messages to send to the model */
   messages: Array<{ role: string; content: string }>;
-  /** Number of learnings applied (0 if learning.apply is disabled) */
-  learningsApplied: number;
 }
 
 /**
@@ -36,18 +35,7 @@ export interface BuildSystemMessagesResult {
 export async function buildSystemMessages(options: BuildSystemMessagesOptions): Promise<BuildSystemMessagesResult> {
   const { agent, isSubAgent = false, agentFilePath } = options;
 
-  const systemMessages: Array<{ role: string; content: string }> = [];
-
-  // For Anthropic, add the Claude Code prompt as FIRST system message
-  if (agent.config.model.includes('anthropic')) {
-    systemMessages.push({
-      role: 'system',
-      content: 'You are Claude Code, Anthropic\'s official CLI for Claude.'
-    });
-    if (!isSubAgent) {
-      logger.debug("Using Anthropic system prompt: You are Claude Code...");
-    }
-  }
+  let systemMessages: Array<{ role: string; content: string }> = [];
 
   // Build today's date for system prompt
   const todayDate = new Date().toLocaleDateString('en-US', {
@@ -75,8 +63,13 @@ export async function buildSystemMessages(options: BuildSystemMessagesOptions): 
     }
   }
 
-  // learningsApplied is now tracked in preparation.ts where learnings are appended to instructions
-  return { messages: systemMessages, learningsApplied: 0 };
+  // Prepend Anthropic identity if needed
+  systemMessages = addAnthropicIdentity(systemMessages, agent.config.model);
+  if (isAnthropicModel(agent.config.model) && !isSubAgent) {
+    logger.debug("Using Anthropic system prompt: You are Claude Code...");
+  }
+
+  return { messages: systemMessages };
 }
 
 /**
