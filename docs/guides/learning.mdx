@@ -1,0 +1,217 @@
+---
+title: Learning
+description: Extract insights from executions and apply them in future runs
+tag: Experimental
+---
+
+<Warning>
+  **Experimental Feature**: Learning is experimental. The configuration and behavior may change or be removed in future versions. Discuss feedback in [GitHub Discussions](https://github.com/agentuse/agentuse/discussions).
+</Warning>
+
+## What is Learning?
+
+Learning extracts insights from agent executions and stores them in a readable markdown file. You can then review these learnings and incorporate the best ones back into your agent instructions - creating a human-in-the-loop improvement cycle.
+
+## Recommended Workflow
+
+The default workflow keeps you in control:
+
+1. **Enable extraction** - Set `evaluate: true` to capture learnings
+2. **Run your agent** - Learnings accumulate in `{agent-name}.learnings.md`
+3. **Review periodically** - Check the learnings file for valuable insights
+4. **Update instructions** - Copy the best learnings into your agent file
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+learning:
+  evaluate: true   # Extract learnings after execution
+  apply: false     # Review manually (default)
+---
+
+# Blog Writer
+
+Write short productivity blog posts.
+
+## Guidelines
+- Start with a relatable hook
+- Include 3 actionable tips
+```
+
+After several runs, check `blog-writer.learnings.md`. If you see a valuable pattern like "use specific time estimates for each tip", add it to your Guidelines section permanently.
+
+## Auto-Apply (Optional)
+
+If you want hands-off improvement, enable `apply: true`:
+
+```yaml
+learning:
+  evaluate: true
+  apply: true      # Automatically inject learnings
+```
+
+With auto-apply:
+- Up to 10 learnings are appended to your agent instructions each run
+- The agent adapts without manual intervention
+- Less control, but more autonomous
+
+<Note>
+  Start with manual review (`apply: false`) until you trust the quality of extracted learnings. Then consider enabling auto-apply for mature agents.
+</Note>
+
+## Configuration Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `evaluate` | `true` or `string` | Extract learnings after execution. Use `true` or a custom evaluation prompt. |
+| `apply` | `boolean` | Auto-inject stored learnings in future runs. Default: `false`. |
+| `file` | `string` | Custom file path for storing learnings (relative to agent file). |
+
+## Storage
+
+Learnings are stored in `{agent-name}.learnings.md` next to your agent file:
+
+```
+my-project/
+  blog-writer.agentuse
+  blog-writer.learnings.md   # Auto-created, human-readable
+```
+
+Custom path:
+
+```yaml
+learning:
+  evaluate: true
+  file: "./learnings/shared.md"
+```
+
+## How Extraction Works
+
+After execution (when `evaluate: true`):
+
+1. LLM evaluates the execution result
+2. Extracts 0-3 high-confidence learnings (≥0.8 threshold)
+3. Deduplicates against existing learnings (60% word overlap)
+4. Stores in markdown format
+
+## How Application Works
+
+On next run (when `apply: true`):
+
+1. Loads up to 10 learnings from storage
+2. Appends them to your agent instructions as a `## Learned Guidelines` section
+3. Tracks which learnings were applied (for analytics)
+
+This keeps learnings at the instruction level - where they have the most influence on agent behavior.
+
+## Learning Categories
+
+Learnings are categorized for context:
+
+- **tip** - General best practices
+- **warning** - Things to avoid
+- **pattern** - Successful approaches
+- **tool-usage** - How to use specific tools
+- **error-fix** - Solutions to known errors
+
+## Storage Format
+
+Learnings are stored as readable markdown:
+
+```markdown
+# Learnings for blog-writer
+
+### [tip] Use specific examples over generic advice
+<!-- id:a1b2c3d4 | confidence:0.92 | applied:3 | 2026-01-27 -->
+When writing productivity tips, include concrete scenarios
+like "checking emails before coffee" rather than abstract advice.
+
+### [pattern] Structure with time estimates
+<!-- id:e5f6g7h8 | confidence:0.88 | applied:1 | 2026-01-27 -->
+Each actionable tip should include a specific time estimate
+(e.g., "5-minute brain dump") to make it feel achievable.
+```
+
+## Custom Evaluation Prompts
+
+Pass a string to `evaluate` for domain-specific extraction:
+
+```yaml
+learning:
+  evaluate: |
+    Evaluate the blog post against these criteria:
+    1. Hook quality - Is the opening engaging?
+    2. Actionability - Can readers implement immediately?
+    3. Tone - Professional but conversational?
+```
+
+## Example: Manual Review Workflow
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+learning:
+  evaluate: true
+---
+
+# Blog Writer
+
+Write short productivity blog posts (150-200 words).
+
+## Requirements
+- Start with a relatable hook
+- Include 3 actionable tips
+- End with a clear call-to-action
+```
+
+After 5-10 runs, review `blog-writer.learnings.md`:
+
+```markdown
+### [tip] Use specific examples over generic advice
+When writing productivity tips, include concrete scenarios
+like "checking emails before coffee" rather than abstract advice.
+
+### [pattern] Structure with time estimates
+Each actionable tip should include a specific time estimate
+(e.g., "5-minute brain dump") to make it feel achievable.
+```
+
+Then update your agent instructions with the best insights:
+
+```yaml
+## Requirements
+- Start with a relatable hook
+- Include 3 actionable tips with specific time estimates  # ← from learnings
+- Use concrete scenarios, not abstract advice             # ← from learnings
+- End with a clear call-to-action
+```
+
+This keeps you in control while still benefiting from extracted patterns.
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Review before auto-apply" icon="eye">
+    Run with `apply: false` first to verify learning quality before enabling auto-injection
+  </Card>
+  <Card title="Curate your instructions" icon="pen">
+    The best learnings should become permanent parts of your agent file
+  </Card>
+  <Card title="Use custom prompts" icon="microscope">
+    Tailor extraction to your domain with custom evaluation prompts
+  </Card>
+  <Card title="Share across agents" icon="share">
+    Use `file` to point multiple agents at shared learnings
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Store Guide" icon="database" href="/guides/store">
+    Persistent data storage for agents
+  </Card>
+  <Card title="Manager Agents" icon="users" href="/guides/manager-agents">
+    Orchestrate teams of learning agents
+  </Card>
+</CardGroup>

@@ -42,12 +42,13 @@
         "guides/creating-agents",
         "guides/model-configuration",
         "guides/subagents",
-        "guides/manager-agents",
-        "guides/store",
         "guides/skills",
         "guides/plugins",
         "guides/agent-design-patterns",
-        "guides/context-management"
+        "guides/context-management",
+        "guides/manager-agents",
+        "guides/store",
+        "guides/learning"
       ]
     },
     {
