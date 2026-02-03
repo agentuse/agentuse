@@ -38,6 +38,7 @@ import { resolveTimeout } from './utils/config';
 import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
 import { telemetry, categorizeError, aggregateToolCalls, countSteps, parseModel } from './telemetry';
+import type { SessionManager as SessionManagerType } from './session';
 
 const program = new Command();
 
@@ -145,6 +146,26 @@ program
     const startTime = Date.now();
     let originalCwd: string | undefined;
 
+    // Track session info for interrupt handling (needs to be accessible in catch block)
+    let interruptSessionInfo: { sessionID: string; agentName: string } | null = null;
+    let sessionErrorLogged = false;
+    let sessionManager: SessionManagerType | undefined;
+
+    // Helper function for session error logging (needs sessionManager to be set)
+    const logSessionInterrupt = async (errorCode: string = 'USER_INTERRUPT', errorMessage: string = 'Agent execution interrupted by user (Ctrl+C)') => {
+      if (sessionErrorLogged) return;
+      if (sessionManager && interruptSessionInfo) {
+        try {
+          await sessionManager.setSessionError(
+            interruptSessionInfo.sessionID,
+            interruptSessionInfo.agentName,
+            { code: errorCode, message: errorMessage }
+          );
+          sessionErrorLogged = true;
+        } catch { /* ignore failures */ }
+      }
+    };
+
     try {
       // Configure logger based on flags
       // --json implies --quiet and --no-tty
@@ -230,7 +251,6 @@ program
       logger.debug(`Using project root: ${projectContext.projectRoot}`);
 
       // Initialize storage and session manager
-      let sessionManager;
       try {
         const { initStorage } = await import('./storage/index.js');
         const { SessionManager } = await import('./session/index.js');
@@ -412,18 +432,39 @@ program
           wasInterrupted = true;  // Mark as user interrupt
           abortController.abort();  // Trigger existing abort mechanism
 
+          // Log session interrupt immediately (fire and forget)
+          logSessionInterrupt();
+
           // Give cleanup 2 seconds, then force exit if still hanging
-          setTimeout(() => {
+          setTimeout(async () => {
+            await logSessionInterrupt();
             console.log('\n⚠️  Force exiting...');
             process.exit(130);
           }, 2000);
         } else {
-          // Second Ctrl-C - immediate exit (if cleanup is taking too long)
-          console.log('\n⚠️  Force exiting...');
-          process.exit(130);
+          // Second Ctrl-C - quick attempt to log, then immediate exit
+          logSessionInterrupt().catch(() => {}).finally(() => {
+            setTimeout(() => {
+              console.log('\n⚠️  Force exiting...');
+              process.exit(130);
+            }, 100);
+          });
         }
       };
       process.on('SIGINT', sigintHandler);
+
+      // Handle SIGTERM (sent by kill command, container shutdown, etc.)
+      const sigtermHandler = () => {
+        console.log('\n⚠️  Received SIGTERM, shutting down...');
+        wasInterrupted = true;
+        abortController.abort();
+        logSessionInterrupt();
+        setTimeout(async () => {
+          await logSessionInterrupt();
+          process.exit(143);  // 128 + 15 (SIGTERM)
+        }, 2000);
+      };
+      process.on('SIGTERM', sigtermHandler);
 
       // Initialize plugin manager before running agent with project-specific plugin directories
       let pluginManager: PluginManager | null = null;
@@ -470,6 +511,11 @@ program
         abortSignal: abortController.signal,
         verbose: options.debug
       });
+
+      // Update session info for interrupt handling (now that we have sessionID)
+      if (preparedExecution.sessionID) {
+        interruptSessionInfo = { sessionID: preparedExecution.sessionID, agentName: agent.name };
+      }
 
       // Display agent metadata in clean format
       if (!effectiveQuiet) {
@@ -528,6 +574,9 @@ program
         if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
           if (wasInterrupted) {
             // User pressed Ctrl-C - clean exit with standard interrupt code
+            // Log session error before exiting
+            await logSessionInterrupt();
+
             if (!jsonMode) {
               logger.info('Agent execution interrupted by user.');
             }
@@ -544,12 +593,14 @@ program
             if (jsonMode) {
               console.log(JSON.stringify({
                 success: false,
-                error: { code: 'USER_ABORT', message: 'Agent execution interrupted by user' },
+                error: { code: 'USER_INTERRUPT', message: 'Agent execution interrupted by user' },
               }));
             }
             process.exit(130);
           } else {
-            // Actual timeout
+            // Actual timeout - log session error before exiting
+            await logSessionInterrupt('TIMEOUT', `Agent execution timed out after ${effectiveTimeoutSeconds}s`);
+
             if (!jsonMode) {
               logger.error(`
 ⚠️  EXECUTION TIMEOUT
@@ -595,6 +646,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       } finally {
         clearTimeout(timeoutId);
         process.off('SIGINT', sigintHandler);
+        process.off('SIGTERM', sigtermHandler);
       }
 
       // Stop capturing and get console output
@@ -744,6 +796,9 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
 
       // Capture telemetry for startup errors (auth, config) or execution errors
       if (error instanceof AuthenticationError) {
+        // Log to session if it exists (auth errors can happen during runAgent)
+        await logSessionInterrupt('AUTH_ERROR', error.message);
+
         telemetry.captureStartupError({
           type: 'auth',
           provider: error.provider,
@@ -784,6 +839,10 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
 
       // For other errors, use the execution event
       const errorType = categorizeError(error);
+
+      // Log to session if it exists
+      await logSessionInterrupt(errorType ?? 'EXECUTION_ERROR', (error as Error).message);
+
       telemetry.captureExecution({
         provider: 'unknown',
         modelName: 'unknown',

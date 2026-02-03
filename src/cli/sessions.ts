@@ -541,7 +541,9 @@ async function showSession(
   // Display session-level error (failures before LLM calls - auth, MCP, etc.)
   if (s.error) {
     process.stdout.write(`\n${"─".repeat(60)}\n`);
-    process.stdout.write(`✗ ERROR: ${s.error.code}\n`);
+    const icon = s.error.code === 'USER_INTERRUPT' ? '⚠' : '✗';
+    const label = s.error.code === 'USER_INTERRUPT' ? 'INTERRUPTED' : 'ERROR';
+    process.stdout.write(`${icon} ${label}: ${s.error.code}\n`);
     process.stdout.write(`  ${s.error.message}\n`);
     process.stdout.write(`  Time: ${new Date(s.error.time).toLocaleString()}\n`);
   }

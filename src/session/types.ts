@@ -46,9 +46,16 @@ export interface SessionInfo {
   };
 
   // Error (for failures before LLM calls - auth, MCP, etc.)
+  // Standard error codes:
+  //   - AUTH_ERROR: Authentication failure (missing/invalid API key)
+  //   - MCP_ERROR: MCP server connection failure
+  //   - CONFIG_ERROR: Agent configuration error
+  //   - TIMEOUT: Agent execution timed out
+  //   - USER_INTERRUPT: User interrupted execution (Ctrl+C or SIGTERM)
+  //   - EXECUTION_ERROR: General execution error
   error?: {
     message: string;
-    code: string;                    // 'AUTH_ERROR', 'MCP_ERROR', 'CONFIG_ERROR', etc.
+    code: string;
     time: number;                    // Unix timestamp (ms)
   };
 }
