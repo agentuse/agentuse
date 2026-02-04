@@ -269,6 +269,7 @@ Error: ${errorMessage}`);
           const errorMessage = (chunk as any).error?.message || (chunk as any).error || 'Unknown error';
           yield {
             type: 'tool-result',  // Treat as result so AI sees it
+            toolCallId,  // Include toolCallId so session storage can match and update the pending tool call
             toolName: chunk.toolName,
             toolResult: JSON.stringify({
               success: false,
