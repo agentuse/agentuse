@@ -39,7 +39,7 @@ export async function processAgentStream(
   const toolCalls: Array<{ tool: string; args: unknown }> = [];
   let subAgentTokens = 0;
   const toolCallTraces: ToolCallTrace[] = [];
-  const pendingToolCalls = new Map<string, { name: string; startTime: number; partID?: string; input?: unknown }>();
+  const pendingToolCalls = new Map<string, { name: string; startTime: number; addPartPromise?: Promise<string | undefined>; input?: unknown }>();
   let currentLlmCall: { model: string; startTime: number; firstTokenTime?: number } | null = null;
   let llmSegmentCount = 0;
   let hasTextOutput = false;
@@ -216,9 +216,9 @@ export async function processAgentStream(
           });
         }
 
-        // Log to session and track partID for later update
+        // Log to session and store the promise for later awaiting
         if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName && chunk.toolCallId) {
-          const addPromise = options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
+          const addPartPromise = options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
             type: 'tool',
             callID: chunk.toolCallId,
             tool: chunk.toolName!,
@@ -227,14 +227,17 @@ export async function processAgentStream(
               input: chunk.toolInput,
               time: { start: chunk.toolStartTime || Date.now() }
             }
-          } as any).then(partID => {
-            // Track partID so we can update it when result comes in
-            const pending = pendingToolCalls.get(chunk.toolCallId!);
-            if (pending) {
-              pendingToolCalls.set(chunk.toolCallId!, { ...pending, partID });
-            }
-          }).catch(err => logger.debug(`Failed to log tool-call part: ${err.message}`));
-          trackSessionUpdate(addPromise);
+          } as any).catch(err => {
+            logger.debug(`Failed to log tool-call part: ${err.message}`);
+            return undefined; // Return undefined on error so partID check fails gracefully
+          });
+          trackSessionUpdate(addPartPromise);
+
+          // Store the promise directly so tool-result can await it
+          const pending = pendingToolCalls.get(chunk.toolCallId);
+          if (pending) {
+            pendingToolCalls.set(chunk.toolCallId, { ...pending, addPartPromise });
+          }
         }
         break;
 
@@ -376,23 +379,27 @@ export async function processAgentStream(
             });
 
             // Update the session storage part with completed state
-            if (pending.partID && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
-              // Build completed state with required fields
-              const completedState: ToolStateCompleted = {
-                status: 'completed',
-                input: pending.input || {},  // Use stored input from tool-call
-                output: chunk.toolResultRaw || chunk.toolResult,
-                time: {
-                  start: pending.startTime,
-                  end: Date.now()
-                },
-                ...(tokens && { metadata: { tokens } })
-              };
+            // Await the addPartPromise to ensure partID is available (fixes race condition for fast tools like skill_load)
+            if (pending.addPartPromise && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
+              const partID = await pending.addPartPromise;
+              if (partID) {
+                // Build completed state with required fields
+                const completedState: ToolStateCompleted = {
+                  status: 'completed',
+                  input: pending.input || {},  // Use stored input from tool-call
+                  output: chunk.toolResultRaw || chunk.toolResult,
+                  time: {
+                    start: pending.startTime,
+                    end: Date.now()
+                  },
+                  ...(tokens && { metadata: { tokens } })
+                };
 
-              const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentName, options.messageID, pending.partID, {
-                state: completedState
-              }).catch(err => logger.debug(`Failed to update tool part: ${err.message}`));
-              trackSessionUpdate(updatePromise);
+                const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentName, options.messageID, partID, {
+                  state: completedState
+                }).catch(err => logger.debug(`Failed to update tool part: ${err.message}`));
+                trackSessionUpdate(updatePromise);
+              }
             }
 
             pendingToolCalls.delete(chunk.toolCallId);
