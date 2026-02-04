@@ -18,7 +18,7 @@ export async function processAgentStream(
     sessionManager?: SessionManager;
     sessionID?: string;
     messageID?: string;
-    agentName?: string;
+    agentId?: string;
     doomLoopDetector?: DoomLoopDetector;
     /** Suppress console output (for serve mode) */
     quiet?: boolean;
@@ -67,11 +67,11 @@ export async function processAgentStream(
       textUpdateTimer = null;
     }
 
-    if (currentTextPart && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
+    if (currentTextPart && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
       try {
         await options.sessionManager.updatePart(
           options.sessionID,
-          options.agentName,
+          options.agentId,
           options.messageID,
           currentTextPart.partID,
           {
@@ -106,11 +106,11 @@ export async function processAgentStream(
         }
 
         // Log to session with debounced writes to prevent race conditions
-        if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
+        if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
           if (!currentTextPart) {
             // First text chunk: create new part (await to ensure partID is available)
             const startTime = Date.now();
-            const addPromise = options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
+            const addPromise = options.sessionManager.addPart(options.sessionID, options.agentId, options.messageID, {
               type: 'text',
               text: chunk.text!,
               time: { start: startTime }
@@ -140,10 +140,10 @@ export async function processAgentStream(
               const getText = () => currentTextPart?.text || '';
 
               textUpdateTimer = setTimeout(() => {
-                if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
+                if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
                   const updatePromise = options.sessionManager.updatePart(
                     options.sessionID,
-                    options.agentName,
+                    options.agentId,
                     options.messageID,
                     partID,
                     {
@@ -217,8 +217,8 @@ export async function processAgentStream(
         }
 
         // Log to session and store the promise for later awaiting
-        if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName && chunk.toolCallId) {
-          const addPartPromise = options.sessionManager.addPart(options.sessionID, options.agentName, options.messageID, {
+        if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId && chunk.toolCallId) {
+          const addPartPromise = options.sessionManager.addPart(options.sessionID, options.agentId, options.messageID, {
             type: 'tool',
             callID: chunk.toolCallId,
             tool: chunk.toolName!,
@@ -380,7 +380,7 @@ export async function processAgentStream(
 
             // Update the session storage part with completed state
             // Await the addPartPromise to ensure partID is available (fixes race condition for fast tools like skill_load)
-            if (pending.addPartPromise && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentName) {
+            if (pending.addPartPromise && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
               const partID = await pending.addPartPromise;
               if (partID) {
                 // Build completed state with required fields
@@ -395,7 +395,7 @@ export async function processAgentStream(
                   ...(tokens && { metadata: { tokens } })
                 };
 
-                const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentName, options.messageID, partID, {
+                const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentId, options.messageID, partID, {
                   state: completedState
                 }).catch(err => logger.debug(`Failed to update tool part: ${err.message}`));
                 trackSessionUpdate(updatePromise);

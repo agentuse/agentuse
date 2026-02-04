@@ -1,5 +1,6 @@
 import type { Tool } from 'ai';
 import { getMCPTools, type MCPConnection } from '../mcp';
+import { computeAgentId } from '../utils/agent-id';
 import { getTools as getConfiguredTools, type PathResolverContext } from '../tools/index.js';
 import { createSkillTools } from '../skill/index.js';
 import { createStore, createStoreTools, type Store } from '../store/index.js';
@@ -16,6 +17,8 @@ export interface LoadAgentToolsOptions {
   projectContext?: { projectRoot: string; cwd: string } | undefined;
   /** Directory containing the agent file (for resolving relative paths) */
   agentDir?: string | undefined;
+  /** Full path to the agent file (for computing agentId) */
+  agentFilePath?: string | undefined;
   /** Active MCP connections */
   mcpConnections: MCPConnection[];
   /** Log prefix for debug messages */
@@ -46,9 +49,13 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     agent,
     projectContext,
     agentDir,
+    agentFilePath,
     mcpConnections,
     logPrefix = ''
   } = options;
+
+  // Compute agentId (file-path-based identifier) for store naming
+  const agentId = computeAgentId(agentFilePath, projectContext?.projectRoot, agent.name);
 
   // Convert MCP tools to AI SDK format
   const mcpTools = await getMCPTools(mcpConnections);
@@ -89,7 +96,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   let store: Store | undefined;
   if (agent.config.store && projectContext) {
     try {
-      store = createStore(projectContext.projectRoot, agent.config.store, agent.name);
+      store = createStore(projectContext.projectRoot, agent.config.store, agentId);
       storeTools = createStoreTools(store);
       const storeName = store.getStoreName();
       logger.debug(`${logPrefix}Loaded store tools for "${storeName}"`);

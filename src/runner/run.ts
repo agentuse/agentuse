@@ -54,7 +54,7 @@ export async function runAgent(
 ): Promise<RunAgentResult> {
   // Track session info for error logging (set during preparation)
   let sessionID: string | undefined;
-  let agentName: string | undefined;
+  let agentId: string | undefined;
   let preparation: PreparedAgentExecution | undefined;
 
   try {
@@ -87,12 +87,13 @@ export async function runAgent(
       subAgentNames,
       sessionID: prepSessionID,
       assistantMsgID,
+      agentId: prepAgentId,
       doomLoopDetector
     } = preparation;
 
     // Set outer scope variables for error logging
     sessionID = prepSessionID;
-    agentName = agent.name;
+    agentId = prepAgentId;
 
     // Execute using the core generator
     const coreOptions = {
@@ -105,12 +106,12 @@ export async function runAgent(
 
     const result = await processAgentStream(
       executeAgentCore(agent, tools, coreOptions),
-      sessionManager && prepSessionID && assistantMsgID ? {
+      sessionManager && prepSessionID && assistantMsgID && prepAgentId ? {
         collectToolCalls: true,
         sessionManager,
         sessionID: prepSessionID,
         messageID: assistantMsgID,
-        agentName: agent.name,
+        agentId: prepAgentId,
         doomLoopDetector,
         quiet
       } : {
@@ -141,9 +142,9 @@ export async function runAgent(
     }
 
     // Update session message with final token usage and mark session completed
-    if (sessionManager && prepSessionID && assistantMsgID && result.usage) {
+    if (sessionManager && prepSessionID && assistantMsgID && prepAgentId && result.usage) {
       try {
-        await sessionManager.updateMessage(prepSessionID, agent.name, assistantMsgID, {
+        await sessionManager.updateMessage(prepSessionID, prepAgentId, assistantMsgID, {
           time: { completed: Date.now() },
           assistant: {
             tokens: {
@@ -152,7 +153,7 @@ export async function runAgent(
             }
           }
         });
-        await sessionManager.setSessionCompleted(prepSessionID, agent.name);
+        await sessionManager.setSessionCompleted(prepSessionID, prepAgentId);
       } catch (error) {
         logger.debug(`Failed to update message with token usage: ${(error as Error).message}`);
       }
@@ -170,13 +171,13 @@ export async function runAgent(
     };
   } catch (error: unknown) {
     // Log error to session if available (for visibility in `agentuse sessions`)
-    if (sessionManager && sessionID && agentName) {
+    if (sessionManager && sessionID && agentId) {
       try {
         const errorCode = error instanceof AuthenticationError ? 'AUTH_ERROR' :
           (error instanceof Error && error.name === 'AbortError') ? 'TIMEOUT' :
           'EXECUTION_ERROR';
         const errorMessage = error instanceof Error ? error.message : String(error);
-        await sessionManager.setSessionError(sessionID, agentName, {
+        await sessionManager.setSessionError(sessionID, agentId, {
           code: errorCode,
           message: errorMessage
         });

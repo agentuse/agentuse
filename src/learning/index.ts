@@ -39,7 +39,7 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
 
   try {
     // Load existing learnings to avoid duplicates
-    const store = LearningStore.fromAgentFile(agentFilePath, event.agent.name, config.file);
+    const store = LearningStore.fromAgentFile(agentFilePath, config.file);
     const existingLearnings = await store.load();
 
     const learnings = await evaluateExecution(

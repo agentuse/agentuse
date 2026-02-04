@@ -31,10 +31,10 @@ describe("LearningStore", () => {
   it("resolves default and custom learning file paths", () => {
     const agentFile = join(tempDir, "agents", "blog.md");
 
-    const defaultPath = resolveLearningFilePath(agentFile, "blog");
+    const defaultPath = resolveLearningFilePath(agentFile);
     expect(defaultPath.endsWith("agents/blog.learnings.md")).toBe(true);
 
-    const customPath = resolveLearningFilePath(agentFile, "blog", "./notes/learnings.md");
+    const customPath = resolveLearningFilePath(agentFile, "./notes/learnings.md");
     expect(customPath.endsWith("agents/notes/learnings.md")).toBe(true);
   });
 

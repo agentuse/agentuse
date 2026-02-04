@@ -6,6 +6,7 @@ import { logger } from './utils/logger';
 import { executeAgentCore, processAgentStream } from './runner';
 import { DoomLoopDetector } from './tools/index.js';
 import { resolve, dirname } from 'path';
+import { computeAgentId } from './utils/agent-id';
 import { SessionManager } from './session/manager';
 import { loadAgentTools } from './runner/tools-loader';
 import { buildSystemMessages } from './runner/system-messages';
@@ -41,7 +42,7 @@ export function getMaxSubAgentDepth(): number {
  * @param callStack Array of agent paths in the call stack for cycle detection
  * @param sessionManager Optional session manager for logging
  * @param parentSessionID Optional parent session ID
- * @param parentAgentName Optional parent agent name
+ * @param parentAgentId Optional parent agent ID (file-path-based identifier)
  * @param projectContext Optional project context (root, cwd)
  * @returns Tool that executes the sub-agent
  */
@@ -54,7 +55,7 @@ export async function createSubAgentTool(
   callStack: string[] = [],
   sessionManager?: SessionManager,
   parentSessionID?: string,
-  parentAgentName?: string,
+  parentAgentId?: string,
   projectContext?: { projectRoot: string; cwd: string },
   abortSignal?: AbortSignal
 ): Promise<Tool> {
@@ -85,6 +86,9 @@ export async function createSubAgentTool(
     execute: async ({ task, context }) => {
       const startTime = Date.now();
 
+      // Compute agentId (file-path-based identifier) for session operations
+      const agentId = computeAgentId(resolvedPath, projectContext?.projectRoot, agent.name);
+
       // Declare session variables outside try block so they're accessible in catch
       let subagentSessionID: string | undefined;
       let subagentMsgID: string | undefined;
@@ -105,6 +109,7 @@ export async function createSubAgentTool(
           agent,
           projectContext,
           agentDir: subAgentBasePath,
+          agentFilePath: resolvedPath,
           mcpConnections,
           logPrefix: '[SubAgent] ',
         });
@@ -128,6 +133,7 @@ export async function createSubAgentTool(
             agent,
             isSubAgent: true,
             agentFilePath: resolvedPath,
+            projectRoot: projectContext?.projectRoot,
           });
           const systemMessages = systemMessagesResult.messages;
 
@@ -144,7 +150,7 @@ export async function createSubAgentTool(
           }
 
           // Create session for this subagent if SessionManager is provided
-          if (sessionManager && parentSessionID && parentAgentName && projectContext) {
+          if (sessionManager && parentSessionID && parentAgentId && projectContext) {
             try {
               // Create NEW SessionManager instance for this subagent
               // This eliminates shared state issues with parent agent
@@ -202,7 +208,7 @@ export async function createSubAgentTool(
               [...callStack, resolvedPath],
               subagentSessionManager,  // Pass NEW instance (not parent's)
               subagentSessionID,
-              agent.name,
+              agentId,
               projectContext,
               abortSignal  // Pass parent's abort signal to nested subagents
             );
@@ -226,7 +232,7 @@ export async function createSubAgentTool(
             subagentSessionID && subagentMsgID && subagentSessionManager ? {
               sessionManager: subagentSessionManager,  // Use NEW instance
               sessionID: subagentSessionID,
-              agentName: agent.name,
+              agentId,
               messageID: subagentMsgID,
               collectToolCalls: true,
               logPrefix: '[SubAgent] ',
@@ -249,7 +255,7 @@ export async function createSubAgentTool(
           // Update session message with final token usage and mark session completed
           if (subagentSessionManager && subagentSessionID && subagentMsgID && result.usage) {
             try {
-              await subagentSessionManager.updateMessage(subagentSessionID, agent.name, subagentMsgID, {
+              await subagentSessionManager.updateMessage(subagentSessionID, agentId, subagentMsgID, {
                 time: { completed: Date.now() },
                 assistant: {
                   tokens: {
@@ -258,7 +264,7 @@ export async function createSubAgentTool(
                   }
                 }
               });
-              await subagentSessionManager.setSessionCompleted(subagentSessionID, agent.name);
+              await subagentSessionManager.setSessionCompleted(subagentSessionID, agentId);
             } catch (error) {
               logger.debug(`[SubAgent] Failed to update message with token usage: ${(error as Error).message}`);
             }
@@ -296,7 +302,7 @@ export async function createSubAgentTool(
         // Mark session as error if we have session info
         if (subagentSessionManager && subagentSessionID) {
           try {
-            await subagentSessionManager.setSessionError(subagentSessionID, agent.name, {
+            await subagentSessionManager.setSessionError(subagentSessionID, agentId, {
               code: 'EXECUTION_ERROR',
               message: errorMsg
             });
@@ -330,7 +336,7 @@ export async function createSubAgentTools(
   callStack: string[] = [],
   sessionManager?: SessionManager,
   parentSessionID?: string,
-  parentAgentName?: string,
+  parentAgentId?: string,
   projectContext?: { projectRoot: string; cwd: string },
   abortSignal?: AbortSignal
 ): Promise<Record<string, Tool>> {
@@ -351,7 +357,7 @@ export async function createSubAgentTools(
         callStack,
         sessionManager,
         parentSessionID,
-        parentAgentName,
+        parentAgentId,
         projectContext,
         abortSignal
       );

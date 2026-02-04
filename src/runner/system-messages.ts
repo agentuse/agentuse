@@ -1,4 +1,5 @@
 import { dirname, resolve } from 'path';
+import { computeAgentId } from '../utils/agent-id';
 import { buildAutonomousAgentPrompt } from './prompt';
 import { buildManagerPrompt, type SubagentInfo, type ScheduleInfo } from '../manager/index.js';
 import { parseScheduleExpression, formatScheduleHuman } from '../scheduler/parser.js';
@@ -17,6 +18,8 @@ export interface BuildSystemMessagesOptions {
   isSubAgent?: boolean | undefined;
   /** Path to the agent file (needed for manager prompt to resolve subagent descriptions) */
   agentFilePath?: string | undefined;
+  /** Project root directory (needed for computing agentId for store naming) */
+  projectRoot?: string | undefined;
 }
 
 /**
@@ -33,7 +36,7 @@ export interface BuildSystemMessagesResult {
  * This is shared logic between main agent (preparation.ts) and subagents (subagent.ts)
  */
 export async function buildSystemMessages(options: BuildSystemMessagesOptions): Promise<BuildSystemMessagesResult> {
-  const { agent, isSubAgent = false, agentFilePath } = options;
+  const { agent, isSubAgent = false, agentFilePath, projectRoot } = options;
 
   let systemMessages: Array<{ role: string; content: string }> = [];
 
@@ -53,7 +56,7 @@ export async function buildSystemMessages(options: BuildSystemMessagesOptions): 
 
   // If this is a manager agent, inject the manager prompt
   if (agent.config.type === 'manager') {
-    const managerPrompt = await buildManagerSystemPrompt(agent, agentFilePath);
+    const managerPrompt = await buildManagerSystemPrompt(agent, agentFilePath, projectRoot);
     if (managerPrompt) {
       systemMessages.push({
         role: 'system',
@@ -75,7 +78,7 @@ export async function buildSystemMessages(options: BuildSystemMessagesOptions): 
 /**
  * Build the manager-specific system prompt
  */
-async function buildManagerSystemPrompt(agent: ParsedAgent, agentFilePath?: string): Promise<string | undefined> {
+async function buildManagerSystemPrompt(agent: ParsedAgent, agentFilePath?: string, projectRoot?: string): Promise<string | undefined> {
   // Build subagent info for the manager prompt
   const subagentInfo: SubagentInfo[] = [];
   if (agent.config.subagents && agentFilePath) {
@@ -102,9 +105,12 @@ async function buildManagerSystemPrompt(agent: ParsedAgent, agentFilePath?: stri
   }
 
   // Determine store name for the manager prompt
+  // Uses agentId (file-path-based) for consistency with actual store naming
   let storeName: string | undefined;
   if (agent.config.store) {
-    storeName = agent.config.store === true ? agent.name : agent.config.store;
+    storeName = agent.config.store === true
+      ? computeAgentId(agentFilePath, projectRoot, agent.name)
+      : agent.config.store;
   }
 
   // Determine schedule info for the manager prompt
@@ -143,7 +149,6 @@ export async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: str
   try {
     const store = LearningStore.fromAgentFile(
       agentFilePath,
-      agent.name,
       agent.config.learning?.file
     );
     const learnings = await store.load();

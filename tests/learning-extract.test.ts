@@ -90,7 +90,7 @@ describe("extractLearnings", () => {
       config: { evaluate: true, apply: false },
     });
 
-    const defaultPath = join(tempDir, "agents", "demo-agent.learnings.md");
+    const defaultPath = join(tempDir, "agents", "demo.learnings.md");
     expect(existsSync(defaultPath)).toBe(true);
     const content = readFileSync(defaultPath, "utf-8");
     expect(content).toContain("Shorten prompts");
@@ -110,7 +110,7 @@ describe("extractLearnings", () => {
       config: { evaluate: true, apply: false },
     });
 
-    expect(existsSync(join(tempDir, "agents", "demo-agent.learnings.md"))).toBe(false);
+    expect(existsSync(join(tempDir, "agents", "demo.learnings.md"))).toBe(false);
     expect(succeedMock).toHaveBeenCalledWith("No new learnings extracted");
   });
 

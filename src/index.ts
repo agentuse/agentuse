@@ -147,7 +147,7 @@ program
     let originalCwd: string | undefined;
 
     // Track session info for interrupt handling (needs to be accessible in catch block)
-    let interruptSessionInfo: { sessionID: string; agentName: string } | null = null;
+    let interruptSessionInfo: { sessionID: string; agentId: string } | null = null;
     let sessionErrorLogged = false;
     let sessionManager: SessionManagerType | undefined;
 
@@ -158,7 +158,7 @@ program
         try {
           await sessionManager.setSessionError(
             interruptSessionInfo.sessionID,
-            interruptSessionInfo.agentName,
+            interruptSessionInfo.agentId,
             { code: errorCode, message: errorMessage }
           );
           sessionErrorLogged = true;
@@ -513,8 +513,8 @@ program
       });
 
       // Update session info for interrupt handling (now that we have sessionID)
-      if (preparedExecution.sessionID) {
-        interruptSessionInfo = { sessionID: preparedExecution.sessionID, agentName: agent.name };
+      if (preparedExecution.sessionID && preparedExecution.agentId) {
+        interruptSessionInfo = { sessionID: preparedExecution.sessionID, agentId: preparedExecution.agentId };
       }
 
       // Display agent metadata in clean format

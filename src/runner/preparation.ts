@@ -1,4 +1,5 @@
 import { dirname } from 'path';
+import { computeAgentId } from '../utils/agent-id';
 import { createSubAgentTools } from '../subagent';
 import {
   DoomLoopDetector,
@@ -36,6 +37,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     agent,
     projectContext,
     agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
+    agentFilePath,
     mcpConnections: mcpClients,
   });
 
@@ -70,6 +72,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     agent,
     isSubAgent: false,
     agentFilePath,
+    projectRoot: projectContext?.projectRoot,
   });
   const systemMessages = systemMessagesResult.messages;
 
@@ -113,6 +116,9 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     }
   }
 
+  // Compute agentId (file-path-based identifier) for session operations
+  const agentId = computeAgentId(agentFilePath, projectContext?.projectRoot, agent.name);
+
   // Load sub-agent tools if configured
   let subAgentTools: Record<string, ToolSet[string]> = {};
   if (agent.config.subagents && agent.config.subagents.length > 0) {
@@ -130,7 +136,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       [],
       sessionManager,
       sessionID,
-      agent.name,
+      agentId,
       projectContext,
       abortSignal
     );
@@ -175,6 +181,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     subAgentNames,
     sessionID,
     assistantMsgID,
+    agentId,
     doomLoopDetector,
     cleanup,
     learningsApplied

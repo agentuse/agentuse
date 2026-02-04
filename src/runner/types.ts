@@ -25,6 +25,8 @@ export interface PreparedAgentExecution {
   subAgentNames: Set<string>;
   sessionID?: string | undefined;
   assistantMsgID?: string | undefined;
+  /** Agent ID (file-path-based identifier for session directory naming) */
+  agentId?: string | undefined;
   doomLoopDetector: DoomLoopDetector;
   /** Cleanup function to release resources (store locks, etc.) - call when agent execution completes */
   cleanup: () => Promise<void>;

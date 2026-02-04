@@ -1,23 +1,23 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, resolve, basename } from 'path';
 import type { Learning, LearningCategory } from './types';
 
 /**
  * Resolve learning file path
- * - Default: {agent-dir}/{agent-name}.learnings.md
+ * - Default: {agent-dir}/{agent-file-basename}.learnings.md
  * - Custom: config.file relative to agent file
  */
 export function resolveLearningFilePath(
   agentFilePath: string,
-  agentName: string,
   customFile?: string
 ): string {
   const agentDir = dirname(agentFilePath);
   if (customFile) {
     return resolve(agentDir, customFile);
   }
-  return join(agentDir, `${agentName}.learnings.md`);
+  const agentFileBasename = basename(agentFilePath, '.md');
+  return join(agentDir, `${agentFileBasename}.learnings.md`);
 }
 
 /**
@@ -30,8 +30,8 @@ export class LearningStore {
     this.filePath = filePath;
   }
 
-  static fromAgentFile(agentFilePath: string, agentName: string, customFile?: string): LearningStore {
-    const filePath = resolveLearningFilePath(agentFilePath, agentName, customFile);
+  static fromAgentFile(agentFilePath: string, customFile?: string): LearningStore {
+    const filePath = resolveLearningFilePath(agentFilePath, customFile);
     return new LearningStore(filePath);
   }
 

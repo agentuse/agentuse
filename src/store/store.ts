@@ -342,13 +342,13 @@ export class Store {
  * Create a Store instance from config
  * @param projectRoot The project root directory
  * @param storeConfig The store configuration (true for isolated, string for shared)
- * @param agentName The agent name (used when storeConfig is true)
+ * @param agentId The agent ID (file-path-based identifier, used when storeConfig is true)
  */
 export function createStore(
   projectRoot: string,
   storeConfig: true | string,
-  agentName: string
+  agentId: string
 ): Store {
-  const storeName = storeConfig === true ? agentName : storeConfig;
-  return new Store(projectRoot, storeName, agentName);
+  const storeName = storeConfig === true ? agentId : storeConfig;
+  return new Store(projectRoot, storeName, agentId);
 }
