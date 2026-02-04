@@ -48,14 +48,15 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
 
   // Extract agent ID from file path (relative path without extension)
   // e.g., /root/social/quotes/1-quotes-create.agentuse -> social/quotes/1-quotes-create
+  // Falls back to agent name if no file path available
   const agentId = agentFilePath
     ? path.relative(projectContext.projectRoot, agentFilePath).replace(/\.agentuse$/, '')
-    : undefined;
+    : agent.name;
 
   const sessionID = await sessionManager.createSession({
     ...(parentSessionID ? { parentSessionID } : {}),
     agent: {
-      ...(agentId && { id: agentId }),
+      id: agentId,
       name: agent.name,
       ...(agent.description && { description: agent.description }),
       ...(agentFilePath && { filePath: agentFilePath }),

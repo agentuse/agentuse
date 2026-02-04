@@ -15,7 +15,7 @@ export interface SessionInfo {
 
   // Agent metadata
   agent: {
-    id?: string;                     // Agent ID (filename without extension, e.g., "1-quotes-create")
+    id: string;                      // Agent ID (relative path without extension, e.g., "social/quotes/1-quotes-create")
     name: string;                    // Agent display name from YAML
     filePath?: string;               // Path to .agentuse file (if local)
     description?: string;            // Agent description from YAML

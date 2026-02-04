@@ -7,13 +7,24 @@ import { resolveProjectContext } from "../utils/project";
 
 interface SessionSummary {
   id: string;
-  agentId?: string;
+  agentId: string;
   agentName: string;
   model: string;
   created: Date;
   isSubAgent: boolean;
   dirPath: string;
   status?: 'running' | 'completed' | 'error';
+}
+
+/**
+ * Compute agent ID from file path and project root
+ * Used for migrating old sessions that don't have agent.id
+ */
+function computeAgentId(filePath: string | undefined, projectRoot: string, agentName: string): string {
+  if (filePath) {
+    return path.relative(projectRoot, filePath).replace(/\.agentuse$/, '');
+  }
+  return agentName;
 }
 
 /**
@@ -58,11 +69,16 @@ async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
       const sessionJsonPath = path.join(sessionDir, entry.name, "session.json");
       try {
         const content = await fs.readFile(sessionJsonPath, "utf-8");
-        const sessionInfo = JSON.parse(content) as SessionInfo;
+        // Use Partial for agent.id to handle old sessions that don't have it
+        const sessionInfo = JSON.parse(content) as SessionInfo & { agent: { id?: string } };
+
+        // Migrate old sessions: compute agentId if missing
+        const agentId = sessionInfo.agent.id
+          ?? computeAgentId(sessionInfo.agent.filePath, sessionInfo.project.root, sessionInfo.agent.name);
 
         sessions.push({
           id: sessionInfo.id,
-          ...(sessionInfo.agent.id && { agentId: sessionInfo.agent.id }),
+          agentId,
           agentName: sessionInfo.agent.name,
           model: sessionInfo.model,
           created: new Date(sessionInfo.time.created),
@@ -74,6 +90,7 @@ async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
         // If session.json is missing or invalid, use parsed info
         sessions.push({
           id: parsed.id,
+          agentId: parsed.agentName, // Use agentName as fallback for old sessions without session.json
           agentName: parsed.agentName,
           model: "unknown",
           created: new Date(0),
@@ -116,7 +133,14 @@ async function getSessionDetails(
       path.join(sessionDir, "session.json"),
       "utf-8"
     );
-    result.session = JSON.parse(sessionContent) as SessionInfo;
+    // Use Partial for agent.id to handle old sessions that don't have it
+    const rawSession = JSON.parse(sessionContent) as SessionInfo & { agent: { id?: string } };
+
+    // Migrate old sessions: compute agentId if missing
+    if (!rawSession.agent.id) {
+      rawSession.agent.id = computeAgentId(rawSession.agent.filePath, rawSession.project.root, rawSession.agent.name);
+    }
+    result.session = rawSession as SessionInfo;
   } catch {
     return result;
   }
@@ -446,11 +470,11 @@ async function listSessionsCommand(
     return;
   }
 
-  // Calculate column widths - prefer agentId over agentName for display
+  // Calculate column widths
   const idWidth = 12; // First 12 chars of ULID
   const agentWidth = Math.min(
     20,
-    Math.max(...sessions.map((s) => (s.agentId || s.agentName).length))
+    Math.max(...sessions.map((s) => s.agentId.length))
   );
   const modelWidth = 20;
 
@@ -465,9 +489,7 @@ async function listSessionsCommand(
   for (const session of sessions) {
     const shortId = session.id.substring(0, idWidth);
     const statusIcon = session.status === 'completed' ? '✓' : session.status === 'error' ? '✗' : '⋯';
-    // Display agentId if available, otherwise fall back to agentName for backwards compatibility
-    const agentDisplay = session.agentId || session.agentName;
-    const agent = truncate(agentDisplay, agentWidth).padEnd(agentWidth);
+    const agent = truncate(session.agentId, agentWidth).padEnd(agentWidth);
     const model = formatModel(session.model).padEnd(modelWidth);
     const date = formatDate(session.created);
 
