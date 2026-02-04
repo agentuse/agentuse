@@ -57,6 +57,10 @@ const MCPServerSchema = z.union([
 // Schema for agent configuration as per spec
 // Supports both mcp_servers (deprecated) and mcpServers (preferred)
 const AgentSchema = z.object({
+  name: z.string()
+    .min(1)
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/, 'Name must be alphanumeric with spaces, hyphens, or underscores')
+    .optional(),
   model: z.string(),
   description: z.string().optional(),
   version: z.string().optional(),
@@ -135,9 +139,9 @@ export function parseAgentContent(content: string, name: string): ParsedAgent {
     // Validate configuration with Zod
     const config = AgentSchema.parse(data);
 
-    // Return parsed agent
+    // Return parsed agent (prefer frontmatter name over filename)
     return {
-      name,
+      name: config.name || name,
       config,
       instructions: instructions.trim(),
       ...(config.description && { description: config.description })
