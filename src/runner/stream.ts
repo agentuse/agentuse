@@ -3,7 +3,7 @@ import type { ToolCallTrace } from '../plugin/types';
 import type { DoomLoopDetector } from '../tools/index.js';
 import type { SessionManager } from '../session';
 import type { AgentPart } from '../types/parts';
-import type { ToolStateCompleted } from '../session/types';
+import type { ToolStateCompleted, ToolStateError } from '../session/types';
 import { logger } from '../utils/logger';
 import type { AgentChunk } from './types';
 
@@ -383,20 +383,28 @@ export async function processAgentStream(
             if (pending.addPartPromise && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
               const partID = await pending.addPartPromise;
               if (partID) {
-                // Build completed state with required fields
-                const completedState: ToolStateCompleted = {
-                  status: 'completed',
-                  input: pending.input || {},  // Use stored input from tool-call
-                  output: chunk.toolResultRaw || chunk.toolResult,
-                  time: {
-                    start: pending.startTime,
-                    end: Date.now()
-                  },
-                  ...(tokens && { metadata: { tokens } })
-                };
+                // Build state based on success/failure
+                const endTime = Date.now();
+                const toolState: ToolStateCompleted | ToolStateError = toolSuccess
+                  ? {
+                      status: 'completed',
+                      input: pending.input || {},
+                      output: chunk.toolResultRaw || chunk.toolResult,
+                      time: { start: pending.startTime, end: endTime },
+                      ...(tokens && { metadata: { tokens } })
+                    }
+                  : {
+                      status: 'error',
+                      input: pending.input || {},
+                      error: rawResult?.error
+                        ? (typeof rawResult.error === 'string' ? rawResult.error : JSON.stringify(rawResult.error))
+                        : (chunk.toolResult || 'Unknown error'),
+                      time: { start: pending.startTime, end: endTime },
+                      ...(tokens && { metadata: { tokens } })
+                    };
 
                 const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentId, options.messageID, partID, {
-                  state: completedState
+                  state: toolState
                 }).catch(err => logger.debug(`Failed to update tool part: ${err.message}`));
                 trackSessionUpdate(updatePromise);
               }
