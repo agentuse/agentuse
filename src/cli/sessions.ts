@@ -12,6 +12,7 @@ interface SessionSummary {
   created: Date;
   isSubAgent: boolean;
   dirPath: string;
+  status?: 'running' | 'completed' | 'error';
 }
 
 /**
@@ -65,6 +66,7 @@ async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
           created: new Date(sessionInfo.time.created),
           isSubAgent: sessionInfo.agent.isSubAgent,
           dirPath: path.join(sessionDir, entry.name),
+          status: sessionInfo.status,
         });
       } catch {
         // If session.json is missing or invalid, use parsed info
@@ -451,19 +453,21 @@ async function listSessionsCommand(
   const modelWidth = 20;
 
   // Header
+  const statusWidth = 4;
   process.stdout.write(
-    `${"ID".padEnd(idWidth)}  ${"AGENT".padEnd(agentWidth)}  ${"MODEL".padEnd(modelWidth)}  DATE\n`
+    `${"ID".padEnd(idWidth)}  ${"ST".padEnd(statusWidth)}  ${"AGENT".padEnd(agentWidth)}  ${"MODEL".padEnd(modelWidth)}  DATE\n`
   );
-  process.stdout.write(`${"-".repeat(idWidth + agentWidth + modelWidth + 20)}\n`);
+  process.stdout.write(`${"-".repeat(idWidth + statusWidth + agentWidth + modelWidth + 24)}\n`);
 
   // Rows
   for (const session of sessions) {
     const shortId = session.id.substring(0, idWidth);
+    const statusIcon = session.status === 'completed' ? '✓' : session.status === 'error' ? '✗' : '⋯';
     const agent = truncate(session.agentName, agentWidth).padEnd(agentWidth);
     const model = formatModel(session.model).padEnd(modelWidth);
     const date = formatDate(session.created);
 
-    process.stdout.write(`${shortId}  ${agent}  ${model}  ${date}\n`);
+    process.stdout.write(`${shortId}  ${statusIcon.padEnd(statusWidth)}  ${agent}  ${model}  ${date}\n`);
   }
 
   // Footer
@@ -530,6 +534,10 @@ async function showSession(
   }
   process.stdout.write(`Model:       ${s.model}\n`);
   process.stdout.write(`Started:     ${new Date(s.time.created).toLocaleString()}\n`);
+
+  // Display session status
+  const statusIcon = s.status === 'completed' ? '✓' : s.status === 'error' ? '✗' : '⋯';
+  process.stdout.write(`Status:      ${statusIcon} ${s.status || 'unknown'}\n`);
 
   if (s.config.mcpServers && s.config.mcpServers.length > 0) {
     process.stdout.write(`MCP Servers: ${s.config.mcpServers.join(", ")}\n`);

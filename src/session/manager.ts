@@ -29,13 +29,14 @@ export class SessionManager {
   /**
    * Create a new session
    */
-  async createSession(info: Omit<SessionInfo, 'id' | 'time'>): Promise<string> {
+  async createSession(info: Omit<SessionInfo, 'id' | 'time' | 'status'>): Promise<string> {
     const id = ulid();
     const now = Date.now();
 
     const session: SessionInfo = {
       ...info,
       id,
+      status: 'running',
       time: {
         created: now,
         updated: now
@@ -245,10 +246,20 @@ export class SessionManager {
     error: { message: string; code: string }
   ): Promise<void> {
     await this.updateSession(sessionID, agentName, {
+      status: 'error',
       error: {
         ...error,
         time: Date.now()
       }
+    });
+  }
+
+  /**
+   * Mark session as completed successfully
+   */
+  async setSessionCompleted(sessionID: string, agentName: string): Promise<void> {
+    await this.updateSession(sessionID, agentName, {
+      status: 'completed'
     });
   }
 

@@ -140,7 +140,7 @@ export async function runAgent(
       });
     }
 
-    // Update session message with final token usage
+    // Update session message with final token usage and mark session completed
     if (sessionManager && prepSessionID && assistantMsgID && result.usage) {
       try {
         await sessionManager.updateMessage(prepSessionID, agent.name, assistantMsgID, {
@@ -152,6 +152,7 @@ export async function runAgent(
             }
           }
         });
+        await sessionManager.setSessionCompleted(prepSessionID, agent.name);
       } catch (error) {
         logger.debug(`Failed to update message with token usage: ${(error as Error).message}`);
       }

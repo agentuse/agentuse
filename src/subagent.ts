@@ -85,6 +85,11 @@ export async function createSubAgentTool(
     execute: async ({ task, context }) => {
       const startTime = Date.now();
 
+      // Declare session variables outside try block so they're accessible in catch
+      let subagentSessionID: string | undefined;
+      let subagentMsgID: string | undefined;
+      let subagentSessionManager: SessionManager | undefined;
+
       try {
         logger.info(`[SubAgent:depth=${depth}] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
 
@@ -107,13 +112,6 @@ export async function createSubAgentTool(
         // Load nested sub-agents if within depth limit (will be populated after session creation)
         const maxDepth = getMaxSubAgentDepth();
         let nestedSubAgentTools: Record<string, Tool> = {};
-
-        // Will be set after session creation
-        let subagentSessionID: string | undefined;
-        let subagentMsgID: string | undefined;
-
-        // Create NEW SessionManager instance for this subagent (eliminates shared state issues)
-        let subagentSessionManager: SessionManager | undefined;
 
         // Check depth limit but don't create nested tools yet
         if (depth + 1 >= maxDepth && agent.config.subagents && agent.config.subagents.length > 0) {
@@ -248,7 +246,7 @@ export async function createSubAgentTool(
             logger.info(`[SubAgent:depth=${depth}] ${agent.name} tokens used: ${result.usage.totalTokens}`);
           }
 
-          // Update session message with final token usage
+          // Update session message with final token usage and mark session completed
           if (subagentSessionManager && subagentSessionID && subagentMsgID && result.usage) {
             try {
               await subagentSessionManager.updateMessage(subagentSessionID, agent.name, subagentMsgID, {
@@ -260,6 +258,7 @@ export async function createSubAgentTool(
                   }
                 }
               });
+              await subagentSessionManager.setSessionCompleted(subagentSessionID, agent.name);
             } catch (error) {
               logger.debug(`[SubAgent] Failed to update message with token usage: ${(error as Error).message}`);
             }
@@ -293,6 +292,19 @@ export async function createSubAgentTool(
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         logger.error(`[SubAgent] ${agent.name} failed: ${errorMsg}`);
+
+        // Mark session as error if we have session info
+        if (subagentSessionManager && subagentSessionID) {
+          try {
+            await subagentSessionManager.setSessionError(subagentSessionID, agent.name, {
+              code: 'EXECUTION_ERROR',
+              message: errorMsg
+            });
+          } catch {
+            // Ignore session update errors
+          }
+        }
+
         return {
           output: `Sub-agent ${agent.name} failed: ${errorMsg}`
         };

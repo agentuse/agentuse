@@ -6,9 +6,12 @@ export type DeepPartial<T> = {
 };
 
 // Session Info Schema
+export type SessionStatus = 'running' | 'completed' | 'error';
+
 export interface SessionInfo {
   id: string;                        // ULID
   parentSessionID?: string;          // For subagent sessions - links to parent agent session
+  status: SessionStatus;             // Session completion status
 
   // Agent metadata
   agent: {
