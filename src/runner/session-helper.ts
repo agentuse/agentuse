@@ -1,3 +1,4 @@
+import path from 'path';
 import type { ParsedAgent } from '../parser';
 import type { SessionManager } from '../session';
 
@@ -45,9 +46,16 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
     parentSessionID,
   } = params;
 
+  // Extract agent ID from file path (relative path without extension)
+  // e.g., /root/social/quotes/1-quotes-create.agentuse -> social/quotes/1-quotes-create
+  const agentId = agentFilePath
+    ? path.relative(projectContext.projectRoot, agentFilePath).replace(/\.agentuse$/, '')
+    : undefined;
+
   const sessionID = await sessionManager.createSession({
     ...(parentSessionID ? { parentSessionID } : {}),
     agent: {
+      ...(agentId && { id: agentId }),
       name: agent.name,
       ...(agent.description && { description: agent.description }),
       ...(agentFilePath && { filePath: agentFilePath }),

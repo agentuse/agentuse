@@ -7,6 +7,7 @@ import { resolveProjectContext } from "../utils/project";
 
 interface SessionSummary {
   id: string;
+  agentId?: string;
   agentName: string;
   model: string;
   created: Date;
@@ -61,6 +62,7 @@ async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
 
         sessions.push({
           id: sessionInfo.id,
+          ...(sessionInfo.agent.id && { agentId: sessionInfo.agent.id }),
           agentName: sessionInfo.agent.name,
           model: sessionInfo.model,
           created: new Date(sessionInfo.time.created),
@@ -444,11 +446,11 @@ async function listSessionsCommand(
     return;
   }
 
-  // Calculate column widths
+  // Calculate column widths - prefer agentId over agentName for display
   const idWidth = 12; // First 12 chars of ULID
   const agentWidth = Math.min(
     20,
-    Math.max(...sessions.map((s) => s.agentName.length))
+    Math.max(...sessions.map((s) => (s.agentId || s.agentName).length))
   );
   const modelWidth = 20;
 
@@ -463,7 +465,9 @@ async function listSessionsCommand(
   for (const session of sessions) {
     const shortId = session.id.substring(0, idWidth);
     const statusIcon = session.status === 'completed' ? '✓' : session.status === 'error' ? '✗' : '⋯';
-    const agent = truncate(session.agentName, agentWidth).padEnd(agentWidth);
+    // Display agentId if available, otherwise fall back to agentName for backwards compatibility
+    const agentDisplay = session.agentId || session.agentName;
+    const agent = truncate(agentDisplay, agentWidth).padEnd(agentWidth);
     const model = formatModel(session.model).padEnd(modelWidth);
     const date = formatDate(session.created);
 

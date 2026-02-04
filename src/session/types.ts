@@ -15,7 +15,8 @@ export interface SessionInfo {
 
   // Agent metadata
   agent: {
-    name: string;                    // Agent name from YAML
+    id?: string;                     // Agent ID (filename without extension, e.g., "1-quotes-create")
+    name: string;                    // Agent display name from YAML
     filePath?: string;               // Path to .agentuse file (if local)
     description?: string;            // Agent description from YAML
     isSubAgent: boolean;             // True if this is a subagent execution
