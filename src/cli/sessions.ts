@@ -364,22 +364,6 @@ function formatToolOutput(output: string, maxLen: number = 200, maxLines: number
   return result.join("\n");
 }
 
-/**
- * Format model name for display (shorter)
- */
-function formatModel(model: string): string {
-  // anthropic:claude-sonnet-4-0 -> claude-sonnet-4
-  const parts = model.split(":");
-  if (parts.length < 2) return model;
-
-  let modelName = parts[1];
-
-  // Remove trailing version numbers like -0, -1
-  modelName = modelName.replace(/-\d+$/, "");
-
-  return truncate(modelName, 20);
-}
-
 export function createSessionsCommand(): Command {
   const sessionsCmd = new Command("sessions")
     .description("View session logs")
@@ -472,28 +456,26 @@ async function listSessionsCommand(
 
   // Calculate column widths
   const idWidth = 12; // First 12 chars of ULID
+  const statusWidth = 6; // "STATUS"
   const agentWidth = Math.min(
-    20,
+    40,
     Math.max(...sessions.map((s) => s.agentId.length))
   );
-  const modelWidth = 20;
 
   // Header
-  const statusWidth = 4;
   process.stdout.write(
-    `${"ID".padEnd(idWidth)}  ${"ST".padEnd(statusWidth)}  ${"AGENT".padEnd(agentWidth)}  ${"MODEL".padEnd(modelWidth)}  DATE\n`
+    `${"ID".padEnd(idWidth)}  ${"STATUS".padEnd(statusWidth)}  ${"AGENT".padEnd(agentWidth)}  DATE\n`
   );
-  process.stdout.write(`${"-".repeat(idWidth + statusWidth + agentWidth + modelWidth + 24)}\n`);
+  process.stdout.write(`${"-".repeat(idWidth + statusWidth + agentWidth + 16)}\n`);
 
   // Rows
   for (const session of sessions) {
     const shortId = session.id.substring(0, idWidth);
-    const statusIcon = session.status === 'completed' ? '✓' : session.status === 'error' ? '✗' : '⋯';
+    const statusText = session.status === 'completed' ? 'done' : session.status === 'error' ? 'fail' : 'run';
     const agent = truncate(session.agentId, agentWidth).padEnd(agentWidth);
-    const model = formatModel(session.model).padEnd(modelWidth);
     const date = formatDate(session.created);
 
-    process.stdout.write(`${shortId}  ${statusIcon.padEnd(statusWidth)}  ${agent}  ${model}  ${date}\n`);
+    process.stdout.write(`${shortId}  ${statusText.padEnd(statusWidth)}  ${agent}  ${date}\n`);
   }
 
   // Footer
