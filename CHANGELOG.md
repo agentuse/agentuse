@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.8.0] - 2026-02-04
+
+### Added
+
+- **[Experimental]** Manager agent type with orchestration and store support for coordinating multi-agent workflows
+- **[Experimental]** Schedule awareness for manager agents to pace work appropriately
+- **[Experimental]** Agent learning system with evaluation and injection of learnings from past sessions
+- **[Experimental]** Persistent store with locking and atomic writes for data safety
+- Session status tracking with completion markers and error logging
+- Explicit agent ID/name support in frontmatter configuration
+- Agent ID tracking in session metadata for improved traceability
+
+### Changed
+
+- Replace agent.name with agent.id for session and store identifiers (breaking change)
+- Make agent.id mandatory with migration logic for existing sessions
+- Move learning injection from system messages to agent instructions
+- Improve sessions list CLI readability
+- Optimize agent file watching with glob pattern
+- Extract tool loading and system message building into separate modules
+- Improve bash path access validation with clearer skill warnings
+
+### Fixed
+
+- Track error states for tool execution results
+- Include toolCallId in error tool results
+- Prevent race conditions with serialized writes during interrupts
+- Resolve race condition in tool result updates
+- Suppress telemetry errors and add shutdown timeout
+
+### Documentation
+
+- Add manager agents and store guides
+- Add learning guide with experimental warnings
+- Improve quickstart and demo content
+
+---
+
 ## [0.7.1] - 2026-01-27
 
 ### Added
