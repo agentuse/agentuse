@@ -87,20 +87,20 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       const { sessionID: createdSessionID, messageID } = await createSessionAndMessage({
         sessionManager,
         agent,
-        agentFilePath,
+        ...(agentFilePath !== undefined && { agentFilePath }),
         systemMessages: systemMessages.map(m => m.content),
         task: resolvedInstructions,
-        userPrompt,
+        ...(userPrompt !== undefined && { userPrompt }),
         projectContext,
         version: packageVersion,
         config: {
-          timeout: agent.config.timeout,
+          ...(agent.config.timeout !== undefined && { timeout: agent.config.timeout }),
           maxSteps,
-          mcpServers: agent.config.mcpServers ? Object.keys(agent.config.mcpServers) : undefined,
-          subagents: agent.config.subagents?.map(sa => ({
+          ...(agent.config.mcpServers && { mcpServers: Object.keys(agent.config.mcpServers) }),
+          ...(agent.config.subagents && { subagents: agent.config.subagents.map(sa => ({
             path: sa.path,
             ...(sa.name && { name: sa.name })
-          })),
+          })) }),
         },
         isSubAgent: false,
       });

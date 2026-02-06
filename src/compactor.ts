@@ -34,7 +34,7 @@ export async function compactMessages(
 
     // Use the agent's model to create summary
     const model = await createModel(modelString);
-    
+
     const { text } = await generateText({
       model,
       messages: [

@@ -176,13 +176,13 @@ export async function createSubAgentTool(
                 projectContext,
                 version: process.env.npm_package_version || 'unknown',
                 config: {
-                  timeout: agent.config.timeout,
-                  maxSteps: agent.config.maxSteps,
-                  mcpServers: agent.config.mcpServers ? Object.keys(agent.config.mcpServers) : undefined,
-                  subagents: agent.config.subagents?.map(s => ({
+                  ...(agent.config.timeout !== undefined && { timeout: agent.config.timeout }),
+                  ...(agent.config.maxSteps !== undefined && { maxSteps: agent.config.maxSteps }),
+                  ...(agent.config.mcpServers && { mcpServers: Object.keys(agent.config.mcpServers) }),
+                  ...(agent.config.subagents && { subagents: agent.config.subagents.map(s => ({
                     path: s.path,
                     ...(s.name && { name: s.name })
-                  })),
+                  })) }),
                 },
                 isSubAgent: true,
                 parentSessionID,
