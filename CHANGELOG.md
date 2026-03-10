@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.9.0] - 2026-03-10
+
+### Added
+
+- **Docker-based sandbox execution** with per-path filesystem mounting, replacing E2B
+- Orphaned container cleanup and graceful shutdown for sandbox environments
+- Docker image auto-pull for seamless sandbox setup
+- Path validator module for sandbox mount validation
+
+### Changed
+
+- Switch plugin compilation from esbuild-wasm to native esbuild, fixing WASM crashes in bun test environment
+- Tighten skill name validation to enforce lowercase alphanumeric with single hyphens and optional colon namespacing
+- Update model references to Claude 4.6
+- Consolidate isolated environment guide into new sandbox guide
+
+### Documentation
+
+- Add sandbox guide with Docker-based execution instructions
+- Update self-hosting guide for sandbox workflow
+- Update model references across documentation
+
+---
+
 ## [0.8.0] - 2026-02-04
 
 ### Added
