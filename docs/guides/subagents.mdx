@@ -36,7 +36,7 @@ Research the requested topic and provide comprehensive findings.
 Create `main.agentuse`:
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 subagents:
   - path: ./researcher.agentuse
 ---
@@ -55,7 +55,7 @@ When asked for information, use the researcher tool to gather data.
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 subagents:
   - path: ./agents/researcher.agentuse
   - path: ./agents/writer.agentuse
@@ -76,7 +76,7 @@ You can customize sub-agent behavior:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 subagents:
   - path: ./researcher.agentuse
     name: custom_researcher  # Override default name
@@ -106,7 +106,7 @@ Sub-agents accept optional parameters when called as tools:
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 subagents:
   - path: ./data-processor.agentuse
 ---
@@ -136,7 +136,7 @@ The sub-agent receives its original instructions plus any additional task and co
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 subagents:
   - path: ./technical-expert.agentuse
   - path: ./creative-writer.agentuse
@@ -166,14 +166,14 @@ This limitation is intentional to:
 ```yaml
 # orchestrator.agentuse
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 subagents:
   - path: ./team-lead.agentuse  # ✅ Works
 ---
 
 # team-lead.agentuse
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 subagents:
   - path: ./developer.agentuse  # ❌ Will be ignored
   - path: ./tester.agentuse      # ❌ Will be ignored
@@ -188,7 +188,7 @@ subagents:
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 subagents:
   - path: ./analyzer-1.agentuse
   - path: ./analyzer-2.agentuse
@@ -217,7 +217,7 @@ Sub-agents create their own isolated tool environments:
 ```yaml
 # parent.agentuse
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 mcpServers:
   database:
     command: "node"
@@ -279,7 +279,7 @@ All sub-agents receive consistent system context:
 ```yaml
 # support-system.agentuse
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 subagents:
   - path: ./agents/ticket-classifier.agentuse
   - path: ./agents/knowledge-base.agentuse
@@ -316,10 +316,10 @@ Classify support tickets into categories:
 ```yaml
 # Optimize model usage
 ---
-model: anthropic:claude-sonnet-4-5  # Smart coordinator
+model: anthropic:claude-sonnet-4-6  # Smart coordinator
 subagents:
   - path: ./simple-task.agentuse  # Can use claude-3-5-haiku-latest
-  - path: ./complex-task.agentuse  # Can use anthropic:claude-opus-4-5
+  - path: ./complex-task.agentuse  # Can use anthropic:claude-opus-4-6
 ---
 ```
 
@@ -341,7 +341,7 @@ Control sub-agent execution limits:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 subagents:
   - path: ./quick-task.agentuse
     maxSteps: 10              # Limit for simple tasks

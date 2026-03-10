@@ -28,7 +28,7 @@ Set `type: manager` in your agent frontmatter:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 type: manager
 subagents:
   - path: ./researcher.agentuse
@@ -140,7 +140,7 @@ A good SOP clearly defines the workflow phases:
 ```yaml
 # manager.agentuse
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 type: manager
 store: "content-pipeline"
 schedule: "0 * * * *"  # Every hour
@@ -201,7 +201,7 @@ Return a summary of topics found.
 ```yaml
 # agents/writer.agentuse
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 store: "content-pipeline"
 ---
 

@@ -37,7 +37,7 @@ Create `my-agent.agentuse`:
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 ---
 
 Generate a daily motivation quote with a tech fact.
@@ -56,7 +56,7 @@ A real-world agent with MCP tools:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 mcpServers:
   postgres:
     command: npx

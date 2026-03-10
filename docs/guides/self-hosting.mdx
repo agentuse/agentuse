@@ -1,6 +1,6 @@
 ---
 title: Self-Hosting
-description: Deploy your own AgentUse server for production workloads
+description: Run AgentUse in Docker for local development or production deployment
 ---
 
 ## Why Self-Host?
@@ -15,24 +15,20 @@ description: Deploy your own AgentUse server for production workloads
   <Card title="API Access" icon="webhook">
     Expose agents via HTTP API for integration with other services.
   </Card>
-  <Card title="Always On" icon="clock">
-    Run agents 24/7 without keeping your local machine running.
+  <Card title="Reproducible" icon="copy">
+    Same container runs identically across machines. Share your setup with teammates.
   </Card>
 </CardGroup>
 
 ## Quick Start
 
-Run the official Docker image:
-
 ```bash
-docker run -d \
+docker run -d --name agentuse \
   -p 12233:12233 \
   -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
   -v $(pwd)/agents:/agents \
   ghcr.io/agentuse/agentuse:latest
 ```
-
-Your AgentUse server is now running at `http://localhost:12233`.
 
 Test it:
 
@@ -42,87 +38,74 @@ curl http://localhost:12233/run \
   -d '{"agent": "/agents/hello.agentuse"}'
 ```
 
-## What's Included
+## Local Development
 
-| Component | Version | Purpose |
-|-----------|---------|---------|
-| AgentUse | Latest | Bun-compiled binary |
-| Node.js | 20.x | Run JavaScript scripts |
-| Python | 3.12 | Run Python scripts |
-| git | Latest | Version control operations |
-| curl | Latest | HTTP requests |
-| jq | Latest | JSON processing |
-| bash | Latest | Shell scripts |
+For local development, mount your credentials and workspace instead of using environment variables:
+
+```bash
+docker run -d --name agentuse-dev \
+  -p 12233:12233 \
+  -v ~/.local/share/agentuse:/root/.local/share/agentuse \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  ghcr.io/agentuse/agentuse:latest
+```
+
+This gives the container access to your OAuth tokens, API keys, and session logs from `agentuse auth login`.
+
+Run agents via exec:
+
+```bash
+docker exec -it agentuse-dev agentuse run my-agent.agentuse
+```
+
+<Tip>
+  Add `alias agentuse-docker='docker exec -it agentuse-dev agentuse'` to your shell profile for convenience.
+</Tip>
+
+<Warning>
+  OAuth tokens may expire. If you encounter auth errors, run `agentuse auth login` on your host to refresh.
+</Warning>
 
 ## Configuration
 
 ### Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | Yes* | Anthropic Claude API key |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Yes* | Long-lived OAuth token from `claude setup-token` (valid 1 year) |
-| `OPENAI_API_KEY` | Yes* | OpenAI API key |
-| `OPENROUTER_API_KEY` | No | OpenRouter API key |
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_API_KEY` | Anthropic Claude API key |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Long-lived OAuth token from `claude setup-token` (valid 1 year) |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
 
 <Note>
-  *At least one AI provider authentication is required. For Anthropic, use either `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`.
+  At least one AI provider authentication is required. For Anthropic, use either `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`.
 </Note>
-
-<Tip>
-  To get your OAuth token, run `claude setup-token` in Claude Code CLI. This creates a long-lived token valid for 1 year.
-</Tip>
 
 ### Using an Environment File
 
 ```bash
-docker run -d \
-  -p 12233:12233 \
-  --env-file .env \
+docker run -d -p 12233:12233 --env-file .env \
   -v $(pwd)/agents:/agents \
   ghcr.io/agentuse/agentuse:latest
 ```
 
 ## Including Your Agents
 
-### Option 1: Volume Mount
-
-Mount agent files at runtime:
+**Volume mount** (best for development):
 
 ```bash
-docker run -d \
-  -p 12233:12233 \
-  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  -v $(pwd)/agents:/agents \
-  ghcr.io/agentuse/agentuse:latest
+-v $(pwd)/agents:/agents
 ```
 
-<Info>
-  Best for development - no rebuild needed when agents change.
-</Info>
-
-### Option 2: Extend Base Image
-
-Create a Dockerfile in your project:
+**Bake into image** (best for production):
 
 ```dockerfile
 FROM ghcr.io/agentuse/agentuse:latest
-
 COPY ./agents /agents
 ```
 
-Build and deploy:
-
-```bash
-docker build -t my-company/agents:latest .
-docker run -d -p 12233:12233 -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY my-company/agents:latest
-```
-
-<Info>
-  Best for production - self-contained, versioned, deployable.
-</Info>
-
-### Option 3: Docker Compose
+## Docker Compose
 
 ```yaml
 # docker-compose.yml
@@ -145,48 +128,19 @@ services:
       retries: 3
 ```
 
-```bash
-docker-compose up -d
-```
-
 ## Extending the Base Image
-
-Add packages your agents need:
 
 ```dockerfile
 FROM ghcr.io/agentuse/agentuse:latest
 
-# System packages
 RUN apk add --no-cache ffmpeg imagemagick
-
-# Python packages
 RUN pip3 install --no-cache-dir pandas numpy requests
-
-# Node.js packages
 RUN npm install -g typescript puppeteer
 
-# Copy your agents
 COPY ./agents /agents
 ```
 
-## Building from Source
-
-Build for your platform:
-
-<Tabs>
-  <Tab title="arm64 (Apple Silicon / Graviton)">
-    ```bash
-    docker build --platform linux/arm64 -t agentuse:latest .
-    ```
-  </Tab>
-  <Tab title="amd64 (Intel/AMD)">
-    ```bash
-    docker build --platform linux/amd64 -t agentuse:latest .
-    ```
-  </Tab>
-</Tabs>
-
-Build and push multi-arch:
+### Multi-arch Build
 
 ```bash
 docker buildx build \
@@ -196,8 +150,6 @@ docker buildx build \
 ```
 
 ## Production Deployment
-
-For production use, run behind a reverse proxy with process management.
 
 ### Reverse Proxy with nginx
 
@@ -216,27 +168,8 @@ server {
 }
 ```
 
-### Process Management with PM2
-
-```javascript
-// ecosystem.config.js
-module.exports = {
-  apps: [{
-    name: 'agentuse-server',
-    script: 'npx',
-    args: 'agentuse serve --port 12233',
-    cwd: '/path/to/project',
-    env: {
-      AGENTUSE_API_KEY: 'your-secret-key',
-      ANTHROPIC_API_KEY: 'sk-ant-...'
-    }
-  }]
-}
-```
-
 <AccordionGroup>
   <Accordion title="Rate limiting">
-    Configure rate limiting in nginx to prevent abuse:
     ```nginx
     limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
 
@@ -247,7 +180,6 @@ module.exports = {
     ```
   </Accordion>
   <Accordion title="SSL certificates">
-    Use Let's Encrypt for free SSL:
     ```bash
     certbot --nginx -d agents.example.com
     ```
@@ -258,26 +190,15 @@ module.exports = {
 
 <AccordionGroup>
   <Accordion title="Container exits immediately">
-    Check the logs:
-    ```bash
-    docker logs agentuse
-    ```
-
-    Common causes:
-    - Missing API keys
-    - Port already in use
+    Check logs with `docker logs agentuse`. Common causes: missing API keys, port already in use.
   </Accordion>
   <Accordion title="Cannot connect to server">
-    The official image binds to `0.0.0.0` by default. If building a custom image, ensure:
+    The official image binds to `0.0.0.0` by default. If using a custom image, ensure:
     ```dockerfile
     ENTRYPOINT ["/usr/local/bin/agentuse", "serve", "-H", "0.0.0.0"]
     ```
   </Accordion>
   <Accordion title="Agent file not found">
-    Check the volume mount:
-    ```bash
-    docker exec -it agentuse ls /agents
-    ```
-    Ensure paths in API requests match container paths.
+    Check the volume mount with `docker exec -it agentuse ls /agents`. Ensure API request paths match container paths.
   </Accordion>
 </AccordionGroup>

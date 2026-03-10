@@ -60,8 +60,8 @@
         "guides/cicd",
         "guides/remote-agents",
         "guides/self-hosting",
-        "guides/isolated-environment",
-        "guides/session-logs"
+        "guides/session-logs",
+        "guides/sandbox"
       ]
     },
     {

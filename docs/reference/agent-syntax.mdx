@@ -36,14 +36,14 @@ Additional instructions or context.
   - `openrouter` - OpenRouter models
   
   ```yaml
-  model: anthropic:claude-sonnet-4-5
+  model: anthropic:claude-sonnet-4-6
   model: openai:gpt-5-mini
   model: openrouter:z-ai/glm-4.7
   ```
   
   You can also specify a custom environment variable suffix:
   ```yaml
-  model: anthropic:claude-sonnet-4-5:dev  # Uses ANTHROPIC_API_KEY_DEV
+  model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
   ```
 </ParamField>
 
@@ -162,6 +162,32 @@ Additional instructions or context.
 
   <Note>
     These options are particularly useful with GPT-5 models to balance between response quality, speed, and cost.
+  </Note>
+</ParamField>
+
+<ParamField path="sandbox" type="true | object" required={false}>
+  Run agent commands inside an isolated Docker container. Requires Docker to be installed and running. Use `sandbox: true` for defaults or provide a config object.
+
+  **Fields (when using object form):**
+  - `provider`: Must be `docker` (required)
+  - `image`: Docker image to use (default: `node:22-slim`)
+  - `timeout`: Container timeout in seconds (default: `300`)
+  - `setup`: Shell command(s) to run after container starts
+  - `env`: Host env var names to forward into the container
+
+  ```yaml
+  sandbox:
+    provider: docker
+    image: python:3.12-slim
+    timeout: 600
+    setup:
+      - pip install pandas numpy
+  ```
+
+  When enabled, the agent receives `sandbox__exec` for running commands in the container. File I/O uses the existing filesystem tool — each filesystem path is mounted at its real host path with per-path ro/rw mode derived from permissions.
+
+  <Note>
+    This feature is experimental. See the [Sandbox guide](/guides/sandbox) for full documentation.
   </Note>
 </ParamField>
 
@@ -348,7 +374,7 @@ mcpServers:
 ```markdown
 ---
 name: agent
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 ---
 
 You are a helpful assistant.
@@ -370,7 +396,7 @@ What the agent should do.
 ```markdown
 ---
 name: personalized
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 ---
 
 You are a helpful AI assistant.
@@ -388,7 +414,7 @@ Provide assistance based on the user's specific needs and context.
 ```markdown
 ---
 name: adaptive
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 ---
 
 You adapt based on user needs.

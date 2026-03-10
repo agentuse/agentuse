@@ -1,5 +1,5 @@
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 description: Test scheduled agent
 schedule: "1m"
 ---

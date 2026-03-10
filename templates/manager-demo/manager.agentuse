@@ -1,5 +1,5 @@
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 type: manager
 store: "demo-content"
 # schedule: "0 * * * *"  # Uncomment to run every hour

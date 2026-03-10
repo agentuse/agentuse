@@ -1,20 +1,10 @@
 import { z } from 'zod';
 
-/**
- * Skill name validation:
- * - 1-64 characters
- * - Lowercase letters, numbers, and hyphens only
- * - Cannot start or end with hyphen
- * - No consecutive hyphens
- */
-const skillNameRegex = /^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$/;
-
 export const SkillFrontmatterSchema = z.object({
   name: z.string()
     .min(1, 'Name is required')
     .max(64, 'Name must be 64 characters or less')
-    .regex(skillNameRegex, 'Name must be lowercase letters, numbers, and hyphens only')
-    .refine(s => !s.includes('--'), 'Name cannot contain consecutive hyphens'),
+    .regex(/^[^\s\\/]+$/, 'Name cannot contain spaces, backslashes, or forward slashes'),
   description: z.string()
     .min(1, 'Description is required')
     .max(1024, 'Description must be 1024 characters or less'),

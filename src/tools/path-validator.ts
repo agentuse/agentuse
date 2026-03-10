@@ -82,6 +82,47 @@ export function resolveSafeVariables(text: string, context: PathResolverContext)
   return result;
 }
 
+// ── Filesystem mount resolution for sandbox ─────────────────────────
+
+export interface ResolvedMount {
+  hostPath: string;   // Absolute resolved host path
+  writable: boolean;  // true if write/edit permission
+}
+
+/**
+ * Resolve filesystem configs into mountable directory paths for Docker sandbox.
+ * Skips glob patterns (not mountable). Deduplicates by hostPath (writable wins).
+ */
+export function resolveFilesystemMounts(
+  configs: FilesystemPathConfig[],
+  context: PathResolverContext,
+): ResolvedMount[] {
+  const mountMap = new Map<string, boolean>(); // hostPath → writable
+
+  for (const config of configs) {
+    const patterns = config.paths ?? (config.path ? [config.path] : []);
+    const writable = config.permissions.includes('write') || config.permissions.includes('edit');
+
+    for (const pattern of patterns) {
+      // Skip glob patterns — not mountable as directories
+      if (/[*?[\]]/.test(pattern)) continue;
+
+      // Resolve variables and ~ expansion
+      let resolved = resolveSafeVariables(pattern, context)
+        .replace(/^~/, os.homedir());
+
+      // Resolve to real path (follows symlinks, handles macOS /var → /private/var)
+      resolved = resolveRealPath(resolved);
+
+      // Deduplicate: writable wins
+      const existing = mountMap.get(resolved);
+      mountMap.set(resolved, existing === true || writable);
+    }
+  }
+
+  return Array.from(mountMap.entries()).map(([hostPath, writable]) => ({ hostPath, writable }));
+}
+
 export class PathValidator {
   private readonly projectRoot: string;
   private readonly agentDir: string | undefined;

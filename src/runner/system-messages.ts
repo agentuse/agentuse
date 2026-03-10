@@ -4,6 +4,7 @@ import { buildAutonomousAgentPrompt } from './prompt';
 import { buildManagerPrompt, type SubagentInfo, type ScheduleInfo } from '../manager/index.js';
 import { parseScheduleExpression, formatScheduleHuman } from '../scheduler/parser.js';
 import { parseAgent, type ParsedAgent } from '../parser';
+import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
 import { logger } from '../utils/logger';
 import { LearningStore } from '../learning/index.js';
 import { addAnthropicIdentity, isAnthropicModel } from '../utils/anthropic';
@@ -64,6 +65,22 @@ export async function buildSystemMessages(options: BuildSystemMessagesOptions): 
       });
       logger.debug(`[Manager] Injected manager prompt`);
     }
+  }
+
+  // If sandbox is configured, inject sandbox context so the agent knows about mount paths
+  if (agent.config.sandbox && projectRoot) {
+    let mounts: ResolvedMount[] = [];
+    if (agent.config.tools?.filesystem) {
+      mounts = resolveFilesystemMounts(agent.config.tools.filesystem, {
+        projectRoot,
+        agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
+      });
+    }
+    systemMessages.push({
+      role: 'system',
+      content: buildSandboxPrompt(projectRoot, mounts),
+    });
+    logger.debug(`[Sandbox] Injected sandbox system prompt (${mounts.length} mount(s))`);
   }
 
   // Prepend Anthropic identity if needed
@@ -131,6 +148,40 @@ async function buildManagerSystemPrompt(agent: ParsedAgent, agentFilePath?: stri
     storeName,
     schedule: scheduleInfo,
   });
+}
+
+/**
+ * Build the sandbox environment prompt so agents know about mount paths
+ */
+function buildSandboxPrompt(projectRoot: string, mounts: ResolvedMount[]): string {
+  const home = process.env['HOME'] ?? '/root';
+
+  // Build mount list for the prompt
+  let mountList: string;
+  if (mounts.length > 0) {
+    mountList = mounts.map(m =>
+      `- **\`${m.hostPath}\`** — ${m.writable ? 'read-write' : 'read-only'}`
+    ).join('\n');
+  } else {
+    mountList = `- **\`${projectRoot}\`** — read-only (default)`;
+  }
+
+  const hasWritable = mounts.some(m => m.writable);
+  const writeNote = hasWritable
+    ? 'You can modify files in writable mounts using the filesystem tool — changes are reflected inside the sandbox automatically.'
+    : 'Mounted paths are read-only in the sandbox. Use the filesystem tool on the host to modify project files.';
+
+  return `## Sandbox Environment
+
+You are running with a Docker sandbox for command execution. Key details:
+
+- **Paths inside the container mirror the host** — use the same absolute paths everywhere (no \`/workspace/\` alias).
+- **Mounted paths:**
+${mountList}
+- ${writeNote}
+- Use \`sandbox__exec\` to run shell commands inside the container. Use the filesystem tool for reading/writing project files.
+- **Skill directories** are mounted at their original host paths (e.g. \`${home}/.claude/skills/<skill-name>/\`). Access them via \`sandbox__exec\`.
+- If you need packages not in the base image, install them via \`sandbox__exec\` (e.g. \`apt-get update && apt-get install -y <pkg>\` or \`npm install <pkg>\`).`;
 }
 
 /**

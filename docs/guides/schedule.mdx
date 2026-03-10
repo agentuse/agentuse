@@ -11,7 +11,7 @@ Run agents automatically on a schedule using `agentuse serve`. Configure schedul
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 schedule: "1h"
 ---
 
@@ -85,7 +85,7 @@ A scheduled agent for daily reports:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 description: Generate daily analytics report
 schedule: "0 8 * * 1-5"    # Weekdays at 8am
 tools:
@@ -101,7 +101,7 @@ Generate the daily analytics report and save it to reports/daily.md.
 ```
 
 <Tip>
-  Use cheaper models like `openrouter:minimax/minimax-m2.1` for frequent, straightforward tasks (health checks, simple monitoring). Reserve `claude-sonnet-4-5` and `claude-opus-4-5` for complex creative tasks.
+  Use cheaper models like `openrouter:minimax/minimax-m2.1` for frequent, straightforward tasks (health checks, simple monitoring). Reserve `claude-sonnet-4-6` and `claude-opus-4-6` for complex creative tasks.
 </Tip>
 
 ## Server Options

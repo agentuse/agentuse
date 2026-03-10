@@ -1,5 +1,5 @@
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 description: "Monitors websites for changes and sends notifications via Slack"
 mcpServers:
   fetch:

@@ -159,6 +159,34 @@ bash:
     - /opt/tools
 ```
 
+## Sandbox Tool
+
+When a `sandbox` is configured in the agent frontmatter, the `sandbox__exec` tool is injected for running commands inside the Docker container. File I/O is handled by the filesystem tool — no separate sandbox file tools are needed.
+
+<Note>
+  The sandbox tool is only available when `sandbox` is configured. See the [Sandbox guide](/guides/sandbox) for setup instructions.
+</Note>
+
+### `sandbox__exec`
+
+Execute a shell command inside the Docker container.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `command` | `string` | Required | Shell command to execute |
+| `cwd` | `string` | Project root | Working directory inside the container |
+
+Returns `stdout`, `stderr`, and `exitCode`.
+
+### Mount Mode
+
+Each filesystem path is mounted at its **real host path** with per-path mode derived from permissions:
+
+- **Read-only** — No `write` or `edit` permissions for that path
+- **Read-write** — `write` or `edit` permissions granted for that path
+
+Paths inside the container mirror the host (no `/workspace/` alias). Changes made by the filesystem tool on the host are visible inside the container via the bind mount.
+
 ## Security Considerations
 
 ### Filesystem Tool

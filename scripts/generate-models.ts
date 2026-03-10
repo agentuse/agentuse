@@ -26,7 +26,7 @@ const PROVIDER_MAPPINGS: Record<string, {
   // Anthropic models
   'anthropic': {
     ourProvider: 'anthropic',
-    filter: (id: string) => id.includes('claude') && id.includes('4-5'),
+    filter: (id: string) => id.includes('claude') && /4-[56]/.test(id),
     transform: (id: string) => id,
   },
   // OpenAI models
@@ -104,6 +104,36 @@ function buildRegistry(apiData: Record<string, { models: Record<string, ModelDat
           ...model,
           id: transformedId,
         };
+      }
+    }
+  }
+
+  // Deduplicate: keep only the latest version per model family
+  // e.g., if claude-sonnet-4-6 exists, remove claude-sonnet-4-5 (and its dated variant)
+  for (const providerModels of Object.values(registry)) {
+    const ids = Object.keys(providerModels);
+    // Extract family name (e.g., "claude-sonnet" from "claude-sonnet-4-6")
+    const familyVersions: Record<string, { id: string; version: number; dated: boolean }[]> = {};
+    for (const id of ids) {
+      const dated = /\d{8}$/.test(id);
+      // Strip date suffix for family matching
+      const base = id.replace(/-\d{8}$/, '');
+      // Extract family and version: "claude-sonnet-4-6" -> family "claude-sonnet", version 4.6
+      const match = base.match(/^(.+?)-(\d+)-(\d+)$/);
+      if (match) {
+        const family = match[1];
+        const version = parseFloat(`${match[2]}.${match[3]}`);
+        if (!familyVersions[family]) familyVersions[family] = [];
+        familyVersions[family].push({ id, version, dated });
+      }
+    }
+    for (const entries of Object.values(familyVersions)) {
+      const maxVersion = Math.max(...entries.map(e => e.version));
+      for (const entry of entries) {
+        // Remove older versions (both base and dated)
+        if (entry.version < maxVersion) {
+          delete providerModels[entry.id];
+        }
       }
     }
   }
@@ -301,8 +331,10 @@ function generateDocsPage(registry: Registry): string {
     rows.push(formatModelRow('openrouter', id, model));
   }
 
-  const defaultAnthropic = Object.keys(registry.anthropic)[0];
-  const defaultOpenai = Object.keys(registry.openai)[0];
+  const anthropicKeys = Object.keys(registry.anthropic).filter(id => !/\d{8}$/.test(id));
+  const openaiKeys = Object.keys(registry.openai).filter(id => !/\d{8}$/.test(id));
+  const defaultAnthropic = anthropicKeys.find(id => id.includes('sonnet')) ?? anthropicKeys[0];
+  const defaultOpenai = openaiKeys.find(id => !id.includes('pro') && !id.includes('codex') && !id.includes('chat') && !id.includes('mini') && !id.includes('nano')) ?? openaiKeys[0];
   const defaultOpenrouter = Object.keys(registry.openrouter)[0];
 
   return `---
@@ -321,8 +353,8 @@ This page lists recommended models for AgentUse, organized by provider.
 ## Quick Reference
 
 **Default models:**
-- **Anthropic**: \`anthropic:claude-sonnet-4-5\` (balanced performance)
-- **OpenAI**: \`openai:gpt-5.2\` (latest GPT)
+- **Anthropic**: \`anthropic:${defaultAnthropic}\` (balanced performance)
+- **OpenAI**: \`openai:${defaultOpenai}\` (latest GPT)
 - **OpenRouter**: \`openrouter:${defaultOpenrouter}\` (open source)
 
 ## Recommended Models
@@ -335,14 +367,14 @@ Specify a model in your agent file:
 
 \`\`\`yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:${defaultAnthropic}
 ---
 \`\`\`
 
 Or override via CLI:
 
 \`\`\`bash
-agentuse run agent.agentuse -m openai:gpt-5.2
+agentuse run agent.agentuse -m openai:${defaultOpenai}
 \`\`\`
 `;
 }
@@ -411,14 +443,15 @@ function updateFileReferences(projectRoot: string, registry: Registry): void {
     }
   };
 
-  const walkDir = (dir: string, extensions: string[]): void => {
+  const walkDir = (dir: string, extensions: string[], ignorePaths: string[] = []): void => {
     const entries = readdirSync(dir);
     for (const entry of entries) {
       const fullPath = join(dir, entry);
+      if (ignorePaths.includes(fullPath)) continue;
       const stat = statSync(fullPath);
 
       if (stat.isDirectory() && !entry.startsWith('.') && entry !== 'node_modules' && entry !== 'generated') {
-        walkDir(fullPath, extensions);
+        walkDir(fullPath, extensions, ignorePaths);
       } else if (stat.isFile() && extensions.some(ext => entry.endsWith(ext))) {
         processFile(fullPath);
       }
@@ -435,10 +468,10 @@ function updateFileReferences(projectRoot: string, registry: Registry): void {
     console.log('  No templates directory found');
   }
 
-  // Update docs
+  // Update docs (skip auto-generated models.mdx)
   const docsDir = join(projectRoot, 'docs');
   try {
-    walkDir(docsDir, ['.mdx', '.md']);
+    walkDir(docsDir, ['.mdx', '.md'], [join(projectRoot, 'docs/reference/models.mdx')]);
   } catch {
     console.log('  No docs directory found');
   }

@@ -7,6 +7,7 @@ import { ToolsConfigSchema } from './tools/index.js';
 import { ScheduleConfigSchema } from './scheduler/index.js';
 import { StoreConfigSchema } from './store/index.js';
 import { LearningConfigSchema } from './learning/index.js';
+import { SandboxConfigSchema } from './sandbox.js';
 
 /**
  * Error thrown when agent configuration is invalid
@@ -85,7 +86,9 @@ const AgentSchema = z.object({
   // Agent type: currently only 'manager' is supported
   type: z.enum(['manager']).optional(),
   // Learning configuration: extract and apply learnings from execution
-  learning: LearningConfigSchema.optional()
+  learning: LearningConfigSchema.optional(),
+  // Sandbox configuration: isolated cloud VM for command execution
+  sandbox: SandboxConfigSchema.optional()
 }).transform((data) => {
   // Handle backward compatibility: support both mcp_servers and mcpServers
   if (data.mcp_servers && data.mcpServers) {
@@ -111,6 +114,9 @@ const AgentSchema = z.object({
   }
   if (data.learning) {
     logger.warn('[Experimental] Learning feature is experimental and may change in future versions.');
+  }
+  if (data.sandbox) {
+    logger.warn('[Experimental] Sandbox feature is experimental and may change in future versions.');
   }
 
   return data;

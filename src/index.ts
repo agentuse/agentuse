@@ -572,6 +572,9 @@ program
         }
       } catch (error: unknown) {
         if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
+          // Clean up sandbox/store before exiting (process.exit skips finally blocks)
+          await preparedExecution.cleanup();
+
           if (wasInterrupted) {
             // User pressed Ctrl-C - clean exit with standard interrupt code
             // Log session error before exiting

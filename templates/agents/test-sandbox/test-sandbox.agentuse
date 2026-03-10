@@ -1,0 +1,34 @@
+---
+model: anthropic:claude-haiku-4-5
+sandbox:
+  provider: docker
+  image: node:22-slim
+  timeout: 120
+tools:
+  filesystem:
+    - path: ${root}/tmp
+      permissions: [read, write, edit]
+---
+
+You are a test agent verifying that the sandbox and filesystem tool work together correctly. Run through these tests in order and report PASS/FAIL for each:
+
+## Test 1: Read project files from sandbox
+Use `sandbox__exec` to run `ls ${root}/package.json` and verify the project is mounted at its real host path.
+
+## Test 2: Filesystem tool write → sandbox visibility
+Use the filesystem tool to write a file at `${root}/tmp/sandbox-test-write.txt` with content "hello from filesystem tool".
+Then use `sandbox__exec` to run `cat ${root}/tmp/sandbox-test-write.txt` and verify the content matches.
+
+## Test 3: Sandbox write → filesystem tool read
+Use `sandbox__exec` to run `echo "hello from sandbox" > ${root}/tmp/sandbox-test-read.txt`.
+Then use the filesystem tool to read `${root}/tmp/sandbox-test-read.txt` and verify the content matches.
+
+## Test 4: Filesystem tool edit
+Use the filesystem tool to edit `${root}/tmp/sandbox-test-write.txt`, changing "hello" to "updated".
+Then use `sandbox__exec` to run `cat ${root}/tmp/sandbox-test-write.txt` and verify it now says "updated from filesystem tool".
+
+## Test 5: Sandbox exec with installed tools
+Use `sandbox__exec` to run `node -e "console.log(JSON.stringify({test: 'passed', node: process.version}))"` and verify it returns valid JSON.
+
+## Final Report
+Print a summary table of all test results. Then clean up: use `sandbox__exec` to run `rm ${root}/tmp/sandbox-test-write.txt ${root}/tmp/sandbox-test-read.txt`.

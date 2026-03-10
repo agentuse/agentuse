@@ -32,15 +32,6 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     verbose = false
   } = options;
 
-  // Load all agent tools (MCP, configured, skill, store)
-  const loadedTools = await loadAgentTools({
-    agent,
-    projectContext,
-    agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
-    agentFilePath,
-    mcpConnections: mcpClients,
-  });
-
   // Resolve safe variables in instructions (${root}, ${agentDir}, ${tmpDir} - NOT ${env:*})
   const pathContext: PathResolverContext = {
     projectRoot: projectContext?.projectRoot ?? process.cwd(),
@@ -76,7 +67,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   });
   const systemMessages = systemMessagesResult.messages;
 
-  // Create session if session manager is provided
+  // Create session first so sandbox can use the session ID for its output directory
   let sessionID: string | undefined;
   let assistantMsgID: string | undefined;
 
@@ -115,6 +106,17 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       }
     }
   }
+
+  // Load all agent tools (MCP, configured, skill, store, sandbox)
+  // Done after session creation so sandbox output dir uses the session ID
+  const loadedTools = await loadAgentTools({
+    agent,
+    projectContext,
+    agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
+    agentFilePath,
+    mcpConnections: mcpClients,
+    sessionId: sessionID,
+  });
 
   // Compute agentId (file-path-based identifier) for session operations
   const agentId = computeAgentId(agentFilePath, projectContext?.projectRoot, agent.name);
@@ -170,6 +172,9 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   const cleanup = async () => {
     if (loadedTools.store) {
       await loadedTools.store.releaseLock();
+    }
+    if (loadedTools.sandboxInstance) {
+      await loadedTools.sandboxInstance.kill();
     }
   };
 

@@ -4,6 +4,8 @@ import { computeAgentId } from '../utils/agent-id';
 import { getTools as getConfiguredTools, type PathResolverContext } from '../tools/index.js';
 import { createSkillTools } from '../skill/index.js';
 import { createStore, createStoreTools, type Store } from '../store/index.js';
+import { createSandbox, createSandboxTools, type SandboxInstance } from '../sandbox.js';
+import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
 import { logger } from '../utils/logger';
 import type { ParsedAgent } from '../parser';
 
@@ -23,6 +25,8 @@ export interface LoadAgentToolsOptions {
   mcpConnections: MCPConnection[];
   /** Log prefix for debug messages */
   logPrefix?: string | undefined;
+  /** Session ID for sandbox output directory */
+  sessionId?: string | undefined;
 }
 
 /**
@@ -33,10 +37,13 @@ export interface LoadedAgentTools {
   configuredTools: Record<string, Tool>;
   skillTools: Record<string, Tool>;
   storeTools: Record<string, Tool>;
+  sandboxTools: Record<string, Tool>;
   /** All tools merged together */
   all: Record<string, Tool>;
   /** Store instance (if configured) - caller must call store.releaseLock() when done */
   store?: Store | undefined;
+  /** Sandbox instance (if configured) - caller must call sandboxInstance.kill() when done */
+  sandboxInstance?: SandboxInstance | undefined;
 }
 
 /**
@@ -51,7 +58,8 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     agentDir,
     agentFilePath,
     mcpConnections,
-    logPrefix = ''
+    logPrefix = '',
+    sessionId,
   } = options;
 
   // Compute agentId (file-path-based identifier) for store naming
@@ -105,12 +113,42 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     }
   }
 
+  // Load sandbox tools if sandbox is configured
+  let sandboxTools: Record<string, Tool> = {};
+  let sandboxInstance: SandboxInstance | undefined;
+  if (agent.config.sandbox && projectContext) {
+    try {
+      // Resolve filesystem mounts for the sandbox
+      let filesystemMounts: ResolvedMount[] | undefined;
+      if (agent.config.tools?.filesystem) {
+        filesystemMounts = resolveFilesystemMounts(agent.config.tools.filesystem, {
+          projectRoot: projectContext.projectRoot,
+          agentDir,
+        });
+      }
+
+      sandboxInstance = await createSandbox({
+        config: agent.config.sandbox,
+        projectRoot: projectContext.projectRoot,
+        sessionId,
+        filesystemMounts,
+      });
+      sandboxTools = createSandboxTools(sandboxInstance.container, projectContext.projectRoot);
+      const mountSummary = filesystemMounts?.map(m => `${m.hostPath}(${m.writable ? 'rw' : 'ro'})`).join(', ') ?? 'default(ro)';
+      logger.debug(`${logPrefix}Loaded sandbox tool (mounts: ${mountSummary})`);
+    } catch (error) {
+      throw new Error(`Failed to create sandbox: ${(error as Error).message}. The agent requires a sandbox but Docker is not available.`);
+    }
+  }
+
   return {
     mcpTools,
     configuredTools,
     skillTools,
     storeTools,
-    all: { ...mcpTools, ...configuredTools, ...skillTools, ...storeTools },
+    sandboxTools,
+    all: { ...mcpTools, ...configuredTools, ...skillTools, ...storeTools, ...sandboxTools },
     store,
+    sandboxInstance,
   };
 }

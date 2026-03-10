@@ -28,7 +28,7 @@ Use `${root}` in filesystem tool path configurations to reference paths relative
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 tools:
   filesystem:
     - path: ${root}/src
@@ -56,7 +56,7 @@ Use `${agentDir}` to access files that are distributed alongside your agent file
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 tools:
   filesystem:
     - path: ${agentDir}/scripts
@@ -86,7 +86,7 @@ Use `${tmpDir}` for temporary file storage that doesn't need to persist across a
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 tools:
   filesystem:
     - path: ${tmpDir}/agentuse
@@ -110,7 +110,7 @@ Currently supported in HTTP MCP server authentication:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 mcpServers:
   api_server:
     url: https://api.example.com/mcp
@@ -142,7 +142,7 @@ You can use path variables (`${root}`, `${agentDir}`, `${tmpDir}`) in the markdo
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 tools:
   filesystem:
     - path: ${root}/data
@@ -184,7 +184,7 @@ You have read/write access to the project's data directory.
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 description: "Agent with multiple filesystem paths"
 tools:
   filesystem:
@@ -211,7 +211,7 @@ You are an agent with access to project files, bundled templates, and temp works
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-5
+model: anthropic:claude-sonnet-4-6
 description: "Agent with bundled scripts and data"
 tools:
   filesystem:
