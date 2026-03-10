@@ -4,7 +4,7 @@ export const SkillFrontmatterSchema = z.object({
   name: z.string()
     .min(1, 'Name is required')
     .max(64, 'Name must be 64 characters or less')
-    .regex(/^[^\s\\/]+$/, 'Name cannot contain spaces, backslashes, or forward slashes'),
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*(?::[a-z0-9]+(?:-[a-z0-9]+)*)*$/, 'Name must be lowercase alphanumeric with single hyphens, optionally namespaced with colons (e.g. my-skill or namespace:my-skill)'),
   description: z.string()
     .min(1, 'Description is required')
     .max(1024, 'Description must be 1024 characters or less'),
