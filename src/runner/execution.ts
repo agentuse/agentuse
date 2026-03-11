@@ -65,6 +65,7 @@ export async function* executeAgentCore(
 
     // Extract provider options based on model provider
     const provider = agent.config.model.split(':')[0];
+    const isCustomProvider = !['anthropic', 'openai', 'openrouter', 'demo'].includes(provider);
 
     // Only include provider options if they exist and match the model provider
     let providerOptions: any = undefined;
@@ -102,7 +103,10 @@ export async function* executeAgentCore(
       toolChoice: 'auto' as const,
       stopWhen: stepCountIs(options.maxSteps),
       ...(options.abortSignal && { abortSignal: options.abortSignal }),
-      ...(providerOptions && { providerOptions })
+      ...(providerOptions && { providerOptions }),
+      // Custom/local providers need explicit maxOutputTokens (local reasoning
+      // models generate unlimited thinking tokens without it)
+      ...(isCustomProvider && { maxOutputTokens: 16384 }),
     };
 
     // Only add tools if there are any

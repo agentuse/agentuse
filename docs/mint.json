@@ -70,6 +70,7 @@
       "pages": [
         "reference/cli-commands",
         "reference/agent-syntax",
+        "reference/models",
         "reference/builtin-tools",
         "reference/variables",
         "reference/session-storage",

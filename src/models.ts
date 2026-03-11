@@ -1,11 +1,12 @@
 import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { wrapLanguageModel } from 'ai';
 import { AnthropicAuth } from './auth/anthropic';
 import { CodexAuth } from './auth/codex';
 import { AuthStorage } from './auth/storage';
 import { logger } from './utils/logger';
-import { warnIfModelNotInRegistry } from './utils/model-utils';
+import { warnIfModelNotInRegistry, loadCustomProviderNames } from './utils/model-utils';
 import { createDemoModel } from './providers/demo';
 
 /**
@@ -103,31 +104,49 @@ function resolveBaseURL(
  * - "openai:gpt-5.2:dev" -> use _DEV suffix
  * - "openai:gpt-5.2:OPENAI_API_KEY_PERSONAL" -> use specific env var
  */
-function parseModelConfig(modelString: string): ModelConfig {
-  const parts = modelString.split(':');
-  const [provider, modelName, envPart] = parts.length >= 2 
-    ? parts 
-    : ['openai', modelString, undefined];
-  
-  if (!envPart) {
-    return { provider, modelName };
+export function parseModelConfig(modelString: string): ModelConfig {
+  const firstColon = modelString.indexOf(':');
+  if (firstColon === -1) {
+    return { provider: 'openai', modelName: modelString };
   }
-  
-  // Determine if envPart is a full env var or just a suffix
-  const isFullEnvVar = envPart.includes('_KEY');
-  return {
-    provider,
-    modelName,
-    ...(isFullEnvVar 
-      ? { envVar: envPart }
-      : { envSuffix: envPart.toUpperCase() })
-  };
+
+  const provider = modelString.slice(0, firstColon);
+  const rest = modelString.slice(firstColon + 1);
+
+  // Built-in providers support the env suffix syntax: provider:model:env
+  const builtinProviders = ['anthropic', 'openai', 'openrouter', 'demo'];
+  if (builtinProviders.includes(provider)) {
+    const secondColon = rest.indexOf(':');
+    if (secondColon === -1) {
+      return { provider, modelName: rest };
+    }
+
+    const modelName = rest.slice(0, secondColon);
+    const envPart = rest.slice(secondColon + 1);
+
+    // Determine if envPart is a full env var or just a suffix
+    const isFullEnvVar = envPart.includes('_KEY');
+    return {
+      provider,
+      modelName,
+      ...(isFullEnvVar
+        ? { envVar: envPart }
+        : { envSuffix: envPart.toUpperCase() })
+    };
+  }
+
+  // Custom providers: everything after first colon is the model name
+  // (supports colons in model names, e.g. ollama:qwen3.5:0.8b)
+  return { provider, modelName: rest };
 }
 
 /**
  * Create AI model instance based on configuration
  */
 export async function createModel(modelString: string) {
+  // Load custom provider names for sync validation (cached after first call)
+  await loadCustomProviderNames();
+
   // Validate model and warn if not in registry (non-blocking)
   warnIfModelNotInRegistry(modelString);
 
@@ -392,6 +411,26 @@ export async function createModel(modelString: string) {
     return await maybeWrapWithDevTools(createDemoModel(config.modelName));
 
   } else {
-    throw new Error(`Unsupported provider: ${config.provider}`);
+    // Check for custom provider
+    const customProvider = await AuthStorage.getCustomProvider(config.provider);
+    if (customProvider) {
+      // Allow env var overrides: <NAME>_BASE_URL and <NAME>_API_KEY
+      const envPrefix = config.provider.toUpperCase().replace(/-/g, '_');
+      const baseURL = process.env[`${envPrefix}_BASE_URL`] || customProvider.baseURL;
+      const apiKey = process.env[`${envPrefix}_API_KEY`] || customProvider.key || 'not-needed';
+
+      logger.debug(`Using custom provider '${config.provider}' at ${baseURL}`);
+
+      // Use @ai-sdk/openai-compatible for local/custom endpoints
+      // (handles protocol differences better than @ai-sdk/openai)
+      const provider = createOpenAICompatible({
+        name: config.provider,
+        baseURL,
+        apiKey,
+      });
+      return await maybeWrapWithDevTools(provider(config.modelName));
+    }
+
+    throw new Error(`Unsupported provider: ${config.provider}. Add it with: agentuse provider add ${config.provider} --url <url>`);
   }
 }

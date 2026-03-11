@@ -39,11 +39,41 @@ export function validateModel(modelString: string): ValidationResult {
   };
 }
 
+// Cache of known custom provider names (populated at startup)
+let customProviderNamesCache: Set<string> | null = null;
+
+/**
+ * Load custom provider names into cache for sync access
+ * Call this once at startup before model validation runs
+ */
+export async function loadCustomProviderNames(): Promise<void> {
+  try {
+    const { AuthStorage } = await import('../auth/storage.js');
+    const providers = await AuthStorage.getCustomProviders();
+    customProviderNamesCache = new Set(Object.keys(providers));
+  } catch {
+    customProviderNamesCache = new Set();
+  }
+}
+
+/**
+ * Check if a provider name is a known custom provider
+ */
+function isCustomProvider(provider: string): boolean {
+  return customProviderNamesCache?.has(provider) ?? false;
+}
+
 /**
  * Warn if model is not in registry (non-blocking)
  * Returns the original model string to continue with
  */
 export function warnIfModelNotInRegistry(modelString: string): string {
+  // Skip validation for custom providers
+  const parts = modelString.split(':');
+  if (parts.length >= 2 && isCustomProvider(parts[0])) {
+    return modelString;
+  }
+
   const result = validateModel(modelString);
 
   if (!result.valid) {

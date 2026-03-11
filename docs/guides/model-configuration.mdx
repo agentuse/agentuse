@@ -9,7 +9,7 @@ AgentUse supports multiple AI providers. You need to authenticate with at least 
 
 ## Supported Providers
 
-<CardGroup cols={3}>
+<CardGroup cols={2}>
   <Card title="Anthropic">
     Claude models (Opus, Sonnet, Haiku)
     Supports OAuth and API keys
@@ -22,6 +22,9 @@ AgentUse supports multiple AI providers. You need to authenticate with at least 
     Access to 100+ models via unified API
     API key authentication
   </Card>
+  <Card title="Custom / Local">
+    Any OpenAI-compatible endpoint: Ollama, LM Studio, vLLM, llama.cpp, etc.
+  </Card>
 </CardGroup>
 
 ## Authentication Methods
@@ -32,12 +35,12 @@ The simplest way to authenticate:
 
 ```bash
 # Interactive menu
-agentuse auth login
+agentuse provider login
 
 # Or login to specific provider
-agentuse auth login anthropic
-agentuse auth login openai
-agentuse auth login openrouter
+agentuse provider login anthropic
+agentuse provider login openai
+agentuse provider login openrouter
 ```
 
 ### 2. Environment Variables
@@ -86,12 +89,83 @@ agentuse run agent.md --model openai:gpt-5.2:OPENAI_API_KEY_PERSONAL
   ```
 </Warning>
 
+## Custom Providers (Local LLMs)
+
+Connect to any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, llama.cpp, and more.
+
+### Adding a Custom Provider
+
+```bash
+# Ollama (default port 11434)
+agentuse provider add ollama --url http://localhost:11434/v1
+
+# LM Studio (default port 1234)
+agentuse provider add lmstudio --url http://localhost:1234/v1
+
+# With optional API key
+agentuse provider add myserver --url https://my-gpu-server.example.com/v1 --key sk-mykey123
+```
+
+### Using Custom Providers
+
+In your agent file:
+
+```yaml
+---
+model: ollama:glm-4.7-flash:q4_K_M
+---
+```
+
+```yaml
+---
+model: lmstudio:qwen/qwen3.5-9b
+---
+```
+
+Or override at runtime:
+
+```bash
+agentuse run agent.agentuse -m ollama:glm-4.7-flash:q4_K_M
+agentuse run agent.agentuse -m lmstudio:qwen/qwen3.5-9b
+```
+
+<Info>
+  Custom providers support colons in model names — `ollama:qwen3.5:0.8b` is parsed as provider `ollama`, model `qwen3.5:0.8b`.
+</Info>
+
+### Environment Variable Overrides
+
+Custom providers support env var overrides using the uppercased provider name:
+
+```bash
+# Override base URL and API key for a custom provider named "ollama"
+export OLLAMA_BASE_URL=http://192.168.1.100:11434/v1
+export OLLAMA_API_KEY=sk-optional-key
+```
+
+### Managing Custom Providers
+
+```bash
+# List all providers (including custom)
+agentuse provider list
+
+# Remove a custom provider
+agentuse provider remove ollama
+```
+
+<Warning>
+  **Local model limitations:**
+  - **Quality**: Small models (under 30B parameters) often struggle with complex tool use, multi-step reasoning, and following detailed agent instructions. For best results, use 30B+ parameter models.
+  - **Context window**: Ensure your model is loaded with a context size of at least 8192 tokens. AgentUse's system prompts can exceed 4096 tokens.
+  - **Tool calling**: Many local models have limited or no native tool/function calling support, which may cause agents with tools to fail or behave unpredictably.
+</Warning>
+
 ## Managing Credentials
 
 ### List Stored Credentials
 
 ```bash
-agentuse auth list
+agentuse provider list
 ```
 
 Output:
@@ -104,24 +178,28 @@ Stored credentials:
 
 Environment variables:
   🌍 openrouter (OPENROUTER_API_KEY) → Use as: openrouter:z-ai/glm-4.7
+
+Custom Providers:
+  🔌 ollama → http://localhost:11434/v1
+  🔌 lmstudio → http://localhost:1234/v1
 ```
 
 ### Remove Credentials
 
 ```bash
 # Remove specific provider
-agentuse auth logout anthropic
+agentuse provider logout anthropic
 
-# Remove all credentials
-agentuse auth logout
+# Remove a custom provider
+agentuse provider remove ollama
 ```
 
 ### Rotate API Keys
 
 ```bash
 # Logout and login again
-agentuse auth logout openai
-agentuse auth login openai
+agentuse provider logout openai
+agentuse provider login openai
 ```
 
 ## Getting API Keys
@@ -141,7 +219,7 @@ Get API keys from provider consoles:
 AgentUse checks authentication sources in this order:
 
 1. **OAuth tokens** - Checked first and refreshed automatically
-2. **Stored API keys** (via `agentuse auth login`) - Stored in `~/.local/share/agentuse/auth.json`
+2. **Stored API keys** (via `agentuse provider login`) - Stored in `~/.local/share/agentuse/auth.json`
 3. **Environment variables** - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`
 4. **Custom environment variables** - Using suffix patterns (e.g., `ANTHROPIC_API_KEY_DEV`) or full variable names
 
@@ -183,6 +261,13 @@ openai:
 ---
 name: specialized-agent
 model: openrouter:z-ai/glm-4.7  # Uses OpenRouter
+---
+```
+
+```markdown
+---
+name: local-agent
+model: ollama:glm-4.7-flash:q4_K_M  # Uses local Ollama
 ---
 ```
 

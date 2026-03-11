@@ -1,21 +1,29 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { MODELS, type Provider, type ModelInfo } from '../generated/models';
+import { AuthStorage } from '../auth/storage';
 
 export function createModelsCommand(): Command {
   const modelsCommand = new Command('models')
     .description('List recommended AI models')
-    .argument('[provider]', 'Filter by provider (anthropic, openai, openrouter)')
+    .argument('[provider]', 'Filter by provider (anthropic, openai, openrouter, or custom)')
     .option('-v, --verbose', 'Show detailed model information')
     .action(async (provider: string | undefined, options: { verbose?: boolean }) => {
-      const providers: Provider[] = provider
-        ? [provider as Provider]
-        : ['anthropic', 'openai', 'openrouter'];
+      const builtinProviders: Provider[] = ['anthropic', 'openai', 'openrouter'];
+      const customProviders = await AuthStorage.getCustomProviders();
+      const customNames = Object.keys(customProviders);
+      const isCustomFilter = provider && customNames.includes(provider);
+
+      // If filtering by custom provider, don't show builtin models
+      const providers: Provider[] = isCustomFilter
+        ? []
+        : (!provider ? builtinProviders : [provider as Provider]);
 
       // Validate provider
-      if (provider && !['anthropic', 'openai', 'openrouter'].includes(provider)) {
+      if (provider && !builtinProviders.includes(provider as Provider) && !isCustomFilter) {
         console.error(chalk.red(`Unknown provider: ${provider}`));
-        console.log(chalk.gray('Available providers: anthropic, openai, openrouter'));
+        const allProviders = [...builtinProviders, ...customNames];
+        console.log(chalk.gray(`Available providers: ${allProviders.join(', ')}`));
         process.exit(1);
       }
 
@@ -39,6 +47,19 @@ export function createModelsCommand(): Command {
         }
 
         console.log();
+      }
+
+      // Show custom providers
+      const displayCustom = isCustomFilter
+        ? Object.entries(customProviders).filter(([name]) => name === provider)
+        : Object.entries(customProviders);
+
+      if (displayCustom.length > 0 && (!provider || isCustomFilter)) {
+        for (const [name, config] of displayCustom) {
+          console.log(chalk.cyan.bold(`${name}`) + chalk.gray(` (${config.baseURL})`));
+          console.log(chalk.gray(`  Use: agentuse run agent.agentuse -m ${name}:<model-name>`));
+          console.log();
+        }
       }
 
       // Show legend

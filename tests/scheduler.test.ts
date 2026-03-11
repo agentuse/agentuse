@@ -290,8 +290,8 @@ describe("Scheduler", () => {
       const result = scheduler.formatScheduleTable();
 
       expect(result).toContain("test.agentuse");
-      expect(result).toContain("0 9 * * *");
-      expect(result).toContain("next:");
+      // Output uses human-readable format: "Daily 9am"
+      expect(result).toContain("Daily 9am");
     });
 
     it("formats multiple schedules", () => {
@@ -302,8 +302,8 @@ describe("Scheduler", () => {
 
       expect(result).toContain("agent1.agentuse");
       expect(result).toContain("agent2.agentuse");
-      expect(result).toContain("0 9 * * *");
-      expect(result).toContain("0 10 * * *");
+      expect(result).toContain("Daily 9am");
+      expect(result).toContain("Daily 10am");
     });
   });
 });

@@ -3,7 +3,8 @@ import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
 import { runAgent, prepareAgentExecution, type PreparedAgentExecution } from './runner';
 import { Command } from 'commander';
-import { createAuthCommand } from './cli/auth';
+import { createProviderCommand, createAuthCommand } from './cli/auth';
+import { AuthStorage } from './auth/storage';
 import { createSessionsCommand } from './cli/sessions';
 import { createServeCommand } from './cli/serve';
 import { createModelsCommand } from './cli/models';
@@ -106,8 +107,11 @@ program
     }
   });
 
-// Add auth command
-program.addCommand(createAuthCommand());
+// Add provider command (manages auth + custom providers)
+program.addCommand(createProviderCommand());
+
+// Add 'auth' as hidden alias for backward compatibility (creates a second instance)
+program.addCommand(createAuthCommand(), { hidden: true });
 
 // Add sessions command
 program.addCommand(createSessionsCommand());
@@ -366,9 +370,13 @@ program
         }
 
         const [provider] = modelParts;
-        const validProviders = ['anthropic', 'openai', 'openrouter', 'demo'];
-        if (!validProviders.includes(provider)) {
-          throw new Error(`Invalid model provider '${provider}'. Supported providers: ${validProviders.join(', ')}`);
+        const builtinProviders = ['anthropic', 'openai', 'openrouter', 'demo'];
+        if (!builtinProviders.includes(provider)) {
+          // Check if it's a custom provider
+          const customProvider = await AuthStorage.getCustomProvider(provider);
+          if (!customProvider) {
+            throw new Error(`Unknown provider '${provider}'. Built-in: ${builtinProviders.join(', ')}. Add custom providers with: agentuse provider add <name> --url <url>`);
+          }
         }
 
         const originalModel = agent.config.model;
@@ -814,12 +822,12 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
           console.error(`\n[ERROR] ${error.message}`);
           console.error('');
           console.error('To authenticate, run:');
-          console.error('  agentuse auth login');
+          console.error('  agentuse provider login');
           console.error('');
           console.error('Or set your API key:');
           console.error(`  export ${error.envVar}='your-key-here'`);
           console.error('');
-          console.error('For more options: agentuse auth --help');
+          console.error('For more options: agentuse provider --help');
         }
         process.exit(1);
       }

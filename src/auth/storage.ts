@@ -1,7 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
-import type { AuthInfo, OAuthTokens, CodexOAuthTokens, ApiKeyAuth, ProviderAuth } from "./types.js";
+import type { AuthInfo, OAuthTokens, CodexOAuthTokens, ApiKeyAuth, ProviderAuth, CustomProviderAuth } from "./types.js";
 
 export class AuthStorage {
   private static readonly AUTH_FILE = path.join(
@@ -213,6 +213,71 @@ export class AuthStorage {
 
     await this.ensureDir();
     await fs.writeFile(this.AUTH_FILE, JSON.stringify(data, null, 2));
+  }
+
+  /**
+   * Set a custom provider configuration
+   * Stores under custom:<name> key
+   */
+  static async setCustomProvider(name: string, config: { baseURL: string; key?: string }): Promise<void> {
+    await this.ensureDir();
+    const data = await this.all();
+    const entry: CustomProviderAuth = {
+      type: "custom",
+      baseURL: config.baseURL,
+      ...(config.key && { key: config.key }),
+    };
+    data[`custom:${name}`] = entry;
+    await fs.writeFile(this.AUTH_FILE, JSON.stringify(data, null, 2));
+    await fs.chmod(this.AUTH_FILE, 0o600);
+  }
+
+  /**
+   * Get a custom provider configuration by name
+   */
+  static async getCustomProvider(name: string): Promise<CustomProviderAuth | undefined> {
+    try {
+      const content = await fs.readFile(this.AUTH_FILE, "utf-8");
+      const data = JSON.parse(content);
+      const entry = data[`custom:${name}`];
+      if (entry && entry.type === "custom") {
+        return entry as CustomProviderAuth;
+      }
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Get all custom providers
+   * Returns a map of name -> CustomProviderAuth
+   */
+  static async getCustomProviders(): Promise<Record<string, CustomProviderAuth>> {
+    const data = await this.all();
+    const result: Record<string, CustomProviderAuth> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (key.startsWith("custom:") && value.type === "custom") {
+        const name = key.slice("custom:".length);
+        result[name] = value as CustomProviderAuth;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Remove a custom provider configuration
+   */
+  static async removeCustomProvider(name: string): Promise<boolean> {
+    const data = await this.all();
+    const key = `custom:${name}`;
+    if (!(key in data)) {
+      return false;
+    }
+    delete data[key];
+    await this.ensureDir();
+    await fs.writeFile(this.AUTH_FILE, JSON.stringify(data, null, 2));
+    return true;
   }
 
   static getFilePath(): string {

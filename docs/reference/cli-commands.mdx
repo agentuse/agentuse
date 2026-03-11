@@ -95,9 +95,9 @@ provider:model[:env]
 ```
 
 Where:
-- `provider`: Either `anthropic` or `openai`
-- `model`: The specific model name (e.g., `claude-3-5-sonnet-20241022`, `gpt-4o`)
-- `env`: Optional environment suffix for API keys (e.g., `dev`, `prod`, or full env var name)
+- `provider`: A built-in provider (`anthropic`, `openai`, `openrouter`) or a custom provider name
+- `model`: The specific model name (e.g., `claude-sonnet-4-6`, `gpt-5.2`, `glm-4.7-flash:q4_K_M`)
+- `env`: Optional environment suffix for API keys (e.g., `dev`, `prod`, or full env var name) — built-in providers only
 
 #### Examples
 
@@ -421,100 +421,43 @@ Use `--json` for scripting. Stale entries are automatically cleaned up.
 
 ---
 
-## agentuse auth
+## agentuse provider
 
-Manage authentication for AI providers.
+Manage providers and authentication credentials. (`auth` still works as a hidden alias.)
 
-### Subcommands
-
-#### auth login
-
-Authenticate with a provider.
+### provider login
 
 ```bash
-agentuse auth login [provider]
+agentuse provider login [provider]   # anthropic, openai, openrouter
 ```
 
-Providers:
-- `anthropic` - Anthropic Claude (supports OAuth)
-- `openai` - OpenAI GPT
-- `openrouter` - OpenRouter
+### provider add
 
-Examples:
-```bash
-# Interactive login (shows provider selection)
-agentuse auth login
-
-# Login to specific provider
-agentuse auth login anthropic
-agentuse auth login openai
-agentuse auth login openrouter
-```
-
-#### auth logout
-
-Remove stored credentials.
+Add a custom OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, etc.).
 
 ```bash
-agentuse auth logout [provider]
+agentuse provider add ollama --url http://localhost:11434/v1
+agentuse provider add lmstudio --url http://localhost:1234/v1
+agentuse provider add myserver --url https://gpu.example.com/v1 --key sk-mykey
 ```
 
-Examples:
-```bash
-# Logout from all providers
-agentuse auth logout
+Then use: `agentuse run agent.agentuse -m ollama:glm-4.7-flash:q4_K_M`
 
-# Logout from specific provider
-agentuse auth logout openai
-```
+<Info>
+  Colons in model names are supported — `ollama:qwen3.5:0.8b` parses as provider `ollama`, model `qwen3.5:0.8b`.
+</Info>
 
-#### auth list
-
-Show authentication status and stored credentials.
+### provider remove / logout
 
 ```bash
-agentuse auth list
-# or
-agentuse auth ls
+agentuse provider remove ollama       # remove custom provider
+agentuse provider logout openai       # remove built-in credentials
 ```
 
-Output:
-```
-📁 Credentials stored in: ~/.agentuse/auth.json
-
-Stored credentials:
-  🔑 anthropic (oauth) → Use as: anthropic:claude-sonnet-4-6
-  🎫 openai (api) → Use as: openai:gpt-5.2
-  🎫 openrouter (api) → Use as: openrouter:z-ai/glm-4.7
-
-Environment variables:
-  🌍 openai (OPENAI_API_KEY) → Use as: openai:gpt-5.2
-
-Model usage examples:
-  agentuse run agent.agentuse --model anthropic:claude-sonnet-4-6
-  agentuse run agent.agentuse --model openai:gpt-5.2
-  agentuse run agent.agentuse --model openrouter:z-ai/glm-4.7
-```
-
-#### auth help
-
-Show detailed authentication help and configuration options.
+### provider list
 
 ```bash
-agentuse auth help
-```
-
-Displays comprehensive help including:
-- Authentication methods (login command vs environment variables)
-- Provider-specific setup instructions
-- Environment variable configuration for different shells
-- Priority order for credential resolution
-- Links to get API keys
-
-<Note>
-  The `agentuse create` command is not yet implemented.
-  Please create agent files manually using the .agentuse extension.
-</Note>
+agentuse provider list
 
 ---
 
@@ -773,19 +716,25 @@ AgentUse uses standard exit codes:
 AgentUse currently supports these commands:
 
 ```bash
-agentuse run <file> [prompt...]   # Run an agent with optional prompt
-agentuse serve [options]          # Start HTTP server to run agents via API
-agentuse serve ps [--json]        # List running serve instances
-agentuse auth login [provider]    # Authenticate with a provider
-agentuse auth logout [provider]   # Remove stored credentials
-agentuse auth list                # Show authentication status
-agentuse auth help                # Show detailed auth help
-agentuse skills [options]         # List available skills
-agentuse agents [options]         # Discover and list project agents
-agentuse add <source> [options]   # Add skills/agents from GitHub or local path
-agentuse --version                # Show version
-agentuse --help                   # Show help
+agentuse run <file> [prompt...]          # Run an agent with optional prompt
+agentuse serve [options]                 # Start HTTP server to run agents via API
+agentuse serve ps [--json]               # List running serve instances
+agentuse provider login [provider]       # Authenticate with a provider
+agentuse provider add <name> --url <url> # Add custom provider (Ollama, LM Studio, etc.)
+agentuse provider logout [provider]      # Remove stored credentials
+agentuse provider remove <name>          # Remove a custom provider
+agentuse provider list                   # Show all providers and credentials
+agentuse provider help                   # Show detailed auth help
+agentuse skills [options]                # List available skills
+agentuse agents [options]                # Discover and list project agents
+agentuse add <source> [options]          # Add skills/agents from GitHub or local path
+agentuse --version                       # Show version
+agentuse --help                          # Show help
 ```
+
+<Note>
+  The `agentuse auth` command still works as a backward-compatible alias for `agentuse provider`.
+</Note>
 
 ## Advanced Usage
 
@@ -845,14 +794,14 @@ find . -name "*.md" | parallel agentuse run formatter.agentuse {}
     If you see authentication errors, AgentUse will show specific guidance:
     ```bash
     [ERROR] No API key found for anthropic
-    
+
     To authenticate, run:
-      agentuse auth login
-    
+      agentuse provider login
+
     Or set your API key:
       export ANTHROPIC_API_KEY='your-key-here'
-    
-    For more options: agentuse auth --help
+
+    For more options: agentuse provider --help
     ```
   </Accordion>
   <Accordion title="Timeout issues">

@@ -26,11 +26,18 @@ export const WellKnownAuth = z.object({
   token: z.string(),
 });
 
+export const CustomProviderAuth = z.object({
+  type: z.literal("custom"),
+  baseURL: z.string(),
+  key: z.string().optional(),
+});
+
 export const AuthInfo = z.discriminatedUnion("type", [
   OAuthTokens,
   CodexOAuthTokens,
   ApiKeyAuth,
   WellKnownAuth,
+  CustomProviderAuth,
 ]);
 
 export type AuthInfo = z.infer<typeof AuthInfo>;
@@ -38,6 +45,7 @@ export type OAuthTokens = z.infer<typeof OAuthTokens>;
 export type CodexOAuthTokens = z.infer<typeof CodexOAuthTokens>;
 export type ApiKeyAuth = z.infer<typeof ApiKeyAuth>;
 export type WellKnownAuth = z.infer<typeof WellKnownAuth>;
+export type CustomProviderAuth = z.infer<typeof CustomProviderAuth>;
 
 // Combined provider auth supporting both OAuth and API key
 export interface ProviderAuth {

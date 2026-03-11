@@ -26,9 +26,9 @@ async function promptInput(question: string): Promise<string> {
 }
 
 
-export function createAuthCommand(): Command {
-  const authCmd = new Command("auth")
-    .description("Manage authentication credentials");
+export function createProviderCommand(): Command {
+  const authCmd = new Command("provider")
+    .description("Manage providers and authentication credentials");
 
   authCmd
     .command("help")
@@ -40,7 +40,7 @@ export function createAuthCommand(): Command {
       process.stdout.write("AUTHENTICATION METHODS:\n");
       process.stdout.write("─".repeat(40) + "\n");
       process.stdout.write("1. Login Command (Recommended):\n");
-      process.stdout.write("   agentuse auth login\n\n");
+      process.stdout.write("   agentuse provider login\n\n");
       
       process.stdout.write("2. Environment Variables:\n");
       process.stdout.write("   Set API keys directly in your environment:\n");
@@ -78,16 +78,58 @@ export function createAuthCommand(): Command {
       
       process.stdout.write("COMMANDS:\n");
       process.stdout.write("─".repeat(40) + "\n");
-      process.stdout.write("  auth login [provider]  - Store API credentials\n");
-      process.stdout.write("  auth logout [provider] - Remove stored credentials\n");
-      process.stdout.write("  auth list             - Show stored credentials\n");
-      process.stdout.write("  auth help             - Show this help message\n\n");
+      process.stdout.write("  provider login [provider]       - Store API credentials\n");
+      process.stdout.write("  provider logout [provider]      - Remove stored credentials\n");
+      process.stdout.write("  provider add <name> --url <url> - Add custom endpoint\n");
+      process.stdout.write("  provider remove <name>          - Remove a provider\n");
+      process.stdout.write("  provider list                   - Show stored credentials\n");
+      process.stdout.write("  provider help                   - Show this help message\n\n");
       
       process.stdout.write("GETTING API KEYS:\n");
       process.stdout.write("─".repeat(40) + "\n");
       process.stdout.write("• Anthropic:   https://console.anthropic.com/account/keys\n");
       process.stdout.write("• OpenAI:      https://platform.openai.com/api-keys\n");
       process.stdout.write("• OpenRouter:  https://openrouter.ai/keys\n");
+    });
+
+  authCmd
+    .command("add <name>")
+    .description("Add a custom provider endpoint (OpenAI-compatible)")
+    .requiredOption("--url <url>", "Base URL of the OpenAI-compatible endpoint")
+    .option("--key <key>", "Optional API key for the endpoint")
+    .action(async (name: string, options: { url: string; key?: string }) => {
+      // Validate name doesn't conflict with built-in providers
+      const reserved = ["anthropic", "openai", "openrouter", "demo"];
+      if (reserved.includes(name.toLowerCase())) {
+        logger.error(`Cannot use reserved provider name '${name}'. Reserved: ${reserved.join(", ")}`);
+        process.exit(1);
+      }
+
+      // Validate name format (alphanumeric, hyphens, underscores)
+      if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(name)) {
+        logger.error("Provider name must start with a letter and contain only letters, numbers, hyphens, and underscores");
+        process.exit(1);
+      }
+
+      // Validate URL format
+      try {
+        new URL(options.url);
+      } catch {
+        logger.error(`Invalid URL: ${options.url}`);
+        process.exit(1);
+      }
+
+      await AuthStorage.setCustomProvider(name, {
+        baseURL: options.url,
+        ...(options.key && { key: options.key }),
+      });
+
+      process.stdout.write(`✅ Added custom provider '${name}'\n`);
+      process.stdout.write(`   URL: ${options.url}\n`);
+      if (options.key) {
+        process.stdout.write(`   Key: ****${options.key.slice(-4)}\n`);
+      }
+      process.stdout.write(`\nUsage: agentuse run agent.agentuse -m ${name}:<model-name>\n`);
     });
 
   authCmd
@@ -145,15 +187,16 @@ export function createAuthCommand(): Command {
 
   authCmd
     .command("logout")
-    .description("Logout from a provider")
-    .argument("[provider]", "Provider to logout from")
+    .alias("remove")
+    .description("Logout from a provider or remove a custom provider")
+    .argument("[provider]", "Provider to logout from or custom provider to remove")
     .option("--oauth", "Remove only OAuth credentials")
     .option("--api", "Remove only API key credentials")
     .action(async (provider?: string, options?: { oauth?: boolean; api?: boolean }) => {
       const knownProviders = ["anthropic", "openai", "openrouter"];
 
       // Build list of stored credentials
-      const storedList: { provider: string; type: string; key: string }[] = [];
+      const storedList: { provider: string; type: string; key: string; isCustom?: boolean }[] = [];
       for (const p of knownProviders) {
         const providerAuth = await AuthStorage.getProviderAuth(p);
         if (providerAuth.oauth) {
@@ -170,6 +213,17 @@ export function createAuthCommand(): Command {
             key: `${p}:api`,
           });
         }
+      }
+
+      // Add custom providers to the list
+      const customProviders = await AuthStorage.getCustomProviders();
+      for (const [name, config] of Object.entries(customProviders)) {
+        storedList.push({
+          provider: name,
+          type: `Custom (${config.baseURL})`,
+          key: `custom:${name}`,
+          isCustom: true,
+        });
       }
 
       if (storedList.length === 0) {
@@ -189,7 +243,9 @@ export function createAuthCommand(): Command {
 
         if (index >= 0 && index < storedList.length) {
           const item = storedList[index];
-          if (item.key.endsWith(":oauth")) {
+          if (item.isCustom) {
+            await AuthStorage.removeCustomProvider(item.provider);
+          } else if (item.key.endsWith(":oauth")) {
             await AuthStorage.removeOAuth(item.provider);
           } else {
             await AuthStorage.removeApiKey(item.provider);
@@ -199,6 +255,14 @@ export function createAuthCommand(): Command {
         } else {
           provider = selection;
         }
+      }
+
+      // Check if it's a custom provider first
+      const customProvider = await AuthStorage.getCustomProvider(provider);
+      if (customProvider) {
+        await AuthStorage.removeCustomProvider(provider);
+        process.stdout.write(`✅ Removed custom provider '${provider}'\n`);
+        return;
       }
 
       // Handle provider-specific logout
@@ -382,7 +446,23 @@ export function createAuthCommand(): Command {
       if (unconfiguredProviders.length > 0) {
         process.stdout.write("Not configured:\n");
         for (const p of unconfiguredProviders) {
-          process.stdout.write(`  ⚠️  ${p.display} - run \`agentuse auth login ${p.name}\`\n`);
+          process.stdout.write(`  ⚠️  ${p.display} - run \`agentuse provider login ${p.name}\`\n`);
+        }
+        process.stdout.write("\n");
+      }
+
+      // Show custom providers
+      const customProviders = await AuthStorage.getCustomProviders();
+      const customEntries = Object.entries(customProviders);
+      if (customEntries.length > 0) {
+        process.stdout.write("Custom Providers:\n");
+        process.stdout.write("─".repeat(50) + "\n");
+        for (const [name, config] of customEntries) {
+          process.stdout.write(`  🔌 ${name} → ${config.baseURL}`);
+          if (config.key) {
+            process.stdout.write(` (key: ****${config.key.slice(-4)})`);
+          }
+          process.stdout.write("\n");
         }
         process.stdout.write("\n");
       }
@@ -654,6 +734,14 @@ async function handleAnthropicOAuth(mode: "max" | "console") {
   } catch (error) {
     logger.error("Authentication failed", error as Error);
   }
+}
+
+/** Create 'auth' command as hidden alias for backward compatibility */
+export function createAuthCommand(): Command {
+  const cmd = createProviderCommand();
+  // Override the command name to 'auth' for the alias
+  cmd.name('auth');
+  return cmd;
 }
 
 async function handleGenericLogin(provider: string, keyName: string) {
