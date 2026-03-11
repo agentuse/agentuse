@@ -17,6 +17,22 @@ import { join, relative } from 'path';
 
 const MODELS_DEV_API = 'https://models.dev/api.json';
 
+/** Parse version from model ID as a comparable integer (major * 1000 + minor).
+ *  Handles both hyphen format ("claude-sonnet-4-6") and dot format ("gpt-5.2"). */
+function parseModelVersion(id: string): number {
+  // Hyphen format: "claude-sonnet-4-6" -> 4006
+  const base = id.replace(/-\d{8}$/, '');
+  const hyphenMatch = base.match(/^.+?-(\d+)-(\d+)$/);
+  if (hyphenMatch) return parseInt(hyphenMatch[1], 10) * 1000 + parseInt(hyphenMatch[2], 10);
+  // Dot format: "gpt-5.2" -> 5002
+  const dotMatch = id.match(/(\d+)\.(\d+)/);
+  if (dotMatch) return parseInt(dotMatch[1], 10) * 1000 + parseInt(dotMatch[2], 10);
+  // Single version: "gpt-5" -> 5000
+  const singleMatch = id.match(/-(\d+)(?:-|$)/);
+  if (singleMatch) return parseInt(singleMatch[1], 10) * 1000;
+  return 0;
+}
+
 // Provider mappings: models.dev provider ID -> our provider name + filters
 const PROVIDER_MAPPINGS: Record<string, {
   ourProvider: 'anthropic' | 'openai' | 'openrouter';
@@ -118,11 +134,11 @@ function buildRegistry(apiData: Record<string, { models: Record<string, ModelDat
       const dated = /\d{8}$/.test(id);
       // Strip date suffix for family matching
       const base = id.replace(/-\d{8}$/, '');
-      // Extract family and version: "claude-sonnet-4-6" -> family "claude-sonnet", version 4.6
+      // Extract family and version: "claude-sonnet-4-6" -> family "claude-sonnet", version 4006
       const match = base.match(/^(.+?)-(\d+)-(\d+)$/);
       if (match) {
         const family = match[1];
-        const version = parseFloat(`${match[2]}.${match[3]}`);
+        const version = parseInt(match[2], 10) * 1000 + parseInt(match[3], 10);
         if (!familyVersions[family]) familyVersions[family] = [];
         familyVersions[family].push({ id, version, dated });
       }
@@ -186,21 +202,6 @@ function generateRegistryCode(registry: Registry): string {
       .join(',\n');
   };
 
-  // Sort models: latest versions first, dated versions last
-  const extractVersion = (id: string): number => {
-    // Extract version number from model ID (e.g., "4.5", "5.2", "4.7")
-    const match = id.match(/(\d+)\.(\d+)/);
-    if (match) {
-      return parseFloat(`${match[1]}.${match[2]}`);
-    }
-    // Try single digit version (e.g., "gpt-5")
-    const singleMatch = id.match(/-(\d+)(?:-|$)/);
-    if (singleMatch) {
-      return parseFloat(singleMatch[1]);
-    }
-    return 0;
-  };
-
   const sortModels = (models: ProviderModels): ProviderModels => {
     const entries = Object.entries(models);
     entries.sort(([a], [b]) => {
@@ -210,8 +211,8 @@ function generateRegistryCode(registry: Registry): string {
       if (aHasDate !== bHasDate) return aHasDate ? 1 : -1;
 
       // Sort by version number (higher = first)
-      const aVersion = extractVersion(a);
-      const bVersion = extractVersion(b);
+      const aVersion = parseModelVersion(a);
+      const bVersion = parseModelVersion(b);
       if (aVersion !== bVersion) return bVersion - aVersion;
 
       // Same version: prefer shorter names (base model before variants)
@@ -334,7 +335,7 @@ function generateDocsPage(registry: Registry): string {
   const anthropicKeys = Object.keys(registry.anthropic).filter(id => !/\d{8}$/.test(id));
   const openaiKeys = Object.keys(registry.openai).filter(id => !/\d{8}$/.test(id));
   const defaultAnthropic = anthropicKeys.find(id => id.includes('sonnet')) ?? anthropicKeys[0];
-  const defaultOpenai = openaiKeys.find(id => !id.includes('pro') && !id.includes('codex') && !id.includes('chat') && !id.includes('mini') && !id.includes('nano')) ?? openaiKeys[0];
+  const defaultOpenai = openaiKeys.find(id => /^gpt-\d+(\.\d+)?$/.test(id)) ?? openaiKeys[0];
   const defaultOpenrouter = Object.keys(registry.openrouter)[0];
 
   return `---
@@ -432,11 +433,7 @@ function updateFileReferences(projectRoot: string, registry: Registry): void {
     });
 
     if (modified) {
-      content = newContent;
-    }
-
-    if (modified) {
-      writeFileSync(filePath, content);
+      writeFileSync(filePath, newContent);
       console.log(`  Updated: ${relative(projectRoot, filePath)}`);
     } else {
       console.log(`  Checked: ${relative(projectRoot, filePath)} (no changes)`);
