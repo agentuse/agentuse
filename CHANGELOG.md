@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.10.0] - 2026-03-10
+
+### Added
+
+- **Custom provider support** for OpenAI-compatible endpoints via `agentuse provider add <name> --url <url>`
+- Custom provider authentication with optional API key storage
+- `provider add` and `provider remove` CLI commands for managing custom endpoints
+
+### Changed
+
+- Rename `auth` command to `provider` for managing providers and credentials
+- Refactor model version sorting to use integer-based comparison, fixing incorrect ordering for hyphen-format versions (e.g., `claude-sonnet-4-6`)
+- Improve default OpenAI model selection in docs generation with stricter regex matching
+- Update model registry with latest model entries
+
+### Fixed
+
+- Fix version sorting bug where `4-6` was parsed as `4.6` float instead of `4006` integer, causing incorrect model ordering
+- Fix duplicate `writeFileSync` call in model generation script
+
+### Documentation
+
+- Expand model configuration guide with custom provider setup instructions
+- Add custom provider examples and usage patterns to models reference
+
+---
+
 ## [0.9.0] - 2026-03-10
 
 ### Added
