@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:te
 import { parseScheduleExpression } from "../src/scheduler/parser";
 import { Scheduler } from "../src/scheduler/scheduler";
 import { logger, executionLog } from "../src/utils/logger";
-import type { Schedule } from "../src/scheduler/types";
 
 // Suppress logging during tests
 let loggerDebugSpy: ReturnType<typeof spyOn>;

@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { createServer, IncomingMessage, ServerResponse, Server } from 'http';
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
+import { createServer, IncomingMessage, Server } from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -74,8 +74,6 @@ async function makeRequest(
 
 describe('Serve Command - Request Body Parsing', () => {
   let tempDir: string;
-  let server: Server;
-  let port: number;
 
   beforeAll(() => {
     // Create temporary directory with a valid agent file
@@ -542,7 +540,7 @@ Test agent`;
 
 describe('Serve Command - Error Response Format', () => {
   it('should return consistent error format with success: false', async () => {
-    const mockServer = createServer(async (req, res) => {
+    const mockServer = createServer(async (_req, res) => {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         success: false,
@@ -569,7 +567,7 @@ describe('Serve Command - Error Response Format', () => {
   });
 
   it('should set Content-Type to application/json for all responses', async () => {
-    const mockServer = createServer(async (req, res) => {
+    const mockServer = createServer(async (_req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true }));
     });
@@ -590,7 +588,7 @@ describe('Serve Command - Error Response Format', () => {
 
 describe('Serve Command - CORS Headers', () => {
   it('should include CORS headers in all responses', async () => {
-    const mockServer = createServer(async (req, res) => {
+    const mockServer = createServer(async (_req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
