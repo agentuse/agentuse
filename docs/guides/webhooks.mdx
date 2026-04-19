@@ -21,7 +21,52 @@ curl -X POST http://127.0.0.1:12233/run \
   -d '{"agent": "assistant.agentuse"}'
 ```
 
+## Serving Multiple Projects
+
+One `agentuse serve` process can host agents from several project directories. Repeat the `-C` flag:
+
+```bash
+agentuse serve -C ./projA -C ./projB
+```
+
+Project ids default to the directory basename (e.g. `projA`, `projB`). Two projects with the same basename are a hard startup error; rename one or serve them separately.
+
+Send requests with a `project` field in the body:
+
+```bash
+curl -X POST http://127.0.0.1:12233/run \
+  -H "Content-Type: application/json" \
+  -d '{"project": "projA", "agent": "assistant.agentuse"}'
+```
+
+Omit `project` and the server returns `400 PROJECT_REQUIRED` with the list of available ids, unless you set a default at startup:
+
+```bash
+agentuse serve -C ./projA -C ./projB --default projA
+```
+
+With `--default`, requests without a `project` field route to the default project. Explicit `project` fields still win.
+
+### Environment isolation
+
+Each project has its own `.env` / `.env.local`; they never mix. One subprocess worker per project owns that project's environment. No project-level env is loaded into the parent `serve` process.
+
 ## API Reference
+
+### GET /
+
+Server info for discovery. Returns version, default project (if any), and the list of served projects.
+
+```json
+{
+  "version": "0.10.0",
+  "default": "projA",
+  "projects": [
+    { "id": "projA", "path": "/abs/path/to/projA", "agentCount": 3, "scheduleCount": 1 },
+    { "id": "projB", "path": "/abs/path/to/projB", "agentCount": 2, "scheduleCount": 0 }
+  ]
+}
+```
 
 ### POST /run
 
@@ -32,6 +77,7 @@ Execute an agent and receive the result.
 ```json
 {
   "agent": "path/to/agent.agentuse",
+  "project": "projA",
   "prompt": "Optional additional instructions",
   "model": "anthropic:claude-sonnet-4-6",
   "timeout": 300,
@@ -41,7 +87,8 @@ Execute an agent and receive the result.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `agent` | string | Yes | Path to agent file (relative to project root) |
+| `agent` | string | Yes | Path to agent file (relative to that project's root) |
+| `project` | string | Conditional | Project id. Optional in single-project mode. Required in multi-project mode unless `--default` is set |
 | `prompt` | string | No | Additional prompt appended to agent instructions |
 | `model` | string | No | Override model in agent file |
 | `timeout` | number | No | Max execution time in seconds (default: 300) |
@@ -77,6 +124,8 @@ Execute an agent and receive the result.
 | Error Code | HTTP Status | Description |
 |------------|-------------|-------------|
 | `AGENT_NOT_FOUND` | 404 | Agent file doesn't exist |
+| `PROJECT_NOT_FOUND` | 404 | Unknown project id in multi-project mode |
+| `PROJECT_REQUIRED` | 400 | Multi-project mode with no `project` field and no `--default` |
 | `INVALID_PATH` | 400 | Path outside project root |
 | `INVALID_REQUEST` | 400 | Invalid JSON body |
 | `MISSING_FIELD` | 400 | Required field missing |

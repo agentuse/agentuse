@@ -223,10 +223,23 @@ agentuse serve [options]
 ```bash
 -p, --port <number>     Port to listen on (default: 12233)
 -H, --host <string>     Host to bind to (default: 127.0.0.1)
--C, --directory <path>  Working directory for agent resolution
+-C, --directory <path>  Project directory (repeat for multi-project)
+--default <id>          In multi-project mode, project id to route POST /run when no `project` is supplied
 -d, --debug             Enable debug mode
 --no-auth               Disable API key requirement for exposed hosts (dangerous)
 ```
+
+### Serving Multiple Projects
+
+One server process can host agents from several project directories. Repeat `-C`:
+
+```bash
+agentuse serve -C ./projA -C ./projB
+```
+
+Project ids are derived from the directory basename (`projA`, `projB`). Two projects with the same basename are a hard startup error; rename one or serve them separately. Each project keeps its own `.env` / `.env.local`; envs never mix across projects.
+
+Requests include a `project` field in the body to pick which project runs the agent. In single-project mode, the field is ignored, so existing integrations work untouched. In multi-project mode, omitting `project` returns `400 PROJECT_REQUIRED` unless `--default <id>` is set at startup, in which case requests without `project` route to the default.
 
 ### Authentication
 
@@ -252,7 +265,24 @@ curl -X POST http://server:12233/run \
   Use `--no-auth` to bypass authentication (dangerous for production).
 </Warning>
 
-### API Endpoint
+### API Endpoints
+
+#### GET /
+
+Server info for discovery.
+
+```json
+{
+  "version": "0.10.0",
+  "default": "projA",
+  "projects": [
+    { "id": "projA", "path": "/abs/path/to/projA", "agentCount": 3, "scheduleCount": 1 },
+    { "id": "projB", "path": "/abs/path/to/projB", "agentCount": 2, "scheduleCount": 0 }
+  ]
+}
+```
+
+`default` is `null` when no `--default` is set (or in single-project mode, the sole project id).
 
 #### POST /run
 
@@ -263,6 +293,7 @@ Execute an agent and receive the result.
 ```json
 {
   "agent": "path/to/agent.agentuse",
+  "project": "projA",
   "prompt": "Optional additional prompt",
   "model": "anthropic:claude-sonnet-4-6",
   "timeout": 300,
@@ -272,7 +303,8 @@ Execute an agent and receive the result.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `agent` | string | Yes | Path to agent file (relative to project root) |
+| `agent` | string | Yes | Path to agent file (relative to that project's root) |
+| `project` | string | Conditional | Project id. Optional in single-project mode. Required in multi-project mode unless `--default` is set |
 | `prompt` | string | No | Additional prompt to append to agent instructions |
 | `model` | string | No | Override the model specified in agent file |
 | `timeout` | number | No | Maximum execution time in seconds (default: 300) |
@@ -307,8 +339,10 @@ Execute an agent and receive the result.
 
 | Error Code | HTTP Status | Description |
 |------------|-------------|-------------|
-| `NOT_FOUND` | 404 | Endpoint not found (use POST /run) |
+| `NOT_FOUND` | 404 | Endpoint not found (use `POST /run` or `GET /`) |
 | `AGENT_NOT_FOUND` | 404 | Agent file doesn't exist |
+| `PROJECT_NOT_FOUND` | 404 | Unknown project id in multi-project mode |
+| `PROJECT_REQUIRED` | 400 | Multi-project mode with no `project` field and no `--default` |
 | `INVALID_PATH` | 400 | Agent path outside project root |
 | `INVALID_REQUEST` | 400 | Invalid JSON body |
 | `MISSING_FIELD` | 400 | Required field missing |
@@ -352,6 +386,12 @@ agentuse serve --host 0.0.0.0 --port 3000
 # Use specific project directory
 agentuse serve -C /path/to/project
 
+# Host multiple projects from one process
+agentuse serve -C ./projA -C ./projB
+
+# Same, with POST /run defaulting to projA when `project` is not supplied
+agentuse serve -C ./projA -C ./projB --default projA
+
 # Start with debug logging
 agentuse serve --debug
 ```
@@ -379,6 +419,14 @@ curl -N -X POST http://127.0.0.1:12233/run \
   -H "Content-Type: application/json" \
   -H "Accept: application/x-ndjson" \
   -d '{"agent": "agents/analyzer.agentuse"}'
+
+# Multi-project: pick which project runs the agent
+curl -X POST http://127.0.0.1:12233/run \
+  -H "Content-Type: application/json" \
+  -d '{"project": "projA", "agent": "assistant.agentuse"}'
+
+# Discovery: list served projects
+curl http://127.0.0.1:12233/
 ```
 
 ### Scheduled Agents
@@ -408,13 +456,13 @@ List running `agentuse serve` instances.
 agentuse serve ps [--json]
 ```
 
-Shows PID, port, project directory, agent/schedule counts, and uptime for each server.
+Shows PID, port, project summary, total agent/schedule counts, and uptime for each server. Multi-project servers show the first project id followed by `+N`, where N is the count of additional projects.
 
 ```
-PID      PORT     PROJECT                        AGENTS   SCHEDULES   UPTIME
+PID      PORT     PROJECTS                       AGENTS   SCHEDULES   UPTIME
 ────────────────────────────────────────────────────────────────────────────
 63398    12233    ~/workspace/agentuse           9        1           2h 15m
-71245    12234    ~/workspace/another-project    5        0           45m
+71245    12234    projA +2                       12       3           45m
 ```
 
 Use `--json` for scripting. Stale entries are automatically cleaned up.
