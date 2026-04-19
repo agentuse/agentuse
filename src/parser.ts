@@ -9,6 +9,13 @@ import { StoreConfigSchema } from './store/index.js';
 import { LearningConfigSchema } from './learning/index.js';
 import { SandboxConfigSchema } from './sandbox.js';
 
+const warnedExperimental = new Set<string>();
+function warnExperimentalOnce(key: string, label: string): void {
+  if (warnedExperimental.has(key)) return;
+  warnedExperimental.add(key);
+  logger.warn(`[Experimental] ${label} is experimental and may change in future versions.`);
+}
+
 /**
  * Error thrown when agent configuration is invalid
  * Used for telemetry to track common config issues without exposing sensitive data
@@ -105,19 +112,12 @@ const AgentSchema = z.object({
     };
   }
 
-  // Experimental feature warnings
-  if (data.type === 'manager') {
-    logger.warn('[Experimental] Manager agents (type: manager) are experimental and may change in future versions.');
-  }
-  if (data.store) {
-    logger.warn('[Experimental] Store feature is experimental and may change in future versions.');
-  }
-  if (data.learning) {
-    logger.warn('[Experimental] Learning feature is experimental and may change in future versions.');
-  }
-  if (data.sandbox) {
-    logger.warn('[Experimental] Sandbox feature is experimental and may change in future versions.');
-  }
+  // Experimental feature warnings (emit once per feature per process to avoid
+  // log spam when the same or many agents are parsed repeatedly, e.g. in serve).
+  if (data.type === 'manager') warnExperimentalOnce('manager', 'Manager agents (type: manager)');
+  if (data.store) warnExperimentalOnce('store', 'Store feature');
+  if (data.learning) warnExperimentalOnce('learning', 'Learning feature');
+  if (data.sandbox) warnExperimentalOnce('sandbox', 'Sandbox feature');
 
   return data;
 });

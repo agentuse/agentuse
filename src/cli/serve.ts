@@ -17,7 +17,6 @@ import { Scheduler, type Schedule } from "../scheduler";
 import { FileWatcher } from "../watcher";
 import { telemetry, parseModel } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
-import { validateAgentEnvVars, formatEnvValidationError } from "../utils/env-validation";
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { homedir } from "os";
 
@@ -513,16 +512,11 @@ export function createServeCommand(): Command {
         }
         const agentPath = resolve(project.root, schedule.agentPath);
 
-        // Parse agent for telemetry and validation
+        // Parse agent for telemetry (env validation happens in the worker,
+        // which loads the project's .env before checking process.env)
         let agent: Awaited<ReturnType<typeof parseAgent>> | undefined;
         try {
           agent = await parseAgent(agentPath);
-
-          // Pre-flight environment variable validation
-          const envValidation = validateAgentEnvVars(agent.config);
-          if (!envValidation.valid) {
-            throw new Error(formatEnvValidationError(envValidation));
-          }
         } catch (parseError) {
           const duration = Date.now() - startTime;
           totalExecutions++;
@@ -845,15 +839,9 @@ export function createServeCommand(): Command {
 
           executionLog.start(multiProject ? `${project.id}/${body.agent}` : body.agent);
 
-          // Parse agent for validation and telemetry
+          // Parse agent for telemetry (env validation happens in the worker,
+          // which loads the project's .env before checking process.env)
           const agent = await parseAgent(agentPath);
-
-          // Pre-flight environment variable validation
-          const envValidation = validateAgentEnvVars(agent.config);
-          if (!envValidation.valid) {
-            sendError(res, 500, "ENV_MISSING", formatEnvValidationError(envValidation));
-            return;
-          }
 
           // Create abort controller for timeout
           const timeoutSeconds = body.timeout ?? agent.config.timeout ?? 300;
