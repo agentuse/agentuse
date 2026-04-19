@@ -592,7 +592,7 @@ describe('Serve Command - CORS Headers', () => {
   it('should include CORS headers in all responses', async () => {
     const mockServer = createServer(async (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true }));
@@ -607,9 +607,225 @@ describe('Serve Command - CORS Headers', () => {
       });
       expect(response.headers['access-control-allow-origin']).toBe('*');
       expect(response.headers['access-control-allow-methods']).toContain('POST');
+      expect(response.headers['access-control-allow-methods']).toContain('GET');
       expect(response.headers['access-control-allow-headers']).toContain('Content-Type');
     } finally {
       mockServer.close();
     }
+  });
+});
+
+/**
+ * Multi-project serve tests.
+ *
+ * Replicates the project-resolution rules from serve.ts in a mock handler so
+ * we can assert the HTTP contract without spinning up the real worker stack.
+ * The rules under test:
+ *  - single-project mode: `project` optional, existing clients unchanged
+ *  - multi-project without `--default`: missing `project` -> 400 PROJECT_REQUIRED
+ *  - multi-project with `--default`: missing `project` -> routes to default
+ *  - unknown project id -> 404 PROJECT_NOT_FOUND
+ *  - GET / returns server info
+ */
+function buildMockMultiProjectServer(projects: Array<{ id: string; root: string }>, defaultId?: string): Server {
+  const byId = new Map(projects.map((p) => [p.id, p]));
+  const multiProject = projects.length > 1;
+
+  return createServer((req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    if (req.method === 'GET' && (req.url === '/' || req.url === '')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        version: 'test',
+        default: defaultId ?? (multiProject ? null : projects[0].id),
+        projects: projects.map((p) => ({ id: p.id, path: p.root, agentCount: 0, scheduleCount: 0 })),
+      }));
+      return;
+    }
+
+    if (req.method !== 'POST' || req.url !== '/run') {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: { code: 'NOT_FOUND', message: 'Endpoint not found. Use POST /run or GET /' } }));
+      return;
+    }
+
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      let parsed: { agent?: string; project?: string };
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: { code: 'INVALID_REQUEST', message: 'Invalid JSON' } }));
+        return;
+      }
+      if (!parsed.agent) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: { code: 'MISSING_FIELD', message: 'Missing agent' } }));
+        return;
+      }
+
+      // project resolution
+      let resolvedId: string | undefined;
+      if (parsed.project !== undefined) {
+        if (!byId.has(parsed.project)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: { code: 'PROJECT_NOT_FOUND', message: `Unknown project id: "${parsed.project}"` } }));
+          return;
+        }
+        resolvedId = parsed.project;
+      } else if (!multiProject) {
+        resolvedId = projects[0].id;
+      } else if (defaultId) {
+        resolvedId = defaultId;
+      } else {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: false,
+          error: { code: 'PROJECT_REQUIRED', message: 'Multiple projects are served.' },
+          availableProjects: [...byId.keys()],
+        }));
+        return;
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, resolvedProjectId: resolvedId, agent: parsed.agent }));
+    });
+  });
+}
+
+describe('Serve Command - Multi-Project Routing', () => {
+  describe('single-project mode', () => {
+    let server: Server;
+    const port = 19020;
+    beforeAll(async () => {
+      server = buildMockMultiProjectServer([{ id: 'only', root: '/tmp/only' }]);
+      await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+    });
+    afterAll(() => {
+      server.close();
+    });
+
+    it('POST /run without project works (back-compat)', async () => {
+      const res = await makeRequest(port, { body: { agent: 'foo.agentuse' } });
+      expect(res.status).toBe(200);
+      const data = res.data as { success: boolean; resolvedProjectId: string };
+      expect(data.success).toBe(true);
+      expect(data.resolvedProjectId).toBe('only');
+    });
+
+    it('POST /run with matching project works', async () => {
+      const res = await makeRequest(port, { body: { agent: 'foo.agentuse', project: 'only' } });
+      expect(res.status).toBe(200);
+    });
+
+    it('POST /run with unknown project returns 404 PROJECT_NOT_FOUND', async () => {
+      const res = await makeRequest(port, { body: { agent: 'foo.agentuse', project: 'nope' } });
+      expect(res.status).toBe(404);
+      const err = (res.data as { error: { code: string } }).error;
+      expect(err.code).toBe('PROJECT_NOT_FOUND');
+    });
+  });
+
+  describe('multi-project mode without --default', () => {
+    let server: Server;
+    const port = 19021;
+    beforeAll(async () => {
+      server = buildMockMultiProjectServer([
+        { id: 'a', root: '/tmp/a' },
+        { id: 'b', root: '/tmp/b' },
+      ]);
+      await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+    });
+    afterAll(() => {
+      server.close();
+    });
+
+    it('POST /run without project returns 400 PROJECT_REQUIRED with available ids', async () => {
+      const res = await makeRequest(port, { body: { agent: 'foo.agentuse' } });
+      expect(res.status).toBe(400);
+      const data = res.data as { error: { code: string }; availableProjects: string[] };
+      expect(data.error.code).toBe('PROJECT_REQUIRED');
+      expect(data.availableProjects).toEqual(['a', 'b']);
+    });
+
+    it('POST /run with valid project routes correctly', async () => {
+      const res = await makeRequest(port, { body: { agent: 'foo.agentuse', project: 'b' } });
+      expect(res.status).toBe(200);
+      expect((res.data as { resolvedProjectId: string }).resolvedProjectId).toBe('b');
+    });
+  });
+
+  describe('multi-project mode with --default', () => {
+    let server: Server;
+    const port = 19022;
+    beforeAll(async () => {
+      server = buildMockMultiProjectServer([
+        { id: 'a', root: '/tmp/a' },
+        { id: 'b', root: '/tmp/b' },
+      ], 'a');
+      await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+    });
+    afterAll(() => {
+      server.close();
+    });
+
+    it('POST /run without project routes to default', async () => {
+      const res = await makeRequest(port, { body: { agent: 'foo.agentuse' } });
+      expect(res.status).toBe(200);
+      expect((res.data as { resolvedProjectId: string }).resolvedProjectId).toBe('a');
+    });
+
+    it('explicit project still overrides default', async () => {
+      const res = await makeRequest(port, { body: { agent: 'foo.agentuse', project: 'b' } });
+      expect(res.status).toBe(200);
+      expect((res.data as { resolvedProjectId: string }).resolvedProjectId).toBe('b');
+    });
+  });
+
+  describe('GET /', () => {
+    it('returns server info with project list and null default in multi-project mode without --default', async () => {
+      const server = buildMockMultiProjectServer([
+        { id: 'a', root: '/tmp/a' },
+        { id: 'b', root: '/tmp/b' },
+      ]);
+      const port = 19023;
+      await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+      try {
+        const res = await makeRequest(port, { method: 'GET', path: '/' });
+        expect(res.status).toBe(200);
+        const data = res.data as { version: string; default: string | null; projects: Array<{ id: string }> };
+        expect(data.default).toBeNull();
+        expect(data.projects.map((p) => p.id)).toEqual(['a', 'b']);
+      } finally {
+        server.close();
+      }
+    });
+
+    it('reports the --default when set', async () => {
+      const server = buildMockMultiProjectServer(
+        [{ id: 'a', root: '/tmp/a' }, { id: 'b', root: '/tmp/b' }],
+        'b',
+      );
+      const port = 19024;
+      await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+      try {
+        const res = await makeRequest(port, { method: 'GET', path: '/' });
+        const data = res.data as { default: string };
+        expect(data.default).toBe('b');
+      } finally {
+        server.close();
+      }
+    });
   });
 });

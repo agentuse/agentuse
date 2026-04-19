@@ -138,7 +138,7 @@ describe("Scheduler", () => {
 
   describe("add()", () => {
     it("creates schedule with cron expression", () => {
-      const schedule = scheduler.add("test.agentuse", "0 9 * * *");
+      const schedule = scheduler.add("test-project", "test.agentuse", "0 9 * * *");
 
       expect(schedule.id).toBeDefined();
       expect(schedule.agentPath).toBe("test.agentuse");
@@ -149,19 +149,19 @@ describe("Scheduler", () => {
     });
 
     it("creates schedule with interval", () => {
-      const schedule = scheduler.add("test.agentuse", "5m");
+      const schedule = scheduler.add("test-project", "test.agentuse", "5m");
 
       expect(schedule.expression).toBe("*/5 * * * *");
     });
 
     it("uses system timezone", () => {
-      const schedule = scheduler.add("test.agentuse", "0 9 * * *");
+      const schedule = scheduler.add("test-project", "test.agentuse", "0 9 * * *");
 
       expect(schedule.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
     });
 
     it("sets nextRun for schedules", () => {
-      const schedule = scheduler.add("test.agentuse", "0 9 * * *");
+      const schedule = scheduler.add("test-project", "test.agentuse", "0 9 * * *");
 
       expect(schedule.nextRun).toBeInstanceOf(Date);
     });
@@ -169,7 +169,7 @@ describe("Scheduler", () => {
 
   describe("get()", () => {
     it("returns schedule by ID", () => {
-      const added = scheduler.add("test.agentuse", "0 9 * * *");
+      const added = scheduler.add("test-project", "test.agentuse", "0 9 * * *");
       const retrieved = scheduler.get(added.id);
 
       expect(retrieved).toBeDefined();
@@ -192,9 +192,9 @@ describe("Scheduler", () => {
     });
 
     it("returns all schedules", () => {
-      scheduler.add("agent1.agentuse", "0 9 * * *");
-      scheduler.add("agent2.agentuse", "0 10 * * *");
-      scheduler.add("agent3.agentuse", "0 11 * * *");
+      scheduler.add("test-project", "agent1.agentuse", "0 9 * * *");
+      scheduler.add("test-project", "agent2.agentuse", "0 10 * * *");
+      scheduler.add("test-project", "agent3.agentuse", "0 11 * * *");
 
       const schedules = scheduler.list();
 
@@ -209,8 +209,8 @@ describe("Scheduler", () => {
     });
 
     it("returns correct count", () => {
-      scheduler.add("agent1.agentuse", "0 9 * * *");
-      scheduler.add("agent2.agentuse", "0 10 * * *");
+      scheduler.add("test-project", "agent1.agentuse", "0 9 * * *");
+      scheduler.add("test-project", "agent2.agentuse", "0 10 * * *");
 
       expect(scheduler.count).toBe(2);
     });
@@ -218,7 +218,7 @@ describe("Scheduler", () => {
 
   describe("trigger()", () => {
     it("executes schedule immediately", async () => {
-      const schedule = scheduler.add("test.agentuse", "0 9 * * *");
+      const schedule = scheduler.add("test-project", "test.agentuse", "0 9 * * *");
 
       await scheduler.trigger(schedule.id);
 
@@ -227,7 +227,7 @@ describe("Scheduler", () => {
     });
 
     it("updates lastRun and lastResult on success", async () => {
-      const schedule = scheduler.add("test.agentuse", "0 9 * * *");
+      const schedule = scheduler.add("test-project", "test.agentuse", "0 9 * * *");
 
       await scheduler.trigger(schedule.id);
 
@@ -245,7 +245,7 @@ describe("Scheduler", () => {
       const errorScheduler = new Scheduler({ onExecute: errorExecute });
 
       try {
-        const schedule = errorScheduler.add("test.agentuse", "0 9 * * *");
+        const schedule = errorScheduler.add("test-project", "test.agentuse", "0 9 * * *");
         await errorScheduler.trigger(schedule.id);
 
         const updated = errorScheduler.get(schedule.id);
@@ -266,8 +266,8 @@ describe("Scheduler", () => {
 
   describe("shutdown()", () => {
     it("stops all cron jobs", () => {
-      scheduler.add("agent1.agentuse", "0 9 * * *");
-      scheduler.add("agent2.agentuse", "0 10 * * *");
+      scheduler.add("test-project", "agent1.agentuse", "0 9 * * *");
+      scheduler.add("test-project", "agent2.agentuse", "0 10 * * *");
 
       // Should not throw
       scheduler.shutdown();
@@ -285,7 +285,7 @@ describe("Scheduler", () => {
     });
 
     it("formats single schedule", () => {
-      scheduler.add("test.agentuse", "0 9 * * *");
+      scheduler.add("test-project", "test.agentuse", "0 9 * * *");
 
       const result = scheduler.formatScheduleTable();
 
@@ -295,8 +295,8 @@ describe("Scheduler", () => {
     });
 
     it("formats multiple schedules", () => {
-      scheduler.add("agent1.agentuse", "0 9 * * *");
-      scheduler.add("agent2.agentuse", "0 10 * * *");
+      scheduler.add("test-project", "agent1.agentuse", "0 9 * * *");
+      scheduler.add("test-project", "agent2.agentuse", "0 10 * * *");
 
       const result = scheduler.formatScheduleTable();
 
