@@ -74,6 +74,10 @@ Generate an executive summary with trends.
 ```bash
 agentuse serve
 curl -X POST http://localhost:12233/run -d '{"agent": "my-agent"}'
+
+# Serve multiple projects from one process:
+agentuse serve -C ./projA -C ./projB
+curl -X POST http://localhost:12233/run -d '{"project":"projA","agent":"my-agent"}'
 ```
 
 **Scheduled Agents** - Run on a schedule:
