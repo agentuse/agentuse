@@ -28,25 +28,23 @@ export async function getGitRoot(cwd: string): Promise<string | null> {
 }
 
 /**
- * Get project directory based on git root or global
- * Returns: {xdgData}/agentuse/project/{git-hash} or {xdgData}/agentuse/project/global
+ * Get project directory based on git root or project-root hash.
+ * Returns: {xdgData}/agentuse/project/{hash}
+ * Hash source: git root when available, otherwise the absolute project root.
+ * The non-git branch previously returned `project/global`, which collided across
+ * multiple non-git projects served by the same process.
  */
 export async function getProjectDir(projectRoot: string): Promise<string> {
   const baseDir = path.join(getXdgDataDir(), 'agentuse', 'project');
 
   const gitRoot = await getGitRoot(projectRoot);
+  const source = gitRoot ?? path.resolve(projectRoot);
 
-  if (gitRoot) {
-    // Hash git root for directory name
-    const hash = crypto.createHash('sha256')
-      .update(gitRoot)
-      .digest('hex')
-      .substring(0, 16);
-    return path.join(baseDir, hash);
-  } else {
-    // Use global for non-git projects
-    return path.join(baseDir, 'global');
-  }
+  const hash = crypto.createHash('sha256')
+    .update(source)
+    .digest('hex')
+    .substring(0, 16);
+  return path.join(baseDir, hash);
 }
 
 /**
