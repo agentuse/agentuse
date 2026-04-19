@@ -239,6 +239,7 @@ program
       
       // Change working directory first if -C/--directory was specified
       originalCwd = process.cwd();
+      let explicitProjectRoot: string | undefined;
       if (options.directory) {
         const targetDir = resolve(options.directory);
         if (!existsSync(targetDir)) {
@@ -246,11 +247,15 @@ program
         }
         logger.debug(`Changing working directory from ${originalCwd} to ${targetDir}`);
         process.chdir(targetDir);
+        explicitProjectRoot = targetDir;
       }
 
-      // Now detect project root from current directory (after potential cd)
+      // Detect project root. When -C was explicitly specified, use it directly
+      // (do NOT walk up to .git/package.json, matching `serve -C`). Otherwise
+      // search upward from cwd for project markers.
       const projectContext = resolveProjectContext(process.cwd(), {
         ...(options.envFile && { envFile: options.envFile }),
+        ...(explicitProjectRoot && { projectRoot: explicitProjectRoot }),
       });
       logger.debug(`Using project root: ${projectContext.projectRoot}`);
 

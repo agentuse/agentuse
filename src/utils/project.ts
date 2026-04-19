@@ -65,19 +65,24 @@ export function findProjectRoot(startPath: string): string {
  * Resolve project context based on current directory and CLI options
  *
  * @param currentDir - Current working directory
- * @param options - CLI options
+ * @param options - CLI options. When `projectRoot` is provided, it is used
+ *   directly (no upward walk for `.git`/`package.json`). This matches
+ *   `serve -C <dir>` semantics: an explicit directory is authoritative.
  * @returns Project context with resolved paths
  */
 export function resolveProjectContext(
   currentDir: string,
-  options: { envFile?: string } = {}
+  options: { envFile?: string; projectRoot?: string } = {}
 ): {
   projectRoot: string;
   envFile: string;
   pluginDirs: string[];
 } {
-  // Find project root from current directory
-  const projectRoot = findProjectRoot(currentDir);
+  // If caller provided an explicit project root (e.g. from -C), use it as-is.
+  // Otherwise, search upward for project markers.
+  const projectRoot = options.projectRoot
+    ? resolve(options.projectRoot)
+    : findProjectRoot(currentDir);
 
   // Resolve env file path
   let envFile: string;
