@@ -32,9 +32,18 @@ export interface ServerEntry {
   version: string;
   /** One entry per project served by this instance. Present from v0.11.0 onward. */
   projects?: ServerProjectEntry[];
+  /** Flat log file path (stdout/stderr tee). Absent when --no-log-file was passed. */
+  logFile?: string;
 }
 
 const REGISTRY_DIR = join(getXdgDataDir(), "agentuse", "servers");
+
+/**
+ * Default flat-log path for a given PID (no rotation, one file per process).
+ */
+export function getDefaultLogFilePath(pid: number): string {
+  return join(REGISTRY_DIR, `${pid}.log`);
+}
 
 /**
  * Ensure the registry directory exists.
@@ -126,11 +135,19 @@ export function listServers(): ServerEntry[] {
       if (isProcessRunning(entry.pid)) {
         entries.push(entry);
       } else {
-        // Clean up stale entry
+        // Clean up stale entry (and its log file, if any)
         try {
           rmSync(filePath);
         } catch {
           // Ignore cleanup errors
+        }
+        const logPath = entry.logFile ?? getDefaultLogFilePath(entry.pid);
+        if (existsSync(logPath)) {
+          try {
+            rmSync(logPath);
+          } catch {
+            // Ignore cleanup errors
+          }
         }
       }
     } catch {

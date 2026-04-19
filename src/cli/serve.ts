@@ -17,7 +17,8 @@ import { Scheduler, type Schedule } from "../scheduler";
 import { FileWatcher } from "../watcher";
 import { telemetry, parseModel } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
-import { registerServer, unregisterServer, updateServer, listServers, formatUptime, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
+import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
+import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { homedir } from "os";
 
 interface RunRequest {
@@ -354,7 +355,8 @@ export function createServeCommand(): Command {
     .option("--default <id>", "In multi-project mode, the project id to route POST /run when no `project` field is supplied")
     .option("-d, --debug", "Enable debug mode")
     .option("--no-auth", "Disable API key requirement for exposed hosts (dangerous)")
-    .action(async (options: { port: string; host: string; directory: string[]; default?: string; debug?: boolean; auth: boolean }) => {
+    .option("--no-log-file", "Disable the per-server log file (stdout/stderr tee)")
+    .action(async (options: { port: string; host: string; directory: string[]; default?: string; debug?: boolean; auth: boolean; logFile: boolean }) => {
       const port = parseInt(options.port, 10);
       if (isNaN(port) || port <= 0 || port > 65535) {
         console.error("Invalid port number");
@@ -493,6 +495,7 @@ export function createServeCommand(): Command {
       let totalExecutions = 0;
       let successfulExecutions = 0;
       let failedExecutions = 0;
+      let logHandle: LogFileHandle | null = null;
 
       // Helper function to execute an agent (used by scheduler)
       // Uses subprocess to work around EBADF issue when spawning from async callbacks
@@ -1026,7 +1029,8 @@ export function createServeCommand(): Command {
 
         server.close(() => {
           console.log("Server closed");
-          process.exit(0);
+          const done = logHandle ? logHandle.close() : Promise.resolve();
+          done.finally(() => process.exit(0));
         });
       };
 
@@ -1057,6 +1061,17 @@ export function createServeCommand(): Command {
           scheduleCount: schedules.filter((s) => s.projectId === p.id).length,
         }));
 
+        // Start the flat log file before the banner so startup output is captured.
+        let logFilePath: string | undefined;
+        if (options.logFile !== false) {
+          try {
+            logHandle = startLogFile({ path: getDefaultLogFilePath(process.pid) });
+            logFilePath = logHandle.path;
+          } catch (err) {
+            logger.warn(`Could not open server log file: ${(err as Error).message}`);
+          }
+        }
+
         // Register server in the process registry
         registerServer({
           port,
@@ -1067,6 +1082,7 @@ export function createServeCommand(): Command {
           scheduleCount: schedules.length,
           version: packageVersion,
           projects: registryProjects,
+          ...(logFilePath && { logFile: logFilePath }),
         });
 
         printLogo();
@@ -1131,8 +1147,9 @@ export function createServeCommand(): Command {
       });
     });
 
-  // Add ps subcommand
+  // Add ps and logs subcommands
   serveCmd.addCommand(createPsSubcommand());
+  serveCmd.addCommand(createLogsSubcommand());
 
   return serveCmd;
 }
@@ -1167,16 +1184,25 @@ function formatPsTable(servers: ServerEntry[]): string {
     return truncatePath(s.projectRoot, widths[2]);
   };
 
-  const rows = servers.map((s) => [
-    String(s.pid).padEnd(widths[0]),
-    String(s.port).padEnd(widths[1]),
-    formatProjects(s).padEnd(widths[2]),
-    String(s.agentCount).padEnd(widths[3]),
-    String(s.scheduleCount).padEnd(widths[4]),
-    formatUptime(s.startTime).padEnd(widths[5]),
-  ].join("  "));
-
-  return [chalk.dim(headerRow), chalk.dim(separator), ...rows].join("\n");
+  const blocks: string[] = [chalk.dim(headerRow), chalk.dim(separator)];
+  for (const s of servers) {
+    const row = [
+      String(s.pid).padEnd(widths[0]),
+      String(s.port).padEnd(widths[1]),
+      formatProjects(s).padEnd(widths[2]),
+      String(s.agentCount).padEnd(widths[3]),
+      String(s.scheduleCount).padEnd(widths[4]),
+      formatUptime(s.startTime).padEnd(widths[5]),
+    ].join("  ");
+    blocks.push(row);
+    if (s.logFile) {
+      const shortLog = s.logFile.startsWith(homedir())
+        ? "~" + s.logFile.slice(homedir().length)
+        : s.logFile;
+      blocks.push(chalk.dim(`  log: ${shortLog}`));
+    }
+  }
+  return blocks.join("\n");
 }
 
 function createPsSubcommand(): Command {
@@ -1200,5 +1226,83 @@ function createPsSubcommand(): Command {
       console.log(formatPsTable(servers));
       console.log();
       console.log(chalk.dim(`${servers.length} server${servers.length === 1 ? "" : "s"} running`));
+    });
+}
+
+function resolveTargetServer(pidArg: string | undefined): ServerEntry | null {
+  const servers = listServers();
+  if (pidArg !== undefined) {
+    const pid = parseInt(pidArg, 10);
+    if (isNaN(pid)) {
+      console.error(chalk.red(`Invalid pid: ${pidArg}`));
+      return null;
+    }
+    const found = servers.find((s) => s.pid === pid);
+    if (!found) {
+      console.error(chalk.red(`No running agentuse serve instance with pid ${pid}.`));
+      console.error(chalk.dim(`Use \`agentuse serve ps\` to see running servers.`));
+      return null;
+    }
+    return found;
+  }
+  if (servers.length === 0) {
+    console.error(chalk.dim("No running agentuse serve instances found."));
+    return null;
+  }
+  if (servers.length > 1) {
+    console.error(chalk.red("Multiple servers running; specify a pid."));
+    console.error();
+    console.error(formatPsTable(servers));
+    return null;
+  }
+  return servers[0];
+}
+
+function createLogsSubcommand(): Command {
+  return new Command("logs")
+    .description("Show the log file for a running agentuse serve instance")
+    .argument("[pid]", "PID of the server to tail (omit when only one server is running)")
+    .option("-n, --lines <number>", "Number of lines to show from the end of the file", "50")
+    .option("-f, --follow", "Follow the log as it grows")
+    .option("--path", "Print only the log file path and exit")
+    .action((pidArg: string | undefined, options: { lines: string; follow?: boolean; path?: boolean }) => {
+      const target = resolveTargetServer(pidArg);
+      if (!target) {
+        process.exit(1);
+      }
+      if (!target.logFile) {
+        console.error(chalk.red(`Server pid ${target.pid} has no log file (started with --no-log-file?).`));
+        process.exit(1);
+      }
+
+      if (options.path) {
+        console.log(target.logFile);
+        return;
+      }
+
+      const lines = parseInt(options.lines, 10);
+      if (isNaN(lines) || lines < 0) {
+        console.error(chalk.red(`Invalid --lines value: ${options.lines}`));
+        process.exit(1);
+      }
+
+      const args = options.follow
+        ? ["-n", String(lines), "-F", target.logFile]
+        : ["-n", String(lines), target.logFile];
+      const child = spawn("tail", args, { stdio: "inherit" });
+      child.on("error", (err) => {
+        console.error(chalk.red(`Failed to spawn tail: ${err.message}`));
+        process.exit(1);
+      });
+      child.on("exit", (code) => {
+        process.exit(code ?? 0);
+      });
+      if (options.follow) {
+        const forward = (sig: NodeJS.Signals) => {
+          child.kill(sig);
+        };
+        process.on("SIGINT", forward);
+        process.on("SIGTERM", forward);
+      }
     });
 }

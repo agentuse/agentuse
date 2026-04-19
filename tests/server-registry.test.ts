@@ -7,6 +7,7 @@ import {
   listServers,
   updateServer,
   formatUptime,
+  getDefaultLogFilePath,
   type ServerEntry,
 } from "../src/utils/server-registry";
 import { getXdgDataDir } from "../src/storage/paths";
@@ -153,6 +154,37 @@ describe("Server Registry", () => {
       listServers();
 
       expect(fs.existsSync(fakeEntryPath)).toBe(false);
+    });
+
+    it("should also delete the log file when sweeping a stale entry", () => {
+      const fakePid = 999999998;
+      const fakeEntryPath = path.join(REGISTRY_DIR, `${fakePid}.json`);
+      const fakeLogPath = getDefaultLogFilePath(fakePid);
+
+      fs.mkdirSync(REGISTRY_DIR, { recursive: true });
+      fs.writeFileSync(
+        fakeEntryPath,
+        JSON.stringify({
+          pid: fakePid,
+          port: 99998,
+          host: "127.0.0.1",
+          projectRoot: "/fake/project",
+          startTime: Date.now(),
+          agentCount: 0,
+          scheduleCount: 0,
+          version: "1.0.0",
+          logFile: fakeLogPath,
+        })
+      );
+      fs.writeFileSync(fakeLogPath, "stale content\n");
+
+      expect(fs.existsSync(fakeEntryPath)).toBe(true);
+      expect(fs.existsSync(fakeLogPath)).toBe(true);
+
+      listServers();
+
+      expect(fs.existsSync(fakeEntryPath)).toBe(false);
+      expect(fs.existsSync(fakeLogPath)).toBe(false);
     });
 
     it("should return empty array when no servers running", () => {
