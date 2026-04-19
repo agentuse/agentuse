@@ -27,6 +27,7 @@ export type ScheduleConfig = z.infer<typeof ScheduleConfigSchema>;
  */
 export interface Schedule {
   id: string;
+  projectId: string;
   agentPath: string;
   expression: string; // Normalized cron expression
   timezone: string;

@@ -23,13 +23,14 @@ export class Scheduler {
   /**
    * Add a schedule for an agent
    */
-  add(agentPath: string, config: ScheduleConfig): Schedule {
+  add(projectId: string, agentPath: string, config: ScheduleConfig): Schedule {
     const id = randomUUID();
     const expression = parseScheduleExpression(config);
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     const schedule: Schedule = {
       id,
+      projectId,
       agentPath,
       expression,
       timezone,
@@ -129,11 +130,11 @@ export class Scheduler {
   }
 
   /**
-   * Find a schedule by agent path
+   * Find a schedule by project + agent path
    */
-  getByAgentPath(agentPath: string): Schedule | undefined {
+  getByAgentPath(projectId: string, agentPath: string): Schedule | undefined {
     for (const schedule of this.schedules.values()) {
-      if (schedule.agentPath === agentPath) {
+      if (schedule.projectId === projectId && schedule.agentPath === agentPath) {
         return schedule;
       }
     }
@@ -141,11 +142,11 @@ export class Scheduler {
   }
 
   /**
-   * Remove a schedule by agent path
+   * Remove a schedule by project + agent path
    * @returns true if a schedule was removed, false if not found
    */
-  removeByAgentPath(agentPath: string): boolean {
-    const schedule = this.getByAgentPath(agentPath);
+  removeByAgentPath(projectId: string, agentPath: string): boolean {
+    const schedule = this.getByAgentPath(projectId, agentPath);
     if (!schedule) {
       return false;
     }
@@ -160,7 +161,7 @@ export class Scheduler {
     // Remove the schedule
     this.schedules.delete(schedule.id);
 
-    logger.debug(`Scheduler: Removed schedule for ${agentPath}`);
+    logger.debug(`Scheduler: Removed schedule for ${projectId}:${agentPath}`);
     return true;
   }
 
@@ -168,13 +169,13 @@ export class Scheduler {
    * Update a schedule for an agent (removes old, adds new)
    * @returns The new schedule, or undefined if no schedule config provided
    */
-  update(agentPath: string, config: ScheduleConfig | undefined): Schedule | undefined {
+  update(projectId: string, agentPath: string, config: ScheduleConfig | undefined): Schedule | undefined {
     // Always remove existing schedule first
-    this.removeByAgentPath(agentPath);
+    this.removeByAgentPath(projectId, agentPath);
 
     // Add new schedule if config provided
     if (config) {
-      return this.add(agentPath, config);
+      return this.add(projectId, agentPath, config);
     }
 
     return undefined;
@@ -269,6 +270,10 @@ export class Scheduler {
       return a.nextRun.getTime() - b.nextRun.getTime();
     });
 
+    // Show the project prefix only when more than one project has schedules.
+    const uniqueProjects = new Set(schedules.map((s) => s.projectId));
+    const showProject = uniqueProjects.size > 1;
+
     // Pre-calculate human-readable schedules for width calculation
     const schedulesWithHuman = schedules.map((s) => ({
       schedule: s,
@@ -282,17 +287,18 @@ export class Scheduler {
             hour12: false,
           })
         : "N/A",
+      agentLabel: showProject ? `${s.projectId}/${s.agentPath}` : s.agentPath,
     }));
 
     // Calculate column widths for alignment
     const maxNextRunWidth = Math.max(...schedulesWithHuman.map((s) => s.nextRunStr.length));
-    const maxAgentWidth = Math.max(...schedulesWithHuman.map((s) => s.schedule.agentPath.length));
+    const maxAgentWidth = Math.max(...schedulesWithHuman.map((s) => s.agentLabel.length));
 
     const lines: string[] = [];
 
-    for (const { schedule, humanSchedule, nextRunStr } of schedulesWithHuman) {
+    for (const { humanSchedule, nextRunStr, agentLabel } of schedulesWithHuman) {
       const nextRunCol = nextRunStr.padEnd(maxNextRunWidth);
-      const agentCol = schedule.agentPath.padEnd(maxAgentWidth);
+      const agentCol = agentLabel.padEnd(maxAgentWidth);
 
       lines.push(`    ${nextRunCol}  ${agentCol}  ${humanSchedule}`);
     }

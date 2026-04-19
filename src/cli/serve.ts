@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import { timingSafeEqual } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
-import { resolve } from "path";
+import { resolve, basename } from "path";
 import { existsSync } from "fs";
 import { glob } from "glob";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
@@ -18,12 +18,12 @@ import { FileWatcher } from "../watcher";
 import { telemetry, parseModel } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { validateAgentEnvVars, formatEnvValidationError } from "../utils/env-validation";
-import { registerServer, unregisterServer, updateServer, listServers, formatUptime, type ServerEntry } from "../utils/server-registry";
+import { registerServer, unregisterServer, updateServer, listServers, formatUptime, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { homedir } from "os";
-import * as dotenv from "dotenv";
 
 interface RunRequest {
   agent: string;
+  project?: string;
   prompt?: string;
   model?: string;
   timeout?: number;
@@ -324,15 +324,38 @@ function validateApiKey(req: IncomingMessage, expectedKey: string | undefined): 
   }
 }
 
+interface Project {
+  id: string;
+  root: string;
+  envFile: string;
+  agentFiles: string[];
+}
+
+function collectDir(value: string, previous: string[]): string[] {
+  return previous.concat([value]);
+}
+
+function resolveProjectFromPath(rawPath: string): Omit<Project, 'agentFiles'> {
+  const root = resolve(rawPath);
+  if (!existsSync(root)) {
+    throw new Error(`Directory not found: ${root}`);
+  }
+  const envLocal = resolve(root, '.env.local');
+  const envFile = existsSync(envLocal) ? envLocal : resolve(root, '.env');
+  const id = basename(root);
+  return { id, root, envFile };
+}
+
 export function createServeCommand(): Command {
   const serveCmd = new Command("serve")
     .description("Start an HTTP server to run agents via API")
     .option("-p, --port <number>", "Port to listen on", "12233")
     .option("-H, --host <string>", "Host to bind to", "127.0.0.1")
-    .option("-C, --directory <path>", "Working directory for agent resolution")
+    .option("-C, --directory <path>", "Project directory (repeat for multi-project)", collectDir, [] as string[])
+    .option("--default <id>", "In multi-project mode, the project id to route POST /run when no `project` field is supplied")
     .option("-d, --debug", "Enable debug mode")
     .option("--no-auth", "Disable API key requirement for exposed hosts (dangerous)")
-    .action(async (options: { port: string; host: string; directory?: string; debug?: boolean; auth: boolean }) => {
+    .action(async (options: { port: string; host: string; directory: string[]; default?: string; debug?: boolean; auth: boolean }) => {
       const port = parseInt(options.port, 10);
       if (isNaN(port) || port <= 0 || port > 65535) {
         console.error("Invalid port number");
@@ -355,65 +378,116 @@ export function createServeCommand(): Command {
         process.env.AGENTUSE_DEBUG = "true";
       }
 
-      // Resolve working directory
-      const workDir = options.directory ? resolve(options.directory) : process.cwd();
-      if (!existsSync(workDir)) {
-        console.error(`Directory not found: ${workDir}`);
-        process.exit(1);
-      }
-
-      // Resolve project context
-      // If --directory is explicitly specified, use it directly as project root
-      // Otherwise, search upward for project markers
-      const projectContext = options.directory
-        ? {
-            projectRoot: workDir,
-            envFile: existsSync(resolve(workDir, '.env.local'))
-              ? resolve(workDir, '.env.local')
-              : resolve(workDir, '.env'),
-            pluginDirs: [],
+      // Resolve projects from -C flags (repeated) or cwd fallback
+      const dirFlags = options.directory ?? [];
+      const projectSeeds: Array<Omit<Project, 'agentFiles'>> = [];
+      if (dirFlags.length > 0) {
+        for (const dir of dirFlags) {
+          try {
+            projectSeeds.push(resolveProjectFromPath(dir));
+          } catch (err) {
+            console.error(chalk.red((err as Error).message));
+            process.exit(1);
           }
-        : resolveProjectContext(workDir);
-      logger.info(`Project root: ${projectContext.projectRoot}`);
+        }
+      } else {
+        const ctx = resolveProjectContext(process.cwd());
+        const envLocal = resolve(ctx.projectRoot, '.env.local');
+        projectSeeds.push({
+          id: basename(ctx.projectRoot),
+          root: ctx.projectRoot,
+          envFile: existsSync(envLocal) ? envLocal : ctx.envFile,
+        });
+      }
 
-      // Check if a server is already running for this project
+      // Reject duplicate absolute paths
+      const pathSeen = new Map<string, string>();
+      for (const p of projectSeeds) {
+        const prev = pathSeen.get(p.root);
+        if (prev) {
+          console.error(chalk.red(`\nError: duplicate project path: ${p.root}`));
+          console.error(chalk.dim(`Each -C must point to a distinct directory.`));
+          process.exit(1);
+        }
+        pathSeen.set(p.root, p.id);
+      }
+
+      // Reject duplicate ids (same basename from different parents)
+      const idSeen = new Map<string, string>();
+      for (const p of projectSeeds) {
+        const prev = idSeen.get(p.id);
+        if (prev) {
+          console.error(chalk.red(`\nError: duplicate project id "${p.id}": both "${prev}" and "${p.root}" resolve to the same basename.`));
+          console.error(chalk.dim(`Rename one directory or serve them separately.`));
+          process.exit(1);
+        }
+        idSeen.set(p.id, p.root);
+      }
+
+      const multiProject = projectSeeds.length > 1;
+
+      // Validate --default
+      if (options.default !== undefined) {
+        if (!multiProject) {
+          console.error(chalk.red(`\nError: --default is only meaningful with multiple -C flags.`));
+          process.exit(1);
+        }
+        if (!idSeen.has(options.default)) {
+          const known = projectSeeds.map((p) => p.id).join(', ');
+          console.error(chalk.red(`\nError: --default "${options.default}" is not a known project id.`));
+          console.error(chalk.dim(`Known ids: ${known}`));
+          process.exit(1);
+        }
+      }
+
+      // Check if any requested project root is already served
       const existingServers = listServers();
-      const existingServer = existingServers.find(s => s.projectRoot === projectContext.projectRoot);
-      if (existingServer) {
-        console.error(chalk.red(`\nError: A server is already running for this project.`));
-        console.error(chalk.dim(`\n  PID:  ${existingServer.pid}`));
-        console.error(chalk.dim(`  Port: ${existingServer.port}`));
-        console.error(chalk.dim(`\nTo see all running servers: agentuse serve ps`));
-        process.exit(1);
+      for (const p of projectSeeds) {
+        const clash = existingServers.find((s) => {
+          if (s.projects && s.projects.length > 0) return s.projects.some((sp) => sp.root === p.root);
+          return s.projectRoot === p.root;
+        });
+        if (clash) {
+          console.error(chalk.red(`\nError: a server is already running for project at ${p.root}.`));
+          console.error(chalk.dim(`\n  PID:  ${clash.pid}`));
+          console.error(chalk.dim(`  Port: ${clash.port}`));
+          console.error(chalk.dim(`\nTo see all running servers: agentuse serve ps`));
+          process.exit(1);
+        }
       }
 
-      // Load environment
-      if (existsSync(projectContext.envFile)) {
-        dotenv.config({ path: projectContext.envFile, quiet: true });
-        logger.debug(`Loaded env from: ${projectContext.envFile}`);
+      // Initialize storage per project (non-blocking if one fails)
+      for (const p of projectSeeds) {
+        try {
+          await initStorage(p.root);
+        } catch (err) {
+          logger.warn(`Failed to initialize session storage for ${p.id}: ${(err as Error).message}`);
+        }
       }
 
-      // Initialize storage
-      try {
-        await initStorage(projectContext.projectRoot);
-        logger.debug("Session storage initialized");
-      } catch (err) {
-        logger.warn(`Failed to initialize session storage: ${(err as Error).message}`);
+      for (const p of projectSeeds) {
+        logger.info(`Project ${p.id}: ${p.root}`);
       }
 
       // Initialize telemetry
       await telemetry.init(packageVersion);
 
-      // Spawn agent worker at startup (sync context where spawn works)
-      // This worker handles agent execution to work around EBADF in async callbacks
-      const worker = new AgentWorker();
-      try {
-        await worker.spawn();
-        logger.debug("Agent worker spawned successfully");
-      } catch (err) {
-        console.error(chalk.red(`Failed to spawn agent worker: ${(err as Error).message}`));
-        process.exit(1);
+      // Spawn one worker per project. Each worker loads its own project's
+      // .env / .env.local on each execute request, so per-project env stays
+      // isolated from the parent process and from sibling projects.
+      const workers = new Map<string, AgentWorker>();
+      for (const p of projectSeeds) {
+        const w = new AgentWorker();
+        try {
+          await w.spawn();
+        } catch (err) {
+          console.error(chalk.red(`Failed to spawn worker for ${p.id}: ${(err as Error).message}`));
+          for (const live of workers.values()) live.shutdown();
+          process.exit(1);
+        }
+        workers.set(p.id, w);
       }
+      logger.debug(`Spawned ${workers.size} agent worker(s)`);
 
       // Execution stats tracking
       const serverStartTime = Date.now();
@@ -427,7 +501,17 @@ export function createServeCommand(): Command {
         schedule: Schedule
       ): Promise<{ success: boolean; duration: number; error?: string; sessionId?: string }> => {
         const startTime = Date.now();
-        const agentPath = resolve(projectContext.projectRoot, schedule.agentPath);
+        const project = projectsById.get(schedule.projectId);
+        if (!project) {
+          totalExecutions++;
+          failedExecutions++;
+          return {
+            success: false,
+            duration: 0,
+            error: `Unknown project for schedule: ${schedule.projectId}`,
+          };
+        }
+        const agentPath = resolve(project.root, schedule.agentPath);
 
         // Parse agent for telemetry and validation
         let agent: Awaited<ReturnType<typeof parseAgent>> | undefined;
@@ -450,10 +534,21 @@ export function createServeCommand(): Command {
           };
         }
 
+        const projectWorker = workers.get(project.id);
+        if (!projectWorker) {
+          totalExecutions++;
+          failedExecutions++;
+          return {
+            success: false,
+            duration: 0,
+            error: `Worker not available for project ${project.id}`,
+          };
+        }
+
         // Execute via worker process to work around EBADF issue in async callbacks
-        const spawnResult = await worker.execute({
+        const spawnResult = await projectWorker.execute({
           agentPath: schedule.agentPath, // Use relative path
-          projectRoot: projectContext.projectRoot,
+          projectRoot: project.root,
           timeout: agent.config.timeout,
           maxSteps: agent.config.maxSteps,
           debug: options.debug,
@@ -523,41 +618,53 @@ export function createServeCommand(): Command {
         onExecute: executeScheduledAgent,
       });
 
-      // Scan for agents with schedule config
-      const agentFiles = await glob("**/*.agentuse", {
-        cwd: projectContext.projectRoot,
-        ignore: ["node_modules/**", "tmp/**", ".git/**"],
-      });
-
-      // Track agent count for registry updates (mutable for hot reload)
-      let currentAgentCount = agentFiles.length;
-
-      // Helper to update the server registry after hot reload changes
-      const updateRegistryCounts = () => {
-        updateServer({
-          agentCount: currentAgentCount,
-          scheduleCount: scheduler.list().length,
+      // Build projects with agent files and scan for schedules
+      const projects: Project[] = [];
+      for (const seed of projectSeeds) {
+        const agentFiles = await glob("**/*.agentuse", {
+          cwd: seed.root,
+          ignore: ["node_modules/**", "tmp/**", ".git/**"],
         });
-      };
+        projects.push({ ...seed, agentFiles });
 
-      for (const agentFile of agentFiles) {
-        try {
-          const agentPath = resolve(projectContext.projectRoot, agentFile);
-          const agent = await parseAgent(agentPath);
-
-          if (agent.config.schedule) {
-            scheduler.add(agentFile, agent.config.schedule);
-            logger.debug(`Loaded schedule for: ${agentFile}`);
+        for (const agentFile of agentFiles) {
+          try {
+            const agentPath = resolve(seed.root, agentFile);
+            const agent = await parseAgent(agentPath);
+            if (agent.config.schedule) {
+              scheduler.add(seed.id, agentFile, agent.config.schedule);
+              logger.debug(`Loaded schedule for ${seed.id}: ${agentFile}`);
+            }
+          } catch (err) {
+            logger.warn(`Failed to load agent ${seed.id}/${agentFile}: ${(err as Error).message}`);
           }
-        } catch (err) {
-          logger.warn(`Failed to load agent ${agentFile}: ${(err as Error).message}`);
         }
       }
 
+      const projectsById = new Map<string, Project>(projects.map((p) => [p.id, p]));
+
+      // Mutable per-project agent counts (updated by hot reload)
+      const agentCounts = new Map<string, number>(projects.map((p) => [p.id, p.agentFiles.length]));
+
+      const updateRegistryCounts = () => {
+        const entries: ServerProjectEntry[] = projects.map((p) => ({
+          id: p.id,
+          root: p.root,
+          agentCount: agentCounts.get(p.id) ?? 0,
+          scheduleCount: scheduler.list().filter((s) => s.projectId === p.id).length,
+        }));
+        updateServer({
+          agentCount: entries.reduce((a, b) => a + b.agentCount, 0),
+          scheduleCount: entries.reduce((a, b) => a + b.scheduleCount, 0),
+          projects: entries,
+        });
+      };
+
       // Helper to print hot reload messages
-      const printHotReload = (action: "added" | "changed" | "removed", path: string, schedule?: Schedule) => {
+      const printHotReload = (projectId: string, action: "added" | "changed" | "removed", path: string, schedule?: Schedule) => {
         const actionColor = action === "added" ? chalk.green : action === "removed" ? chalk.red : chalk.yellow;
-        console.log(`  ${chalk.cyan("Hot reload")} Agent ${actionColor(action)}: ${chalk.dim(path)}`);
+        const label = multiProject ? `${projectId}/${path}` : path;
+        console.log(`  ${chalk.cyan("Hot reload")} Agent ${actionColor(action)}: ${chalk.dim(label)}`);
         if (schedule) {
           const nextRun = schedule.nextRun?.toLocaleString("en-US", {
             month: "short",
@@ -570,67 +677,102 @@ export function createServeCommand(): Command {
         }
       };
 
-      // Initialize file watcher for hot reload
-      const fileWatcher = new FileWatcher({
-        projectRoot: projectContext.projectRoot,
-        envFile: projectContext.envFile,
+      // One file watcher per project
+      const fileWatchers: FileWatcher[] = [];
+      for (const project of projects) {
+        const watcher = new FileWatcher({
+          projectRoot: project.root,
+          envFile: project.envFile,
 
-        onAgentAdded: async (relativePath: string) => {
-          try {
-            const agentPath = resolve(projectContext.projectRoot, relativePath);
-            const agent = await parseAgent(agentPath);
+          onAgentAdded: async (relativePath: string) => {
+            try {
+              const agentPath = resolve(project.root, relativePath);
+              const agent = await parseAgent(agentPath);
 
-            const schedule = agent.config.schedule ? scheduler.add(relativePath, agent.config.schedule) : undefined;
-            printHotReload("added", relativePath, schedule);
+              const schedule = agent.config.schedule
+                ? scheduler.add(project.id, relativePath, agent.config.schedule)
+                : undefined;
+              printHotReload(project.id, "added", relativePath, schedule);
 
-            // Update registry
-            currentAgentCount++;
+              agentCounts.set(project.id, (agentCounts.get(project.id) ?? 0) + 1);
+              updateRegistryCounts();
+            } catch (err) {
+              logger.warn(`Hot reload: Failed to parse new agent ${project.id}/${relativePath}: ${(err as Error).message}`);
+            }
+          },
+
+          onAgentChanged: async (relativePath: string) => {
+            try {
+              const agentPath = resolve(project.root, relativePath);
+              const agent = await parseAgent(agentPath);
+
+              const schedule = scheduler.update(project.id, relativePath, agent.config.schedule);
+              printHotReload(project.id, "changed", relativePath, schedule);
+
+              updateRegistryCounts();
+            } catch (err) {
+              logger.warn(`Hot reload: Failed to parse changed agent ${project.id}/${relativePath}: ${(err as Error).message}`);
+            }
+          },
+
+          onAgentRemoved: (relativePath: string) => {
+            const hadSchedule = scheduler.removeByAgentPath(project.id, relativePath);
+            printHotReload(project.id, "removed", relativePath);
+            if (hadSchedule) {
+              logger.debug(`Hot reload: Unregistered schedule for ${project.id}/${relativePath}`);
+            }
+
+            agentCounts.set(project.id, Math.max(0, (agentCounts.get(project.id) ?? 0) - 1));
             updateRegistryCounts();
-          } catch (err) {
-            logger.warn(`Hot reload: Failed to parse new agent ${relativePath}: ${(err as Error).message}`);
+          },
+
+          onEnvReloaded: () => {
+            // Env changes are picked up by the worker on its next execute,
+            // which re-reads the project's .env / .env.local before each run.
+          },
+        });
+
+        watcher.start();
+        fileWatchers.push(watcher);
+      }
+
+      const resolveRequestProject = (body: RunRequest): { project: Project } | { error: { status: number; code: string; message: string; extra?: Record<string, unknown> } } => {
+        if (body.project !== undefined) {
+          const proj = projectsById.get(body.project);
+          if (!proj) {
+            return {
+              error: {
+                status: 404,
+                code: "PROJECT_NOT_FOUND",
+                message: `Unknown project id: "${body.project}". Known ids: ${[...projectsById.keys()].join(', ')}`,
+              },
+            };
           }
-        },
+          return { project: proj };
+        }
 
-        onAgentChanged: async (relativePath: string) => {
-          try {
-            const agentPath = resolve(projectContext.projectRoot, relativePath);
-            const agent = await parseAgent(agentPath);
+        if (!multiProject) {
+          return { project: projects[0] };
+        }
 
-            const schedule = scheduler.update(relativePath, agent.config.schedule);
-            printHotReload("changed", relativePath, schedule);
+        if (options.default) {
+          return { project: projectsById.get(options.default)! };
+        }
 
-            // Update registry (schedule count may have changed)
-            updateRegistryCounts();
-          } catch (err) {
-            logger.warn(`Hot reload: Failed to parse changed agent ${relativePath}: ${(err as Error).message}`);
-          }
-        },
-
-        onAgentRemoved: (relativePath: string) => {
-          const hadSchedule = scheduler.removeByAgentPath(relativePath);
-          printHotReload("removed", relativePath);
-          if (hadSchedule) {
-            logger.debug(`Hot reload: Unregistered schedule for ${relativePath}`);
-          }
-
-          // Update registry
-          currentAgentCount--;
-          updateRegistryCounts();
-        },
-
-        onEnvReloaded: () => {
-          // Environment variables are reloaded in process.env
-          // New requests will pick up the changes automatically
-        },
-      });
-
-      // Start watching for file changes
-      fileWatcher.start();
+        return {
+          error: {
+            status: 400,
+            code: "PROJECT_REQUIRED",
+            message: `Multiple projects are served. Add "project" to the request body. Available ids: ${[...projectsById.keys()].join(', ')}`,
+            extra: { availableProjects: [...projectsById.keys()] },
+          },
+        };
+      };
 
       const server = createServer(async (req, res) => {
         // CORS headers
         res.setHeader("Access-Control-Allow-Origin", "*");
-        res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization");
 
         if (req.method === "OPTIONS") {
@@ -645,8 +787,25 @@ export function createServeCommand(): Command {
           return;
         }
 
+        // GET / returns server info
+        if (req.method === "GET" && (req.url === "/" || req.url === "")) {
+          const info = {
+            version: packageVersion,
+            default: options.default ?? (multiProject ? null : projects[0].id),
+            projects: projects.map((p) => ({
+              id: p.id,
+              path: p.root,
+              agentCount: agentCounts.get(p.id) ?? 0,
+              scheduleCount: scheduler.list().filter((s) => s.projectId === p.id).length,
+            })),
+          };
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(info));
+          return;
+        }
+
         if (req.method !== "POST" || req.url !== "/run") {
-          sendError(res, 404, "NOT_FOUND", "Endpoint not found. Use POST /run");
+          sendError(res, 404, "NOT_FOUND", "Endpoint not found. Use POST /run or GET /");
           return;
         }
 
@@ -657,20 +816,34 @@ export function createServeCommand(): Command {
           const body = await parseRequestBody(req);
           const wantsStream = req.headers.accept?.includes("application/x-ndjson");
 
+          // Resolve project
+          const resolved = resolveRequestProject(body);
+          if ('error' in resolved) {
+            const { status, code, message, extra } = resolved.error;
+            if (extra) {
+              res.writeHead(status, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ success: false, error: { code, message }, ...extra }));
+            } else {
+              sendError(res, status, code, message);
+            }
+            return;
+          }
+          const project = resolved.project;
+
           // Resolve agent path
-          const agentPath = resolve(projectContext.projectRoot, body.agent);
+          const agentPath = resolve(project.root, body.agent);
           if (!existsSync(agentPath)) {
             sendError(res, 404, "AGENT_NOT_FOUND", `Agent file not found: ${body.agent}`);
             return;
           }
 
           // Security: ensure agent is within project root
-          if (!agentPath.startsWith(projectContext.projectRoot)) {
+          if (!agentPath.startsWith(project.root)) {
             sendError(res, 400, "INVALID_PATH", "Agent path must be within project root");
             return;
           }
 
-          executionLog.start(body.agent);
+          executionLog.start(multiProject ? `${project.id}/${body.agent}` : body.agent);
 
           // Parse agent for validation and telemetry
           const agent = await parseAgent(agentPath);
@@ -692,11 +865,18 @@ export function createServeCommand(): Command {
             abortController.abort();
           });
 
+          const projectWorker = workers.get(project.id);
+          if (!projectWorker) {
+            clearTimeout(timeoutId);
+            sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
+            return;
+          }
+
           // Execute via worker process to work around EBADF issue in async callbacks
           // MCP server spawning fails in HTTP handlers due to bundler/Node.js fd issues
-          const spawnResult = await worker.execute({
+          const spawnResult = await projectWorker.execute({
             agentPath: body.agent, // Use relative path, worker resolves from projectRoot
-            projectRoot: projectContext.projectRoot,
+            projectRoot: project.root,
             prompt: body.prompt,
             model: body.model,
             timeout: timeoutSeconds,
@@ -844,7 +1024,8 @@ export function createServeCommand(): Command {
         unregisterServer();
 
         scheduler.shutdown();
-        worker.shutdown();
+        for (const w of workers.values()) w.shutdown();
+        for (const fw of fileWatchers) fw.close().catch(() => {/* ignore */});
 
         // Capture server shutdown telemetry
         telemetry.captureServerShutdown({
@@ -879,25 +1060,41 @@ export function createServeCommand(): Command {
 
       server.listen(port, options.host, () => {
         const serverUrl = `http://${options.host}:${port}`;
-        const firstAgent = agentFiles[0] || "path/to/agent.agentuse";
         const schedules = scheduler.list();
+        const totalAgents = projects.reduce((a, p) => a + p.agentFiles.length, 0);
+        const registryProjects: ServerProjectEntry[] = projects.map((p) => ({
+          id: p.id,
+          root: p.root,
+          agentCount: p.agentFiles.length,
+          scheduleCount: schedules.filter((s) => s.projectId === p.id).length,
+        }));
 
         // Register server in the process registry
         registerServer({
           port,
           host: options.host,
-          projectRoot: projectContext.projectRoot,
+          projectRoot: projects[0].root,
           startTime: serverStartTime,
-          agentCount: agentFiles.length,
+          agentCount: totalAgents,
           scheduleCount: schedules.length,
           version: packageVersion,
+          projects: registryProjects,
         });
 
         printLogo();
 
         // Server info
         console.log(`  ${chalk.dim("Server")}    ${chalk.cyan(serverUrl)}`);
-        console.log(`  ${chalk.dim("Directory")} ${projectContext.projectRoot}`);
+        if (!multiProject) {
+          console.log(`  ${chalk.dim("Directory")} ${projects[0].root}`);
+        } else {
+          console.log(`  ${chalk.dim("Projects")}  ${projects.length}`);
+          for (const p of projects) {
+            const scheduleN = schedules.filter((s) => s.projectId === p.id).length;
+            const marker = options.default === p.id ? chalk.green(' (default)') : '';
+            console.log(`    ${chalk.cyan(p.id.padEnd(20))} ${chalk.dim(p.root)}  ${chalk.dim(`${p.agentFiles.length} agents, ${scheduleN} scheduled`)}${marker}`);
+          }
+        }
         if (apiKey) {
           console.log(`  ${chalk.dim("Auth")}      ${chalk.green("API key required")}`);
         } else if (isExposedHost(options.host)) {
@@ -910,13 +1107,20 @@ export function createServeCommand(): Command {
         // Webhooks
         console.log(`\n  ${chalk.dim("Webhooks")}`);
         const authHeader = apiKey ? ` -H "Authorization: Bearer $AGENTUSE_API_KEY"` : "";
-        console.log(`    curl -X POST ${serverUrl}/run${authHeader} -H "Content-Type: application/json" -d '{"agent": "${firstAgent}"}'`);
+        const firstProject = projects[0];
+        const firstAgent = firstProject.agentFiles[0] || "path/to/agent.agentuse";
+        if (!multiProject) {
+          console.log(`    curl -X POST ${serverUrl}/run${authHeader} -H "Content-Type: application/json" -d '{"agent": "${firstAgent}"}'`);
+        } else {
+          console.log(`    curl -X POST ${serverUrl}/run${authHeader} -H "Content-Type: application/json" -d '{"project": "${firstProject.id}", "agent": "${firstAgent}"}'`);
+          console.log(`    ${chalk.dim(`curl ${serverUrl}/ for server info`)}`);
+        }
         console.log(`    ${chalk.dim(`curl -N ... -H "Accept: application/x-ndjson" -d '{"agent": "..."}' (streaming)`)}`);
 
-        // Available agents for webhooks
-        if (agentFiles.length > 0) {
-          console.log(`\n    ${chalk.dim(`Agents (${agentFiles.length})`)}`);
-          for (const agent of agentFiles) {
+        // Available agents for webhooks (only in single-project mode to avoid noise)
+        if (!multiProject && firstProject.agentFiles.length > 0) {
+          console.log(`\n    ${chalk.dim(`Agents (${firstProject.agentFiles.length})`)}`);
+          for (const agent of firstProject.agentFiles) {
             console.log(`      ${agent}`);
           }
         }
@@ -933,7 +1137,7 @@ export function createServeCommand(): Command {
           port,
           host: options.host,
           scheduledAgents: schedules.length,
-          totalAgents: agentFiles.length,
+          totalAgents,
           authEnabled: !!apiKey,
         });
       });
@@ -958,16 +1162,27 @@ function truncatePath(path: string, maxLen: number): string {
 function formatPsTable(servers: ServerEntry[]): string {
   if (servers.length === 0) return "";
 
-  const headers = ["PID", "PORT", "PROJECT", "AGENTS", "SCHEDULES", "UPTIME"];
+  const headers = ["PID", "PORT", "PROJECTS", "AGENTS", "SCHEDULES", "UPTIME"];
   const widths = [7, 7, 40, 7, 10, 10];
 
   const headerRow = headers.map((h, i) => h.padEnd(widths[i])).join("  ");
   const separator = widths.map((w) => "─".repeat(w)).join("──");
 
+  const formatProjects = (s: ServerEntry): string => {
+    if (s.projects && s.projects.length > 0) {
+      if (s.projects.length === 1) {
+        return truncatePath(s.projects[0].root, widths[2]);
+      }
+      const head = s.projects[0].id;
+      return `${head} +${s.projects.length - 1}`;
+    }
+    return truncatePath(s.projectRoot, widths[2]);
+  };
+
   const rows = servers.map((s) => [
     String(s.pid).padEnd(widths[0]),
     String(s.port).padEnd(widths[1]),
-    truncatePath(s.projectRoot, widths[2]).padEnd(widths[2]),
+    formatProjects(s).padEnd(widths[2]),
     String(s.agentCount).padEnd(widths[3]),
     String(s.scheduleCount).padEnd(widths[4]),
     formatUptime(s.startTime).padEnd(widths[5]),

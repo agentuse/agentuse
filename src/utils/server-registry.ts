@@ -11,15 +11,27 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync
 import { join } from "path";
 import { getXdgDataDir } from "../storage/paths";
 
+export interface ServerProjectEntry {
+  id: string;
+  root: string;
+  agentCount: number;
+  scheduleCount: number;
+}
+
 export interface ServerEntry {
   pid: number;
   port: number;
   host: string;
+  /** Deprecated mirror of projects[0].root; kept for older `ps` output and upgrades. */
   projectRoot: string;
   startTime: number;
+  /** Sum of projects[].agentCount. */
   agentCount: number;
+  /** Sum of projects[].scheduleCount. */
   scheduleCount: number;
   version: string;
+  /** One entry per project served by this instance. Present from v0.11.0 onward. */
+  projects?: ServerProjectEntry[];
 }
 
 const REGISTRY_DIR = join(getXdgDataDir(), "agentuse", "servers");
