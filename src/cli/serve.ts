@@ -19,6 +19,7 @@ import { telemetry, parseModel } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
+import { loadGlobalConfig, expandHome, getGlobalConfigPath, type GlobalConfig } from "../utils/global-config";
 import { homedir } from "os";
 
 interface RunRequest {
@@ -335,41 +336,61 @@ function collectDir(value: string, previous: string[]): string[] {
   return previous.concat([value]);
 }
 
-function resolveProjectFromPath(rawPath: string): Omit<Project, 'agentFiles'> {
-  const root = resolve(rawPath);
+function resolveProjectFromPath(rawPath: string, idOverride?: string): Omit<Project, 'agentFiles'> {
+  const root = resolve(expandHome(rawPath));
   if (!existsSync(root)) {
     throw new Error(`Directory not found: ${root}`);
   }
   const envLocal = resolve(root, '.env.local');
   const envFile = existsSync(envLocal) ? envLocal : resolve(root, '.env');
-  const id = basename(root);
+  const id = idOverride ?? basename(root);
   return { id, root, envFile };
 }
 
 export function createServeCommand(): Command {
   const serveCmd = new Command("serve")
     .description("Start an HTTP server to run agents via API")
-    .option("-p, --port <number>", "Port to listen on", "12233")
-    .option("-H, --host <string>", "Host to bind to", "127.0.0.1")
-    .option("-C, --directory <path>", "Project directory (repeat for multi-project)", collectDir, [] as string[])
+    .option("-p, --port <number>", "Port to listen on (default: 12233 or config.serve.port)")
+    .option("-H, --host <string>", "Host to bind to (default: 127.0.0.1 or config.serve.host)")
+    .option("-C, --directory <path>", "Project directory (repeat for multi-project). Overrides config.serve.projects.", collectDir, [] as string[])
     .option("--default <id>", "In multi-project mode, the project id to route POST /run when no `project` field is supplied")
     .option("-d, --debug", "Enable debug mode")
     .option("--no-auth", "Disable API key requirement for exposed hosts (dangerous)")
     .option("--no-log-file", "Disable the per-server log file (stdout/stderr tee)")
-    .action(async (options: { port: string; host: string; directory: string[]; default?: string; debug?: boolean; auth: boolean; logFile: boolean }) => {
-      const port = parseInt(options.port, 10);
+    .action(async (options: { port?: string; host?: string; directory: string[]; default?: string; debug?: boolean; auth: boolean; logFile: boolean }) => {
+      // Load global config once; hard-fail on malformed config so users don't silently get defaults.
+      let globalConfig: GlobalConfig | null = null;
+      try {
+        globalConfig = loadGlobalConfig();
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+        process.exit(1);
+      }
+      const serveCfg = globalConfig?.serve;
+      if (serveCfg && options.debug) {
+        logger.debug(`Loaded global config from ${getGlobalConfigPath()}`);
+      }
+
+      // Precedence: explicit CLI flag > config > built-in default.
+      const effectivePortRaw = options.port ?? (serveCfg?.port !== undefined ? String(serveCfg.port) : "12233");
+      const port = parseInt(effectivePortRaw, 10);
       if (isNaN(port) || port <= 0 || port > 65535) {
         console.error("Invalid port number");
         process.exit(1);
       }
+      const effectiveHost = options.host ?? serveCfg?.host ?? "127.0.0.1";
+
+      // Commander boolean flags have no "unset" signal for defaults, so:
+      // CLI --no-auth forces false; otherwise config value wins if set; default true.
+      const effectiveAuth = options.auth === false ? false : (serveCfg?.auth ?? true);
+      const effectiveLogFile = options.logFile === false ? false : (serveCfg?.logFile ?? true);
 
       // Check API key requirement for exposed hosts
       const apiKey = process.env.AGENTUSE_API_KEY;
-      const authDisabled = options.auth === false;
 
-      if (isExposedHost(options.host) && !apiKey && !authDisabled) {
+      if (isExposedHost(effectiveHost) && !apiKey && effectiveAuth) {
         console.error(chalk.red("Error: API key required when binding to exposed host"));
-        console.error(chalk.dim("Set AGENTUSE_API_KEY environment variable or use --no-auth to bypass (dangerous)"));
+        console.error(chalk.dim("Set AGENTUSE_API_KEY environment variable or use --no-auth / serve.auth=false to bypass (dangerous)"));
         process.exit(1);
       }
 
@@ -379,7 +400,7 @@ export function createServeCommand(): Command {
         process.env.AGENTUSE_DEBUG = "true";
       }
 
-      // Resolve projects from -C flags (repeated) or cwd fallback
+      // Resolve projects: CLI -C > config.serve.projects > cwd fallback.
       const dirFlags = options.directory ?? [];
       const projectSeeds: Array<Omit<Project, 'agentFiles'>> = [];
       if (dirFlags.length > 0) {
@@ -388,6 +409,15 @@ export function createServeCommand(): Command {
             projectSeeds.push(resolveProjectFromPath(dir));
           } catch (err) {
             console.error(chalk.red((err as Error).message));
+            process.exit(1);
+          }
+        }
+      } else if (serveCfg?.projects && serveCfg.projects.length > 0) {
+        for (const p of serveCfg.projects) {
+          try {
+            projectSeeds.push(resolveProjectFromPath(p.path, p.id));
+          } catch (err) {
+            console.error(chalk.red(`Config project ${p.id ?? p.path}: ${(err as Error).message}`));
             process.exit(1);
           }
         }
@@ -427,15 +457,20 @@ export function createServeCommand(): Command {
 
       const multiProject = projectSeeds.length > 1;
 
-      // Validate --default
-      if (options.default !== undefined) {
+      // CLI --default > config.serve.default.
+      const effectiveDefault = options.default ?? serveCfg?.default;
+
+      // Validate effective default
+      if (effectiveDefault !== undefined) {
         if (!multiProject) {
-          console.error(chalk.red(`\nError: --default is only meaningful with multiple -C flags.`));
+          const from = options.default !== undefined ? '--default' : 'config.serve.default';
+          console.error(chalk.red(`\nError: ${from} is only meaningful with multiple projects.`));
           process.exit(1);
         }
-        if (!idSeen.has(options.default)) {
+        if (!idSeen.has(effectiveDefault)) {
           const known = projectSeeds.map((p) => p.id).join(', ');
-          console.error(chalk.red(`\nError: --default "${options.default}" is not a known project id.`));
+          const from = options.default !== undefined ? '--default' : 'config.serve.default';
+          console.error(chalk.red(`\nError: ${from} "${effectiveDefault}" is not a known project id.`));
           console.error(chalk.dim(`Known ids: ${known}`));
           process.exit(1);
         }
@@ -752,8 +787,8 @@ export function createServeCommand(): Command {
           return { project: projects[0] };
         }
 
-        if (options.default) {
-          return { project: projectsById.get(options.default)! };
+        if (effectiveDefault) {
+          return { project: projectsById.get(effectiveDefault)! };
         }
 
         return {
@@ -788,7 +823,7 @@ export function createServeCommand(): Command {
         if (req.method === "GET" && (req.url === "/" || req.url === "")) {
           const info = {
             version: packageVersion,
-            default: options.default ?? (multiProject ? null : projects[0].id),
+            default: effectiveDefault ?? (multiProject ? null : projects[0].id),
             projects: projects.map((p) => ({
               id: p.id,
               path: p.root,
@@ -1050,8 +1085,8 @@ export function createServeCommand(): Command {
         throw err;
       });
 
-      server.listen(port, options.host, () => {
-        const serverUrl = `http://${options.host}:${port}`;
+      server.listen(port, effectiveHost, () => {
+        const serverUrl = `http://${effectiveHost}:${port}`;
         const schedules = scheduler.list();
         const totalAgents = projects.reduce((a, p) => a + p.agentFiles.length, 0);
         const registryProjects: ServerProjectEntry[] = projects.map((p) => ({
@@ -1063,7 +1098,7 @@ export function createServeCommand(): Command {
 
         // Start the flat log file before the banner so startup output is captured.
         let logFilePath: string | undefined;
-        if (options.logFile !== false) {
+        if (effectiveLogFile) {
           try {
             logHandle = startLogFile({ path: getDefaultLogFilePath(process.pid) });
             logFilePath = logHandle.path;
@@ -1075,7 +1110,7 @@ export function createServeCommand(): Command {
         // Register server in the process registry
         registerServer({
           port,
-          host: options.host,
+          host: effectiveHost,
           projectRoot: projects[0].root,
           startTime: serverStartTime,
           agentCount: totalAgents,
@@ -1095,13 +1130,13 @@ export function createServeCommand(): Command {
           console.log(`  ${chalk.dim("Projects")}  ${projects.length}`);
           for (const p of projects) {
             const scheduleN = schedules.filter((s) => s.projectId === p.id).length;
-            const marker = options.default === p.id ? chalk.green(' (default)') : '';
+            const marker = effectiveDefault === p.id ? chalk.green(' (default)') : '';
             console.log(`    ${chalk.cyan(p.id.padEnd(20))} ${chalk.dim(p.root)}  ${chalk.dim(`${p.agentFiles.length} agents, ${scheduleN} scheduled`)}${marker}`);
           }
         }
         if (apiKey) {
           console.log(`  ${chalk.dim("Auth")}      ${chalk.green("API key required")}`);
-        } else if (isExposedHost(options.host)) {
+        } else if (isExposedHost(effectiveHost)) {
           console.log(`  ${chalk.dim("Auth")}      ${chalk.yellow("No API key (--no-auth)")}`);
         } else {
           console.log(`  ${chalk.dim("Auth")}      ${chalk.dim("None (localhost)")}`);
@@ -1139,7 +1174,7 @@ export function createServeCommand(): Command {
         // Capture server start telemetry
         telemetry.captureServerStart({
           port,
-          host: options.host,
+          host: effectiveHost,
           scheduledAgents: schedules.length,
           totalAgents,
           authEnabled: !!apiKey,

@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `serve` reads optional global config at `~/.agentuse/config.json` (override via `AGENTUSE_CONFIG`). Supports `serve.projects`, `serve.default`, `serve.port`, `serve.host`, `serve.auth`, `serve.logFile`. CLI flags override config; `-C` ignores `serve.projects`. API key remains env-only (`AGENTUSE_API_KEY`).
+
 ## [0.11.0] - 2026-04-24
 
 ### Added
