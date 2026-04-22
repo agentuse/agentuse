@@ -46,7 +46,9 @@ export function createProviderCommand(): Command {
       process.stdout.write("   Set API keys directly in your environment:\n");
       process.stdout.write("   • ANTHROPIC_API_KEY     - For Anthropic Claude models\n");
       process.stdout.write("   • OPENAI_API_KEY        - For OpenAI GPT models\n");
-      process.stdout.write("   • OPENROUTER_API_KEY    - For OpenRouter (multiple models)\n\n");
+      process.stdout.write("   • OPENROUTER_API_KEY    - For OpenRouter (multiple models)\n");
+      process.stdout.write("   • AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_REGION\n");
+      process.stdout.write("                           - For Amazon Bedrock (or AWS_BEARER_TOKEN_BEDROCK)\n\n");
       
       process.stdout.write("ENVIRONMENT VARIABLE SETUP:\n");
       process.stdout.write("─".repeat(40) + "\n");
@@ -90,6 +92,7 @@ export function createProviderCommand(): Command {
       process.stdout.write("• Anthropic:   https://console.anthropic.com/account/keys\n");
       process.stdout.write("• OpenAI:      https://platform.openai.com/api-keys\n");
       process.stdout.write("• OpenRouter:  https://openrouter.ai/keys\n");
+      process.stdout.write("• AWS Bedrock: https://console.aws.amazon.com/iam (create access key with AmazonBedrockFullAccess)\n");
     });
 
   authCmd

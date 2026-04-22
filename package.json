@@ -58,6 +58,7 @@
     "generate:models": "npx tsx scripts/generate-models.ts"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^4.0.96",
     "@ai-sdk/anthropic": "3.0.1",
     "@ai-sdk/mcp": "1.0.1",
     "@ai-sdk/openai": "3.0.1",

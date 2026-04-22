@@ -1,6 +1,7 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { wrapLanguageModel } from 'ai';
 import { AnthropicAuth } from './auth/anthropic';
 import { CodexAuth } from './auth/codex';
@@ -112,6 +113,12 @@ export function parseModelConfig(modelString: string): ModelConfig {
 
   const provider = modelString.slice(0, firstColon);
   const rest = modelString.slice(firstColon + 1);
+
+  // Bedrock model IDs contain colons (e.g. "anthropic.claude-3-5-sonnet-20241022-v2:0"),
+  // so we keep the full remainder as the model name and don't support env-suffix syntax.
+  if (provider === 'bedrock') {
+    return { provider, modelName: rest };
+  }
 
   // Built-in providers support the env suffix syntax: provider:model:env
   const builtinProviders = ['anthropic', 'openai', 'openrouter', 'demo'];
@@ -409,6 +416,45 @@ export async function createModel(modelString: string) {
     // Demo provider - no authentication required
     logger.debug('Using demo provider (no API key required)');
     return await maybeWrapWithDevTools(createDemoModel(config.modelName));
+
+  } else if (config.provider === 'bedrock') {
+    // Amazon Bedrock - supports SigV4 (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY)
+    // or Bearer token (AWS_BEARER_TOKEN_BEDROCK), plus AWS_REGION/AWS_SESSION_TOKEN.
+    // The provider reads these from the environment by default.
+    const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+    const bearerToken = process.env.AWS_BEARER_TOKEN_BEDROCK;
+
+    if (!bearerToken && !(accessKeyId && secretAccessKey)) {
+      throw new AuthenticationError(
+        'bedrock',
+        'AWS_ACCESS_KEY_ID',
+        'No authentication found for Amazon Bedrock. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (and AWS_REGION), or AWS_BEARER_TOKEN_BEDROCK'
+      );
+    }
+    if (!region) {
+      throw new AuthenticationError(
+        'bedrock',
+        'AWS_REGION',
+        'No AWS region found for Amazon Bedrock. Set AWS_REGION (or AWS_DEFAULT_REGION)'
+      );
+    }
+
+    logger.debug(
+      bearerToken
+        ? 'Using AWS_BEARER_TOKEN_BEDROCK for Amazon Bedrock authentication'
+        : 'Using AWS access key for Amazon Bedrock authentication'
+    );
+
+    const bedrock = createAmazonBedrock({
+      region,
+      ...(accessKeyId ? { accessKeyId } : {}),
+      ...(secretAccessKey ? { secretAccessKey } : {}),
+      ...(process.env.AWS_SESSION_TOKEN ? { sessionToken: process.env.AWS_SESSION_TOKEN } : {}),
+      ...(bearerToken ? { apiKey: bearerToken } : {}),
+    });
+    return await maybeWrapWithDevTools(bedrock(config.modelName));
 
   } else {
     // Check for custom provider

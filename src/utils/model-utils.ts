@@ -74,6 +74,11 @@ export function warnIfModelNotInRegistry(modelString: string): string {
     return modelString;
   }
 
+  // Skip validation for Bedrock - model IDs are AWS-specific and not in our registry
+  if (parts.length >= 2 && parts[0] === 'bedrock') {
+    return modelString;
+  }
+
   const result = validateModel(modelString);
 
   if (!result.valid) {
