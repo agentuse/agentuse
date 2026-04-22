@@ -145,6 +145,7 @@ describe('createModel Amazon Bedrock', () => {
     AWS_SECRET_ACCESS_KEY: undefined as string | undefined,
     AWS_SESSION_TOKEN: undefined as string | undefined,
     AWS_BEARER_TOKEN_BEDROCK: undefined as string | undefined,
+    AWS_PROFILE: undefined as string | undefined,
   };
 
   it('creates a Bedrock model with AWS access keys', async () => {
@@ -185,14 +186,17 @@ describe('createModel Amazon Bedrock', () => {
     });
   });
 
-  it('throws AuthenticationError when no credentials are provided', async () => {
+  it('uses the AWS SDK credential chain when no static credentials are set', async () => {
+    // No AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_BEARER_TOKEN_BEDROCK,
+    // only AWS_PROFILE + region — should resolve via fromNodeProviderChain().
     await withEnv({
       ...bedrockEnvKeys,
-      AWS_REGION: 'us-east-1',
+      AWS_REGION: 'eu-west-1',
+      AWS_PROFILE: 'some-profile',
     }, async () => {
-      await expect(
-        createModel('bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0')
-      ).rejects.toBeInstanceOf(AuthenticationError);
+      const model = await createModel('bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0');
+      expect(model).toBeDefined();
+      expect(model.modelId).toBe('anthropic.claude-3-5-sonnet-20241022-v2:0');
     });
   });
 
@@ -201,18 +205,6 @@ describe('createModel Amazon Bedrock', () => {
       ...bedrockEnvKeys,
       AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE',
       AWS_SECRET_ACCESS_KEY: 'secret',
-    }, async () => {
-      await expect(
-        createModel('bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0')
-      ).rejects.toBeInstanceOf(AuthenticationError);
-    });
-  });
-
-  it('throws AuthenticationError when only access key id is set', async () => {
-    await withEnv({
-      ...bedrockEnvKeys,
-      AWS_REGION: 'us-east-1',
-      AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE',
     }, async () => {
       await expect(
         createModel('bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0')

@@ -92,6 +92,15 @@ These environment variables are required for authenticating with AI providers.
   ```
 </ParamField>
 
+<ParamField path="AWS_PROFILE" type="string">
+  AWS named profile from `~/.aws/credentials` / `~/.aws/config`. Used when no static keys or Bearer token are set: the SDK credential provider chain resolves SSO cache, assumed roles, instance metadata, etc.
+
+  ```bash
+  export AWS_REGION=eu-west-1
+  export AWS_PROFILE=my-bedrock-profile
+  ```
+</ParamField>
+
 ## Custom API Key Suffixes
 
 You can use multiple API keys by adding suffixes:
