@@ -86,7 +86,7 @@ schedule: "0 9 * * *"
 ## Features
 
 ### 🤖 Multi-Provider Support
-Works with Anthropic (Claude), OpenAI (GPT), and OpenRouter for open source models like GLM and Minimax. Switch models with a single line change.
+Works with Anthropic (Claude), OpenAI (GPT), OpenRouter (open source models like GLM and Minimax), and Amazon Bedrock. Switch models with a single line change.
 
 ### 🌐 Webhooks & HTTP API
 Trigger agents via HTTP webhooks. Integrate with Zapier, Make, GitHub Actions, or any system that can POST. Supports streaming responses for real-time output.

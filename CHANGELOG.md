@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Amazon Bedrock provider** (`bedrock:`) via `@ai-sdk/amazon-bedrock`
+  - Supports AWS SigV4 (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION`, optional `AWS_SESSION_TOKEN`) and Bearer token (`AWS_BEARER_TOKEN_BEDROCK`) authentication
+  - `parseModelConfig` preserves colons in Bedrock model IDs (e.g. `bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0`)
+  - Static model-registry validation is skipped for `bedrock:` so any AWS-supported model ID is accepted
+  - Documentation updates: model configuration guide, models reference, CLI commands, environment variables, self-hosting, agent syntax
+
 ## [0.10.0] - 2026-03-10
 
 ### Added

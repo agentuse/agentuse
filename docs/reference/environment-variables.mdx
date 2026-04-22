@@ -52,6 +52,46 @@ These environment variables are required for authenticating with AI providers.
   ```
 </ParamField>
 
+<ParamField path="AWS_ACCESS_KEY_ID" type="string">
+  AWS access key ID for Amazon Bedrock authentication (SigV4). Used together with `AWS_SECRET_ACCESS_KEY` and `AWS_REGION`.
+
+  ```bash
+  export AWS_ACCESS_KEY_ID="AKIA..."
+  ```
+</ParamField>
+
+<ParamField path="AWS_SECRET_ACCESS_KEY" type="string">
+  AWS secret access key for Amazon Bedrock authentication (SigV4).
+
+  ```bash
+  export AWS_SECRET_ACCESS_KEY="..."
+  ```
+</ParamField>
+
+<ParamField path="AWS_REGION" type="string">
+  AWS region for Amazon Bedrock API calls (e.g. `us-east-1`). Falls back to `AWS_DEFAULT_REGION` if unset. Required when using Bedrock.
+
+  ```bash
+  export AWS_REGION="us-east-1"
+  ```
+</ParamField>
+
+<ParamField path="AWS_SESSION_TOKEN" type="string">
+  Optional AWS session token for temporary credentials (e.g. STS / assumed roles) when using Amazon Bedrock.
+
+  ```bash
+  export AWS_SESSION_TOKEN="..."
+  ```
+</ParamField>
+
+<ParamField path="AWS_BEARER_TOKEN_BEDROCK" type="string">
+  Bedrock API key (Bearer token). When set, used instead of AWS SigV4 authentication.
+
+  ```bash
+  export AWS_BEARER_TOKEN_BEDROCK="..."
+  ```
+</ParamField>
+
 ## Custom API Key Suffixes
 
 You can use multiple API keys by adding suffixes:

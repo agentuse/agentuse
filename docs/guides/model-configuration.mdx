@@ -22,6 +22,10 @@ AgentUse supports multiple AI providers. You need to authenticate with at least 
     Access to 100+ models via unified API
     API key authentication
   </Card>
+  <Card title="Amazon Bedrock">
+    Claude, Llama, Mistral, Nova and more via AWS
+    AWS SigV4 or Bearer token
+  </Card>
   <Card title="Custom / Local">
     Any OpenAI-compatible endpoint: Ollama, LM Studio, vLLM, llama.cpp, etc.
   </Card>
@@ -88,6 +92,36 @@ agentuse run agent.md --model openai:gpt-5.2:OPENAI_API_KEY_PERSONAL
   .env.*.local
   ```
 </Warning>
+
+## Amazon Bedrock
+
+Bedrock authenticates with standard AWS credentials rather than `agentuse provider login`.
+
+```bash
+export AWS_REGION=us-east-1
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+# Optional, for STS / assumed-role temporary credentials
+export AWS_SESSION_TOKEN="..."
+```
+
+Alternatively, use a Bedrock API key (Bearer token):
+
+```bash
+export AWS_REGION=us-east-1
+export AWS_BEARER_TOKEN_BEDROCK="..."
+```
+
+Use the full Bedrock model ID (which contains colons) as-is:
+
+```bash
+agentuse run agent.agentuse -m bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0
+agentuse run agent.agentuse -m bedrock:meta.llama3-70b-instruct-v1:0
+```
+
+<Note>
+  Your IAM user/role needs `AmazonBedrockFullAccess` (or an equivalent custom policy) and you must have requested access to the foundation model in the AWS console. The `bedrock:` prefix bypasses the static model registry, so any Bedrock model ID is accepted.
+</Note>
 
 ## Custom Providers (Local LLMs)
 

@@ -17,6 +17,7 @@ This page lists recommended models for AgentUse, organized by provider.
 - **Anthropic**: `anthropic:claude-sonnet-4-6` (balanced performance)
 - **OpenAI**: `openai:gpt-5.4` (latest GPT)
 - **OpenRouter**: `openrouter:z-ai/glm-4.7` (open source)
+- **Amazon Bedrock**: `bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0`
 
 ## Recommended Models
 
@@ -67,6 +68,23 @@ This page lists recommended models for AgentUse, organized by provider.
 | `openrouter:z-ai/glm-4.5-air` | GLM 4.5 Air | 128,000 | 96,000 | Reasoning, Tools |
 | `openrouter:z-ai/glm-4.5-air:free` | GLM 4.5 Air (free) | 128,000 | 96,000 | Reasoning |
 | `openrouter:minimax/minimax-m2.1` | MiniMax M2.1 | 204,800 | 131,072 | Reasoning, Tools |
+
+### Amazon Bedrock
+
+Bedrock model IDs are passed through unchanged and are not validated against the static registry. Use any model ID supported by your AWS account and region.
+
+| Model ID (example) | Notes |
+|--------------------|-------|
+| `bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Claude Sonnet 4.5 (US cross-region inference profile) |
+| `bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0` | Claude 3.5 Sonnet v2 |
+| `bedrock:anthropic.claude-3-haiku-20240307-v1:0` | Claude 3 Haiku |
+| `bedrock:meta.llama3-70b-instruct-v1:0` | Llama 3 70B Instruct |
+| `bedrock:mistral.mistral-large-2402-v1:0` | Mistral Large |
+| `bedrock:us.amazon.nova-pro-v1:0` | Amazon Nova Pro |
+
+See the [Amazon Bedrock model catalog](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list. Model availability depends on the AWS region and on the [model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) granted in your account.
+
+Authentication uses standard AWS environment variables (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION`, optional `AWS_SESSION_TOKEN`) or `AWS_BEARER_TOKEN_BEDROCK`. See the [Model Configuration guide](/guides/model-configuration#amazon-bedrock) for details.
 
 ## Custom Providers (Local LLMs)
 
