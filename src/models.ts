@@ -441,11 +441,11 @@ export async function createModel(modelString: string) {
       );
     }
 
-    const bedrockOptions: Record<string, unknown> = { region };
+    const bedrockOptions: Parameters<typeof createAmazonBedrock>[0] = { region };
     if (bearerToken) {
       logger.debug('Using AWS_BEARER_TOKEN_BEDROCK for Amazon Bedrock authentication');
       bedrockOptions.apiKey = bearerToken;
-    } else if (hasStaticCreds) {
+    } else if (accessKeyId && secretAccessKey) {
       logger.debug('Using static AWS access keys for Amazon Bedrock authentication');
       bedrockOptions.accessKeyId = accessKeyId;
       bedrockOptions.secretAccessKey = secretAccessKey;
@@ -465,12 +465,12 @@ export async function createModel(modelString: string) {
         throw new AuthenticationError(
           'bedrock',
           'AWS_ACCESS_KEY_ID',
-          `No authentication found for Amazon Bedrock and @aws-sdk/credential-providers is not available (${error instanceof Error ? error.message : String(error)}). Set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, AWS_BEARER_TOKEN_BEDROCK, or install @aws-sdk/credential-providers and configure AWS_PROFILE`
+          `No authentication found for Amazon Bedrock and @aws-sdk/credential-providers is not available (${error instanceof Error ? error.message : String(error)}). Set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, AWS_BEARER_TOKEN_BEDROCK, or install @aws-sdk/credential-providers to use AWS_PROFILE / SSO / instance roles: pnpm add @aws-sdk/credential-providers`
         );
       }
     }
 
-    const bedrock = createAmazonBedrock(bedrockOptions as Parameters<typeof createAmazonBedrock>[0]);
+    const bedrock = createAmazonBedrock(bedrockOptions);
     return await maybeWrapWithDevTools(bedrock(config.modelName));
 
   } else {

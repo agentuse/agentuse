@@ -102,7 +102,7 @@ export function createProviderCommand(): Command {
     .option("--key <key>", "Optional API key for the endpoint")
     .action(async (name: string, options: { url: string; key?: string }) => {
       // Validate name doesn't conflict with built-in providers
-      const reserved = ["anthropic", "openai", "openrouter", "demo"];
+      const reserved = ["anthropic", "openai", "openrouter", "demo", "bedrock"];
       if (reserved.includes(name.toLowerCase())) {
         logger.error(`Cannot use reserved provider name '${name}'. Reserved: ${reserved.join(", ")}`);
         process.exit(1);

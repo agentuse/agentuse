@@ -65,7 +65,7 @@ export async function* executeAgentCore(
 
     // Extract provider options based on model provider
     const provider = agent.config.model.split(':')[0];
-    const isCustomProvider = !['anthropic', 'openai', 'openrouter', 'demo'].includes(provider);
+    const isCustomProvider = !['anthropic', 'openai', 'openrouter', 'demo', 'bedrock'].includes(provider);
 
     // Only include provider options if they exist and match the model provider
     let providerOptions: any = undefined;
