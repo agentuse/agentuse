@@ -1,14 +1,19 @@
 # Changelog
 
-## [Unreleased]
+## [0.11.0] - 2026-04-24
 
 ### Added
 
-- **Amazon Bedrock provider** (`bedrock:`) via `@ai-sdk/amazon-bedrock`
-  - Supports AWS SigV4 (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION`, optional `AWS_SESSION_TOKEN`) and Bearer token (`AWS_BEARER_TOKEN_BEDROCK`) authentication
+- **Amazon Bedrock provider** (`bedrock:`) via `@ai-sdk/amazon-bedrock` — thanks to @lseguin1337
+  - Three authentication modes: static AWS credentials (`AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` + `AWS_REGION`, optional `AWS_SESSION_TOKEN`), Bearer token (`AWS_BEARER_TOKEN_BEDROCK`), and AWS SDK credential provider chain (`AWS_PROFILE` / SSO / EC2/ECS/EKS instance roles)
   - `parseModelConfig` preserves colons in Bedrock model IDs (e.g. `bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0`)
   - Static model-registry validation is skipped for `bedrock:` so any AWS-supported model ID is accepted
+  - `bedrock` is reserved as a built-in provider name, preventing shadowing via `provider add bedrock`
   - Documentation updates: model configuration guide, models reference, CLI commands, environment variables, self-hosting, agent syntax
+
+### Changed
+
+- `@aws-sdk/credential-providers` is declared as an **optional** dependency — users authenticating with static keys or Bearer tokens skip the ~16 MB / 85 transitive dependencies. Install it explicitly (`pnpm add @aws-sdk/credential-providers`) only when using `AWS_PROFILE`, SSO, or instance roles
 
 ## [0.10.0] - 2026-03-10
 
