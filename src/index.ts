@@ -370,7 +370,7 @@ program
         }
 
         const [provider] = modelParts;
-        const builtinProviders = ['anthropic', 'openai', 'openrouter', 'demo'];
+        const builtinProviders = ['anthropic', 'openai', 'openrouter', 'demo', 'bedrock'];
         if (!builtinProviders.includes(provider)) {
           // Check if it's a custom provider
           const customProvider = await AuthStorage.getCustomProvider(provider);

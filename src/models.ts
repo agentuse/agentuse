@@ -1,6 +1,7 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { wrapLanguageModel } from 'ai';
 import { AnthropicAuth } from './auth/anthropic';
 import { CodexAuth } from './auth/codex';
@@ -112,6 +113,12 @@ export function parseModelConfig(modelString: string): ModelConfig {
 
   const provider = modelString.slice(0, firstColon);
   const rest = modelString.slice(firstColon + 1);
+
+  // Bedrock model IDs contain colons (e.g. "anthropic.claude-3-5-sonnet-20241022-v2:0"),
+  // so we keep the full remainder as the model name and don't support env-suffix syntax.
+  if (provider === 'bedrock') {
+    return { provider, modelName: rest };
+  }
 
   // Built-in providers support the env suffix syntax: provider:model:env
   const builtinProviders = ['anthropic', 'openai', 'openrouter', 'demo'];
@@ -409,6 +416,62 @@ export async function createModel(modelString: string) {
     // Demo provider - no authentication required
     logger.debug('Using demo provider (no API key required)');
     return await maybeWrapWithDevTools(createDemoModel(config.modelName));
+
+  } else if (config.provider === 'bedrock') {
+    // Amazon Bedrock supports three authentication modes (in priority order):
+    //   1. AWS_BEARER_TOKEN_BEDROCK   - Bedrock API key (Bearer auth)
+    //   2. AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (+ optional AWS_SESSION_TOKEN)
+    //      - Static IAM credentials (SigV4)
+    //   3. AWS SDK credential provider chain - resolves AWS_PROFILE,
+    //      ~/.aws/credentials, SSO cache, EC2/ECS/EKS instance roles, env vars, etc.
+    const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+    const bearerToken = process.env.AWS_BEARER_TOKEN_BEDROCK;
+    const hasStaticCreds = Boolean(accessKeyId && secretAccessKey);
+    // Use the SDK credential provider chain when no static creds are present
+    // (covers AWS_PROFILE / SSO / instance roles / etc.)
+    const useCredentialChain = !bearerToken && !hasStaticCreds;
+
+    if (!region) {
+      throw new AuthenticationError(
+        'bedrock',
+        'AWS_REGION',
+        'No AWS region found for Amazon Bedrock. Set AWS_REGION (or AWS_DEFAULT_REGION)'
+      );
+    }
+
+    const bedrockOptions: Parameters<typeof createAmazonBedrock>[0] = { region };
+    if (bearerToken) {
+      logger.debug('Using AWS_BEARER_TOKEN_BEDROCK for Amazon Bedrock authentication');
+      bedrockOptions.apiKey = bearerToken;
+    } else if (accessKeyId && secretAccessKey) {
+      logger.debug('Using static AWS access keys for Amazon Bedrock authentication');
+      bedrockOptions.accessKeyId = accessKeyId;
+      bedrockOptions.secretAccessKey = secretAccessKey;
+      if (process.env.AWS_SESSION_TOKEN) {
+        bedrockOptions.sessionToken = process.env.AWS_SESSION_TOKEN;
+      }
+    } else if (useCredentialChain) {
+      logger.debug(
+        process.env.AWS_PROFILE
+          ? `Using AWS SDK credential chain for Amazon Bedrock (AWS_PROFILE=${process.env.AWS_PROFILE})`
+          : 'Using AWS SDK credential chain for Amazon Bedrock'
+      );
+      try {
+        const { fromNodeProviderChain } = await import('@aws-sdk/credential-providers');
+        bedrockOptions.credentialProvider = fromNodeProviderChain();
+      } catch (error) {
+        throw new AuthenticationError(
+          'bedrock',
+          'AWS_ACCESS_KEY_ID',
+          `No authentication found for Amazon Bedrock and @aws-sdk/credential-providers is not available (${error instanceof Error ? error.message : String(error)}). Set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, AWS_BEARER_TOKEN_BEDROCK, or install @aws-sdk/credential-providers to use AWS_PROFILE / SSO / instance roles: pnpm add @aws-sdk/credential-providers`
+        );
+      }
+    }
+
+    const bedrock = createAmazonBedrock(bedrockOptions);
+    return await maybeWrapWithDevTools(bedrock(config.modelName));
 
   } else {
     // Check for custom provider

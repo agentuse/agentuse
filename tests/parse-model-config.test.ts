@@ -90,4 +90,34 @@ describe("parseModelConfig", () => {
       expect(result.modelName).toBe("TheBloke/Mistral-7B-Instruct:q4_0");
     });
   });
+
+  describe("bedrock provider", () => {
+    it("preserves colons in Bedrock model IDs", () => {
+      const result = parseModelConfig("bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0");
+      expect(result.provider).toBe("bedrock");
+      expect(result.modelName).toBe("anthropic.claude-3-5-sonnet-20241022-v2:0");
+      expect(result.envSuffix).toBeUndefined();
+      expect(result.envVar).toBeUndefined();
+    });
+
+    it("handles cross-region inference profile IDs", () => {
+      const result = parseModelConfig("bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0");
+      expect(result.provider).toBe("bedrock");
+      expect(result.modelName).toBe("us.anthropic.claude-sonnet-4-5-20250929-v1:0");
+    });
+
+    it("handles non-Anthropic Bedrock model IDs", () => {
+      const result = parseModelConfig("bedrock:meta.llama3-70b-instruct-v1:0");
+      expect(result.provider).toBe("bedrock");
+      expect(result.modelName).toBe("meta.llama3-70b-instruct-v1:0");
+    });
+
+    it("does not extract env suffix even with _KEY in remainder", () => {
+      const result = parseModelConfig("bedrock:my.model:AWS_BEARER_TOKEN_BEDROCK");
+      expect(result.provider).toBe("bedrock");
+      expect(result.modelName).toBe("my.model:AWS_BEARER_TOKEN_BEDROCK");
+      expect(result.envVar).toBeUndefined();
+      expect(result.envSuffix).toBeUndefined();
+    });
+  });
 });

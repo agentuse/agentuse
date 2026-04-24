@@ -95,7 +95,7 @@ provider:model[:env]
 ```
 
 Where:
-- `provider`: A built-in provider (`anthropic`, `openai`, `openrouter`) or a custom provider name
+- `provider`: A built-in provider (`anthropic`, `openai`, `openrouter`, `bedrock`) or a custom provider name
 - `model`: The specific model name (e.g., `claude-sonnet-4-6`, `gpt-5.2`, `glm-4.7-flash:q4_K_M`)
 - `env`: Optional environment suffix for API keys (e.g., `dev`, `prod`, or full env var name) — built-in providers only
 
@@ -430,6 +430,10 @@ Manage providers and authentication credentials. (`auth` still works as a hidden
 ```bash
 agentuse provider login [provider]   # anthropic, openai, openrouter
 ```
+
+<Note>
+  Amazon Bedrock authenticates via standard AWS environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, optional `AWS_SESSION_TOKEN`) or `AWS_BEARER_TOKEN_BEDROCK`. There is no `provider login bedrock` command.
+</Note>
 
 ### provider add
 

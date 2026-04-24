@@ -58,6 +58,7 @@
     "generate:models": "npx tsx scripts/generate-models.ts"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "4.0.96",
     "@ai-sdk/anthropic": "3.0.1",
     "@ai-sdk/mcp": "1.0.1",
     "@ai-sdk/openai": "3.0.1",
@@ -86,6 +87,9 @@
     "web-tree-sitter": "^0.26.3",
     "yaml": "^2.8.2",
     "zod": "^3.25.76"
+  },
+  "optionalDependencies": {
+    "@aws-sdk/credential-providers": "3.1034.0"
   },
   "devDependencies": {
     "@ai-sdk/devtools": "^0.0.1",

@@ -108,4 +108,14 @@ describe("warnIfModelNotInRegistry (custom provider skip)", () => {
     const result = warnIfModelNotInRegistry("anthropic:claude-sonnet-4-6");
     expect(result).toBe("anthropic:claude-sonnet-4-6");
   });
+
+  it("skips validation for bedrock models (not in registry)", async () => {
+    await loadCustomProviderNames();
+    // Bedrock model IDs are AWS-specific and intentionally not in the registry,
+    // so warnIfModelNotInRegistry should return the string unchanged.
+    const result = warnIfModelNotInRegistry(
+      "bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0"
+    );
+    expect(result).toBe("bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0");
+  });
 });

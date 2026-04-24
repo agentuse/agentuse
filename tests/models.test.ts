@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { createModel } from '../src/models';
+import { createModel, AuthenticationError } from '../src/models';
 import { AnthropicAuth } from '../src/auth/anthropic';
 import { CodexAuth } from '../src/auth/codex';
 
@@ -133,6 +133,82 @@ describe('createModel base URL configuration', () => {
       } finally {
         AnthropicAuth.access = originalAccess;
       }
+    });
+  });
+});
+
+describe('createModel Amazon Bedrock', () => {
+  const bedrockEnvKeys = {
+    AWS_REGION: undefined as string | undefined,
+    AWS_DEFAULT_REGION: undefined as string | undefined,
+    AWS_ACCESS_KEY_ID: undefined as string | undefined,
+    AWS_SECRET_ACCESS_KEY: undefined as string | undefined,
+    AWS_SESSION_TOKEN: undefined as string | undefined,
+    AWS_BEARER_TOKEN_BEDROCK: undefined as string | undefined,
+    AWS_PROFILE: undefined as string | undefined,
+  };
+
+  it('creates a Bedrock model with AWS access keys', async () => {
+    await withEnv({
+      ...bedrockEnvKeys,
+      AWS_REGION: 'us-east-1',
+      AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE',
+      AWS_SECRET_ACCESS_KEY: 'secret',
+    }, async () => {
+      const model = await createModel('bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0');
+      expect(model).toBeDefined();
+      expect(model.modelId).toBe('anthropic.claude-3-5-sonnet-20241022-v2:0');
+      expect(model.provider).toContain('bedrock');
+    });
+  });
+
+  it('creates a Bedrock model with AWS_BEARER_TOKEN_BEDROCK', async () => {
+    await withEnv({
+      ...bedrockEnvKeys,
+      AWS_REGION: 'us-east-1',
+      AWS_BEARER_TOKEN_BEDROCK: 'bearer-token',
+    }, async () => {
+      const model = await createModel('bedrock:meta.llama3-70b-instruct-v1:0');
+      expect(model).toBeDefined();
+      expect(model.modelId).toBe('meta.llama3-70b-instruct-v1:0');
+    });
+  });
+
+  it('falls back to AWS_DEFAULT_REGION when AWS_REGION is unset', async () => {
+    await withEnv({
+      ...bedrockEnvKeys,
+      AWS_DEFAULT_REGION: 'eu-west-1',
+      AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE',
+      AWS_SECRET_ACCESS_KEY: 'secret',
+    }, async () => {
+      const model = await createModel('bedrock:anthropic.claude-3-haiku-20240307-v1:0');
+      expect(model).toBeDefined();
+    });
+  });
+
+  it('uses the AWS SDK credential chain when no static credentials are set', async () => {
+    // No AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_BEARER_TOKEN_BEDROCK,
+    // only AWS_PROFILE + region — should resolve via fromNodeProviderChain().
+    await withEnv({
+      ...bedrockEnvKeys,
+      AWS_REGION: 'eu-west-1',
+      AWS_PROFILE: 'some-profile',
+    }, async () => {
+      const model = await createModel('bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0');
+      expect(model).toBeDefined();
+      expect(model.modelId).toBe('anthropic.claude-3-5-sonnet-20241022-v2:0');
+    });
+  });
+
+  it('throws AuthenticationError when region is missing', async () => {
+    await withEnv({
+      ...bedrockEnvKeys,
+      AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE',
+      AWS_SECRET_ACCESS_KEY: 'secret',
+    }, async () => {
+      await expect(
+        createModel('bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0')
+      ).rejects.toBeInstanceOf(AuthenticationError);
     });
   });
 });
