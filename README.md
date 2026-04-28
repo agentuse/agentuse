@@ -80,7 +80,7 @@ agentuse serve -C ./projA -C ./projB
 curl -X POST http://localhost:12233/run -d '{"project":"projA","agent":"my-agent"}'
 ```
 
-**Global config** - avoid re-typing `-C` each launch by declaring defaults in `~/.agentuse/config.json`:
+**Global config** - put serve defaults in `~/.agentuse/config.json`:
 ```jsonc
 {
   "serve": {
@@ -96,7 +96,7 @@ curl -X POST http://localhost:12233/run -d '{"project":"projA","agent":"my-agent
   }
 }
 ```
-CLI flags override config; `-C` ignores `serve.projects` entirely. Set `AGENTUSE_CONFIG=/path/to/config.json` to point elsewhere. The API key still comes from the `AGENTUSE_API_KEY` environment variable; it is never read from the config file.
+CLI flags override config. `-C` replaces `serve.projects`; `AGENTUSE_CONFIG=/path/to/config.json` uses another file. `AGENTUSE_API_KEY` remains env-only.
 
 **Scheduled Agents** - Run on a schedule:
 ```yaml

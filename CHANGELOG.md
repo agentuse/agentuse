@@ -1,10 +1,22 @@
 # Changelog
 
-## [Unreleased]
+## [0.12.0] - 2026-04-28
 
 ### Added
 
-- `serve` reads optional global config at `~/.agentuse/config.json` (override via `AGENTUSE_CONFIG`). Supports `serve.projects`, `serve.default`, `serve.port`, `serve.host`, `serve.auth`, `serve.logFile`. CLI flags override config; `-C` ignores `serve.projects`. API key remains env-only (`AGENTUSE_API_KEY`).
+- **Multi-project `serve`**: one `serve` process hosts multiple project roots, selected by the `project` request field. Schedulers and storage stay isolated; `GET /` lists projects.
+- **Per-PID flat log file**: `agentuse serve logs` tails or prints worker log files.
+- **Global config at `~/.agentuse/config.json`** (or `AGENTUSE_CONFIG`). Supports `serve.projects`, `serve.default`, `serve.port`, `serve.host`, `serve.auth`, and `serve.logFile`. CLI flags override config; `-C` replaces `serve.projects`; the API key remains env-only.
+
+### Fixed
+
+- `serve` worker validates required env vars at startup and dedupes Node experimental warnings.
+- `agentuse run -C <dir>` treats `-C` as the project root instead of walking upward.
+- Non-git project sessions are isolated per project.
+
+### Documentation
+
+- README, webhooks guide, and CLI reference updated for multi-project `serve`, `GET /`, and `serve logs`.
 
 ## [0.11.0] - 2026-04-24
 
