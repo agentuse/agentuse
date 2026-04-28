@@ -85,7 +85,10 @@ describe('createModel base URL configuration', () => {
 
   describe('Anthropic', () => {
     it('uses default base URL when not configured', async () => {
-      await withEnv({ ANTHROPIC_API_KEY: 'anthropic-key' }, async () => {
+      await withEnv({
+        ANTHROPIC_API_KEY: 'anthropic-key',
+        ANTHROPIC_BASE_URL: undefined,
+      }, async () => {
         const model = await createModel('anthropic:claude-3-opus');
         expect(model.config.baseURL).toBe('https://api.anthropic.com/v1');
       });
