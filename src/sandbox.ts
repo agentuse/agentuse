@@ -3,6 +3,7 @@
  */
 
 import type { Tool } from 'ai';
+import type Dockerode from 'dockerode';
 import { z } from 'zod';
 import { mkdirSync, existsSync, readdirSync, rmdirSync } from 'fs';
 import { join } from 'path';
@@ -32,24 +33,7 @@ export type SandboxConfig = z.output<typeof SandboxConfigSchema>;
 
 // ── Types ───────────────────────────────────────────────────────────
 
-interface Container {
-  id: string;
-  start(): Promise<void>;
-  stop(opts?: { t?: number }): Promise<void>;
-  remove(opts?: { force?: boolean }): Promise<void>;
-  exec(opts: {
-    Cmd: string[];
-    AttachStdout?: boolean;
-    AttachStderr?: boolean;
-    WorkingDir?: string;
-  }): Promise<Exec>;
-  modem: { demuxStream(stream: NodeJS.ReadableStream, stdout: NodeJS.WritableStream, stderr: NodeJS.WritableStream): void };
-}
-
-interface Exec {
-  start(opts?: { hijack?: boolean }): Promise<NodeJS.ReadableStream>;
-  inspect(): Promise<{ ExitCode: number }>;
-}
+type Container = Dockerode.Container;
 
 // ── Docker socket detection ─────────────────────────────────────────
 
@@ -305,7 +289,7 @@ async function execInContainer(
     ...(options?.cwd && { WorkingDir: options.cwd }),
   });
 
-  const stream = await exec.start();
+  const stream = await exec.start({});
 
   // Collect stdout/stderr via demux
   const stdoutChunks: Buffer[] = [];
@@ -329,7 +313,7 @@ async function execInContainer(
   return {
     stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
     stderr: Buffer.concat(stderrChunks).toString('utf-8'),
-    exitCode: ExitCode,
+    exitCode: ExitCode ?? 1,
   };
 }
 

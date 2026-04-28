@@ -94,6 +94,7 @@
   "devDependencies": {
     "@ai-sdk/devtools": "^0.0.1",
     "@types/bun": "^1.2.19",
+    "@types/dockerode": "^4.0.1",
     "np": "^10.2.0",
     "typescript": "^5.9.2"
   },
