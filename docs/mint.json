@@ -69,6 +69,7 @@
       "icon": "code",
       "pages": [
         "reference/cli-commands",
+        "reference/configuration-files",
         "reference/agent-syntax",
         "reference/models",
         "reference/builtin-tools",

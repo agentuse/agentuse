@@ -1,0 +1,151 @@
+---
+title: Configuration Files
+description: User-facing files and directories that configure AgentUse
+---
+
+AgentUse reads configuration from agent files, environment files, global defaults, and project or user-level extension directories.
+
+## Quick reference
+
+| Path | Scope | Purpose |
+|------|-------|---------|
+| `*.agentuse` | Agent | Defines an agent with YAML frontmatter and Markdown instructions |
+| `.env.local` | Project | Local environment variables loaded before `.env` when present |
+| `.env` | Project | Environment variables for API keys, model providers, MCP servers, and runtime behavior |
+| `--env-file <path>` | Run command | Load a specific environment file for `agentuse run` |
+| `~/.agentuse/config.json` | User | Global `agentuse serve` defaults |
+| `AGENTUSE_CONFIG=/path/to/config.json` | Process | Override the global config file path |
+| `.agentuse/plugins/*.{ts,js}` | Project | Project-local plugins |
+| `~/.agentuse/plugins/*.{ts,js}` | User | User-global plugins |
+| `.agentuse/skills/` | Project | Project-local skills |
+| `~/.agentuse/skills/` | User | User-global skills |
+| `.claude/skills/` | Project | Claude ecosystem skill compatibility |
+| `~/.claude/skills/` | User | Claude ecosystem skill compatibility |
+| `{agent-name}.learnings.md` | Agent | Auto-created learning notes for agents with learning enabled |
+| `{agent-name}.store.json` | Agent | Persistent store file for agents with store enabled |
+
+## Agent files
+
+Agent files use the `.agentuse` extension. They combine YAML frontmatter with Markdown instructions:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-6
+description: Summarize pull requests
+schedule: "0 9 * * 1"
+tools:
+  bash:
+    commands:
+      - "gh *"
+---
+
+Review open pull requests and summarize anything blocked.
+```
+
+Common frontmatter fields include `model`, `tools`, `schedule`, `mcpServers`, `subagents`, `store`, `learning`, `sandbox`, `timeout`, and `maxSteps`.
+
+See [Agent Syntax](/reference/agent-syntax) for the full schema.
+
+## Environment files
+
+AgentUse loads environment variables from the project root. Project roots are detected from `.agentuse/`, `.git/`, or `package.json`.
+
+For `agentuse run`, `.env.local` takes priority when present, otherwise `.env` is used. You can also pass a specific file:
+
+```bash
+agentuse run agent.agentuse --env-file .env.production
+```
+
+For `agentuse serve`, each served project loads its own `.env.local` or `.env` in that project's worker process. Environment variables do not mix across served projects.
+
+Use environment files for provider API keys, MCP server credentials, and runtime controls such as `MAX_STEPS`, `LOG_LEVEL`, and `AGENTUSE_TELEMETRY_DISABLED`.
+
+<Warning>
+Never commit `.env`, `.env.local`, or other secret-bearing environment files.
+</Warning>
+
+See [Environment Variables](/reference/environment-variables) for supported variables and examples.
+
+## Global serve config
+
+Put long-lived `agentuse serve` defaults in `~/.agentuse/config.json`:
+
+```json
+{
+  "serve": {
+    "projects": [
+      { "path": "~/work/projA" },
+      { "id": "b", "path": "~/work/projB" }
+    ],
+    "default": "projA",
+    "port": 12233,
+    "host": "127.0.0.1",
+    "auth": true,
+    "logFile": true
+  }
+}
+```
+
+Use `AGENTUSE_CONFIG=/path/to/config.json` to load a different file. Project paths may start with `~` or `~/`.
+
+| Config key | Type | Description |
+|------------|------|-------------|
+| `serve.projects` | array | Project roots to serve. Each item needs `path`; `id` is optional |
+| `serve.default` | string | Default project id when `POST /run` omits `project` |
+| `serve.port` | number | Port to listen on |
+| `serve.host` | string | Host to bind to |
+| `serve.auth` | boolean | Require API key authentication for exposed hosts |
+| `serve.logFile` | boolean | Write serve logs to a file |
+
+CLI flags override config values:
+
+| Config key | CLI override |
+|------------|--------------|
+| `serve.projects` | `-C, --directory` replaces the configured project list |
+| `serve.default` | `--default <id>` |
+| `serve.port` | `--port <number>` |
+| `serve.host` | `--host <string>` |
+| `serve.auth` | `--no-auth` sets auth to `false` |
+| `serve.logFile` | `--no-log-file` sets log files to `false` |
+
+`AGENTUSE_API_KEY` remains env-only and is not read from config.
+
+See [Webhooks](/guides/webhooks) and [CLI Commands](/reference/cli-commands#agentuse-serve) for serve usage.
+
+## Plugins
+
+Plugins are TypeScript or JavaScript modules loaded from these directories:
+
+1. `.agentuse/plugins/*.{ts,js}`
+2. `~/.agentuse/plugins/*.{ts,js}`
+
+Project plugins load before user-global plugins.
+
+See [Plugins](/guides/plugins) for the plugin API.
+
+## Skills
+
+Skills are reusable instruction packs stored as `SKILL.md` files. AgentUse discovers skills in this order:
+
+1. `.agentuse/skills/`
+2. `~/.agentuse/skills/`
+3. `.claude/skills/`
+4. `~/.claude/skills/`
+
+Use `.agentuse/skills/` for project-specific skills and `~/.agentuse/skills/` for personal skills shared across projects. The `.claude/skills/` locations provide compatibility with existing Claude skills.
+
+See [Skills](/guides/skills) for authoring and discovery details.
+
+## Generated files and data locations
+
+These files are generated by features rather than hand-written as primary configuration:
+
+| Path | Created by | Purpose |
+|------|------------|---------|
+| `{agent-name}.learnings.md` | Learning | Stores extracted guidance next to the agent file by default |
+| `{agent-name}.store.json` | Store | Stores persistent key-value data for the agent |
+| `.agentuse/sandbox/` | Sandbox | Stores sandbox-related working data |
+| `.agentuse/benchmark/` | Benchmark | Stores local benchmark suites and results |
+| `$XDG_DATA_HOME/agentuse/` | Session logging | Stores execution sessions, defaulting to `~/.local/share/agentuse/` |
+
+See [Learning](/guides/learning), [Store](/guides/store), [Sandbox](/guides/sandbox), and [Session Storage](/reference/session-storage) for details.
