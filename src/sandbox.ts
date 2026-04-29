@@ -60,10 +60,22 @@ function resolveDockerOpts(): { socketPath: string } | Record<string, never> {
 
 const LABEL_MANAGED = 'agentuse.managed';
 const LABEL_SESSION = 'agentuse.session';
+const LABEL_PID = 'agentuse.pid';
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
 
 /**
  * Remove orphaned agentuse containers left behind by force-quit or crash.
- * Called before creating a new container.
+ * Called before creating a new container. Containers whose owner agentuse
+ * process is still alive are skipped, so concurrent runs don't kill each
+ * other's sandboxes.
  */
 export async function cleanupOrphanedContainers(): Promise<void> {
   try {
@@ -76,9 +88,19 @@ export async function cleanupOrphanedContainers(): Promise<void> {
     });
 
     for (const info of containers) {
+      const isRunning = info.State === 'running';
+      if (isRunning) {
+        const pidLabel = info.Labels?.[LABEL_PID];
+        const pid = pidLabel ? Number(pidLabel) : NaN;
+        if (Number.isFinite(pid) && isProcessAlive(pid)) {
+          // Owner agentuse process is still alive — leave its sandbox alone
+          continue;
+        }
+      }
+
       try {
         const container = docker.getContainer(info.Id);
-        if (info.State === 'running') {
+        if (isRunning) {
           await container.stop({ t: 2 });
         }
         await container.remove({ force: true });
@@ -199,6 +221,7 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
     WorkingDir: projectRoot,
     Labels: {
       [LABEL_MANAGED]: 'true',
+      [LABEL_PID]: String(process.pid),
       ...(sessionId && { [LABEL_SESSION]: sessionId }),
     },
     Env: envVars.length > 0 ? envVars : undefined,
