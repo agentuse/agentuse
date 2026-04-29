@@ -5,7 +5,8 @@
 import type { Tool } from 'ai';
 import type Dockerode from 'dockerode';
 import { z } from 'zod';
-import { mkdirSync, existsSync, readdirSync, rmdirSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { mkdirSync, existsSync, readdirSync, rmdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { ResolvedMount } from './tools/path-validator.js';
@@ -61,6 +62,16 @@ function resolveDockerOpts(): { socketPath: string } | Record<string, never> {
 const LABEL_MANAGED = 'agentuse.managed';
 const LABEL_SESSION = 'agentuse.session';
 const LABEL_PID = 'agentuse.pid';
+const LABEL_OWNER_STARTED_AT = 'agentuse.ownerStartedAt';
+
+let currentProcessStartTime: string | undefined;
+let linuxBootId: string | undefined;
+
+function parsePid(label: string | undefined): number | null {
+  if (!label) return null;
+  const pid = Number(label);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -71,11 +82,63 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+function getLinuxBootId(): string | null {
+  if (linuxBootId === undefined) {
+    try {
+      linuxBootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    } catch {
+      linuxBootId = '';
+    }
+  }
+  return linuxBootId || null;
+}
+
+function getLinuxProcessStartTime(pid: number): string | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const endOfCommand = stat.lastIndexOf(')');
+    if (endOfCommand === -1) return null;
+
+    // /proc/<pid>/stat field 22 is starttime. After the command field,
+    // the remaining fields begin at field 3, so index 19 maps to field 22.
+    const fields = stat.slice(endOfCommand + 2).trim().split(/\s+/);
+    const startTicks = fields[19];
+    if (!startTicks) return null;
+
+    const bootId = getLinuxBootId();
+    return bootId ? `linux:${bootId}:${startTicks}` : `linux:${startTicks}`;
+  } catch {
+    return null;
+  }
+}
+
+function getProcessStartTime(pid: number): string | null {
+  const linuxStartTime = getLinuxProcessStartTime(pid);
+  if (linuxStartTime) return linuxStartTime;
+
+  try {
+    const startTime = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return startTime ? `ps:${startTime}` : null;
+  } catch {
+    return null;
+  }
+}
+
+function getCurrentProcessStartTime(): string | null {
+  if (currentProcessStartTime === undefined) {
+    currentProcessStartTime = getProcessStartTime(process.pid) ?? '';
+  }
+  return currentProcessStartTime || null;
+}
+
 /**
  * Remove orphaned agentuse containers left behind by force-quit or crash.
  * Called before creating a new container. Containers whose owner agentuse
- * process is still alive are skipped, so concurrent runs don't kill each
- * other's sandboxes.
+ * process is still alive, with the same process start time, are skipped so
+ * concurrent runs don't kill each other's sandboxes even if a PID is reused.
  */
 export async function cleanupOrphanedContainers(): Promise<void> {
   try {
@@ -90,11 +153,14 @@ export async function cleanupOrphanedContainers(): Promise<void> {
     for (const info of containers) {
       const isRunning = info.State === 'running';
       if (isRunning) {
-        const pidLabel = info.Labels?.[LABEL_PID];
-        const pid = pidLabel ? Number(pidLabel) : NaN;
-        if (Number.isFinite(pid) && isProcessAlive(pid)) {
-          // Owner agentuse process is still alive — leave its sandbox alone
-          continue;
+        const pid = parsePid(info.Labels?.[LABEL_PID]);
+        const ownerStartedAt = info.Labels?.[LABEL_OWNER_STARTED_AT];
+        if (pid && ownerStartedAt && isProcessAlive(pid)) {
+          const currentStartedAt = getProcessStartTime(pid);
+          if (currentStartedAt === ownerStartedAt) {
+            // Owner agentuse process is still alive — leave its sandbox alone
+            continue;
+          }
         }
       }
 
@@ -215,6 +281,8 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
 
   logger.debug(`[Sandbox] Creating Docker container (image=${image}, timeout=${timeout}s${sessionId ? `, session=${sessionId}` : ''})`);
 
+  const ownerStartedAt = getCurrentProcessStartTime();
+
   const container: Container = await docker.createContainer({
     Image: image,
     Cmd: ['sleep', 'infinity'],
@@ -222,6 +290,7 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
     Labels: {
       [LABEL_MANAGED]: 'true',
       [LABEL_PID]: String(process.pid),
+      ...(ownerStartedAt && { [LABEL_OWNER_STARTED_AT]: ownerStartedAt }),
       ...(sessionId && { [LABEL_SESSION]: sessionId }),
     },
     Env: envVars.length > 0 ? envVars : undefined,
