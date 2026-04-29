@@ -21,7 +21,6 @@ function getDiscoveryDirectories(projectRoot: string): string[] {
     join(home, '.claude', 'skills'),
   ];
 }
-
 /**
  * Check if a directory exists
  */
@@ -37,10 +36,17 @@ async function directoryExists(dir: string): Promise<boolean> {
 /**
  * Discover all skills from configured directories
  * Returns map of skill name to SkillInfo
+ *
+ * @param projectRoot Root of the user's project (used for `.agentuse/skills`, `.claude/skills`).
+ * @param extraDirs   Additional skill directories (highest priority — checked first).
+ *                    Used by the plugin-bundle system to inject skills shipped with plugins.
  */
-export async function discoverSkills(projectRoot: string): Promise<Map<string, SkillInfo>> {
+export async function discoverSkills(
+  projectRoot: string,
+  extraDirs?: string[]
+): Promise<Map<string, SkillInfo>> {
   const skills = new Map<string, SkillInfo>();
-  const directories = getDiscoveryDirectories(projectRoot);
+  const directories = [...(extraDirs ?? []), ...getDiscoveryDirectories(projectRoot)];
 
   for (const dir of directories) {
     if (!await directoryExists(dir)) {
