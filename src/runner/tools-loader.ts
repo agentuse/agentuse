@@ -27,6 +27,8 @@ export interface LoadAgentToolsOptions {
   logPrefix?: string | undefined;
   /** Session ID for sandbox output directory */
   sessionId?: string | undefined;
+  /** Extra skill discovery directories (e.g. injected by plugin bundles). */
+  extraSkillDirs?: string[] | undefined;
 }
 
 /**
@@ -60,6 +62,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     mcpConnections,
     logPrefix = '',
     sessionId,
+    extraSkillDirs,
   } = options;
 
   // Compute agentId (file-path-based identifier) for store naming
@@ -88,7 +91,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   let skillTools: Record<string, Tool> = {};
   if (projectContext) {
     try {
-      const { skillTool, skillReadTool, skills } = await createSkillTools(projectContext.projectRoot, agent.config.tools);
+      const { skillTool, skillReadTool, skills } = await createSkillTools(projectContext.projectRoot, agent.config.tools, extraSkillDirs);
       if (skills.length > 0) {
         skillTools['tools__skill_load'] = skillTool;
         skillTools['tools__skill_read'] = skillReadTool;

@@ -15,6 +15,8 @@ export interface PrepareAgentOptions {
   userPrompt?: string | undefined;
   abortSignal?: AbortSignal | undefined;
   verbose?: boolean | undefined;
+  /** Extra skill discovery directories (typically contributed by plugin bundles). */
+  extraSkillDirs?: string[] | undefined;
 }
 
 export interface PreparedAgentExecution {

@@ -17,6 +17,7 @@ import { basename, resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
+import { loadPluginBundles, type LoadedPluginsResult } from './plugin-bundle';
 import { extractLearnings } from './learning/index.js';
 import { version as packageVersion } from '../package.json';
 import { existsSync as existsSyncFs } from 'fs';
@@ -412,6 +413,31 @@ program
       // Since we've already changed directory, resolve the file path from the new CWD
       const agentFilePath = !isURL(file) ? resolve(file) : undefined;
       const mcpBasePath = agentFilePath ? dirname(agentFilePath) : undefined;
+
+      // Resolve plugin bundles (auto-discovered + frontmatter `plugins:` array).
+      // Must run BEFORE connectMCP so plugin-contributed MCP servers are included.
+      let loadedPluginBundles: LoadedPluginsResult = { plugins: [], skillDirs: [], agentDirs: [], mcpServers: {} };
+      try {
+        loadedPluginBundles = await loadPluginBundles({
+          projectRoot: projectContext.projectRoot,
+          specs: agent.config.plugins,
+        });
+        if (loadedPluginBundles.plugins.length > 0) {
+          logger.debug(
+            `Loaded ${loadedPluginBundles.plugins.length} plugin bundle(s): ${loadedPluginBundles.plugins.map(p => p.manifest.name).join(', ')}`
+          );
+          // Merge plugin MCP servers into agent config (user config wins on key collisions).
+          if (Object.keys(loadedPluginBundles.mcpServers).length > 0) {
+            agent.config.mcpServers = {
+              ...loadedPluginBundles.mcpServers,
+              ...(agent.config.mcpServers ?? {}),
+            };
+          }
+        }
+      } catch (e) {
+        logger.warn(`Failed to load plugin bundles: ${(e as Error).message}`);
+      }
+
       let mcp;
       try {
         mcp = await connectMCP(agent.config.mcpServers, options.debug, mcpBasePath);
@@ -517,7 +543,8 @@ program
         projectContext: { projectRoot: projectContext.projectRoot, cwd: process.cwd() },
         userPrompt: additionalPrompt || undefined,
         abortSignal: abortController.signal,
-        verbose: options.debug
+        verbose: options.debug,
+        extraSkillDirs: loadedPluginBundles.skillDirs.length > 0 ? loadedPluginBundles.skillDirs : undefined
       });
 
       // Update session info for interrupt handling (now that we have sessionID)

@@ -174,13 +174,16 @@ export async function createSkillTool(
 
 /**
  * Create both skill tools: skill loader and skill file reader
+ *
+ * @param extraSkillDirs Optional additional skill directories (e.g. from plugin bundles).
  */
 export async function createSkillTools(
   projectRoot: string,
-  agentToolsConfig: ToolsConfig | undefined
+  agentToolsConfig: ToolsConfig | undefined,
+  extraSkillDirs?: string[]
 ): Promise<SkillToolsResult> {
   // Discover all available skills
-  const skillsMap = await discoverSkills(projectRoot);
+  const skillsMap = await discoverSkills(projectRoot, extraSkillDirs);
   const skills = Array.from(skillsMap.values());
 
   // Track loaded skills: name -> directory (shared between both tools)

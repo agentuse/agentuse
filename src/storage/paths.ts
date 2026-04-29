@@ -59,6 +59,17 @@ export async function getSessionStorageDir(projectRoot: string): Promise<string>
 }
 
 /**
+ * Get the user-level cache directory for resolved plugin bundles.
+ * Returns: {xdgData}/agentuse/plugin-cache
+ */
+export async function getPluginCacheDir(): Promise<string> {
+  const dir = path.join(getXdgDataDir(), 'agentuse', 'plugin-cache');
+  const { mkdir } = await import('fs/promises');
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+/**
  * Sanitize agent name for use in filesystem paths
  * Converts to lowercase and replaces invalid characters with hyphens
  */

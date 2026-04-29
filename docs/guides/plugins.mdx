@@ -1,18 +1,101 @@
 # Plugin System
 
-## Why Plugins?
+AgentUse supports two complementary plugin styles:
 
-The plugin system is the only way to programmatically extend agent functionality beyond the built-in capabilities. While agents themselves are markdown-based and declarative, plugins provide a JavaScript/TypeScript interface for:
+1. **Plugin bundles** (Claude / VS Code-compatible): packaged directories containing a `plugin.json` manifest plus skills, agents, and MCP server definitions. Bundles can live locally, be auto-discovered, or be pulled from a Git repository.
+2. **Lifecycle hooks** (legacy): single JS/TS files that handle runtime events such as `agent:complete`.
 
-- **Custom integrations**: Connect agents to your existing systems, databases, or APIs
-- **Observability**: Add monitoring, logging, or analytics to track agent performance
-- **Automation workflows**: Trigger actions based on agent completion or failure
-- **Development tools**: Build debugging utilities or testing frameworks
-- **Cross-agent functionality**: Share logic across all agents without modifying each one
+This guide covers both, starting with bundles.
 
-Without plugins, you would be limited to the tools and capabilities built into AgentUse. Plugins bridge the gap between AgentUse's declarative agent definitions and your custom programmatic needs.
+---
 
-## Quick Start
+## Plugin Bundles
+
+A plugin bundle is a directory that ships skills, agents and/or MCP servers as a single unit. The format is compatible with VS Code agent plugins and Claude Code plugins, so bundles authored for either ecosystem can be reused as-is.
+
+### Bundle layout
+
+```
+my-plugin/
+  plugin.json          # required manifest (also accepted at .plugin/, .claude-plugin/, .github/plugin/)
+  skills/              # optional — auto-included if present
+    my-skill/
+      SKILL.md
+  agents/              # optional — auto-included if present
+    helper.agentuse
+  .mcp.json            # optional — referenced from plugin.json
+```
+
+### `plugin.json`
+
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "description": "Example plugin",
+  "skills": "skills/",
+  "agents": "agents/",
+  "mcpServers": ".mcp.json"
+}
+```
+
+- `name` (required) — kebab-case, ≤ 64 chars.
+- `skills` / `agents` — string or string array of directories. Defaults to `skills/` / `agents/` when those directories exist.
+- `mcpServers` — either a path to a JSON file (with a top-level `mcpServers` object) or an inline object. Use `${PLUGIN_ROOT}` or `${CLAUDE_PLUGIN_ROOT}` to reference files inside the plugin.
+
+### Auto-discovery
+
+Bundles are loaded automatically from any of these directories (project takes priority over user, AgentUse over Claude):
+
+- `./.agentuse/plugins/<bundle>/`
+- `~/.agentuse/plugins/<bundle>/`
+- `./.claude/plugins/<bundle>/`
+- `~/.claude/plugins/<bundle>/`
+
+A directory is treated as a bundle only if it contains a recognized `plugin.json`. Legacy single-file lifecycle plugins (`./.agentuse/plugins/*.js`) keep working unchanged.
+
+### Declaring plugins in an agent
+
+Add a `plugins:` array to the agent frontmatter. Each entry is a *spec*:
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-5
+plugins:
+  - ./local/path/to/plugin              # local directory
+  - /absolute/path/to/plugin
+  - ~/shared/plugins/mine
+  - agentuse/example-plugin             # GitHub: owner/repo
+  - agentuse/monorepo/.github/plugins/x # GitHub subpath
+  - agentuse/example-plugin@v1.2.0      # GitHub at tag/branch/SHA
+  - https://github.com/org/repo.git     # generic git URL
+  - git@github.com:org/repo.git@main    # SSH + ref
+---
+```
+
+GitHub specs are cloned (shallow) into `~/.local/share/agentuse/plugin-cache/` on first use and reused afterwards.
+
+### What happens at runtime
+
+When an agent runs, AgentUse:
+
+1. Auto-discovers local bundle directories.
+2. Resolves every spec listed in `plugins:` (cloning Git repos when needed).
+3. Validates each `plugin.json`.
+4. Adds the bundle's `skills/` directories to skill discovery (alongside your project skills).
+5. Merges the bundle's MCP servers into the agent's MCP server map. Plugin servers are namespaced as `<plugin-name>.<server-name>` so they can never collide with user-defined servers (user config wins on key collisions).
+
+If a plugin fails to load, a warning is logged and the agent continues.
+
+### Security
+
+Plugins can ship MCP servers that execute code on your machine. Only install bundles from sources you trust, and pin a `@ref` (tag or SHA) for reproducibility when pulling from GitHub.
+
+---
+
+## Programmatic Plugin Mechanism
+
+
 
 1. Create a plugin directory:
 ```bash

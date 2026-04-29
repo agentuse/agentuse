@@ -88,7 +88,12 @@ const AgentSchema = z.object({
   // Learning configuration: extract and apply learnings from execution
   learning: LearningConfigSchema.optional(),
   // Sandbox configuration: isolated cloud VM for command execution
-  sandbox: SandboxConfigSchema.optional()
+  sandbox: SandboxConfigSchema.optional(),
+  // Plugin bundles to load (Claude/VS Code-style). Each item is a spec string:
+  //   - "./local/path" or "/abs/path" — local directory containing plugin.json
+  //   - "owner/repo[/subpath][@ref]" — GitHub shorthand
+  //   - "https://host/owner/repo.git" or "git@host:owner/repo.git" — generic git URL
+  plugins: z.array(z.string().min(1)).optional()
 }).transform((data) => {
   // Handle backward compatibility: support both mcp_servers and mcpServers
   if (data.mcp_servers && data.mcpServers) {

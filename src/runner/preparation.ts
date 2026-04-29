@@ -116,6 +116,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     agentFilePath,
     mcpConnections: mcpClients,
     sessionId: sessionID,
+    extraSkillDirs: options.extraSkillDirs,
   });
 
   // Compute agentId (file-path-based identifier) for session operations
