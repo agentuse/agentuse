@@ -14,6 +14,9 @@ import type { ToolSet } from 'ai';
 import { loadAgentTools } from './tools-loader';
 import { buildSystemMessages, buildLearningPrompt } from './system-messages';
 import { createSessionAndMessage } from './session-helper';
+import { bindToolsToSnapshot, createToolsSnapshot } from './tool-snapshot';
+import { rehydrateMessages } from '../session';
+import { appendApprovalInstructions } from './approval';
 
 /**
  * Prepare agent execution - shared setup logic for both streaming and non-streaming modes
@@ -29,7 +32,9 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     projectContext,
     userPrompt,
     abortSignal,
-    verbose = false
+    verbose = false,
+    existingSessionId,
+    prebuiltMessages
   } = options;
 
   // Resolve safe variables in instructions (${root}, ${agentDir}, ${tmpDir} - NOT ${env:*})
@@ -38,10 +43,14 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
   };
   let resolvedInstructions = resolveSafeVariables(agent.instructions, pathContext);
+  if (!existingSessionId) {
+    resolvedInstructions = appendApprovalInstructions(resolvedInstructions, agent.config);
+  }
 
-  // Append learnings to instructions if apply is enabled
+  // Append learnings to instructions if apply is enabled. Resume uses the
+  // persisted LLM state, so learning prompts are intentionally not re-derived.
   let learningsApplied = 0;
-  if (agent.config.learning?.apply && agentFilePath) {
+  if (!existingSessionId && agent.config.learning?.apply && agentFilePath) {
     const learningResult = await buildLearningPrompt(agent, agentFilePath);
     if (learningResult) {
       resolvedInstructions = `${resolvedInstructions}\n\n${learningResult.prompt}`;
@@ -58,22 +67,58 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
 
   logger.debug(`Running agent with model: ${agent.config.model}`);
 
-  // Build system messages (Anthropic prompt, autonomous prompt, manager prompt if applicable)
-  const systemMessagesResult = await buildSystemMessages({
-    agent,
-    isSubAgent: false,
-    agentFilePath,
-    projectRoot: projectContext?.projectRoot,
-  });
-  const systemMessages = systemMessagesResult.messages;
-
   // Create session first so sandbox can use the session ID for its output directory
   let sessionID: string | undefined;
   let assistantMsgID: string | undefined;
+  let agentId = computeAgentId(agentFilePath, projectContext?.projectRoot, agent.name);
+  let systemMessages: Array<{ role: string; content: string }>;
+  let resumedMessages = prebuiltMessages;
+  let userMessage: string;
 
   logger.debug(`Session manager available: ${!!sessionManager}, Project context available: ${!!projectContext}`);
 
-  if (sessionManager && projectContext) {
+  if (existingSessionId) {
+    if (!sessionManager) {
+      throw new Error('Cannot resume without a session manager');
+    }
+
+    const found = await sessionManager.findSession(existingSessionId);
+    if (!found) {
+      throw new Error(`Session not found: ${existingSessionId}`);
+    }
+    if (found.session.status === 'error' || found.session.status === 'completed') {
+      throw new Error(`Cannot resume session ${existingSessionId} with status ${found.session.status}`);
+    }
+
+    sessionID = existingSessionId;
+    agentId = found.agentId;
+    const message = await sessionManager.getPrimaryMessage(existingSessionId, found.agentId);
+    if (!message) {
+      throw new Error(`Session message not found: ${existingSessionId}`);
+    }
+    assistantMsgID = message.id;
+    systemMessages = message.assistant.system.map(content => ({ role: 'system', content }));
+    userMessage = message.user.prompt.user
+      ? `${message.user.prompt.task}\n\n${message.user.prompt.user}`
+      : message.user.prompt.task;
+    resumedMessages ??= await rehydrateMessages(sessionManager, existingSessionId, found.agentId);
+  } else {
+    // Build system messages (Anthropic prompt, autonomous prompt, manager prompt if applicable)
+    const systemMessagesResult = await buildSystemMessages({
+      agent,
+      isSubAgent: false,
+      agentFilePath,
+      projectRoot: projectContext?.projectRoot,
+    });
+    systemMessages = systemMessagesResult.messages;
+
+    // Build user message by concatenating task and user prompts
+    userMessage = userPrompt
+      ? `${resolvedInstructions}\n\n${userPrompt}`
+      : resolvedInstructions;
+  }
+
+  if (!existingSessionId && sessionManager && projectContext) {
     try {
       const { sessionID: createdSessionID, messageID } = await createSessionAndMessage({
         sessionManager,
@@ -118,9 +163,6 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     sessionId: sessionID,
   });
 
-  // Compute agentId (file-path-based identifier) for session operations
-  const agentId = computeAgentId(agentFilePath, projectContext?.projectRoot, agent.name);
-
   // Load sub-agent tools if configured
   let subAgentTools: Record<string, ToolSet[string]> = {};
   if (agent.config.subagents && agent.config.subagents.length > 0) {
@@ -149,7 +191,19 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   }
 
   // Merge all tools (loadedTools.all contains MCP, configured, skill, store)
-  const tools = { ...loadedTools.all, ...subAgentTools };
+  let tools = { ...loadedTools.all, ...subAgentTools };
+
+  if (sessionManager && sessionID) {
+    if (existingSessionId) {
+      const snapshot = await sessionManager.readToolsSnapshot(sessionID, agentId);
+      if (!snapshot) {
+        throw new Error(`Missing tools snapshot for session ${sessionID}`);
+      }
+      tools = bindToolsToSnapshot(tools, snapshot);
+    } else {
+      await sessionManager.writeToolsSnapshot(sessionID, agentId, createToolsSnapshot(tools));
+    }
+  }
 
   if (Object.keys(tools).length > 0) {
     logger.debug(`Available tools: ${Object.keys(tools).join(', ')}`);
@@ -162,11 +216,6 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
 
   // Track subagent names for logging
   const subAgentNames = new Set(Object.keys(subAgentTools));
-
-  // Build user message by concatenating task and user prompts
-  const userMessage = userPrompt
-    ? `${resolvedInstructions}\n\n${userPrompt}`
-    : resolvedInstructions;
 
   // Create cleanup function to release resources
   const cleanup = async () => {
@@ -182,6 +231,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     tools,
     systemMessages,
     userMessage,
+    ...(resumedMessages && { messages: resumedMessages }),
     maxSteps,
     subAgentNames,
     sessionID,

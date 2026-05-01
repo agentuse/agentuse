@@ -246,6 +246,38 @@ describe('prepareAgentExecution', () => {
       expect(result.tools).toBeDefined();
       expect(Object.keys(result.tools).length).toBeGreaterThan(0);
     });
+
+    it('should auto-enable await_human and inject approval instructions when approval is configured', async () => {
+      const agent = createMockAgent({
+        instructions: 'Write a polished draft.',
+        config: {
+          model: 'anthropic:claude-sonnet-4-0',
+          approval: {
+            channel: 'webhook',
+            url: '${env:APPROVAL_WEBHOOK_URL}',
+            timeout: '24h',
+            actions: ['approve', 'reject', 'comment'],
+            on_comment: 'revise_once'
+          }
+        }
+      });
+
+      const result = await prepareAgentExecution({
+        agent,
+        mcpClients: [],
+        projectContext: {
+          projectRoot: '/tmp/test-project',
+          cwd: '/tmp/test-project'
+        }
+      });
+
+      expect(result.tools.await_human).toBeDefined();
+      expect(result.userMessage).toContain('Write a polished draft.');
+      expect(result.userMessage).toContain('## Approval Gate');
+      expect(result.userMessage).toContain('call the `await_human` tool');
+      expect(result.userMessage).toContain('actions: approve, reject, comment');
+      expect(result.userMessage).toContain('revise once');
+    });
   });
 
   describe('subAgentNames tracking', () => {

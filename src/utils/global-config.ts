@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
+import * as dotenv from 'dotenv';
 
 export interface GlobalConfigProject {
   id?: string;
@@ -12,6 +13,7 @@ export interface GlobalServeConfig {
   default?: string;
   port?: number;
   host?: string;
+  publicUrl?: string;
   auth?: boolean;
   logFile?: boolean;
 }
@@ -24,6 +26,23 @@ export function getGlobalConfigPath(): string {
   const override = process.env.AGENTUSE_CONFIG;
   if (override && override.length > 0) return path.resolve(override);
   return path.join(homedir(), '.agentuse', 'config.json');
+}
+
+export function getGlobalEnvPath(): string {
+  const override = process.env.AGENTUSE_ENV;
+  if (override && override.length > 0) return path.resolve(override);
+  return path.join(homedir(), '.agentuse', '.env');
+}
+
+export function loadGlobalEnv(options: { override?: boolean } = {}): string | undefined {
+  const envPath = getGlobalEnvPath();
+  if (!existsSync(envPath)) return undefined;
+  dotenv.config({
+    path: envPath,
+    override: options.override ?? false,
+    quiet: true,
+  });
+  return envPath;
 }
 
 export function expandHome(p: string): string {
@@ -94,6 +113,20 @@ function validate(input: unknown, configPath: string): GlobalConfig {
       fail(configPath, '`serve.host` must be a non-empty string');
     }
     srv.host = serve.host;
+  }
+  if (serve.publicUrl !== undefined) {
+    if (typeof serve.publicUrl !== 'string' || serve.publicUrl.length === 0) {
+      fail(configPath, '`serve.publicUrl` must be a non-empty string');
+    }
+    try {
+      const url = new URL(serve.publicUrl);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        fail(configPath, '`serve.publicUrl` must use http:// or https://');
+      }
+    } catch {
+      fail(configPath, '`serve.publicUrl` must be a valid URL');
+    }
+    srv.publicUrl = serve.publicUrl;
   }
   if (serve.auth !== undefined) {
     if (typeof serve.auth !== 'boolean') fail(configPath, '`serve.auth` must be a boolean');

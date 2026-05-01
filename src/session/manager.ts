@@ -1,11 +1,26 @@
 import { ulid } from 'ulid';
-import { writeJSON, readJSON, sanitizeAgentName } from '../storage';
+import fs from 'fs/promises';
+import path from 'path';
+import { writeJSON, readJSON, listKeys, getStorageState, sanitizeAgentName } from '../storage';
 import type {
   SessionInfo,
   Part,
   Message,
-  DeepPartial
+  DeepPartial,
+  ToolsSnapshot,
+  ToolPart
 } from './types';
+
+function getPartOrder(part: Part): number {
+  if (part.type === 'text') return part.time?.start ?? Number.MAX_SAFE_INTEGER;
+  if (part.type === 'reasoning') return part.time.start;
+  if (part.type === 'tool') {
+    const state = part.state;
+    if (state.status === 'pending') return state.suspendedAt ?? Number.MAX_SAFE_INTEGER;
+    return state.time.start;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
 
 export class SessionManager {
   private sessionID: string | null = null;
@@ -260,6 +275,122 @@ export class SessionManager {
     const sessionPath = this.buildSessionPath(sessionID, agentId);
     // New path structure: {messageID}/part/{partID}.json
     return readJSON<Part>(`${sessionPath}/${messageID}/part/${partID}`);
+  }
+
+  /**
+   * Locate a top-level session by ID without requiring the caller to know the
+   * sanitized agent id. Resume endpoints only have the session id in the URL.
+   */
+  async findSession(sessionID: string): Promise<{ session: SessionInfo; agentId: string; path: string } | null> {
+    const state = await getStorageState();
+    const entries = await fs.readdir(state.dir, { withFileTypes: true }).catch(() => []);
+    const prefix = `${sessionID}-`;
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith(prefix)) continue;
+      const session = await readJSON<SessionInfo>(`${entry.name}/session`);
+      if (!session) continue;
+      return {
+        session,
+        agentId: entry.name.slice(prefix.length),
+        path: entry.name
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Return the first message in a session. Current sessions store one user /
+   * assistant exchange, which is the exchange resume needs to continue.
+   */
+  async getPrimaryMessage(sessionID: string, agentId: string): Promise<Message | null> {
+    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const keys = await listKeys(sessionPath);
+    const messageKey = keys
+      .filter(key => key.startsWith(`${sessionPath}/`) && key.endsWith('/message'))
+      .sort()[0];
+    return messageKey ? readJSON<Message>(messageKey) : null;
+  }
+
+  /**
+   * List all persisted parts for a message in creation order.
+   */
+  async getMessageParts(sessionID: string, agentId: string, messageID: string): Promise<Part[]> {
+    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const partPrefix = `${sessionPath}/${messageID}/part`;
+    const keys = await listKeys(partPrefix);
+    const parts = await Promise.all(
+      keys
+        .filter(key => key.startsWith(`${partPrefix}/`))
+        .sort()
+        .map(key => readJSON<Part>(key))
+    );
+    return parts
+      .filter((part): part is Part => part !== null)
+      .sort((a, b) => getPartOrder(a) - getPartOrder(b) || a.id.localeCompare(b.id));
+  }
+
+  /**
+   * Mark session as suspended on an external event.
+   */
+  async setSessionSuspended(sessionID: string, agentId: string): Promise<void> {
+    await this.updateSession(sessionID, agentId, {
+      status: 'suspended'
+    });
+  }
+
+  /**
+   * Mark a suspended session as running while a resume worker continues it.
+   */
+  async setSessionRunning(sessionID: string, agentId: string): Promise<void> {
+    await this.updateSession(sessionID, agentId, {
+      status: 'running'
+    });
+  }
+
+  async getSuspendedSessions(): Promise<Array<{ session: SessionInfo; agentId: string }>> {
+    const state = await getStorageState();
+    const entries = await fs.readdir(state.dir, { withFileTypes: true }).catch(() => []);
+    const suspended: Array<{ session: SessionInfo; agentId: string }> = [];
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const session = await readJSON<SessionInfo>(`${entry.name}/session`);
+      if (session?.status === 'suspended') {
+        const agentId = entry.name.slice(`${session.id}-`.length);
+        suspended.push({ session, agentId });
+      }
+    }
+
+    return suspended;
+  }
+
+  async findPendingTool(sessionID: string, agentId: string): Promise<{ message: Message; part: ToolPart } | null> {
+    const message = await this.getPrimaryMessage(sessionID, agentId);
+    if (!message) return null;
+
+    const parts = await this.getMessageParts(sessionID, agentId, message.id);
+    const pending = parts.find((part): part is ToolPart =>
+      part.type === 'tool' && (part.state.status === 'pending' || part.state.status === 'running')
+    );
+
+    return pending ? { message, part: pending } : null;
+  }
+
+  async writeToolsSnapshot(sessionID: string, agentId: string, snapshot: ToolsSnapshot): Promise<void> {
+    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    await writeJSON(`${sessionPath}/tools`, snapshot);
+  }
+
+  async readToolsSnapshot(sessionID: string, agentId: string): Promise<ToolsSnapshot | null> {
+    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    return readJSON<ToolsSnapshot>(`${sessionPath}/tools`);
+  }
+
+  async getSessionDirectory(sessionID: string, agentId: string): Promise<string> {
+    const state = await getStorageState();
+    return path.join(state.dir, this.buildSessionPath(sessionID, agentId));
   }
 
   /**

@@ -57,6 +57,7 @@
       "pages": [
         "guides/schedule",
         "guides/webhooks",
+        "guides/approval-gates",
         "guides/cicd",
         "guides/remote-agents",
         "guides/self-hosting",

@@ -1,0 +1,268 @@
+---
+title: Approval Gates
+description: Pause an agent run for human review, then resume it from Slack or a webhook
+tag: Experimental
+---
+
+<Warning>
+  **Experimental Feature**: Approval gates are experimental. The configuration, Slack interaction flow, webhook payload, and resume behavior may change based on production feedback.
+</Warning>
+
+Approval gates let an agent prepare work, pause before finalizing it, notify a reviewer, and continue once the reviewer approves, rejects, or comments.
+
+The important design is that approval is declared in YAML. Your markdown prompt should describe the business task, not tell the agent to wait.
+
+## How It Works
+
+1. Add `approval:` to the agent frontmatter.
+2. Run `agentuse serve`.
+3. The agent works normally until it reaches the approval point.
+4. AgentUse posts an approval request to Slack.
+5. A reviewer clicks Approve, Reject, or Comment.
+6. AgentUse receives the Slack interaction over Socket Mode.
+7. AgentUse resumes the suspended session with the reviewer result.
+
+## Create an Agent with Approval
+
+Add an `approval` block to the agent frontmatter:
+
+```md
+---
+model: anthropic:claude-sonnet-4-6
+approval:
+  channel: slack
+  channel_id: C0123456789
+  timeout: 24h
+  actions: [approve, reject, comment]
+---
+
+Write a polished launch email from the user request.
+```
+
+The markdown body stays focused on the work. You do not need to write instructions like "wait for approval before publishing."
+
+## Configure Slack
+
+Slack approvals use Socket Mode, so AgentUse does not need a public Slack callback endpoint. Configure two Slack tokens:
+
+```bash
+export SLACK_BOT_TOKEN="xoxb-..."
+export SLACK_APP_TOKEN="xapp-..."
+```
+
+The bot token posts and updates approval messages. The app-level token opens the Socket Mode connection that receives button clicks and modal submissions.
+
+The Slack app needs:
+
+- Socket Mode enabled
+- An app-level token with `connections:write`
+- A bot token installed in the workspace
+- Bot scope `chat:write`
+- The bot invited to the approval channel
+
+That is the minimum for the built-in Slack approval flow. AgentUse uses `apps.connections.open` through Socket Mode, `chat.postMessage` to create the approval request, `chat.update` to mark it handled, and `views.open` for the comment modal. `views.open` does not require an additional scope.
+
+If you want the app to post into public channels without inviting the bot first, also add Slack's optional `chat:write.public` scope. Private channels still require the bot to be a member.
+
+If you do not want to put the channel id in every agent, set it once:
+
+```bash
+export SLACK_APPROVAL_CHANNEL="C0123456789"
+```
+
+To find a Slack channel id, open the channel in Slack, click the channel name, and look near the bottom of the channel details panel for the channel id. You can also copy a channel link; the id is the `C...` or `G...` value in the URL.
+
+Then the agent can be:
+
+```yaml
+approval:
+  channel: slack
+```
+
+## Start the Server
+
+Start AgentUse normally:
+
+```bash
+agentuse serve
+```
+
+When both Slack tokens are present, `serve` starts the Slack Socket Mode listener. Slack approvals do not require `--public-url`.
+
+## Reviewer Flow
+
+When the agent reaches the approval point, AgentUse posts a Slack message with a structured review card:
+
+- Review prompt
+- Summary of what was prepared
+- Review artifact link, draft URL, or inline draft content
+- Relevant context from the work so far
+- Known risks or reviewer notes
+- Action buttons
+
+- `Approve`: resumes the agent with `status: "approve"`
+- `Reject`: resumes the agent with `status: "reject"`
+- `Comment`: opens a Slack modal, then resumes the agent with `status: "comment"` and the reviewer comment
+
+After a reviewer responds, AgentUse updates the original Slack message so the channel can see that the request was handled.
+
+## Webhook Approvals
+
+Use webhook approvals when you want to connect AgentUse to a custom review system instead of Slack:
+
+```yaml
+approval:
+  channel: webhook
+  url: ${env:APPROVAL_WEBHOOK_URL}
+  timeout: 24h
+```
+
+Webhook approvals need a public resume URL:
+
+```bash
+export APPROVAL_WEBHOOK_URL="https://your-webhook.example.com/agentuse"
+agentuse serve --public-url https://agentuse.mycompany.com
+```
+
+`--public-url` is used to build resume links sent to the approval webhook. If the server is running behind a reverse proxy, use the externally reachable URL, not the local bind address.
+
+You can also configure the public URL globally:
+
+```json
+{
+  "serve": {
+    "publicUrl": "https://agentuse.mycompany.com"
+  }
+}
+```
+
+`AGENTUSE_RESUME_PUBLIC_URL` is still supported as a fallback, but most deployments should prefer `agentuse serve --public-url ...` or `serve.publicUrl`.
+
+## Approval Webhook Payload
+
+When the agent pauses, AgentUse sends a request to `approval.url`:
+
+```json
+{
+  "type": "agentuse.await_human",
+  "sessionId": "session_abc123",
+  "prompt": "Please review the launch email before it is finalized.",
+  "summary": "Drafted a launch email announcing approval gates.",
+  "draft": "...",
+  "draft_url": "https://example.com/draft/123",
+  "artifact_url": "https://example.com/review/123",
+  "context": "The email targets existing AgentUse users and focuses on the Slack approval path.",
+  "risk": "The final CTA has not been reviewed by marketing.",
+  "actions": ["approve", "reject", "comment"],
+  "resumeUrl": "https://agentuse.mycompany.com/resume/session_abc123",
+  "resumeToken": "resume_token",
+  "expiresAt": "2026-05-02T18:00:00.000Z"
+}
+```
+
+Your approval service can render this however you want: an internal review page, an email approval flow, or another workflow system.
+
+## Resume from a Webhook
+
+After the reviewer decides, post the result back to `resumeUrl`:
+
+```bash
+curl -X POST "$resumeUrl" \
+  -H "Authorization: Bearer $resumeToken" \
+  -H "Content-Type: application/json" \
+  -d '{"toolResult":{"status":"approve","comment":"Looks good"}}'
+```
+
+The response is accepted asynchronously:
+
+```json
+{
+  "sessionId": "session_abc123",
+  "status": "running"
+}
+```
+
+The resume token can be sent either as a bearer token or in the JSON body:
+
+```json
+{
+  "resumeToken": "resume_token",
+  "toolResult": {
+    "status": "approve",
+    "comment": "Looks good"
+  }
+}
+```
+
+## Reviewer Results
+
+Use one of the configured actions as the result status:
+
+```json
+{
+  "toolResult": {
+    "status": "approve",
+    "comment": "Looks good"
+  }
+}
+```
+
+Common statuses:
+
+- `approve`: continue and finalize the prepared work
+- `reject`: stop or return the rejection to the user
+- `comment`: revise using the reviewer comment, then follow the configured comment behavior
+
+By default, comments cause the agent to revise and request approval again. You can change that with `on_comment`.
+
+## Configuration Fields
+
+```yaml
+approval:
+  channel: slack
+  channel_id: C0123456789
+  timeout: 24h
+  actions: [approve, reject, comment]
+  include: [summary, draft, artifact]
+  on_comment: revise_until_approved
+```
+
+- `channel`: `slack` or `webhook`
+- `url`: webhook URL for approval notifications
+- `channel_id`: Slack channel id for approval messages
+- `timeout`: suspension timeout, such as `24h` or `7d`
+- `actions`: reviewer actions, defaulting to `approve`, `reject`, and `comment`
+- `include`: what the agent should include in the approval request
+- `on_comment`: `revise_once`, `revise_until_approved`, or `return_comment`
+
+The internal approval request supports these review fields:
+
+- `prompt`: the reviewer-facing decision prompt
+- `summary`: what changed and what is being approved
+- `draft`: inline draft content
+- `draft_url`: URL to a draft artifact
+- `artifact_url`: URL to the primary review artifact, such as a PR, preview, document, or generated artifact
+- `context`: relevant background, constraints, or work completed so far
+- `risk`: known risks, unresolved questions, or reviewer attention areas
+
+## Minimal Configuration
+
+You can also enable the approval behavior with:
+
+```yaml
+approval: true
+```
+
+For production Slack flows, prefer the explicit form with `channel: slack` and either `channel_id` or `SLACK_APPROVAL_CHANNEL`.
+
+## Local Resume
+
+For development or manual testing, you can resume a suspended session from the CLI:
+
+```bash
+agentuse resume session_abc123 \
+  --resume-token "$resumeToken" \
+  --tool-result '{"status":"approve","comment":"Looks good"}'
+```
+
+Use Slack for the normal human-review path, the HTTP resume endpoint for hosted webhook services, and the CLI command when you are testing locally.

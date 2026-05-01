@@ -1,6 +1,8 @@
 import type { Tool } from 'ai';
 import { createReadTool, createWriteTool, createEditTool } from './filesystem.js';
 import { createBashTool } from './bash.js';
+import { createAwaitExternalTool } from './await-external.js';
+import { createAwaitHumanTool } from './await-human.js';
 import type { ToolsConfig } from './types.js';
 import type { PathResolverContext } from './path-validator.js';
 
@@ -45,6 +47,18 @@ export function getTools(
   // Create bash tool if configured
   if (config.bash && config.bash.commands.length > 0) {
     tools['tools__bash'] = createBashTool(config.bash, context.projectRoot, context);
+  }
+
+  const extraContext = context as PathResolverContext & {
+    sessionId?: string;
+    approval?: Parameters<typeof createAwaitHumanTool>[1];
+  };
+  const sessionId = extraContext.sessionId;
+  if (config.await_external) {
+    tools['await_external'] = createAwaitExternalTool(sessionId);
+  }
+  if (config.await_human) {
+    tools['await_human'] = createAwaitHumanTool(sessionId, extraContext.approval);
   }
 
   return tools;

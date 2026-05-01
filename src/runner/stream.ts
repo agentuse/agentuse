@@ -5,6 +5,7 @@ import type { SessionManager } from '../session';
 import type { AgentPart } from '../types/parts';
 import type { ToolStateCompleted, ToolStateError } from '../session/types';
 import { logger } from '../utils/logger';
+import { formatToolResultForDisplay } from '../utils/format-tool-result';
 import type { AgentChunk } from './types';
 
 /**
@@ -32,6 +33,7 @@ export async function processAgentStream(
   finishReason?: string;
   finishReasons?: string[];
   hasTextOutput: boolean;
+  suspended?: boolean;
   parts: AgentPart[];
 }> {
   let finalText = '';
@@ -45,6 +47,7 @@ export async function processAgentStream(
   let hasTextOutput = false;
   const finishReasons: string[] = [];
   const parts: AgentPart[] = [];
+  let suspended = false;
 
   // Track current text part for streaming updates with debouncing
   let currentTextPart: { partID: string; text: string; startTime: number } | null = null;
@@ -322,7 +325,7 @@ export async function processAgentStream(
         parts.push({
           type: 'tool-result',
           tool: chunk.toolName!,
-          output: chunk.toolResult || 'No result',
+          output: chunk.toolResult ?? 'No result',
           duration: toolDuration || 0,
           success: toolSuccess,
           timestamp: Date.now()
@@ -337,7 +340,7 @@ export async function processAgentStream(
               success: toolSuccess
             });
             // Check for warnings in skill output and log them after "Skill loaded"
-            const result = chunk.toolResult || '';
+            const result = typeof chunk.toolResult === 'string' ? chunk.toolResult : '';
             const warningMatch = result.match(/> ⚠️ WARNING: (.+)/g);
             if (warningMatch) {
               for (const warning of warningMatch) {
@@ -351,7 +354,7 @@ export async function processAgentStream(
               success: toolSuccess
             });
           } else {
-            logger.toolResult(chunk.toolResult || 'No result', {
+            logger.toolResult(chunk.toolResult ?? chunk.toolResultRaw ?? 'No result', {
               ...(toolDuration !== undefined && { duration: toolDuration }),
               success: toolSuccess,
               ...(tokens && { tokens })
@@ -397,8 +400,8 @@ export async function processAgentStream(
                       status: 'error',
                       input: pending.input || {},
                       error: rawResult?.error
-                        ? (typeof rawResult.error === 'string' ? rawResult.error : JSON.stringify(rawResult.error))
-                        : (chunk.toolResult || 'Unknown error'),
+                        ? formatToolResultForDisplay(rawResult.error, { preferError: true })
+                        : formatToolResultForDisplay(chunk.toolResult ?? chunk.toolResultRaw ?? 'Unknown error', { preferError: true }),
                       time: { start: pending.startTime, end: endTime },
                       ...(tokens && { metadata: { tokens } })
                     };
@@ -425,6 +428,41 @@ export async function processAgentStream(
         logger.warnWithTool(chunk.toolName || 'unknown', 'call', errorStr);
         if (prefix) logger.warn(prefix.trim()); // Show any prefix separately
         break;
+
+      case 'suspended': {
+        suspended = true;
+        await finalizeTextPart();
+
+        if (chunk.toolCallId) {
+          const pending = pendingToolCalls.get(chunk.toolCallId);
+          if (pending?.addPartPromise && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
+            const partID = await pending.addPartPromise;
+            if (partID) {
+              const payload = (chunk.toolResultRaw ?? {}) as Record<string, unknown>;
+              const notification = payload.notification && typeof payload.notification === 'object'
+                ? payload.notification as any
+                : undefined;
+              const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentId, options.messageID, partID, {
+                state: {
+                  status: 'pending',
+                  input: pending.input,
+                  suspendedAt: Date.now(),
+                  resumePayload: {
+                    kind: (payload.kind === 'await_human' ? 'await_human' : 'await_external') as 'await_external' | 'await_human',
+                    ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
+                    ...(typeof payload.channel === 'string' && { channel: payload.channel }),
+                    ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
+                    ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
+                    ...(notification ? { notification } : {})
+                  }
+                }
+              } as any).catch(err => logger.debug(`Failed to mark tool part pending: ${err.message}`));
+              trackSessionUpdate(updatePromise);
+            }
+          }
+        }
+        break;
+      }
 
       case 'finish':
         // Finalize any pending text part
@@ -487,6 +525,7 @@ export async function processAgentStream(
     ...(toolCallTraces.length > 0 && { toolCallTraces }),
     ...(finishReasons.length > 0 && { finishReasons, finishReason: finishReasons[finishReasons.length - 1] }),
     hasTextOutput,
+    ...(suspended && { suspended }),
     parts
   };
 }

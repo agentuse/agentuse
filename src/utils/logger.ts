@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import ora, { type Ora } from 'ora';
+import { formatToolResultForDisplay } from './format-tool-result';
 
 /**
  * Logger for internal operational messages (errors, warnings, progress).
@@ -652,7 +653,7 @@ class Logger {
   /**
    * Log tool result with formatting and optional timing/status
    */
-  toolResult(result: string, options?: { duration?: number; success?: boolean; tokens?: number }) {
+  toolResult(result: unknown, options?: { duration?: number; success?: boolean; tokens?: number }) {
     this.refreshTUIState();
 
     // Stop spinner and persist the line
@@ -690,22 +691,12 @@ class Logger {
 
     // Format result
     const MAX_RESULT_LENGTH = 100;
-    let resultStr = result;
     const isError = options?.success === false;
+    let resultStr = formatToolResultForDisplay(result, { preferError: isError });
 
-    // For errors, try to extract the error message from JSON
-    if (isError) {
-      try {
-        const parsed = JSON.parse(result);
-        if (parsed.error) {
-          resultStr = parsed.error;
-        }
-      } catch {
-        // Not JSON, use as-is
-      }
-    } else if (!debugMode && result.length > MAX_RESULT_LENGTH) {
+    if (!isError && !debugMode && resultStr.length > MAX_RESULT_LENGTH) {
       // Truncate non-error results
-      resultStr = result.substring(0, MAX_RESULT_LENGTH) + '...';
+      resultStr = resultStr.substring(0, MAX_RESULT_LENGTH) + '...';
     }
 
     const line = `  ${statusIcon} ${resultStr}${durationStr}${tokensStr}`;

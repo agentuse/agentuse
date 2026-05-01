@@ -2,7 +2,7 @@ import { Command } from "commander";
 import fs from "fs/promises";
 import path from "path";
 import { getSessionStorageDir, getProjectDir } from "../storage/paths";
-import type { SessionInfo, Message, Part } from "../session/types";
+import type { SessionInfo, Message, Part, SessionStatus } from "../session/types";
 import { resolveProjectContext } from "../utils/project";
 
 interface SessionSummary {
@@ -13,7 +13,7 @@ interface SessionSummary {
   created: Date;
   isSubAgent: boolean;
   dirPath: string;
-  status?: 'running' | 'completed' | 'error';
+  status?: SessionStatus;
 }
 
 /**

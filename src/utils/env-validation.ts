@@ -57,6 +57,8 @@ function extractInlineEnvVars(obj: unknown, path: string, refs: EnvVarReference[
 export function extractEnvVarReferences(config: AgentConfig): EnvVarReference[] {
   const refs: EnvVarReference[] = [];
 
+  extractInlineEnvVars(config.approval, 'approval', refs);
+
   // Extract from MCP servers
   if (config.mcpServers) {
     for (const [serverName, serverConfig] of Object.entries(config.mcpServers)) {

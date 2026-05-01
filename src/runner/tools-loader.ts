@@ -8,6 +8,7 @@ import { createSandbox, createSandboxTools, type SandboxInstance } from '../sand
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
 import { logger } from '../utils/logger';
 import type { ParsedAgent } from '../parser';
+import { approvalToolDefaults, isApprovalEnabled } from './approval';
 
 /**
  * Options for loading agent tools
@@ -70,11 +71,17 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
 
   // Get configured builtin tools (filesystem, bash)
   let configuredTools: Record<string, Tool> = {};
-  if (agent.config.tools && projectContext) {
+  if ((agent.config.tools || isApprovalEnabled(agent.config)) && projectContext) {
     try {
-      configuredTools = getConfiguredTools(agent.config.tools, {
+      const toolsConfig = {
+        ...(agent.config.tools ?? {}),
+        ...(isApprovalEnabled(agent.config) && { await_human: true })
+      };
+      configuredTools = getConfiguredTools(toolsConfig, {
         projectRoot: projectContext.projectRoot,
         agentDir,
+        sessionId,
+        approval: approvalToolDefaults(agent.config),
       } as PathResolverContext);
       if (Object.keys(configuredTools).length > 0) {
         logger.debug(`${logPrefix}Loaded ${Object.keys(configuredTools).length} configured tool(s): ${Object.keys(configuredTools).join(', ')}`);

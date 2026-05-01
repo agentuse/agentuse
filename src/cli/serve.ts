@@ -7,6 +7,7 @@ import { existsSync } from "fs";
 import { glob } from "glob";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
 import chalk from "chalk";
+import * as dotenv from "dotenv";
 import { parseAgent } from "../parser";
 import { type AgentChunk } from "../runner";
 import { resolveProjectContext } from "../utils/project";
@@ -19,7 +20,8 @@ import { telemetry, parseModel } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
-import { loadGlobalConfig, expandHome, getGlobalConfigPath, type GlobalConfig } from "../utils/global-config";
+import { loadGlobalConfig, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
+import { SlackApprovalSocket, type SlackApprovalDecision } from "../slack/approval";
 import { homedir } from "os";
 
 interface RunRequest {
@@ -29,6 +31,7 @@ interface RunRequest {
   model?: string;
   timeout?: number;
   maxSteps?: number;
+  sessionId?: string;
 }
 
 interface RunResponse {
@@ -52,13 +55,16 @@ interface RunErrorResponse {
 }
 
 interface WorkerExecuteOptions {
-  agentPath: string;
+  agentPath?: string;
   projectRoot: string;
   prompt?: string | undefined;
   model?: string | undefined;
   timeout?: number | undefined;
   maxSteps?: number | undefined;
   debug?: boolean | undefined;
+  sessionId?: string | undefined;
+  toolResult?: unknown;
+  resumeToken?: string | undefined;
 }
 
 interface WorkerExecuteResult {
@@ -102,6 +108,8 @@ class AgentWorker {
   private readyPromise: Promise<void> | null = null;
   private readyResolve: (() => void) | null = null;
 
+  constructor(private envOverrides: NodeJS.ProcessEnv = {}) {}
+
   /**
    * Spawn the worker process. Must be called during server startup (sync context).
    */
@@ -131,7 +139,10 @@ class AgentWorker {
 
     this.process = spawn(process.execPath, [cliPath, "--internal-worker"], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: {
+        ...process.env,
+        ...this.envOverrides,
+      },
     });
 
     this.readline = createInterface({
@@ -239,7 +250,7 @@ class AgentWorker {
 
       const request = {
         id,
-        type: "execute",
+        type: options.sessionId && !options.agentPath ? "resume" : "execute",
         agentPath: options.agentPath,
         projectRoot: options.projectRoot,
         prompt: options.prompt,
@@ -247,6 +258,9 @@ class AgentWorker {
         timeout: options.timeout,
         maxSteps: options.maxSteps,
         debug: options.debug,
+        sessionId: options.sessionId,
+        toolResult: options.toolResult,
+        resumeToken: options.resumeToken,
       };
 
       this.process.stdin!.write(JSON.stringify(request) + "\n");
@@ -285,6 +299,21 @@ function parseRequestBody(req: IncomingMessage): Promise<RunRequest> {
           return;
         }
         resolve(parsed as RunRequest);
+      } catch {
+        reject(new Error("Invalid JSON body"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function parseJSONBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
       } catch {
         reject(new Error("Invalid JSON body"));
       }
@@ -347,17 +376,28 @@ function resolveProjectFromPath(rawPath: string, idOverride?: string): Omit<Proj
   return { id, root, envFile };
 }
 
+function loadServeProjectEnvironment(projectSeeds: Array<Omit<Project, 'agentFiles'>>): string[] {
+  const loaded: string[] = [];
+  if (projectSeeds.length === 1 && existsSync(projectSeeds[0].envFile)) {
+    dotenv.config({ path: projectSeeds[0].envFile, override: false, quiet: true });
+    loaded.push(projectSeeds[0].envFile);
+  }
+
+  return loaded;
+}
+
 export function createServeCommand(): Command {
   const serveCmd = new Command("serve")
     .description("Start an HTTP server to run agents via API")
     .option("-p, --port <number>", "Port to listen on (default: 12233 or config.serve.port)")
     .option("-H, --host <string>", "Host to bind to (default: 127.0.0.1 or config.serve.host)")
+    .option("--public-url <url>", "Externally reachable base URL used in resume links (or config.serve.publicUrl)")
     .option("-C, --directory <path>", "Project directory (repeat for multi-project). Overrides config.serve.projects.", collectDir, [] as string[])
     .option("--default <id>", "In multi-project mode, the project id to route POST /run when no `project` field is supplied")
     .option("-d, --debug", "Enable debug mode")
     .option("--no-auth", "Disable API key requirement for exposed hosts (dangerous)")
     .option("--no-log-file", "Disable the per-server log file (stdout/stderr tee)")
-    .action(async (options: { port?: string; host?: string; directory: string[]; default?: string; debug?: boolean; auth: boolean; logFile: boolean }) => {
+    .action(async (options: { port?: string; host?: string; publicUrl?: string; directory: string[]; default?: string; debug?: boolean; auth: boolean; logFile: boolean }) => {
       // Load global config once; hard-fail on malformed config so users don't silently get defaults.
       let globalConfig: GlobalConfig | null = null;
       try {
@@ -370,6 +410,11 @@ export function createServeCommand(): Command {
       if (serveCfg && options.debug) {
         logger.debug(`Loaded global config from ${getGlobalConfigPath()}`);
       }
+      const loadedServeEnvFiles: string[] = [];
+      const loadedGlobalEnv = loadGlobalEnv();
+      if (loadedGlobalEnv) {
+        loadedServeEnvFiles.push(loadedGlobalEnv);
+      }
 
       // Precedence: explicit CLI flag > config > built-in default.
       const effectivePortRaw = options.port ?? (serveCfg?.port !== undefined ? String(serveCfg.port) : "12233");
@@ -379,6 +424,18 @@ export function createServeCommand(): Command {
         process.exit(1);
       }
       const effectiveHost = options.host ?? serveCfg?.host ?? "127.0.0.1";
+      const serverUrl = `http://${effectiveHost}:${port}`;
+      const effectivePublicUrl = (options.publicUrl ?? serveCfg?.publicUrl ?? process.env.AGENTUSE_RESUME_PUBLIC_URL ?? serverUrl).replace(/\/$/, '');
+      try {
+        const parsedPublicUrl = new URL(effectivePublicUrl);
+        if (parsedPublicUrl.protocol !== 'http:' && parsedPublicUrl.protocol !== 'https:') {
+          throw new Error('invalid protocol');
+        }
+      } catch {
+        console.error(chalk.red("Invalid public URL"));
+        console.error(chalk.dim("Use --public-url with an http:// or https:// URL, e.g. https://agentuse.example.com"));
+        process.exit(1);
+      }
 
       // Commander boolean flags have no "unset" signal for defaults, so:
       // CLI --no-auth forces false; otherwise config value wins if set; default true.
@@ -430,6 +487,8 @@ export function createServeCommand(): Command {
           envFile: existsSync(envLocal) ? envLocal : ctx.envFile,
         });
       }
+
+      loadedServeEnvFiles.push(...loadServeProjectEnvironment(projectSeeds));
 
       // Reject duplicate absolute paths
       const pathSeen = new Map<string, string>();
@@ -513,7 +572,10 @@ export function createServeCommand(): Command {
       // isolated from the parent process and from sibling projects.
       const workers = new Map<string, AgentWorker>();
       for (const p of projectSeeds) {
-        const w = new AgentWorker();
+        const w = new AgentWorker({
+          AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
+          AGENTUSE_PROJECT_ID: p.id,
+        });
         try {
           await w.spawn();
         } catch (err) {
@@ -801,6 +863,55 @@ export function createServeCommand(): Command {
         };
       };
 
+      const resolveResumeProject = (projectId?: string): Project | undefined => {
+        return projectId
+          ? projectsById.get(projectId)
+          : (effectiveDefault ? projectsById.get(effectiveDefault) : projects[0]);
+      };
+
+      const resumeSuspendedSession = async (decision: SlackApprovalDecision): Promise<void> => {
+        const project = resolveResumeProject(decision.projectId);
+        if (!project) {
+          throw new Error(`Project not found for Slack approval resume: ${decision.projectId ?? 'default'}`);
+        }
+
+        const projectWorker = workers.get(project.id);
+        if (!projectWorker) {
+          throw new Error(`No worker for project ${project.id}`);
+        }
+
+        const result = await projectWorker.execute({
+          projectRoot: project.root,
+          sessionId: decision.sessionId,
+          toolResult: decision.toolResult,
+          resumeToken: decision.resumeToken,
+          debug: options.debug,
+        });
+
+        if (!result.success) {
+          throw new Error(result.error.message);
+        }
+      };
+
+      let slackApprovalSocket: SlackApprovalSocket | null = null;
+      const slackBotToken = process.env.SLACK_BOT_TOKEN;
+      const slackAppToken = process.env.SLACK_APP_TOKEN;
+      if (slackBotToken && slackAppToken) {
+        slackApprovalSocket = new SlackApprovalSocket({
+          botToken: slackBotToken,
+          appToken: slackAppToken,
+          onDecision: resumeSuspendedSession,
+          ...(options.debug !== undefined && { debug: options.debug })
+        });
+        slackApprovalSocket.start()
+          .then(() => logger.info('Slack approval socket connected'))
+          .catch((err) => logger.warn(`Slack approval socket failed to start: ${(err as Error).message}`));
+      } else if (slackBotToken || slackAppToken) {
+        logger.warn('Slack approval requires both SLACK_BOT_TOKEN and SLACK_APP_TOKEN; Socket Mode listener not started.');
+      } else if (loadedServeEnvFiles.length === 0) {
+        logger.debug(`No server-level env file found at ${getGlobalEnvPath()}`);
+      }
+
       const server = createServer(async (req, res) => {
         // CORS headers
         res.setHeader("Access-Control-Allow-Origin", "*");
@@ -833,6 +944,49 @@ export function createServeCommand(): Command {
           };
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(info));
+          return;
+        }
+
+        const resumeMatch = req.method === "POST" ? req.url?.match(/^\/resume\/([^/?#]+)/) : null;
+        if (resumeMatch) {
+          try {
+            const body = await parseJSONBody(req);
+            const sessionId = decodeURIComponent(resumeMatch[1]);
+            const projectId = typeof body.project === 'string' ? body.project : undefined;
+            const project = resolveResumeProject(projectId);
+
+            if (!project) {
+              sendError(res, 404, "PROJECT_NOT_FOUND", "Project not found for resume request");
+              return;
+            }
+
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) {
+              sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
+              return;
+            }
+
+            projectWorker.execute({
+              projectRoot: project.root,
+              sessionId,
+              toolResult: body.toolResult,
+              resumeToken: typeof body.resumeToken === 'string'
+                ? body.resumeToken
+                : req.headers.authorization?.startsWith('Bearer ')
+                  ? req.headers.authorization.slice(7)
+                  : undefined,
+              debug: options.debug,
+            }).then(result => {
+              if (!result.success) {
+                logger.warn(`Resume ${sessionId} failed: ${result.error.message}`);
+              }
+            });
+
+            res.writeHead(202, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ sessionId, status: "running" }));
+          } catch (err) {
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
           return;
         }
 
@@ -908,6 +1062,7 @@ export function createServeCommand(): Command {
             timeout: timeoutSeconds,
             maxSteps: body.maxSteps,
             debug: options.debug,
+            sessionId: body.sessionId,
           });
 
           clearTimeout(timeoutId);
@@ -1050,6 +1205,9 @@ export function createServeCommand(): Command {
         unregisterServer();
 
         scheduler.shutdown();
+        if (slackApprovalSocket) {
+          await slackApprovalSocket.stop().catch(() => {/* ignore */});
+        }
         for (const w of workers.values()) w.shutdown();
         for (const fw of fileWatchers) fw.close().catch(() => {/* ignore */});
 
@@ -1086,7 +1244,6 @@ export function createServeCommand(): Command {
       });
 
       server.listen(port, effectiveHost, () => {
-        const serverUrl = `http://${effectiveHost}:${port}`;
         const schedules = scheduler.list();
         const totalAgents = projects.reduce((a, p) => a + p.agentFiles.length, 0);
         const registryProjects: ServerProjectEntry[] = projects.map((p) => ({
@@ -1124,6 +1281,7 @@ export function createServeCommand(): Command {
 
         // Server info
         console.log(`  ${chalk.dim("Server")}    ${chalk.cyan(serverUrl)}`);
+        console.log(`  ${chalk.dim("Public")}    ${chalk.cyan(effectivePublicUrl)}`);
         if (!multiProject) {
           console.log(`  ${chalk.dim("Directory")} ${projects[0].root}`);
         } else {
@@ -1142,6 +1300,10 @@ export function createServeCommand(): Command {
           console.log(`  ${chalk.dim("Auth")}      ${chalk.dim("None (localhost)")}`);
         }
         console.log(`  ${chalk.dim("Hot reload")} ${chalk.green("enabled")}`);
+        console.log(`  ${chalk.dim("Slack")}     ${slackApprovalSocket ? chalk.green("Socket Mode enabled") : chalk.dim("disabled")}`);
+        if (loadedServeEnvFiles.length > 0) {
+          console.log(`  ${chalk.dim("Env")}       ${chalk.dim(loadedServeEnvFiles.join(', '))}`);
+        }
 
         // Webhooks
         console.log(`\n  ${chalk.dim("Webhooks")}`);

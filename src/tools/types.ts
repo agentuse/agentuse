@@ -21,6 +21,8 @@ export const BashConfigSchema = z.object({
 export const ToolsConfigSchema = z.object({
   filesystem: z.array(FilesystemPathConfigSchema).optional(),
   bash: BashConfigSchema.optional(),
+  await_external: z.boolean().optional(),
+  await_human: z.boolean().optional(),
 });
 
 // Derive types from Zod schemas

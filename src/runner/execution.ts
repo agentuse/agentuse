@@ -1,4 +1,4 @@
-import { streamText, stepCountIs, type ToolSet } from 'ai';
+import { streamText, stepCountIs, type ModelMessage, type ToolSet } from 'ai';
 import type { ParsedAgent } from '../parser';
 import { createModel, AuthenticationError } from '../models';
 import { CodexAuth } from '../auth/codex';
@@ -6,6 +6,7 @@ import { logger } from '../utils/logger';
 import { ContextManager } from '../context-manager';
 import { compactMessages } from '../compactor';
 import type { AgentChunk } from './types';
+import { isSuspendSignal } from './suspend';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -19,6 +20,7 @@ export async function* executeAgentCore(
   options: {
     userMessage: string;
     systemMessages: Array<{role: string, content: string}>;
+    messages?: ModelMessage[];
     maxSteps: number;
     abortSignal?: AbortSignal;
     subAgentNames?: Set<string>;  // Track which tools are subagents
@@ -37,7 +39,7 @@ export async function* executeAgentCore(
 
   // Initialize context manager if enabled
   let contextManager: ContextManager | null = null;
-  const initialMessages: any[] = [
+  const initialMessages: any[] = options.messages ?? [
     ...options.systemMessages,
     { role: 'user', content: options.userMessage }
   ];
@@ -120,6 +122,7 @@ export async function* executeAgentCore(
   // Declare timing variables before use
   let accumulatedText = '';
   const toolStartTimes = new Map<string, number>();
+  let lastToolCall: { id: string; name?: string } | null = null;
   let llmGenerationStartTime: number | undefined;
   let llmFirstTokenTime: number | undefined;
   const currentLlmModel = agent.config.model;
@@ -210,6 +213,7 @@ Error: ${errorMessage}`);
           const startTime = Date.now();
           const toolCallId = (chunk as any).toolCallId || 'unknown';
           toolStartTimes.set(toolCallId, startTime);
+          lastToolCall = { id: toolCallId, name: chunk.toolName };
 
           yield {
             type: 'tool-call',
@@ -268,9 +272,21 @@ Error: ${errorMessage}`);
           const toolCallId = (chunk as any).toolCallId || 'unknown';
           const startTime = toolStartTimes.get(toolCallId);
           const duration = startTime ? Date.now() - startTime : undefined;
+          const chunkError = (chunk as any).error;
+
+          if (isSuspendSignal(chunkError)) {
+            yield {
+              type: 'suspended',
+              ...(chunk.toolName && { toolName: chunk.toolName }),
+              ...(toolCallId && { toolCallId }),
+              ...(toolCallId && { suspend: { toolCallId } }),
+              toolResultRaw: chunkError.payload
+            };
+            return;
+          }
 
           // Pass tool errors as structured results to let AI decide on retry
-          const errorMessage = (chunk as any).error?.message || (chunk as any).error || 'Unknown error';
+          const errorMessage = chunkError?.message || chunkError || 'Unknown error';
           yield {
             type: 'tool-result',  // Treat as result so AI sees it
             toolCallId,  // Include toolCallId so session storage can match and update the pending tool call
@@ -410,6 +426,17 @@ Current step: ${stepCount}/${options.maxSteps}`);
     }
 
   } catch (error: any) {
+    if (isSuspendSignal(error)) {
+      yield {
+        type: 'suspended',
+        ...(lastToolCall?.name && { toolName: lastToolCall.name }),
+        ...(lastToolCall?.id && { toolCallId: lastToolCall.id }),
+        ...(lastToolCall?.id && { suspend: { toolCallId: lastToolCall.id } }),
+        toolResultRaw: error.payload
+      };
+      return;
+    }
+
     // Check for token limit errors first
     const errorMessage = error?.message || String(error);
     const errorLower = errorMessage.toLowerCase();

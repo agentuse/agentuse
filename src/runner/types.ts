@@ -1,4 +1,4 @@
-import type { LanguageModelUsage, ToolSet } from 'ai';
+import type { LanguageModelUsage, ModelMessage, ToolSet } from 'ai';
 import type { ParsedAgent } from '../parser';
 import type { MCPConnection } from '../mcp';
 import type { ToolCallTrace } from '../plugin/types';
@@ -15,12 +15,15 @@ export interface PrepareAgentOptions {
   userPrompt?: string | undefined;
   abortSignal?: AbortSignal | undefined;
   verbose?: boolean | undefined;
+  existingSessionId?: string | undefined;
+  prebuiltMessages?: ModelMessage[] | undefined;
 }
 
 export interface PreparedAgentExecution {
   tools: ToolSet;
   systemMessages: Array<{ role: string; content: string }>;
   userMessage: string;
+  messages?: ModelMessage[] | undefined;
   maxSteps: number;
   subAgentNames: Set<string>;
   sessionID?: string | undefined;
@@ -35,7 +38,7 @@ export interface PreparedAgentExecution {
 }
 
 export interface AgentChunk {
-  type: 'text' | 'tool-call' | 'tool-result' | 'tool-error' | 'finish' | 'error' | 'llm-start' | 'llm-first-token';
+  type: 'text' | 'tool-call' | 'tool-result' | 'tool-error' | 'finish' | 'error' | 'suspended' | 'llm-start' | 'llm-first-token';
   text?: string;
   toolName?: string;
   toolCallId?: string;      // Tool call ID from AI SDK
@@ -51,9 +54,15 @@ export interface AgentChunk {
   llmModel?: string;        // Model name for LLM traces
   llmStartTime?: number;    // When LLM call started
   llmFirstTokenTime?: number; // Time to first token
+  suspend?: {
+    sessionId?: string;
+    toolCallId?: string;
+    resumeUrl?: string;
+  };
 }
 
 export interface RunAgentResult {
+  status?: 'completed' | 'suspended';
   text: string;
   usage?: LanguageModelUsage;
   toolCallCount: number;

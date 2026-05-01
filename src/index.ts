@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
-import { runAgent, prepareAgentExecution, type PreparedAgentExecution } from './runner';
+import { runAgent, prepareAgentExecution, applyResumeToolResult, type PreparedAgentExecution } from './runner';
 import { Command } from 'commander';
 import { createProviderCommand, createAuthCommand } from './cli/auth';
 import { AuthStorage } from './auth/storage';
 import { createSessionsCommand } from './cli/sessions';
 import { createServeCommand } from './cli/serve';
+import { createResumeCommand } from './cli/resume';
 import { createModelsCommand } from './cli/models';
 import { createSkillsCommand } from './cli/skills';
 import { createBenchmarkCommand } from './cli/benchmark';
@@ -17,7 +18,6 @@ import { basename, resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
-import { extractLearnings } from './learning/index.js';
 import { version as packageVersion } from '../package.json';
 import { existsSync as existsSyncFs } from 'fs';
 
@@ -35,6 +35,7 @@ import { AuthenticationError } from './models';
 import * as dotenv from 'dotenv';
 import { existsSync } from 'fs';
 import { resolveProjectContext } from './utils/project';
+import { loadGlobalEnv } from './utils/global-config';
 import { resolveTimeout } from './utils/config';
 import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
@@ -119,6 +120,9 @@ program.addCommand(createSessionsCommand());
 // Add serve command (includes ps subcommand)
 program.addCommand(createServeCommand());
 
+// Add resume command
+program.addCommand(createResumeCommand());
+
 // Add models command
 program.addCommand(createModelsCommand());
 
@@ -145,8 +149,9 @@ program
   .option('-C, --directory <path>', 'Run as if agentuse was started in <path> instead of the current directory')
   .option('--env-file <path>', 'Path to custom .env file')
   .option('-m, --model <model>', 'Override the model specified in the agent file')
+  .option('--session-id <id>', 'Resume from an existing session id')
   .option('--json', 'Output result as JSON (implies --quiet --no-tty)')
-  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string, json?: boolean }) => {
+  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string, sessionId?: string, json?: boolean }) => {
     const startTime = Date.now();
     let originalCwd: string | undefined;
 
@@ -224,6 +229,11 @@ program
         logger.info(`Starting AgentUse at ${new Date().toISOString()}`);
       }
       
+      const loadedGlobalEnvFile = loadGlobalEnv();
+      if (loadedGlobalEnvFile) {
+        logger.debug(`Loading global environment from: ${loadedGlobalEnvFile}`);
+      }
+
       // Parse CLI timeout value (will be used as override later)
       const timeoutWasExplicit = process.argv.includes('--timeout');
       const cliTimeoutSeconds = parseInt(options.timeout);
@@ -496,9 +506,6 @@ program
       //   await pluginManager.emitAgentStart({ ... });
       // }
 
-      // Start capturing console output for plugins
-      logger.startCapture();
-
       /**
        * Prepare execution context BEFORE running the agent.
        *
@@ -522,7 +529,8 @@ program
         projectContext: { projectRoot: projectContext.projectRoot, cwd: process.cwd() },
         userPrompt: additionalPrompt || undefined,
         abortSignal: abortController.signal,
-        verbose: options.debug
+        verbose: options.debug,
+        existingSessionId: options.sessionId
       });
 
       // Update session info for interrupt handling (now that we have sessionID)
@@ -569,7 +577,11 @@ program
           sessionManager,
           { projectRoot: projectContext.projectRoot, cwd: process.cwd() },
           additionalPrompt || undefined,
-          preparedExecution
+          preparedExecution,
+          false,
+          pluginManager,
+          true,
+          options.sessionId
         );
 
         if (!result.hasTextOutput) {
@@ -663,77 +675,6 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         clearTimeout(timeoutId);
         process.off('SIGINT', sigintHandler);
         process.off('SIGTERM', sigtermHandler);
-      }
-
-      // Stop capturing and get console output
-      const consoleOutput = logger.stopCapture();
-      
-      // Emit plugin event for agent completion
-      if (pluginManager) {
-        try {
-          const duration = startTime ? (Date.now() - startTime) / 1000 : 0;
-          // agentFilePath already resolved before directory change
-
-          await pluginManager.emitAgentComplete({
-            agent: {
-              name: agent.name,
-              model: agent.config.model,
-              ...(agent.description && { description: agent.description }),
-              ...(agentFilePath && { filePath: agentFilePath })
-            },
-            result: {
-              text: result.text || '',
-              duration,
-              tokens: result.usage?.totalTokens,
-              toolCalls: result.toolCallCount || 0,
-              ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
-              ...(result.finishReason && { finishReason: result.finishReason }),
-              ...(result.finishReasons && { finishReasons: result.finishReasons }),
-              hasTextOutput: result.hasTextOutput
-            },
-            isSubAgent: false,
-            consoleOutput
-          });
-        } catch (pluginError) {
-          // Don't fail the agent execution if plugins fail
-          logger.warn(`Plugin event error: ${(pluginError as Error).message}`);
-        }
-      }
-
-      // Extract learnings if learning.evaluate is enabled
-      if (agent.config.learning?.evaluate && agentFilePath) {
-        try {
-          const duration = startTime ? (Date.now() - startTime) / 1000 : 0;
-          await extractLearnings({
-            event: {
-              agent: {
-                name: agent.name,
-                model: agent.config.model,
-                ...(agent.description && { description: agent.description }),
-                filePath: agentFilePath
-              },
-              result: {
-                text: result.text || '',
-                duration,
-                tokens: result.usage?.totalTokens,
-                toolCalls: result.toolCallCount || 0,
-                ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
-                ...(result.finishReason && { finishReason: result.finishReason }),
-                ...(result.finishReasons && { finishReasons: result.finishReasons }),
-                hasTextOutput: result.hasTextOutput
-              },
-              isSubAgent: false,
-              consoleOutput
-            },
-            agentInstructions: agent.instructions,
-            agentModel: agent.config.model,
-            agentFilePath,
-            config: agent.config.learning,
-          });
-        } catch (learningError) {
-          // Don't fail the agent execution if learning extraction fails
-          logger.debug(`[Learning] Extraction failed: ${(learningError as Error).message}`);
-        }
       }
 
       // Capture telemetry for successful execution
@@ -906,17 +847,21 @@ async function runInternalWorker() {
 
   // Configure logger to be quiet
   logger.configure({ level: LogLevel.ERROR, quiet: true, disableTUI: true });
+  loadGlobalEnv();
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute';
-    agentPath: string;
+    type: 'execute' | 'resume';
+    agentPath?: string;
     projectRoot: string;
     prompt?: string;
     model?: string;
     timeout?: number;
     maxSteps?: number;
     debug?: boolean;
+    sessionId?: string;
+    toolResult?: unknown;
+    resumeToken?: string;
   }
 
   async function executeAgent(req: ExecuteRequest) {
@@ -924,8 +869,8 @@ async function runInternalWorker() {
     let mcp: Awaited<ReturnType<typeof connectMCP>> = [];
 
     try {
-      const agentPath = resolve(req.projectRoot, req.agentPath);
-      if (!existsSync(agentPath)) {
+      let agentPath = req.agentPath ? resolve(req.projectRoot, req.agentPath) : '';
+      if (req.type === 'execute' && (!req.agentPath || !existsSync(agentPath))) {
         return {
           id: req.id,
           success: false,
@@ -946,6 +891,34 @@ async function runInternalWorker() {
         await initStorage(req.projectRoot);
       } catch {
         // Ignore storage init errors
+      }
+
+      const sessionManager = new SessionManager();
+      let existingSessionId: string | undefined = req.sessionId;
+      if (req.type === 'resume') {
+        if (!req.sessionId) {
+          return {
+            id: req.id,
+            success: false,
+            error: { code: 'SESSION_REQUIRED', message: 'Missing sessionId for resume request' },
+          };
+        }
+
+        const resumed = await applyResumeToolResult({
+          sessionManager,
+          sessionId: req.sessionId,
+          toolResult: req.toolResult,
+          ...(req.resumeToken && { resumeToken: req.resumeToken })
+        });
+        if (!resumed.agentFilePath) {
+          return {
+            id: req.id,
+            success: false,
+            error: { code: 'AGENT_NOT_FOUND', message: `Session ${req.sessionId} does not record an agent file path` },
+          };
+        }
+        agentPath = resumed.agentFilePath;
+        existingSessionId = req.sessionId;
       }
 
       const agent = await parseAgent(agentPath);
@@ -969,8 +942,14 @@ async function runInternalWorker() {
       const timeoutSeconds = req.timeout ?? agent.config.timeout ?? 300;
       const abortController = new AbortController();
       const timeoutId = setTimeout(() => abortController.abort(), timeoutSeconds * 1000);
-
-      const sessionManager = new SessionManager();
+      let pluginManager: PluginManager | null = null;
+      try {
+        const projectContext = resolveProjectContext(req.projectRoot, { projectRoot: req.projectRoot });
+        pluginManager = new PluginManager();
+        await pluginManager.loadPlugins(projectContext.pluginDirs);
+      } catch {
+        pluginManager = null;
+      }
 
       try {
         const result = await runAgent(
@@ -986,7 +965,10 @@ async function runInternalWorker() {
           { projectRoot: req.projectRoot, cwd: req.projectRoot },
           req.prompt,
           undefined,
-          true
+          true,
+          pluginManager,
+          true,
+          existingSessionId
         );
 
         clearTimeout(timeoutId);
@@ -1054,7 +1036,7 @@ async function runInternalWorker() {
 
     try {
       const request = JSON.parse(line) as ExecuteRequest;
-      if (request.type === 'execute') {
+      if (request.type === 'execute' || request.type === 'resume') {
         // Don't await - handle requests concurrently
         // Each request runs in parallel, response sent when complete
         executeAgent(request).then((response) => {

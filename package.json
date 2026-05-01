@@ -67,6 +67,8 @@
     "@clack/prompts": "^0.11.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@openauthjs/openauth": "^0.4.3",
+    "@slack/socket-mode": "^2.0.7",
+    "@slack/web-api": "^7.15.1",
     "ai": "6.0.3",
     "chalk": "^5.5.0",
     "chokidar": "^5.0.0",

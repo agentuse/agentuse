@@ -6,7 +6,7 @@ export type DeepPartial<T> = {
 };
 
 // Session Info Schema
-export type SessionStatus = 'running' | 'completed' | 'error';
+export type SessionStatus = 'running' | 'completed' | 'error' | 'suspended';
 
 export interface SessionInfo {
   id: string;                        // ULID
@@ -162,6 +162,21 @@ export interface PartBase {
 // Tool State - discriminated union for type safety
 export type ToolStatePending = {
   status: 'pending';
+  input?: unknown;
+  suspendedAt?: number;
+  resumePayload?: {
+    kind: 'await_external' | 'await_human';
+    prompt?: string;
+    channel?: string;
+    expiresAt?: number;
+    resumeToken?: string;
+    notification?: {
+      type: 'webhook' | 'slack-message';
+      ts?: string;
+      channel?: string;
+      url?: string;
+    };
+  };
 };
 
 export type ToolStateRunning = {
@@ -198,6 +213,15 @@ export type ToolStateError = {
 };
 
 export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted | ToolStateError;
+
+export interface ToolsSnapshot {
+  tools: Array<{
+    name: string;
+    description?: string;
+    inputSchema?: unknown;
+  }>;
+  providerOptions?: unknown;
+}
 
 // Part Schemas
 export type Part =

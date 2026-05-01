@@ -152,6 +152,53 @@ Test agent`;
   });
 
   describe('Other agent config fields', () => {
+    it('parses declarative approval configuration', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+approval:
+  channel: webhook
+  url: \${env:APPROVAL_WEBHOOK_URL}
+  channel_id: C0123456789
+  timeout: 24h
+  actions: [approve, reject, comment]
+  include: [draft, summary]
+  on_comment: revise_once
+---
+
+Write a draft.`;
+
+      const agent = parseAgentContent(content, 'test');
+
+      expect(agent.config.approval).toMatchObject({
+        channel: 'webhook',
+        url: '${env:APPROVAL_WEBHOOK_URL}',
+        channel_id: 'C0123456789',
+        timeout: '24h',
+        actions: ['approve', 'reject', 'comment'],
+        include: ['draft', 'summary'],
+        on_comment: 'revise_once'
+      });
+      expect(agent.instructions).toBe('Write a draft.');
+    });
+
+    it('parses Slack approval configuration', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+approval:
+  channel: slack
+  channel_id: C0123456789
+---
+
+Write a draft.`;
+
+      const agent = parseAgentContent(content, 'test');
+
+      expect(agent.config.approval).toMatchObject({
+        channel: 'slack',
+        channel_id: 'C0123456789'
+      });
+    });
+
     it('parses complete agent configuration', () => {
       const content = `---
 model: openai:gpt-5

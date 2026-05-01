@@ -1,8 +1,10 @@
 import type { ParsedAgent } from '../parser';
 import type { MCPConnection } from '../mcp';
 import type { SessionManager } from '../session';
+import type { AgentCompleteEvent, PluginManager } from '../plugin';
 import { AuthenticationError } from '../models';
 import { logger } from '../utils/logger';
+import { extractLearnings } from '../learning/index.js';
 import { executeAgentCore } from './execution';
 import { prepareAgentExecution } from './preparation';
 import { processAgentStream } from './stream';
@@ -50,14 +52,23 @@ export async function runAgent(
    */
   preparedExecution?: PreparedAgentExecution,
   /** Suppress console output (for serve mode) */
-  quiet: boolean = false
+  quiet: boolean = false,
+  pluginManager?: PluginManager | null,
+  captureConsole: boolean = true,
+  existingSessionId?: string
 ): Promise<RunAgentResult> {
   // Track session info for error logging (set during preparation)
   let sessionID: string | undefined;
   let agentId: string | undefined;
   let preparation: PreparedAgentExecution | undefined;
+  let captureActive = false;
 
   try {
+    if (captureConsole) {
+      logger.startCapture();
+      captureActive = true;
+    }
+
     // Log initialization time if verbose
     if (verbose && startTime) {
       const initTime = Date.now() - startTime;
@@ -76,13 +87,15 @@ export async function runAgent(
       projectContext,
       userPrompt,
       abortSignal,
-      verbose
+      verbose,
+      existingSessionId
     });
 
     const {
       tools,
       systemMessages,
       userMessage,
+      messages,
       maxSteps,
       subAgentNames,
       sessionID: prepSessionID,
@@ -99,6 +112,7 @@ export async function runAgent(
     const coreOptions = {
       userMessage,
       systemMessages,
+      ...(messages && { messages }),
       maxSteps,
       subAgentNames,
       ...(abortSignal && { abortSignal })
@@ -123,6 +137,27 @@ export async function runAgent(
 
     logger.debug(`Agent finish reasons: ${result.finishReasons?.join(', ') ?? 'none'}`);
     logger.debug(`Agent produced text output: ${result.hasTextOutput}`);
+
+    if (result.suspended) {
+      if (sessionManager && prepSessionID && prepAgentId) {
+        await sessionManager.setSessionSuspended(prepSessionID, prepAgentId);
+      }
+      if (captureActive) {
+        logger.stopCapture();
+        captureActive = false;
+      }
+
+      return {
+        status: 'suspended',
+        text: result.text,
+        ...(result.usage && { usage: result.usage }),
+        toolCallCount: result.toolCalls?.length || 0,
+        ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
+        finishReason: 'suspended',
+        finishReasons: [...(result.finishReasons ?? []), 'suspended'],
+        hasTextOutput: result.hasTextOutput
+      };
+    }
 
     // Display execution summary
     const mainTokens = result.usage?.totalTokens || 0;
@@ -159,8 +194,8 @@ export async function runAgent(
       }
     }
 
-    // Return metrics for plugin system
-    return {
+    const runResult: RunAgentResult = {
+      status: 'completed',
       text: result.text,
       ...(result.usage && { usage: result.usage }),
       toolCallCount: result.toolCalls?.length || 0,
@@ -169,6 +204,20 @@ export async function runAgent(
       ...(result.finishReasons && { finishReasons: result.finishReasons }),
       hasTextOutput: result.hasTextOutput
     };
+
+    const consoleOutput = captureActive ? logger.stopCapture() : '';
+    captureActive = false;
+    await runPostLifecycle({
+      agent,
+      result: runResult,
+      consoleOutput,
+      ...(agentFilePath !== undefined && { agentFilePath }),
+      ...(startTime !== undefined && { startTime }),
+      ...(pluginManager !== undefined && { pluginManager })
+    });
+
+    // Return metrics for plugin system
+    return runResult;
   } catch (error: unknown) {
     // Log error to session if available (for visibility in `agentuse sessions`)
     if (sessionManager && sessionID && agentId) {
@@ -195,6 +244,11 @@ export async function runAgent(
     throw error;
   } finally {
     // Clean up preparation resources (store locks, etc.)
+    if (captureActive) {
+      logger.stopCapture();
+      captureActive = false;
+    }
+
     if (preparation) {
       await preparation.cleanup();
     }
@@ -210,6 +264,60 @@ export async function runAgent(
       } catch (error) {
         // Ignore errors when closing MCP clients
       }
+    }
+  }
+}
+
+export async function runPostLifecycle(options: {
+  pluginManager?: PluginManager | null | undefined;
+  agent: ParsedAgent;
+  agentFilePath?: string;
+  result: RunAgentResult;
+  startTime?: number;
+  consoleOutput: string;
+}) {
+  const { pluginManager, agent, agentFilePath, result, startTime, consoleOutput } = options;
+  const duration = startTime ? (Date.now() - startTime) / 1000 : 0;
+  const event: AgentCompleteEvent = {
+    agent: {
+      name: agent.name,
+      model: agent.config.model,
+      ...(agent.description && { description: agent.description }),
+      ...(agentFilePath && { filePath: agentFilePath })
+    },
+    result: {
+      text: result.text || '',
+      duration,
+      ...(result.usage?.totalTokens !== undefined && { tokens: result.usage.totalTokens }),
+      toolCalls: result.toolCallCount || 0,
+      ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
+      ...(result.finishReason && { finishReason: result.finishReason }),
+      ...(result.finishReasons && { finishReasons: result.finishReasons }),
+      hasTextOutput: result.hasTextOutput
+    },
+    isSubAgent: false,
+    consoleOutput
+  };
+
+  if (pluginManager) {
+    try {
+      await pluginManager.emitAgentComplete(event);
+    } catch (pluginError) {
+      logger.warn(`Plugin event error: ${(pluginError as Error).message}`);
+    }
+  }
+
+  if (agent.config.learning?.evaluate && agentFilePath) {
+    try {
+      await extractLearnings({
+        event,
+        agentInstructions: agent.instructions,
+        agentModel: agent.config.model,
+        agentFilePath,
+        config: agent.config.learning,
+      });
+    } catch (learningError) {
+      logger.debug(`[Learning] Extraction failed: ${(learningError as Error).message}`);
     }
   }
 }
