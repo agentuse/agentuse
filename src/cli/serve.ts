@@ -433,6 +433,7 @@ function renderLogItems(logs?: ApprovalLogEntry[]): string {
   return logs.map((entry) => `
         <li class="log-item ${escapeHtml(entry.status ?? '')}">
           <span class="log-time">${escapeHtml(formatLogTime(entry.time))}</span>
+          <span class="log-marker">⋮</span>
           <span class="log-main">
             <span class="log-title">${escapeHtml(entry.title)}</span>
             ${entry.message ? `<pre>${escapeHtml(entry.message)}</pre>` : ''}
@@ -458,92 +459,598 @@ function renderApprovalPage(options: {
         ? 'waiting'
         : approval.sessionStatus;
   const decision = approval.decision ? JSON.stringify(approval.decision, null, 2) : '';
-  const detailRows = [
-    ['Summary', approval.summary],
-    ['Draft', approval.draft],
-    ['Artifact', approval.artifactUrl],
-    ['Draft URL', approval.draftUrl],
-    ['Context', approval.context],
-    ['Risk / notes', approval.risk],
-  ].filter(([, value]) => typeof value === 'string' && value.length > 0);
+  const detailRows: Array<[string, string]> = [
+    ['summary', approval.summary],
+    ['draft', approval.draft],
+    ['artifact', approval.artifactUrl],
+    ['draft url', approval.draftUrl],
+    ['context', approval.context],
+    ['risk / notes', approval.risk],
+  ].filter(([, value]) => typeof value === 'string' && value.length > 0) as Array<[string, string]>;
   const actions = approvalActionList(approval.actions);
   const initialLogs = approval.logs ?? [];
+  const agentLabel = approval.agent.name || approval.agent.id;
 
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AgentUse Approval</title>
+  <title>AgentUse / Approval</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    // Resolve theme before paint to avoid flash. Stored value: 'light' | 'dark' | null (system).
+    (function() {
+      try {
+        var stored = localStorage.getItem('agentuse-theme');
+        var resolved = stored === 'light' || stored === 'dark'
+          ? stored
+          : (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', resolved);
+        if (stored) document.documentElement.setAttribute('data-theme-pref', stored);
+        else document.documentElement.setAttribute('data-theme-pref', 'system');
+      } catch (e) {}
+    })();
+  </script>
   <style>
-    :root { color-scheme: light; --bg: #f7f8fb; --fg: #18202f; --muted: #657186; --line: #d9deea; --panel: #ffffff; --primary: #1f6feb; --danger: #c93434; }
+    :root {
+      --mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #000000;
+      --fg: #ffffff;
+      --line: rgba(255,255,255,0.10);
+      --line-strong: rgba(255,255,255,0.18);
+      --panel: rgba(255,255,255,0.03);
+      --panel-hover: rgba(255,255,255,0.06);
+      --muted: rgba(255,255,255,0.50);
+      --muted-2: rgba(255,255,255,0.30);
+      --muted-3: rgba(255,255,255,0.70);
+      --cyan: #22d3ee;
+      --cyan-soft: rgba(34,211,238,0.08);
+      --cyan-border: rgba(34,211,238,0.35);
+      --green: #4ade80;
+      --green-soft: rgba(74,222,128,0.08);
+      --green-border: rgba(74,222,128,0.35);
+      --amber: #fbbf24;
+      --amber-soft: rgba(251,191,36,0.08);
+      --amber-border: rgba(251,191,36,0.35);
+      --red: #f87171;
+      --red-soft: rgba(248,113,113,0.10);
+      --red-border: rgba(248,113,113,0.35);
+      --primary-fg: #000000;
+      --primary-bg: #4ade80;
+      --primary-bg-hover: #86efac;
+      --bar-bg: rgba(0,0,0,0.85);
+      --glow-1: rgba(34,211,238,0.06);
+      --glow-2: rgba(74,222,128,0.04);
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #fafaf9;
+      --fg: #0a0a0a;
+      --line: rgba(0,0,0,0.08);
+      --line-strong: rgba(0,0,0,0.16);
+      --panel: rgba(0,0,0,0.025);
+      --panel-hover: rgba(0,0,0,0.05);
+      --muted: rgba(0,0,0,0.55);
+      --muted-2: rgba(0,0,0,0.35);
+      --muted-3: rgba(0,0,0,0.75);
+      --cyan: #0891b2;
+      --cyan-soft: rgba(8,145,178,0.08);
+      --cyan-border: rgba(8,145,178,0.35);
+      --green: #047857;
+      --green-soft: rgba(4,120,87,0.08);
+      --green-border: rgba(4,120,87,0.35);
+      --amber: #b45309;
+      --amber-soft: rgba(180,83,9,0.10);
+      --amber-border: rgba(180,83,9,0.35);
+      --red: #b91c1c;
+      --red-soft: rgba(185,28,28,0.08);
+      --red-border: rgba(185,28,28,0.35);
+      --primary-fg: #ffffff;
+      --primary-bg: #047857;
+      --primary-bg-hover: #065f46;
+      --bar-bg: rgba(250,250,249,0.85);
+      --glow-1: rgba(8,145,178,0.06);
+      --glow-2: rgba(4,120,87,0.04);
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); line-height: 1.5; }
-    main { width: min(960px, calc(100vw - 32px)); margin: 32px auto; }
-    header { margin-bottom: 20px; }
-    h1 { font-size: 28px; line-height: 1.15; margin: 0 0 12px; letter-spacing: 0; }
-    h2 { font-size: 15px; margin: 28px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0; }
-    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin: 16px 0; }
-    .meta div, section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
-    .label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
-    .prompt { font-size: 17px; }
-    .status { display: inline-flex; align-items: center; min-height: 28px; padding: 3px 10px; border-radius: 999px; background: #e8eefc; color: #174ea6; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
-    .status.expired, .status.error { background: #fdeaea; color: #9f1d1d; }
-    .status.completed { background: #e6f4ea; color: #137333; }
-    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
-    button { border: 1px solid var(--line); background: #fff; color: var(--fg); border-radius: 8px; min-height: 40px; padding: 0 14px; font-weight: 650; cursor: pointer; }
-    button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
-    button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
-    button:disabled, textarea:disabled { opacity: .55; cursor: not-allowed; }
-    textarea { width: 100%; min-height: 96px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; }
-    .logs { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-    .log-item { display: grid; grid-template-columns: 88px 1fr; gap: 10px; border-bottom: 1px solid var(--line); padding: 10px 0; }
+    html, body { background: var(--bg); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--fg);
+      font-family: var(--mono);
+      font-size: 14px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      background:
+        radial-gradient(1200px 600px at 50% -200px, var(--glow-1), transparent 60%),
+        radial-gradient(800px 400px at 100% 100%, var(--glow-2), transparent 60%),
+        var(--bg);
+      padding-bottom: 140px;
+    }
+    a { color: var(--cyan); text-decoration: none; border-bottom: 1px dotted var(--cyan-border); }
+    a:hover { opacity: 0.8; }
+
+    /* top bar */
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .topbar .brand { display: inline-flex; gap: 10px; align-items: center; color: var(--fg); font-weight: 500; letter-spacing: 0.02em; }
+    .topbar .brand .slash { color: var(--muted-2); }
+    .topbar .brand .page { color: var(--muted-3); }
+    .topbar .right { display: inline-flex; gap: 18px; align-items: center; }
+    .session-pill { color: var(--muted); }
+    .session-pill code { color: var(--muted-3); }
+
+    main { width: min(960px, calc(100vw - 32px)); margin: 0 auto; padding: 40px 0 24px; }
+
+    /* header */
+    header { margin-bottom: 28px; }
+    .status {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 4px 10px 4px 8px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      font-size: 11px; font-weight: 500;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      background: var(--panel);
+      color: var(--muted-3);
+      margin-bottom: 18px;
+    }
+    .status::before {
+      content: ""; width: 6px; height: 6px; border-radius: 999px;
+      background: currentColor; box-shadow: 0 0 10px currentColor;
+    }
+    .status.waiting { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+    .status.waiting::before { animation: pulse 1.4s ease-in-out infinite; }
+    .status.resuming { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
+    .status.resuming::before { animation: pulse 0.8s ease-in-out infinite; }
+    .status.completed, .status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+    .status.expired, .status.error, .status.rejected { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+    .eyebrow {
+      font-size: 11px;
+      color: var(--cyan);
+      letter-spacing: 0.18em; text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    h1 {
+      font-family: var(--sans);
+      font-size: clamp(28px, 4vw, 42px);
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin: 0 0 18px;
+      font-weight: 500;
+    }
+    .prompt {
+      font-family: var(--sans);
+      font-size: 17px;
+      color: var(--muted-3);
+      border-left: 2px solid var(--cyan-border);
+      padding: 6px 0 6px 16px;
+      margin: 0;
+    }
+
+    /* meta grid */
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1px;
+      margin: 28px 0 0;
+      background: var(--line);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .meta .cell {
+      background: var(--bg);
+      padding: 14px 16px;
+    }
+    .meta .label {
+      display: block;
+      color: var(--muted-2);
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+    .meta .label::before { content: "⋮ "; color: var(--cyan); opacity: 0.6; }
+    .meta .value, .meta code { color: var(--fg); font-size: 13px; word-break: break-all; }
+
+    /* sections */
+    .section-title {
+      display: flex; align-items: baseline; gap: 10px;
+      margin: 36px 0 10px;
+      font-size: 11px;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--muted-2);
+    }
+    .section-title::before { content: "⋮"; color: var(--cyan); font-size: 14px; transform: translateY(1px); }
+    .section-title .rule { flex: 1; height: 1px; background: var(--line); }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px 18px;
+    }
+    .panel + .panel { margin-top: 10px; }
+    .panel pre {
+      margin: 0;
+      white-space: pre-wrap; overflow-wrap: anywhere;
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--muted-3);
+    }
+
+    .notice { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
+    .notice.error { color: var(--red); }
+    .notice.error::before { content: "✗ "; }
+
+    /* logs */
+    .logs { list-style: none; margin: 0; padding: 0; }
+    .log-item {
+      display: grid;
+      grid-template-columns: 96px 14px 1fr;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px dashed var(--line);
+      align-items: start;
+    }
     .log-item:last-child { border-bottom: 0; }
-    .log-time { color: var(--muted); font-size: 12px; padding-top: 2px; }
-    .log-title { font-weight: 650; }
-    .log-main pre { margin-top: 4px; color: #2d3748; max-height: none; }
-    .log-empty { color: var(--muted); }
-    .notice { margin: 16px 0; color: var(--muted); }
-    .notice.error { color: #9f1d1d; }
-    a { color: var(--primary); }
+    .log-time { color: var(--muted-2); font-size: 12px; padding-top: 1px; }
+    .log-marker { color: var(--cyan); opacity: 0.6; }
+    .log-item.error .log-marker, .log-item.failed .log-marker { color: var(--red); }
+    .log-item.completed .log-marker, .log-item.approved .log-marker { color: var(--green); }
+    .log-item.resuming .log-marker { color: var(--amber); }
+    .log-title { font-weight: 500; color: var(--fg); }
+    .log-main pre {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12.5px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .log-empty { color: var(--muted-2); padding: 12px 0; font-style: italic; }
+
+    /* sticky action bar */
+    .action-bar {
+      position: fixed;
+      left: 0; right: 0; bottom: 0;
+      z-index: 50;
+      background: var(--bar-bg);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-top: 1px solid var(--line);
+    }
+    .action-bar-inner {
+      width: min(960px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 14px 0;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 14px;
+      align-items: center;
+    }
+    .action-bar .hint {
+      font-size: 12px;
+      color: var(--muted-2);
+      letter-spacing: 0.04em;
+    }
+    .action-bar .hint b { color: var(--muted-3); font-weight: 500; }
+    .action-bar .hint .kbd {
+      display: inline-block;
+      padding: 1px 6px; margin: 0 2px;
+      font-size: 11px;
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+      color: var(--muted-3);
+      background: var(--panel);
+    }
+    .actions { display: inline-flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+    button {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      border: 1px solid var(--line-strong);
+      background: transparent;
+      color: var(--fg);
+      border-radius: 8px;
+      min-height: 40px;
+      padding: 0 16px;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+    }
+    button:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+    button:active { transform: translateY(1px); }
+    button.primary {
+      background: var(--primary-bg);
+      border-color: var(--primary-bg);
+      color: var(--primary-fg);
+    }
+    button.primary:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
+    button.danger {
+      background: transparent;
+      border-color: var(--red-border);
+      color: var(--red);
+    }
+    button.danger:hover { background: var(--red-soft); border-color: var(--red); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+    /* theme toggle */
+    .theme-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      padding: 2px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+    }
+    .theme-toggle button {
+      min-height: 0;
+      padding: 4px 8px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted-2);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .theme-toggle button:hover { background: transparent; color: var(--muted-3); border: 0; }
+    .theme-toggle button[aria-pressed="true"] {
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--line);
+    }
+    .theme-toggle svg { width: 12px; height: 12px; display: block; }
+
+    /* comment dialog */
+    dialog#comment-dialog {
+      width: min(560px, calc(100vw - 32px));
+      max-width: 100%;
+      padding: 0;
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      background: var(--bg);
+      color: var(--fg);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+    }
+    dialog#comment-dialog::backdrop {
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+    :root[data-theme="light"] dialog#comment-dialog::backdrop {
+      background: rgba(0,0,0,0.30);
+    }
+    dialog#comment-dialog form { margin: 0; padding: 0; }
+    .dialog-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      font-size: 11px;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--muted-2);
+    }
+    .dialog-head .title::before { content: "⋮ "; color: var(--cyan); }
+    .dialog-close {
+      min-height: 0; padding: 4px 8px;
+      background: transparent; border: 0;
+      color: var(--muted-2); font-size: 16px; line-height: 1;
+      cursor: pointer; border-radius: 6px;
+    }
+    .dialog-close:hover { background: var(--panel-hover); color: var(--fg); border: 0; }
+    .dialog-body {
+      padding: 16px 18px;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+    .dialog-body .prefix {
+      color: var(--cyan); opacity: 0.7; font-size: 13px; padding-top: 12px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 96px;
+      max-height: 240px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font: inherit;
+      font-family: var(--mono);
+      font-size: 13.5px;
+      color: var(--fg);
+      outline: none;
+      transition: border-color 120ms ease;
+    }
+    textarea:focus { border-color: var(--cyan-border); }
+    textarea::placeholder { color: var(--muted-2); }
+    textarea:disabled { opacity: 0.55; cursor: not-allowed; }
+    .dialog-foot {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px;
+      padding: 12px 18px;
+      border-top: 1px solid var(--line);
+    }
+    .dialog-foot .hint {
+      font-size: 11px;
+      color: var(--muted-2);
+      letter-spacing: 0.04em;
+    }
+    .dialog-foot .hint .kbd {
+      display: inline-block;
+      padding: 1px 6px; margin: 0 2px;
+      font-size: 11px;
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+      color: var(--muted-3);
+      background: var(--panel);
+    }
+    .dialog-foot .actions { gap: 8px; }
+
+    .inactive-banner {
+      margin-top: 24px;
+      padding: 14px 16px;
+      border: 1px dashed var(--line-strong);
+      border-radius: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .inactive-banner::before { content: "⋮ "; color: var(--muted-2); }
+
+    /* responsive */
+    @media (max-width: 640px) {
+      .topbar { padding: 12px 16px; flex-wrap: wrap; gap: 6px; }
+      h1 { font-size: 26px; }
+      .action-bar-inner { grid-template-columns: 1fr; }
+      .action-bar .hint { display: none; }
+      .actions { justify-content: stretch; }
+      .actions button { flex: 1; }
+    }
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <span class="brand"><span>agentuse</span><span class="slash">/</span><span class="page">approval</span></span>
+    <span class="right">
+      <span class="session-pill">session <code>${escapeHtml(approval.sessionId.slice(0, 8))}…</code></span>
+      <span class="theme-toggle" role="group" aria-label="Theme">
+        <button type="button" data-theme-pref="light" title="Light" aria-label="Light theme">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M14.5 8H13M3 8H1.5M12.6 3.4l-1.06 1.06M4.46 11.54L3.4 12.6M12.6 12.6l-1.06-1.06M4.46 4.46L3.4 3.4"/></svg>
+        </button>
+        <button type="button" data-theme-pref="system" title="System" aria-label="System theme">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M5.5 13.5h5M8 11v2.5" stroke-linecap="round"/></svg>
+        </button>
+        <button type="button" data-theme-pref="dark" title="Dark" aria-label="Dark theme">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7Z"/></svg>
+        </button>
+      </span>
+    </span>
+  </div>
+
   <main>
     <header>
       <span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span>
-      <h1>AgentUse Approval</h1>
-      <section class="prompt">${escapeHtml(approval.prompt ?? 'Approval request unavailable')}</section>
+      <div class="eyebrow">human approval requested</div>
+      <h1>${escapeHtml(approval.prompt ?? 'Approval request unavailable')}</h1>
+      <p class="prompt">Review the context below, then approve, reject, or send a comment back to the agent. The session is paused until you respond.</p>
+      <div class="meta">
+        <div class="cell"><span class="label">session</span><code>${escapeHtml(approval.sessionId)}</code></div>
+        <div class="cell"><span class="label">project</span><code>${escapeHtml(projectId ?? 'default')}</code></div>
+        <div class="cell"><span class="label">agent</span><span class="value">${escapeHtml(agentLabel)}</span></div>
+        <div class="cell"><span class="label">expires</span><span class="value">${escapeHtml(formatApprovalTime(approval.expiresAt))}</span></div>
+      </div>
     </header>
-    <div class="meta">
-      <div><span class="label">Session</span><code>${escapeHtml(approval.sessionId)}</code></div>
-      <div><span class="label">Project</span><code>${escapeHtml(projectId ?? 'default')}</code></div>
-      <div><span class="label">Agent</span>${escapeHtml(approval.agent.name || approval.agent.id)}</div>
-      <div><span class="label">Expires</span>${escapeHtml(formatApprovalTime(approval.expiresAt))}</div>
-    </div>
+
     ${error ? `<p class="notice error">${escapeHtml(error)}</p>` : ''}
-    ${detailRows.map(([label, value]) => `<h2>${escapeHtml(label)}</h2><section><pre>${escapeHtml(value)}</pre></section>`).join('')}
-    ${decision ? `<h2>Decision</h2><section><pre>${escapeHtml(decision)}</pre></section>` : ''}
-    <h2>Decision</h2>
-    <section>
-      ${actionable ? `
-      <textarea id="comment" placeholder="Optional comment"></textarea>
-      <div class="actions">
-        ${actions.map(action => `<button class="${escapeHtml(action.style ?? '')}" data-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`).join('')}
-      </div>` : `<p class="notice">This approval request is not accepting decisions right now.</p>`}
-      <p id="result" class="notice"></p>
-    </section>
-    <h2>Session Log</h2>
-    <section>
+
+    ${detailRows.map(([label, value]) => `
+    <div class="section-title"><span>${escapeHtml(label)}</span><span class="rule"></span></div>
+    <div class="panel"><pre>${escapeHtml(value)}</pre></div>`).join('')}
+
+    ${decision ? `
+    <div class="section-title"><span>decision</span><span class="rule"></span></div>
+    <div class="panel"><pre>${escapeHtml(decision)}</pre></div>` : ''}
+
+    <div class="section-title"><span>session log</span><span class="rule"></span></div>
+    <div class="panel">
       <ul id="logs" class="logs">${renderLogItems(initialLogs)}</ul>
-    </section>
+    </div>
+
+    ${actionable ? '' : `
+    <div class="inactive-banner">This approval request is not accepting decisions right now.</div>`}
+
+    <p id="result" class="notice"></p>
   </main>
+
+  ${actionable ? `
+  <dialog id="comment-dialog" aria-labelledby="comment-dialog-title">
+    <form method="dialog">
+      <div class="dialog-head">
+        <span id="comment-dialog-title" class="title">leave a comment</span>
+        <button type="button" class="dialog-close" data-comment-cancel aria-label="Close">×</button>
+      </div>
+      <div class="dialog-body">
+        <span class="prefix">&gt;</span>
+        <textarea id="comment" placeholder="explain your decision, ask for a tweak, or send context back to the agent" autofocus></textarea>
+      </div>
+      <div class="dialog-foot">
+        <span class="hint"><span class="kbd">⌘⏎</span> send <span class="kbd">esc</span> cancel</span>
+        <span class="actions">
+          <button type="button" data-comment-cancel>Cancel</button>
+          <button type="button" class="primary" data-comment-submit>Send comment</button>
+        </span>
+      </div>
+    </form>
+  </dialog>` : ''}
+
+  <div class="action-bar" role="toolbar" aria-label="Approval actions">
+    <div class="action-bar-inner">
+      <div class="hint">
+        ${actionable
+          ? `<b>${escapeHtml(approval.sessionId.slice(0, 8))}…</b> awaiting decision <span style="opacity:.4">·</span> <span class="kbd">⌘⏎</span> approve <span class="kbd">esc</span> reject <span class="kbd">c</span> comment`
+          : `<b>${escapeHtml(approval.sessionId.slice(0, 8))}…</b> ${escapeHtml(status)}`}
+      </div>
+      <div class="actions">
+        ${actionable
+          ? actions.map(action => `<button class="${escapeHtml(action.style ?? '')}" data-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`).join('')
+          : `<button disabled>no actions available</button>`}
+      </div>
+    </div>
+  </div>
+
   <script>
     const token = ${JSON.stringify(token)};
     const project = ${JSON.stringify(projectId)};
     const statusEl = document.querySelector('.status');
     const logsEl = document.getElementById('logs');
+
+    // theme toggle
+    const themeMql = window.matchMedia('(prefers-color-scheme: light)');
+    function applyTheme(pref) {
+      const resolved = pref === 'light' || pref === 'dark'
+        ? pref
+        : (themeMql.matches ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', resolved);
+      document.documentElement.setAttribute('data-theme-pref', pref);
+      for (const btn of document.querySelectorAll('.theme-toggle button')) {
+        btn.setAttribute('aria-pressed', String(btn.dataset.themePref === pref));
+      }
+    }
+    function currentPref() {
+      return localStorage.getItem('agentuse-theme') || 'system';
+    }
+    applyTheme(currentPref());
+    for (const btn of document.querySelectorAll('.theme-toggle button')) {
+      btn.addEventListener('click', () => {
+        const pref = btn.dataset.themePref;
+        if (pref === 'system') localStorage.removeItem('agentuse-theme');
+        else localStorage.setItem('agentuse-theme', pref);
+        applyTheme(pref);
+      });
+    }
+    themeMql.addEventListener('change', () => {
+      if (currentPref() === 'system') applyTheme('system');
+    });
     function escapeText(value) {
       return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
         '&': '&amp;',
@@ -556,16 +1063,43 @@ function renderApprovalPage(options: {
     function formatTime(value) {
       return value ? new Date(value).toLocaleTimeString() : '';
     }
+    // Logs accumulate monotonically across the session. The /status endpoint
+    // can return fewer (or zero) entries during the approval handoff window,
+    // so we merge by id instead of overwriting.
+    const renderedLogs = new Map();
+    const initialEntries = ${JSON.stringify(initialLogs)};
+    for (const entry of initialEntries) {
+      if (entry && entry.id != null) renderedLogs.set(String(entry.id), entry);
+    }
+    function logEntryHtml(entry) {
+      return '<li class="log-item ' + escapeText(entry.status || '') + '">' +
+        '<span class="log-time">' + escapeText(formatTime(entry.time)) + '</span>' +
+        '<span class="log-marker">⋮</span>' +
+        '<span class="log-main"><span class="log-title">' + escapeText(entry.title) + '</span>' +
+        (entry.message ? '<pre>' + escapeText(entry.message) + '</pre>' : '') +
+        '</span></li>';
+    }
     function renderLogs(logs) {
-      if (!logs || logs.length === 0) {
+      let changed = false;
+      if (Array.isArray(logs)) {
+        for (const entry of logs) {
+          if (!entry || entry.id == null) continue;
+          const key = String(entry.id);
+          const prior = renderedLogs.get(key);
+          // Update if new, or if state changed (e.g. tool: pending -> completed).
+          if (!prior || prior.status !== entry.status || prior.message !== entry.message || prior.title !== entry.title) {
+            renderedLogs.set(key, entry);
+            changed = true;
+          }
+        }
+      }
+      if (renderedLogs.size === 0) {
         logsEl.innerHTML = '<li class="log-empty">No session events yet.</li>';
         return;
       }
-      logsEl.innerHTML = logs.map((entry) => '<li class="log-item ' + escapeText(entry.status || '') + '">' +
-        '<span class="log-time">' + escapeText(formatTime(entry.time)) + '</span>' +
-        '<span class="log-main"><span class="log-title">' + escapeText(entry.title) + '</span>' +
-        (entry.message ? '<pre>' + escapeText(entry.message) + '</pre>' : '') +
-        '</span></li>').join('');
+      if (!changed) return;
+      const ordered = [...renderedLogs.values()].sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
+      logsEl.innerHTML = ordered.map(logEntryHtml).join('');
     }
     async function refreshStatus() {
       try {
@@ -583,34 +1117,98 @@ function renderApprovalPage(options: {
     }
     refreshStatus();
     setInterval(refreshStatus, 1500);
-    for (const button of document.querySelectorAll('button[data-action]')) {
-      button.addEventListener('click', async () => {
-        for (const b of document.querySelectorAll('button[data-action]')) b.disabled = true;
-        const result = document.getElementById('result');
-        result.textContent = 'Submitting decision...';
-        try {
-          const response = await fetch(location.pathname + '/decision', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              status: button.dataset.action,
-              comment: document.getElementById('comment')?.value || undefined,
-              resumeToken: token,
-              project
-            })
-          });
-          const payload = await response.json();
-          if (!response.ok) throw new Error(payload?.error?.message || 'Approval failed');
-          result.textContent = 'Decision recorded. AgentUse is resuming the session.';
-          statusEl.textContent = 'resuming';
-          statusEl.className = 'status resuming';
-          refreshStatus();
-        } catch (err) {
-          result.textContent = err.message || String(err);
-          for (const b of document.querySelectorAll('button[data-action]')) b.disabled = false;
-        }
+
+    async function submitDecision(actionId, opts) {
+      const button = document.querySelector('button[data-action="' + actionId + '"]');
+      if (!button || button.disabled) return;
+      for (const b of document.querySelectorAll('button[data-action]')) b.disabled = true;
+      const result = document.getElementById('result');
+      result.textContent = '⋮ submitting decision…';
+      result.className = 'notice';
+      try {
+        const response = await fetch(location.pathname + '/decision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: actionId,
+            comment: opts && opts.comment ? opts.comment : undefined,
+            resumeToken: token,
+            project
+          })
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error?.message || 'Approval failed');
+        result.textContent = '✓ decision recorded — agentuse is resuming the session.';
+        statusEl.textContent = 'resuming';
+        statusEl.className = 'status resuming';
+        refreshStatus();
+      } catch (err) {
+        result.textContent = err.message || String(err);
+        result.className = 'notice error';
+        for (const b of document.querySelectorAll('button[data-action]')) b.disabled = false;
+      }
+    }
+
+    // comment dialog
+    const commentDialog = document.getElementById('comment-dialog');
+    const commentInput = document.getElementById('comment');
+    function openCommentDialog() {
+      if (!commentDialog) return;
+      if (typeof commentDialog.showModal === 'function') commentDialog.showModal();
+      else commentDialog.setAttribute('open', '');
+      requestAnimationFrame(() => commentInput?.focus());
+    }
+    function closeCommentDialog() {
+      if (!commentDialog) return;
+      if (typeof commentDialog.close === 'function') commentDialog.close();
+      else commentDialog.removeAttribute('open');
+    }
+    async function submitComment() {
+      const text = (commentInput?.value || '').trim();
+      if (!text) { commentInput?.focus(); return; }
+      closeCommentDialog();
+      await submitDecision('comment', { comment: text });
+    }
+    if (commentDialog) {
+      for (const el of commentDialog.querySelectorAll('[data-comment-cancel]')) {
+        el.addEventListener('click', closeCommentDialog);
+      }
+      const submitBtn = commentDialog.querySelector('[data-comment-submit]');
+      submitBtn?.addEventListener('click', submitComment);
+      // click outside dialog content closes it
+      commentDialog.addEventListener('click', (e) => {
+        if (e.target === commentDialog) closeCommentDialog();
+      });
+      commentInput?.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitComment(); }
       });
     }
+
+    for (const button of document.querySelectorAll('button[data-action]')) {
+      button.addEventListener('click', () => {
+        if (button.dataset.action === 'comment') openCommentDialog();
+        else submitDecision(button.dataset.action);
+      });
+    }
+
+    // keyboard shortcuts (only when no dialog is open and not typing in a field):
+    //   cmd/ctrl+Enter → approve, Esc → reject, c → comment
+    document.addEventListener('keydown', (e) => {
+      if (commentDialog?.open) return;
+      const target = e.target;
+      const inField = target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT');
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        const approve = document.querySelector('button[data-action="approve"]');
+        if (approve && !approve.disabled) submitDecision('approve');
+      } else if (e.key === 'Escape' && !inField) {
+        const reject = document.querySelector('button[data-action="reject"]');
+        if (reject && !reject.disabled) submitDecision('reject');
+      } else if ((e.key === 'c' || e.key === 'C') && !inField && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const comment = document.querySelector('button[data-action="comment"]');
+        if (comment && !comment.disabled) { e.preventDefault(); openCommentDialog(); }
+      }
+    });
   </script>
 </body>
 </html>`;
