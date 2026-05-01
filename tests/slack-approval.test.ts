@@ -40,22 +40,8 @@ describe('Slack approval blocks', () => {
     expect(values).toEqual(['approve now', 'reject now']);
   });
 
-  it('renders resume failures into Slack-visible blocks', () => {
-    const blocks = __testing.resumeFailedBlocks({
-      status: 'approve',
-      sessionId: 'session-1',
-      error: new Error('ModelMessage schema mismatch'),
-      reviewer: { id: 'U123' }
-    });
-
-    expect(blocks[0].text.text).toContain('resume failed');
-    expect(blocks[0].text.text).toContain('session-1');
-    expect(blocks[0].text.text).toContain('<@U123>');
-    expect(blocks[1].text.text).toContain('ModelMessage schema mismatch');
-  });
-
-  it('keeps approval context after a decision', () => {
-    const originalBlocks = __testing.buildApprovalBlocks({
+  it('keeps the channel status card concise and moves details to thread messages', () => {
+    const request = {
       botToken: 'xoxb-test',
       channelId: 'C123',
       sessionId: 'session-1',
@@ -64,16 +50,47 @@ describe('Slack approval blocks', () => {
       draft: 'Release candidate v1.2.3',
       resumeToken: 'resume-token',
       expiresAt: new Date(0).toISOString()
-    });
+    };
 
-    const blocks = __testing.resolvedBlocks('approve', { id: 'U123' }, undefined, originalBlocks);
+    const channelBlocks = __testing.buildStatusBlocks({
+      phase: 'waiting',
+      prompt: request.prompt,
+      sessionId: request.sessionId,
+      expiresAt: request.expiresAt
+    });
+    const threadMessages = __testing.buildDetailThreadMessages(request);
+
+    expect(JSON.stringify(channelBlocks)).toContain('Approve this deployment?');
+    expect(JSON.stringify(channelBlocks)).not.toContain('Release candidate v1.2.3');
+    expect(JSON.stringify(threadMessages)).toContain('Deploying the release candidate');
+    expect(JSON.stringify(threadMessages)).toContain('Release candidate v1.2.3');
+  });
+
+  it('renders resume failures into the channel status card', () => {
+    const blocks = __testing.buildStatusBlocks({
+      phase: 'failed',
+      prompt: 'Approve this deployment?',
+      sessionId: 'session-1',
+      decision: 'approve',
+      error: new Error('ModelMessage schema mismatch'),
+      reviewer: { id: 'U123' }
+    });
     const text = JSON.stringify(blocks);
 
-    expect(blocks.some((block: any) => block.type === 'actions')).toBe(false);
-    expect(text).toContain('AgentUse approval approved');
-    expect(text).toContain('Approve this deployment?');
-    expect(text).toContain('Deploying the release candidate');
-    expect(text).toContain('Release candidate v1.2.3');
+    expect(text).toContain('AgentUse approval failed');
+    expect(text).toContain('session-1');
+    expect(text).toContain('<@U123>');
+    expect(text).toContain('ModelMessage schema mismatch');
+  });
+
+  it('adds actionable context for Slack channel_not_found errors', () => {
+    const message = __testing.slackApprovalPostErrorMessage('C123', {
+      data: { error: 'channel_not_found' }
+    });
+
+    expect(message).toContain('C123');
+    expect(message).toContain('SLACK_BOT_TOKEN');
+    expect(message).toContain('~/.agentuse/.env');
   });
 
   it('updates Slack before awaiting resumed execution', async () => {
@@ -99,17 +116,8 @@ describe('Slack approval blocks', () => {
     await (socket as any).handleBlockAction({
       channel: { id: 'C123' },
       message: {
-        ts: '123.456',
-        blocks: __testing.buildApprovalBlocks({
-          botToken: 'xoxb-test',
-          channelId: 'C123',
-          sessionId: 'session-1',
-          prompt: 'Approve this deployment?',
-          summary: 'Deploying the release candidate',
-          draft: 'Release candidate v1.2.3',
-          resumeToken: 'resume-token',
-          expiresAt: new Date(0).toISOString()
-        })
+        ts: '222.333',
+        thread_ts: '111.222'
       },
       user: { id: 'U123' },
       team: { id: 'T123' },
@@ -118,17 +126,93 @@ describe('Slack approval blocks', () => {
         value: JSON.stringify({
           sessionId: 'session-1',
           resumeToken: 'resume-token',
+          rootChannelId: 'C123',
+          rootMessageTs: '111.222',
+          prompt: 'Approve this deployment?',
           action: 'approve'
         })
       }]
     });
 
-    expect(updates).toHaveLength(1);
-    expect(updates[0].text).toBe('AgentUse approval received: approve');
-    expect(JSON.stringify(updates[0].blocks)).toContain('Release candidate v1.2.3');
+    expect(updates).toHaveLength(2);
+    expect(updates[0]).toMatchObject({
+      channel: 'C123',
+      ts: '111.222',
+      text: 'AgentUse approval resuming'
+    });
+    expect(JSON.stringify(updates[0].blocks)).toContain('Status');
+    expect(JSON.stringify(updates[0].blocks)).toContain('resuming');
+    expect(updates[1]).toMatchObject({
+      channel: 'C123',
+      ts: '222.333',
+      text: 'AgentUse approval received: approve'
+    });
     expect(decisionStarted).toBe(true);
 
     releaseDecision();
     await new Promise(resolve => setTimeout(resolve, 0));
+    expect(updates).toHaveLength(3);
+    expect(updates[2]).toMatchObject({
+      channel: 'C123',
+      ts: '111.222',
+      text: 'AgentUse approval completed'
+    });
+  });
+
+  it('starts resumed execution without waiting for Slack message updates', async () => {
+    let decisionStarted = false;
+    const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
+      appToken: 'xapp-test',
+      botToken: 'xoxb-test',
+      onDecision: async () => {
+        decisionStarted = true;
+      }
+    });
+
+    const updates: any[] = [];
+    const releaseUpdates: Array<() => void> = [];
+    (socket as any).web.chat.update = async (payload: any) => {
+      updates.push(payload);
+      if (updates.length <= 2) {
+        await new Promise<void>(resolve => {
+          releaseUpdates.push(resolve);
+        });
+      }
+      return { ok: true };
+    };
+
+    await (socket as any).handleBlockAction({
+      channel: { id: 'C123' },
+      message: {
+        ts: '222.333',
+        thread_ts: '111.222'
+      },
+      user: { id: 'U123' },
+      team: { id: 'T123' },
+      actions: [{
+        action_id: 'agentuse_approval_action_0_approve',
+        value: JSON.stringify({
+          sessionId: 'session-1',
+          resumeToken: 'resume-token',
+          rootChannelId: 'C123',
+          rootMessageTs: '111.222',
+          prompt: 'Approve this deployment?',
+          action: 'approve'
+        })
+      }]
+    });
+
+    expect(decisionStarted).toBe(true);
+    expect(updates).toHaveLength(2);
+
+    for (const release of releaseUpdates) release();
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(updates).toHaveLength(3);
+    expect(updates[2]).toMatchObject({
+      channel: 'C123',
+      ts: '111.222',
+      text: 'AgentUse approval completed'
+    });
   });
 });
