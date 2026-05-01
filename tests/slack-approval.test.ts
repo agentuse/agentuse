@@ -39,4 +39,96 @@ describe('Slack approval blocks', () => {
 
     expect(values).toEqual(['approve now', 'reject now']);
   });
+
+  it('renders resume failures into Slack-visible blocks', () => {
+    const blocks = __testing.resumeFailedBlocks({
+      status: 'approve',
+      sessionId: 'session-1',
+      error: new Error('ModelMessage schema mismatch'),
+      reviewer: { id: 'U123' }
+    });
+
+    expect(blocks[0].text.text).toContain('resume failed');
+    expect(blocks[0].text.text).toContain('session-1');
+    expect(blocks[0].text.text).toContain('<@U123>');
+    expect(blocks[1].text.text).toContain('ModelMessage schema mismatch');
+  });
+
+  it('keeps approval context after a decision', () => {
+    const originalBlocks = __testing.buildApprovalBlocks({
+      botToken: 'xoxb-test',
+      channelId: 'C123',
+      sessionId: 'session-1',
+      prompt: 'Approve this deployment?',
+      summary: 'Deploying the release candidate',
+      draft: 'Release candidate v1.2.3',
+      resumeToken: 'resume-token',
+      expiresAt: new Date(0).toISOString()
+    });
+
+    const blocks = __testing.resolvedBlocks('approve', { id: 'U123' }, undefined, originalBlocks);
+    const text = JSON.stringify(blocks);
+
+    expect(blocks.some((block: any) => block.type === 'actions')).toBe(false);
+    expect(text).toContain('AgentUse approval approved');
+    expect(text).toContain('Approve this deployment?');
+    expect(text).toContain('Deploying the release candidate');
+    expect(text).toContain('Release candidate v1.2.3');
+  });
+
+  it('updates Slack before awaiting resumed execution', async () => {
+    let releaseDecision!: () => void;
+    let decisionStarted = false;
+    const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
+      appToken: 'xapp-test',
+      botToken: 'xoxb-test',
+      onDecision: async () => {
+        decisionStarted = true;
+        await new Promise<void>(resolve => {
+          releaseDecision = resolve;
+        });
+      }
+    });
+
+    const updates: any[] = [];
+    (socket as any).web.chat.update = async (payload: any) => {
+      updates.push(payload);
+      return { ok: true };
+    };
+
+    await (socket as any).handleBlockAction({
+      channel: { id: 'C123' },
+      message: {
+        ts: '123.456',
+        blocks: __testing.buildApprovalBlocks({
+          botToken: 'xoxb-test',
+          channelId: 'C123',
+          sessionId: 'session-1',
+          prompt: 'Approve this deployment?',
+          summary: 'Deploying the release candidate',
+          draft: 'Release candidate v1.2.3',
+          resumeToken: 'resume-token',
+          expiresAt: new Date(0).toISOString()
+        })
+      },
+      user: { id: 'U123' },
+      team: { id: 'T123' },
+      actions: [{
+        action_id: 'agentuse_approval_action_0_approve',
+        value: JSON.stringify({
+          sessionId: 'session-1',
+          resumeToken: 'resume-token',
+          action: 'approve'
+        })
+      }]
+    });
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0].text).toBe('AgentUse approval received: approve');
+    expect(JSON.stringify(updates[0].blocks)).toContain('Release candidate v1.2.3');
+    expect(decisionStarted).toBe(true);
+
+    releaseDecision();
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
 });

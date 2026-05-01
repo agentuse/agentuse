@@ -11,7 +11,7 @@ import * as dotenv from "dotenv";
 import { parseAgent } from "../parser";
 import { type AgentChunk } from "../runner";
 import { resolveProjectContext } from "../utils/project";
-import { logger, LogLevel, executionLog } from "../utils/logger";
+import { logger, LogLevel, executionLog, approvalLog } from "../utils/logger";
 import { printLogo } from "../utils/branding";
 import { initStorage } from "../storage/index.js";
 import { Scheduler, type Schedule } from "../scheduler";
@@ -870,6 +870,11 @@ export function createServeCommand(): Command {
       };
 
       const resumeSuspendedSession = async (decision: SlackApprovalDecision): Promise<void> => {
+        const reviewer = decision.toolResult.reviewer?.id
+          ? `<@${decision.toolResult.reviewer.id}>`
+          : decision.toolResult.reviewer?.username;
+        approvalLog.received('slack', decision.toolResult.status, decision.sessionId, reviewer);
+
         const project = resolveResumeProject(decision.projectId);
         if (!project) {
           throw new Error(`Project not found for Slack approval resume: ${decision.projectId ?? 'default'}`);
@@ -880,6 +885,8 @@ export function createServeCommand(): Command {
           throw new Error(`No worker for project ${project.id}`);
         }
 
+        const resumeStart = Date.now();
+        approvalLog.resumeStarted(decision.sessionId);
         const result = await projectWorker.execute({
           projectRoot: project.root,
           sessionId: decision.sessionId,
@@ -889,8 +896,10 @@ export function createServeCommand(): Command {
         });
 
         if (!result.success) {
+          approvalLog.resumeFailed(decision.sessionId, Date.now() - resumeStart, result.error.message);
           throw new Error(result.error.message);
         }
+        approvalLog.resumeCompleted(decision.sessionId, Date.now() - resumeStart);
       };
 
       let slackApprovalSocket: SlackApprovalSocket | null = null;

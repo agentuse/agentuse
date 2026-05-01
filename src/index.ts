@@ -584,11 +584,13 @@ program
           options.sessionId
         );
 
-        if (!result.hasTextOutput) {
+        if (result.status === 'suspended') {
+          const sessionId = preparedExecution.sessionID;
+          logger.info(`Agent is waiting for approval${sessionId ? ` (session ${sessionId})` : ''}.`);
+          logger.info('Approve or reject in Slack, or inspect status with `agentuse sessions`.');
+        } else if (!result.hasTextOutput) {
           logger.warn('Agent completed without producing a final response.');
-        }
-
-        if (result.finishReason && result.finishReason !== 'stop') {
+        } else if (result.finishReason && result.finishReason !== 'stop') {
           if (result.finishReason === 'unknown') {
             logger.warn('Agent finished without reporting a reason; output may be incomplete.');
           } else {

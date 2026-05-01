@@ -1058,3 +1058,25 @@ export const executionLog = {
     console.log(`${this.formatTimestamp()} ${chalk.red('Timeout:')} ${agentPath} (${this.formatDuration(durationMs)})`);
   },
 };
+
+export const approvalLog = {
+  formatTimestamp: executionLog.formatTimestamp,
+  formatDuration: executionLog.formatDuration,
+
+  received(channel: string, action: string, sessionId: string, reviewer?: string): void {
+    const reviewerSuffix = reviewer ? ` by ${reviewer}` : '';
+    console.log(`${this.formatTimestamp()} ${chalk.cyan('Approval received:')} ${channel} ${action} for ${sessionId}${reviewerSuffix}`);
+  },
+
+  resumeStarted(sessionId: string): void {
+    console.log(`${this.formatTimestamp()} ${chalk.cyan('Approval resume started:')} ${sessionId}`);
+  },
+
+  resumeCompleted(sessionId: string, durationMs: number): void {
+    console.log(`${this.formatTimestamp()} ${chalk.green('Approval resume completed:')} ${sessionId} (${this.formatDuration(durationMs)})`);
+  },
+
+  resumeFailed(sessionId: string, durationMs: number, error: string): void {
+    console.log(`${this.formatTimestamp()} ${chalk.red('Approval resume failed:')} ${sessionId} (${this.formatDuration(durationMs)}) - ${error}`);
+  },
+};

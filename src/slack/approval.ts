@@ -220,7 +220,9 @@ function buildApprovalBlocks(request: SlackApprovalRequest): any[] {
 }
 
 export const __testing = {
-  buildApprovalBlocks
+  buildApprovalBlocks,
+  resolvedBlocks,
+  resumeFailedBlocks
 };
 
 export async function sendSlackApprovalRequest(request: SlackApprovalRequest): Promise<SlackApprovalMessage> {
@@ -268,16 +270,90 @@ function findCommentValue(values: any): string {
   return '';
 }
 
-function resolvedBlocks(status: string, reviewer?: SlackApprovalDecision['toolResult']['reviewer'], comment?: string): any[] {
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'approve':
+      return 'approved';
+    case 'reject':
+      return 'rejected';
+    case 'comment':
+      return 'commented';
+    default:
+      return status;
+  }
+}
+
+function originalReviewBlocks(blocks: unknown): any[] {
+  if (!Array.isArray(blocks)) return [];
+
+  return blocks
+    .filter((block: any) => block?.type !== 'actions')
+    .map((block: any, index) => {
+      if (
+        index === 0 &&
+        block?.type === 'section' &&
+        block?.text?.type === 'mrkdwn' &&
+        typeof block.text.text === 'string'
+      ) {
+        return {
+          ...block,
+          text: {
+            ...block.text,
+            text: block.text.text.replace('*AgentUse approval requested*', '*Approved request*')
+          }
+        };
+      }
+      return block;
+    });
+}
+
+function resolvedBlocks(status: string, reviewer?: SlackApprovalDecision['toolResult']['reviewer'], comment?: string, originalBlocks?: unknown): any[] {
   const who = reviewer?.id ? `<@${reviewer.id}>` : 'A reviewer';
   const commentText = comment ? `\n>${truncate(comment, 1500)}` : '';
+  const details = originalReviewBlocks(originalBlocks);
   return [
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*AgentUse approval ${status}*\n${who} submitted \`${status}\`.${commentText}`
+        text: `*AgentUse approval ${statusLabel(status)}*\n${who} submitted \`${status}\`. AgentUse is resuming the session.${commentText}`
       }
+    },
+    ...(details.length > 0 ? [{ type: 'divider' }, ...details] : [])
+  ];
+}
+
+function resumeFailedBlocks(options: {
+  status: string;
+  sessionId: string;
+  error: unknown;
+  reviewer?: SlackApprovalDecision['toolResult']['reviewer'];
+}): any[] {
+  const who = options.reviewer?.id ? `<@${options.reviewer.id}>` : 'A reviewer';
+  const message = options.error instanceof Error ? options.error.message : String(options.error);
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*AgentUse approval resume failed*\n${who} submitted \`${options.status}\`, but AgentUse could not resume session \`${options.sessionId}\`.`
+      }
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Error*\n\`\`\`${truncate(message, 2500)}\`\`\``
+      }
+    },
+    {
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: 'Check `agentuse sessions <session_id>` and the `agentuse serve` log for details.'
+        }
+      ]
     }
   ];
 }
@@ -344,7 +420,9 @@ export class SlackApprovalSocket {
     }
 
     const reviewer = reviewerFromBody(body);
-    await this.options.onDecision({
+    await this.updateOriginalMessage(body, value.action, reviewer);
+
+    void this.options.onDecision({
       sessionId: value.sessionId,
       ...(value.projectId && { projectId: value.projectId }),
       resumeToken: value.resumeToken,
@@ -352,9 +430,10 @@ export class SlackApprovalSocket {
         status: value.action,
         ...(Object.keys(reviewer).length > 0 && { reviewer })
       }
+    }).catch(async (err) => {
+      await this.updateOriginalMessageFailure(body, value.action, value.sessionId, err, reviewer);
+      logger.warn(`Slack approval resume failed: ${(err as Error).message}`);
     });
-
-    await this.updateOriginalMessage(body, value.action, reviewer);
   }
 
   private async openCommentModal(body: any, value: ReturnType<typeof parseActionValue>): Promise<void> {
@@ -409,7 +488,13 @@ export class SlackApprovalSocket {
     const value = parseActionValue(body.view.private_metadata);
     const comment = findCommentValue(body.view.state?.values);
     const reviewer = reviewerFromBody(body);
-    await this.options.onDecision({
+
+    const metadata = JSON.parse(body.view.private_metadata) as { channel?: unknown; messageTs?: unknown };
+    if (typeof metadata.channel === 'string' && typeof metadata.messageTs === 'string') {
+      await this.updateMessage(metadata.channel, metadata.messageTs, 'AgentUse approval received: comment', resolvedBlocks('comment', reviewer, comment));
+    }
+
+    void this.options.onDecision({
       sessionId: value.sessionId,
       ...(value.projectId && { projectId: value.projectId }),
       resumeToken: value.resumeToken,
@@ -418,17 +503,17 @@ export class SlackApprovalSocket {
         comment,
         ...(Object.keys(reviewer).length > 0 && { reviewer })
       }
+    }).catch(async (err) => {
+      if (typeof metadata.channel === 'string' && typeof metadata.messageTs === 'string') {
+        await this.updateMessage(
+          metadata.channel,
+          metadata.messageTs,
+          'AgentUse approval resume failed',
+          resumeFailedBlocks({ status: 'comment', sessionId: value.sessionId, error: err, reviewer })
+        );
+      }
+      logger.warn(`Slack approval resume failed: ${(err as Error).message}`);
     });
-
-    const metadata = JSON.parse(body.view.private_metadata) as { channel?: unknown; messageTs?: unknown };
-    if (typeof metadata.channel === 'string' && typeof metadata.messageTs === 'string') {
-      await this.web.chat.update({
-        channel: metadata.channel,
-        ts: metadata.messageTs,
-        text: 'AgentUse approval received: comment',
-        blocks: resolvedBlocks('comment', reviewer, comment)
-      });
-    }
   }
 
   private async updateOriginalMessage(body: any, status: string, reviewer?: SlackApprovalDecision['toolResult']['reviewer']): Promise<void> {
@@ -436,11 +521,29 @@ export class SlackApprovalSocket {
     const ts = typeof body?.message?.ts === 'string' ? body.message.ts : undefined;
     if (!channel || !ts) return;
 
-    await this.web.chat.update({
+    await this.updateMessage(channel, ts, `AgentUse approval received: ${status}`, resolvedBlocks(status, reviewer, undefined, body?.message?.blocks));
+  }
+
+  private async updateOriginalMessageFailure(
+    body: any,
+    status: string,
+    sessionId: string,
+    error: unknown,
+    reviewer?: SlackApprovalDecision['toolResult']['reviewer']
+  ): Promise<void> {
+    const channel = typeof body?.channel?.id === 'string' ? body.channel.id : undefined;
+    const ts = typeof body?.message?.ts === 'string' ? body.message.ts : undefined;
+    if (!channel || !ts) return;
+
+    await this.updateMessage(
       channel,
       ts,
-      text: `AgentUse approval received: ${status}`,
-      blocks: resolvedBlocks(status, reviewer)
-    });
+      'AgentUse approval resume failed',
+      resumeFailedBlocks({ status, sessionId, error, reviewer })
+    );
+  }
+
+  private async updateMessage(channel: string, ts: string, text: string, blocks: any[]): Promise<void> {
+    await this.web.chat.update({ channel, ts, text, blocks });
   }
 }

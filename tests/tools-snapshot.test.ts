@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { asSchema } from 'ai';
 import { z } from 'zod';
 import { bindToolsToSnapshot, createToolsSnapshot } from '../src/runner/tool-snapshot';
 
@@ -45,7 +46,7 @@ describe('tools snapshot', () => {
     const bound = bindToolsToSnapshot(next, snapshot) as any;
     expect(Object.keys(bound)).toEqual(['approve']);
     expect(bound.approve.description).toBe('current description');
-    expect(bound.approve.inputSchema).toEqual(snapshot.tools[0].inputSchema);
+    expect(asSchema(bound.approve.inputSchema).jsonSchema).toEqual(snapshot.tools[0].inputSchema);
     expect(bound.approve.execute).toBe(next.approve.execute);
   });
 

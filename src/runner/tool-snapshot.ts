@@ -1,4 +1,4 @@
-import type { ToolSet } from 'ai';
+import { jsonSchema, type ToolSet } from 'ai';
 import type { ToolsSnapshot } from '../session/types';
 
 type JsonSchema = Record<string, unknown>;
@@ -103,7 +103,7 @@ export function bindToolsToSnapshot(currentTools: ToolSet, snapshot: ToolsSnapsh
     (bound as Record<string, any>)[snap.name] = {
       ...current,
       ...(snap.description !== undefined && { description: snap.description }),
-      ...(snap.inputSchema !== undefined && { inputSchema: snap.inputSchema })
+      ...(snap.inputSchema !== undefined && { inputSchema: jsonSchema(snap.inputSchema as any) })
     };
   }
 
