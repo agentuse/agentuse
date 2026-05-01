@@ -35,6 +35,9 @@ export async function applyResumeToolResult(options: {
   }
 
   const input = 'input' in pending.part.state ? pending.part.state.input : undefined;
+  const resumePayload = pending.part.state.status === 'pending'
+    ? pending.part.state.resumePayload
+    : undefined;
   const now = Date.now();
   const start = pending.part.state.status === 'running'
     ? pending.part.state.time.start
@@ -46,6 +49,7 @@ export async function applyResumeToolResult(options: {
       status: 'completed',
       input: input ?? {},
       output: toolResult,
+      ...(resumePayload && { metadata: { resumePayload } }),
       time: {
         start,
         end: now

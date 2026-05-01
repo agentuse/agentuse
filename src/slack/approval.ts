@@ -22,6 +22,7 @@ export interface SlackApprovalRequest {
   risk?: string;
   actions?: SlackApprovalAction[];
   resumeToken: string;
+  approvalUrl?: string;
   expiresAt: string;
 }
 
@@ -321,10 +322,143 @@ function buildApprovalBlocks(request: SlackApprovalRequest): any[] {
   ];
 }
 
+function buildReviewLinkBlocks(request: SlackApprovalRequest): any[] {
+  const fields = [
+    {
+      type: 'mrkdwn',
+      text: `*Session*\n\`${request.sessionId ?? 'unknown'}\``
+    },
+    ...(request.projectId ? [{
+      type: 'mrkdwn',
+      text: `*Project*\n\`${request.projectId}\``
+    }] : []),
+    {
+      type: 'mrkdwn',
+      text: `*Status*\nwaiting for approval`
+    },
+    {
+      type: 'mrkdwn',
+      text: `*Expires*\n${request.expiresAt}`
+    }
+  ];
+
+  return [
+    {
+      type: 'header',
+      text: {
+        type: 'plain_text',
+        text: 'AgentUse approval requested'
+      }
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Prompt*\n${truncate(request.prompt, 800)}`
+      }
+    },
+    {
+      type: 'section',
+      fields
+    },
+    ...(request.approvalUrl ? [{
+      type: 'actions',
+      elements: [{
+        type: 'button',
+        text: {
+          type: 'plain_text',
+          text: 'Review approval'
+        },
+        url: request.approvalUrl,
+        style: 'primary'
+      }]
+    }] : [])
+  ];
+}
+
+function buildReviewStatusBlocks(options: {
+  prompt: string;
+  sessionId?: string;
+  projectId?: string;
+  status: 'waiting' | 'resuming' | 'completed' | 'failed';
+  decision?: string;
+  error?: unknown;
+  approvalUrl?: string;
+  expiresAt?: string;
+}): any[] {
+  const fields = [
+    {
+      type: 'mrkdwn',
+      text: `*Session*\n\`${options.sessionId ?? 'unknown'}\``
+    },
+    ...(options.projectId ? [{
+      type: 'mrkdwn',
+      text: `*Project*\n\`${options.projectId}\``
+    }] : []),
+    ...(options.decision ? [{
+      type: 'mrkdwn',
+      text: `*Decision*\n\`${options.decision}\``
+    }] : []),
+    {
+      type: 'mrkdwn',
+      text: `*Status*\n${options.status}`
+    },
+    ...(options.expiresAt ? [{
+      type: 'mrkdwn',
+      text: `*Expires*\n${options.expiresAt}`
+    }] : [])
+  ];
+  const error = options.error instanceof Error ? options.error.message : options.error;
+
+  return [
+    {
+      type: 'header',
+      text: {
+        type: 'plain_text',
+        text: options.status === 'waiting'
+          ? 'AgentUse approval requested'
+          : `AgentUse approval ${options.status}`
+      }
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Prompt*\n${truncate(options.prompt, 800)}`
+      }
+    },
+    {
+      type: 'section',
+      fields
+    },
+    ...(error ? [{
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Error*\n\`\`\`${truncate(String(error), 2500)}\`\`\``
+      }
+    }] : []),
+    ...(options.approvalUrl && options.status === 'waiting' ? [{
+      type: 'actions',
+      elements: [{
+        type: 'button',
+        text: {
+          type: 'plain_text',
+          text: 'Review approval'
+        },
+        url: options.approvalUrl,
+        style: 'primary'
+      }]
+    }] : [])
+  ];
+}
+
 export const __testing = {
   buildApprovalBlocks,
   buildActionBlocks,
   buildDetailThreadMessages,
+  buildReviewLinkBlocks,
+  buildReviewStatusBlocks,
   buildStatusBlocks,
   slackApprovalPostErrorMessage,
   resolvedBlocks,
@@ -340,12 +474,7 @@ export async function sendSlackApprovalRequest(request: SlackApprovalRequest): P
   const response = await postSlackApprovalMessage(web, request.channelId, {
     channel: request.channelId,
     text: `AgentUse approval requested: ${request.prompt}`,
-    blocks: buildStatusBlocks({
-      phase: 'waiting',
-      prompt: request.prompt,
-      ...(request.sessionId && { sessionId: request.sessionId }),
-      expiresAt: request.expiresAt
-    })
+    blocks: buildReviewLinkBlocks(request)
   });
 
   const channel = typeof response.channel === 'string' ? response.channel : request.channelId;
@@ -354,27 +483,38 @@ export async function sendSlackApprovalRequest(request: SlackApprovalRequest): P
     throw new Error('Slack approval message was sent but Slack did not return a message timestamp');
   }
 
-  for (const message of buildDetailThreadMessages(request)) {
-    await postSlackApprovalMessage(web, channel, {
-      channel,
-      thread_ts: ts,
-      text: message.text,
-      blocks: message.blocks
-    });
-  }
+  return { channel, ts };
+}
 
-  await postSlackApprovalMessage(web, channel, {
-    channel,
-    thread_ts: ts,
-    text: 'AgentUse approval actions',
-    blocks: buildActionBlocks({
-      ...request,
-      rootChannelId: channel,
-      rootMessageTs: ts
+export async function updateSlackApprovalRequestStatus(options: {
+  botToken: string;
+  channelId: string;
+  ts: string;
+  prompt: string;
+  sessionId?: string;
+  projectId?: string;
+  approvalUrl?: string;
+  expiresAt?: string;
+  status: 'resuming' | 'completed' | 'failed';
+  decision?: string;
+  error?: unknown;
+}): Promise<void> {
+  const web = new WebClient(options.botToken);
+  await web.chat.update({
+    channel: options.channelId,
+    ts: options.ts,
+    text: `AgentUse approval ${options.status}`,
+    blocks: buildReviewStatusBlocks({
+      prompt: options.prompt,
+      ...(options.sessionId && { sessionId: options.sessionId }),
+      ...(options.projectId && { projectId: options.projectId }),
+      ...(options.approvalUrl && { approvalUrl: options.approvalUrl }),
+      ...(options.expiresAt && { expiresAt: options.expiresAt }),
+      status: options.status,
+      ...(options.decision && { decision: options.decision }),
+      ...(options.error !== undefined && { error: options.error })
     })
   });
-
-  return { channel, ts };
 }
 
 async function postSlackApprovalMessage(web: WebClient, channelId: string, payload: any) {
@@ -390,7 +530,7 @@ async function postSlackApprovalMessage(web: WebClient, channelId: string, paylo
 function slackApprovalPostErrorMessage(channelId: string, err: unknown): string | undefined {
   const errorCode = slackApiErrorCode(err);
   if (errorCode !== 'channel_not_found') return undefined;
-  return `Slack could not post approval request to channel "${channelId}" (channel_not_found). Check that SLACK_BOT_TOKEN belongs to the same Slack workspace as the channel, the bot is a member of private channels, and no exported shell env var is overriding ~/.agentuse/.env.`;
+  return `Slack could not post approval request to channel "${channelId}" (channel_not_found). Check that SLACK_BOT_TOKEN belongs to the same Slack workspace as the channel and that the bot is a member of private channels.`;
 }
 
 function slackApiErrorCode(err: unknown): string | undefined {

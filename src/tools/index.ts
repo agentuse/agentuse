@@ -58,7 +58,10 @@ export function getTools(
     tools['await_external'] = createAwaitExternalTool(sessionId);
   }
   if (config.await_human) {
-    tools['await_human'] = createAwaitHumanTool(sessionId, extraContext.approval);
+    tools['await_human'] = createAwaitHumanTool(sessionId, {
+      ...extraContext.approval,
+      projectRoot: context.projectRoot
+    });
   }
 
   return tools;

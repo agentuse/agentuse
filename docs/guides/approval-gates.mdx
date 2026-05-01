@@ -1,6 +1,6 @@
 ---
 title: Approval Gates
-description: Pause an agent run for human review, then resume it from Slack or a webhook
+description: Pause an agent run for human review, then resume it from an approval page or a webhook
 tag: Experimental
 ---
 
@@ -17,9 +17,9 @@ The important design is that approval is declared in YAML. Your markdown prompt 
 1. Add `approval:` to the agent frontmatter.
 2. Run `agentuse serve`.
 3. The agent works normally until it reaches the approval point.
-4. AgentUse posts an approval request to Slack.
-5. A reviewer clicks Approve, Reject, or Comment.
-6. AgentUse receives the Slack interaction over Socket Mode.
+4. AgentUse posts a compact approval request to Slack.
+5. A reviewer opens the approval page, reviews the details, and approves, rejects, or comments.
+6. AgentUse receives the web decision.
 7. AgentUse resumes the suspended session with the reviewer result.
 
 ## Create an Agent with Approval
@@ -43,24 +43,21 @@ The markdown body stays focused on the work. You do not need to write instructio
 
 ## Configure Slack
 
-Slack approvals use Socket Mode, so AgentUse does not need a public Slack callback endpoint. Configure two Slack tokens:
+Slack approvals use Slack as the notification surface and an AgentUse web page as the review surface. Configure a bot token:
 
 ```bash
 export SLACK_BOT_TOKEN="xoxb-..."
-export SLACK_APP_TOKEN="xapp-..."
 ```
 
-The bot token posts and updates approval messages. The app-level token opens the Socket Mode connection that receives button clicks and modal submissions.
+The bot token posts approval messages with a review link.
 
 The Slack app needs:
 
-- Socket Mode enabled
-- An app-level token with `connections:write`
 - A bot token installed in the workspace
 - Bot scope `chat:write`
 - The bot invited to the approval channel
 
-That is the minimum for the built-in Slack approval flow. AgentUse uses `apps.connections.open` through Socket Mode, `chat.postMessage` to create the approval request, `chat.update` to mark it handled, and `views.open` for the comment modal. `views.open` does not require an additional scope.
+That is the minimum for the built-in Slack approval notification flow. AgentUse uses `chat.postMessage` to create the approval request.
 
 If you want the app to post into public channels without inviting the bot first, also add Slack's optional `chat:write.public` scope. Private channels still require the bot to be a member.
 
@@ -87,24 +84,28 @@ Start AgentUse normally:
 agentuse serve
 ```
 
-When both Slack tokens are present, `serve` starts the Slack Socket Mode listener. Slack approvals do not require `--public-url`.
+If reviewers open approval links from another machine, start `serve` with a reachable public URL:
+
+```bash
+agentuse serve --public-url https://agentuse.mycompany.com
+```
+
+When a local `agentuse serve` is already running for the project, AgentUse uses that server's registered port for approval links. Use `--public-url` when the reviewer needs a URL other than the local server address.
 
 ## Reviewer Flow
 
-When the agent reaches the approval point, AgentUse posts a Slack message with a structured review card:
+When the agent reaches the approval point, AgentUse posts a compact Slack message with:
 
 - Review prompt
-- Summary of what was prepared
-- Review artifact link, draft URL, or inline draft content
-- Relevant context from the work so far
-- Known risks or reviewer notes
-- Action buttons
+- Session and project metadata
+- Approval status
+- A `Review approval` button
+
+The approval page shows the full summary, draft, artifact links, context, risks, and action buttons.
 
 - `Approve`: resumes the agent with `status: "approve"`
 - `Reject`: resumes the agent with `status: "reject"`
-- `Comment`: opens a Slack modal, then resumes the agent with `status: "comment"` and the reviewer comment
-
-After a reviewer responds, AgentUse updates the original Slack message so the channel can see that the request was handled.
+- `Comment`: resumes the agent with `status: "comment"` and the reviewer comment
 
 ## Webhook Approvals
 

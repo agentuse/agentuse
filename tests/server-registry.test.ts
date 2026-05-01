@@ -6,6 +6,7 @@ import {
   unregisterServer,
   listServers,
   updateServer,
+  findServerForProject,
   formatUptime,
   getDefaultLogFilePath,
   type ServerEntry,
@@ -31,6 +32,7 @@ describe("Server Registry", () => {
       registerServer({
         port: 12345,
         host: "127.0.0.1",
+        publicUrl: "http://127.0.0.1:12345",
         projectRoot: "/test/project",
         startTime: Date.now(),
         agentCount: 5,
@@ -45,6 +47,7 @@ describe("Server Registry", () => {
       expect(entry.pid).toBe(process.pid);
       expect(entry.port).toBe(12345);
       expect(entry.host).toBe("127.0.0.1");
+      expect(entry.publicUrl).toBe("http://127.0.0.1:12345");
       expect(entry.projectRoot).toBe("/test/project");
       expect(entry.agentCount).toBe(5);
       expect(entry.scheduleCount).toBe(2);
@@ -195,6 +198,65 @@ describe("Server Registry", () => {
       // Filter out any other real servers that might be running
       const testServers = servers.filter((s) => s.pid === process.pid);
       expect(testServers).toHaveLength(0);
+    });
+  });
+
+  describe("findServerForProject", () => {
+    it("returns the server registered for a project root", () => {
+      registerServer({
+        port: 12345,
+        host: "127.0.0.1",
+        publicUrl: "http://127.0.0.1:12345",
+        projectRoot: "/test/project",
+        startTime: Date.now(),
+        agentCount: 5,
+        scheduleCount: 2,
+        version: "1.0.0",
+        projects: [{ id: "project", root: "/test/project", agentCount: 5, scheduleCount: 2 }],
+      });
+
+      const server = findServerForProject("/test/project");
+
+      expect(server?.pid).toBe(process.pid);
+      expect(server?.publicUrl).toBe("http://127.0.0.1:12345");
+    });
+
+    it("falls back to the only running server when the project root differs", () => {
+      registerServer({
+        port: 12345,
+        host: "127.0.0.1",
+        publicUrl: "http://127.0.0.1:12345",
+        projectRoot: "/test/project",
+        startTime: Date.now(),
+        agentCount: 5,
+        scheduleCount: 2,
+        version: "1.0.0",
+        projects: [{ id: "project", root: "/test/project", agentCount: 5, scheduleCount: 2 }],
+      });
+
+      const server = findServerForProject("/different/worktree");
+
+      expect(server?.pid).toBe(process.pid);
+      expect(server?.publicUrl).toBe("http://127.0.0.1:12345");
+    });
+
+    it("matches a server whose served root is nested under the run project root", () => {
+      registerServer({
+        port: 12345,
+        host: "127.0.0.1",
+        publicUrl: "http://127.0.0.1:12345",
+        projectRoot: "/test/project/tmp",
+        startTime: Date.now(),
+        agentCount: 5,
+        scheduleCount: 2,
+        version: "1.0.0",
+        projects: [{ id: "tmp", root: "/test/project/tmp", agentCount: 5, scheduleCount: 2 }],
+      });
+
+      const server = findServerForProject("/test/project");
+
+      expect(server?.pid).toBe(process.pid);
+      expect(server?.publicUrl).toBe("http://127.0.0.1:12345");
     });
   });
 

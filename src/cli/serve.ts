@@ -21,7 +21,7 @@ import { version as packageVersion } from "../../package.json";
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
-import { SlackApprovalSocket, type SlackApprovalDecision } from "../slack/approval";
+import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision } from "../slack/approval";
 import { homedir } from "os";
 
 interface RunRequest {
@@ -86,6 +86,49 @@ interface WorkerExecuteError {
   };
 }
 
+interface WorkerApprovalInfoResult {
+  success: true;
+  approval: ApprovalPageInfo;
+}
+
+interface ApprovalPageInfo {
+  sessionId: string;
+  sessionStatus: string;
+  agent: {
+    id: string;
+    name: string;
+    filePath?: string;
+  };
+  prompt?: string;
+  summary?: string;
+  draft?: string;
+  draftUrl?: string;
+  artifactUrl?: string;
+  context?: string;
+  risk?: string;
+  actions?: Array<{ id: string; label: string; style?: 'primary' | 'danger' }>;
+  channel?: string;
+  expiresAt?: number;
+  suspendedAt?: number;
+  notification?: {
+    type?: string;
+    channel?: string;
+    ts?: string;
+    url?: string;
+  };
+  decision?: unknown;
+  logs?: ApprovalLogEntry[];
+}
+
+interface ApprovalLogEntry {
+  id: string;
+  type: string;
+  status?: string;
+  title: string;
+  message?: string;
+  time?: number;
+}
+
 /**
  * Agent Worker Manager
  *
@@ -100,7 +143,7 @@ class AgentWorker {
   private process: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
   private pendingRequests: Map<string, {
-    resolve: (value: WorkerExecuteResult | WorkerExecuteError) => void;
+    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult) => void;
     timeoutId?: NodeJS.Timeout;
   }> = new Map();
   private requestCounter = 0;
@@ -223,6 +266,36 @@ class AgentWorker {
    * Execute an agent via the worker process.
    */
   execute(options: WorkerExecuteOptions): Promise<WorkerExecuteResult | WorkerExecuteError> {
+    return this.request({
+      type: options.sessionId && !options.agentPath ? "resume" : "execute",
+      agentPath: options.agentPath,
+      projectRoot: options.projectRoot,
+      prompt: options.prompt,
+      model: options.model,
+      timeout: options.timeout,
+      maxSteps: options.maxSteps,
+      debug: options.debug,
+      sessionId: options.sessionId,
+      toolResult: options.toolResult,
+      resumeToken: options.resumeToken,
+    }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
+  }
+
+  getApprovalInfo(options: {
+    projectRoot: string;
+    sessionId: string;
+    resumeToken?: string;
+  }): Promise<WorkerApprovalInfoResult | WorkerExecuteError> {
+    return this.request({
+      type: "approval-info",
+      projectRoot: options.projectRoot,
+      sessionId: options.sessionId,
+      resumeToken: options.resumeToken,
+      timeout: 30,
+    }) as Promise<WorkerApprovalInfoResult | WorkerExecuteError>;
+  }
+
+  private request(options: Record<string, unknown> & { timeout?: number | undefined }): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult> {
     return new Promise((resolve) => {
       if (!this.process || !this.ready) {
         resolve({
@@ -250,17 +323,7 @@ class AgentWorker {
 
       const request = {
         id,
-        type: options.sessionId && !options.agentPath ? "resume" : "execute",
-        agentPath: options.agentPath,
-        projectRoot: options.projectRoot,
-        prompt: options.prompt,
-        model: options.model,
-        timeout: options.timeout,
-        maxSteps: options.maxSteps,
-        debug: options.debug,
-        sessionId: options.sessionId,
-        toolResult: options.toolResult,
-        resumeToken: options.resumeToken,
+        ...options,
       };
 
       this.process.stdin!.write(JSON.stringify(request) + "\n");
@@ -329,6 +392,228 @@ function sendJSON(res: ServerResponse, status: number, data: RunResponse | RunEr
 
 function sendError(res: ServerResponse, status: number, code: string, message: string) {
   sendJSON(res, status, { success: false, error: { code, message } });
+}
+
+function sendHTML(res: ServerResponse, status: number, html: string) {
+  res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(html);
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatApprovalTime(value?: number): string {
+  return value ? new Date(value).toLocaleString() : 'Unknown';
+}
+
+function formatLogTime(value?: number): string {
+  return value ? new Date(value).toLocaleTimeString() : '';
+}
+
+function approvalActionList(actions?: ApprovalPageInfo['actions']): Array<{ id: string; label: string; style?: 'primary' | 'danger' }> {
+  return actions && actions.length > 0
+    ? actions
+    : [
+      { id: 'approve', label: 'Approve', style: 'primary' },
+      { id: 'reject', label: 'Reject', style: 'danger' },
+      { id: 'comment', label: 'Comment' }
+    ];
+}
+
+function renderLogItems(logs?: ApprovalLogEntry[]): string {
+  if (!logs || logs.length === 0) {
+    return '<li class="log-empty">No session events yet.</li>';
+  }
+  return logs.map((entry) => `
+        <li class="log-item ${escapeHtml(entry.status ?? '')}">
+          <span class="log-time">${escapeHtml(formatLogTime(entry.time))}</span>
+          <span class="log-main">
+            <span class="log-title">${escapeHtml(entry.title)}</span>
+            ${entry.message ? `<pre>${escapeHtml(entry.message)}</pre>` : ''}
+          </span>
+        </li>`).join('');
+}
+
+function renderApprovalPage(options: {
+  approval: ApprovalPageInfo;
+  token: string;
+  projectId?: string;
+  resuming?: boolean;
+  error?: string;
+}): string {
+  const { approval, token, projectId, resuming, error } = options;
+  const expired = approval.expiresAt !== undefined && approval.expiresAt <= Date.now();
+  const actionable = approval.sessionStatus === 'suspended' && !expired && !resuming && !error && Boolean(approval.prompt);
+  const status = resuming
+    ? 'resuming'
+    : expired
+      ? 'expired'
+      : approval.sessionStatus === 'suspended'
+        ? 'waiting'
+        : approval.sessionStatus;
+  const decision = approval.decision ? JSON.stringify(approval.decision, null, 2) : '';
+  const detailRows = [
+    ['Summary', approval.summary],
+    ['Draft', approval.draft],
+    ['Artifact', approval.artifactUrl],
+    ['Draft URL', approval.draftUrl],
+    ['Context', approval.context],
+    ['Risk / notes', approval.risk],
+  ].filter(([, value]) => typeof value === 'string' && value.length > 0);
+  const actions = approvalActionList(approval.actions);
+  const initialLogs = approval.logs ?? [];
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentUse Approval</title>
+  <style>
+    :root { color-scheme: light; --bg: #f7f8fb; --fg: #18202f; --muted: #657186; --line: #d9deea; --panel: #ffffff; --primary: #1f6feb; --danger: #c93434; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); line-height: 1.5; }
+    main { width: min(960px, calc(100vw - 32px)); margin: 32px auto; }
+    header { margin-bottom: 20px; }
+    h1 { font-size: 28px; line-height: 1.15; margin: 0 0 12px; letter-spacing: 0; }
+    h2 { font-size: 15px; margin: 28px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0; }
+    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin: 16px 0; }
+    .meta div, section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+    .label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+    .prompt { font-size: 17px; }
+    .status { display: inline-flex; align-items: center; min-height: 28px; padding: 3px 10px; border-radius: 999px; background: #e8eefc; color: #174ea6; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+    .status.expired, .status.error { background: #fdeaea; color: #9f1d1d; }
+    .status.completed { background: #e6f4ea; color: #137333; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    button { border: 1px solid var(--line); background: #fff; color: var(--fg); border-radius: 8px; min-height: 40px; padding: 0 14px; font-weight: 650; cursor: pointer; }
+    button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+    button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+    button:disabled, textarea:disabled { opacity: .55; cursor: not-allowed; }
+    textarea { width: 100%; min-height: 96px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; }
+    .logs { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+    .log-item { display: grid; grid-template-columns: 88px 1fr; gap: 10px; border-bottom: 1px solid var(--line); padding: 10px 0; }
+    .log-item:last-child { border-bottom: 0; }
+    .log-time { color: var(--muted); font-size: 12px; padding-top: 2px; }
+    .log-title { font-weight: 650; }
+    .log-main pre { margin-top: 4px; color: #2d3748; max-height: none; }
+    .log-empty { color: var(--muted); }
+    .notice { margin: 16px 0; color: var(--muted); }
+    .notice.error { color: #9f1d1d; }
+    a { color: var(--primary); }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span>
+      <h1>AgentUse Approval</h1>
+      <section class="prompt">${escapeHtml(approval.prompt ?? 'Approval request unavailable')}</section>
+    </header>
+    <div class="meta">
+      <div><span class="label">Session</span><code>${escapeHtml(approval.sessionId)}</code></div>
+      <div><span class="label">Project</span><code>${escapeHtml(projectId ?? 'default')}</code></div>
+      <div><span class="label">Agent</span>${escapeHtml(approval.agent.name || approval.agent.id)}</div>
+      <div><span class="label">Expires</span>${escapeHtml(formatApprovalTime(approval.expiresAt))}</div>
+    </div>
+    ${error ? `<p class="notice error">${escapeHtml(error)}</p>` : ''}
+    ${detailRows.map(([label, value]) => `<h2>${escapeHtml(label)}</h2><section><pre>${escapeHtml(value)}</pre></section>`).join('')}
+    ${decision ? `<h2>Decision</h2><section><pre>${escapeHtml(decision)}</pre></section>` : ''}
+    <h2>Decision</h2>
+    <section>
+      ${actionable ? `
+      <textarea id="comment" placeholder="Optional comment"></textarea>
+      <div class="actions">
+        ${actions.map(action => `<button class="${escapeHtml(action.style ?? '')}" data-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`).join('')}
+      </div>` : `<p class="notice">This approval request is not accepting decisions right now.</p>`}
+      <p id="result" class="notice"></p>
+    </section>
+    <h2>Session Log</h2>
+    <section>
+      <ul id="logs" class="logs">${renderLogItems(initialLogs)}</ul>
+    </section>
+  </main>
+  <script>
+    const token = ${JSON.stringify(token)};
+    const project = ${JSON.stringify(projectId)};
+    const statusEl = document.querySelector('.status');
+    const logsEl = document.getElementById('logs');
+    function escapeText(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[ch]));
+    }
+    function formatTime(value) {
+      return value ? new Date(value).toLocaleTimeString() : '';
+    }
+    function renderLogs(logs) {
+      if (!logs || logs.length === 0) {
+        logsEl.innerHTML = '<li class="log-empty">No session events yet.</li>';
+        return;
+      }
+      logsEl.innerHTML = logs.map((entry) => '<li class="log-item ' + escapeText(entry.status || '') + '">' +
+        '<span class="log-time">' + escapeText(formatTime(entry.time)) + '</span>' +
+        '<span class="log-main"><span class="log-title">' + escapeText(entry.title) + '</span>' +
+        (entry.message ? '<pre>' + escapeText(entry.message) + '</pre>' : '') +
+        '</span></li>').join('');
+    }
+    async function refreshStatus() {
+      try {
+        const url = new URL(location.pathname + '/status', location.origin);
+        url.searchParams.set('token', token);
+        if (project) url.searchParams.set('project', project);
+        const response = await fetch(url);
+        const payload = await response.json();
+        if (!response.ok || !payload.success) return;
+        const status = payload.status || payload.approval?.sessionStatus || 'unknown';
+        statusEl.textContent = status;
+        statusEl.className = 'status ' + status;
+        renderLogs(payload.logs || payload.approval?.logs || []);
+      } catch {}
+    }
+    refreshStatus();
+    setInterval(refreshStatus, 1500);
+    for (const button of document.querySelectorAll('button[data-action]')) {
+      button.addEventListener('click', async () => {
+        for (const b of document.querySelectorAll('button[data-action]')) b.disabled = true;
+        const result = document.getElementById('result');
+        result.textContent = 'Submitting decision...';
+        try {
+          const response = await fetch(location.pathname + '/decision', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              status: button.dataset.action,
+              comment: document.getElementById('comment')?.value || undefined,
+              resumeToken: token,
+              project
+            })
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload?.error?.message || 'Approval failed');
+          result.textContent = 'Decision recorded. AgentUse is resuming the session.';
+          statusEl.textContent = 'resuming';
+          statusEl.className = 'status resuming';
+          refreshStatus();
+        } catch (err) {
+          result.textContent = err.message || String(err);
+          for (const b of document.querySelectorAll('button[data-action]')) b.disabled = false;
+        }
+      });
+    }
+  </script>
+</body>
+</html>`;
 }
 
 function isExposedHost(host: string): boolean {
@@ -869,6 +1154,8 @@ export function createServeCommand(): Command {
           : (effectiveDefault ? projectsById.get(effectiveDefault) : projects[0]);
       };
 
+      const activeApprovalResumes = new Set<string>();
+
       const resumeSuspendedSession = async (decision: SlackApprovalDecision): Promise<void> => {
         const reviewer = decision.toolResult.reviewer?.id
           ? `<@${decision.toolResult.reviewer.id}>`
@@ -915,13 +1202,16 @@ export function createServeCommand(): Command {
         slackApprovalSocket.start()
           .then(() => logger.info('Slack approval socket connected'))
           .catch((err) => logger.warn(`Slack approval socket failed to start: ${(err as Error).message}`));
-      } else if (slackBotToken || slackAppToken) {
-        logger.warn('Slack approval requires both SLACK_BOT_TOKEN and SLACK_APP_TOKEN; Socket Mode listener not started.');
+      } else if (slackAppToken && !slackBotToken) {
+        logger.warn('Slack Socket Mode requires SLACK_BOT_TOKEN when SLACK_APP_TOKEN is set; listener not started.');
       } else if (loadedServeEnvFiles.length === 0) {
         logger.debug(`No server-level env file found at ${getGlobalEnvPath()}`);
       }
 
       const server = createServer(async (req, res) => {
+        const requestUrl = new URL(req.url || '/', serverUrl);
+        const isApprovalRoute = requestUrl.pathname.startsWith('/approvals/');
+
         // CORS headers
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -934,7 +1224,7 @@ export function createServeCommand(): Command {
         }
 
         // Auth check
-        if (apiKey && !validateApiKey(req, apiKey)) {
+        if (apiKey && !isApprovalRoute && !validateApiKey(req, apiKey)) {
           sendError(res, 401, "UNAUTHORIZED", "Invalid or missing Authorization header. Use: Authorization: Bearer <key>");
           return;
         }
@@ -953,6 +1243,238 @@ export function createServeCommand(): Command {
           };
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(info));
+          return;
+        }
+
+        const approvalPageMatch = req.method === "GET" ? requestUrl.pathname.match(/^\/approvals\/([^/?#]+)$/) : null;
+        if (approvalPageMatch) {
+          const sessionId = decodeURIComponent(approvalPageMatch[1]);
+          const token = requestUrl.searchParams.get('token') ?? undefined;
+          const projectId = requestUrl.searchParams.get('project') ?? undefined;
+          if (!token) {
+            sendHTML(res, 401, '<!doctype html><title>AgentUse Approval</title><p>Missing approval token.</p>');
+            return;
+          }
+
+          const project = resolveResumeProject(projectId);
+          if (!project) {
+            sendHTML(res, 404, '<!doctype html><title>AgentUse Approval</title><p>Project not found for approval request.</p>');
+            return;
+          }
+
+          const projectWorker = workers.get(project.id);
+          if (!projectWorker) {
+            sendHTML(res, 500, '<!doctype html><title>AgentUse Approval</title><p>Worker unavailable for approval request.</p>');
+            return;
+          }
+
+          const info = await projectWorker.getApprovalInfo({
+            projectRoot: project.root,
+            sessionId,
+            resumeToken: token
+          });
+          if (!info.success) {
+            sendHTML(res, info.error.code === 'RESUME_TOKEN_INVALID' ? 401 : 404, `<!doctype html><title>AgentUse Approval</title><p>${escapeHtml(info.error.message)}</p>`);
+            return;
+          }
+
+          const activeKey = `${project.id}:${sessionId}`;
+          sendHTML(res, 200, renderApprovalPage({
+            approval: info.approval,
+            token,
+            projectId: project.id,
+            resuming: activeApprovalResumes.has(activeKey),
+          }));
+          return;
+        }
+
+        const approvalStatusMatch = req.method === "GET" ? requestUrl.pathname.match(/^\/approvals\/([^/?#]+)\/status$/) : null;
+        if (approvalStatusMatch) {
+          const sessionId = decodeURIComponent(approvalStatusMatch[1]);
+          const token = requestUrl.searchParams.get('token') ?? undefined;
+          const projectId = requestUrl.searchParams.get('project') ?? undefined;
+          if (!token) {
+            sendError(res, 401, "RESUME_TOKEN_REQUIRED", "Missing approval token");
+            return;
+          }
+
+          const project = resolveResumeProject(projectId);
+          if (!project) {
+            sendError(res, 404, "PROJECT_NOT_FOUND", "Project not found for approval request");
+            return;
+          }
+
+          const projectWorker = workers.get(project.id);
+          if (!projectWorker) {
+            sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
+            return;
+          }
+
+          const info = await projectWorker.getApprovalInfo({
+            projectRoot: project.root,
+            sessionId,
+            resumeToken: token
+          });
+          if (!info.success) {
+            sendError(res, info.error.code === 'RESUME_TOKEN_INVALID' ? 401 : 404, info.error.code, info.error.message);
+            return;
+          }
+
+          const activeKey = `${project.id}:${sessionId}`;
+          const status = activeApprovalResumes.has(activeKey)
+            ? 'resuming'
+            : info.approval.sessionStatus === 'suspended'
+              ? 'waiting'
+              : info.approval.sessionStatus;
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            success: true,
+            sessionId,
+            status,
+            logs: info.approval.logs ?? [],
+            decision: info.approval.decision
+          }));
+          return;
+        }
+
+        const approvalDecisionMatch = req.method === "POST" ? requestUrl.pathname.match(/^\/approvals\/([^/?#]+)\/decision$/) : null;
+        if (approvalDecisionMatch) {
+          try {
+            const sessionId = decodeURIComponent(approvalDecisionMatch[1]);
+            const body = await parseJSONBody(req);
+            const token = typeof body.resumeToken === 'string' ? body.resumeToken : undefined;
+            const status = typeof body.status === 'string' ? body.status : undefined;
+            const comment = typeof body.comment === 'string' && body.comment.length > 0 ? body.comment : undefined;
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+
+            if (!token) {
+              sendError(res, 401, "RESUME_TOKEN_REQUIRED", "Missing approval token");
+              return;
+            }
+            if (!status) {
+              sendError(res, 400, "STATUS_REQUIRED", "Missing approval status");
+              return;
+            }
+
+            const project = resolveResumeProject(projectId);
+            if (!project) {
+              sendError(res, 404, "PROJECT_NOT_FOUND", "Project not found for approval request");
+              return;
+            }
+
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) {
+              sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
+              return;
+            }
+
+            const activeKey = `${project.id}:${sessionId}`;
+            if (activeApprovalResumes.has(activeKey)) {
+              sendError(res, 409, "APPROVAL_RESUMING", "Approval decision has already been submitted and the session is resuming");
+              return;
+            }
+
+            const info = await projectWorker.getApprovalInfo({
+              projectRoot: project.root,
+              sessionId,
+              resumeToken: token
+            });
+            if (!info.success) {
+              sendError(res, info.error.code === 'RESUME_TOKEN_INVALID' ? 401 : 404, info.error.code, info.error.message);
+              return;
+            }
+            if (info.approval.sessionStatus !== 'suspended') {
+              sendError(res, 409, "SESSION_NOT_SUSPENDED", `Session is ${info.approval.sessionStatus}`);
+              return;
+            }
+            if (info.approval.expiresAt !== undefined && info.approval.expiresAt <= Date.now()) {
+              sendError(res, 410, "APPROVAL_EXPIRED", "Approval request has expired");
+              return;
+            }
+
+            activeApprovalResumes.add(activeKey);
+            approvalLog.received('web', status, sessionId, 'web');
+            const resumeStart = Date.now();
+            approvalLog.resumeStarted(sessionId);
+            const slackNotification = info.approval.notification?.type === 'slack-message' &&
+              info.approval.notification.channel &&
+              info.approval.notification.ts &&
+              slackBotToken
+              ? {
+                channelId: info.approval.notification.channel,
+                ts: info.approval.notification.ts,
+                approvalUrl: info.approval.notification.url
+              }
+              : undefined;
+            if (slackNotification && info.approval.prompt) {
+              void updateSlackApprovalRequestStatus({
+                botToken: slackBotToken!,
+                channelId: slackNotification.channelId,
+                ts: slackNotification.ts,
+                prompt: info.approval.prompt,
+                sessionId,
+                projectId: project.id,
+                ...(slackNotification.approvalUrl && { approvalUrl: slackNotification.approvalUrl }),
+                ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
+                status: 'resuming',
+                decision: status
+              }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
+            }
+            projectWorker.execute({
+              projectRoot: project.root,
+              sessionId,
+              toolResult: {
+                status,
+                ...(comment && { comment }),
+                reviewer: { username: 'web' }
+              },
+              resumeToken: token,
+              debug: options.debug,
+            }).then(result => {
+              if (!result.success) {
+                approvalLog.resumeFailed(sessionId, Date.now() - resumeStart, result.error.message);
+                logger.warn(`Approval resume ${sessionId} failed: ${result.error.message}`);
+                if (slackNotification && info.approval.prompt) {
+                  void updateSlackApprovalRequestStatus({
+                    botToken: slackBotToken!,
+                    channelId: slackNotification.channelId,
+                    ts: slackNotification.ts,
+                    prompt: info.approval.prompt,
+                    sessionId,
+                    projectId: project.id,
+                    ...(slackNotification.approvalUrl && { approvalUrl: slackNotification.approvalUrl }),
+                    ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
+                    status: 'failed',
+                    decision: status,
+                    error: result.error.message
+                  }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
+                }
+              } else {
+                approvalLog.resumeCompleted(sessionId, Date.now() - resumeStart);
+                if (slackNotification && info.approval.prompt) {
+                  void updateSlackApprovalRequestStatus({
+                    botToken: slackBotToken!,
+                    channelId: slackNotification.channelId,
+                    ts: slackNotification.ts,
+                    prompt: info.approval.prompt,
+                    sessionId,
+                    projectId: project.id,
+                    ...(slackNotification.approvalUrl && { approvalUrl: slackNotification.approvalUrl }),
+                    ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
+                    status: 'completed',
+                    decision: status
+                  }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
+                }
+              }
+            }).finally(() => {
+              activeApprovalResumes.delete(activeKey);
+            });
+
+            res.writeHead(202, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ sessionId, status: "resuming" }));
+          } catch (err) {
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
           return;
         }
 
@@ -1277,6 +1799,7 @@ export function createServeCommand(): Command {
         registerServer({
           port,
           host: effectiveHost,
+          publicUrl: effectivePublicUrl,
           projectRoot: projects[0].root,
           startTime: serverStartTime,
           agentCount: totalAgents,

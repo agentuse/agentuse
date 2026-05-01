@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto';
 import { z } from 'zod';
 import { SuspendSignal } from '../runner/suspend';
 import { sendSlackApprovalRequest } from '../slack/approval';
+import { findServerForProject } from '../utils/server-registry';
 
 const DEFAULT_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -22,10 +23,26 @@ function parseTimeout(value?: string): number {
   return amount * multipliers[unit];
 }
 
-function getResumeUrl(sessionId?: string): string | undefined {
+function getApprovalBaseUrl(projectRoot?: string): string {
+  const explicit = process.env.AGENTUSE_RESUME_PUBLIC_URL ?? process.env.AGENTUSE_SERVE_URL;
+  if (explicit) return explicit;
+  const server = findServerForProject(projectRoot);
+  return server?.publicUrl ?? `http://${server?.host ?? '127.0.0.1'}:${server?.port ?? 12233}`;
+}
+
+function getResumeUrl(sessionId?: string, projectRoot?: string): string | undefined {
   if (!sessionId) return undefined;
-  const base = process.env.AGENTUSE_RESUME_PUBLIC_URL ?? process.env.AGENTUSE_SERVE_URL ?? 'http://127.0.0.1:12233';
+  const base = getApprovalBaseUrl(projectRoot);
   return `${base.replace(/\/$/, '')}/resume/${sessionId}`;
+}
+
+export function getApprovalUrl(sessionId: string | undefined, resumeToken: string, projectId?: string, projectRoot?: string): string | undefined {
+  if (!sessionId) return undefined;
+  const base = getApprovalBaseUrl(projectRoot);
+  const url = new URL(`${base.replace(/\/$/, '')}/approvals/${encodeURIComponent(sessionId)}`);
+  url.searchParams.set('token', resumeToken);
+  if (projectId) url.searchParams.set('project', projectId);
+  return url.toString();
 }
 
 function resolveEnvVariables(value: string): string {
@@ -38,6 +55,7 @@ export interface AwaitHumanDefaults {
   channelId?: string;
   timeout?: string;
   actions?: Array<{ id: string; label: string; style?: 'primary' | 'danger' }>;
+  projectRoot?: string;
 }
 
 export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDefaults): Tool {
@@ -81,7 +99,9 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       const slackChannelId = channel_id ?? defaults?.channelId ?? process.env.SLACK_APPROVAL_CHANNEL;
       const expiresAt = Date.now() + parseTimeout(effectiveTimeout);
       const resumeToken = randomBytes(24).toString('base64url');
-      const resumeUrl = getResumeUrl(sessionId);
+      const projectId = process.env.AGENTUSE_PROJECT_ID;
+      const resumeUrl = getResumeUrl(sessionId, defaults?.projectRoot);
+      const approvalUrl = getApprovalUrl(sessionId, resumeToken, projectId, defaults?.projectRoot);
 
       if (effectiveChannel === 'webhook' && !notifyUrl) {
         throw new Error('approval.channel is "webhook", but no approval.url or AGENTUSE_AWAIT_HUMAN_WEBHOOK_URL is configured');
@@ -103,6 +123,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
             risk,
             actions: effectiveActions,
             resumeUrl,
+            approvalUrl,
             resumeToken,
             expiresAt: new Date(expiresAt).toISOString()
           })
@@ -113,19 +134,18 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
         }
       }
 
-      let slackNotification: { type: 'slack-message'; channel: string; ts: string } | undefined;
+      let slackNotification: { type: 'slack-message'; channel: string; ts: string; url: string } | undefined;
       if (effectiveChannel === 'slack') {
         const botToken = process.env.SLACK_BOT_TOKEN;
-        const appToken = process.env.SLACK_APP_TOKEN;
-        if (!botToken || !appToken || !slackChannelId) {
-          throw new Error('approval.channel is "slack", but SLACK_BOT_TOKEN, SLACK_APP_TOKEN, and approval.channel_id or SLACK_APPROVAL_CHANNEL are required');
+        if (!botToken || !slackChannelId || !approvalUrl) {
+          throw new Error('approval.channel is "slack", but SLACK_BOT_TOKEN, approval.channel_id or SLACK_APPROVAL_CHANNEL, and a session id are required');
         }
 
         const message = await sendSlackApprovalRequest({
           botToken,
           channelId: slackChannelId,
           ...(sessionId && { sessionId }),
-          ...(process.env.AGENTUSE_PROJECT_ID && { projectId: process.env.AGENTUSE_PROJECT_ID }),
+          ...(projectId && { projectId }),
           prompt,
           ...(summary && { summary }),
           ...(draft && { draft }),
@@ -135,12 +155,14 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
           ...(risk && { risk }),
           ...(effectiveActions && { actions: effectiveActions }),
           resumeToken,
+          approvalUrl,
           expiresAt: new Date(expiresAt).toISOString()
         });
         slackNotification = {
           type: 'slack-message',
           channel: message.channel,
-          ts: message.ts
+          ts: message.ts,
+          url: approvalUrl
         };
       }
 

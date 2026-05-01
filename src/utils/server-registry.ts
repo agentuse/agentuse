@@ -8,7 +8,7 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from "fs";
-import { join } from "path";
+import { join, relative, resolve } from "path";
 import { getXdgDataDir } from "../storage/paths";
 
 export interface ServerProjectEntry {
@@ -30,6 +30,8 @@ export interface ServerEntry {
   /** Sum of projects[].scheduleCount. */
   scheduleCount: number;
   version: string;
+  /** Base URL used for generated resume and approval links. */
+  publicUrl?: string;
   /** One entry per project served by this instance. Present from v0.11.0 onward. */
   projects?: ServerProjectEntry[];
   /** Flat log file path (stdout/stderr tee). Absent when --no-log-file was passed. */
@@ -162,6 +164,39 @@ export function listServers(): ServerEntry[] {
 
   // Sort by start time (oldest first)
   return entries.sort((a, b) => a.startTime - b.startTime);
+}
+
+export function findServerForProject(projectRoot?: string): ServerEntry | undefined {
+  const servers = listServers();
+  if (!projectRoot) return servers[0];
+  const normalizedProjectRoot = resolve(projectRoot);
+  const serverRoots = (server: ServerEntry): string[] => [
+    ...(server.projects?.map((project) => project.root) ?? []),
+    server.projectRoot
+  ].map((root) => resolve(root));
+
+  const exact = servers.find((server) => {
+    return serverRoots(server).some((root) => root === normalizedProjectRoot);
+  });
+  if (exact) return exact;
+
+  const related = servers
+    .map((server) => {
+      const roots = serverRoots(server);
+      const matchingRoots = roots.filter((root) => isSameOrNested(root, normalizedProjectRoot) || isSameOrNested(normalizedProjectRoot, root));
+      const bestRootLength = matchingRoots.reduce((max, root) => Math.max(max, root.length), 0);
+      return { server, bestRootLength };
+    })
+    .filter((entry) => entry.bestRootLength > 0)
+    .sort((a, b) => b.bestRootLength - a.bestRootLength);
+  if (related.length > 0) return related[0].server;
+
+  return servers.length === 1 ? servers[0] : undefined;
+}
+
+function isSameOrNested(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !rel.startsWith('/') && rel !== '..');
 }
 
 /**

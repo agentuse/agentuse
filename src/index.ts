@@ -853,7 +853,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume';
+    type: 'execute' | 'resume' | 'approval-info';
     agentPath?: string;
     projectRoot: string;
     prompt?: string;
@@ -864,6 +864,192 @@ async function runInternalWorker() {
     sessionId?: string;
     toolResult?: unknown;
     resumeToken?: string;
+  }
+
+  function valueAsRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {};
+  }
+
+  function formatApprovalLogValue(value: unknown): string | undefined {
+    if (value === undefined || value === null) return undefined;
+    return typeof value === 'string'
+      ? value
+      : JSON.stringify(value, null, 2);
+  }
+
+  function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; status?: string; title: string; message?: string; time?: number }> {
+    return parts.map((part: any) => {
+      if (part?.type === 'text') {
+        const message = formatApprovalLogValue(part.text);
+        return {
+          id: String(part.id),
+          type: 'text',
+          title: 'Assistant response',
+          ...(message !== undefined && { message }),
+          ...(typeof part.time?.start === 'number' && { time: part.time.start })
+        };
+      }
+      if (part?.type === 'reasoning') {
+        const message = formatApprovalLogValue(part.text);
+        return {
+          id: String(part.id),
+          type: 'reasoning',
+          title: 'Reasoning',
+          ...(message !== undefined && { message }),
+          ...(typeof part.time?.start === 'number' && { time: part.time.start })
+        };
+      }
+      if (part?.type === 'tool') {
+        const state = part.state ?? {};
+        const message = state.status === 'completed'
+          ? formatApprovalLogValue(state.output)
+          : state.status === 'error'
+            ? formatApprovalLogValue(state.error)
+            : state.status === 'pending'
+              ? formatApprovalLogValue(state.input)
+              : undefined;
+        return {
+          id: String(part.id),
+          type: 'tool',
+          ...(typeof state.status === 'string' && { status: state.status }),
+          title: `${part.tool ?? 'tool'} ${state.status ?? ''}`.trim(),
+          ...(message !== undefined && { message }),
+          ...(typeof state.time?.start === 'number'
+            ? { time: state.time.start }
+            : typeof state.suspendedAt === 'number'
+              ? { time: state.suspendedAt }
+              : {})
+        };
+      }
+      return {
+        id: String(part?.id ?? 'unknown'),
+        type: String(part?.type ?? 'part'),
+        title: String(part?.type ?? 'Session event')
+      };
+    });
+  }
+
+  async function getApprovalInfo(req: ExecuteRequest) {
+    try {
+      if (!req.sessionId) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_REQUIRED', message: 'Missing sessionId for approval request' },
+        };
+      }
+
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const found = await sessionManager.findSession(req.sessionId);
+      if (!found) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${req.sessionId}` },
+        };
+      }
+
+      const messages = await sessionManager.getSessionMessages(req.sessionId, found.agentId);
+      const parts = (await Promise.all(
+        messages.map((message) => sessionManager.getMessageParts(req.sessionId!, found.agentId, message.id))
+      )).flat();
+      const logs = buildApprovalLogs(parts);
+      const approvalPart = [...parts].reverse().find((part: any) =>
+        part?.type === 'tool' &&
+        part?.tool === 'await_human' &&
+        (
+          part?.state?.resumePayload?.kind === 'await_human' ||
+          part?.state?.status === 'completed' ||
+          part?.state?.status === 'running'
+        )
+      ) as any;
+
+      if (!approvalPart) {
+        return {
+          id: req.id,
+          success: true,
+          approval: {
+            sessionId: req.sessionId,
+            sessionStatus: found.session.status,
+            agent: {
+              id: found.session.agent.id,
+              name: found.session.agent.name,
+              ...(found.session.agent.filePath && { filePath: found.session.agent.filePath })
+            },
+            logs
+          },
+        };
+      }
+
+      const state = approvalPart.state;
+      const input = valueAsRecord(state.input);
+      const metadata = valueAsRecord(state.metadata);
+      const resumePayload = state.status === 'pending'
+        ? valueAsRecord(state.resumePayload)
+        : valueAsRecord(metadata.resumePayload);
+      const expectedToken = typeof resumePayload.resumeToken === 'string' ? resumePayload.resumeToken : undefined;
+      if (expectedToken && expectedToken !== req.resumeToken) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'RESUME_TOKEN_INVALID', message: 'Invalid approval token' },
+        };
+      }
+      if (!expectedToken) {
+        return {
+          id: req.id,
+          success: true,
+          approval: {
+            sessionId: req.sessionId,
+            sessionStatus: found.session.status,
+            agent: {
+              id: found.session.agent.id,
+              name: found.session.agent.name,
+              ...(found.session.agent.filePath && { filePath: found.session.agent.filePath })
+            },
+            logs
+          },
+        };
+      }
+
+      const notification = valueAsRecord(resumePayload.notification);
+      return {
+        id: req.id,
+        success: true,
+        approval: {
+          sessionId: req.sessionId,
+          sessionStatus: found.session.status,
+          agent: {
+            id: found.session.agent.id,
+            name: found.session.agent.name,
+            ...(found.session.agent.filePath && { filePath: found.session.agent.filePath })
+          },
+          ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
+          ...(typeof input.summary === 'string' && { summary: input.summary }),
+          ...(typeof input.draft === 'string' && { draft: input.draft }),
+          ...(typeof input.draft_url === 'string' && { draftUrl: input.draft_url }),
+          ...(typeof input.artifact_url === 'string' && { artifactUrl: input.artifact_url }),
+          ...(typeof input.context === 'string' && { context: input.context }),
+          ...(typeof input.risk === 'string' && { risk: input.risk }),
+          ...(Array.isArray(input.actions) && { actions: input.actions }),
+          ...(typeof resumePayload.channel === 'string' && { channel: resumePayload.channel }),
+          ...(typeof resumePayload.expiresAt === 'number' && { expiresAt: resumePayload.expiresAt }),
+          ...(typeof state.suspendedAt === 'number' && { suspendedAt: state.suspendedAt }),
+          ...(Object.keys(notification).length > 0 && { notification }),
+          ...(state.status === 'completed' && { decision: state.output }),
+          logs
+        },
+      };
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: (err as Error).message },
+      };
+    }
   }
 
   async function executeAgent(req: ExecuteRequest) {
@@ -1038,7 +1224,11 @@ async function runInternalWorker() {
 
     try {
       const request = JSON.parse(line) as ExecuteRequest;
-      if (request.type === 'execute' || request.type === 'resume') {
+      if (request.type === 'approval-info') {
+        getApprovalInfo(request).then((response) => {
+          console.log(JSON.stringify(response));
+        });
+      } else if (request.type === 'execute' || request.type === 'resume') {
         // Don't await - handle requests concurrently
         // Each request runs in parallel, response sent when complete
         executeAgent(request).then((response) => {

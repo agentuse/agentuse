@@ -313,6 +313,18 @@ export class SessionManager {
     return messageKey ? readJSON<Message>(messageKey) : null;
   }
 
+  async getSessionMessages(sessionID: string, agentId: string): Promise<Message[]> {
+    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const keys = await listKeys(sessionPath);
+    const messageKeys = keys
+      .filter(key => key.startsWith(`${sessionPath}/`) && key.endsWith('/message'))
+      .sort();
+    const messages = await Promise.all(messageKeys.map(key => readJSON<Message>(key)));
+    return messages
+      .filter((message): message is Message => message !== null)
+      .sort((a, b) => a.time.created - b.time.created || a.id.localeCompare(b.id));
+  }
+
   /**
    * List all persisted parts for a message in creation order.
    */

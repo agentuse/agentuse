@@ -40,30 +40,49 @@ describe('Slack approval blocks', () => {
     expect(values).toEqual(['approve now', 'reject now']);
   });
 
-  it('keeps the channel status card concise and moves details to thread messages', () => {
+  it('renders the default Slack message as a compact review link', () => {
     const request = {
       botToken: 'xoxb-test',
       channelId: 'C123',
       sessionId: 'session-1',
+      projectId: 'project-1',
       prompt: 'Approve this deployment?',
       summary: 'Deploying the release candidate',
       draft: 'Release candidate v1.2.3',
       resumeToken: 'resume-token',
+      approvalUrl: 'https://agentuse.example.com/approvals/session-1?token=resume-token',
       expiresAt: new Date(0).toISOString()
     };
 
-    const channelBlocks = __testing.buildStatusBlocks({
-      phase: 'waiting',
-      prompt: request.prompt,
-      sessionId: request.sessionId,
-      expiresAt: request.expiresAt
-    });
-    const threadMessages = __testing.buildDetailThreadMessages(request);
+    const blocks = __testing.buildReviewLinkBlocks(request);
+    const text = JSON.stringify(blocks);
+    const actionsBlock = blocks.find((block: any) => block.type === 'actions') as any;
 
-    expect(JSON.stringify(channelBlocks)).toContain('Approve this deployment?');
-    expect(JSON.stringify(channelBlocks)).not.toContain('Release candidate v1.2.3');
-    expect(JSON.stringify(threadMessages)).toContain('Deploying the release candidate');
-    expect(JSON.stringify(threadMessages)).toContain('Release candidate v1.2.3');
+    expect(text).toContain('Approve this deployment?');
+    expect(text).toContain('project-1');
+    expect(text).not.toContain('Release candidate v1.2.3');
+    expect(actionsBlock.elements).toHaveLength(1);
+    expect(actionsBlock.elements[0]).toMatchObject({
+      type: 'button',
+      url: request.approvalUrl
+    });
+  });
+
+  it('renders compact Slack status updates without review details', () => {
+    const blocks = __testing.buildReviewStatusBlocks({
+      prompt: 'Approve this deployment?',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      status: 'completed',
+      decision: 'approve',
+      approvalUrl: 'https://agentuse.example.com/approvals/session-1?token=resume-token',
+      expiresAt: new Date(0).toISOString()
+    });
+    const text = JSON.stringify(blocks);
+
+    expect(text).toContain('AgentUse approval completed');
+    expect(text).toContain('approve');
+    expect(text).not.toContain('Review approval');
   });
 
   it('renders resume failures into the channel status card', () => {
@@ -90,7 +109,7 @@ describe('Slack approval blocks', () => {
 
     expect(message).toContain('C123');
     expect(message).toContain('SLACK_BOT_TOKEN');
-    expect(message).toContain('~/.agentuse/.env');
+    expect(message).toContain('private channels');
   });
 
   it('updates Slack before awaiting resumed execution', async () => {
