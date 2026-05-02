@@ -8,6 +8,40 @@ import { logger } from '../utils/logger';
 import { formatToolResultForDisplay } from '../utils/format-tool-result';
 import type { AgentChunk } from './types';
 
+async function notifyApprovalRequested(options: {
+  sessionId?: string;
+  resumeToken?: string;
+  approvalUrl?: string;
+  prompt?: string;
+}): Promise<void> {
+  if (!options.sessionId || !options.resumeToken || !options.approvalUrl || typeof fetch !== 'function') return;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 750);
+    const url = new URL(options.approvalUrl);
+    const project = url.searchParams.get('project') ?? undefined;
+    url.pathname = `/approvals/${encodeURIComponent(options.sessionId)}/requested`;
+    url.search = '';
+
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        resumeToken: options.resumeToken,
+        approvalUrl: options.approvalUrl,
+        ...(project && { project }),
+        ...(options.prompt && { prompt: options.prompt })
+      })
+    });
+    clearTimeout(timeout);
+  } catch {
+    // Approval execution must not fail just because serve is unavailable,
+    // restarted, or running an older build without this endpoint.
+  }
+}
+
 /**
  * Process agent stream chunks and handle output/logging
  */
@@ -458,6 +492,7 @@ export async function processAgentStream(
                     kind: (payload.kind === 'await_human' ? 'await_human' : 'await_external') as 'await_external' | 'await_human',
                     ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
                     ...(typeof payload.channel === 'string' && { channel: payload.channel }),
+                    ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
                     ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
                     ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
                     ...(notification ? { notification } : {})
@@ -465,6 +500,15 @@ export async function processAgentStream(
                 }
               } as any).catch(err => logger.debug(`Failed to mark tool part pending: ${err.message}`));
               trackSessionUpdate(updatePromise);
+              await updatePromise;
+              if (payload.kind === 'await_human') {
+                await notifyApprovalRequested({
+                  sessionId: options.sessionID,
+                  ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
+                  ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
+                  ...(typeof payload.prompt === 'string' && { prompt: payload.prompt })
+                });
+              }
             }
           }
         }

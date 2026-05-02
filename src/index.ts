@@ -2,6 +2,7 @@
 import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
 import { runAgent, prepareAgentExecution, applyResumeToolResult, type PreparedAgentExecution } from './runner';
+import { isApprovalEnabled } from './runner/approval';
 import { Command } from 'commander';
 import { createProviderCommand, createAuthCommand } from './cli/auth';
 import { AuthStorage } from './auth/storage';
@@ -13,7 +14,7 @@ import { createBenchmarkCommand } from './cli/benchmark';
 import { createAgentsCommand } from './cli/agents';
 import { createAddCommand } from './cli/add';
 import { logger, LogLevel } from './utils/logger';
-import { basename, resolve, dirname, join } from 'path';
+import { basename, resolve, dirname, join, relative } from 'path';
 import { fileURLToPath } from 'url';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
@@ -40,8 +41,32 @@ import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
 import { telemetry, categorizeError, aggregateToolCalls, countSteps, parseModel } from './telemetry';
 import type { SessionManager as SessionManagerType } from './session';
+import { listServers } from './utils/server-registry';
 
 const program = new Command();
+
+function isSameOrNested(parent: string, child: string): boolean {
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === '' || (!rel.startsWith('..') && !rel.startsWith('/') && rel !== '..');
+}
+
+function hasServeForApprovalRun(projectRoot: string, agentFilePath?: string): boolean {
+  const targets = [
+    projectRoot,
+    ...(agentFilePath ? [agentFilePath, dirname(agentFilePath)] : [])
+  ].map((target) => resolve(target));
+
+  return listServers().some((server) => {
+    const roots = [
+      ...(server.projects?.map((project) => project.root) ?? []),
+      server.projectRoot
+    ].map((root) => resolve(root));
+
+    return roots.some((root) =>
+      targets.some((target) => isSameOrNested(root, target) || isSameOrNested(target, root))
+    );
+  });
+}
 
 // Helper function to prompt user
 async function prompt(question: string): Promise<string> {
@@ -294,6 +319,7 @@ program
       const additionalPrompt = promptArgs.length > 0 ? promptArgs.join(' ') : null;
 
       let agent;
+      let agentFilePath: string | undefined;
 
       // Check if input is a URL
       if (isURL(file)) {
@@ -364,6 +390,7 @@ program
             agentFile = withExt;
           }
         }
+        agentFilePath = resolve(agentFile);
         agent = await parseAgent(agentFile);
       }
       
@@ -410,6 +437,17 @@ program
         logger.warn(formatEnvValidationError(envValidation));
       }
 
+      if (isApprovalEnabled(agent.config) && !hasServeForApprovalRun(projectContext.projectRoot, agentFilePath)) {
+        const serveRoot = agentFilePath ? dirname(agentFilePath) : projectContext.projectRoot;
+        throw new Error(
+          [
+            'Approval gates require agentuse serve to be running for this project.',
+            'Start it in another terminal, then rerun this agent:',
+            `  agentuse serve -C ${serveRoot}`
+          ].join('\n')
+        );
+      }
+
       // Determine effective timeout (precedence: CLI > agent YAML > default)
       const effectiveTimeoutSeconds = resolveTimeout(
         cliTimeoutSeconds,
@@ -421,7 +459,6 @@ program
       // Connect to MCP servers if configured
       // Pass the agent file's directory as base path for resolving relative paths
       // Since we've already changed directory, resolve the file path from the new CWD
-      const agentFilePath = !isURL(file) ? resolve(file) : undefined;
       const mcpBasePath = agentFilePath ? dirname(agentFilePath) : undefined;
       let mcp;
       try {
@@ -581,9 +618,8 @@ program
         );
 
         if (result.status === 'suspended') {
-          const sessionId = preparedExecution.sessionID;
-          logger.info(`Agent is waiting for approval${sessionId ? ` (session ${sessionId})` : ''}.`);
-          logger.info('Approve or reject in Slack, or inspect status with `agentuse sessions`.');
+          const target = result.approvalUrl ?? preparedExecution.sessionID;
+          logger.info(`Agent is waiting for approval${target ? ` ${target}` : ''}`);
         } else if (!result.hasTextOutput) {
           logger.warn('Agent completed without producing a final response.');
         } else if (result.finishReason && result.finishReason !== 'stop') {
@@ -933,12 +969,22 @@ async function runInternalWorker() {
       }
       if (part?.type === 'tool') {
         const state = part.state ?? {};
+        const resumePayload = valueAsRecord(state.resumePayload);
+        const notification = valueAsRecord(resumePayload.notification);
+        const approvalUrl = typeof resumePayload.approvalUrl === 'string'
+          ? resumePayload.approvalUrl
+          : typeof notification.url === 'string'
+            ? notification.url
+            : undefined;
         const message = state.status === 'completed'
           ? formatApprovalLogValue(state.output)
           : state.status === 'error'
             ? formatApprovalLogValue(state.error)
             : state.status === 'pending'
-              ? formatApprovalLogValue(state.input)
+              ? [
+                formatApprovalLogValue(state.input),
+                approvalUrl ? `Review URL: ${approvalUrl}` : undefined
+              ].filter(Boolean).join('\n\n')
               : undefined;
         return {
           id: String(part.id),
@@ -1047,6 +1093,11 @@ async function runInternalWorker() {
       }
 
       const notification = valueAsRecord(resumePayload.notification);
+      const approvalUrl = typeof resumePayload.approvalUrl === 'string'
+        ? resumePayload.approvalUrl
+        : typeof notification.url === 'string'
+          ? notification.url
+          : undefined;
       return {
         id: req.id,
         success: true,
@@ -1067,6 +1118,7 @@ async function runInternalWorker() {
           ...(typeof input.risk === 'string' && { risk: input.risk }),
           ...(Array.isArray(input.actions) && { actions: input.actions }),
           ...(typeof resumePayload.channel === 'string' && { channel: resumePayload.channel }),
+          ...(approvalUrl && { approvalUrl }),
           ...(typeof resumePayload.expiresAt === 'number' && { expiresAt: resumePayload.expiresAt }),
           ...(typeof state.suspendedAt === 'number' && { suspendedAt: state.suspendedAt }),
           ...(Object.keys(notification).length > 0 && { notification }),
@@ -1380,6 +1432,7 @@ async function runInternalWorker() {
               },
             }),
             toolCalls: result.toolCallCount || 0,
+            ...(result.sessionId && { sessionId: result.sessionId }),
             ...(result.approvalUrl && { approvalUrl: result.approvalUrl }),
           },
         };

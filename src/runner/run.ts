@@ -156,6 +156,7 @@ export async function runAgent(
         finishReason: 'suspended',
         finishReasons: [...(result.finishReasons ?? []), 'suspended'],
         hasTextOutput: result.hasTextOutput,
+        ...(prepSessionID && { sessionId: prepSessionID }),
         ...(result.approvalUrl && { approvalUrl: result.approvalUrl })
       };
     }

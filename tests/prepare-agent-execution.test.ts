@@ -257,13 +257,16 @@ describe('prepareAgentExecution', () => {
             timeout: '24h'
           },
           notifications: {
-            notify_on: ['approval'],
-            channels: {
-              slack: {
-                enabled: true,
-                channel_id: 'C0123456789'
+            routes: [
+              {
+                on: ['approval'],
+                to: {
+                  slack: {
+                    channel_id: 'C0123456789'
+                  }
+                }
               }
-            }
+            ]
           }
         }
       });
@@ -291,13 +294,16 @@ describe('prepareAgentExecution', () => {
           model: 'anthropic:claude-sonnet-4-0',
           approval: true,
           notifications: {
-            notify_on: ['approval'],
-            channels: {
-              slack: {
-                enabled: true,
-                channel_id: 'C0123456789'
+            routes: [
+              {
+                on: ['approval'],
+                to: {
+                  slack: {
+                    channel_id: 'C0123456789'
+                  }
+                }
               }
-            }
+            ]
           }
         }
       });
@@ -305,6 +311,61 @@ describe('prepareAgentExecution', () => {
       expect(approvalToolDefaults(agent.config)).toMatchObject({
         slack: { channelId: 'C0123456789' }
       });
+    });
+
+    it('supports env-backed Slack approval notification routes', () => {
+      const agent = createMockAgent({
+        config: {
+          model: 'anthropic:claude-sonnet-4-0',
+          approval: true,
+          notifications: {
+            routes: [
+              {
+                on: ['approval'],
+                to: {
+                  slack: {}
+                }
+              }
+            ]
+          }
+        }
+      });
+
+      expect(approvalToolDefaults(agent.config)).toMatchObject({
+        slack: {}
+      });
+    });
+
+    it('ignores disabled and non-approval Slack notification routes', () => {
+      const agent = createMockAgent({
+        config: {
+          model: 'anthropic:claude-sonnet-4-0',
+          approval: true,
+          notifications: {
+            routes: [
+              {
+                enabled: false,
+                on: ['approval'],
+                to: {
+                  slack: {
+                    channel_id: 'C_DISABLED'
+                  }
+                }
+              },
+              {
+                on: ['completion'],
+                to: {
+                  slack: {
+                    channel_id: 'C_COMPLETION'
+                  }
+                }
+              }
+            ]
+          }
+        }
+      });
+
+      expect(approvalToolDefaults(agent.config)?.slack).toBeUndefined();
     });
 
     it('does not route Slack approval notifications from approval config', () => {

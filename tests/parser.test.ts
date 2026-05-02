@@ -158,11 +158,12 @@ model: anthropic:claude-sonnet-4-0
 approval:
   timeout: 24h
 notifications:
-  notify_on: [approval, completion]
-  channels:
-    slack:
-      enabled: true
-      channel_id: C0123456789
+  routes:
+    - name: approval-review
+      on: [approval, completion]
+      to:
+        slack:
+          channel_id: C0123456789
 ---
 
 Write a draft.`;
@@ -173,15 +174,48 @@ Write a draft.`;
         timeout: '24h'
       });
       expect(agent.config.notifications).toMatchObject({
-        notify_on: ['approval', 'completion'],
-        channels: {
-          slack: {
-            enabled: true,
-            channel_id: 'C0123456789'
+        routes: [
+          {
+            name: 'approval-review',
+            on: ['approval', 'completion'],
+            to: {
+              slack: {
+                channel_id: 'C0123456789'
+              }
+            }
           }
-        }
+        ]
       });
       expect(agent.instructions).toBe('Write a draft.');
+    });
+
+    it('normalizes shorthand notification routes', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+approval: true
+notifications:
+  routes:
+    - on: approval
+      to: slack
+    - on: [approval]
+      to:
+        slack:
+---
+
+Write a draft.`;
+
+      const agent = parseAgentContent(content, 'test');
+
+      expect(agent.config.notifications?.routes).toEqual([
+        {
+          on: ['approval'],
+          to: { slack: {} }
+        },
+        {
+          on: ['approval'],
+          to: { slack: {} }
+        }
+      ]);
     });
 
     it('rejects removed approval delivery fields', () => {

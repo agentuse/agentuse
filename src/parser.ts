@@ -69,14 +69,63 @@ const ApprovalConfigSchema = z.union([
   }).strict()
 ]);
 
+const NotificationEventSchema = z.enum(['approval', 'completion', 'failure']);
+const NotificationEventListSchema = z.union([
+  NotificationEventSchema.transform((event) => [event]),
+  z.array(NotificationEventSchema).min(1)
+]);
+
+const SlackNotificationConfigSchema = z.object({
+  channel_id: z.string().optional()
+}).strict();
+
+const NotificationProviderConfigSchema = z.union([
+  z.record(z.unknown()),
+  z.null()
+]).transform((config) => config ?? {});
+
+const NotificationToSchema = z.union([
+  z.string().min(1).transform((provider) => ({ [provider]: {} })),
+  z.record(NotificationProviderConfigSchema).superRefine((value, ctx) => {
+    const providers = Object.keys(value);
+    if (providers.length !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Notification route "to" must define exactly one channel provider'
+      });
+      return;
+    }
+
+    const provider = providers[0];
+    const config = value[provider] ?? {};
+    if (provider === 'slack') {
+      const result = SlackNotificationConfigSchema.safeParse(config);
+      if (!result.success) {
+        for (const issue of result.error.issues) {
+          ctx.addIssue({
+            ...issue,
+            path: [provider, ...issue.path]
+          });
+        }
+      }
+    }
+  })
+]).transform((to) => {
+  if (typeof to === 'string') {
+    return { [to]: {} };
+  }
+
+  const [[provider, config]] = Object.entries(to);
+  return { [provider]: config ?? {} };
+});
+
 const NotificationsConfigSchema = z.object({
-  notify_on: z.array(z.enum(['approval', 'completion'])).optional(),
-  channels: z.object({
-    slack: z.object({
-      enabled: z.boolean().optional(),
-      channel_id: z.string().optional()
-    }).strict().optional()
-  }).strict().optional()
+  routes: z.array(z.object({
+    name: z.string().optional(),
+    enabled: z.boolean().optional(),
+    on: NotificationEventListSchema,
+    to: NotificationToSchema
+  }).strict()).optional()
 }).strict();
 
 // Schema for agent configuration as per spec

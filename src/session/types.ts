@@ -168,6 +168,7 @@ export type ToolStatePending = {
     kind: 'await_external' | 'await_human';
     prompt?: string;
     channel?: string;
+    approvalUrl?: string;
     expiresAt?: number;
     resumeToken?: string;
     notification?: {

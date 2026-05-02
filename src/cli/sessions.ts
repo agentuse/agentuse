@@ -553,7 +553,7 @@ async function listSessionsCommand(
 
   // Calculate column widths
   const idWidth = 12; // First 12 chars of ULID
-  const statusWidth = 6; // "STATUS"
+  const statusWidth = 9; // "suspended"
   const agentWidth = Math.min(
     40,
     Math.max(...sessions.map((s) => s.agentId.length))
@@ -568,7 +568,13 @@ async function listSessionsCommand(
   // Rows
   for (const session of sessions) {
     const shortId = session.id.substring(0, idWidth);
-    const statusText = session.status === 'completed' ? 'done' : session.status === 'error' ? 'fail' : 'run';
+    const statusText = session.status === 'completed'
+      ? 'done'
+      : session.status === 'error'
+        ? 'fail'
+        : session.status === 'suspended'
+          ? 'suspended'
+          : 'running';
     const agent = truncate(session.agentId, agentWidth).padEnd(agentWidth);
     const date = formatDate(session.created);
 
@@ -763,6 +769,13 @@ async function showSession(
                 input?: unknown;
                 output?: unknown;
                 error?: string;
+                resumePayload?: {
+                  kind?: string;
+                  approvalUrl?: string;
+                  notification?: {
+                    url?: string;
+                  };
+                };
                 time?: { start: number; end?: number };
               }
             };
@@ -799,6 +812,14 @@ async function showSession(
             if (showFull && tool.state.input !== undefined) {
               process.stdout.write(`Input:\n`);
               process.stdout.write(formatValueFull(tool.state.input, "  ") + "\n");
+            }
+
+            const approvalUrl = tool.state.resumePayload?.approvalUrl ?? tool.state.resumePayload?.notification?.url;
+            if (tool.state.status === "pending" && tool.state.resumePayload?.kind === "await_human") {
+              process.stdout.write(`Approval: pending\n`);
+              if (approvalUrl) {
+                process.stdout.write(`Review URL: ${approvalUrl}\n`);
+              }
             }
 
             // Show output or error

@@ -59,10 +59,9 @@ For a social publishing agent:
 model: anthropic:claude-sonnet-4-6
 approval: true
 notifications:
-  notify_on: [approval]
-  channels:
-    slack:
-      enabled: true
+  routes:
+    - on: [approval]
+      to: slack
 ---
 
 Draft the social post and save any working files under `.agentuse/tmp/`.
@@ -127,11 +126,11 @@ Slack is configured as a notification channel, not inside `approval`.
 approval: true
 
 notifications:
-  notify_on: [approval]
-  channels:
-    slack:
-      enabled: true
-      channel_id: C0123456789
+  routes:
+    - on: [approval]
+      to:
+        slack:
+          channel_id: C0123456789
 ```
 
 Configure a Slack bot token:
@@ -156,10 +155,9 @@ Then the agent can omit `channel_id`:
 
 ```yaml
 notifications:
-  notify_on: [approval]
-  channels:
-    slack:
-      enabled: true
+  routes:
+    - on: [approval]
+      to: slack
 ```
 
 To find a Slack channel id, open the channel in Slack, click the channel name, and look near the bottom of the channel details panel for the channel id. You can also copy a channel link; the id is the `C...` or `G...` value in the URL.
@@ -209,16 +207,19 @@ Notification config is separate:
 
 ```yaml
 notifications:
-  notify_on: [approval]
-  channels:
-    slack:
-      enabled: true
-      channel_id: C0123456789
+  routes:
+    - name: approval-review
+      on: [approval]
+      to:
+        slack:
+          channel_id: C0123456789
 ```
 
-- `notifications.notify_on`: events that should send notifications. `approval` is supported now; `completion` is reserved for broader notification workflows.
-- `notifications.channels.slack.enabled`: enable Slack delivery for selected events
-- `notifications.channels.slack.channel_id`: Slack channel id for notifications
+- `notifications.routes`: ordered notification subscriptions
+- `notifications.routes[].on`: events for that route. `approval` is supported now; `completion` and `failure` are reserved for broader notification workflows.
+- `notifications.routes[].to`: one destination for that route. Use `slack`, `slack: {}`, or `slack.channel_id`.
+- `notifications.routes[].name`: optional route name for logs and debugging
+- `notifications.routes[].enabled`: optional switch for temporarily disabling a route
 
 ## Experimental Approval API
 

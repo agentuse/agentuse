@@ -144,7 +144,7 @@ model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
 ## Approval Gates
 
 <ParamField path="SLACK_BOT_TOKEN" type="string">
-  Slack bot token used to post and update notification messages when `notifications.notify_on` includes `approval` and `notifications.channels.slack.enabled` is true. The app needs the `chat:write` bot scope, and the bot must be in the approval channel unless you also grant `chat:write.public` for public channels.
+  Slack bot token used to post and update notification messages when a notification route listens for `approval` and sends to Slack. The app needs the `chat:write` bot scope, and the bot must be in the approval channel unless you also grant `chat:write.public` for public channels.
 
   ```bash
   export SLACK_BOT_TOKEN="xoxb-..."
@@ -160,7 +160,7 @@ model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
 </ParamField>
 
 <ParamField path="SLACK_APPROVAL_CHANNEL" type="string">
-  Default Slack channel id for approval notifications. Agents can override this with `notifications.channels.slack.channel_id`.
+  Default Slack channel id for approval notifications. Agents can override this with `notifications.routes[].to.slack.channel_id`.
 
   ```bash
   export SLACK_APPROVAL_CHANNEL="C0123456789"

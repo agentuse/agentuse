@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import { timingSafeEqual } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
-import { resolve, basename } from "path";
+import { resolve, basename, relative } from "path";
 import { existsSync } from "fs";
 import { glob } from "glob";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
@@ -67,6 +67,7 @@ interface WorkerExecuteResult {
     duration: number;
     tokens?: { input: number; output: number };
     toolCalls: number;
+    sessionId?: string;
     approvalUrl?: string;
   };
 }
@@ -145,6 +146,7 @@ interface ApprovalPageInfo {
   risk?: string;
   actions?: Array<{ id: string; label: string; style?: 'primary' | 'danger' }>;
   channel?: string;
+  approvalUrl?: string;
   expiresAt?: number;
   suspendedAt?: number;
   notification?: {
@@ -1890,13 +1892,6 @@ export function createServeCommand(): Command {
             },
           });
 
-          if (spawnResult.result.finishReason === 'suspended') {
-            const scheduleLabel = projects.length > 1
-              ? `${project.id}/${schedule.agentPath}`
-              : schedule.agentPath;
-            approvalLog.sent(scheduleLabel, spawnResult.result.approvalUrl);
-          }
-
           return {
             success: true,
             duration,
@@ -2092,6 +2087,7 @@ export function createServeCommand(): Command {
       };
 
       const activeApprovalResumes = new Set<string>();
+      const loggedApprovalRequests = new Set<string>();
 
       const resumeSuspendedSession = async (decision: SlackApprovalDecision): Promise<void> => {
         const reviewer = decision.toolResult.reviewer?.id
@@ -2325,6 +2321,63 @@ export function createServeCommand(): Command {
             projectId: project.id,
             resuming: activeApprovalResumes.has(activeKey),
           }));
+          return;
+        }
+
+        const approvalRequestedMatch = req.method === "POST" ? requestUrl.pathname.match(/^\/approvals\/([^/?#]+)\/requested$/) : null;
+        if (approvalRequestedMatch) {
+          try {
+            const sessionId = decodeURIComponent(approvalRequestedMatch[1]);
+            const body = await parseJSONBody(req);
+            const token = typeof body.resumeToken === 'string' ? body.resumeToken : undefined;
+            const approvalUrl = typeof body.approvalUrl === 'string' ? body.approvalUrl : undefined;
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+
+            if (!token) {
+              sendError(res, 401, "RESUME_TOKEN_REQUIRED", "Missing approval token");
+              return;
+            }
+
+            const project = resolveResumeProject(projectId);
+            if (!project) {
+              sendError(res, 404, "PROJECT_NOT_FOUND", "Project not found for approval request");
+              return;
+            }
+
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) {
+              sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
+              return;
+            }
+
+            const info = await projectWorker.getApprovalInfo({
+              projectRoot: project.root,
+              sessionId,
+              resumeToken: token
+            });
+            if (!info.success) {
+              sendError(res, info.error.code === 'RESUME_TOKEN_INVALID' ? 401 : 404, info.error.code, info.error.message);
+              return;
+            }
+
+            const logKey = `${project.id}:${sessionId}`;
+            if (!loggedApprovalRequests.has(logKey)) {
+              loggedApprovalRequests.add(logKey);
+              const filePath = info.approval.agent.filePath;
+              const agentLabel = filePath
+                ? relative(project.root, filePath)
+                : info.approval.agent.name;
+              approvalLog.sent(
+                multiProject ? `${project.id}/${agentLabel}` : agentLabel,
+                info.approval.approvalUrl ?? approvalUrl,
+                sessionId
+              );
+            }
+
+            sendJSON(res, 200, { success: true, status: "logged", sessionId });
+          } catch (err) {
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
           return;
         }
 
@@ -2665,12 +2718,7 @@ export function createServeCommand(): Command {
               },
             });
 
-            if (spawnResult.result.finishReason === 'suspended') {
-              approvalLog.sent(
-                multiProject ? `${project.id}/${body.agent}` : body.agent,
-                spawnResult.result.approvalUrl
-              );
-            } else {
+            if (spawnResult.result.finishReason !== 'suspended') {
               executionLog.complete(body.agent, duration);
             }
 

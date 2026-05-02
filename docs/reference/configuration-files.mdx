@@ -51,11 +51,11 @@ Approval notifications are configured separately from approval policy:
 ```yaml
 approval: true
 notifications:
-  notify_on: [approval]
-  channels:
-    slack:
-      enabled: true
-      channel_id: C0123456789
+  routes:
+    - on: [approval]
+      to:
+        slack:
+          channel_id: C0123456789
 ```
 
 See [Approval Gates](/guides/approval-gates) for the approval dashboard and API workflow.

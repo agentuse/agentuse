@@ -70,5 +70,6 @@ export interface RunAgentResult {
   finishReason?: string;
   finishReasons?: string[];
   hasTextOutput: boolean;
+  sessionId?: string;
   approvalUrl?: string;
 }

@@ -77,7 +77,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
         const botToken = process.env.SLACK_BOT_TOKEN;
         const slackChannelId = defaults.slack.channelId ?? process.env.SLACK_APPROVAL_CHANNEL;
         if (!botToken || !slackChannelId || !approvalUrl) {
-          throw new Error('Slack approval notifications require SLACK_BOT_TOKEN, notifications.channels.slack.channel_id or SLACK_APPROVAL_CHANNEL, and a session id');
+          throw new Error('Slack approval notifications require SLACK_BOT_TOKEN, notifications.routes[].to.slack.channel_id or SLACK_APPROVAL_CHANNEL, and a session id');
         }
 
         const message = await sendSlackApprovalRequest({

@@ -1063,9 +1063,10 @@ export const approvalLog = {
   formatTimestamp: executionLog.formatTimestamp,
   formatDuration: executionLog.formatDuration,
 
-  sent(agentPath: string, approvalUrl?: string): void {
-    const urlSuffix = approvalUrl ? ` ${chalk.underline(approvalUrl)}` : '';
-    console.log(`${this.formatTimestamp()} ${chalk.cyan('Approval requested:')} ${agentPath}${urlSuffix}`);
+  sent(agentPath: string, approvalUrl?: string, sessionId?: string): void {
+    const target = approvalUrl ? chalk.underline(approvalUrl) : chalk.dim(sessionId ?? '');
+    const targetSuffix = target ? ` ${target}` : '';
+    console.log(`${this.formatTimestamp()} ${chalk.cyan('Approval requested:')} ${agentPath}${targetSuffix}`);
   },
 
   expired(agentPath: string, sessionId: string, expiresAt: number): void {

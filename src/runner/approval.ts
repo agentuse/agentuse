@@ -19,6 +19,17 @@ function getApprovalObject(config: AgentConfig): ApprovalObject | undefined {
     : undefined;
 }
 
+function getSlackApprovalRoute(config: AgentConfig): { channel_id?: string } | undefined {
+  for (const route of config.notifications?.routes ?? []) {
+    if (route.enabled === false || !route.on.includes('approval')) continue;
+    const destinations = route.to as Record<string, unknown>;
+    const slack = destinations.slack;
+    if (slack === undefined) continue;
+    return slack as { channel_id?: string };
+  }
+  return undefined;
+}
+
 export function approvalToolDefaults(config: AgentConfig): {
   timeout?: string;
   actions?: Array<{ id: string; label: string; style?: 'primary' | 'danger' }>;
@@ -27,14 +38,12 @@ export function approvalToolDefaults(config: AgentConfig): {
   if (!isApprovalEnabled(config)) return undefined;
 
   const approval = getApprovalObject(config);
-  const notifyOn = config.notifications?.notify_on ?? [];
-  const slack = config.notifications?.channels?.slack;
-  const shouldNotifySlack = notifyOn.includes('approval') && slack?.enabled !== false && slack !== undefined;
+  const slack = getSlackApprovalRoute(config);
 
   return {
     ...(approval?.timeout && { timeout: approval.timeout }),
     actions: DEFAULT_APPROVAL_ACTIONS,
-    ...(shouldNotifySlack && {
+    ...(slack && {
       slack: {
         ...(slack.channel_id && { channelId: slack.channel_id })
       }
