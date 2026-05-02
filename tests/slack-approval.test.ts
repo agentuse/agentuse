@@ -68,6 +68,20 @@ describe('Slack approval blocks', () => {
     });
   });
 
+  it('omits expiration from compact Slack messages when approval is unlimited', () => {
+    const blocks = __testing.buildReviewLinkBlocks({
+      botToken: 'xoxb-test',
+      channelId: 'C123',
+      sessionId: 'session-1',
+      prompt: 'Approve this deployment?',
+      resumeToken: 'resume-token',
+      approvalUrl: 'https://agentuse.example.com/approvals/session-1?token=resume-token'
+    });
+    const text = JSON.stringify(blocks);
+
+    expect(text).not.toContain('*Expires*');
+  });
+
   it('renders compact Slack status updates without review details', () => {
     const blocks = __testing.buildReviewStatusBlocks({
       prompt: 'Approve this deployment?',

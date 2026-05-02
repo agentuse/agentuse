@@ -3,31 +3,11 @@ import type { AgentConfig } from '../parser';
 type ApprovalConfig = NonNullable<AgentConfig['approval']>;
 type ApprovalObject = Exclude<ApprovalConfig, boolean>;
 
-function normalizeActions(actions: ApprovalObject['actions']): Array<{ id: string; label: string; style?: 'primary' | 'danger' }> {
-  const defaults: Array<{ id: string; label: string; style?: 'primary' | 'danger' }> = [
-    { id: 'approve', label: 'Approve', style: 'primary' },
-    { id: 'reject', label: 'Reject', style: 'danger' },
-    { id: 'comment', label: 'Comment' }
-  ];
-
-  if (!actions || actions.length === 0) return defaults;
-
-  return actions.map(action => {
-    if (typeof action === 'string') {
-      return {
-        id: action,
-        label: action.charAt(0).toUpperCase() + action.slice(1),
-        ...(action === 'approve' && { style: 'primary' as const }),
-        ...(action === 'reject' && { style: 'danger' as const })
-      };
-    }
-    return {
-      id: action.id,
-      label: action.label,
-      ...(action.style && { style: action.style })
-    };
-  });
-}
+export const DEFAULT_APPROVAL_ACTIONS: Array<{ id: string; label: string; style?: 'primary' | 'danger' }> = [
+  { id: 'approve', label: 'Approve', style: 'primary' },
+  { id: 'reject', label: 'Reject', style: 'danger' },
+  { id: 'comment', label: 'Comment' }
+];
 
 export function isApprovalEnabled(config: AgentConfig): boolean {
   return config.approval === true || (typeof config.approval === 'object' && config.approval !== null);
@@ -40,31 +20,25 @@ function getApprovalObject(config: AgentConfig): ApprovalObject | undefined {
 }
 
 export function approvalToolDefaults(config: AgentConfig): {
-  channel?: 'slack' | 'webhook';
-  url?: string;
-  channelId?: string;
   timeout?: string;
   actions?: Array<{ id: string; label: string; style?: 'primary' | 'danger' }>;
+  slack?: { channelId?: string };
 } | undefined {
   if (!isApprovalEnabled(config)) return undefined;
 
-  if (config.approval === true) {
-    return {
-      channel: 'slack',
-      actions: normalizeActions(undefined)
-    };
-  }
-
   const approval = getApprovalObject(config);
-  if (!approval) return undefined;
+  const notifyOn = config.notifications?.notify_on ?? [];
+  const slack = config.notifications?.channels?.slack;
+  const shouldNotifySlack = notifyOn.includes('approval') && slack?.enabled !== false && slack !== undefined;
 
-  const channel = approval.channel ?? (approval.url ? 'webhook' : 'slack');
   return {
-    channel,
-    ...(approval.url && { url: approval.url }),
-    ...(approval.channel_id && { channelId: approval.channel_id }),
-    ...(approval.timeout && { timeout: approval.timeout }),
-    actions: normalizeActions(approval.actions)
+    ...(approval?.timeout && { timeout: approval.timeout }),
+    actions: DEFAULT_APPROVAL_ACTIONS,
+    ...(shouldNotifySlack && {
+      slack: {
+        ...(slack.channel_id && { channelId: slack.channel_id })
+      }
+    })
   };
 }
 
@@ -72,11 +46,9 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
   if (!isApprovalEnabled(config)) return instructions;
 
   const approval = getApprovalObject(config) ?? {};
-  const actions = normalizeActions(approval.actions);
-  const actionList = actions.map(action => action.id).join(', ');
-  const include = approval.include?.join(', ') ?? 'draft, summary';
-  const onComment = approval.on_comment ?? 'revise_until_approved';
-  const timeout = approval.timeout ?? '7d';
+  const timeoutNote = approval.timeout
+    ? `This approval request expires after ${approval.timeout}.`
+    : 'This approval request does not expire unless a timeout is configured in YAML.';
 
   const approvalInstructions = [
     '## Approval Gate',
@@ -89,18 +61,12 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
     '- draft or artifact_url: the reviewable work itself, a preview link, PR, document, file, or artifact URL when available',
     '- context: relevant background, constraints, or work completed so far',
     '- risk: known risks, unresolved questions, or reviewer attention areas when relevant',
-    `- include: ${include}`,
-    `- actions: ${actionList}`,
-    `- timeout: ${timeout}`,
+    timeoutNote,
     '',
     'After the approval result:',
     '- approve: finalize the work and complete normally.',
     '- reject: stop cleanly and summarize the rejection.',
-    onComment === 'revise_once'
-      ? '- comment: revise once from the reviewer comment, then request approval one more time.'
-      : onComment === 'return_comment'
-        ? '- comment: return the reviewer comment without revising.'
-        : '- comment: revise from the reviewer comment and request approval again until approved or rejected.',
+    '- comment: use the reviewer comment to revise or clarify the work, then request approval again if the work still needs approval.',
     '',
     'If the `await_human` tool fails, do not finalize, publish, ship, or return the prepared work as complete. Stop and report that the approval request failed with the tool error.',
     '',

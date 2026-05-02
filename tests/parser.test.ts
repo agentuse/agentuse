@@ -152,17 +152,17 @@ Test agent`;
   });
 
   describe('Other agent config fields', () => {
-    it('parses declarative approval configuration', () => {
+    it('parses minimal approval configuration with notifications', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0
 approval:
-  channel: webhook
-  url: \${env:APPROVAL_WEBHOOK_URL}
-  channel_id: C0123456789
   timeout: 24h
-  actions: [approve, reject, comment]
-  include: [draft, summary]
-  on_comment: revise_once
+notifications:
+  notify_on: [approval, completion]
+  channels:
+    slack:
+      enabled: true
+      channel_id: C0123456789
 ---
 
 Write a draft.`;
@@ -170,18 +170,21 @@ Write a draft.`;
       const agent = parseAgentContent(content, 'test');
 
       expect(agent.config.approval).toMatchObject({
-        channel: 'webhook',
-        url: '${env:APPROVAL_WEBHOOK_URL}',
-        channel_id: 'C0123456789',
-        timeout: '24h',
-        actions: ['approve', 'reject', 'comment'],
-        include: ['draft', 'summary'],
-        on_comment: 'revise_once'
+        timeout: '24h'
+      });
+      expect(agent.config.notifications).toMatchObject({
+        notify_on: ['approval', 'completion'],
+        channels: {
+          slack: {
+            enabled: true,
+            channel_id: 'C0123456789'
+          }
+        }
       });
       expect(agent.instructions).toBe('Write a draft.');
     });
 
-    it('parses Slack approval configuration', () => {
+    it('rejects removed approval delivery fields', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0
 approval:
@@ -191,12 +194,7 @@ approval:
 
 Write a draft.`;
 
-      const agent = parseAgentContent(content, 'test');
-
-      expect(agent.config.approval).toMatchObject({
-        channel: 'slack',
-        channel_id: 'C0123456789'
-      });
+      expect(() => parseAgentContent(content, 'test')).toThrow('approval');
     });
 
     it('parses complete agent configuration', () => {

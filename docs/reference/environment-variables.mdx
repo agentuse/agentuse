@@ -144,7 +144,7 @@ model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
 ## Approval Gates
 
 <ParamField path="SLACK_BOT_TOKEN" type="string">
-  Slack bot token used to post and update approval messages when `approval.channel` is `slack`. The app needs the `chat:write` bot scope, and the bot must be in the approval channel unless you also grant `chat:write.public` for public channels.
+  Slack bot token used to post and update notification messages when `notifications.notify_on` includes `approval` and `notifications.channels.slack.enabled` is true. The app needs the `chat:write` bot scope, and the bot must be in the approval channel unless you also grant `chat:write.public` for public channels.
 
   ```bash
   export SLACK_BOT_TOKEN="xoxb-..."
@@ -160,23 +160,15 @@ model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
 </ParamField>
 
 <ParamField path="SLACK_APPROVAL_CHANNEL" type="string">
-  Default Slack channel id for approval messages. Agents can override this with `approval.channel_id`.
+  Default Slack channel id for approval notifications. Agents can override this with `notifications.channels.slack.channel_id`.
 
   ```bash
   export SLACK_APPROVAL_CHANNEL="C0123456789"
   ```
 </ParamField>
 
-<ParamField path="APPROVAL_WEBHOOK_URL" type="string">
-  Conventional environment variable for webhook approval notifications when using `approval.url: ${env:APPROVAL_WEBHOOK_URL}`.
-
-  ```bash
-  export APPROVAL_WEBHOOK_URL="https://your-webhook.example.com/agentuse"
-  ```
-</ParamField>
-
 <ParamField path="AGENTUSE_RESUME_PUBLIC_URL" type="string">
-  Fallback public base URL used to build webhook resume links. Prefer `agentuse serve --public-url ...` or `serve.publicUrl` for hosted deployments.
+  Fallback public base URL used to build approval review links. Prefer `agentuse serve --public-url ...` or `serve.publicUrl` for hosted deployments.
 
   ```bash
   export AGENTUSE_RESUME_PUBLIC_URL="https://agentuse.mycompany.com"

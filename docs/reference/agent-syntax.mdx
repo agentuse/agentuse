@@ -216,31 +216,48 @@ Additional instructions or context.
   When `approval` is present, AgentUse automatically enables the internal `await_human` tool and injects the approval behavior for you. The markdown body should describe the work the agent needs to do; the YAML declares that the work must be reviewed before it is finalized.
 
   ```yaml
-  approval:
-    channel: slack
-    channel_id: C0123456789
-    timeout: 24h
-    actions: [approve, reject, comment]
-  ```
-
-  **Fields:**
-  - `channel`: `slack` or `webhook`
-  - `url`: webhook URL for the approval notification
-  - `channel_id`: Slack channel id for approval messages
-  - `timeout`: suspension timeout such as `24h` or `7d`
-  - `actions`: reviewer actions; defaults to `approve`, `reject`, and `comment`
-  - `include`: what the agent should include in the approval request, such as `draft` and `summary`
-  - `on_comment`: `revise_once`, `revise_until_approved`, or `return_comment`
-
-  Approval requests render best when the agent can provide `summary`, `draft` or `artifact_url`, `context`, and `risk` fields to the internal approval tool.
-
-  Minimal form:
-
-  ```yaml
   approval: true
   ```
 
-  See [Approval Gates](/guides/approval-gates) for the full setup guide, webhook payload, and resume examples.
+  Optional timeout:
+
+  ```yaml
+  approval:
+    timeout: 24h
+  ```
+
+  **Fields:**
+  - `timeout`: optional suspension timeout such as `24h` or `7d`. Approvals do not expire by default.
+
+  Approval requests render best when the agent can provide `summary`, `draft` or `artifact_url`, `context`, and `risk` fields to the internal approval tool.
+
+  You can define the approval boundary in the agent instructions. For example:
+
+  ```md
+  You may create local drafts and preview artifacts without approval.
+  Before scheduling, publishing, sending, deploying, merging, or changing external production state, request approval.
+  Include the final content, target destination, timing, and risks in the approval request.
+  ```
+
+  See [Approval Gates](/guides/approval-gates) for the full setup guide and Approval API examples.
+</ParamField>
+
+<ParamField path="notifications" type="object" required={false}>
+  Configure event/channel notifications separately from approval policy.
+
+  ```yaml
+  notifications:
+    notify_on: [approval]
+    channels:
+      slack:
+        enabled: true
+        channel_id: C0123456789
+  ```
+
+  **Fields:**
+  - `notify_on`: events that should send notifications. `approval` is supported now; `completion` is reserved for broader notification workflows.
+  - `channels.slack.enabled`: enable Slack notifications for selected events
+  - `channels.slack.channel_id`: Slack channel id. If omitted, AgentUse uses `SLACK_APPROVAL_CHANNEL`.
 </ParamField>
 
 ## Tools Configuration

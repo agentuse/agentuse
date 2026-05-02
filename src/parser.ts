@@ -62,27 +62,22 @@ const MCPServerSchema = z.union([
   })
 ]);
 
-const ApprovalActionSchema = z.union([
-  z.enum(['approve', 'reject', 'comment']),
-  z.object({
-    id: z.string(),
-    label: z.string(),
-    style: z.enum(['primary', 'danger']).optional()
-  })
-]);
-
 const ApprovalConfigSchema = z.union([
   z.boolean(),
   z.object({
-    channel: z.enum(['slack', 'webhook']).optional(),
-    url: z.string().optional(),
-    channel_id: z.string().optional(),
     timeout: z.string().optional(),
-    actions: z.array(ApprovalActionSchema).optional(),
-    include: z.array(z.enum(['draft', 'summary', 'artifact', 'diff'])).optional(),
-    on_comment: z.enum(['revise_once', 'revise_until_approved', 'return_comment']).optional(),
   }).strict()
 ]);
+
+const NotificationsConfigSchema = z.object({
+  notify_on: z.array(z.enum(['approval', 'completion'])).optional(),
+  channels: z.object({
+    slack: z.object({
+      enabled: z.boolean().optional(),
+      channel_id: z.string().optional()
+    }).strict().optional()
+  }).strict().optional()
+}).strict();
 
 // Schema for agent configuration as per spec
 // Supports both mcp_servers (deprecated) and mcpServers (preferred)
@@ -120,7 +115,10 @@ const AgentSchema = z.object({
   sandbox: SandboxConfigSchema.optional(),
   // Declarative suspension gate. Enables hidden await_human tooling and
   // injects an approval step so markdown instructions can stay business-only.
-  approval: ApprovalConfigSchema.optional()
+  approval: ApprovalConfigSchema.optional(),
+  // Event/channel based notifications. Approval notifications are delivered
+  // outside the approval policy itself.
+  notifications: NotificationsConfigSchema.optional()
 }).transform((data) => {
   // Handle backward compatibility: support both mcp_servers and mcpServers
   if (data.mcp_servers && data.mcpServers) {

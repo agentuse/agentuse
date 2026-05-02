@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { prepareAgentExecution, buildAutonomousAgentPrompt } from '../src/runner';
+import { approvalToolDefaults } from '../src/runner/approval';
 import type { ParsedAgent } from '../src/parser';
 import type { MCPConnection } from '../src/mcp';
 
@@ -253,11 +254,16 @@ describe('prepareAgentExecution', () => {
         config: {
           model: 'anthropic:claude-sonnet-4-0',
           approval: {
-            channel: 'webhook',
-            url: '${env:APPROVAL_WEBHOOK_URL}',
-            timeout: '24h',
-            actions: ['approve', 'reject', 'comment'],
-            on_comment: 'revise_once'
+            timeout: '24h'
+          },
+          notifications: {
+            notify_on: ['approval'],
+            channels: {
+              slack: {
+                enabled: true,
+                channel_id: 'C0123456789'
+              }
+            }
           }
         }
       });
@@ -275,8 +281,41 @@ describe('prepareAgentExecution', () => {
       expect(result.userMessage).toContain('Write a polished draft.');
       expect(result.userMessage).toContain('## Approval Gate');
       expect(result.userMessage).toContain('call the `await_human` tool');
-      expect(result.userMessage).toContain('actions: approve, reject, comment');
-      expect(result.userMessage).toContain('revise once');
+      expect(result.userMessage).toContain('expires after 24h');
+      expect(result.userMessage).toContain('comment: use the reviewer comment');
+    });
+
+    it('routes Slack approval notifications through notifications config', () => {
+      const agent = createMockAgent({
+        config: {
+          model: 'anthropic:claude-sonnet-4-0',
+          approval: true,
+          notifications: {
+            notify_on: ['approval'],
+            channels: {
+              slack: {
+                enabled: true,
+                channel_id: 'C0123456789'
+              }
+            }
+          }
+        }
+      });
+
+      expect(approvalToolDefaults(agent.config)).toMatchObject({
+        slack: { channelId: 'C0123456789' }
+      });
+    });
+
+    it('does not route Slack approval notifications from approval config', () => {
+      const agent = createMockAgent({
+        config: {
+          model: 'anthropic:claude-sonnet-4-0',
+          approval: true
+        }
+      });
+
+      expect(approvalToolDefaults(agent.config)?.slack).toBeUndefined();
     });
   });
 

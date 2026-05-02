@@ -388,10 +388,10 @@ agentuse serve --port 8080
 # Bind to all interfaces (for external access)
 agentuse serve --host 0.0.0.0 --port 3000
 
-# Set the public callback URL used in approval resume links
+# Set the public URL used in approval review links
 agentuse serve --public-url https://agentuse.mycompany.com
 
-# Start with Slack approval notifications enabled
+# Provide Slack credentials for agents that enable Slack notifications
 SLACK_BOT_TOKEN=xoxb-... SLACK_APPROVAL_CHANNEL=C0123456789 agentuse serve
 
 # Use specific project directory

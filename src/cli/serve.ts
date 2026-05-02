@@ -46,14 +46,6 @@ interface RunResponse {
   };
 }
 
-interface RunErrorResponse {
-  success: false;
-  error: {
-    code: string;
-    message: string;
-  };
-}
-
 interface WorkerExecuteOptions {
   agentPath?: string;
   projectRoot: string;
@@ -446,7 +438,7 @@ function parseJSONBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   });
 }
 
-function sendJSON(res: ServerResponse, status: number, data: RunResponse | RunErrorResponse) {
+function sendJSON(res: ServerResponse, status: number, data: unknown) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
 }
@@ -458,6 +450,12 @@ function sendError(res: ServerResponse, status: number, code: string, message: s
 function sendHTML(res: ServerResponse, status: number, html: string) {
   res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" });
   res.end(html);
+}
+
+function wantsJson(requestUrl: URL, req: IncomingMessage): boolean {
+  if (requestUrl.searchParams.get('format') === 'json') return true;
+  const accept = req.headers.accept;
+  return typeof accept === 'string' && accept.split(',').some(value => value.trim().startsWith('application/json'));
 }
 
 function escapeHtml(value: unknown): string {
@@ -1316,7 +1314,7 @@ function renderApprovalPage(options: {
         <div class="cell"><span class="label">session</span><code>${escapeHtml(approval.sessionId)}</code></div>
         <div class="cell"><span class="label">project</span><code>${escapeHtml(projectId ?? 'default')}</code></div>
         <div class="cell"><span class="label">agent</span><span class="value">${escapeHtml(agentLabel)}</span></div>
-        <div class="cell"><span class="label">expires</span><span class="value">${escapeHtml(formatApprovalTime(approval.expiresAt))}</span></div>
+        ${approval.expiresAt !== undefined ? `<div class="cell"><span class="label">expires</span><span class="value">${escapeHtml(formatApprovalTime(approval.expiresAt))}</span></div>` : ''}
       </div>
     </header>
 
@@ -1608,7 +1606,7 @@ export function createServeCommand(): Command {
     .description("Start an HTTP server to run agents via API")
     .option("-p, --port <number>", "Port to listen on (default: 12233 or config.serve.port)")
     .option("-H, --host <string>", "Host to bind to (default: 127.0.0.1 or config.serve.host)")
-    .option("--public-url <url>", "Externally reachable base URL used in resume links (or config.serve.publicUrl)")
+    .option("--public-url <url>", "Externally reachable base URL used in approval review links (or config.serve.publicUrl)")
     .option("-C, --directory <path>", "Project directory (repeat for multi-project). Overrides config.serve.projects.", collectDir, [] as string[])
     .option("--default <id>", "In multi-project mode, the project id to route POST /run when no `project` field is supplied")
     .option("-d, --debug", "Enable debug mode")
@@ -2266,6 +2264,24 @@ export function createServeCommand(): Command {
               .sort((a, b) => (b.approval.decisionAt ?? b.approval.expiresAt ?? 0) - (a.approval.decisionAt ?? a.approval.expiresAt ?? 0))
           };
 
+          if (wantsJson(requestUrl, req)) {
+            const serializeRow = (row: ProjectRow) => ({
+              project: row.projectId,
+              ...row.approval
+            });
+            sendJSON(res, 200, {
+              success: true,
+              approvals: rows.map(serializeRow),
+              buckets: {
+                pending: buckets.pending.map(serializeRow),
+                completed: buckets.completed.map(serializeRow),
+                expired: buckets.expired.map(serializeRow)
+              },
+              errors
+            });
+            return;
+          }
+
           sendHTML(res, 200, renderApprovalsListPage({ buckets, errors, multiProject }));
           return;
         }
@@ -2355,6 +2371,7 @@ export function createServeCommand(): Command {
             success: true,
             sessionId,
             status,
+            approval: info.approval,
             logs: info.approval.logs ?? [],
             decision: info.approval.decision
           }));

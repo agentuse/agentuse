@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { getApprovalUrl } from '../src/tools/await-human';
+import { createAwaitHumanTool, getApprovalUrl } from '../src/tools/await-human';
+import { isSuspendSignal } from '../src/runner/suspend';
 import { registerServer, unregisterServer } from '../src/utils/server-registry';
 
 describe('await_human approval URL', () => {
@@ -50,5 +51,38 @@ describe('await_human approval URL', () => {
     expect(getApprovalUrl('session-1', 'resume-token', 'project-a', '/tmp/project-a')).toBe(
       'http://127.0.0.1:12234/approvals/session-1?token=resume-token&project=project-a'
     );
+  });
+
+  it('does not set an approval expiration by default', async () => {
+    const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
+
+    try {
+      await tool.execute?.({ prompt: 'Approve this?' } as any, {} as any);
+      throw new Error('expected suspend signal');
+    } catch (err) {
+      expect(isSuspendSignal(err)).toBe(true);
+      if (!isSuspendSignal(err)) return;
+      expect(err.payload.expiresAt).toBeUndefined();
+      expect(err.payload.approvalUrl).toContain('/approvals/session-1?token=');
+      expect(err.payload.notification).toBeUndefined();
+    }
+  });
+
+  it('sets an approval expiration only when timeout is configured', async () => {
+    const now = Date.now();
+    const tool = createAwaitHumanTool('session-1', {
+      projectRoot: '/tmp/project-a',
+      timeout: '24h'
+    });
+
+    try {
+      await tool.execute?.({ prompt: 'Approve this?' } as any, {} as any);
+      throw new Error('expected suspend signal');
+    } catch (err) {
+      expect(isSuspendSignal(err)).toBe(true);
+      if (!isSuspendSignal(err)) return;
+      expect(err.payload.expiresAt).toBeGreaterThanOrEqual(now + 24 * 60 * 60 * 1000 - 1000);
+      expect(err.payload.expiresAt).toBeLessThanOrEqual(now + 24 * 60 * 60 * 1000 + 1000);
+    }
   });
 });

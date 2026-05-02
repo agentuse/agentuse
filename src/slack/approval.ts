@@ -23,7 +23,7 @@ export interface SlackApprovalRequest {
   actions?: SlackApprovalAction[];
   resumeToken: string;
   approvalUrl?: string;
-  expiresAt: string;
+  expiresAt?: string;
 }
 
 export interface SlackApprovalMessage {
@@ -303,7 +303,9 @@ function buildActionBlocks(request: SlackApprovalRequest & { rootChannelId?: str
     elements: [
       {
         type: 'mrkdwn',
-        text: `Session \`${request.sessionId ?? 'unknown'}\` expires ${request.expiresAt}`
+          text: request.expiresAt
+            ? `Session \`${request.sessionId ?? 'unknown'}\` expires ${request.expiresAt}`
+            : `Session \`${request.sessionId ?? 'unknown'}\` has no approval timeout`
       }
     ]
   }];
@@ -315,7 +317,7 @@ function buildApprovalBlocks(request: SlackApprovalRequest): any[] {
       phase: 'waiting',
       prompt: request.prompt,
       ...(request.sessionId && { sessionId: request.sessionId }),
-      expiresAt: request.expiresAt
+      ...(request.expiresAt && { expiresAt: request.expiresAt })
     }),
     ...buildDetailThreadMessages(request).flatMap(message => message.blocks),
     ...buildActionBlocks(request)
@@ -336,10 +338,10 @@ function buildReviewLinkBlocks(request: SlackApprovalRequest): any[] {
       type: 'mrkdwn',
       text: `*Status*\nwaiting for approval`
     },
-    {
+    ...(request.expiresAt ? [{
       type: 'mrkdwn',
       text: `*Expires*\n${request.expiresAt}`
-    }
+    }] : [])
   ];
 
   return [
