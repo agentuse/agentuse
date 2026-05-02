@@ -853,7 +853,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'approval-info' | 'sweep-expired';
+    type: 'execute' | 'resume' | 'approval-info' | 'sweep-expired' | 'list-approvals';
     agentPath?: string;
     projectRoot: string;
     prompt?: string;
@@ -873,6 +873,30 @@ async function runInternalWorker() {
     prompt?: string;
     expiresAt: number;
     suspendedAt?: number;
+    notification?: { type?: string; channel?: string; ts?: string; url?: string };
+  }
+
+  type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
+
+  interface ApprovalSummary {
+    sessionId: string;
+    agentId: string;
+    agentName: string;
+    agentFilePath?: string;
+    status: ApprovalSummaryStatus;
+    sessionStatus: string;
+    prompt?: string;
+    summary?: string;
+    risk?: string;
+    suspendedAt?: number;
+    expiresAt?: number;
+    createdAt?: number;
+    decisionAt?: number;
+    decisionStatus?: string;
+    decisionComment?: string;
+    decisionReviewer?: string;
+    resumeToken?: string;
+    errorMessage?: string;
     notification?: { type?: string; channel?: string; ts?: string; url?: string };
   }
 
@@ -1136,6 +1160,106 @@ async function runInternalWorker() {
     }
   }
 
+  async function listAllApprovals(req: ExecuteRequest) {
+    try {
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const sessions = await sessionManager.listAllSessions();
+      const approvals: ApprovalSummary[] = [];
+
+      for (const { session, agentId } of sessions) {
+        const messages = await sessionManager.getSessionMessages(session.id, agentId);
+        const parts = (await Promise.all(
+          messages.map((message) => sessionManager.getMessageParts(session.id, agentId, message.id))
+        )).flat();
+
+        const approvalPart = [...parts].reverse().find((part: any) =>
+          part?.type === 'tool' && part?.tool === 'await_human'
+        ) as any;
+        if (!approvalPart) continue;
+
+        const state = approvalPart.state ?? {};
+        const input = valueAsRecord(state.input);
+        const metadata = valueAsRecord(state.metadata);
+        const resumePayload = state.status === 'pending'
+          ? valueAsRecord(state.resumePayload)
+          : valueAsRecord(metadata.resumePayload);
+        const notification = valueAsRecord(resumePayload.notification);
+        const output = valueAsRecord(state.output);
+        const reviewer = valueAsRecord(output.reviewer);
+
+        let status: ApprovalSummaryStatus;
+        let errorMessage: string | undefined;
+        if (state.status === 'pending') {
+          status = 'pending';
+        } else if (state.status === 'completed') {
+          const decisionStatus = typeof output.status === 'string' ? output.status.toLowerCase() : '';
+          status = decisionStatus === 'approve' || decisionStatus === 'approved'
+            ? 'approved'
+            : decisionStatus === 'reject' || decisionStatus === 'rejected'
+              ? 'rejected'
+              : decisionStatus === 'comment' || decisionStatus === 'commented'
+                ? 'commented'
+                : 'approved';
+        } else if (state.status === 'error') {
+          const errText = typeof state.error === 'string' ? state.error : '';
+          status = /timed out|timeout|APPROVAL_TIMEOUT/i.test(errText) ||
+            session.error?.code === 'APPROVAL_TIMEOUT'
+            ? 'expired'
+            : 'errored';
+          errorMessage = errText || session.error?.message;
+        } else {
+          status = 'errored';
+        }
+
+        const decisionAt = state.status === 'completed' || state.status === 'error'
+          ? (typeof state.time?.end === 'number' ? state.time.end : undefined)
+          : undefined;
+
+        approvals.push({
+          sessionId: session.id,
+          agentId,
+          agentName: session.agent.name || session.agent.id,
+          ...(session.agent.filePath && { agentFilePath: session.agent.filePath }),
+          status,
+          sessionStatus: session.status,
+          ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
+          ...(typeof input.summary === 'string' && { summary: input.summary }),
+          ...(typeof input.risk === 'string' && { risk: input.risk }),
+          ...(typeof state.suspendedAt === 'number' && { suspendedAt: state.suspendedAt }),
+          ...(typeof resumePayload.expiresAt === 'number' && { expiresAt: resumePayload.expiresAt }),
+          ...(typeof session.time?.created === 'number' && { createdAt: session.time.created }),
+          ...(decisionAt !== undefined && { decisionAt }),
+          ...(typeof output.status === 'string' && { decisionStatus: output.status }),
+          ...(typeof output.comment === 'string' && { decisionComment: output.comment }),
+          ...(typeof reviewer.username === 'string' && { decisionReviewer: reviewer.username }),
+          ...(typeof resumePayload.resumeToken === 'string' && { resumeToken: resumePayload.resumeToken }),
+          ...(errorMessage && { errorMessage }),
+          ...(Object.keys(notification).length > 0 && {
+            notification: {
+              ...(typeof notification.type === 'string' && { type: notification.type }),
+              ...(typeof notification.channel === 'string' && { channel: notification.channel }),
+              ...(typeof notification.ts === 'string' && { ts: notification.ts }),
+              ...(typeof notification.url === 'string' && { url: notification.url })
+            }
+          })
+        });
+      }
+
+      return {
+        id: req.id,
+        success: true as const,
+        approvals
+      };
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false as const,
+        error: { code: 'LIST_APPROVALS_ERROR', message: (err as Error).message }
+      };
+    }
+  }
+
   async function executeAgent(req: ExecuteRequest) {
     const startTime = Date.now();
     let mcp: Awaited<ReturnType<typeof connectMCP>> = [];
@@ -1315,6 +1439,10 @@ async function runInternalWorker() {
         });
       } else if (request.type === 'sweep-expired') {
         sweepExpiredApprovals(request).then((response) => {
+          console.log(JSON.stringify(response));
+        });
+      } else if (request.type === 'list-approvals') {
+        listAllApprovals(request).then((response) => {
           console.log(JSON.stringify(response));
         });
       } else if (request.type === 'execute' || request.type === 'resume') {

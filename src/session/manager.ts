@@ -361,21 +361,31 @@ export class SessionManager {
     });
   }
 
-  async getSuspendedSessions(): Promise<Array<{ session: SessionInfo; agentId: string }>> {
+  private async scanSessions(
+    predicate?: (session: SessionInfo) => boolean
+  ): Promise<Array<{ session: SessionInfo; agentId: string }>> {
     const state = await getStorageState();
     const entries = await fs.readdir(state.dir, { withFileTypes: true }).catch(() => []);
-    const suspended: Array<{ session: SessionInfo; agentId: string }> = [];
+    const results: Array<{ session: SessionInfo; agentId: string }> = [];
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const session = await readJSON<SessionInfo>(`${entry.name}/session`);
-      if (session?.status === 'suspended') {
-        const agentId = entry.name.slice(`${session.id}-`.length);
-        suspended.push({ session, agentId });
-      }
+      if (!session) continue;
+      if (predicate && !predicate(session)) continue;
+      const agentId = entry.name.slice(`${session.id}-`.length);
+      results.push({ session, agentId });
     }
 
-    return suspended;
+    return results;
+  }
+
+  async getSuspendedSessions(): Promise<Array<{ session: SessionInfo; agentId: string }>> {
+    return this.scanSessions((session) => session.status === 'suspended');
+  }
+
+  async listAllSessions(): Promise<Array<{ session: SessionInfo; agentId: string }>> {
+    return this.scanSessions();
   }
 
   async findPendingTool(sessionID: string, agentId: string): Promise<{ message: Message; part: ToolPart } | null> {

@@ -107,6 +107,35 @@ interface WorkerSweepExpiredResult {
   expired: ExpiredApproval[];
 }
 
+type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
+
+interface ApprovalSummary {
+  sessionId: string;
+  agentId: string;
+  agentName: string;
+  agentFilePath?: string;
+  status: ApprovalSummaryStatus;
+  sessionStatus: string;
+  prompt?: string;
+  summary?: string;
+  risk?: string;
+  suspendedAt?: number;
+  expiresAt?: number;
+  createdAt?: number;
+  decisionAt?: number;
+  decisionStatus?: string;
+  decisionComment?: string;
+  decisionReviewer?: string;
+  resumeToken?: string;
+  errorMessage?: string;
+  notification?: { type?: string; channel?: string; ts?: string; url?: string };
+}
+
+interface WorkerListApprovalsResult {
+  success: true;
+  approvals: ApprovalSummary[];
+}
+
 interface ApprovalPageInfo {
   sessionId: string;
   sessionStatus: string;
@@ -159,7 +188,7 @@ class AgentWorker {
   private process: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
   private pendingRequests: Map<string, {
-    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult) => void;
+    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult | WorkerListApprovalsResult) => void;
     timeoutId?: NodeJS.Timeout;
   }> = new Map();
   private requestCounter = 0;
@@ -319,7 +348,15 @@ class AgentWorker {
     }) as Promise<WorkerSweepExpiredResult | WorkerExecuteError>;
   }
 
-  private request(options: Record<string, unknown> & { timeout?: number | undefined }): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult> {
+  listApprovals(projectRoot: string): Promise<WorkerListApprovalsResult | WorkerExecuteError> {
+    return this.request({
+      type: "list-approvals",
+      projectRoot,
+      timeout: 30,
+    }) as Promise<WorkerListApprovalsResult | WorkerExecuteError>;
+  }
+
+  private request(options: Record<string, unknown> & { timeout?: number | undefined }): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult | WorkerListApprovalsResult> {
     return new Promise((resolve) => {
       if (!this.process || !this.ready) {
         resolve({
@@ -463,6 +500,285 @@ function renderLogItems(logs?: ApprovalLogEntry[]): string {
             ${entry.message ? `<pre>${escapeHtml(entry.message)}</pre>` : ''}
           </span>
         </li>`).join('');
+}
+
+function approvalListThemeStyles(): string {
+  return `
+    :root {
+      --mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #000000; --fg: #ffffff;
+      --line: rgba(255,255,255,0.10); --line-strong: rgba(255,255,255,0.18);
+      --panel: rgba(255,255,255,0.03); --panel-hover: rgba(255,255,255,0.06);
+      --muted: rgba(255,255,255,0.50); --muted-2: rgba(255,255,255,0.30); --muted-3: rgba(255,255,255,0.70);
+      --cyan: #22d3ee; --cyan-soft: rgba(34,211,238,0.08); --cyan-border: rgba(34,211,238,0.35);
+      --green: #4ade80; --green-soft: rgba(74,222,128,0.08); --green-border: rgba(74,222,128,0.35);
+      --amber: #fbbf24; --amber-soft: rgba(251,191,36,0.08); --amber-border: rgba(251,191,36,0.35);
+      --red: #f87171; --red-soft: rgba(248,113,113,0.10); --red-border: rgba(248,113,113,0.35);
+      --glow-1: rgba(34,211,238,0.06); --glow-2: rgba(74,222,128,0.04);
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #fafaf9; --fg: #0a0a0a;
+      --line: rgba(0,0,0,0.08); --line-strong: rgba(0,0,0,0.16);
+      --panel: rgba(0,0,0,0.025); --panel-hover: rgba(0,0,0,0.05);
+      --muted: rgba(0,0,0,0.55); --muted-2: rgba(0,0,0,0.35); --muted-3: rgba(0,0,0,0.75);
+      --cyan: #0891b2; --cyan-soft: rgba(8,145,178,0.08); --cyan-border: rgba(8,145,178,0.35);
+      --green: #047857; --green-soft: rgba(4,120,87,0.08); --green-border: rgba(4,120,87,0.35);
+      --amber: #b45309; --amber-soft: rgba(180,83,9,0.10); --amber-border: rgba(180,83,9,0.35);
+      --red: #b91c1c; --red-soft: rgba(185,28,28,0.08); --red-border: rgba(185,28,28,0.35);
+      --glow-1: rgba(8,145,178,0.06); --glow-2: rgba(4,120,87,0.04);
+    }
+  `;
+}
+
+function approvalThemeBootScript(): string {
+  return `(function() {
+    try {
+      var stored = localStorage.getItem('agentuse-theme');
+      var resolved = stored === 'light' || stored === 'dark'
+        ? stored
+        : (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', resolved);
+      document.documentElement.setAttribute('data-theme-pref', stored || 'system');
+    } catch (e) {}
+  })();`;
+}
+
+function renderApprovalRow(row: { projectId: string; multiProject: boolean; approval: ApprovalSummary }): string {
+  const { approval, projectId, multiProject } = row;
+  const linkable = approval.resumeToken !== undefined;
+  const params = new URLSearchParams();
+  if (approval.resumeToken) params.set('token', approval.resumeToken);
+  params.set('project', projectId);
+  const href = linkable ? `/approvals/${encodeURIComponent(approval.sessionId)}?${params.toString()}` : null;
+
+  const promptText = approval.summary || approval.prompt || '(no prompt summary)';
+  const truncated = promptText.length > 220 ? `${promptText.slice(0, 220)}…` : promptText;
+
+  const timeLabel = approval.status === 'pending'
+    ? (approval.expiresAt
+      ? `expires ${formatApprovalTime(approval.expiresAt)}`
+      : `suspended ${formatApprovalTime(approval.suspendedAt)}`)
+    : approval.status === 'expired'
+      ? `expired ${formatApprovalTime(approval.decisionAt ?? approval.expiresAt)}`
+      : `decided ${formatApprovalTime(approval.decisionAt)}`;
+
+  const decisionLabel = approval.decisionStatus
+    ? `${approval.decisionStatus}${approval.decisionReviewer ? ` by ${approval.decisionReviewer}` : ''}`
+    : approval.errorMessage || '';
+
+  const projectChip = multiProject ? `<span class="chip project">${escapeHtml(projectId)}</span>` : '';
+
+  const inner = `
+    <div class="row-head">
+      <span class="chip status ${escapeHtml(approval.status)}">${escapeHtml(approval.status)}</span>
+      ${projectChip}
+      <span class="chip agent">${escapeHtml(approval.agentName)}</span>
+      <span class="row-time">${escapeHtml(timeLabel)}</span>
+    </div>
+    <div class="row-body">${escapeHtml(truncated)}</div>
+    ${decisionLabel ? `<div class="row-decision">${escapeHtml(decisionLabel)}${approval.decisionComment ? `: ${escapeHtml(approval.decisionComment)}` : ''}</div>` : ''}
+    <div class="row-meta"><code>${escapeHtml(approval.sessionId)}</code></div>
+  `;
+
+  return href
+    ? `<a class="row" href="${escapeHtml(href)}">${inner}</a>`
+    : `<div class="row row-static">${inner}</div>`;
+}
+
+function renderApprovalBucket(
+  title: string,
+  rows: Array<{ projectId: string; multiProject: boolean; approval: ApprovalSummary }>,
+  emptyText: string
+): string {
+  return `
+    <section class="bucket">
+      <h2 class="section-title"><span>${escapeHtml(title)}</span><span class="count">${rows.length}</span><span class="rule"></span></h2>
+      ${rows.length === 0
+        ? `<p class="empty">${escapeHtml(emptyText)}</p>`
+        : `<div class="rows">${rows.map(renderApprovalRow).join('')}</div>`}
+    </section>
+  `;
+}
+
+function renderApprovalsListPage(options: {
+  buckets: {
+    pending: Array<{ projectId: string; multiProject: boolean; approval: ApprovalSummary }>;
+    completed: Array<{ projectId: string; multiProject: boolean; approval: ApprovalSummary }>;
+    expired: Array<{ projectId: string; multiProject: boolean; approval: ApprovalSummary }>;
+  };
+  errors: Array<{ projectId: string; message: string }>;
+  multiProject: boolean;
+}): string {
+  const { buckets, errors } = options;
+  const totalPending = buckets.pending.length;
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentUse / Approvals</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>${approvalThemeBootScript()}</script>
+  <meta http-equiv="refresh" content="10">
+  <style>
+    ${approvalListThemeStyles()}
+    * { box-sizing: border-box; }
+    html, body { background: var(--bg); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--fg);
+      font-family: var(--mono);
+      font-size: 14px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      background:
+        radial-gradient(1200px 600px at 50% -200px, var(--glow-1), transparent 60%),
+        radial-gradient(800px 400px at 100% 100%, var(--glow-2), transparent 60%),
+        var(--bg);
+    }
+    a { color: inherit; text-decoration: none; }
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .topbar .brand { display: inline-flex; gap: 10px; align-items: center; color: var(--fg); font-weight: 500; letter-spacing: 0.02em; }
+    .topbar .brand .slash { color: var(--muted-2); }
+    .topbar .brand .page { color: var(--muted-3); }
+    .topbar .right { display: inline-flex; gap: 18px; align-items: center; }
+    .pending-count { color: var(--cyan); }
+    main { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; padding: 32px 0 48px; }
+    h1 {
+      font-family: var(--sans);
+      font-size: clamp(24px, 3vw, 34px);
+      letter-spacing: -0.02em;
+      margin: 0 0 24px;
+      font-weight: 500;
+    }
+    .section-title {
+      display: flex; align-items: baseline; gap: 10px;
+      margin: 32px 0 12px;
+      font-size: 11px;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--muted-2);
+      font-weight: 500;
+    }
+    .section-title::before { content: "⋮"; color: var(--cyan); font-size: 14px; transform: translateY(1px); }
+    .section-title .count { color: var(--muted-3); font-size: 12px; }
+    .section-title .rule { flex: 1; height: 1px; background: var(--line); }
+    .empty { color: var(--muted-2); font-style: italic; padding: 14px 0; }
+    .rows { display: flex; flex-direction: column; gap: 8px; }
+    .row {
+      display: block;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px 16px;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+    a.row { cursor: pointer; }
+    a.row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+    .row-static { opacity: 0.85; }
+    .row-head {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      margin-bottom: 8px;
+    }
+    .row-time { color: var(--muted-2); font-size: 12px; margin-left: auto; }
+    .row-body {
+      font-family: var(--sans);
+      font-size: 14px;
+      color: var(--muted-3);
+      white-space: pre-wrap; overflow-wrap: anywhere;
+    }
+    .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
+    .row-meta { margin-top: 8px; color: var(--muted-2); font-size: 11px; }
+    .row-meta code { font-family: var(--mono); font-size: 11px; }
+    .chip {
+      display: inline-flex; align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border: 1px solid var(--line-strong);
+      background: var(--panel);
+      color: var(--muted-3);
+    }
+    .chip.status.pending { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+    .chip.status.approved, .chip.status.commented { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+    .chip.status.rejected { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
+    .chip.status.expired, .chip.status.errored { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+    .chip.project { color: var(--cyan); }
+    .chip.agent { color: var(--fg); }
+    .errors {
+      margin: 16px 0 0;
+      padding: 12px 14px;
+      border: 1px solid var(--red-border);
+      background: var(--red-soft);
+      border-radius: 10px;
+      color: var(--red);
+      font-size: 12.5px;
+    }
+    .errors ul { margin: 6px 0 0; padding-left: 20px; }
+    .theme-toggle {
+      cursor: pointer;
+      background: transparent;
+      border: 1px solid var(--line-strong);
+      color: var(--muted-3);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+    .theme-toggle:hover { background: var(--panel-hover); }
+    footer { color: var(--muted-2); font-size: 11px; margin-top: 32px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">agentuse <span class="slash">/</span> <span class="page">approvals</span></div>
+    <div class="right">
+      <span class="pending-count">${totalPending} pending</span>
+      <button class="theme-toggle" type="button" onclick="toggleTheme()">theme</button>
+    </div>
+  </div>
+  <main>
+    <h1>Approvals</h1>
+    ${errors.length > 0 ? `
+      <div class="errors">
+        Some projects failed to load:
+        <ul>${errors.map((e) => `<li>${escapeHtml(e.projectId)}: ${escapeHtml(e.message)}</li>`).join('')}</ul>
+      </div>
+    ` : ''}
+    ${renderApprovalBucket('Pending', buckets.pending, 'No approvals waiting.')}
+    ${renderApprovalBucket('Completed', buckets.completed, 'No completed approvals yet.')}
+    ${renderApprovalBucket('Expired / Errored', buckets.expired, 'Nothing has expired or errored.')}
+    <footer>auto-refreshes every 10s</footer>
+  </main>
+  <script>
+    function toggleTheme() {
+      try {
+        var current = document.documentElement.getAttribute('data-theme') || 'dark';
+        var next = current === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        document.documentElement.setAttribute('data-theme-pref', next);
+        localStorage.setItem('agentuse-theme', next);
+      } catch (e) {}
+    }
+  </script>
+</body>
+</html>`;
 }
 
 function renderApprovalPage(options: {
@@ -1920,6 +2236,43 @@ export function createServeCommand(): Command {
           };
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(info));
+          return;
+        }
+
+        if (req.method === "GET" && requestUrl.pathname === '/approvals') {
+          type ProjectRow = { projectId: string; multiProject: boolean; approval: ApprovalSummary };
+          const rows: ProjectRow[] = [];
+          const errors: Array<{ projectId: string; message: string }> = [];
+
+          for (const project of projects) {
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) {
+              errors.push({ projectId: project.id, message: 'Worker unavailable' });
+              continue;
+            }
+            const result = await projectWorker.listApprovals(project.root);
+            if (!result.success) {
+              errors.push({ projectId: project.id, message: result.error.message });
+              continue;
+            }
+            for (const approval of result.approvals) {
+              rows.push({ projectId: project.id, multiProject, approval });
+            }
+          }
+
+          const buckets = {
+            pending: rows
+              .filter((r) => r.approval.status === 'pending')
+              .sort((a, b) => (a.approval.expiresAt ?? Number.MAX_SAFE_INTEGER) - (b.approval.expiresAt ?? Number.MAX_SAFE_INTEGER)),
+            completed: rows
+              .filter((r) => r.approval.status === 'approved' || r.approval.status === 'rejected' || r.approval.status === 'commented')
+              .sort((a, b) => (b.approval.decisionAt ?? 0) - (a.approval.decisionAt ?? 0)),
+            expired: rows
+              .filter((r) => r.approval.status === 'expired' || r.approval.status === 'errored')
+              .sort((a, b) => (b.approval.decisionAt ?? b.approval.expiresAt ?? 0) - (a.approval.decisionAt ?? a.approval.expiresAt ?? 0))
+          };
+
+          sendHTML(res, 200, renderApprovalsListPage({ buckets, errors, multiProject }));
           return;
         }
 
