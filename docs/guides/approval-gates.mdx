@@ -267,9 +267,14 @@ The decision endpoint returns immediately while the suspended session resumes in
 For development or manual testing, you can resume a suspended session from the CLI:
 
 ```bash
-agentuse resume session_abc123 \
-  --resume-token "$resumeToken" \
-  --tool-result '{"status":"approve","comment":"Looks good"}'
+agentuse sessions resume session_abc123 --approve
 ```
 
-Prefer the `/approvals` UI for normal review, Slack for reviewer notification, and the Approval API for custom review surfaces.
+You can also reject or comment without writing JSON:
+
+```bash
+agentuse sessions resume session_abc123 --reject "Not ready"
+agentuse sessions resume session_abc123 --comment "Shorten this and add pricing"
+```
+
+Prefer the `/approvals` UI for normal review, Slack for reviewer notification, the Approval API for custom review surfaces, and `agentuse sessions resume` for local testing.

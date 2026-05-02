@@ -1,9 +1,17 @@
 import { Command } from "commander";
 import fs from "fs/promises";
 import path from "path";
+import * as dotenv from "dotenv";
 import { getSessionStorageDir, getProjectDir } from "../storage/paths";
 import type { SessionInfo, Message, Part, SessionStatus } from "../session/types";
+import { initStorage } from "../storage";
+import { SessionManager } from "../session";
 import { resolveProjectContext } from "../utils/project";
+import { loadGlobalEnv } from "../utils/global-config";
+import { logger, LogLevel } from "../utils/logger";
+import { parseAgent } from "../parser";
+import { connectMCP } from "../mcp";
+import { applyResumeToolResult, runAgent } from "../runner";
 
 interface SessionSummary {
   id: string;
@@ -340,6 +348,73 @@ function extractOutputValue(output: unknown): string {
   return String(output);
 }
 
+function parseToolResult(raw?: string): unknown {
+  if (!raw) {
+    throw new Error("Missing --tool-result JSON");
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error("--tool-result must be valid JSON");
+  }
+}
+
+function decisionValue(value: string | boolean | undefined): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function buildApprovalToolResult(options: {
+  approve?: string | boolean;
+  reject?: string | boolean;
+  comment?: string;
+}): unknown | null {
+  const decisions = [
+    options.approve !== undefined ? "approve" : null,
+    options.reject !== undefined ? "reject" : null,
+    options.comment !== undefined ? "comment" : null,
+  ].filter(Boolean);
+
+  if (decisions.length === 0) return null;
+  if (decisions.length > 1) {
+    throw new Error("Choose only one of --approve, --reject, or --comment");
+  }
+
+  const status = decisions[0]!;
+  const comment = status === "approve"
+    ? decisionValue(options.approve)
+    : status === "reject"
+      ? decisionValue(options.reject)
+      : options.comment;
+
+  return {
+    status,
+    ...(comment && { comment }),
+    reviewer: { username: "cli" }
+  };
+}
+
+function lastAssistantText(details: { messages: Array<{ message: Message; parts: Part[] }> }): string | undefined {
+  for (const entry of [...details.messages].reverse()) {
+    const text = [...entry.parts].reverse().find((part): part is Part & { type: "text"; text: string } =>
+      part.type === "text" && typeof (part as any).text === "string" && (part as any).text.trim().length > 0
+    );
+    if (text) return text.text.trim();
+  }
+  return undefined;
+}
+
+function buildContinuationPrompt(session: SessionInfo, details: { messages: Array<{ message: Message; parts: Part[] }> }, prompt?: string): string {
+  const previous = lastAssistantText(details);
+  return [
+    `Continue from previous AgentUse session ${session.id}.`,
+    `Previous session status: ${session.status}.`,
+    previous ? `Previous final assistant output:\n${previous}` : undefined,
+    prompt?.trim()
+      ? `New instruction:\n${prompt.trim()}`
+      : "New instruction:\nContinue from where the previous session left off.",
+  ].filter(Boolean).join("\n\n");
+}
+
 /**
  * Format tool output with truncation and line limits
  */
@@ -409,6 +484,28 @@ export function createSessionsCommand(): Command {
     .action(async (id: string, options: { json?: boolean; full?: boolean }) => {
       const projectContext = resolveProjectContext(process.cwd());
       await showSession(projectContext.projectRoot, id, options);
+    });
+
+  sessionsCmd
+    .command("resume <id>")
+    .description("Resume a suspended or ended session")
+    .option("--approve [comment]", "Approve a suspended approval request")
+    .option("--reject [comment]", "Reject a suspended approval request with an optional comment")
+    .option("--comment <comment>", "Send a reviewer comment to a suspended approval request")
+    .option("--tool-result <json>", "JSON result for a suspended non-approval await_* tool")
+    .option("--prompt <text>", "Instruction for continuing an ended session")
+    .option("-C, --directory <path>", "Run as if agentuse was started in <path> instead of the current directory")
+    .option("-d, --debug", "Enable debug logging")
+    .action(async (id: string, options: {
+      approve?: string | boolean;
+      reject?: string | boolean;
+      comment?: string;
+      toolResult?: string;
+      prompt?: string;
+      directory?: string;
+      debug?: boolean;
+    }) => {
+      await resumeSession(id, options);
     });
 
   // Add path subcommand to show storage location
@@ -733,4 +830,175 @@ async function showSession(
   }
 
   process.stdout.write(`\n`);
+}
+
+async function resolveSessionByPrefix(projectRoot: string, sessionId: string): Promise<SessionSummary> {
+  const sessions = await listSessions(projectRoot);
+  const matches = sessions.filter((s) =>
+    s.id.toLowerCase().startsWith(sessionId.toLowerCase())
+  );
+
+  if (matches.length === 0) {
+    throw new Error(`No session found matching: ${sessionId}`);
+  }
+  if (matches.length > 1) {
+    const rendered = matches.map((m) => `  ${m.id.substring(0, 12)}  ${m.agentName}`).join("\n");
+    throw new Error(`Multiple sessions match '${sessionId}':\n${rendered}\n\nPlease use a more specific ID.`);
+  }
+
+  return matches[0];
+}
+
+async function resumeSession(
+  sessionId: string,
+  options: {
+    approve?: string | boolean;
+    reject?: string | boolean;
+    comment?: string;
+    toolResult?: string;
+    prompt?: string;
+    directory?: string;
+    debug?: boolean;
+  }
+): Promise<void> {
+  logger.configure({
+    level: options.debug ? LogLevel.DEBUG : LogLevel.INFO,
+    ...(options.debug && { enableDebug: true })
+  });
+
+  const cwd = options.directory ? path.resolve(options.directory) : process.cwd();
+  const projectContext = resolveProjectContext(cwd, {
+    ...(options.directory && { projectRoot: cwd })
+  });
+
+  loadGlobalEnv();
+  if (projectContext.envFile) {
+    try {
+      dotenv.config({ path: projectContext.envFile, quiet: true });
+    } catch {
+      // Best-effort env loading, matching the rest of the CLI's forgiving posture.
+    }
+  }
+
+  await initStorage(projectContext.projectRoot);
+  const summary = await resolveSessionByPrefix(projectContext.projectRoot, sessionId);
+  const sessionManager = new SessionManager();
+  const found = await sessionManager.findSession(summary.id);
+  if (!found) {
+    throw new Error(`Session not found: ${summary.id}`);
+  }
+  if (!found.session.agent.filePath) {
+    throw new Error(`Session ${summary.id} does not record an agent file path`);
+  }
+
+  if (found.session.status === "running") {
+    throw new Error(`Session ${summary.id} is already running`);
+  }
+
+  if (found.session.status === "suspended") {
+    const pending = await sessionManager.findPendingTool(summary.id, found.agentId);
+    if (!pending) {
+      throw new Error(`Session ${summary.id} is suspended, but no pending tool was found`);
+    }
+
+    const pendingKind = pending.part.state.status === "pending"
+      ? pending.part.state.resumePayload?.kind
+      : undefined;
+    const approvalResult = buildApprovalToolResult(options);
+    const toolResult = approvalResult ?? (options.toolResult ? parseToolResult(options.toolResult) : undefined);
+
+    if (!toolResult) {
+      if (pendingKind === "await_human" || pending.part.tool === "await_human") {
+        const input = pending.part.state.status === "pending" ? pending.part.state.input : undefined;
+        const prompt = input && typeof input === "object" && typeof (input as Record<string, unknown>).prompt === "string"
+          ? `\nPrompt: ${(input as Record<string, unknown>).prompt}`
+          : "";
+        throw new Error(`Session ${summary.id} is waiting for approval.${prompt}\nUse --approve, --reject, or --comment.`);
+      }
+      throw new Error(`Session ${summary.id} is waiting on ${pending.part.tool}. Use --tool-result <json>.`);
+    }
+
+    const { agentFilePath } = await applyResumeToolResult({
+      sessionManager,
+      sessionId: summary.id,
+      toolResult,
+      skipTokenValidation: true
+    });
+
+    const agentPath = agentFilePath ?? found.session.agent.filePath;
+    const agent = await parseAgent(agentPath);
+    const mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, path.dirname(agentPath));
+
+    const result = await runAgent(
+      agent,
+      mcp,
+      options.debug ?? false,
+      undefined,
+      Date.now(),
+      options.debug ?? false,
+      agentPath,
+      undefined,
+      sessionManager,
+      { projectRoot: projectContext.projectRoot, cwd },
+      undefined,
+      undefined,
+      false,
+      undefined,
+      true,
+      summary.id
+    );
+
+    process.stdout.write(JSON.stringify({
+      success: true,
+      sessionId: summary.id,
+      status: result.status ?? "completed",
+      result: {
+        text: result.text,
+        finishReason: result.finishReason,
+        toolCalls: result.toolCallCount
+      }
+    }, null, 2) + "\n");
+    return;
+  }
+
+  if (options.approve !== undefined || options.reject !== undefined || options.comment !== undefined || options.toolResult) {
+    throw new Error(`Session ${summary.id} is ${found.session.status}; approval and tool-result flags only apply to suspended sessions`);
+  }
+
+  const details = await getSessionDetails(summary.dirPath);
+  if (!details.session) {
+    throw new Error(`Failed to read session: ${summary.id}`);
+  }
+
+  const agent = await parseAgent(found.session.agent.filePath);
+  const mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, path.dirname(found.session.agent.filePath));
+  const continuationPrompt = buildContinuationPrompt(found.session, details, options.prompt);
+  const result = await runAgent(
+    agent,
+    mcp,
+    options.debug ?? false,
+    undefined,
+    Date.now(),
+    options.debug ?? false,
+    found.session.agent.filePath,
+    undefined,
+    sessionManager,
+    { projectRoot: projectContext.projectRoot, cwd },
+    continuationPrompt,
+    undefined,
+    false,
+    undefined,
+    true
+  );
+
+  process.stdout.write(JSON.stringify({
+    success: true,
+    continuedFrom: summary.id,
+    status: result.status ?? "completed",
+    result: {
+      text: result.text,
+      finishReason: result.finishReason,
+      toolCalls: result.toolCallCount
+    }
+  }, null, 2) + "\n");
 }

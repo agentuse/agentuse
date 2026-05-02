@@ -7,7 +7,6 @@ import { createProviderCommand, createAuthCommand } from './cli/auth';
 import { AuthStorage } from './auth/storage';
 import { createSessionsCommand } from './cli/sessions';
 import { createServeCommand } from './cli/serve';
-import { createResumeCommand } from './cli/resume';
 import { createModelsCommand } from './cli/models';
 import { createSkillsCommand } from './cli/skills';
 import { createBenchmarkCommand } from './cli/benchmark';
@@ -119,9 +118,6 @@ program.addCommand(createSessionsCommand());
 
 // Add serve command (includes ps subcommand)
 program.addCommand(createServeCommand());
-
-// Add resume command
-program.addCommand(createResumeCommand());
 
 // Add models command
 program.addCommand(createModelsCommand());

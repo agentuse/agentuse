@@ -5,8 +5,9 @@ export async function applyResumeToolResult(options: {
   sessionId: string;
   toolResult: unknown;
   resumeToken?: string;
+  skipTokenValidation?: boolean;
 }): Promise<{ agentId: string; agentFilePath?: string }> {
-  const { sessionManager, sessionId, toolResult, resumeToken } = options;
+  const { sessionManager, sessionId, toolResult, resumeToken, skipTokenValidation } = options;
   const found = await sessionManager.findSession(sessionId);
   if (!found) {
     throw new Error(`SESSION_NOT_FOUND: ${sessionId}`);
@@ -23,7 +24,7 @@ export async function applyResumeToolResult(options: {
   const expectedToken = pending.part.state.status === 'pending'
     ? pending.part.state.resumePayload?.resumeToken
     : undefined;
-  if (expectedToken && expectedToken !== resumeToken) {
+  if (!skipTokenValidation && expectedToken && expectedToken !== resumeToken) {
     throw new Error('RESUME_TOKEN_INVALID');
   }
 

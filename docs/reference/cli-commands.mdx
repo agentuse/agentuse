@@ -208,6 +208,58 @@ agentuse run agent.agentuse -m openai:gpt-5.2:dev
 agentuse run orchestrator.agentuse --model openai:gpt-5-mini
 ```
 
+## agentuse sessions
+
+View and resume AgentUse sessions.
+
+### Syntax
+
+```bash
+agentuse sessions [id] [options]
+agentuse sessions list [options]
+agentuse sessions show <id> [options]
+agentuse sessions resume <id> [options]
+agentuse sessions path
+```
+
+### Resume a Session
+
+Use `agentuse sessions resume` for local continuation. It supports suspended approval sessions and ended sessions.
+
+For a suspended approval session:
+
+```bash
+agentuse sessions resume 01K... --approve
+agentuse sessions resume 01K... --approve "Looks good"
+agentuse sessions resume 01K... --reject "Not ready"
+agentuse sessions resume 01K... --comment "Please revise the CTA"
+```
+
+The CLI uses local session access as the trust boundary, so approval resumes do not require a resume token.
+
+For a suspended non-approval `await_*` tool:
+
+```bash
+agentuse sessions resume 01K... --tool-result '{"status":"done"}'
+```
+
+For a completed or errored session, AgentUse starts a new run from the original agent file with continuation context:
+
+```bash
+agentuse sessions resume 01K... --prompt "Continue from here and add tests"
+```
+
+### Options
+
+```bash
+-s, --subagents          Include subagent sessions when listing
+-n, --limit <n>          Limit number of sessions to show
+-j, --json               Output as JSON
+-f, --full               Show full tool input/output
+-C, --directory <path>   Run as if agentuse was started in <path>
+-d, --debug              Enable debug logging for resume
+```
+
 ## agentuse serve
 
 Start an HTTP server to run agents via API. This enables integration with external applications, webhooks, or any system that can make HTTP requests.
