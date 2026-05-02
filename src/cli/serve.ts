@@ -548,6 +548,118 @@ function approvalThemeBootScript(): string {
   })();`;
 }
 
+function approvalsTopbarStyles(): string {
+  return `
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .topbar .brand { display: inline-flex; gap: 10px; align-items: center; color: var(--fg); font-weight: 500; letter-spacing: 0.02em; }
+    .topbar .brand a { color: inherit; text-decoration: none; border: 0; }
+    .topbar .brand a:hover { opacity: 1; color: var(--fg); }
+    .topbar .brand .slash { color: var(--muted-2); }
+    .topbar .brand .page { color: var(--muted-3); transition: color 120ms ease; }
+    .topbar .brand a.page:hover { color: var(--fg); }
+    .topbar .right { display: inline-flex; gap: 18px; align-items: center; }
+    .session-pill { color: var(--muted); }
+    .session-pill code { color: var(--muted-3); }
+    .pending-count { color: var(--cyan); }
+    .theme-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      padding: 2px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+    }
+    .theme-toggle button {
+      min-height: 0;
+      padding: 4px 8px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted-2);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+    }
+    .theme-toggle button:hover { background: transparent; color: var(--muted-3); border: 0; }
+    .theme-toggle button[aria-pressed="true"] {
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--line);
+    }
+    .theme-toggle svg { width: 12px; height: 12px; display: block; }
+    @media (max-width: 640px) {
+      .topbar { padding: 12px 16px; flex-wrap: wrap; gap: 6px; }
+    }
+  `;
+}
+
+function approvalsThemeToggleHtml(): string {
+  return `<span class="theme-toggle" role="group" aria-label="Theme">
+      <button type="button" data-theme-pref="light" title="Light" aria-label="Light theme">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M14.5 8H13M3 8H1.5M12.6 3.4l-1.06 1.06M4.46 11.54L3.4 12.6M12.6 12.6l-1.06-1.06M4.46 4.46L3.4 3.4"/></svg>
+      </button>
+      <button type="button" data-theme-pref="system" title="System" aria-label="System theme">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M5.5 13.5h5M8 11v2.5" stroke-linecap="round"/></svg>
+      </button>
+      <button type="button" data-theme-pref="dark" title="Dark" aria-label="Dark theme">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7Z"/></svg>
+      </button>
+    </span>`;
+}
+
+function approvalsThemeToggleScript(): string {
+  return `
+    (function() {
+      const themeMql = window.matchMedia('(prefers-color-scheme: light)');
+      function applyTheme(pref) {
+        const resolved = pref === 'light' || pref === 'dark'
+          ? pref
+          : (themeMql.matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', resolved);
+        document.documentElement.setAttribute('data-theme-pref', pref);
+        for (const btn of document.querySelectorAll('.theme-toggle button')) {
+          btn.setAttribute('aria-pressed', String(btn.dataset.themePref === pref));
+        }
+      }
+      function currentPref() {
+        return localStorage.getItem('agentuse-theme') || 'system';
+      }
+      applyTheme(currentPref());
+      for (const btn of document.querySelectorAll('.theme-toggle button')) {
+        btn.addEventListener('click', () => {
+          const pref = btn.dataset.themePref;
+          if (pref === 'system') localStorage.removeItem('agentuse-theme');
+          else localStorage.setItem('agentuse-theme', pref);
+          applyTheme(pref);
+        });
+      }
+      themeMql.addEventListener('change', () => {
+        if (currentPref() === 'system') applyTheme('system');
+      });
+    })();
+  `;
+}
+
+function approvalsTopbarMarkup(opts: { right?: string; isCurrentPage?: boolean }): string {
+  const pageMarkup = opts.isCurrentPage
+    ? `<span class="page">approvals</span>`
+    : `<a class="page" href="/approvals">approvals</a>`;
+  return `<div class="topbar">
+    <span class="brand"><span>agentuse</span><span class="slash">/</span>${pageMarkup}</span>
+    <span class="right">${opts.right ?? ''}</span>
+  </div>`;
+}
+
 function renderApprovalRow(row: { projectId: string; multiProject: boolean; approval: ApprovalSummary }): string {
   const { approval, projectId, multiProject } = row;
   const linkable = approval.resumeToken !== undefined;
@@ -646,18 +758,7 @@ function renderApprovalsListPage(options: {
         var(--bg);
     }
     a { color: inherit; text-decoration: none; }
-    .topbar {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 16px 24px;
-      border-bottom: 1px solid var(--line);
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .topbar .brand { display: inline-flex; gap: 10px; align-items: center; color: var(--fg); font-weight: 500; letter-spacing: 0.02em; }
-    .topbar .brand .slash { color: var(--muted-2); }
-    .topbar .brand .page { color: var(--muted-3); }
-    .topbar .right { display: inline-flex; gap: 18px; align-items: center; }
-    .pending-count { color: var(--cyan); }
+    ${approvalsTopbarStyles()}
     main { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; padding: 32px 0 48px; }
     h1 {
       font-family: var(--sans);
@@ -731,28 +832,14 @@ function renderApprovalsListPage(options: {
       font-size: 12.5px;
     }
     .errors ul { margin: 6px 0 0; padding-left: 20px; }
-    .theme-toggle {
-      cursor: pointer;
-      background: transparent;
-      border: 1px solid var(--line-strong);
-      color: var(--muted-3);
-      border-radius: 6px;
-      padding: 4px 10px;
-      font-family: var(--mono);
-      font-size: 11px;
-    }
-    .theme-toggle:hover { background: var(--panel-hover); }
     footer { color: var(--muted-2); font-size: 11px; margin-top: 32px; text-align: center; }
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <div class="brand">agentuse <span class="slash">/</span> <span class="page">approvals</span></div>
-    <div class="right">
-      <span class="pending-count">${totalPending} pending</span>
-      <button class="theme-toggle" type="button" onclick="toggleTheme()">theme</button>
-    </div>
-  </div>
+  ${approvalsTopbarMarkup({
+    isCurrentPage: true,
+    right: `<span class="pending-count">${totalPending} pending</span>${approvalsThemeToggleHtml()}`
+  })}
   <main>
     <h1>Approvals</h1>
     ${errors.length > 0 ? `
@@ -766,17 +853,7 @@ function renderApprovalsListPage(options: {
     ${renderApprovalBucket('Expired / Errored', buckets.expired, 'Nothing has expired or errored.')}
     <footer>auto-refreshes every 10s</footer>
   </main>
-  <script>
-    function toggleTheme() {
-      try {
-        var current = document.documentElement.getAttribute('data-theme') || 'dark';
-        var next = current === 'dark' ? 'light' : 'dark';
-        document.documentElement.setAttribute('data-theme', next);
-        document.documentElement.setAttribute('data-theme-pref', next);
-        localStorage.setItem('agentuse-theme', next);
-      } catch (e) {}
-    }
-  </script>
+  <script>${approvalsThemeToggleScript()}</script>
 </body>
 </html>`;
 }
@@ -919,19 +996,7 @@ function renderApprovalPage(options: {
     a:hover { opacity: 0.8; }
 
     /* top bar */
-    .topbar {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 16px 24px;
-      border-bottom: 1px solid var(--line);
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .topbar .brand { display: inline-flex; gap: 10px; align-items: center; color: var(--fg); font-weight: 500; letter-spacing: 0.02em; }
-    .topbar .brand .slash { color: var(--muted-2); }
-    .topbar .brand .page { color: var(--muted-3); }
-    .topbar .right { display: inline-flex; gap: 18px; align-items: center; }
-    .session-pill { color: var(--muted); }
-    .session-pill code { color: var(--muted-3); }
+    ${approvalsTopbarStyles()}
 
     main { width: min(960px, calc(100vw - 32px)); margin: 0 auto; padding: 40px 0 24px; }
 
@@ -1129,37 +1194,6 @@ function renderApprovalPage(options: {
     button.danger:hover { background: var(--red-soft); border-color: var(--red); }
     button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
 
-    /* theme toggle */
-    .theme-toggle {
-      display: inline-flex;
-      align-items: center;
-      gap: 0;
-      padding: 2px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: var(--panel);
-    }
-    .theme-toggle button {
-      min-height: 0;
-      padding: 4px 8px;
-      border: 0;
-      border-radius: 999px;
-      background: transparent;
-      color: var(--muted-2);
-      font-size: 11px;
-      letter-spacing: 0.04em;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .theme-toggle button:hover { background: transparent; color: var(--muted-3); border: 0; }
-    .theme-toggle button[aria-pressed="true"] {
-      background: var(--bg);
-      color: var(--fg);
-      border: 1px solid var(--line);
-    }
-    .theme-toggle svg { width: 12px; height: 12px; display: block; }
-
     /* comment dialog */
     dialog#comment-dialog {
       width: min(560px, calc(100vw - 32px));
@@ -1259,7 +1293,6 @@ function renderApprovalPage(options: {
 
     /* responsive */
     @media (max-width: 640px) {
-      .topbar { padding: 12px 16px; flex-wrap: wrap; gap: 6px; }
       h1 { font-size: 26px; }
       .action-bar-inner { grid-template-columns: 1fr; }
       .action-bar .hint { display: none; }
@@ -1269,23 +1302,9 @@ function renderApprovalPage(options: {
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <span class="brand"><span>agentuse</span><span class="slash">/</span><span class="page">approval</span></span>
-    <span class="right">
-      <span class="session-pill">session <code>${escapeHtml(approval.sessionId.slice(0, 8))}…</code></span>
-      <span class="theme-toggle" role="group" aria-label="Theme">
-        <button type="button" data-theme-pref="light" title="Light" aria-label="Light theme">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M14.5 8H13M3 8H1.5M12.6 3.4l-1.06 1.06M4.46 11.54L3.4 12.6M12.6 12.6l-1.06-1.06M4.46 4.46L3.4 3.4"/></svg>
-        </button>
-        <button type="button" data-theme-pref="system" title="System" aria-label="System theme">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M5.5 13.5h5M8 11v2.5" stroke-linecap="round"/></svg>
-        </button>
-        <button type="button" data-theme-pref="dark" title="Dark" aria-label="Dark theme">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7Z"/></svg>
-        </button>
-      </span>
-    </span>
-  </div>
+  ${approvalsTopbarMarkup({
+    right: `<span class="session-pill">session <code>${escapeHtml(approval.sessionId.slice(0, 8))}…</code></span>${approvalsThemeToggleHtml()}`
+  })}
 
   <main>
     <header>
@@ -1365,32 +1384,7 @@ function renderApprovalPage(options: {
     const logsEl = document.getElementById('logs');
 
     // theme toggle
-    const themeMql = window.matchMedia('(prefers-color-scheme: light)');
-    function applyTheme(pref) {
-      const resolved = pref === 'light' || pref === 'dark'
-        ? pref
-        : (themeMql.matches ? 'light' : 'dark');
-      document.documentElement.setAttribute('data-theme', resolved);
-      document.documentElement.setAttribute('data-theme-pref', pref);
-      for (const btn of document.querySelectorAll('.theme-toggle button')) {
-        btn.setAttribute('aria-pressed', String(btn.dataset.themePref === pref));
-      }
-    }
-    function currentPref() {
-      return localStorage.getItem('agentuse-theme') || 'system';
-    }
-    applyTheme(currentPref());
-    for (const btn of document.querySelectorAll('.theme-toggle button')) {
-      btn.addEventListener('click', () => {
-        const pref = btn.dataset.themePref;
-        if (pref === 'system') localStorage.removeItem('agentuse-theme');
-        else localStorage.setItem('agentuse-theme', pref);
-        applyTheme(pref);
-      });
-    }
-    themeMql.addEventListener('change', () => {
-      if (currentPref() === 'system') applyTheme('system');
-    });
+    ${approvalsThemeToggleScript()}
     function escapeText(value) {
       return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
         '&': '&amp;',
