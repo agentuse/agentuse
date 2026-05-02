@@ -10,6 +10,7 @@ export interface SuspendPayload {
   };
   expiresAt?: number;
   resumeToken?: string;
+  approvalUrl?: string;
 }
 
 export class SuspendSignal extends Error {

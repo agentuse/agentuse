@@ -172,6 +172,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
         channel: effectiveChannel,
         expiresAt,
         resumeToken,
+        ...(approvalUrl && { approvalUrl }),
         ...(slackNotification
           ? { notification: slackNotification }
           : notifyUrl

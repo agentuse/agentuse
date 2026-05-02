@@ -853,7 +853,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'approval-info';
+    type: 'execute' | 'resume' | 'approval-info' | 'sweep-expired';
     agentPath?: string;
     projectRoot: string;
     prompt?: string;
@@ -864,6 +864,16 @@ async function runInternalWorker() {
     sessionId?: string;
     toolResult?: unknown;
     resumeToken?: string;
+  }
+
+  interface ExpiredApproval {
+    sessionId: string;
+    agentId: string;
+    agentName: string;
+    prompt?: string;
+    expiresAt: number;
+    suspendedAt?: number;
+    notification?: { type?: string; channel?: string; ts?: string; url?: string };
   }
 
   function valueAsRecord(value: unknown): Record<string, unknown> {
@@ -963,7 +973,8 @@ async function runInternalWorker() {
         (
           part?.state?.resumePayload?.kind === 'await_human' ||
           part?.state?.status === 'completed' ||
-          part?.state?.status === 'running'
+          part?.state?.status === 'running' ||
+          part?.state?.metadata?.resumePayload?.kind === 'await_human'
         )
       ) as any;
 
@@ -1048,6 +1059,79 @@ async function runInternalWorker() {
         id: req.id,
         success: false,
         error: { code: 'INTERNAL_ERROR', message: (err as Error).message },
+      };
+    }
+  }
+
+  async function sweepExpiredApprovals(req: ExecuteRequest) {
+    try {
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const suspended = await sessionManager.getSuspendedSessions();
+      const now = Date.now();
+      const expired: ExpiredApproval[] = [];
+
+      for (const { session, agentId } of suspended) {
+        const pending = await sessionManager.findPendingTool(session.id, agentId);
+        if (!pending) continue;
+        const state = pending.part.state;
+        if (state.status !== 'pending') continue;
+        const resumePayload = state.resumePayload;
+        const expiresAt = typeof resumePayload?.expiresAt === 'number' ? resumePayload.expiresAt : undefined;
+        if (!expiresAt || expiresAt > now) continue;
+
+        const start = state.suspendedAt ?? expiresAt;
+        await sessionManager.updatePart(
+          session.id,
+          agentId,
+          pending.message.id,
+          pending.part.id,
+          {
+            state: {
+              status: 'error',
+              input: state.input,
+              error: 'Approval timed out',
+              ...(resumePayload && { metadata: { resumePayload } }),
+              time: { start, end: now }
+            }
+          } as any
+        ).catch(() => {});
+
+        await sessionManager.setSessionError(session.id, agentId, {
+          code: 'APPROVAL_TIMEOUT',
+          message: `Approval not received before ${new Date(expiresAt).toISOString()}`
+        }).catch(() => {});
+
+        const input = valueAsRecord(state.input);
+        const notification = valueAsRecord(resumePayload?.notification);
+        expired.push({
+          sessionId: session.id,
+          agentId,
+          agentName: session.agent.name || session.agent.id,
+          ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
+          expiresAt,
+          ...(typeof state.suspendedAt === 'number' && { suspendedAt: state.suspendedAt }),
+          ...(Object.keys(notification).length > 0 && {
+            notification: {
+              ...(typeof notification.type === 'string' && { type: notification.type }),
+              ...(typeof notification.channel === 'string' && { channel: notification.channel }),
+              ...(typeof notification.ts === 'string' && { ts: notification.ts }),
+              ...(typeof notification.url === 'string' && { url: notification.url })
+            }
+          })
+        });
+      }
+
+      return {
+        id: req.id,
+        success: true as const,
+        expired
+      };
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false as const,
+        error: { code: 'SWEEP_ERROR', message: (err as Error).message }
       };
     }
   }
@@ -1176,6 +1260,7 @@ async function runInternalWorker() {
               },
             }),
             toolCalls: result.toolCallCount || 0,
+            ...(result.approvalUrl && { approvalUrl: result.approvalUrl }),
           },
         };
       } catch (err) {
@@ -1226,6 +1311,10 @@ async function runInternalWorker() {
       const request = JSON.parse(line) as ExecuteRequest;
       if (request.type === 'approval-info') {
         getApprovalInfo(request).then((response) => {
+          console.log(JSON.stringify(response));
+        });
+      } else if (request.type === 'sweep-expired') {
+        sweepExpiredApprovals(request).then((response) => {
           console.log(JSON.stringify(response));
         });
       } else if (request.type === 'execute' || request.type === 'resume') {

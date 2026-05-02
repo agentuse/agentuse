@@ -1063,6 +1063,16 @@ export const approvalLog = {
   formatTimestamp: executionLog.formatTimestamp,
   formatDuration: executionLog.formatDuration,
 
+  sent(agentPath: string, approvalUrl?: string): void {
+    const urlSuffix = approvalUrl ? ` ${chalk.underline(approvalUrl)}` : '';
+    console.log(`${this.formatTimestamp()} ${chalk.cyan('Approval requested:')} ${agentPath}${urlSuffix}`);
+  },
+
+  expired(agentPath: string, sessionId: string, expiresAt: number): void {
+    const when = new Date(expiresAt).toISOString();
+    console.log(`${this.formatTimestamp()} ${chalk.yellow('Approval expired:')} ${agentPath} ${chalk.dim(sessionId)} ${chalk.dim(`(expired ${when})`)}`);
+  },
+
   received(channel: string, action: string, sessionId: string, reviewer?: string): void {
     const reviewerSuffix = reviewer ? ` by ${reviewer}` : '';
     console.log(`${this.formatTimestamp()} ${chalk.cyan('Approval received:')} ${channel} ${action} for ${sessionId}${reviewerSuffix}`);

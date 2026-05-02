@@ -75,6 +75,7 @@ interface WorkerExecuteResult {
     duration: number;
     tokens?: { input: number; output: number };
     toolCalls: number;
+    approvalUrl?: string;
   };
 }
 
@@ -89,6 +90,21 @@ interface WorkerExecuteError {
 interface WorkerApprovalInfoResult {
   success: true;
   approval: ApprovalPageInfo;
+}
+
+interface ExpiredApproval {
+  sessionId: string;
+  agentId: string;
+  agentName: string;
+  prompt?: string;
+  expiresAt: number;
+  suspendedAt?: number;
+  notification?: { type?: string; channel?: string; ts?: string; url?: string };
+}
+
+interface WorkerSweepExpiredResult {
+  success: true;
+  expired: ExpiredApproval[];
 }
 
 interface ApprovalPageInfo {
@@ -143,7 +159,7 @@ class AgentWorker {
   private process: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
   private pendingRequests: Map<string, {
-    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult) => void;
+    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult) => void;
     timeoutId?: NodeJS.Timeout;
   }> = new Map();
   private requestCounter = 0;
@@ -295,7 +311,15 @@ class AgentWorker {
     }) as Promise<WorkerApprovalInfoResult | WorkerExecuteError>;
   }
 
-  private request(options: Record<string, unknown> & { timeout?: number | undefined }): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult> {
+  sweepExpired(projectRoot: string): Promise<WorkerSweepExpiredResult | WorkerExecuteError> {
+    return this.request({
+      type: "sweep-expired",
+      projectRoot,
+      timeout: 30,
+    }) as Promise<WorkerSweepExpiredResult | WorkerExecuteError>;
+  }
+
+  private request(options: Record<string, unknown> & { timeout?: number | undefined }): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult> {
     return new Promise((resolve) => {
       if (!this.process || !this.ready) {
         resolve({
@@ -1558,6 +1582,13 @@ export function createServeCommand(): Command {
             },
           });
 
+          if (spawnResult.result.finishReason === 'suspended') {
+            const scheduleLabel = projects.length > 1
+              ? `${project.id}/${schedule.agentPath}`
+              : schedule.agentPath;
+            approvalLog.sent(scheduleLabel, spawnResult.result.approvalUrl);
+          }
+
           return {
             success: true,
             duration,
@@ -1805,6 +1836,54 @@ export function createServeCommand(): Command {
       } else if (loadedServeEnvFiles.length === 0) {
         logger.debug(`No server-level env file found at ${getGlobalEnvPath()}`);
       }
+
+      const APPROVAL_SWEEP_INTERVAL_MS = 60_000;
+      let approvalSweepTimer: NodeJS.Timeout | null = null;
+      let approvalSweepRunning = false;
+
+      const runApprovalSweep = async (): Promise<void> => {
+        if (approvalSweepRunning) return;
+        approvalSweepRunning = true;
+        try {
+          for (const project of projects) {
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) continue;
+            const result = await projectWorker.sweepExpired(project.root);
+            if (!result.success) {
+              logger.debug(`Approval sweep failed for ${project.id}: ${result.error.message}`);
+              continue;
+            }
+            for (const item of result.expired) {
+              const label = multiProject ? `${project.id}/${item.agentName}` : item.agentName;
+              approvalLog.expired(label, item.sessionId, item.expiresAt);
+
+              if (
+                slackBotToken &&
+                item.notification?.type === 'slack-message' &&
+                item.notification.channel &&
+                item.notification.ts &&
+                item.prompt
+              ) {
+                void updateSlackApprovalRequestStatus({
+                  botToken: slackBotToken,
+                  channelId: item.notification.channel,
+                  ts: item.notification.ts,
+                  prompt: item.prompt,
+                  sessionId: item.sessionId,
+                  projectId: project.id,
+                  ...(item.notification.url && { approvalUrl: item.notification.url }),
+                  expiresAt: new Date(item.expiresAt).toISOString(),
+                  status: 'failed',
+                  decision: 'expired',
+                  error: 'Approval timed out'
+                }).catch((err) => logger.debug(`Slack expired update failed: ${(err as Error).message}`));
+              }
+            }
+          }
+        } finally {
+          approvalSweepRunning = false;
+        }
+      };
 
       const server = createServer(async (req, res) => {
         const requestUrl = new URL(req.url || '/', serverUrl);
@@ -2222,7 +2301,14 @@ export function createServeCommand(): Command {
               },
             });
 
-            executionLog.complete(body.agent, duration);
+            if (spawnResult.result.finishReason === 'suspended') {
+              approvalLog.sent(
+                multiProject ? `${project.id}/${body.agent}` : body.agent,
+                spawnResult.result.approvalUrl
+              );
+            } else {
+              executionLog.complete(body.agent, duration);
+            }
 
             if (wantsStream) {
               // NDJSON streaming response - send result as text chunk then finish
@@ -2334,6 +2420,10 @@ export function createServeCommand(): Command {
         unregisterServer();
 
         scheduler.shutdown();
+        if (approvalSweepTimer) {
+          clearInterval(approvalSweepTimer);
+          approvalSweepTimer = null;
+        }
         if (slackApprovalSocket) {
           await slackApprovalSocket.stop().catch(() => {/* ignore */});
         }
@@ -2371,6 +2461,12 @@ export function createServeCommand(): Command {
         // Re-throw other errors
         throw err;
       });
+
+      // Kick off approval expiration sweep: once at startup, then on a fixed interval.
+      void runApprovalSweep();
+      approvalSweepTimer = setInterval(() => {
+        void runApprovalSweep();
+      }, APPROVAL_SWEEP_INTERVAL_MS);
 
       server.listen(port, effectiveHost, () => {
         const schedules = scheduler.list();

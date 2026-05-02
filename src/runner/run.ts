@@ -155,7 +155,8 @@ export async function runAgent(
         ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
         finishReason: 'suspended',
         finishReasons: [...(result.finishReasons ?? []), 'suspended'],
-        hasTextOutput: result.hasTextOutput
+        hasTextOutput: result.hasTextOutput,
+        ...(result.approvalUrl && { approvalUrl: result.approvalUrl })
       };
     }
 

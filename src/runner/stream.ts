@@ -34,6 +34,7 @@ export async function processAgentStream(
   finishReasons?: string[];
   hasTextOutput: boolean;
   suspended?: boolean;
+  approvalUrl?: string;
   parts: AgentPart[];
 }> {
   let finalText = '';
@@ -48,6 +49,7 @@ export async function processAgentStream(
   const finishReasons: string[] = [];
   const parts: AgentPart[] = [];
   let suspended = false;
+  let suspendApprovalUrl: string | undefined;
 
   // Track current text part for streaming updates with debouncing
   let currentTextPart: { partID: string; text: string; startTime: number } | null = null;
@@ -433,12 +435,17 @@ export async function processAgentStream(
         suspended = true;
         await finalizeTextPart();
 
+        const suspendPayload = (chunk.toolResultRaw ?? {}) as Record<string, unknown>;
+        if (typeof suspendPayload.approvalUrl === 'string') {
+          suspendApprovalUrl = suspendPayload.approvalUrl;
+        }
+
         if (chunk.toolCallId) {
           const pending = pendingToolCalls.get(chunk.toolCallId);
           if (pending?.addPartPromise && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
             const partID = await pending.addPartPromise;
             if (partID) {
-              const payload = (chunk.toolResultRaw ?? {}) as Record<string, unknown>;
+              const payload = suspendPayload;
               const notification = payload.notification && typeof payload.notification === 'object'
                 ? payload.notification as any
                 : undefined;
@@ -526,6 +533,7 @@ export async function processAgentStream(
     ...(finishReasons.length > 0 && { finishReasons, finishReason: finishReasons[finishReasons.length - 1] }),
     hasTextOutput,
     ...(suspended && { suspended }),
+    ...(suspendApprovalUrl && { approvalUrl: suspendApprovalUrl }),
     parts
   };
 }
