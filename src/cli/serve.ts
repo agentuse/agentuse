@@ -891,19 +891,41 @@ function approvalThemeBootScript(): string {
 function approvalsTopbarStyles(): string {
   return `
     .topbar {
-      display: flex; align-items: center; justify-content: space-between;
+      position: relative;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
       padding: 16px 24px;
       border-bottom: 1px solid var(--line);
       font-size: 12px;
       color: var(--muted);
     }
-    .topbar .brand { display: inline-flex; gap: 10px; align-items: center; color: var(--fg); font-weight: 500; letter-spacing: 0.02em; }
-    .topbar .brand a { color: inherit; text-decoration: none; border: 0; }
-    .topbar .brand a:hover { opacity: 1; color: var(--fg); }
-    .topbar .brand .slash { color: var(--muted-2); }
-    .topbar .brand .page { color: var(--muted-3); transition: color 120ms ease; }
-    .topbar .brand a.page:hover { color: var(--fg); }
-    .topbar .right { display: inline-flex; gap: 18px; align-items: center; }
+    .topbar .brand { display: inline-flex; align-items: center; color: var(--fg); font-weight: 500; letter-spacing: 0.02em; }
+    .topbar .brand-name { color: var(--fg); }
+    .topbar .nav-wrap { justify-self: center; }
+    .topbar .nav {
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+      padding: 2px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+    }
+    .topbar .nav-item {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--muted-2);
+      text-decoration: none;
+      transition: color 120ms ease, background 120ms ease;
+    }
+    .topbar .nav a.nav-item:hover { opacity: 1; color: var(--muted-3); background: var(--panel-hover); }
+    .topbar .nav-item.active { color: var(--fg); background: var(--bg); border: 1px solid var(--line); }
+    .topbar .right { display: inline-flex; gap: 18px; align-items: center; justify-self: end; }
     .session-pill { color: var(--muted); }
     .session-pill code { color: var(--muted-3); }
     .pending-count { color: var(--cyan); }
@@ -938,7 +960,8 @@ function approvalsTopbarStyles(): string {
     }
     .theme-toggle svg { width: 12px; height: 12px; display: block; }
     @media (max-width: 640px) {
-      .topbar { padding: 12px 16px; flex-wrap: wrap; gap: 6px; }
+      .topbar { padding: 12px 16px; grid-template-columns: 1fr auto; gap: 10px; }
+      .topbar .nav-wrap { grid-column: 1 / -1; grid-row: 2; justify-self: center; }
     }
   `;
 }
@@ -993,13 +1016,14 @@ function approvalsThemeToggleScript(): string {
 function approvalsTopbarMarkup(opts: { right?: string; isCurrentPage?: boolean; currentPage?: 'approvals' | 'stores' }): string {
   const currentPage = opts.currentPage ?? (opts.isCurrentPage ? 'approvals' : undefined);
   const approvalsMarkup = currentPage === 'approvals'
-    ? `<span class="page">approvals</span>`
-    : `<a class="page" href="/approvals">approvals</a>`;
+    ? `<span class="nav-item active" aria-current="page">approvals</span>`
+    : `<a class="nav-item" href="/approvals">approvals</a>`;
   const storesMarkup = currentPage === 'stores'
-    ? `<span class="page">stores</span>`
-    : `<a class="page" href="/stores">stores</a>`;
+    ? `<span class="nav-item active" aria-current="page">stores</span>`
+    : `<a class="nav-item" href="/stores">stores</a>`;
   return `<div class="topbar">
-    <span class="brand"><span>agentuse</span><span class="slash">/</span>${approvalsMarkup}<span class="slash">/</span>${storesMarkup}</span>
+    <span class="brand"><span class="brand-name">agentuse</span></span>
+    <span class="nav-wrap"><span class="nav" role="navigation" aria-label="AgentUse serve">${approvalsMarkup}${storesMarkup}</span></span>
     <span class="right">${opts.right ?? ''}</span>
   </div>`;
 }
@@ -2212,7 +2236,8 @@ function renderApprovalPage(options: {
 </head>
 <body>
   ${approvalsTopbarMarkup({
-    right: `<span class="session-pill">session <code>${escapeHtml(approval.sessionId.slice(0, 8))}…</code></span>${approvalsThemeToggleHtml()}`
+    currentPage: 'approvals',
+    right: approvalsThemeToggleHtml()
   })}
 
   <main>
