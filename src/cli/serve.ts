@@ -497,6 +497,169 @@ function formatLogTime(value?: number): string {
   return value ? new Date(value).toLocaleTimeString() : '';
 }
 
+function isJsonLikeContent(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) return false;
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeMarkdown(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return /(^|\n)(#{1,6}\s|\s*[-*+]\s|\s*\d+\.\s|>\s|```|\|.+\|)/.test(trimmed) ||
+    /\[[^\]]+\]\([^)]+\)/.test(trimmed) ||
+    /`[^`]+`/.test(trimmed);
+}
+
+function renderInlineMarkdown(value: string): string {
+  return escapeHtml(value)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
+
+function renderMarkdownTextBlock(value: string): string {
+  const lines = value.split(/\r?\n/);
+  const html: string[] = [];
+  let paragraph: string[] = [];
+  let list: { type: 'ul' | 'ol'; items: string[] } | null = null;
+  let quote: string[] = [];
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    html.push(`<p>${renderInlineMarkdown(paragraph.join(' '))}</p>`);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (!list) return;
+    html.push(`<${list.type}>${list.items.map(item => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</${list.type}>`);
+    list = null;
+  };
+  const flushQuote = () => {
+    if (quote.length === 0) return;
+    html.push(`<blockquote>${quote.map(line => `<p>${renderInlineMarkdown(line)}</p>`).join('')}</blockquote>`);
+    quote = [];
+  };
+  const flushAll = () => {
+    flushParagraph();
+    flushList();
+    flushQuote();
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushAll();
+      continue;
+    }
+    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      flushAll();
+      const level = Math.min(6, heading[1].length + 1);
+      html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+      continue;
+    }
+    const unordered = trimmed.match(/^[-*+]\s+(.+)$/);
+    if (unordered) {
+      flushParagraph();
+      flushQuote();
+      if (!list || list.type !== 'ul') {
+        flushList();
+        list = { type: 'ul', items: [] };
+      }
+      list.items.push(unordered[1]);
+      continue;
+    }
+    const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
+    if (ordered) {
+      flushParagraph();
+      flushQuote();
+      if (!list || list.type !== 'ol') {
+        flushList();
+        list = { type: 'ol', items: [] };
+      }
+      list.items.push(ordered[1]);
+      continue;
+    }
+    const blockquote = trimmed.match(/^>\s?(.*)$/);
+    if (blockquote) {
+      flushParagraph();
+      flushList();
+      quote.push(blockquote[1]);
+      continue;
+    }
+    flushList();
+    flushQuote();
+    paragraph.push(trimmed);
+  }
+  flushAll();
+  return html.join('');
+}
+
+function renderMarkdownBlock(value: string): string {
+  const html: string[] = [];
+  let cursor = 0;
+  const fencePattern = /```([A-Za-z0-9_-]+)?\s*\n([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  while ((match = fencePattern.exec(value)) !== null) {
+    const before = value.slice(cursor, match.index);
+    if (before.trim()) html.push(renderMarkdownTextBlock(before));
+    const language = match[1] ? ` data-language="${escapeHtml(match[1])}"` : '';
+    html.push(`<pre class="content-code"${language}><code>${escapeHtml(match[2].trim())}</code></pre>`);
+    cursor = match.index + match[0].length;
+  }
+  const rest = value.slice(cursor);
+  if (rest.trim()) html.push(renderMarkdownTextBlock(rest));
+  return `<div class="content-markdown">${html.join('')}</div>`;
+}
+
+function isReadableJsonString(value: string): boolean {
+  return value.length > 120 || value.includes('\n') || value.includes('\t');
+}
+
+function renderJsonFieldValue(value: unknown): string {
+  if (typeof value === 'string') {
+    if (isReadableJsonString(value)) {
+      return `<pre class="content-code text decoded-json-string"><code>${escapeHtml(value)}</code></pre>`;
+    }
+    return `<code class="json-inline-string">${escapeHtml(JSON.stringify(value))}</code>`;
+  }
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') {
+    return `<code class="json-inline-literal">${escapeHtml(JSON.stringify(value))}</code>`;
+  }
+  return `<pre class="content-code json"><code>${escapeHtml(JSON.stringify(value, null, 2))}</code></pre>`;
+}
+
+function renderSmartJsonBlock(parsed: unknown): string {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return `<pre class="content-code json"><code>${escapeHtml(JSON.stringify(parsed, null, 2))}</code></pre>`;
+  }
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  if (!entries.some(([, value]) => typeof value === 'string' && isReadableJsonString(value))) {
+    return `<pre class="content-code json"><code>${escapeHtml(JSON.stringify(parsed, null, 2))}</code></pre>`;
+  }
+  return `<div class="json-object-block" role="group" aria-label="JSON object">${entries.map(([key, fieldValue]) => `
+    <div class="json-field">
+      <div class="json-field-key">${escapeHtml(key)}</div>
+      <div class="json-field-value">${renderJsonFieldValue(fieldValue)}</div>
+    </div>
+  `).join('')}</div>`;
+}
+
+function renderLogContentValue(value: string, options?: { forceMarkdown?: boolean }): string {
+  if (isJsonLikeContent(value)) {
+    return renderSmartJsonBlock(JSON.parse(value));
+  }
+  if (options?.forceMarkdown || looksLikeMarkdown(value)) {
+    return renderMarkdownBlock(value);
+  }
+  return `<pre class="content-code text"><code>${escapeHtml(value)}</code></pre>`;
+}
+
 function approvalActionList(actions?: ApprovalPageInfo['actions']): Array<{ id: string; label: string; style?: 'primary' | 'danger' }> {
   return actions && actions.length > 0
     ? actions
@@ -522,15 +685,22 @@ function renderLogItems(
       entry.status === 'pending' &&
       Boolean(entry.details) &&
       (!currentResumeToken || entry.details?.resumeToken === currentResumeToken);
+    const expandable = entry.type === 'tool';
+    const expanded = !expandable;
+    const resumeTokenAttr = entry.details?.resumeToken
+      ? ` data-resume-token="${escapeHtml(entry.details.resumeToken)}"`
+      : '';
     return `
-        <li class="log-item ${escapeHtml(entry.status ?? '')}">
+        <li class="log-item ${escapeHtml(entry.status ?? '')}${expandable ? ' expandable' : ''}${expanded ? ' expanded' : ''}" data-log-id="${escapeHtml(entry.id)}" data-log-type="${escapeHtml(entry.type)}"${resumeTokenAttr}${expandable ? ` aria-expanded="${expanded ? 'true' : 'false'}" tabindex="0"` : ''}>
           <span class="log-time">${escapeHtml(formatLogTime(entry.time))}</span>
           <span class="log-marker">⋮</span>
           <span class="log-main">
             <span class="log-title">${escapeHtml(entry.title)}</span>
-            ${entry.details ? renderApprovalDetailBlock(entry.details) : ''}
+            <span class="log-content">
+              ${entry.details ? renderApprovalDetailBlock(entry.details) : ''}
+              ${entry.message ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : ''}
+            </span>
             ${showActions ? renderInlineActions(actions) : ''}
-            ${entry.message ? `<pre>${escapeHtml(entry.message)}</pre>` : ''}
           </span>
         </li>`;
   }).join('');
@@ -572,7 +742,7 @@ function renderApprovalDetailBlock(details: ApprovalLogDetails): string {
   return `<div class="log-details">${rows.map((row) => {
     const value = row.mode === 'link'
       ? `<a class="log-detail-link" href="${escapeHtml(row.value)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.value)}</a>`
-      : escapeHtml(row.value);
+      : renderLogContentValue(row.value);
     return `<div class="log-detail"><span class="log-detail-label">${escapeHtml(row.label)}</span><div class="log-detail-value">${value}</div></div>`;
   }).join('')}</div>`;
 }
@@ -1186,20 +1356,34 @@ function renderApprovalPage(options: {
     .log-item.error .log-marker, .log-item.failed .log-marker { color: var(--red); }
     .log-item.completed .log-marker, .log-item.approved .log-marker { color: var(--green); }
     .log-item.resuming .log-marker { color: var(--amber); }
-    .log-title { font-weight: 500; color: var(--fg); }
-    .log-main pre {
-      margin-top: 4px;
-      color: var(--muted);
-      font-size: 12.5px;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
+    .log-item.expandable { cursor: pointer; }
+    .log-item.expandable:hover .log-title { color: var(--cyan); }
+    .log-item.expandable .log-title::after {
+      content: "show";
+      display: inline-flex;
+      margin-left: 8px;
+      padding: 1px 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted-2);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      vertical-align: 1px;
     }
+    .log-item.expandable.expanded .log-title::after { content: "hide"; color: var(--muted); }
+    .log-title { font-weight: 500; color: var(--fg); }
+    .log-content {
+      display: block;
+      margin-top: 6px;
+    }
+    .log-item.expandable:not(.expanded) .log-content { display: none; }
     .log-empty { color: var(--muted-2); padding: 12px 0; font-style: italic; }
 
     .log-details {
       display: grid;
       gap: 10px;
-      margin-top: 10px;
     }
     .log-detail {
       display: grid;
@@ -1216,13 +1400,8 @@ function renderApprovalPage(options: {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 10px 12px;
-      font-family: var(--mono);
-      font-size: 13px;
-      line-height: 1.5;
       color: var(--muted-3);
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
+      overflow: hidden;
     }
     .log-detail-link {
       color: var(--cyan);
@@ -1230,6 +1409,140 @@ function renderApprovalPage(options: {
       border-bottom: 1px dashed var(--cyan-border);
     }
     .log-detail-link:hover { border-bottom-style: solid; }
+    .content-code {
+      margin: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--muted-3);
+      font-family: var(--mono);
+      font-size: 12.5px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      overflow-x: auto;
+    }
+    .log-detail-value .content-code {
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+    }
+    .content-code.json code { color: var(--fg); }
+    .json-object-block {
+      display: grid;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .json-object-block::before,
+    .json-object-block::after {
+      color: var(--muted-2);
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1;
+    }
+    .json-object-block::before { content: "{"; }
+    .json-object-block::after { content: "}"; }
+    .log-detail-value .json-object-block {
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+    }
+    .json-field {
+      display: grid;
+      gap: 6px;
+    }
+    .json-field-key {
+      color: var(--cyan);
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.06em;
+    }
+    .json-field-key::before { content: '"'; color: var(--muted-2); }
+    .json-field-key::after { content: '":'; color: var(--muted-2); }
+    .json-field-value > .content-markdown,
+    .json-field-value > .content-code {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg);
+    }
+    .decoded-json-string {
+      white-space: pre-wrap;
+      tab-size: 2;
+    }
+    .json-inline-string,
+    .json-inline-literal {
+      display: inline-block;
+      padding: 3px 6px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--bg);
+      color: var(--muted-3);
+      font-family: var(--mono);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .content-markdown {
+      padding: 10px 12px;
+      color: var(--muted-3);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.6;
+      overflow-wrap: anywhere;
+    }
+    .log-content > .content-markdown,
+    .log-content > .content-code {
+      margin-top: 4px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .content-markdown > :first-child { margin-top: 0; }
+    .content-markdown > :last-child { margin-bottom: 0; }
+    .content-markdown p { margin: 0 0 9px; }
+    .content-markdown h2,
+    .content-markdown h3,
+    .content-markdown h4,
+    .content-markdown h5,
+    .content-markdown h6 {
+      margin: 14px 0 6px;
+      color: var(--fg);
+      font-family: var(--sans);
+      font-size: 15px;
+      line-height: 1.35;
+      font-weight: 600;
+    }
+    .content-markdown ul,
+    .content-markdown ol { margin: 6px 0 10px; padding-left: 22px; }
+    .content-markdown li { margin: 3px 0; }
+    .content-markdown blockquote {
+      margin: 8px 0;
+      padding-left: 12px;
+      border-left: 2px solid var(--cyan-border);
+      color: var(--muted);
+    }
+    .content-markdown code {
+      font-family: var(--mono);
+      font-size: 0.92em;
+      color: var(--fg);
+      background: var(--panel-hover);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    .content-markdown .content-code {
+      margin: 10px 0;
+      padding: 10px 12px;
+      background: var(--bg);
+    }
+    .content-markdown .content-code code {
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
 
     /* inline approval actions (rendered inside the active pending log entry) */
     .log-actions {
@@ -1473,6 +1786,135 @@ function renderApprovalPage(options: {
         "'": '&#39;'
       }[ch]));
     }
+    function isJsonLikeContent(value) {
+      const trimmed = String(value ?? '').trim();
+      if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return false;
+      try { JSON.parse(trimmed); return true; } catch { return false; }
+    }
+    function looksLikeMarkdown(value) {
+      const trimmed = String(value ?? '').trim();
+      if (!trimmed) return false;
+      return /(^|\\n)(#{1,6}\\s|\\s*[-*+]\\s|\\s*\\d+\\.\\s|>\\s|\`\`\`|\\|.+\\|)/.test(trimmed) ||
+        /\\[[^\\]]+\\]\\([^)]+\\)/.test(trimmed) ||
+        /\`[^\`]+\`/.test(trimmed);
+    }
+    function renderInlineMarkdown(value) {
+      return escapeText(value)
+        .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
+        .replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^)\\s]+)\\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    }
+    function renderMarkdownTextBlock(value) {
+      const lines = String(value ?? '').split(/\\r?\\n/);
+      const html = [];
+      let paragraph = [];
+      let list = null;
+      let quote = [];
+      function flushParagraph() {
+        if (!paragraph.length) return;
+        html.push('<p>' + renderInlineMarkdown(paragraph.join(' ')) + '</p>');
+        paragraph = [];
+      }
+      function flushList() {
+        if (!list) return;
+        html.push('<' + list.type + '>' + list.items.map((item) => '<li>' + renderInlineMarkdown(item) + '</li>').join('') + '</' + list.type + '>');
+        list = null;
+      }
+      function flushQuote() {
+        if (!quote.length) return;
+        html.push('<blockquote>' + quote.map((line) => '<p>' + renderInlineMarkdown(line) + '</p>').join('') + '</blockquote>');
+        quote = [];
+      }
+      function flushAll() { flushParagraph(); flushList(); flushQuote(); }
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) { flushAll(); continue; }
+        const heading = trimmed.match(/^(#{1,6})\\s+(.+)$/);
+        if (heading) {
+          flushAll();
+          const level = Math.min(6, heading[1].length + 1);
+          html.push('<h' + level + '>' + renderInlineMarkdown(heading[2]) + '</h' + level + '>');
+          continue;
+        }
+        const unordered = trimmed.match(/^[-*+]\\s+(.+)$/);
+        if (unordered) {
+          flushParagraph(); flushQuote();
+          if (!list || list.type !== 'ul') { flushList(); list = { type: 'ul', items: [] }; }
+          list.items.push(unordered[1]);
+          continue;
+        }
+        const ordered = trimmed.match(/^\\d+\\.\\s+(.+)$/);
+        if (ordered) {
+          flushParagraph(); flushQuote();
+          if (!list || list.type !== 'ol') { flushList(); list = { type: 'ol', items: [] }; }
+          list.items.push(ordered[1]);
+          continue;
+        }
+        const blockquote = trimmed.match(/^>\\s?(.*)$/);
+        if (blockquote) {
+          flushParagraph(); flushList();
+          quote.push(blockquote[1]);
+          continue;
+        }
+        flushList(); flushQuote();
+        paragraph.push(trimmed);
+      }
+      flushAll();
+      return html.join('');
+    }
+    function renderMarkdownBlock(value) {
+      const html = [];
+      let cursor = 0;
+      const fencePattern = /\`\`\`([A-Za-z0-9_-]+)?\\s*\\n([\\s\\S]*?)\`\`\`/g;
+      let match;
+      while ((match = fencePattern.exec(String(value ?? ''))) !== null) {
+        const before = String(value ?? '').slice(cursor, match.index);
+        if (before.trim()) html.push(renderMarkdownTextBlock(before));
+        const language = match[1] ? ' data-language="' + escapeText(match[1]) + '"' : '';
+        html.push('<pre class="content-code"' + language + '><code>' + escapeText(match[2].trim()) + '</code></pre>');
+        cursor = match.index + match[0].length;
+      }
+      const rest = String(value ?? '').slice(cursor);
+      if (rest.trim()) html.push(renderMarkdownTextBlock(rest));
+      return '<div class="content-markdown">' + html.join('') + '</div>';
+    }
+    function isReadableJsonString(value) {
+      return value.length > 120 || value.includes('\\n') || value.includes('\\t');
+    }
+    function renderJsonFieldValue(value) {
+      if (typeof value === 'string') {
+        if (isReadableJsonString(value)) {
+          return '<pre class="content-code text decoded-json-string"><code>' + escapeText(value) + '</code></pre>';
+        }
+        return '<code class="json-inline-string">' + escapeText(JSON.stringify(value)) + '</code>';
+      }
+      if (value === null || typeof value === 'number' || typeof value === 'boolean') {
+        return '<code class="json-inline-literal">' + escapeText(JSON.stringify(value)) + '</code>';
+      }
+      return '<pre class="content-code json"><code>' + escapeText(JSON.stringify(value, null, 2)) + '</code></pre>';
+    }
+    function renderSmartJsonBlock(parsed) {
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return '<pre class="content-code json"><code>' + escapeText(JSON.stringify(parsed, null, 2)) + '</code></pre>';
+      }
+      const entries = Object.entries(parsed);
+      if (!entries.some(([, value]) => typeof value === 'string' && isReadableJsonString(value))) {
+        return '<pre class="content-code json"><code>' + escapeText(JSON.stringify(parsed, null, 2)) + '</code></pre>';
+      }
+      return '<div class="json-object-block" role="group" aria-label="JSON object">' + entries.map(([key, fieldValue]) =>
+        '<div class="json-field">' +
+          '<div class="json-field-key">' + escapeText(key) + '</div>' +
+          '<div class="json-field-value">' + renderJsonFieldValue(fieldValue) + '</div>' +
+        '</div>'
+      ).join('') + '</div>';
+    }
+    function renderLogContentValue(value, opts) {
+      const text = String(value ?? '');
+      if (isJsonLikeContent(text)) {
+        return renderSmartJsonBlock(JSON.parse(text));
+      }
+      if ((opts && opts.forceMarkdown) || looksLikeMarkdown(text)) return renderMarkdownBlock(text);
+      return '<pre class="content-code text"><code>' + escapeText(text) + '</code></pre>';
+    }
     function formatTime(value) {
       return value ? new Date(value).toLocaleTimeString() : '';
     }
@@ -1480,6 +1922,7 @@ function renderApprovalPage(options: {
     // can return fewer (or zero) entries during the approval handoff window,
     // so we merge by id instead of overwriting.
     const renderedLogs = new Map();
+    const expandedLogIds = new Set();
     const initialEntries = ${JSON.stringify(initialLogs)};
     for (const entry of initialEntries) {
       if (entry && entry.id != null) renderedLogs.set(String(entry.id), entry);
@@ -1505,7 +1948,7 @@ function renderApprovalPage(options: {
         const label = '<span class="log-detail-label">' + escapeText(row[0]) + '</span>';
         const value = row[2] === 'link'
           ? '<a class="log-detail-link" href="' + escapeText(row[1]) + '" target="_blank" rel="noopener noreferrer">' + escapeText(row[1]) + '</a>'
-          : escapeText(row[1]);
+          : renderLogContentValue(row[1]);
         return '<div class="log-detail">' + label + '<div class="log-detail-value">' + value + '</div></div>';
       }).join('') + '</div>';
     }
@@ -1531,16 +1974,20 @@ function renderApprovalPage(options: {
       '</div>';
     }
     function logEntryHtml(entry) {
+      const expandable = entry.type === 'tool';
+      const expanded = !expandable || expandedLogIds.has(String(entry.id));
       const resumeTokenAttr = entry.details && entry.details.resumeToken
         ? ' data-resume-token="' + escapeText(entry.details.resumeToken) + '"'
         : '';
-      return '<li class="log-item ' + escapeText(entry.status || '') + '"' + resumeTokenAttr + '>' +
+      return '<li class="log-item ' + escapeText(entry.status || '') + (expandable ? ' expandable' : '') + (expanded ? ' expanded' : '') + '" data-log-id="' + escapeText(entry.id) + '" data-log-type="' + escapeText(entry.type) + '"' + resumeTokenAttr + (expandable ? ' aria-expanded="' + String(expanded) + '" tabindex="0"' : '') + '>' +
         '<span class="log-time">' + escapeText(formatTime(entry.time)) + '</span>' +
         '<span class="log-marker">⋮</span>' +
         '<span class="log-main"><span class="log-title">' + escapeText(entry.title) + '</span>' +
+        '<span class="log-content">' +
         logDetailsHtml(entry.details) +
+        (entry.message ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : '') +
+        '</span>' +
         logActionsHtml(entry) +
-        (entry.message ? '<pre>' + escapeText(entry.message) + '</pre>' : '') +
         '</span></li>';
     }
     function renderLogs(logs) {
@@ -1710,15 +2157,41 @@ function renderApprovalPage(options: {
       });
     }
 
-    // Buttons are re-rendered with the log on every poll, so use delegation
-    // anchored at the logs container instead of binding each button directly.
+    function toggleLogEntry(item) {
+      if (!item || !item.classList.contains('expandable')) return;
+      const id = item.dataset.logId;
+      const next = !item.classList.contains('expanded');
+      item.classList.toggle('expanded', next);
+      item.setAttribute('aria-expanded', String(next));
+      if (id) {
+        if (next) expandedLogIds.add(id);
+        else expandedLogIds.delete(id);
+      }
+    }
+
+    // Buttons and expandable rows are re-rendered with the log on every poll, so
+    // use delegation anchored at the logs container.
     logsEl.addEventListener('click', (e) => {
       const target = e.target instanceof Element ? e.target.closest('button[data-action]') : null;
-      if (!target || target.disabled) return;
-      const action = target.dataset.action;
-      if (!action) return;
-      if (action === 'comment') openCommentDialog();
-      else submitDecision(action);
+      if (target) {
+        if (target.disabled) return;
+        const action = target.dataset.action;
+        if (!action) return;
+        if (action === 'comment') openCommentDialog();
+        else submitDecision(action);
+        return;
+      }
+      const link = e.target instanceof Element ? e.target.closest('a') : null;
+      if (link) return;
+      const item = e.target instanceof Element ? e.target.closest('.log-item.expandable') : null;
+      toggleLogEntry(item);
+    });
+    logsEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const item = e.target instanceof Element ? e.target.closest('.log-item.expandable') : null;
+      if (!item || e.target !== item) return;
+      e.preventDefault();
+      toggleLogEntry(item);
     });
 
     // keyboard shortcuts (only when no dialog is open and not typing in a field):
