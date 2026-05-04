@@ -685,7 +685,8 @@ function renderLogItems(
       entry.status === 'pending' &&
       Boolean(entry.details) &&
       (!currentResumeToken || entry.details?.resumeToken === currentResumeToken);
-    const expandable = entry.type === 'tool';
+    const isApprovalEntry = entry.status === 'pending' && Boolean(entry.details?.resumeToken);
+    const expandable = entry.type === 'tool' && !isApprovalEntry;
     const expanded = !expandable;
     const resumeTokenAttr = entry.details?.resumeToken
       ? ` data-resume-token="${escapeHtml(entry.details.resumeToken)}"`
@@ -1974,7 +1975,8 @@ function renderApprovalPage(options: {
       '</div>';
     }
     function logEntryHtml(entry) {
-      const expandable = entry.type === 'tool';
+      const isApprovalEntry = entry.status === 'pending' && Boolean(entry.details && entry.details.resumeToken);
+      const expandable = entry.type === 'tool' && !isApprovalEntry;
       const expanded = !expandable || expandedLogIds.has(String(entry.id));
       const resumeTokenAttr = entry.details && entry.details.resumeToken
         ? ' data-resume-token="' + escapeText(entry.details.resumeToken) + '"'
