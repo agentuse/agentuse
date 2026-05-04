@@ -136,6 +136,7 @@ interface ApprovalPageInfo {
     id: string;
     name: string;
     filePath?: string;
+    description?: string;
   };
   prompt?: string;
   summary?: string;
@@ -147,6 +148,7 @@ interface ApprovalPageInfo {
   actions?: Array<{ id: string; label: string; style?: 'primary' | 'danger' }>;
   channel?: string;
   approvalUrl?: string;
+  currentResumeToken?: string;
   expiresAt?: number;
   suspendedAt?: number;
   notification?: {
@@ -166,6 +168,22 @@ interface ApprovalLogEntry {
   title: string;
   message?: string;
   time?: number;
+  details?: ApprovalLogDetails;
+}
+
+interface ApprovalLogDetails {
+  resumeToken?: string;
+  prompt?: string;
+  summary?: string;
+  context?: string;
+  risk?: string;
+  draft?: string;
+  draftUrl?: string;
+  artifactUrl?: string;
+  decisionStatus?: string;
+  decisionComment?: string;
+  decisionReviewer?: string;
+  errorMessage?: string;
 }
 
 /**
@@ -324,12 +342,14 @@ class AgentWorker {
     projectRoot: string;
     sessionId: string;
     resumeToken?: string;
+    allowHistorical?: boolean;
   }): Promise<WorkerApprovalInfoResult | WorkerExecuteError> {
     return this.request({
       type: "approval-info",
       projectRoot: options.projectRoot,
       sessionId: options.sessionId,
       resumeToken: options.resumeToken,
+      allowHistorical: options.allowHistorical ?? false,
       timeout: 30,
     }) as Promise<WorkerApprovalInfoResult | WorkerExecuteError>;
   }
@@ -487,19 +507,74 @@ function approvalActionList(actions?: ApprovalPageInfo['actions']): Array<{ id: 
     ];
 }
 
-function renderLogItems(logs?: ApprovalLogEntry[]): string {
+function renderLogItems(
+  logs?: ApprovalLogEntry[],
+  options?: { actions?: ApprovalActionDef[]; actionable?: boolean; currentResumeToken?: string | undefined }
+): string {
   if (!logs || logs.length === 0) {
     return '<li class="log-empty">No session events yet.</li>';
   }
-  return logs.map((entry) => `
+  const actions = options?.actions ?? [];
+  const actionable = options?.actionable ?? false;
+  const currentResumeToken = options?.currentResumeToken;
+  return logs.map((entry) => {
+    const showActions = actionable &&
+      entry.status === 'pending' &&
+      Boolean(entry.details) &&
+      (!currentResumeToken || entry.details?.resumeToken === currentResumeToken);
+    return `
         <li class="log-item ${escapeHtml(entry.status ?? '')}">
           <span class="log-time">${escapeHtml(formatLogTime(entry.time))}</span>
           <span class="log-marker">⋮</span>
           <span class="log-main">
             <span class="log-title">${escapeHtml(entry.title)}</span>
+            ${entry.details ? renderApprovalDetailBlock(entry.details) : ''}
+            ${showActions ? renderInlineActions(actions) : ''}
             ${entry.message ? `<pre>${escapeHtml(entry.message)}</pre>` : ''}
           </span>
-        </li>`).join('');
+        </li>`;
+  }).join('');
+}
+
+type ApprovalActionDef = { id: string; label: string; style?: 'primary' | 'danger' };
+
+function renderInlineActions(actions: ApprovalActionDef[]): string {
+  if (actions.length === 0) return '';
+  return `<div class="log-actions" data-actions-row>
+    <div class="log-actions-hint">
+      <span class="kbd">⌘⏎</span> approve <span class="kbd">esc</span> reject <span class="kbd">c</span> comment
+    </div>
+    <div class="log-actions-buttons">
+      ${actions.map(action => `<button class="${escapeHtml(action.style ?? '')}" data-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`).join('')}
+    </div>
+  </div>`;
+}
+
+function renderApprovalDetailBlock(details: ApprovalLogDetails): string {
+  const rows: Array<{ label: string; value: string; mode?: 'text' | 'link' }> = [];
+  if (details.prompt) rows.push({ label: 'prompt', value: details.prompt });
+  if (details.summary) rows.push({ label: 'summary', value: details.summary });
+  if (details.context) rows.push({ label: 'context', value: details.context });
+  if (details.risk) rows.push({ label: 'risk / notes', value: details.risk });
+  if (details.draft) rows.push({ label: 'draft', value: details.draft });
+  if (details.draftUrl) rows.push({ label: 'draft url', value: details.draftUrl, mode: 'link' });
+  if (details.artifactUrl) rows.push({ label: 'artifact url', value: details.artifactUrl, mode: 'link' });
+
+  const decisionLabel = details.decisionStatus
+    ? `${details.decisionStatus}${details.decisionReviewer ? ` by ${details.decisionReviewer}` : ''}`
+    : '';
+  if (decisionLabel) rows.push({ label: 'decision', value: decisionLabel });
+  if (details.decisionComment) rows.push({ label: 'comment', value: details.decisionComment });
+  if (details.errorMessage) rows.push({ label: 'error', value: details.errorMessage });
+
+  if (rows.length === 0) return '';
+
+  return `<div class="log-details">${rows.map((row) => {
+    const value = row.mode === 'link'
+      ? `<a class="log-detail-link" href="${escapeHtml(row.value)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.value)}</a>`
+      : escapeHtml(row.value);
+    return `<div class="log-detail"><span class="log-detail-label">${escapeHtml(row.label)}</span><div class="log-detail-value">${value}</div></div>`;
+  }).join('')}</div>`;
 }
 
 function approvalListThemeStyles(): string {
@@ -875,18 +950,10 @@ function renderApprovalPage(options: {
       : approval.sessionStatus === 'suspended'
         ? 'waiting'
         : approval.sessionStatus;
-  const decision = approval.decision ? JSON.stringify(approval.decision, null, 2) : '';
-  const detailRows: Array<[string, string]> = [
-    ['summary', approval.summary],
-    ['draft', approval.draft],
-    ['artifact', approval.artifactUrl],
-    ['draft url', approval.draftUrl],
-    ['context', approval.context],
-    ['risk / notes', approval.risk],
-  ].filter(([, value]) => typeof value === 'string' && value.length > 0) as Array<[string, string]>;
   const actions = approvalActionList(approval.actions);
   const initialLogs = approval.logs ?? [];
   const agentLabel = approval.agent.name || approval.agent.id;
+  const agentHeadline = approval.agent.description || agentLabel;
 
   return `<!doctype html>
 <html lang="en">
@@ -1129,41 +1196,68 @@ function renderApprovalPage(options: {
     }
     .log-empty { color: var(--muted-2); padding: 12px 0; font-style: italic; }
 
-    /* sticky action bar */
-    .action-bar {
-      position: fixed;
-      left: 0; right: 0; bottom: 0;
-      z-index: 50;
-      background: var(--bar-bg);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      border-top: 1px solid var(--line);
-    }
-    .action-bar-inner {
-      width: min(960px, calc(100vw - 32px));
-      margin: 0 auto;
-      padding: 14px 0;
+    .log-details {
       display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 14px;
-      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
     }
-    .action-bar .hint {
+    .log-detail {
+      display: grid;
+      gap: 4px;
+    }
+    .log-detail-label {
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--muted-2);
+    }
+    .log-detail-label::before { content: "⋮ "; color: var(--cyan); opacity: 0.6; }
+    .log-detail-value {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--muted-3);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .log-detail-link {
+      color: var(--cyan);
+      text-decoration: none;
+      border-bottom: 1px dashed var(--cyan-border);
+    }
+    .log-detail-link:hover { border-bottom-style: solid; }
+
+    /* inline approval actions (rendered inside the active pending log entry) */
+    .log-actions {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      display: flex; flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .log-actions-hint {
       font-size: 12px;
       color: var(--muted-2);
       letter-spacing: 0.04em;
     }
-    .action-bar .hint b { color: var(--muted-3); font-weight: 500; }
-    .action-bar .hint .kbd {
+    .log-actions-hint .kbd {
       display: inline-block;
       padding: 1px 6px; margin: 0 2px;
       font-size: 11px;
       border: 1px solid var(--line-strong);
       border-radius: 4px;
       color: var(--muted-3);
-      background: var(--panel);
+      background: var(--bg);
     }
-    .actions { display: inline-flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+    .log-actions-buttons { display: inline-flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
     button {
       font-family: var(--mono);
       font-size: 13px;
@@ -1294,10 +1388,10 @@ function renderApprovalPage(options: {
     /* responsive */
     @media (max-width: 640px) {
       h1 { font-size: 26px; }
-      .action-bar-inner { grid-template-columns: 1fr; }
-      .action-bar .hint { display: none; }
-      .actions { justify-content: stretch; }
-      .actions button { flex: 1; }
+      .log-actions { flex-direction: column; align-items: stretch; }
+      .log-actions-hint { display: none; }
+      .log-actions-buttons { justify-content: stretch; }
+      .log-actions-buttons button { flex: 1; }
     }
   </style>
 </head>
@@ -1310,29 +1404,21 @@ function renderApprovalPage(options: {
     <header>
       <span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span>
       <div class="eyebrow">human approval requested</div>
-      <h1>${escapeHtml(approval.prompt ?? 'Approval request unavailable')}</h1>
-      <p class="prompt">Review the context below, then approve, reject, or send a comment back to the agent. The session is paused until you respond.</p>
-      <div class="meta">
+      <h1>${escapeHtml(agentHeadline)}</h1>
+      <p class="prompt">Review the pending request in the session log below, then approve, reject, or send a comment back to the agent. The session is paused until you respond.</p>
+      <div class="meta" id="approval-meta">
         <div class="cell"><span class="label">session</span><code>${escapeHtml(approval.sessionId)}</code></div>
         <div class="cell"><span class="label">project</span><code>${escapeHtml(projectId ?? 'default')}</code></div>
         <div class="cell"><span class="label">agent</span><span class="value">${escapeHtml(agentLabel)}</span></div>
-        ${approval.expiresAt !== undefined ? `<div class="cell"><span class="label">expires</span><span class="value">${escapeHtml(formatApprovalTime(approval.expiresAt))}</span></div>` : ''}
+        <div class="cell" id="expires-cell"${approval.expiresAt === undefined ? ' hidden' : ''}><span class="label">expires</span><span class="value" id="expires-value">${approval.expiresAt !== undefined ? escapeHtml(formatApprovalTime(approval.expiresAt)) : ''}</span></div>
       </div>
     </header>
 
     ${error ? `<p class="notice error">${escapeHtml(error)}</p>` : ''}
 
-    ${detailRows.map(([label, value]) => `
-    <div class="section-title"><span>${escapeHtml(label)}</span><span class="rule"></span></div>
-    <div class="panel"><pre>${escapeHtml(value)}</pre></div>`).join('')}
-
-    ${decision ? `
-    <div class="section-title"><span>decision</span><span class="rule"></span></div>
-    <div class="panel"><pre>${escapeHtml(decision)}</pre></div>` : ''}
-
     <div class="section-title"><span>session log</span><span class="rule"></span></div>
     <div class="panel">
-      <ul id="logs" class="logs">${renderLogItems(initialLogs)}</ul>
+      <ul id="logs" class="logs">${renderLogItems(initialLogs, { actions, actionable, currentResumeToken: approval.currentResumeToken })}</ul>
     </div>
 
     ${actionable ? '' : `
@@ -1362,24 +1448,17 @@ function renderApprovalPage(options: {
     </form>
   </dialog>` : ''}
 
-  <div class="action-bar" role="toolbar" aria-label="Approval actions">
-    <div class="action-bar-inner">
-      <div class="hint">
-        ${actionable
-          ? `<b>${escapeHtml(approval.sessionId.slice(0, 8))}…</b> awaiting decision <span style="opacity:.4">·</span> <span class="kbd">⌘⏎</span> approve <span class="kbd">esc</span> reject <span class="kbd">c</span> comment`
-          : `<b>${escapeHtml(approval.sessionId.slice(0, 8))}…</b> ${escapeHtml(status)}`}
-      </div>
-      <div class="actions">
-        ${actionable
-          ? actions.map(action => `<button class="${escapeHtml(action.style ?? '')}" data-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`).join('')
-          : `<button disabled>no actions available</button>`}
-      </div>
-    </div>
-  </div>
-
   <script>
     const token = ${JSON.stringify(token)};
     const project = ${JSON.stringify(projectId)};
+    // The active gate's resumeToken at page render. Each await_human gate mints
+    // a fresh token; if the page was opened on gate N's URL but the agent has
+    // moved on to gate N+1, this rotates and refreshStatus redirects to the new
+    // approval URL. /decision is sent with the current token, not the URL token,
+    // so it stays valid across gates within the same session.
+    let currentResumeToken = ${JSON.stringify(approval.currentResumeToken ?? token)};
+    const approvalActions = ${JSON.stringify(actions)};
+    let pendingActionable = ${JSON.stringify(actionable)};
     const statusEl = document.querySelector('.status');
     const logsEl = document.getElementById('logs');
 
@@ -1405,11 +1484,59 @@ function renderApprovalPage(options: {
     for (const entry of initialEntries) {
       if (entry && entry.id != null) renderedLogs.set(String(entry.id), entry);
     }
+    function logDetailsHtml(details) {
+      if (!details) return '';
+      const rows = [];
+      if (details.prompt) rows.push(['prompt', details.prompt]);
+      if (details.summary) rows.push(['summary', details.summary]);
+      if (details.context) rows.push(['context', details.context]);
+      if (details.risk) rows.push(['risk / notes', details.risk]);
+      if (details.draft) rows.push(['draft', details.draft]);
+      if (details.draftUrl) rows.push(['draft url', details.draftUrl, 'link']);
+      if (details.artifactUrl) rows.push(['artifact url', details.artifactUrl, 'link']);
+      if (details.decisionStatus) {
+        const reviewer = details.decisionReviewer ? ' by ' + details.decisionReviewer : '';
+        rows.push(['decision', details.decisionStatus + reviewer]);
+      }
+      if (details.decisionComment) rows.push(['comment', details.decisionComment]);
+      if (details.errorMessage) rows.push(['error', details.errorMessage]);
+      if (rows.length === 0) return '';
+      return '<div class="log-details">' + rows.map(function (row) {
+        const label = '<span class="log-detail-label">' + escapeText(row[0]) + '</span>';
+        const value = row[2] === 'link'
+          ? '<a class="log-detail-link" href="' + escapeText(row[1]) + '" target="_blank" rel="noopener noreferrer">' + escapeText(row[1]) + '</a>'
+          : escapeText(row[1]);
+        return '<div class="log-detail">' + label + '<div class="log-detail-value">' + value + '</div></div>';
+      }).join('') + '</div>';
+    }
+    function detailsKey(details) {
+      return details ? JSON.stringify(details) : '';
+    }
+    function logActionsHtml(entry) {
+      if (!pendingActionable) return '';
+      if (entry.status !== 'pending' || !entry.details) return '';
+      if (currentResumeToken && entry.details.resumeToken !== currentResumeToken) return '';
+      if (!Array.isArray(approvalActions) || approvalActions.length === 0) return '';
+      const buttons = approvalActions.map(function (action) {
+        const cls = action && action.style ? escapeText(action.style) : '';
+        const id = escapeText(action && action.id || '');
+        const label = escapeText(action && action.label || '');
+        return '<button class="' + cls + '" data-action="' + id + '">' + label + '</button>';
+      }).join('');
+      return '<div class="log-actions" data-actions-row>' +
+        '<div class="log-actions-hint">' +
+          '<span class="kbd">⌘⏎</span> approve <span class="kbd">esc</span> reject <span class="kbd">c</span> comment' +
+        '</div>' +
+        '<div class="log-actions-buttons">' + buttons + '</div>' +
+      '</div>';
+    }
     function logEntryHtml(entry) {
       return '<li class="log-item ' + escapeText(entry.status || '') + '">' +
         '<span class="log-time">' + escapeText(formatTime(entry.time)) + '</span>' +
         '<span class="log-marker">⋮</span>' +
         '<span class="log-main"><span class="log-title">' + escapeText(entry.title) + '</span>' +
+        logDetailsHtml(entry.details) +
+        logActionsHtml(entry) +
         (entry.message ? '<pre>' + escapeText(entry.message) + '</pre>' : '') +
         '</span></li>';
     }
@@ -1421,7 +1548,11 @@ function renderApprovalPage(options: {
           const key = String(entry.id);
           const prior = renderedLogs.get(key);
           // Update if new, or if state changed (e.g. tool: pending -> completed).
-          if (!prior || prior.status !== entry.status || prior.message !== entry.message || prior.title !== entry.title) {
+          if (!prior
+            || prior.status !== entry.status
+            || prior.message !== entry.message
+            || prior.title !== entry.title
+            || detailsKey(prior.details) !== detailsKey(entry.details)) {
             renderedLogs.set(key, entry);
             changed = true;
           }
@@ -1435,6 +1566,35 @@ function renderApprovalPage(options: {
       const ordered = [...renderedLogs.values()].sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
       logsEl.innerHTML = ordered.map(logEntryHtml).join('');
     }
+    function formatExpires(value) {
+      if (typeof value !== 'number') return '';
+      try { return new Date(value).toLocaleString(); } catch { return String(value); }
+    }
+    // Swap the active gate's panels (prompt, summary/context/risk, expires) and
+    // re-enable the action buttons. Called when a fresh await_human gate opens
+    // mid-session — the page stays put so the session log keeps full history,
+    // but the actionable surface refreshes for the new gate.
+    function renderActiveGate(approval) {
+      const expiresCell = document.getElementById('expires-cell');
+      const expiresValue = document.getElementById('expires-value');
+      if (expiresCell && expiresValue) {
+        if (typeof approval.expiresAt === 'number') {
+          expiresCell.removeAttribute('hidden');
+          expiresValue.textContent = formatExpires(approval.expiresAt);
+        } else {
+          expiresCell.setAttribute('hidden', '');
+          expiresValue.textContent = '';
+        }
+      }
+      const result = document.getElementById('result');
+      if (result) { result.textContent = ''; result.className = 'notice'; }
+      submittingDecision = false;
+      for (const b of document.querySelectorAll('button[data-action]')) b.disabled = false;
+      // Keep the URL in sync so a refresh lands on the active gate.
+      if (approval.approvalUrl) {
+        try { history.replaceState(null, '', approval.approvalUrl); } catch {}
+      }
+    }
     async function refreshStatus() {
       try {
         const url = new URL(location.pathname + '/status', location.origin);
@@ -1446,15 +1606,23 @@ function renderApprovalPage(options: {
         const status = payload.status || payload.approval?.sessionStatus || 'unknown';
         statusEl.textContent = status;
         statusEl.className = 'status ' + status;
+        const nextToken = payload.approval?.currentResumeToken;
+        if (nextToken && nextToken !== currentResumeToken && status === 'waiting') {
+          currentResumeToken = nextToken;
+          renderActiveGate(payload.approval);
+        }
         renderLogs(payload.logs || payload.approval?.logs || []);
       } catch {}
     }
     refreshStatus();
     setInterval(refreshStatus, 1500);
 
+    let submittingDecision = false;
     async function submitDecision(actionId, opts) {
+      if (submittingDecision) return;
       const button = document.querySelector('button[data-action="' + actionId + '"]');
       if (!button || button.disabled) return;
+      submittingDecision = true;
       for (const b of document.querySelectorAll('button[data-action]')) b.disabled = true;
       const result = document.getElementById('result');
       result.textContent = '⋮ submitting decision…';
@@ -1466,7 +1634,7 @@ function renderApprovalPage(options: {
           body: JSON.stringify({
             status: actionId,
             comment: opts && opts.comment ? opts.comment : undefined,
-            resumeToken: token,
+            resumeToken: currentResumeToken,
             project
           })
         });
@@ -1479,6 +1647,7 @@ function renderApprovalPage(options: {
       } catch (err) {
         result.textContent = err.message || String(err);
         result.className = 'notice error';
+        submittingDecision = false;
         for (const b of document.querySelectorAll('button[data-action]')) b.disabled = false;
       }
     }
@@ -1518,12 +1687,16 @@ function renderApprovalPage(options: {
       });
     }
 
-    for (const button of document.querySelectorAll('button[data-action]')) {
-      button.addEventListener('click', () => {
-        if (button.dataset.action === 'comment') openCommentDialog();
-        else submitDecision(button.dataset.action);
-      });
-    }
+    // Buttons are re-rendered with the log on every poll, so use delegation
+    // anchored at the logs container instead of binding each button directly.
+    logsEl.addEventListener('click', (e) => {
+      const target = e.target instanceof Element ? e.target.closest('button[data-action]') : null;
+      if (!target || target.disabled) return;
+      const action = target.dataset.action;
+      if (!action) return;
+      if (action === 'comment') openCommentDialog();
+      else submitDecision(action);
+    });
 
     // keyboard shortcuts (only when no dialog is open and not typing in a field):
     //   cmd/ctrl+Enter → approve, Esc → reject, c → comment
@@ -2307,7 +2480,8 @@ export function createServeCommand(): Command {
           const info = await projectWorker.getApprovalInfo({
             projectRoot: project.root,
             sessionId,
-            resumeToken: token
+            resumeToken: token,
+            allowHistorical: true,
           });
           if (!info.success) {
             sendHTML(res, info.error.code === 'RESUME_TOKEN_INVALID' ? 401 : 404, `<!doctype html><title>AgentUse Approval</title><p>${escapeHtml(info.error.message)}</p>`);
@@ -2360,7 +2534,7 @@ export function createServeCommand(): Command {
               return;
             }
 
-            const logKey = `${project.id}:${sessionId}`;
+            const logKey = `${project.id}:${sessionId}:${token}`;
             if (!loggedApprovalRequests.has(logKey)) {
               loggedApprovalRequests.add(logKey);
               const filePath = info.approval.agent.filePath;
@@ -2406,7 +2580,8 @@ export function createServeCommand(): Command {
           const info = await projectWorker.getApprovalInfo({
             projectRoot: project.root,
             sessionId,
-            resumeToken: token
+            resumeToken: token,
+            allowHistorical: true,
           });
           if (!info.success) {
             sendError(res, info.error.code === 'RESUME_TOKEN_INVALID' ? 401 : 404, info.error.code, info.error.message);

@@ -6,6 +6,7 @@ import type { AgentPart } from '../types/parts';
 import type { ToolStateCompleted, ToolStateError } from '../session/types';
 import { logger } from '../utils/logger';
 import { formatToolResultForDisplay } from '../utils/format-tool-result';
+import { sendSlackApprovalRequest } from '../slack/approval';
 import type { AgentChunk } from './types';
 
 async function notifyApprovalRequested(options: {
@@ -39,6 +40,60 @@ async function notifyApprovalRequested(options: {
   } catch {
     // Approval execution must not fail just because serve is unavailable,
     // restarted, or running an older build without this endpoint.
+  }
+}
+
+async function sendPersistedSlackApproval(options: {
+  sessionId?: string;
+  resumeToken?: string;
+  approvalUrl?: string;
+  prompt?: string;
+  input?: unknown;
+  expiresAt?: number;
+  notificationRequest?: unknown;
+}): Promise<{ type: 'slack-message'; channel: string; ts: string; url: string } | undefined> {
+  const request = options.notificationRequest && typeof options.notificationRequest === 'object'
+    ? options.notificationRequest as Record<string, unknown>
+    : undefined;
+  if (request?.type !== 'slack-message') return undefined;
+
+  const botToken = process.env.SLACK_BOT_TOKEN;
+  const channelId = typeof request.channel === 'string' ? request.channel : process.env.SLACK_APPROVAL_CHANNEL;
+  if (!botToken || !channelId || !options.sessionId || !options.resumeToken || !options.approvalUrl || !options.prompt) {
+    logger.warn('Slack approval notification skipped: missing bot token, channel, session id, resume token, approval URL, or prompt');
+    return undefined;
+  }
+
+  const input = options.input && typeof options.input === 'object'
+    ? options.input as Record<string, unknown>
+    : {};
+  try {
+    const message = await sendSlackApprovalRequest({
+      botToken,
+      channelId,
+      sessionId: options.sessionId,
+      ...(process.env.AGENTUSE_PROJECT_ID && { projectId: process.env.AGENTUSE_PROJECT_ID }),
+      prompt: options.prompt,
+      ...(typeof input.summary === 'string' && { summary: input.summary }),
+      ...(typeof input.draft === 'string' && { draft: input.draft }),
+      ...(typeof input.draft_url === 'string' && { draftUrl: input.draft_url }),
+      ...(typeof input.artifact_url === 'string' && { artifactUrl: input.artifact_url }),
+      ...(typeof input.context === 'string' && { context: input.context }),
+      ...(typeof input.risk === 'string' && { risk: input.risk }),
+      resumeToken: options.resumeToken,
+      approvalUrl: options.approvalUrl,
+      ...(options.expiresAt !== undefined && { expiresAt: new Date(options.expiresAt).toISOString() })
+    });
+
+    return {
+      type: 'slack-message',
+      channel: message.channel,
+      ts: message.ts,
+      url: options.approvalUrl
+    };
+  } catch (err) {
+    logger.warn(`Slack approval notification failed: ${(err as Error).message}`);
+    return undefined;
   }
 }
 
@@ -480,28 +535,45 @@ export async function processAgentStream(
             const partID = await pending.addPartPromise;
             if (partID) {
               const payload = suspendPayload;
-              const notification = payload.notification && typeof payload.notification === 'object'
+              let notification = payload.notification && typeof payload.notification === 'object'
                 ? payload.notification as any
                 : undefined;
-              const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentId, options.messageID, partID, {
-                state: {
-                  status: 'pending',
-                  input: pending.input,
-                  suspendedAt: Date.now(),
-                  resumePayload: {
-                    kind: (payload.kind === 'await_human' ? 'await_human' : 'await_external') as 'await_external' | 'await_human',
-                    ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
-                    ...(typeof payload.channel === 'string' && { channel: payload.channel }),
-                    ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
-                    ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
-                    ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
-                    ...(notification ? { notification } : {})
-                  }
+              const suspendedAt = Date.now();
+              const buildPendingState = (activeNotification?: any) => ({
+                status: 'pending',
+                input: pending.input,
+                suspendedAt,
+                resumePayload: {
+                  kind: (payload.kind === 'await_human' ? 'await_human' : 'await_external') as 'await_external' | 'await_human',
+                  ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
+                  ...(typeof payload.channel === 'string' && { channel: payload.channel }),
+                  ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
+                  ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
+                  ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
+                  ...(activeNotification ? { notification: activeNotification } : {})
                 }
+              });
+              const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentId, options.messageID, partID, {
+                state: buildPendingState(notification)
               } as any).catch(err => logger.debug(`Failed to mark tool part pending: ${err.message}`));
               trackSessionUpdate(updatePromise);
               await updatePromise;
               if (payload.kind === 'await_human') {
+                const sentNotification = await sendPersistedSlackApproval({
+                  sessionId: options.sessionID,
+                  ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
+                  ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
+                  ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
+                  ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
+                  input: pending.input,
+                  notificationRequest: payload.notificationRequest
+                });
+                if (sentNotification) {
+                  notification = sentNotification;
+                  await options.sessionManager.updatePart(options.sessionID, options.agentId, options.messageID, partID, {
+                    state: buildPendingState(sentNotification)
+                  } as any);
+                }
                 await notifyApprovalRequested({
                   sessionId: options.sessionID,
                   ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),

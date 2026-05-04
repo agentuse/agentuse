@@ -896,6 +896,7 @@ async function runInternalWorker() {
     sessionId?: string;
     toolResult?: unknown;
     resumeToken?: string;
+    allowHistorical?: boolean;
   }
 
   interface ExpiredApproval {
@@ -909,6 +910,21 @@ async function runInternalWorker() {
   }
 
   type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
+
+  interface ApprovalLogDetails {
+    resumeToken?: string;
+    prompt?: string;
+    summary?: string;
+    context?: string;
+    risk?: string;
+    draft?: string;
+    draftUrl?: string;
+    artifactUrl?: string;
+    decisionStatus?: string;
+    decisionComment?: string;
+    decisionReviewer?: string;
+    errorMessage?: string;
+  }
 
   interface ApprovalSummary {
     sessionId: string;
@@ -945,7 +961,7 @@ async function runInternalWorker() {
       : JSON.stringify(value, null, 2);
   }
 
-  function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; status?: string; title: string; message?: string; time?: number }> {
+  function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; status?: string; title: string; message?: string; time?: number; details?: ApprovalLogDetails }> {
     return parts.map((part: any) => {
       if (part?.type === 'text') {
         const message = formatApprovalLogValue(part.text);
@@ -969,29 +985,27 @@ async function runInternalWorker() {
       }
       if (part?.type === 'tool') {
         const state = part.state ?? {};
-        const resumePayload = valueAsRecord(state.resumePayload);
-        const notification = valueAsRecord(resumePayload.notification);
-        const approvalUrl = typeof resumePayload.approvalUrl === 'string'
-          ? resumePayload.approvalUrl
-          : typeof notification.url === 'string'
-            ? notification.url
-            : undefined;
-        const message = state.status === 'completed'
-          ? formatApprovalLogValue(state.output)
-          : state.status === 'error'
-            ? formatApprovalLogValue(state.error)
-            : state.status === 'pending'
-              ? [
-                formatApprovalLogValue(state.input),
-                approvalUrl ? `Review URL: ${approvalUrl}` : undefined
-              ].filter(Boolean).join('\n\n')
-              : undefined;
+        const isAwaitHuman = part.tool === 'await_human';
+        const details = isAwaitHuman ? buildAwaitHumanDetails(state) : undefined;
+        const message = details
+          ? undefined
+          : state.status === 'completed'
+            ? formatApprovalLogValue(state.output)
+            : state.status === 'error'
+              ? formatApprovalLogValue(state.error)
+              : state.status === 'pending'
+                ? formatApprovalLogValue(state.input)
+                : undefined;
+        const title = isAwaitHuman
+          ? approvalLogTitle(state)
+          : `${part.tool ?? 'tool'} ${state.status ?? ''}`.trim();
         return {
           id: String(part.id),
           type: 'tool',
           ...(typeof state.status === 'string' && { status: state.status }),
-          title: `${part.tool ?? 'tool'} ${state.status ?? ''}`.trim(),
+          title,
           ...(message !== undefined && { message }),
+          ...(details && { details }),
           ...(typeof state.time?.start === 'number'
             ? { time: state.time.start }
             : typeof state.suspendedAt === 'number'
@@ -1005,6 +1019,59 @@ async function runInternalWorker() {
         title: String(part?.type ?? 'Session event')
       };
     });
+  }
+
+  function approvalLogTitle(state: any): string {
+    if (state?.status === 'pending') return 'Pending for approval';
+    if (state?.status === 'completed') {
+      const output = valueAsRecord(state.output);
+      const decision = typeof output.status === 'string' ? output.status.toLowerCase() : '';
+      if (decision === 'approve' || decision === 'approved') return 'Approved';
+      if (decision === 'reject' || decision === 'rejected') return 'Rejected';
+      if (decision === 'comment' || decision === 'commented') return 'Comment sent';
+      return 'Approval resolved';
+    }
+    if (state?.status === 'error') return 'Approval failed';
+    return 'Approval';
+  }
+
+  function buildAwaitHumanDetails(state: any): ApprovalLogDetails | undefined {
+    const input = valueAsRecord(state?.input);
+    const output = valueAsRecord(state?.output);
+    const metadata = valueAsRecord(state?.metadata);
+    const resumePayload = state?.status === 'pending'
+      ? valueAsRecord(state?.resumePayload)
+      : valueAsRecord(metadata.resumePayload);
+    const fields: ApprovalLogDetails = {};
+    if (typeof resumePayload.resumeToken === 'string' && resumePayload.resumeToken) {
+      fields.resumeToken = resumePayload.resumeToken;
+    }
+    if (typeof input.prompt === 'string' && input.prompt) fields.prompt = input.prompt;
+    if (typeof input.summary === 'string' && input.summary) fields.summary = input.summary;
+    if (typeof input.context === 'string' && input.context) fields.context = input.context;
+    if (typeof input.risk === 'string' && input.risk) fields.risk = input.risk;
+    if (typeof input.draft === 'string' && input.draft) fields.draft = input.draft;
+    if (typeof input.draft_url === 'string' && input.draft_url) fields.draftUrl = input.draft_url;
+    if (typeof input.artifact_url === 'string' && input.artifact_url) fields.artifactUrl = input.artifact_url;
+
+    if (state?.status === 'completed') {
+      const decisionStatus = typeof output.status === 'string' ? output.status : undefined;
+      const decisionComment = typeof output.comment === 'string' ? output.comment : undefined;
+      const reviewer = valueAsRecord(output.reviewer);
+      const reviewerLabel = typeof reviewer.name === 'string'
+        ? reviewer.name
+        : typeof reviewer.id === 'string'
+          ? reviewer.id
+          : undefined;
+      if (decisionStatus) fields.decisionStatus = decisionStatus;
+      if (decisionComment) fields.decisionComment = decisionComment;
+      if (reviewerLabel) fields.decisionReviewer = reviewerLabel;
+    } else if (state?.status === 'error') {
+      const errText = typeof state.error === 'string' ? state.error : undefined;
+      if (errText) fields.errorMessage = errText;
+    }
+
+    return Object.keys(fields).length > 0 ? fields : undefined;
   }
 
   async function getApprovalInfo(req: ExecuteRequest) {
@@ -1033,7 +1100,7 @@ async function runInternalWorker() {
         messages.map((message) => sessionManager.getMessageParts(req.sessionId!, found.agentId, message.id))
       )).flat();
       const logs = buildApprovalLogs(parts);
-      const approvalPart = [...parts].reverse().find((part: any) =>
+      const approvalParts = parts.filter((part: any) =>
         part?.type === 'tool' &&
         part?.tool === 'await_human' &&
         (
@@ -1043,6 +1110,11 @@ async function runInternalWorker() {
           part?.state?.metadata?.resumePayload?.kind === 'await_human'
         )
       ) as any;
+      const pendingApprovalPart = [...approvalParts].reverse().find((part: any) =>
+        part?.state?.status === 'pending'
+      );
+      const latestApprovalPart = [...approvalParts].reverse()[0];
+      const approvalPart = pendingApprovalPart ?? latestApprovalPart;
 
       if (!approvalPart) {
         return {
@@ -1054,7 +1126,8 @@ async function runInternalWorker() {
             agent: {
               id: found.session.agent.id,
               name: found.session.agent.name,
-              ...(found.session.agent.filePath && { filePath: found.session.agent.filePath })
+              ...(found.session.agent.filePath && { filePath: found.session.agent.filePath }),
+              ...(found.session.agent.description && { description: found.session.agent.description })
             },
             logs
           },
@@ -1068,7 +1141,25 @@ async function runInternalWorker() {
         ? valueAsRecord(state.resumePayload)
         : valueAsRecord(metadata.resumePayload);
       const expectedToken = typeof resumePayload.resumeToken === 'string' ? resumePayload.resumeToken : undefined;
-      if (expectedToken && expectedToken !== req.resumeToken) {
+      // For read-only views (e.g. /status polling, page render via an old Slack
+      // link), accept any resumeToken that was issued for any await_human gate
+      // in this session. /decision and resume.ts keep strict latest-token
+      // checks, so authorization to act is not weakened.
+      const tokenMatchesHistory = (() => {
+        if (!req.allowHistorical || !req.resumeToken) return false;
+        for (const part of approvalParts) {
+          const partState = (part as any).state ?? {};
+          const partMeta = valueAsRecord(partState.metadata);
+          const partPayload = partState.status === 'pending'
+            ? valueAsRecord(partState.resumePayload)
+            : valueAsRecord(partMeta.resumePayload);
+          if (typeof partPayload.resumeToken === 'string' && partPayload.resumeToken === req.resumeToken) {
+            return true;
+          }
+        }
+        return false;
+      })();
+      if (expectedToken && expectedToken !== req.resumeToken && !tokenMatchesHistory) {
         return {
           id: req.id,
           success: false,
@@ -1085,7 +1176,8 @@ async function runInternalWorker() {
             agent: {
               id: found.session.agent.id,
               name: found.session.agent.name,
-              ...(found.session.agent.filePath && { filePath: found.session.agent.filePath })
+              ...(found.session.agent.filePath && { filePath: found.session.agent.filePath }),
+              ...(found.session.agent.description && { description: found.session.agent.description })
             },
             logs
           },
@@ -1107,7 +1199,8 @@ async function runInternalWorker() {
           agent: {
             id: found.session.agent.id,
             name: found.session.agent.name,
-            ...(found.session.agent.filePath && { filePath: found.session.agent.filePath })
+            ...(found.session.agent.filePath && { filePath: found.session.agent.filePath }),
+            ...(found.session.agent.description && { description: found.session.agent.description })
           },
           ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
           ...(typeof input.summary === 'string' && { summary: input.summary }),
@@ -1119,6 +1212,7 @@ async function runInternalWorker() {
           ...(Array.isArray(input.actions) && { actions: input.actions }),
           ...(typeof resumePayload.channel === 'string' && { channel: resumePayload.channel }),
           ...(approvalUrl && { approvalUrl }),
+          ...(state.status === 'pending' && expectedToken && { currentResumeToken: expectedToken }),
           ...(typeof resumePayload.expiresAt === 'number' && { expiresAt: resumePayload.expiresAt }),
           ...(typeof state.suspendedAt === 'number' && { suspendedAt: state.suspendedAt }),
           ...(Object.keys(notification).length > 0 && { notification }),

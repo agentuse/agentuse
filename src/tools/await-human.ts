@@ -2,7 +2,6 @@ import type { Tool } from 'ai';
 import { randomBytes } from 'crypto';
 import { z } from 'zod';
 import { SuspendSignal } from '../runner/suspend';
-import { sendSlackApprovalRequest } from '../slack/approval';
 import { findServerForProject } from '../utils/server-registry';
 
 function parseTimeout(value?: string): number | undefined {
@@ -56,7 +55,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       context: z.string().optional().describe('Relevant background, constraints, or work completed so far'),
       risk: z.string().optional().describe('Known risks, unresolved questions, or special reviewer attention areas')
     }),
-    execute: async ({ prompt, summary, draft, draft_url, artifact_url, context, risk }: {
+    execute: async ({ prompt }: {
       prompt: string;
       summary?: string;
       draft?: string;
@@ -65,14 +64,13 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       context?: string;
       risk?: string;
     }) => {
-      const effectiveActions = defaults?.actions;
       const timeoutMs = parseTimeout(defaults?.timeout);
       const expiresAt = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
       const resumeToken = randomBytes(24).toString('base64url');
       const projectId = process.env.AGENTUSE_PROJECT_ID;
       const approvalUrl = getApprovalUrl(sessionId, resumeToken, projectId, defaults?.projectRoot);
 
-      let slackNotification: { type: 'slack-message'; channel: string; ts: string; url: string } | undefined;
+      let notificationRequest: { type: 'slack-message'; channel: string } | undefined;
       if (defaults?.slack) {
         const botToken = process.env.SLACK_BOT_TOKEN;
         const slackChannelId = defaults.slack.channelId ?? process.env.SLACK_APPROVAL_CHANNEL;
@@ -80,28 +78,9 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
           throw new Error('Slack approval notifications require SLACK_BOT_TOKEN, notifications.routes[].to.slack.channel_id or SLACK_APPROVAL_CHANNEL, and a session id');
         }
 
-        const message = await sendSlackApprovalRequest({
-          botToken,
-          channelId: slackChannelId,
-          ...(sessionId && { sessionId }),
-          ...(projectId && { projectId }),
-          prompt,
-          ...(summary && { summary }),
-          ...(draft && { draft }),
-          ...(draft_url && { draftUrl: draft_url }),
-          ...(artifact_url && { artifactUrl: artifact_url }),
-          ...(context && { context }),
-          ...(risk && { risk }),
-          ...(effectiveActions && { actions: effectiveActions }),
-          resumeToken,
-          approvalUrl,
-          ...(expiresAt !== undefined && { expiresAt: new Date(expiresAt).toISOString() })
-        });
-        slackNotification = {
+        notificationRequest = {
           type: 'slack-message',
-          channel: message.channel,
-          ts: message.ts,
-          url: approvalUrl
+          channel: slackChannelId
         };
       }
 
@@ -112,7 +91,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
         ...(expiresAt !== undefined && { expiresAt }),
         resumeToken,
         ...(approvalUrl && { approvalUrl }),
-        ...(slackNotification ? { notification: slackNotification } : {})
+        ...(notificationRequest ? { notificationRequest } : {})
       });
     }
   };
