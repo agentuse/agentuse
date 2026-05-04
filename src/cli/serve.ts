@@ -1531,7 +1531,10 @@ function renderApprovalPage(options: {
       '</div>';
     }
     function logEntryHtml(entry) {
-      return '<li class="log-item ' + escapeText(entry.status || '') + '">' +
+      const resumeTokenAttr = entry.details && entry.details.resumeToken
+        ? ' data-resume-token="' + escapeText(entry.details.resumeToken) + '"'
+        : '';
+      return '<li class="log-item ' + escapeText(entry.status || '') + '"' + resumeTokenAttr + '>' +
         '<span class="log-time">' + escapeText(formatTime(entry.time)) + '</span>' +
         '<span class="log-marker">⋮</span>' +
         '<span class="log-main"><span class="log-title">' + escapeText(entry.title) + '</span>' +
@@ -1565,6 +1568,24 @@ function renderApprovalPage(options: {
       if (!changed) return;
       const ordered = [...renderedLogs.values()].sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
       logsEl.innerHTML = ordered.map(logEntryHtml).join('');
+      scrollToActiveApproval();
+    }
+    let lastScrolledResumeToken = null;
+    function activeApprovalElement() {
+      if (currentResumeToken) {
+        return logsEl.querySelector('[data-resume-token="' + CSS.escape(currentResumeToken) + '"]');
+      }
+      return logsEl.querySelector('.log-item.pending') || logsEl.lastElementChild;
+    }
+    function scrollToActiveApproval(force) {
+      const target = activeApprovalElement();
+      if (!target) return;
+      const tokenForScroll = currentResumeToken || 'latest';
+      if (!force && lastScrolledResumeToken === tokenForScroll) return;
+      lastScrolledResumeToken = tokenForScroll;
+      requestAnimationFrame(function () {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
     }
     function formatExpires(value) {
       if (typeof value !== 'number') return '';
@@ -1594,6 +1615,7 @@ function renderApprovalPage(options: {
       if (approval.approvalUrl) {
         try { history.replaceState(null, '', approval.approvalUrl); } catch {}
       }
+      scrollToActiveApproval(true);
     }
     async function refreshStatus() {
       try {
@@ -1615,6 +1637,7 @@ function renderApprovalPage(options: {
       } catch {}
     }
     refreshStatus();
+    scrollToActiveApproval();
     setInterval(refreshStatus, 1500);
 
     let submittingDecision = false;
