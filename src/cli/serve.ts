@@ -2,15 +2,16 @@ import { Command } from "commander";
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import { timingSafeEqual } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
-import { resolve, basename, relative } from "path";
+import { dirname, join, resolve, basename, relative } from "path";
 import { existsSync } from "fs";
+import { readFile } from "fs/promises";
 import { glob } from "glob";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
 import chalk from "chalk";
 import * as dotenv from "dotenv";
 import { parseAgent } from "../parser";
 import { type AgentChunk } from "../runner";
-import { resolveProjectContext } from "../utils/project";
+import { findProjectRoot, resolveProjectContext } from "../utils/project";
 import { logger, LogLevel, executionLog, approvalLog } from "../utils/logger";
 import { printLogo } from "../utils/branding";
 import { initStorage } from "../storage/index.js";
@@ -23,6 +24,8 @@ import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision } from "../slack/approval";
 import { homedir } from "os";
+import { StoreFileSchema } from "../store/schema";
+import type { StoreItem } from "../store/types";
 
 interface RunRequest {
   agent: string;
@@ -164,6 +167,7 @@ interface ApprovalPageInfo {
 interface ApprovalLogEntry {
   id: string;
   type: string;
+  tool?: string;
   status?: string;
   title: string;
   message?: string;
@@ -660,6 +664,94 @@ function renderLogContentValue(value: string, options?: { forceMarkdown?: boolea
   return `<pre class="content-code text"><code>${escapeHtml(value)}</code></pre>`;
 }
 
+function valueAsRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function storeItemTitle(item: StoreItem): string {
+  if (item.title) return item.title;
+  const data = valueAsRecord(item.data);
+  const candidates = ['title', 'name', 'headline', 'subject', 'url'];
+  for (const key of candidates) {
+    const value = data[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return item.id;
+}
+
+function storeItemPreview(item: StoreItem, max = 180): string {
+  const data = valueAsRecord(item.data);
+  const candidates = ['summary', 'description', 'note_excerpt', 'excerpt', 'draft', 'body', 'content', 'why_engage'];
+  for (const key of candidates) {
+    const value = data[key];
+    if (typeof value === 'string' && value.trim()) {
+      const compact = value.trim().replace(/\s+/g, ' ');
+      return compact.length > max ? `${compact.slice(0, max)}…` : compact;
+    }
+  }
+  const json = JSON.stringify(item.data);
+  return json.length > max ? `${json.slice(0, max)}…` : json;
+}
+
+function parseStoreToolPayload(message?: string): Record<string, unknown> | undefined {
+  if (!message || !isJsonLikeContent(message)) return undefined;
+  try {
+    const parsed = JSON.parse(message);
+    return valueAsRecord(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
+function storeToolEvent(entry: ApprovalLogEntry, projectId?: string): { store?: string; itemId?: string; item?: StoreItem; href?: string } | undefined {
+  if (!entry.tool?.startsWith('store_')) return undefined;
+  const payload = parseStoreToolPayload(entry.message);
+  if (!payload) return undefined;
+  const item = valueAsRecord(payload.item) as unknown as StoreItem;
+  const store = typeof payload.store === 'string' && payload.store ? payload.store : undefined;
+  const itemId = typeof payload.itemId === 'string' && payload.itemId
+    ? payload.itemId
+    : typeof item.id === 'string' && item.id
+      ? item.id
+      : undefined;
+  const params = new URLSearchParams();
+  if (projectId) params.set('project', projectId);
+  if (itemId) params.set('highlight', itemId);
+  const href = store
+    ? `/stores/${encodeURIComponent(store)}${params.toString() ? `?${params.toString()}` : ''}`
+    : undefined;
+  return {
+    ...(store ? { store } : {}),
+    ...(itemId ? { itemId } : {}),
+    ...(typeof item.id === 'string' ? { item } : {}),
+    ...(href ? { href } : {})
+  };
+}
+
+function renderStoreToolEvent(entry: ApprovalLogEntry, projectId?: string): string {
+  const event = storeToolEvent(entry, projectId);
+  if (!event) return '';
+  const item = event.item;
+  const summary = item
+    ? `<div class="store-event-title">${escapeHtml(storeItemTitle(item))}</div>
+       <div class="store-event-meta">
+        ${item.type ? `<span>${escapeHtml(item.type)}</span>` : ''}
+        ${item.status ? `<span>${escapeHtml(item.status)}</span>` : ''}
+        ${event.itemId ? `<code>${escapeHtml(event.itemId)}</code>` : ''}
+       </div>
+       <div class="store-event-preview">${escapeHtml(storeItemPreview(item))}</div>`
+    : `<div class="store-event-title">${escapeHtml(event.itemId ?? 'Store operation')}</div>`;
+  return `<div class="store-event">
+    <div>
+      ${event.store ? `<div class="store-event-store">Store: <code>${escapeHtml(event.store)}</code></div>` : ''}
+      ${summary}
+    </div>
+    ${event.href ? `<a class="store-event-link" href="${escapeHtml(event.href)}">Open in Store</a>` : ''}
+  </div>`;
+}
+
 function approvalActionList(actions?: ApprovalPageInfo['actions']): Array<{ id: string; label: string; style?: 'primary' | 'danger' }> {
   return actions && actions.length > 0
     ? actions
@@ -672,7 +764,7 @@ function approvalActionList(actions?: ApprovalPageInfo['actions']): Array<{ id: 
 
 function renderLogItems(
   logs?: ApprovalLogEntry[],
-  options?: { actions?: ApprovalActionDef[]; actionable?: boolean; currentResumeToken?: string | undefined }
+  options?: { actions?: ApprovalActionDef[]; actionable?: boolean; currentResumeToken?: string | undefined; projectId?: string | undefined }
 ): string {
   if (!logs || logs.length === 0) {
     return '<li class="log-empty">No session events yet.</li>';
@@ -691,6 +783,7 @@ function renderLogItems(
     const resumeTokenAttr = entry.details?.resumeToken
       ? ` data-resume-token="${escapeHtml(entry.details.resumeToken)}"`
       : '';
+    const storeEventHtml = renderStoreToolEvent(entry, options?.projectId);
     return `
         <li class="log-item ${escapeHtml(entry.status ?? '')}${expandable ? ' expandable' : ''}${expanded ? ' expanded' : ''}" data-log-id="${escapeHtml(entry.id)}" data-log-type="${escapeHtml(entry.type)}"${resumeTokenAttr}${expandable ? ` aria-expanded="${expanded ? 'true' : 'false'}" tabindex="0"` : ''}>
           <span class="log-time">${escapeHtml(formatLogTime(entry.time))}</span>
@@ -698,8 +791,9 @@ function renderLogItems(
           <span class="log-main">
             <span class="log-title">${escapeHtml(entry.title)}</span>
             <span class="log-content">
+              ${storeEventHtml}
               ${entry.details ? renderApprovalDetailBlock(entry.details) : ''}
-              ${entry.message ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : ''}
+              ${entry.message && !storeEventHtml ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : ''}
             </span>
             ${showActions ? renderInlineActions(actions) : ''}
           </span>
@@ -896,12 +990,16 @@ function approvalsThemeToggleScript(): string {
   `;
 }
 
-function approvalsTopbarMarkup(opts: { right?: string; isCurrentPage?: boolean }): string {
-  const pageMarkup = opts.isCurrentPage
+function approvalsTopbarMarkup(opts: { right?: string; isCurrentPage?: boolean; currentPage?: 'approvals' | 'stores' }): string {
+  const currentPage = opts.currentPage ?? (opts.isCurrentPage ? 'approvals' : undefined);
+  const approvalsMarkup = currentPage === 'approvals'
     ? `<span class="page">approvals</span>`
     : `<a class="page" href="/approvals">approvals</a>`;
+  const storesMarkup = currentPage === 'stores'
+    ? `<span class="page">stores</span>`
+    : `<a class="page" href="/stores">stores</a>`;
   return `<div class="topbar">
-    <span class="brand"><span>agentuse</span><span class="slash">/</span>${pageMarkup}</span>
+    <span class="brand"><span>agentuse</span><span class="slash">/</span>${approvalsMarkup}<span class="slash">/</span>${storesMarkup}</span>
     <span class="right">${opts.right ?? ''}</span>
   </div>`;
 }
@@ -961,6 +1059,384 @@ function renderApprovalBucket(
         : `<div class="rows">${rows.map(renderApprovalRow).join('')}</div>`}
     </section>
   `;
+}
+
+interface StoreBrowserSummary {
+  projectId: string;
+  name: string;
+  itemCount: number;
+  updatedAt?: number;
+  types: string[];
+  statuses: string[];
+}
+
+interface StoreBrowserRows {
+  projectId: string;
+  storeName: string;
+  items: StoreItem[];
+}
+
+interface StoreProjectRef {
+  id: string;
+  root: string;
+}
+
+function isSafeStoreName(storeName: string): boolean {
+  return Boolean(storeName) &&
+    !storeName.includes('\0') &&
+    !storeName.split('/').some((part) => part === '' || part === '..');
+}
+
+function resolveStoreRoot(projectRoot: string): string {
+  return join(projectRoot, '.agentuse', 'store');
+}
+
+async function readStoreItems(projectRoot: string, storeName: string): Promise<StoreItem[]> {
+  if (!isSafeStoreName(storeName)) throw new Error('Invalid store name');
+  const storePath = join(resolveStoreRoot(projectRoot), storeName, 'items.json');
+  const parsed = StoreFileSchema.parse(JSON.parse(await readFile(storePath, 'utf-8')));
+  return parsed.items as StoreItem[];
+}
+
+async function listProjectStores(project: StoreProjectRef): Promise<{ stores: StoreBrowserSummary[]; errors: Array<{ storeName?: string; message: string }> }> {
+  const storeRoot = resolveStoreRoot(project.root);
+  if (!existsSync(storeRoot)) return { stores: [], errors: [] };
+  const stores: StoreBrowserSummary[] = [];
+  const errors: Array<{ storeName?: string; message: string }> = [];
+  const files = await glob('**/items.json', { cwd: storeRoot, nodir: true, dot: true });
+
+  for (const file of files.sort()) {
+    const storeName = dirname(file);
+    if (!isSafeStoreName(storeName)) continue;
+    try {
+      const items = await readStoreItems(project.root, storeName);
+      const timestamps = items
+        .map((item) => Date.parse(item.updatedAt))
+        .filter((value) => Number.isFinite(value));
+      const types = [...new Set(items.map((item) => item.type).filter((value): value is string => Boolean(value)))].sort();
+      const statuses = [...new Set(items.map((item) => item.status).filter((value): value is string => Boolean(value)))].sort();
+      stores.push({
+        projectId: project.id,
+        name: storeName,
+        itemCount: items.length,
+        ...(timestamps.length > 0 && { updatedAt: Math.max(...timestamps) }),
+        types,
+        statuses
+      });
+    } catch (err) {
+      errors.push({ storeName, message: (err as Error).message });
+    }
+  }
+
+  stores.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.name.localeCompare(b.name));
+  return { stores, errors };
+}
+
+async function listStoreRows(project: StoreProjectRef, storeName: string): Promise<StoreBrowserRows> {
+  const items = await readStoreItems(project.root, storeName);
+  items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return { projectId: project.id, storeName, items };
+}
+
+async function findStoreItem(project: StoreProjectRef, storeName: string, itemId: string): Promise<StoreItem | null> {
+  const items = await readStoreItems(project.root, storeName);
+  return items.find((item) => item.id === itemId) ?? null;
+}
+
+function renderStoreStyles(): string {
+  return `
+    ${approvalsTopbarStyles()}
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--mono);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--cyan); text-decoration: none; border-bottom: 1px dotted var(--cyan-border); }
+    main { width: min(1120px, calc(100vw - 32px)); margin: 0 auto; padding: 36px 0 80px; }
+    header { margin-bottom: 24px; }
+    .eyebrow { font-size: 11px; color: var(--cyan); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px; }
+    h1 { margin: 0 0 8px; font-family: var(--sans); font-size: 34px; line-height: 1.12; font-weight: 500; }
+    .lede { margin: 0; color: var(--muted-3); font-family: var(--sans); font-size: 15px; }
+    .panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
+    .store-table { width: 100%; border-collapse: collapse; }
+    .store-table th, .store-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .store-table th { color: var(--muted-2); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 500; background: var(--panel); }
+    .store-table tr:last-child td { border-bottom: 0; }
+    .store-table tbody tr { transition: background 160ms ease, box-shadow 160ms ease; }
+    .store-table tbody tr:hover { background: var(--panel-hover); }
+    .store-table tbody tr.clickable { cursor: pointer; }
+    .store-table tbody tr.clickable:focus-within { outline: 2px solid var(--cyan-border); outline-offset: -2px; }
+    .store-table tbody tr.highlighted { background: var(--amber-soft); box-shadow: inset 3px 0 0 var(--amber); }
+    .title-cell { display: grid; gap: 4px; min-width: 260px; }
+    .title-cell a { width: fit-content; font-weight: 500; color: var(--fg); border-color: var(--line-strong); }
+    .preview { color: var(--muted-2); font-size: 12px; max-width: 520px; }
+    .muted { color: var(--muted-2); }
+    .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    .chip {
+      display: inline-flex; align-items: center;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted-3);
+      background: var(--bg);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .chip.status { color: var(--cyan); border-color: var(--cyan-border); }
+    .empty { padding: 18px; color: var(--muted-2); font-style: italic; }
+    .errors { margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--red-border); border-radius: 8px; color: var(--red); background: var(--red-soft); }
+    .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+    .detail-cell { background: var(--bg); padding: 12px 14px; }
+    .detail-label { display: block; color: var(--muted-2); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px; }
+    .data-grid { display: grid; gap: 10px; }
+    .data-field { display: grid; gap: 5px; }
+    .data-key { color: var(--cyan); font-size: 11px; letter-spacing: 0.08em; }
+    .data-value { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); padding: 10px 12px; color: var(--muted-3); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .data-value pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; }
+    .tabs { display: inline-flex; gap: 4px; margin: 0 0 12px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .tabs button {
+      min-height: 0;
+      padding: 6px 10px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted-2);
+      font-family: var(--mono);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .tabs button:hover { background: var(--panel-hover); color: var(--muted-3); border: 0; }
+    .tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); border: 1px solid var(--line); }
+    .tab-panel[hidden] { display: none; }
+    .raw-json { margin: 0; padding: 14px 16px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; color: var(--muted-3); }
+    .back-link { display: inline-flex; margin-bottom: 18px; color: var(--muted-3); border-color: var(--line-strong); }
+    code { color: var(--muted-3); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+    @media (max-width: 760px) {
+      .store-table th:nth-child(4), .store-table td:nth-child(4),
+      .store-table th:nth-child(5), .store-table td:nth-child(5) { display: none; }
+      h1 { font-size: 28px; }
+    }
+  `;
+}
+
+function renderStoresIndexPage(options: {
+  stores: StoreBrowserSummary[];
+  errors: Array<{ projectId: string; storeName?: string; message: string }>;
+  multiProject: boolean;
+}): string {
+  const rows = options.stores.map((store) => {
+    const params = new URLSearchParams();
+    if (options.multiProject) params.set('project', store.projectId);
+    const href = `/stores/${encodeURIComponent(store.name)}${params.toString() ? `?${params.toString()}` : ''}`;
+    return `<tr>
+      <td class="title-cell"><a href="${escapeHtml(href)}">${escapeHtml(store.name)}</a>${options.multiProject ? `<span class="muted">${escapeHtml(store.projectId)}</span>` : ''}</td>
+      <td>${store.itemCount}</td>
+      <td>${store.updatedAt ? escapeHtml(formatApprovalTime(store.updatedAt)) : '<span class="muted">never</span>'}</td>
+      <td><span class="chips">${store.types.slice(0, 6).map((type) => `<span class="chip">${escapeHtml(type)}</span>`).join('') || '<span class="muted">none</span>'}</span></td>
+      <td><span class="chips">${store.statuses.slice(0, 6).map((status) => `<span class="chip status">${escapeHtml(status)}</span>`).join('') || '<span class="muted">none</span>'}</span></td>
+    </tr>`;
+  }).join('');
+  const errors = options.errors.length > 0
+    ? `<div class="errors">${options.errors.map((err) => `${escapeHtml(err.projectId)}${err.storeName ? `/${escapeHtml(err.storeName)}` : ''}: ${escapeHtml(err.message)}`).join('<br>')}</div>`
+    : '';
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentUse Stores</title>
+  <script>${approvalThemeBootScript()}</script>
+  <style>${approvalListThemeStyles()}${renderStoreStyles()}</style>
+</head>
+<body>
+  ${approvalsTopbarMarkup({ currentPage: 'stores', right: approvalsThemeToggleHtml() })}
+  <main>
+    <header>
+      <div class="eyebrow">shared state</div>
+      <h1>Stores</h1>
+      <p class="lede">Browse persistent state that agents can share across runs.</p>
+    </header>
+    ${errors}
+    <div class="panel">
+      ${rows ? `<table class="store-table">
+        <thead><tr><th>Store</th><th>Items</th><th>Updated</th><th>Types</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>` : '<div class="empty">No stores found for this serve instance.</div>'}
+    </div>
+  </main>
+  <script>${approvalsThemeToggleScript()}</script>
+</body>
+</html>`;
+}
+
+function renderStoreItemsPage(options: {
+  storeName: string;
+  rows: StoreBrowserRows[];
+  errors: Array<{ projectId: string; message: string }>;
+  highlight?: string;
+  multiProject: boolean;
+}): string {
+  const allRows = options.rows.flatMap((group) => group.items.map((item) => ({ projectId: group.projectId, item })));
+  const rows = allRows.map(({ projectId, item }) => {
+    const highlighted = options.highlight && item.id === options.highlight;
+    const params = new URLSearchParams();
+    if (options.multiProject) params.set('project', projectId);
+    const href = `/stores/${encodeURIComponent(options.storeName)}/${encodeURIComponent(item.id)}${params.toString() ? `?${params.toString()}` : ''}`;
+    return `<tr id="store-item-${escapeHtml(item.id)}" class="clickable${highlighted ? ' highlighted' : ''}" data-store-item-id="${escapeHtml(item.id)}" data-href="${escapeHtml(href)}">
+      <td class="title-cell">
+        <a href="${escapeHtml(href)}">${escapeHtml(storeItemTitle(item))}</a>
+        <span class="preview">${escapeHtml(storeItemPreview(item))}</span>
+      </td>
+      <td><span class="chips">${item.status ? `<span class="chip status">${escapeHtml(item.status)}</span>` : ''}${item.type ? `<span class="chip">${escapeHtml(item.type)}</span>` : ''}</span></td>
+      <td>${escapeHtml(formatApprovalTime(Date.parse(item.updatedAt)))}</td>
+      <td>${item.createdBy ? escapeHtml(item.createdBy) : '<span class="muted">unknown</span>'}</td>
+      <td><code>${escapeHtml(item.id)}</code>${options.multiProject ? `<div class="muted">${escapeHtml(projectId)}</div>` : ''}</td>
+    </tr>`;
+  }).join('');
+  const errors = options.errors.length > 0
+    ? `<div class="errors">${options.errors.map((err) => `${escapeHtml(err.projectId)}: ${escapeHtml(err.message)}`).join('<br>')}</div>`
+    : '';
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentUse Store - ${escapeHtml(options.storeName)}</title>
+  <script>${approvalThemeBootScript()}</script>
+  <style>${approvalListThemeStyles()}${renderStoreStyles()}</style>
+</head>
+<body>
+  ${approvalsTopbarMarkup({ currentPage: 'stores', right: `<span class="session-pill">store <code>${escapeHtml(options.storeName)}</code></span>${approvalsThemeToggleHtml()}` })}
+  <main>
+    <header>
+      <div class="eyebrow">store table</div>
+      <h1>${escapeHtml(options.storeName)}</h1>
+      <p class="lede">${allRows.length} item${allRows.length === 1 ? '' : 's'} visible in this serve instance.</p>
+    </header>
+    ${errors}
+    <div class="panel">
+      ${rows ? `<table class="store-table">
+        <thead><tr><th>Item</th><th>Status / type</th><th>Updated</th><th>Created by</th><th>ID</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>` : '<div class="empty">No items found in this store.</div>'}
+    </div>
+  </main>
+  <script>
+    ${approvalsThemeToggleScript()}
+    const highlight = ${JSON.stringify(options.highlight ?? null)};
+    if (highlight && window.CSS && CSS.escape) {
+      const row = document.querySelector('[data-store-item-id="' + CSS.escape(highlight) + '"]');
+      if (row) requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+    }
+    document.addEventListener('click', (event) => {
+      const link = event.target instanceof Element ? event.target.closest('a') : null;
+      if (link) return;
+      const row = event.target instanceof Element ? event.target.closest('tr[data-href]') : null;
+      const href = row && row.getAttribute('data-href');
+      if (href) location.href = href;
+    });
+  </script>
+</body>
+</html>`;
+}
+
+function renderStoreDataValue(value: unknown): string {
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') {
+    return `<code>${escapeHtml(JSON.stringify(value))}</code>`;
+  }
+  if (typeof value === 'string') {
+    return escapeHtml(value);
+  }
+  return `<pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
+}
+
+function renderStoreItemDetailPage(options: {
+  storeName: string;
+  projectId?: string;
+  item: StoreItem;
+}): string {
+  const { item } = options;
+  const backParams = new URLSearchParams();
+  if (options.projectId) backParams.set('project', options.projectId);
+  backParams.set('highlight', item.id);
+  const backHref = `/stores/${encodeURIComponent(options.storeName)}?${backParams.toString()}`;
+  const dataEntries = Object.entries(valueAsRecord(item.data));
+  const dataRows = dataEntries.length > 0
+    ? dataEntries.map(([key, value]) => `<div class="data-field">
+        <span class="data-key">${escapeHtml(key)}</span>
+        <div class="data-value">${renderStoreDataValue(value)}</div>
+      </div>`).join('')
+    : '<div class="empty">No item data.</div>';
+  const tagChips = item.tags?.map((tag) => `<span class="chip">${escapeHtml(tag)}</span>`).join('') ?? '';
+  const rawJson = JSON.stringify(item, null, 2);
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentUse Store Item - ${escapeHtml(storeItemTitle(item))}</title>
+  <script>${approvalThemeBootScript()}</script>
+  <style>${approvalListThemeStyles()}${renderStoreStyles()}</style>
+</head>
+<body>
+  ${approvalsTopbarMarkup({ currentPage: 'stores', right: `<span class="session-pill">store <code>${escapeHtml(options.storeName)}</code></span>${approvalsThemeToggleHtml()}` })}
+  <main>
+    <a class="back-link" href="${escapeHtml(backHref)}">Back to store table</a>
+    <header>
+      <div class="eyebrow">store item</div>
+      <h1>${escapeHtml(storeItemTitle(item))}</h1>
+      <p class="lede">${escapeHtml(storeItemPreview(item, 260))}</p>
+    </header>
+    <div class="tabs" role="tablist" aria-label="Store item views">
+      <button type="button" role="tab" id="tab-table" aria-controls="panel-table" aria-selected="true" data-tab="table">Table</button>
+      <button type="button" role="tab" id="tab-json" aria-controls="panel-json" aria-selected="false" data-tab="json">Raw JSON</button>
+    </div>
+    <section id="panel-table" class="tab-panel" role="tabpanel" aria-labelledby="tab-table">
+      <div class="detail-grid">
+        <div class="detail-cell"><span class="detail-label">id</span><code>${escapeHtml(item.id)}</code></div>
+        <div class="detail-cell"><span class="detail-label">type</span>${item.type ? escapeHtml(item.type) : '<span class="muted">none</span>'}</div>
+        <div class="detail-cell"><span class="detail-label">status</span>${item.status ? `<span class="chip status">${escapeHtml(item.status)}</span>` : '<span class="muted">none</span>'}</div>
+        <div class="detail-cell"><span class="detail-label">created by</span>${item.createdBy ? escapeHtml(item.createdBy) : '<span class="muted">unknown</span>'}</div>
+        <div class="detail-cell"><span class="detail-label">created</span>${escapeHtml(formatApprovalTime(Date.parse(item.createdAt)))}</div>
+        <div class="detail-cell"><span class="detail-label">updated</span>${escapeHtml(formatApprovalTime(Date.parse(item.updatedAt)))}</div>
+        ${item.parentId ? `<div class="detail-cell"><span class="detail-label">parent</span><code>${escapeHtml(item.parentId)}</code></div>` : ''}
+        ${tagChips ? `<div class="detail-cell"><span class="detail-label">tags</span><span class="chips">${tagChips}</span></div>` : ''}
+      </div>
+      <div class="panel">
+        <div class="data-grid">${dataRows}</div>
+      </div>
+    </section>
+    <section id="panel-json" class="tab-panel panel" role="tabpanel" aria-labelledby="tab-json" hidden>
+      <pre class="raw-json"><code>${escapeHtml(rawJson)}</code></pre>
+    </section>
+  </main>
+  <script>
+    ${approvalsThemeToggleScript()}
+    const tabButtons = Array.from(document.querySelectorAll('[data-tab]'));
+    const panels = {
+      table: document.getElementById('panel-table'),
+      json: document.getElementById('panel-json')
+    };
+    function selectStoreTab(name) {
+      for (const button of tabButtons) {
+        const selected = button.dataset.tab === name;
+        button.setAttribute('aria-selected', String(selected));
+      }
+      for (const [key, panel] of Object.entries(panels)) {
+        if (panel) panel.hidden = key !== name;
+      }
+    }
+    for (const button of tabButtons) {
+      button.addEventListener('click', () => selectStoreTab(button.dataset.tab || 'table'));
+    }
+  </script>
+</body>
+</html>`;
 }
 
 function renderApprovalsListPage(options: {
@@ -1382,6 +1858,31 @@ function renderApprovalPage(options: {
     .log-item.expandable:not(.expanded) .log-content { display: none; }
     .log-empty { color: var(--muted-2); padding: 12px 0; font-style: italic; }
 
+    .store-event {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      margin-top: 8px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .store-event-title { color: var(--fg); font-weight: 500; margin-top: 3px; }
+    .store-event-store,
+    .store-event-meta,
+    .store-event-preview {
+      color: var(--muted-2);
+      font-size: 12px;
+    }
+    .store-event-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+    .store-event-preview { margin-top: 6px; max-width: 640px; }
+    .store-event-link {
+      align-self: flex-start;
+      white-space: nowrap;
+      border-bottom-style: dashed;
+    }
+
     .log-details {
       display: grid;
       gap: 10px;
@@ -1732,7 +2233,7 @@ function renderApprovalPage(options: {
 
     <div class="section-title"><span>session log</span><span class="rule"></span></div>
     <div class="panel">
-      <ul id="logs" class="logs">${renderLogItems(initialLogs, { actions, actionable, currentResumeToken: approval.currentResumeToken })}</ul>
+      <ul id="logs" class="logs">${renderLogItems(initialLogs, { actions, actionable, currentResumeToken: approval.currentResumeToken, projectId })}</ul>
     </div>
 
     ${actionable ? '' : `
@@ -1953,6 +2454,62 @@ function renderApprovalPage(options: {
         return '<div class="log-detail">' + label + '<div class="log-detail-value">' + value + '</div></div>';
       }).join('') + '</div>';
     }
+    function objectValue(value) {
+      return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    }
+    function storeItemTitle(item) {
+      if (item && typeof item.title === 'string' && item.title) return item.title;
+      const data = objectValue(item && item.data);
+      const keys = ['title', 'name', 'headline', 'subject', 'url'];
+      for (const key of keys) {
+        if (typeof data[key] === 'string' && data[key].trim()) return data[key].trim();
+      }
+      return item && item.id ? String(item.id) : 'Store item';
+    }
+    function storeItemPreview(item) {
+      const data = objectValue(item && item.data);
+      const keys = ['summary', 'description', 'note_excerpt', 'excerpt', 'draft', 'body', 'content', 'why_engage'];
+      for (const key of keys) {
+        if (typeof data[key] === 'string' && data[key].trim()) {
+          const compact = data[key].trim().replace(/\\s+/g, ' ');
+          return compact.length > 180 ? compact.slice(0, 180) + '…' : compact;
+        }
+      }
+      const json = JSON.stringify(data);
+      return json.length > 180 ? json.slice(0, 180) + '…' : json;
+    }
+    function storeEventHtml(entry) {
+      if (!entry || typeof entry.tool !== 'string' || !entry.tool.startsWith('store_')) return '';
+      if (!entry.message || !isJsonLikeContent(entry.message)) return '';
+      let payload;
+      try { payload = objectValue(JSON.parse(entry.message)); } catch { return ''; }
+      const item = objectValue(payload.item);
+      const store = typeof payload.store === 'string' && payload.store ? payload.store : '';
+      const itemId = typeof payload.itemId === 'string' && payload.itemId
+        ? payload.itemId
+        : typeof item.id === 'string' && item.id
+          ? item.id
+          : '';
+      const params = new URLSearchParams();
+      if (project) params.set('project', project);
+      if (itemId) params.set('highlight', itemId);
+      const href = store ? '/stores/' + encodeURIComponent(store) + (params.toString() ? '?' + params.toString() : '') : '';
+      const summary = item && typeof item.id === 'string'
+        ? '<div class="store-event-title">' + escapeText(storeItemTitle(item)) + '</div>' +
+          '<div class="store-event-meta">' +
+            (item.type ? '<span>' + escapeText(item.type) + '</span>' : '') +
+            (item.status ? '<span>' + escapeText(item.status) + '</span>' : '') +
+            (itemId ? '<code>' + escapeText(itemId) + '</code>' : '') +
+          '</div>' +
+          '<div class="store-event-preview">' + escapeText(storeItemPreview(item)) + '</div>'
+        : '<div class="store-event-title">' + escapeText(itemId || 'Store operation') + '</div>';
+      return '<div class="store-event"><div>' +
+        (store ? '<div class="store-event-store">Store: <code>' + escapeText(store) + '</code></div>' : '') +
+        summary +
+        '</div>' +
+        (href ? '<a class="store-event-link" href="' + escapeText(href) + '">Open in Store</a>' : '') +
+      '</div>';
+    }
     function detailsKey(details) {
       return details ? JSON.stringify(details) : '';
     }
@@ -1981,13 +2538,15 @@ function renderApprovalPage(options: {
       const resumeTokenAttr = entry.details && entry.details.resumeToken
         ? ' data-resume-token="' + escapeText(entry.details.resumeToken) + '"'
         : '';
+      const storeHtml = storeEventHtml(entry);
       return '<li class="log-item ' + escapeText(entry.status || '') + (expandable ? ' expandable' : '') + (expanded ? ' expanded' : '') + '" data-log-id="' + escapeText(entry.id) + '" data-log-type="' + escapeText(entry.type) + '"' + resumeTokenAttr + (expandable ? ' aria-expanded="' + String(expanded) + '" tabindex="0"' : '') + '>' +
         '<span class="log-time">' + escapeText(formatTime(entry.time)) + '</span>' +
         '<span class="log-marker">⋮</span>' +
         '<span class="log-main"><span class="log-title">' + escapeText(entry.title) + '</span>' +
         '<span class="log-content">' +
+        storeHtml +
         logDetailsHtml(entry.details) +
-        (entry.message ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : '') +
+        (entry.message && !storeHtml ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : '') +
         '</span>' +
         logActionsHtml(entry) +
         '</span></li>';
@@ -2244,9 +2803,25 @@ function validateApiKey(req: IncomingMessage, expectedKey: string | undefined): 
 
 interface Project {
   id: string;
+  /** Detected project/state root. Owns .agentuse/store, sessions, env, plugins. */
   root: string;
+  /** Directory used for agent discovery and relative API agent paths. */
+  scopeRoot: string;
   envFile: string;
   agentFiles: string[];
+}
+
+function resolveScopedAgentPath(project: Project | Omit<Project, 'agentFiles'>, agentPath: string): string {
+  return resolve(project.scopeRoot, agentPath);
+}
+
+function toProjectRelativeAgentPath(project: Project | Omit<Project, 'agentFiles'>, agentPath: string): string {
+  return relative(project.root, resolveScopedAgentPath(project, agentPath));
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !rel.startsWith('/'));
 }
 
 function collectDir(value: string, previous: string[]): string[] {
@@ -2254,14 +2829,15 @@ function collectDir(value: string, previous: string[]): string[] {
 }
 
 function resolveProjectFromPath(rawPath: string, idOverride?: string): Omit<Project, 'agentFiles'> {
-  const root = resolve(expandHome(rawPath));
-  if (!existsSync(root)) {
-    throw new Error(`Directory not found: ${root}`);
+  const scopeRoot = resolve(expandHome(rawPath));
+  if (!existsSync(scopeRoot)) {
+    throw new Error(`Directory not found: ${scopeRoot}`);
   }
+  const root = findProjectRoot(scopeRoot);
   const envLocal = resolve(root, '.env.local');
   const envFile = existsSync(envLocal) ? envLocal : resolve(root, '.env');
-  const id = idOverride ?? basename(root);
-  return { id, root, envFile };
+  const id = idOverride ?? basename(scopeRoot);
+  return { id, root, scopeRoot, envFile };
 }
 
 function loadServeProjectEnvironment(projectSeeds: Array<Omit<Project, 'agentFiles'>>): string[] {
@@ -2280,7 +2856,7 @@ export function createServeCommand(): Command {
     .option("-p, --port <number>", "Port to listen on (default: 12233 or config.serve.port)")
     .option("-H, --host <string>", "Host to bind to (default: 127.0.0.1 or config.serve.host)")
     .option("--public-url <url>", "Externally reachable base URL used in approval review links (or config.serve.publicUrl)")
-    .option("-C, --directory <path>", "Project directory (repeat for multi-project). Overrides config.serve.projects.", collectDir, [] as string[])
+    .option("-C, --directory <path>", "Serve agent files from this directory; project state is detected upward (repeat for multi-project). Overrides config.serve.projects.", collectDir, [] as string[])
     .option("--default <id>", "In multi-project mode, the project id to route POST /run when no `project` field is supplied")
     .option("-d, --debug", "Enable debug mode")
     .option("--no-auth", "Disable API key requirement for exposed hosts (dangerous)")
@@ -2372,6 +2948,7 @@ export function createServeCommand(): Command {
         projectSeeds.push({
           id: basename(ctx.projectRoot),
           root: ctx.projectRoot,
+          scopeRoot: ctx.projectRoot,
           envFile: existsSync(envLocal) ? envLocal : ctx.envFile,
         });
       }
@@ -2427,11 +3004,18 @@ export function createServeCommand(): Command {
       const existingServers = listServers();
       for (const p of projectSeeds) {
         const clash = existingServers.find((s) => {
-          if (s.projects && s.projects.length > 0) return s.projects.some((sp) => sp.root === p.root);
-          return s.projectRoot === p.root;
+          const servedRoots = s.projects && s.projects.length > 0
+            ? s.projects.flatMap((sp) => [sp.root, ...(sp.scopeRoot ? [sp.scopeRoot] : [])])
+            : [s.projectRoot];
+          return servedRoots.some((servedRoot) =>
+            servedRoot === p.root ||
+            servedRoot === p.scopeRoot ||
+            isPathInside(servedRoot, p.scopeRoot) ||
+            isPathInside(p.scopeRoot, servedRoot)
+          );
         });
         if (clash) {
-          console.error(chalk.red(`\nError: a server is already running for project at ${p.root}.`));
+          console.error(chalk.red(`\nError: a server is already running for ${p.scopeRoot}.`));
           console.error(chalk.dim(`\n  PID:  ${clash.pid}`));
           console.error(chalk.dim(`  Port: ${clash.port}`));
           console.error(chalk.dim(`\nTo see all running servers: agentuse serve ps`));
@@ -2498,7 +3082,7 @@ export function createServeCommand(): Command {
             error: `Unknown project for schedule: ${schedule.projectId}`,
           };
         }
-        const agentPath = resolve(project.root, schedule.agentPath);
+        const agentPath = resolveScopedAgentPath(project, schedule.agentPath);
 
         // Parse agent for telemetry (env validation happens in the worker,
         // which loads the project's .env before checking process.env)
@@ -2529,7 +3113,7 @@ export function createServeCommand(): Command {
 
         // Execute via worker process to work around EBADF issue in async callbacks
         const spawnResult = await projectWorker.execute({
-          agentPath: schedule.agentPath, // Use relative path
+          agentPath: toProjectRelativeAgentPath(project, schedule.agentPath),
           projectRoot: project.root,
           timeout: agent.config.timeout,
           maxSteps: agent.config.maxSteps,
@@ -2604,14 +3188,14 @@ export function createServeCommand(): Command {
       const projects: Project[] = [];
       for (const seed of projectSeeds) {
         const agentFiles = await glob("**/*.agentuse", {
-          cwd: seed.root,
+          cwd: seed.scopeRoot,
           ignore: ["node_modules/**", "tmp/**", ".git/**"],
         });
         projects.push({ ...seed, agentFiles });
 
         for (const agentFile of agentFiles) {
           try {
-            const agentPath = resolve(seed.root, agentFile);
+            const agentPath = resolveScopedAgentPath(seed, agentFile);
             const agent = await parseAgent(agentPath);
             if (agent.config.schedule) {
               scheduler.add(seed.id, agentFile, agent.config.schedule);
@@ -2632,6 +3216,7 @@ export function createServeCommand(): Command {
         const entries: ServerProjectEntry[] = projects.map((p) => ({
           id: p.id,
           root: p.root,
+          ...(p.scopeRoot !== p.root && { scopeRoot: p.scopeRoot }),
           agentCount: agentCounts.get(p.id) ?? 0,
           scheduleCount: scheduler.list().filter((s) => s.projectId === p.id).length,
         }));
@@ -2664,11 +3249,12 @@ export function createServeCommand(): Command {
       for (const project of projects) {
         const watcher = new FileWatcher({
           projectRoot: project.root,
+          ...(project.scopeRoot !== project.root && { agentRoot: project.scopeRoot }),
           envFile: project.envFile,
 
           onAgentAdded: async (relativePath: string) => {
             try {
-              const agentPath = resolve(project.root, relativePath);
+              const agentPath = resolveScopedAgentPath(project, relativePath);
               const agent = await parseAgent(agentPath);
 
               const schedule = agent.config.schedule
@@ -2685,7 +3271,7 @@ export function createServeCommand(): Command {
 
           onAgentChanged: async (relativePath: string) => {
             try {
-              const agentPath = resolve(project.root, relativePath);
+              const agentPath = resolveScopedAgentPath(project, relativePath);
               const agent = await parseAgent(agentPath);
 
               const schedule = scheduler.update(project.id, relativePath, agent.config.schedule);
@@ -2889,12 +3475,149 @@ export function createServeCommand(): Command {
             projects: projects.map((p) => ({
               id: p.id,
               path: p.root,
+              ...(p.scopeRoot !== p.root && { scope: p.scopeRoot }),
               agentCount: agentCounts.get(p.id) ?? 0,
               scheduleCount: scheduler.list().filter((s) => s.projectId === p.id).length,
             })),
           };
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(info));
+          return;
+        }
+
+        if (req.method === "GET" && requestUrl.pathname === '/stores') {
+          const requestedProject = requestUrl.searchParams.get('project') ?? undefined;
+          const selectedProjects = requestedProject
+            ? projects.filter((project) => project.id === requestedProject)
+            : projects;
+          if (requestedProject && selectedProjects.length === 0) {
+            sendError(res, 404, "PROJECT_NOT_FOUND", `Project not found: ${requestedProject}`);
+            return;
+          }
+
+          const stores: StoreBrowserSummary[] = [];
+          const errors: Array<{ projectId: string; storeName?: string; message: string }> = [];
+          for (const project of selectedProjects) {
+            const result = await listProjectStores(project);
+            stores.push(...result.stores);
+            errors.push(...result.errors.map((error) => ({ projectId: project.id, ...error })));
+          }
+
+          if (wantsJson(requestUrl, req)) {
+            sendJSON(res, 200, { success: true, stores, errors });
+            return;
+          }
+
+          sendHTML(res, 200, renderStoresIndexPage({ stores, errors, multiProject: selectedProjects.length > 1 }));
+          return;
+        }
+
+        const storePageMatch = req.method === "GET" ? requestUrl.pathname.match(/^\/stores\/([^/?#]+)$/) : null;
+        if (storePageMatch) {
+          const storeName = decodeURIComponent(storePageMatch[1]);
+          if (!isSafeStoreName(storeName)) {
+            sendError(res, 400, "INVALID_STORE_NAME", "Invalid store name");
+            return;
+          }
+
+          const requestedProject = requestUrl.searchParams.get('project') ?? undefined;
+          const selectedProjects = requestedProject
+            ? projects.filter((project) => project.id === requestedProject)
+            : projects;
+          if (requestedProject && selectedProjects.length === 0) {
+            sendError(res, 404, "PROJECT_NOT_FOUND", `Project not found: ${requestedProject}`);
+            return;
+          }
+
+          const rows: StoreBrowserRows[] = [];
+          const errors: Array<{ projectId: string; message: string }> = [];
+          for (const project of selectedProjects) {
+            try {
+              const row = await listStoreRows(project, storeName);
+              rows.push(row);
+            } catch (err) {
+              const code = (err as NodeJS.ErrnoException).code;
+              if (code !== 'ENOENT') {
+                errors.push({ projectId: project.id, message: (err as Error).message });
+              }
+            }
+          }
+
+          if (rows.length === 0 && errors.length === 0) {
+            sendError(res, 404, "STORE_NOT_FOUND", `Store not found: ${storeName}`);
+            return;
+          }
+
+          if (wantsJson(requestUrl, req)) {
+            sendJSON(res, 200, { success: true, store: storeName, rows, errors });
+            return;
+          }
+
+          const highlight = requestUrl.searchParams.get('highlight') ?? undefined;
+          sendHTML(res, 200, renderStoreItemsPage({
+            storeName,
+            rows,
+            errors,
+            ...(highlight ? { highlight } : {}),
+            multiProject: selectedProjects.length > 1,
+          }));
+          return;
+        }
+
+        const storeItemPageMatch = req.method === "GET" ? requestUrl.pathname.match(/^\/stores\/([^/?#]+)\/([^/?#]+)$/) : null;
+        if (storeItemPageMatch) {
+          const storeName = decodeURIComponent(storeItemPageMatch[1]);
+          const itemId = decodeURIComponent(storeItemPageMatch[2]);
+          if (!isSafeStoreName(storeName)) {
+            sendError(res, 400, "INVALID_STORE_NAME", "Invalid store name");
+            return;
+          }
+
+          const requestedProject = requestUrl.searchParams.get('project') ?? undefined;
+          const selectedProjects = requestedProject
+            ? projects.filter((project) => project.id === requestedProject)
+            : projects;
+          if (requestedProject && selectedProjects.length === 0) {
+            sendError(res, 404, "PROJECT_NOT_FOUND", `Project not found: ${requestedProject}`);
+            return;
+          }
+
+          const errors: Array<{ projectId: string; message: string }> = [];
+          let found: { projectId: string; item: StoreItem } | undefined;
+          for (const project of selectedProjects) {
+            try {
+              const item = await findStoreItem(project, storeName, itemId);
+              if (item) {
+                found = { projectId: project.id, item };
+                break;
+              }
+            } catch (err) {
+              const code = (err as NodeJS.ErrnoException).code;
+              if (code !== 'ENOENT') {
+                errors.push({ projectId: project.id, message: (err as Error).message });
+              }
+            }
+          }
+
+          if (!found) {
+            if (errors.length > 0) {
+              sendError(res, 500, "STORE_ITEM_LOOKUP_FAILED", errors.map((err) => `${err.projectId}: ${err.message}`).join('; '));
+              return;
+            }
+            sendError(res, 404, "STORE_ITEM_NOT_FOUND", `Store item not found: ${itemId}`);
+            return;
+          }
+
+          if (wantsJson(requestUrl, req)) {
+            sendJSON(res, 200, { success: true, store: storeName, project: found.projectId, item: found.item });
+            return;
+          }
+
+          sendHTML(res, 200, renderStoreItemDetailPage({
+            storeName,
+            projectId: found.projectId,
+            item: found.item
+          }));
           return;
         }
 
@@ -3315,15 +4038,15 @@ export function createServeCommand(): Command {
           const project = resolved.project;
 
           // Resolve agent path
-          const agentPath = resolve(project.root, body.agent);
+          const agentPath = resolveScopedAgentPath(project, body.agent);
           if (!existsSync(agentPath)) {
             sendError(res, 404, "AGENT_NOT_FOUND", `Agent file not found: ${body.agent}`);
             return;
           }
 
-          // Security: ensure agent is within project root
-          if (!agentPath.startsWith(project.root)) {
-            sendError(res, 400, "INVALID_PATH", "Agent path must be within project root");
+          // Security: ensure API agent paths stay within the served scope.
+          if (!isPathInside(project.scopeRoot, agentPath)) {
+            sendError(res, 400, "INVALID_PATH", "Agent path must be within served directory");
             return;
           }
 
@@ -3353,7 +4076,7 @@ export function createServeCommand(): Command {
           // Execute via worker process to work around EBADF issue in async callbacks
           // MCP server spawning fails in HTTP handlers due to bundler/Node.js fd issues
           const spawnResult = await projectWorker.execute({
-            agentPath: body.agent, // Use relative path, worker resolves from projectRoot
+            agentPath: toProjectRelativeAgentPath(project, body.agent),
             projectRoot: project.root,
             prompt: body.prompt,
             model: body.model,
@@ -3559,6 +4282,7 @@ export function createServeCommand(): Command {
         const registryProjects: ServerProjectEntry[] = projects.map((p) => ({
           id: p.id,
           root: p.root,
+          ...(p.scopeRoot !== p.root && { scopeRoot: p.scopeRoot }),
           agentCount: p.agentFiles.length,
           scheduleCount: schedules.filter((s) => s.projectId === p.id).length,
         }));
@@ -3594,13 +4318,18 @@ export function createServeCommand(): Command {
         console.log(`  ${chalk.dim("Server")}    ${chalk.cyan(serverUrl)}`);
         console.log(`  ${chalk.dim("Public")}    ${chalk.cyan(effectivePublicUrl)}`);
         if (!multiProject) {
-          console.log(`  ${chalk.dim("Directory")} ${projects[0].root}`);
+          console.log(`  ${chalk.dim("Project")}   ${projects[0].root}`);
+          if (projects[0].scopeRoot !== projects[0].root) {
+            console.log(`  ${chalk.dim("Scope")}     ${projects[0].scopeRoot}`);
+          }
+          console.log(`  ${chalk.dim("Store")}     ${join(projects[0].root, '.agentuse', 'store')}`);
         } else {
           console.log(`  ${chalk.dim("Projects")}  ${projects.length}`);
           for (const p of projects) {
             const scheduleN = schedules.filter((s) => s.projectId === p.id).length;
             const marker = effectiveDefault === p.id ? chalk.green(' (default)') : '';
-            console.log(`    ${chalk.cyan(p.id.padEnd(20))} ${chalk.dim(p.root)}  ${chalk.dim(`${p.agentFiles.length} agents, ${scheduleN} scheduled`)}${marker}`);
+            const scopeLabel = p.scopeRoot !== p.root ? ` scope ${relative(p.root, p.scopeRoot)}` : '';
+            console.log(`    ${chalk.cyan(p.id.padEnd(20))} ${chalk.dim(p.root)}  ${chalk.dim(`${p.agentFiles.length} agents, ${scheduleN} scheduled${scopeLabel}`)}${marker}`);
           }
         }
         if (apiKey) {

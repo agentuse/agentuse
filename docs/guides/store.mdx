@@ -17,6 +17,14 @@ The store is a local file-based storage system that allows agents to track work 
 - **Task management** - Track tasks through status workflows
 - **Agent memory** - Remember facts, preferences, and context across runs
 
+Stores live at the AgentUse project root:
+
+```text
+<project-root>/.agentuse/store/<store-name>/items.json
+```
+
+When you run `agentuse serve -C path/to/agents`, `-C` is the served scope for agent files. AgentUse still walks upward to find the project root, so agent folders inside the same repository can share the same store.
+
 <Info>
   When you enable the store, your agent automatically gets tools for creating, reading, updating, deleting, and listing items. Tell the agent what to store and when in your agent file's instructions.
 </Info>
@@ -178,6 +186,24 @@ subagents:
 ## Debugging
 
 ### View Store Contents
+
+If you are running `agentuse serve`, open the store browser:
+
+```bash
+http://127.0.0.1:12233/stores
+```
+
+Each store has its own table:
+
+```bash
+http://127.0.0.1:12233/stores/my-project
+```
+
+Session and approval logs link store tool activity to the matching store table. When AgentUse knows the item ID, the link highlights the changed row:
+
+```bash
+http://127.0.0.1:12233/stores/my-project?highlight=01KQTG63ZQHFH9PP2B17QWMQZP
+```
 
 ```bash
 # Pretty print store

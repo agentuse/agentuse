@@ -5,6 +5,7 @@ import * as dotenv from "dotenv";
 
 export interface FileWatcherOptions {
   projectRoot: string;
+  agentRoot?: string;
   envFile: string;
   onAgentAdded: (relativePath: string) => Promise<void>;
   onAgentChanged: (relativePath: string) => Promise<void>;
@@ -50,10 +51,11 @@ export class FileWatcher {
   }
 
   private startAgentWatcher(): void {
-    const { projectRoot, onAgentAdded, onAgentChanged, onAgentRemoved } = this.options;
+    const { projectRoot, agentRoot, onAgentAdded, onAgentChanged, onAgentRemoved } = this.options;
+    const watchRoot = agentRoot ?? projectRoot;
 
     // Watch only .agentuse files to minimize file descriptors
-    this.agentWatcher = chokidar.watch(join(projectRoot, "**/*.agentuse"), {
+    this.agentWatcher = chokidar.watch(join(watchRoot, "**/*.agentuse"), {
       ignored: [
         "**/node_modules/**",
         "**/tmp/**",
@@ -71,7 +73,7 @@ export class FileWatcher {
     this.agentWatcher
       .on("add", async (absolutePath) => {
         if (this.closed) return;
-        const relativePath = relative(projectRoot, absolutePath);
+        const relativePath = relative(watchRoot, absolutePath);
         if (this.shouldIgnore(relativePath)) return;
 
         try {
@@ -82,7 +84,7 @@ export class FileWatcher {
       })
       .on("change", async (absolutePath) => {
         if (this.closed) return;
-        const relativePath = relative(projectRoot, absolutePath);
+        const relativePath = relative(watchRoot, absolutePath);
         if (this.shouldIgnore(relativePath)) return;
 
         try {
@@ -93,7 +95,7 @@ export class FileWatcher {
       })
       .on("unlink", (absolutePath) => {
         if (this.closed) return;
-        const relativePath = relative(projectRoot, absolutePath);
+        const relativePath = relative(watchRoot, absolutePath);
         if (this.shouldIgnore(relativePath)) return;
 
         try {

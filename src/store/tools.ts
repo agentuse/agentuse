@@ -58,6 +58,8 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         const item = await store.create(options);
         return {
           success: true,
+          store: storeName,
+          itemId: item.id,
           item,
           message: `Created item with ID: ${item.id}`,
         };
@@ -82,6 +84,8 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         }
         return {
           success: true,
+          store: storeName,
+          itemId: item.id,
           item,
         };
       },
@@ -120,6 +124,8 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         }
         return {
           success: true,
+          store: storeName,
+          itemId: item.id,
           item,
           message: `Updated item: ${id}`,
         };
@@ -144,6 +150,8 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         }
         return {
           success: true,
+          store: storeName,
+          itemId: id,
           message: `Deleted item: ${id}`,
         };
       },
@@ -174,6 +182,7 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         const items = await store.list(options);
         return {
           success: true,
+          store: storeName,
           count: items.length,
           items,
         };

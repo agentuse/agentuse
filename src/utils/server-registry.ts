@@ -14,6 +14,7 @@ import { getXdgDataDir } from "../storage/paths";
 export interface ServerProjectEntry {
   id: string;
   root: string;
+  scopeRoot?: string;
   agentCount: number;
   scheduleCount: number;
 }

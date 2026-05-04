@@ -10,6 +10,7 @@ import { logger } from './logger';
  * @returns Project root directory path
  */
 export function findProjectRoot(startPath: string): string {
+  const originalStartPath = startPath;
   // If startPath exists and is a file (not a directory), start from its directory
   let currentDir = startPath;
   if (existsSync(startPath)) {
@@ -24,6 +25,7 @@ export function findProjectRoot(startPath: string): string {
     return process.cwd();
   }
 
+  const fallbackDir = currentDir;
   currentDir = resolve(currentDir);
   const root = dirname(currentDir) === currentDir ? currentDir : '/';
 
@@ -57,8 +59,9 @@ export function findProjectRoot(startPath: string): string {
   }
 
   // No project root found, use the starting directory
-  logger.debug(`No project root markers found, using: ${dirname(startPath)}`);
-  return dirname(startPath);
+  const fallback = existsSync(originalStartPath) ? resolve(fallbackDir) : dirname(originalStartPath);
+  logger.debug(`No project root markers found, using: ${fallback}`);
+  return fallback;
 }
 
 /**

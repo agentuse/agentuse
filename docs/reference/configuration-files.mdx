@@ -62,7 +62,7 @@ See [Approval Gates](/guides/approval-gates) for the approval dashboard and API 
 
 ## Environment files
 
-AgentUse loads environment variables from the project root. Project roots are detected from `.agentuse/`, `.git/`, or `package.json`.
+AgentUse loads environment variables from the project root. Project roots are detected by walking upward from the starting directory until `.agentuse/`, `.git/`, or `package.json` is found. If none are found, the starting directory is the project root.
 
 For `agentuse run`, `.env.local` takes priority when present, otherwise `.env` is used. You can also pass a specific file:
 
@@ -70,7 +70,7 @@ For `agentuse run`, `.env.local` takes priority when present, otherwise `.env` i
 agentuse run agent.agentuse --env-file .env.production
 ```
 
-For `agentuse serve`, each served project loads its own `.env.local` or `.env` in that project's worker process. Environment variables do not mix across served projects.
+For `agentuse serve`, `-C` selects the directory whose agents are served, while the detected project root owns `.env.local`, `.env`, `.agentuse/store`, and session state. Each served project loads its own `.env.local` or `.env` in that project's worker process. Environment variables do not mix across served projects.
 
 Use environment files for provider API keys, MCP server credentials, and runtime controls such as `MAX_STEPS`, `LOG_LEVEL`, and `AGENTUSE_TELEMETRY_DISABLED`.
 
@@ -104,7 +104,7 @@ Use `AGENTUSE_CONFIG=/path/to/config.json` to load a different file. Project pat
 
 | Config key | Type | Description |
 |------------|------|-------------|
-| `serve.projects` | array | Project roots to serve. Each item needs `path`; `id` is optional |
+| `serve.projects` | array | Directories to serve agents from. Each item needs `path`; AgentUse detects the project root upward; `id` is optional |
 | `serve.default` | string | Default project id when `POST /run` omits `project` |
 | `serve.port` | number | Port to listen on |
 | `serve.host` | string | Host to bind to |

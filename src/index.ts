@@ -270,7 +270,6 @@ program
       
       // Change working directory first if -C/--directory was specified
       originalCwd = process.cwd();
-      let explicitProjectRoot: string | undefined;
       if (options.directory) {
         const targetDir = resolve(options.directory);
         if (!existsSync(targetDir)) {
@@ -278,15 +277,13 @@ program
         }
         logger.debug(`Changing working directory from ${originalCwd} to ${targetDir}`);
         process.chdir(targetDir);
-        explicitProjectRoot = targetDir;
       }
 
-      // Detect project root. When -C was explicitly specified, use it directly
-      // (do NOT walk up to .git/package.json, matching `serve -C`). Otherwise
-      // search upward from cwd for project markers.
+      // Detect project root from the working directory. `-C` is the starting
+      // scope, not necessarily the state boundary; .agentuse/.git/package.json
+      // in a parent directory can own sessions, stores, env, and plugins.
       const projectContext = resolveProjectContext(process.cwd(), {
         ...(options.envFile && { envFile: options.envFile }),
-        ...(explicitProjectRoot && { projectRoot: explicitProjectRoot }),
       });
       logger.debug(`Using project root: ${projectContext.projectRoot}`);
 
@@ -961,7 +958,7 @@ async function runInternalWorker() {
       : JSON.stringify(value, null, 2);
   }
 
-  function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; status?: string; title: string; message?: string; time?: number; details?: ApprovalLogDetails }> {
+  function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; tool?: string; status?: string; title: string; message?: string; time?: number; details?: ApprovalLogDetails }> {
     return parts.map((part: any) => {
       if (part?.type === 'text') {
         const message = formatApprovalLogValue(part.text);
@@ -1002,6 +999,7 @@ async function runInternalWorker() {
         return {
           id: String(part.id),
           type: 'tool',
+          ...(part.tool && { tool: String(part.tool) }),
           ...(typeof state.status === 'string' && { status: state.status }),
           title,
           ...(message !== undefined && { message }),
