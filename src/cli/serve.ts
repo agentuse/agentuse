@@ -517,13 +517,17 @@ function looksLikeMarkdown(value: string): boolean {
   if (!trimmed) return false;
   return /(^|\n)(#{1,6}\s|\s*[-*+]\s|\s*\d+\.\s|>\s|```|\|.+\|)/.test(trimmed) ||
     /\[[^\]]+\]\([^)]+\)/.test(trimmed) ||
+    /\*\*[^*]+\*\*/.test(trimmed) ||
+    /https?:\/\/[^\s)]+/.test(trimmed) ||
     /`[^`]+`/.test(trimmed);
 }
 
 function renderInlineMarkdown(value: string): string {
   return escapeHtml(value)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
 }
 
 function renderMarkdownTextBlock(value: string): string {
@@ -535,7 +539,7 @@ function renderMarkdownTextBlock(value: string): string {
 
   const flushParagraph = () => {
     if (paragraph.length === 0) return;
-    html.push(`<p>${renderInlineMarkdown(paragraph.join(' '))}</p>`);
+    html.push(`<p>${paragraph.map(renderInlineMarkdown).join('<br>')}</p>`);
     paragraph = [];
   };
   const flushList = () => {
@@ -816,30 +820,37 @@ function renderInlineActions(actions: ApprovalActionDef[]): string {
 }
 
 function renderApprovalDetailBlock(details: ApprovalLogDetails): string {
-  const rows: Array<{ label: string; value: string; mode?: 'text' | 'link' }> = [];
-  if (details.prompt) rows.push({ label: 'prompt', value: details.prompt });
-  if (details.summary) rows.push({ label: 'summary', value: details.summary });
-  if (details.context) rows.push({ label: 'context', value: details.context });
-  if (details.risk) rows.push({ label: 'risk / notes', value: details.risk });
-  if (details.draft) rows.push({ label: 'draft', value: details.draft });
-  if (details.draftUrl) rows.push({ label: 'draft url', value: details.draftUrl, mode: 'link' });
-  if (details.artifactUrl) rows.push({ label: 'artifact url', value: details.artifactUrl, mode: 'link' });
-
   const decisionLabel = details.decisionStatus
     ? `${details.decisionStatus}${details.decisionReviewer ? ` by ${details.decisionReviewer}` : ''}`
     : '';
-  if (decisionLabel) rows.push({ label: 'decision', value: decisionLabel });
-  if (details.decisionComment) rows.push({ label: 'comment', value: details.decisionComment });
-  if (details.errorMessage) rows.push({ label: 'error', value: details.errorMessage });
+  const primary = details.draft
+    ? { title: 'Draft', html: renderLogContentValue(details.draft, { forceMarkdown: true }) }
+    : details.artifactUrl
+      ? { title: 'Artifact', html: `<a class="approval-link" href="${escapeHtml(details.artifactUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(details.artifactUrl)}</a>` }
+      : details.draftUrl
+        ? { title: 'Draft', html: `<a class="approval-link" href="${escapeHtml(details.draftUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(details.draftUrl)}</a>` }
+        : details.summary
+          ? { title: 'Review', html: renderLogContentValue(details.summary, { forceMarkdown: true }) }
+          : undefined;
+  const showSummary = details.summary && primary?.title !== 'Review';
+  const linkRows = [
+    details.draftUrl ? `<a class="approval-link" href="${escapeHtml(details.draftUrl)}" target="_blank" rel="noopener noreferrer">Open draft</a>` : '',
+    details.artifactUrl ? `<a class="approval-link" href="${escapeHtml(details.artifactUrl)}" target="_blank" rel="noopener noreferrer">Open artifact</a>` : ''
+  ].filter(Boolean).join('');
+  const hasContent = details.prompt || primary || details.risk || showSummary || details.context || linkRows || decisionLabel || details.decisionComment || details.errorMessage;
+  if (!hasContent) return '';
 
-  if (rows.length === 0) return '';
-
-  return `<div class="log-details">${rows.map((row) => {
-    const value = row.mode === 'link'
-      ? `<a class="log-detail-link" href="${escapeHtml(row.value)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.value)}</a>`
-      : renderLogContentValue(row.value);
-    return `<div class="log-detail"><span class="log-detail-label">${escapeHtml(row.label)}</span><div class="log-detail-value">${value}</div></div>`;
-  }).join('')}</div>`;
+  return `<div class="approval-card">
+    ${details.prompt ? `<div class="approval-question">${renderInlineMarkdown(details.prompt)}</div>` : ''}
+    ${primary ? `<section class="approval-section approval-primary"><div class="approval-section-title">${escapeHtml(primary.title)}</div><div class="approval-section-body">${primary.html}</div></section>` : ''}
+    ${details.risk ? `<section class="approval-section approval-risk"><div class="approval-section-title">Risk / consequence</div><div class="approval-section-body">${renderLogContentValue(details.risk, { forceMarkdown: true })}</div></section>` : ''}
+    ${linkRows ? `<section class="approval-section approval-links"><div class="approval-section-title">Links</div><div class="approval-link-row">${linkRows}</div></section>` : ''}
+    ${showSummary ? `<section class="approval-section approval-secondary"><div class="approval-section-title">Why this request</div><div class="approval-section-body">${renderLogContentValue(details.summary!, { forceMarkdown: true })}</div></section>` : ''}
+    ${details.context ? `<details class="approval-section approval-context"><summary>Source context</summary><div class="approval-section-body">${renderLogContentValue(details.context, { forceMarkdown: true })}</div></details>` : ''}
+    ${decisionLabel ? `<section class="approval-section approval-decision"><div class="approval-section-title">Decision</div><div class="approval-section-body">${escapeHtml(decisionLabel)}</div></section>` : ''}
+    ${details.decisionComment ? `<section class="approval-section approval-secondary"><div class="approval-section-title">Comment</div><div class="approval-section-body">${renderLogContentValue(details.decisionComment, { forceMarkdown: true })}</div></section>` : ''}
+    ${details.errorMessage ? `<section class="approval-section approval-risk"><div class="approval-section-title">Error</div><div class="approval-section-body">${escapeHtml(details.errorMessage)}</div></section>` : ''}
+  </div>`;
 }
 
 function approvalListThemeStyles(): string {
@@ -891,12 +902,15 @@ function approvalThemeBootScript(): string {
 function approvalsTopbarStyles(): string {
   return `
     .topbar {
-      position: relative;
+      position: sticky;
+      top: 0;
+      z-index: 50;
       display: grid;
       grid-template-columns: 1fr auto 1fr;
       align-items: center;
       padding: 16px 24px;
       border-bottom: 1px solid var(--line);
+      background: var(--bg);
       font-size: 12px;
       color: var(--muted);
     }
@@ -1015,12 +1029,8 @@ function approvalsThemeToggleScript(): string {
 
 function approvalsTopbarMarkup(opts: { right?: string; isCurrentPage?: boolean; currentPage?: 'approvals' | 'stores' }): string {
   const currentPage = opts.currentPage ?? (opts.isCurrentPage ? 'approvals' : undefined);
-  const approvalsMarkup = currentPage === 'approvals'
-    ? `<span class="nav-item active" aria-current="page">approvals</span>`
-    : `<a class="nav-item" href="/approvals">approvals</a>`;
-  const storesMarkup = currentPage === 'stores'
-    ? `<span class="nav-item active" aria-current="page">stores</span>`
-    : `<a class="nav-item" href="/stores">stores</a>`;
+  const approvalsMarkup = `<a class="nav-item${currentPage === 'approvals' ? ' active' : ''}" href="/approvals"${currentPage === 'approvals' ? ' aria-current="page"' : ''}>approvals</a>`;
+  const storesMarkup = `<a class="nav-item${currentPage === 'stores' ? ' active' : ''}" href="/stores"${currentPage === 'stores' ? ' aria-current="page"' : ''}>stores</a>`;
   return `<div class="topbar">
     <span class="brand"><span class="brand-name">agentuse</span></span>
     <span class="nav-wrap"><span class="nav" role="navigation" aria-label="AgentUse serve">${approvalsMarkup}${storesMarkup}</span></span>
@@ -2069,6 +2079,87 @@ function renderApprovalPage(options: {
       border: 0;
       background: transparent;
     }
+    .content-markdown strong {
+      color: var(--fg);
+      font-weight: 600;
+    }
+
+    /* approval review card */
+    .approval-card {
+      display: grid;
+      gap: 12px;
+      margin-top: 6px;
+    }
+    .approval-question {
+      color: var(--fg);
+      font-family: var(--sans);
+      font-size: 18px;
+      line-height: 1.35;
+      font-weight: 500;
+      overflow-wrap: anywhere;
+    }
+    .approval-question strong { font-weight: 600; }
+    .approval-section {
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      overflow: hidden;
+    }
+    .approval-primary {
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      border-color: var(--line-strong);
+      background: var(--bg);
+    }
+    .approval-risk {
+      background: transparent;
+    }
+    .approval-section-title,
+    .approval-context > summary {
+      color: var(--muted-2);
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      padding: 10px 12px 0;
+    }
+    .approval-context > summary {
+      cursor: pointer;
+      padding-bottom: 10px;
+      list-style-position: inside;
+    }
+    .approval-section-body {
+      padding: 10px 12px 12px;
+      color: var(--muted-3);
+      overflow-wrap: anywhere;
+    }
+    .approval-primary .approval-section-body {
+      color: var(--fg);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+    .approval-risk .approval-section-title { color: var(--amber); }
+    .approval-card .content-markdown,
+    .approval-card .content-code {
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+    }
+    .approval-card .content-code {
+      color: inherit;
+      white-space: pre-wrap;
+    }
+    .approval-link-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 10px 12px 12px;
+    }
+    .approval-link {
+      color: var(--cyan);
+      border-bottom: 1px dashed var(--cyan-border);
+    }
+    .approval-link:hover { border-bottom-style: solid; }
 
     /* inline approval actions (rendered inside the active pending log entry) */
     .log-actions {
@@ -2323,12 +2414,16 @@ function renderApprovalPage(options: {
       if (!trimmed) return false;
       return /(^|\\n)(#{1,6}\\s|\\s*[-*+]\\s|\\s*\\d+\\.\\s|>\\s|\`\`\`|\\|.+\\|)/.test(trimmed) ||
         /\\[[^\\]]+\\]\\([^)]+\\)/.test(trimmed) ||
+        /\\*\\*[^*]+\\*\\*/.test(trimmed) ||
+        /https?:\\/\\/[^\\s)]+/.test(trimmed) ||
         /\`[^\`]+\`/.test(trimmed);
     }
     function renderInlineMarkdown(value) {
       return escapeText(value)
+        .replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>')
         .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
-        .replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^)\\s]+)\\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+        .replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^)\\s]+)\\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+        .replace(/(^|[\\s(])(https?:\\/\\/[^\\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
     }
     function renderMarkdownTextBlock(value) {
       const lines = String(value ?? '').split(/\\r?\\n/);
@@ -2338,7 +2433,7 @@ function renderApprovalPage(options: {
       let quote = [];
       function flushParagraph() {
         if (!paragraph.length) return;
-        html.push('<p>' + renderInlineMarkdown(paragraph.join(' ')) + '</p>');
+        html.push('<p>' + paragraph.map(renderInlineMarkdown).join('<br>') + '</p>');
         paragraph = [];
       }
       function flushList() {
@@ -2456,28 +2551,35 @@ function renderApprovalPage(options: {
     }
     function logDetailsHtml(details) {
       if (!details) return '';
-      const rows = [];
-      if (details.prompt) rows.push(['prompt', details.prompt]);
-      if (details.summary) rows.push(['summary', details.summary]);
-      if (details.context) rows.push(['context', details.context]);
-      if (details.risk) rows.push(['risk / notes', details.risk]);
-      if (details.draft) rows.push(['draft', details.draft]);
-      if (details.draftUrl) rows.push(['draft url', details.draftUrl, 'link']);
-      if (details.artifactUrl) rows.push(['artifact url', details.artifactUrl, 'link']);
+      const primary = details.draft
+        ? { title: 'Draft', html: renderLogContentValue(details.draft, { forceMarkdown: true }) }
+        : details.artifactUrl
+          ? { title: 'Artifact', html: '<a class="approval-link" href="' + escapeText(details.artifactUrl) + '" target="_blank" rel="noopener noreferrer">' + escapeText(details.artifactUrl) + '</a>' }
+          : details.draftUrl
+            ? { title: 'Draft', html: '<a class="approval-link" href="' + escapeText(details.draftUrl) + '" target="_blank" rel="noopener noreferrer">' + escapeText(details.draftUrl) + '</a>' }
+            : details.summary
+              ? { title: 'Review', html: renderLogContentValue(details.summary, { forceMarkdown: true }) }
+              : null;
+      const showSummary = details.summary && (!primary || primary.title !== 'Review');
+      const links = [
+        details.draftUrl ? '<a class="approval-link" href="' + escapeText(details.draftUrl) + '" target="_blank" rel="noopener noreferrer">Open draft</a>' : '',
+        details.artifactUrl ? '<a class="approval-link" href="' + escapeText(details.artifactUrl) + '" target="_blank" rel="noopener noreferrer">Open artifact</a>' : ''
+      ].filter(Boolean).join('');
+      const sections = [];
+      if (details.prompt) sections.push('<div class="approval-question">' + renderInlineMarkdown(details.prompt) + '</div>');
+      if (primary) sections.push('<section class="approval-section approval-primary"><div class="approval-section-title">' + escapeText(primary.title) + '</div><div class="approval-section-body">' + primary.html + '</div></section>');
+      if (details.risk) sections.push('<section class="approval-section approval-risk"><div class="approval-section-title">Risk / consequence</div><div class="approval-section-body">' + renderLogContentValue(details.risk, { forceMarkdown: true }) + '</div></section>');
+      if (links) sections.push('<section class="approval-section approval-links"><div class="approval-section-title">Links</div><div class="approval-link-row">' + links + '</div></section>');
+      if (showSummary) sections.push('<section class="approval-section approval-secondary"><div class="approval-section-title">Why this request</div><div class="approval-section-body">' + renderLogContentValue(details.summary, { forceMarkdown: true }) + '</div></section>');
+      if (details.context) sections.push('<details class="approval-section approval-context"><summary>Source context</summary><div class="approval-section-body">' + renderLogContentValue(details.context, { forceMarkdown: true }) + '</div></details>');
       if (details.decisionStatus) {
         const reviewer = details.decisionReviewer ? ' by ' + details.decisionReviewer : '';
-        rows.push(['decision', details.decisionStatus + reviewer]);
+        sections.push('<section class="approval-section approval-decision"><div class="approval-section-title">Decision</div><div class="approval-section-body">' + escapeText(details.decisionStatus + reviewer) + '</div></section>');
       }
-      if (details.decisionComment) rows.push(['comment', details.decisionComment]);
-      if (details.errorMessage) rows.push(['error', details.errorMessage]);
-      if (rows.length === 0) return '';
-      return '<div class="log-details">' + rows.map(function (row) {
-        const label = '<span class="log-detail-label">' + escapeText(row[0]) + '</span>';
-        const value = row[2] === 'link'
-          ? '<a class="log-detail-link" href="' + escapeText(row[1]) + '" target="_blank" rel="noopener noreferrer">' + escapeText(row[1]) + '</a>'
-          : renderLogContentValue(row[1]);
-        return '<div class="log-detail">' + label + '<div class="log-detail-value">' + value + '</div></div>';
-      }).join('') + '</div>';
+      if (details.decisionComment) sections.push('<section class="approval-section approval-secondary"><div class="approval-section-title">Comment</div><div class="approval-section-body">' + renderLogContentValue(details.decisionComment, { forceMarkdown: true }) + '</div></section>');
+      if (details.errorMessage) sections.push('<section class="approval-section approval-risk"><div class="approval-section-title">Error</div><div class="approval-section-body">' + escapeText(details.errorMessage) + '</div></section>');
+      if (sections.length === 0) return '';
+      return '<div class="approval-card">' + sections.join('') + '</div>';
     }
     function objectValue(value) {
       return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
