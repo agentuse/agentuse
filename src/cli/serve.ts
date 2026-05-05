@@ -2,9 +2,8 @@ import { Command } from "commander";
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import { timingSafeEqual } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
-import { dirname, join, resolve, basename, relative } from "path";
+import { join, resolve, basename, relative } from "path";
 import { existsSync } from "fs";
-import { readFile } from "fs/promises";
 import { glob } from "glob";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
 import chalk from "chalk";
@@ -24,8 +23,33 @@ import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision } from "../slack/approval";
 import { homedir } from "os";
-import { StoreFileSchema } from "../store/schema";
 import type { StoreItem } from "../store/types";
+import {
+  approvalListThemeStyles,
+  approvalThemeBootScript,
+  approvalsThemeToggleHtml,
+  approvalsThemeToggleScript,
+  approvalsTopbarMarkup,
+  approvalsTopbarStyles,
+  escapeHtml,
+  formatApprovalTime,
+  formatLogTime,
+  renderInlineMarkdown,
+  renderLogContentValue,
+  valueAsRecord,
+  wantsJson
+} from "./serve/ui";
+import {
+  findStoreItem,
+  isSafeStoreName,
+  listProjectStores,
+  listStoreRows,
+  renderStoreToolEvent,
+  storeItemPreview,
+  storeItemTitle,
+  type StoreBrowserRows,
+  type StoreBrowserSummary
+} from "./serve/stores";
 
 interface RunRequest {
   agent: string;
@@ -478,284 +502,6 @@ function sendHTML(res: ServerResponse, status: number, html: string) {
   res.end(html);
 }
 
-function wantsJson(requestUrl: URL, req: IncomingMessage): boolean {
-  if (requestUrl.searchParams.get('format') === 'json') return true;
-  const accept = req.headers.accept;
-  return typeof accept === 'string' && accept.split(',').some(value => value.trim().startsWith('application/json'));
-}
-
-function escapeHtml(value: unknown): string {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function formatApprovalTime(value?: number): string {
-  return value ? new Date(value).toLocaleString() : 'Unknown';
-}
-
-function formatLogTime(value?: number): string {
-  return value ? new Date(value).toLocaleTimeString() : '';
-}
-
-function isJsonLikeContent(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) return false;
-  try {
-    JSON.parse(trimmed);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function looksLikeMarkdown(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed) return false;
-  return /(^|\n)(#{1,6}\s|\s*[-*+]\s|\s*\d+\.\s|>\s|```|\|.+\|)/.test(trimmed) ||
-    /\[[^\]]+\]\([^)]+\)/.test(trimmed) ||
-    /\*\*[^*]+\*\*/.test(trimmed) ||
-    /https?:\/\/[^\s)]+/.test(trimmed) ||
-    /`[^`]+`/.test(trimmed);
-}
-
-function renderInlineMarkdown(value: string): string {
-  return escapeHtml(value)
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
-}
-
-function renderMarkdownTextBlock(value: string): string {
-  const lines = value.split(/\r?\n/);
-  const html: string[] = [];
-  let paragraph: string[] = [];
-  let list: { type: 'ul' | 'ol'; items: string[] } | null = null;
-  let quote: string[] = [];
-
-  const flushParagraph = () => {
-    if (paragraph.length === 0) return;
-    html.push(`<p>${paragraph.map(renderInlineMarkdown).join('<br>')}</p>`);
-    paragraph = [];
-  };
-  const flushList = () => {
-    if (!list) return;
-    html.push(`<${list.type}>${list.items.map(item => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</${list.type}>`);
-    list = null;
-  };
-  const flushQuote = () => {
-    if (quote.length === 0) return;
-    html.push(`<blockquote>${quote.map(line => `<p>${renderInlineMarkdown(line)}</p>`).join('')}</blockquote>`);
-    quote = [];
-  };
-  const flushAll = () => {
-    flushParagraph();
-    flushList();
-    flushQuote();
-  };
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      flushAll();
-      continue;
-    }
-    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
-    if (heading) {
-      flushAll();
-      const level = Math.min(6, heading[1].length + 1);
-      html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
-      continue;
-    }
-    const unordered = trimmed.match(/^[-*+]\s+(.+)$/);
-    if (unordered) {
-      flushParagraph();
-      flushQuote();
-      if (!list || list.type !== 'ul') {
-        flushList();
-        list = { type: 'ul', items: [] };
-      }
-      list.items.push(unordered[1]);
-      continue;
-    }
-    const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
-    if (ordered) {
-      flushParagraph();
-      flushQuote();
-      if (!list || list.type !== 'ol') {
-        flushList();
-        list = { type: 'ol', items: [] };
-      }
-      list.items.push(ordered[1]);
-      continue;
-    }
-    const blockquote = trimmed.match(/^>\s?(.*)$/);
-    if (blockquote) {
-      flushParagraph();
-      flushList();
-      quote.push(blockquote[1]);
-      continue;
-    }
-    flushList();
-    flushQuote();
-    paragraph.push(trimmed);
-  }
-  flushAll();
-  return html.join('');
-}
-
-function renderMarkdownBlock(value: string): string {
-  const html: string[] = [];
-  let cursor = 0;
-  const fencePattern = /```([A-Za-z0-9_-]+)?\s*\n([\s\S]*?)```/g;
-  let match: RegExpExecArray | null;
-  while ((match = fencePattern.exec(value)) !== null) {
-    const before = value.slice(cursor, match.index);
-    if (before.trim()) html.push(renderMarkdownTextBlock(before));
-    const language = match[1] ? ` data-language="${escapeHtml(match[1])}"` : '';
-    html.push(`<pre class="content-code"${language}><code>${escapeHtml(match[2].trim())}</code></pre>`);
-    cursor = match.index + match[0].length;
-  }
-  const rest = value.slice(cursor);
-  if (rest.trim()) html.push(renderMarkdownTextBlock(rest));
-  return `<div class="content-markdown">${html.join('')}</div>`;
-}
-
-function isReadableJsonString(value: string): boolean {
-  return value.length > 120 || value.includes('\n') || value.includes('\t');
-}
-
-function renderJsonFieldValue(value: unknown): string {
-  if (typeof value === 'string') {
-    if (isReadableJsonString(value)) {
-      return `<pre class="content-code text decoded-json-string"><code>${escapeHtml(value)}</code></pre>`;
-    }
-    return `<code class="json-inline-string">${escapeHtml(JSON.stringify(value))}</code>`;
-  }
-  if (value === null || typeof value === 'number' || typeof value === 'boolean') {
-    return `<code class="json-inline-literal">${escapeHtml(JSON.stringify(value))}</code>`;
-  }
-  return `<pre class="content-code json"><code>${escapeHtml(JSON.stringify(value, null, 2))}</code></pre>`;
-}
-
-function renderSmartJsonBlock(parsed: unknown): string {
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return `<pre class="content-code json"><code>${escapeHtml(JSON.stringify(parsed, null, 2))}</code></pre>`;
-  }
-  const entries = Object.entries(parsed as Record<string, unknown>);
-  if (!entries.some(([, value]) => typeof value === 'string' && isReadableJsonString(value))) {
-    return `<pre class="content-code json"><code>${escapeHtml(JSON.stringify(parsed, null, 2))}</code></pre>`;
-  }
-  return `<div class="json-object-block" role="group" aria-label="JSON object">${entries.map(([key, fieldValue]) => `
-    <div class="json-field">
-      <div class="json-field-key">${escapeHtml(key)}</div>
-      <div class="json-field-value">${renderJsonFieldValue(fieldValue)}</div>
-    </div>
-  `).join('')}</div>`;
-}
-
-function renderLogContentValue(value: string, options?: { forceMarkdown?: boolean }): string {
-  if (isJsonLikeContent(value)) {
-    return renderSmartJsonBlock(JSON.parse(value));
-  }
-  if (options?.forceMarkdown || looksLikeMarkdown(value)) {
-    return renderMarkdownBlock(value);
-  }
-  return `<pre class="content-code text"><code>${escapeHtml(value)}</code></pre>`;
-}
-
-function valueAsRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function storeItemTitle(item: StoreItem): string {
-  if (item.title) return item.title;
-  const data = valueAsRecord(item.data);
-  const candidates = ['title', 'name', 'headline', 'subject', 'url'];
-  for (const key of candidates) {
-    const value = data[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return item.id;
-}
-
-function storeItemPreview(item: StoreItem, max = 180): string {
-  const data = valueAsRecord(item.data);
-  const candidates = ['summary', 'description', 'note_excerpt', 'excerpt', 'draft', 'body', 'content', 'why_engage'];
-  for (const key of candidates) {
-    const value = data[key];
-    if (typeof value === 'string' && value.trim()) {
-      const compact = value.trim().replace(/\s+/g, ' ');
-      return compact.length > max ? `${compact.slice(0, max)}…` : compact;
-    }
-  }
-  const json = JSON.stringify(item.data);
-  return json.length > max ? `${json.slice(0, max)}…` : json;
-}
-
-function parseStoreToolPayload(message?: string): Record<string, unknown> | undefined {
-  if (!message || !isJsonLikeContent(message)) return undefined;
-  try {
-    const parsed = JSON.parse(message);
-    return valueAsRecord(parsed);
-  } catch {
-    return undefined;
-  }
-}
-
-function storeToolEvent(entry: ApprovalLogEntry, projectId?: string): { store?: string; itemId?: string; item?: StoreItem; href?: string } | undefined {
-  if (!entry.tool?.startsWith('store_')) return undefined;
-  const payload = parseStoreToolPayload(entry.message);
-  if (!payload) return undefined;
-  const item = valueAsRecord(payload.item) as unknown as StoreItem;
-  const store = typeof payload.store === 'string' && payload.store ? payload.store : undefined;
-  const itemId = typeof payload.itemId === 'string' && payload.itemId
-    ? payload.itemId
-    : typeof item.id === 'string' && item.id
-      ? item.id
-      : undefined;
-  const params = new URLSearchParams();
-  if (projectId) params.set('project', projectId);
-  if (itemId) params.set('highlight', itemId);
-  const href = store
-    ? `/stores/${encodeURIComponent(store)}${params.toString() ? `?${params.toString()}` : ''}`
-    : undefined;
-  return {
-    ...(store ? { store } : {}),
-    ...(itemId ? { itemId } : {}),
-    ...(typeof item.id === 'string' ? { item } : {}),
-    ...(href ? { href } : {})
-  };
-}
-
-function renderStoreToolEvent(entry: ApprovalLogEntry, projectId?: string): string {
-  const event = storeToolEvent(entry, projectId);
-  if (!event) return '';
-  const item = event.item;
-  const summary = item
-    ? `<div class="store-event-title">${escapeHtml(storeItemTitle(item))}</div>
-       <div class="store-event-meta">
-        ${item.type ? `<span>${escapeHtml(item.type)}</span>` : ''}
-        ${item.status ? `<span>${escapeHtml(item.status)}</span>` : ''}
-        ${event.itemId ? `<code>${escapeHtml(event.itemId)}</code>` : ''}
-       </div>
-       <div class="store-event-preview">${escapeHtml(storeItemPreview(item))}</div>`
-    : `<div class="store-event-title">${escapeHtml(event.itemId ?? 'Store operation')}</div>`;
-  return `<div class="store-event">
-    <div>
-      ${event.store ? `<div class="store-event-store">Store: <code>${escapeHtml(event.store)}</code></div>` : ''}
-      ${summary}
-    </div>
-    ${event.href ? `<a class="store-event-link" href="${escapeHtml(event.href)}">Open in Store</a>` : ''}
-  </div>`;
-}
-
 function approvalActionList(actions?: ApprovalPageInfo['actions']): Array<{ id: string; label: string; style?: 'primary' | 'danger' }> {
   return actions && actions.length > 0
     ? actions
@@ -853,191 +599,6 @@ function renderApprovalDetailBlock(details: ApprovalLogDetails): string {
   </div>`;
 }
 
-function approvalListThemeStyles(): string {
-  return `
-    :root {
-      --mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      --sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
-    }
-    :root[data-theme="dark"] {
-      color-scheme: dark;
-      --bg: #000000; --fg: #ffffff;
-      --line: rgba(255,255,255,0.10); --line-strong: rgba(255,255,255,0.18);
-      --panel: rgba(255,255,255,0.03); --panel-hover: rgba(255,255,255,0.06);
-      --muted: rgba(255,255,255,0.50); --muted-2: rgba(255,255,255,0.30); --muted-3: rgba(255,255,255,0.70);
-      --cyan: #22d3ee; --cyan-soft: rgba(34,211,238,0.08); --cyan-border: rgba(34,211,238,0.35);
-      --green: #4ade80; --green-soft: rgba(74,222,128,0.08); --green-border: rgba(74,222,128,0.35);
-      --amber: #fbbf24; --amber-soft: rgba(251,191,36,0.08); --amber-border: rgba(251,191,36,0.35);
-      --red: #f87171; --red-soft: rgba(248,113,113,0.10); --red-border: rgba(248,113,113,0.35);
-      --glow-1: rgba(34,211,238,0.06); --glow-2: rgba(74,222,128,0.04);
-    }
-    :root[data-theme="light"] {
-      color-scheme: light;
-      --bg: #fafaf9; --fg: #0a0a0a;
-      --line: rgba(0,0,0,0.08); --line-strong: rgba(0,0,0,0.16);
-      --panel: rgba(0,0,0,0.025); --panel-hover: rgba(0,0,0,0.05);
-      --muted: rgba(0,0,0,0.55); --muted-2: rgba(0,0,0,0.35); --muted-3: rgba(0,0,0,0.75);
-      --cyan: #0891b2; --cyan-soft: rgba(8,145,178,0.08); --cyan-border: rgba(8,145,178,0.35);
-      --green: #047857; --green-soft: rgba(4,120,87,0.08); --green-border: rgba(4,120,87,0.35);
-      --amber: #b45309; --amber-soft: rgba(180,83,9,0.10); --amber-border: rgba(180,83,9,0.35);
-      --red: #b91c1c; --red-soft: rgba(185,28,28,0.08); --red-border: rgba(185,28,28,0.35);
-      --glow-1: rgba(8,145,178,0.06); --glow-2: rgba(4,120,87,0.04);
-    }
-  `;
-}
-
-function approvalThemeBootScript(): string {
-  return `(function() {
-    try {
-      var stored = localStorage.getItem('agentuse-theme');
-      var resolved = stored === 'light' || stored === 'dark'
-        ? stored
-        : (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-      document.documentElement.setAttribute('data-theme', resolved);
-      document.documentElement.setAttribute('data-theme-pref', stored || 'system');
-    } catch (e) {}
-  })();`;
-}
-
-function approvalsTopbarStyles(): string {
-  return `
-    .topbar {
-      position: sticky;
-      top: 0;
-      z-index: 50;
-      display: grid;
-      grid-template-columns: 1fr auto 1fr;
-      align-items: center;
-      padding: 16px 24px;
-      border-bottom: 1px solid var(--line);
-      background: var(--bg);
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .topbar .brand { display: inline-flex; align-items: center; color: var(--fg); font-weight: 500; letter-spacing: 0.02em; }
-    .topbar .brand-name { color: var(--fg); }
-    .topbar .nav-wrap { justify-self: center; }
-    .topbar .nav {
-      display: inline-flex;
-      gap: 4px;
-      align-items: center;
-      padding: 2px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: var(--panel);
-    }
-    .topbar .nav-item {
-      display: inline-flex;
-      align-items: center;
-      min-height: 24px;
-      padding: 0 10px;
-      border: 0;
-      border-radius: 999px;
-      color: var(--muted-2);
-      text-decoration: none;
-      transition: color 120ms ease, background 120ms ease;
-    }
-    .topbar .nav a.nav-item:hover { opacity: 1; color: var(--muted-3); background: var(--panel-hover); }
-    .topbar .nav-item.active { color: var(--fg); background: var(--bg); border: 1px solid var(--line); }
-    .topbar .right { display: inline-flex; gap: 18px; align-items: center; justify-self: end; }
-    .session-pill { color: var(--muted); }
-    .session-pill code { color: var(--muted-3); }
-    .pending-count { color: var(--cyan); }
-    .theme-toggle {
-      display: inline-flex;
-      align-items: center;
-      gap: 0;
-      padding: 2px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: var(--panel);
-    }
-    .theme-toggle button {
-      min-height: 0;
-      padding: 4px 8px;
-      border: 0;
-      border-radius: 999px;
-      background: transparent;
-      color: var(--muted-2);
-      font-size: 11px;
-      letter-spacing: 0.04em;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      cursor: pointer;
-    }
-    .theme-toggle button:hover { background: transparent; color: var(--muted-3); border: 0; }
-    .theme-toggle button[aria-pressed="true"] {
-      background: var(--bg);
-      color: var(--fg);
-      border: 1px solid var(--line);
-    }
-    .theme-toggle svg { width: 12px; height: 12px; display: block; }
-    @media (max-width: 640px) {
-      .topbar { padding: 12px 16px; grid-template-columns: 1fr auto; gap: 10px; }
-      .topbar .nav-wrap { grid-column: 1 / -1; grid-row: 2; justify-self: center; }
-    }
-  `;
-}
-
-function approvalsThemeToggleHtml(): string {
-  return `<span class="theme-toggle" role="group" aria-label="Theme">
-      <button type="button" data-theme-pref="light" title="Light" aria-label="Light theme">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M14.5 8H13M3 8H1.5M12.6 3.4l-1.06 1.06M4.46 11.54L3.4 12.6M12.6 12.6l-1.06-1.06M4.46 4.46L3.4 3.4"/></svg>
-      </button>
-      <button type="button" data-theme-pref="system" title="System" aria-label="System theme">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M5.5 13.5h5M8 11v2.5" stroke-linecap="round"/></svg>
-      </button>
-      <button type="button" data-theme-pref="dark" title="Dark" aria-label="Dark theme">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7Z"/></svg>
-      </button>
-    </span>`;
-}
-
-function approvalsThemeToggleScript(): string {
-  return `
-    (function() {
-      const themeMql = window.matchMedia('(prefers-color-scheme: light)');
-      function applyTheme(pref) {
-        const resolved = pref === 'light' || pref === 'dark'
-          ? pref
-          : (themeMql.matches ? 'light' : 'dark');
-        document.documentElement.setAttribute('data-theme', resolved);
-        document.documentElement.setAttribute('data-theme-pref', pref);
-        for (const btn of document.querySelectorAll('.theme-toggle button')) {
-          btn.setAttribute('aria-pressed', String(btn.dataset.themePref === pref));
-        }
-      }
-      function currentPref() {
-        return localStorage.getItem('agentuse-theme') || 'system';
-      }
-      applyTheme(currentPref());
-      for (const btn of document.querySelectorAll('.theme-toggle button')) {
-        btn.addEventListener('click', () => {
-          const pref = btn.dataset.themePref;
-          if (pref === 'system') localStorage.removeItem('agentuse-theme');
-          else localStorage.setItem('agentuse-theme', pref);
-          applyTheme(pref);
-        });
-      }
-      themeMql.addEventListener('change', () => {
-        if (currentPref() === 'system') applyTheme('system');
-      });
-    })();
-  `;
-}
-
-function approvalsTopbarMarkup(opts: { right?: string; isCurrentPage?: boolean; currentPage?: 'approvals' | 'stores' }): string {
-  const currentPage = opts.currentPage ?? (opts.isCurrentPage ? 'approvals' : undefined);
-  const approvalsMarkup = `<a class="nav-item${currentPage === 'approvals' ? ' active' : ''}" href="/approvals"${currentPage === 'approvals' ? ' aria-current="page"' : ''}>approvals</a>`;
-  const storesMarkup = `<a class="nav-item${currentPage === 'stores' ? ' active' : ''}" href="/stores"${currentPage === 'stores' ? ' aria-current="page"' : ''}>stores</a>`;
-  return `<div class="topbar">
-    <span class="brand"><span class="brand-name">agentuse</span></span>
-    <span class="nav-wrap"><span class="nav" role="navigation" aria-label="AgentUse serve">${approvalsMarkup}${storesMarkup}</span></span>
-    <span class="right">${opts.right ?? ''}</span>
-  </div>`;
-}
-
 function renderApprovalRow(row: { projectId: string; multiProject: boolean; approval: ApprovalSummary }): string {
   const { approval, projectId, multiProject } = row;
   const linkable = approval.resumeToken !== undefined;
@@ -1093,88 +654,6 @@ function renderApprovalBucket(
         : `<div class="rows">${rows.map(renderApprovalRow).join('')}</div>`}
     </section>
   `;
-}
-
-interface StoreBrowserSummary {
-  projectId: string;
-  name: string;
-  itemCount: number;
-  updatedAt?: number;
-  types: string[];
-  statuses: string[];
-}
-
-interface StoreBrowserRows {
-  projectId: string;
-  storeName: string;
-  items: StoreItem[];
-}
-
-interface StoreProjectRef {
-  id: string;
-  root: string;
-}
-
-function isSafeStoreName(storeName: string): boolean {
-  return Boolean(storeName) &&
-    !storeName.includes('\0') &&
-    !storeName.split('/').some((part) => part === '' || part === '..');
-}
-
-function resolveStoreRoot(projectRoot: string): string {
-  return join(projectRoot, '.agentuse', 'store');
-}
-
-async function readStoreItems(projectRoot: string, storeName: string): Promise<StoreItem[]> {
-  if (!isSafeStoreName(storeName)) throw new Error('Invalid store name');
-  const storePath = join(resolveStoreRoot(projectRoot), storeName, 'items.json');
-  const parsed = StoreFileSchema.parse(JSON.parse(await readFile(storePath, 'utf-8')));
-  return parsed.items as StoreItem[];
-}
-
-async function listProjectStores(project: StoreProjectRef): Promise<{ stores: StoreBrowserSummary[]; errors: Array<{ storeName?: string; message: string }> }> {
-  const storeRoot = resolveStoreRoot(project.root);
-  if (!existsSync(storeRoot)) return { stores: [], errors: [] };
-  const stores: StoreBrowserSummary[] = [];
-  const errors: Array<{ storeName?: string; message: string }> = [];
-  const files = await glob('**/items.json', { cwd: storeRoot, nodir: true, dot: true });
-
-  for (const file of files.sort()) {
-    const storeName = dirname(file);
-    if (!isSafeStoreName(storeName)) continue;
-    try {
-      const items = await readStoreItems(project.root, storeName);
-      const timestamps = items
-        .map((item) => Date.parse(item.updatedAt))
-        .filter((value) => Number.isFinite(value));
-      const types = [...new Set(items.map((item) => item.type).filter((value): value is string => Boolean(value)))].sort();
-      const statuses = [...new Set(items.map((item) => item.status).filter((value): value is string => Boolean(value)))].sort();
-      stores.push({
-        projectId: project.id,
-        name: storeName,
-        itemCount: items.length,
-        ...(timestamps.length > 0 && { updatedAt: Math.max(...timestamps) }),
-        types,
-        statuses
-      });
-    } catch (err) {
-      errors.push({ storeName, message: (err as Error).message });
-    }
-  }
-
-  stores.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.name.localeCompare(b.name));
-  return { stores, errors };
-}
-
-async function listStoreRows(project: StoreProjectRef, storeName: string): Promise<StoreBrowserRows> {
-  const items = await readStoreItems(project.root, storeName);
-  items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  return { projectId: project.id, storeName, items };
-}
-
-async function findStoreItem(project: StoreProjectRef, storeName: string, itemId: string): Promise<StoreItem | null> {
-  const items = await readStoreItems(project.root, storeName);
-  return items.find((item) => item.id === itemId) ?? null;
 }
 
 function renderStoreStyles(): string {
