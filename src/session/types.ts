@@ -176,14 +176,14 @@ export type ToolStatePending = {
   input?: unknown;
   suspendedAt?: number;
   resumePayload?: {
-    kind: 'await_external' | 'await_human';
+    kind: 'await_human';
     prompt?: string;
     channel?: string;
     approvalUrl?: string;
     expiresAt?: number;
     resumeToken?: string;
     notification?: {
-      type: 'webhook' | 'slack-message';
+      type: 'slack-message';
       ts?: string;
       channel?: string;
       url?: string;

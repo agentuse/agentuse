@@ -1,9 +1,9 @@
 export interface SuspendPayload {
-  kind: 'await_external' | 'await_human';
+  kind: 'await_human';
   prompt: string;
   channel?: string;
   notification?: {
-    type: 'webhook' | 'slack-message';
+    type: 'slack-message';
     url?: string;
     channel?: string;
     ts?: string;

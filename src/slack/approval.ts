@@ -9,12 +9,6 @@ import {
   updateSlackRootMessage
 } from './lifecycle';
 
-export interface SlackApprovalAction {
-  id: string;
-  label: string;
-  style?: 'primary' | 'danger';
-}
-
 export interface SlackApprovalRequest {
   botToken: string;
   channelId: string;
@@ -27,7 +21,6 @@ export interface SlackApprovalRequest {
   artifactUrl?: string;
   context?: string;
   risk?: string;
-  actions?: SlackApprovalAction[];
   resumeToken: string;
   approvalUrl?: string;
   expiresAt?: string;
@@ -78,6 +71,11 @@ const ACTION_ID_PREFIX = 'agentuse_approval_action';
 const COMMENT_CALLBACK_ID = 'agentuse_approval_comment';
 const COMMENT_BLOCK_ID = 'comment';
 const COMMENT_INPUT_ID = 'value';
+const SLACK_APPROVAL_ACTIONS: Array<{ id: string; label: string; style?: 'primary' | 'danger' }> = [
+  { id: 'approve', label: 'Approve', style: 'primary' },
+  { id: 'reject', label: 'Reject', style: 'danger' },
+  { id: 'comment', label: 'Comment' }
+];
 
 function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
@@ -89,17 +87,7 @@ function formatDuration(ms: number): string {
   return `${Math.round(ms / 1000)}s`;
 }
 
-function fallbackActions(actions?: SlackApprovalAction[]): SlackApprovalAction[] {
-  return actions && actions.length > 0
-    ? actions
-    : [
-      { id: 'approve', label: 'Approve', style: 'primary' },
-      { id: 'reject', label: 'Reject', style: 'danger' },
-      { id: 'comment', label: 'Comment' }
-    ];
-}
-
-function actionIdFor(action: SlackApprovalAction, index: number): string {
+function actionIdFor(action: { id: string }, index: number): string {
   const safeId = action.id.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80) || 'action';
   return `${ACTION_ID_PREFIX}_${index}_${safeId}`;
 }
@@ -324,7 +312,7 @@ function sectionBlock(title: string, value: string, maxLength: number): any {
 function buildActionBlocks(request: SlackApprovalRequest & { rootChannelId?: string; rootMessageTs?: string }): any[] {
   return [{
     type: 'actions',
-    elements: fallbackActions(request.actions).map((action, index) => ({
+    elements: SLACK_APPROVAL_ACTIONS.map((action, index) => ({
       type: 'button',
       action_id: actionIdFor(action, index),
       text: {
@@ -353,19 +341,6 @@ function buildActionBlocks(request: SlackApprovalRequest & { rootChannelId?: str
       }
     ]
   }];
-}
-
-function buildApprovalBlocks(request: SlackApprovalRequest): any[] {
-  return [
-    ...buildStatusBlocks({
-      phase: 'waiting',
-      prompt: request.prompt,
-      ...(request.sessionId && { sessionId: request.sessionId }),
-      ...(request.expiresAt && { expiresAt: request.expiresAt })
-    }),
-    ...buildDetailThreadMessages(request).flatMap(message => message.blocks),
-    ...buildActionBlocks(request)
-  ];
 }
 
 function buildReviewLinkBlocks(request: SlackApprovalRequest): any[] {
@@ -509,7 +484,6 @@ function buildReviewStatusBlocks(options: {
 }
 
 export const __testing = {
-  buildApprovalBlocks,
   buildActionBlocks,
   buildActionThreadMessage,
   buildApprovalThreadMessages,

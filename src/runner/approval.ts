@@ -3,12 +3,6 @@ import type { AgentConfig } from '../parser';
 type ApprovalConfig = NonNullable<AgentConfig['approval']>;
 type ApprovalObject = Exclude<ApprovalConfig, boolean>;
 
-export const DEFAULT_APPROVAL_ACTIONS: Array<{ id: string; label: string; style?: 'primary' | 'danger' }> = [
-  { id: 'approve', label: 'Approve', style: 'primary' },
-  { id: 'reject', label: 'Reject', style: 'danger' },
-  { id: 'comment', label: 'Comment' }
-];
-
 export function isApprovalEnabled(config: AgentConfig): boolean {
   return config.approval === true || (typeof config.approval === 'object' && config.approval !== null);
 }
@@ -32,7 +26,6 @@ function getSlackApprovalRoute(config: AgentConfig): { channel_id?: string } | u
 
 export function approvalToolDefaults(config: AgentConfig): {
   timeout?: string;
-  actions?: Array<{ id: string; label: string; style?: 'primary' | 'danger' }>;
   slack?: { channelId?: string };
 } | undefined {
   if (!isApprovalEnabled(config)) return undefined;
@@ -42,7 +35,6 @@ export function approvalToolDefaults(config: AgentConfig): {
 
   return {
     ...(approval?.timeout && { timeout: approval.timeout }),
-    actions: DEFAULT_APPROVAL_ACTIONS,
     ...(slack && {
       slack: {
         ...(slack.channel_id && { channelId: slack.channel_id })

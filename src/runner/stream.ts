@@ -559,7 +559,7 @@ export async function processAgentStream(
                 input: pending.input,
                 suspendedAt,
                 resumePayload: {
-                  kind: (payload.kind === 'await_human' ? 'await_human' : 'await_external') as 'await_external' | 'await_human',
+                  kind: 'await_human',
                   ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
                   ...(typeof payload.channel === 'string' && { channel: payload.channel }),
                   ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),

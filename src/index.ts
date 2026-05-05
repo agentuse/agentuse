@@ -1273,7 +1273,6 @@ async function runInternalWorker() {
           ...(typeof input.artifact_url === 'string' && { artifactUrl: input.artifact_url }),
           ...(typeof input.context === 'string' && { context: input.context }),
           ...(typeof input.risk === 'string' && { risk: input.risk }),
-          ...(Array.isArray(input.actions) && { actions: input.actions }),
           ...(typeof resumePayload.channel === 'string' && { channel: resumePayload.channel }),
           ...(approvalUrl && { approvalUrl }),
           ...(state.status === 'pending' && expectedToken && { currentResumeToken: expectedToken }),

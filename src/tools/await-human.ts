@@ -38,7 +38,6 @@ export function getApprovalUrl(sessionId: string | undefined, resumeToken: strin
 
 export interface AwaitHumanDefaults {
   timeout?: string;
-  actions?: Array<{ id: string; label: string; style?: 'primary' | 'danger' }>;
   slack?: { channelId?: string };
   projectRoot?: string;
 }

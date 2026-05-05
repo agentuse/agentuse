@@ -41,7 +41,7 @@ To get a Slack bot token:
 
 Optional: add `assistant:write` if you want Slack Assistant thread status while a live run is active.
 
-Approval notifications can also accept Slack thread decisions. For Approve/Reject/Comment buttons and plain thread replies, configure Socket Mode:
+Approval notification threads can also accept decisions. For Approve/Reject/Comment buttons and plain thread replies, configure Socket Mode:
 
 ```bash
 export SLACK_APP_TOKEN="xapp-..."
@@ -119,13 +119,13 @@ Use `completion`, not `complete` or `completed`.
 
 ## Slack Messages
 
-Slack uses one concise channel message as the status card and puts supporting detail in that message's thread.
+Slack uses one concise channel message as the status card and puts approval details in that message's thread.
 
 Approval notifications include:
 
 - Channel card with prompt, session/project metadata, status, and a Review approval button
 - Thread details with summary, draft, artifact, context, and risk when the agent provides them
-- Thread actions for Approve, Reject, and Comment when Slack interactivity is enabled
+- Thread actions for Approve, Reject, and Comment when Socket Mode interactivity is enabled
 - Plain thread replies become `comment` decisions when Socket Mode message events are enabled
 
 The AgentUse approval page remains the source of truth for review state.
