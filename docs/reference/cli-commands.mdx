@@ -219,11 +219,49 @@ View and resume AgentUse sessions.
 ### Syntax
 
 ```bash
-agentuse sessions [id] [options]
 agentuse sessions list [options]
 agentuse sessions show <id> [options]
 agentuse sessions resume <id> [options]
-agentuse sessions path
+agentuse sessions path [options]
+```
+
+`agentuse sessions` is a shortcut for `agentuse sessions list`.
+
+Session data is stored globally and partitioned by project. CLI session commands default to the current project; use `--all` or `--all-search` when you are not sure which project owns a session.
+
+### List Sessions
+
+```bash
+agentuse sessions list
+agentuse sessions list --all
+agentuse sessions list --project ../other-project
+```
+
+List options:
+
+```bash
+-s, --subagents          Include subagent sessions
+-n, --limit <n>          Limit number of sessions to show
+-j, --json               Output as JSON
+--all                    Show sessions across all projects
+--project [path]         Show sessions for a project path; defaults to current project
+```
+
+### Show a Session
+
+```bash
+agentuse sessions show 01K...
+agentuse sessions show 01K... --all-search
+agentuse sessions show 01K... --project ../other-project
+```
+
+Show options:
+
+```bash
+-j, --json               Output as JSON
+-f, --full               Show full tool input/output
+--project [path]         Search a project path; defaults to current project
+--all-search             Search all projects if not found in the selected project
 ```
 
 ### Resume a Session
@@ -253,15 +291,20 @@ For a completed or errored session, AgentUse starts a new run from the original 
 agentuse sessions resume 01K... --prompt "Continue from here and add tests"
 ```
 
-### Options
+Resume options:
 
 ```bash
--s, --subagents          Include subagent sessions when listing
--n, --limit <n>          Limit number of sessions to show
--j, --json               Output as JSON
--f, --full               Show full tool input/output
 -C, --directory <path>   Run as if agentuse was started in <path>
+--project [path]         Search a project path; defaults to current project
+--all-search             Search all projects if not found in the selected project
 -d, --debug              Enable debug logging for resume
+```
+
+### Show Storage Path
+
+```bash
+agentuse sessions path
+agentuse sessions path --project ../other-project
 ```
 
 ## agentuse serve

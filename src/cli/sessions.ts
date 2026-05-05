@@ -2,7 +2,7 @@ import { Command } from "commander";
 import fs from "fs/promises";
 import path from "path";
 import * as dotenv from "dotenv";
-import { getSessionStorageDir, getProjectDir } from "../storage/paths";
+import { getSessionStorageDir, getProjectDir, getXdgDataDir } from "../storage/paths";
 import type { SessionInfo, Message, Part, SessionStatus } from "../session/types";
 import { initStorage } from "../storage";
 import { SessionManager } from "../session";
@@ -21,7 +21,18 @@ interface SessionSummary {
   created: Date;
   isSubAgent: boolean;
   dirPath: string;
+  projectRoot: string;
   status?: SessionStatus;
+}
+
+interface SessionScope {
+  kind: "project" | "all";
+  projectRoot?: string;
+}
+
+interface SessionMatch {
+  summary: SessionSummary;
+  allSearchMatch: boolean;
 }
 
 /**
@@ -92,6 +103,7 @@ async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
           created: new Date(sessionInfo.time.created),
           isSubAgent: sessionInfo.agent.isSubAgent,
           dirPath: path.join(sessionDir, entry.name),
+          projectRoot: sessionInfo.project.root,
           status: sessionInfo.status,
         });
       } catch {
@@ -104,6 +116,7 @@ async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
           created: new Date(0),
           isSubAgent: false,
           dirPath: path.join(sessionDir, entry.name),
+          projectRoot,
         });
       }
     }
@@ -115,6 +128,61 @@ async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
   // Sort by created date (newest first)
   sessions.sort((a, b) => b.created.getTime() - a.created.getTime());
 
+  return sessions;
+}
+
+async function listAllProjectSessions(): Promise<SessionSummary[]> {
+  const projectsDir = path.join(getXdgDataDir(), "agentuse", "project");
+  const sessions: SessionSummary[] = [];
+
+  const projectEntries = await fs.readdir(projectsDir, { withFileTypes: true }).catch(() => []);
+  for (const projectEntry of projectEntries) {
+    if (!projectEntry.isDirectory()) continue;
+    const sessionDir = path.join(projectsDir, projectEntry.name, "session");
+    const sessionEntries = await fs.readdir(sessionDir, { withFileTypes: true }).catch(() => []);
+
+    for (const entry of sessionEntries) {
+      if (!entry.isDirectory()) continue;
+
+      const parsed = parseSessionDirName(entry.name);
+      if (!parsed) continue;
+
+      const dirPath = path.join(sessionDir, entry.name);
+      const sessionJsonPath = path.join(dirPath, "session.json");
+      try {
+        const content = await fs.readFile(sessionJsonPath, "utf-8");
+        const sessionInfo = JSON.parse(content) as SessionInfo & { agent: { id?: string } };
+        const projectRoot = sessionInfo.project.root;
+        const agentId = sessionInfo.agent.id
+          ?? computeAgentId(sessionInfo.agent.filePath, projectRoot, sessionInfo.agent.name);
+
+        sessions.push({
+          id: sessionInfo.id,
+          agentId,
+          agentName: sessionInfo.agent.name,
+          model: sessionInfo.model,
+          created: new Date(sessionInfo.time.created),
+          isSubAgent: sessionInfo.agent.isSubAgent,
+          dirPath,
+          projectRoot,
+          status: sessionInfo.status,
+        });
+      } catch {
+        sessions.push({
+          id: parsed.id,
+          agentId: parsed.agentName,
+          agentName: parsed.agentName,
+          model: "unknown",
+          created: new Date(0),
+          isSubAgent: false,
+          dirPath,
+          projectRoot: projectEntry.name,
+        });
+      }
+    }
+  }
+
+  sessions.sort((a, b) => b.created.getTime() - a.created.getTime());
   return sessions;
 }
 
@@ -240,6 +308,58 @@ function formatDate(date: Date): string {
 function truncate(str: string, len: number): string {
   if (str.length <= len) return str;
   return str.substring(0, len - 1) + "…";
+}
+
+function resolveProjectOption(project?: string | boolean): string {
+  if (typeof project === "string" && project.length > 0) {
+    return path.resolve(project);
+  }
+  return process.cwd();
+}
+
+function resolveSessionScope(options?: { all?: boolean; project?: string | boolean }): SessionScope {
+  if (options?.all && options.project !== undefined) {
+    throw new Error("--all and --project cannot be used together");
+  }
+
+  if (options?.all) {
+    return { kind: "all" };
+  }
+
+  const projectContext = resolveProjectContext(resolveProjectOption(options?.project));
+  return { kind: "project", projectRoot: projectContext.projectRoot };
+}
+
+function statusLabel(status?: SessionStatus): string {
+  return status === 'completed'
+    ? 'done'
+    : status === 'error'
+      ? 'fail'
+      : status === 'suspended'
+        ? 'suspended'
+        : 'running';
+}
+
+function projectLabel(projectRoot: string): string {
+  if (/^[a-f0-9]{16}$/i.test(projectRoot)) return projectRoot;
+  return path.basename(projectRoot) || projectRoot;
+}
+
+async function sessionsForScope(scope: SessionScope): Promise<SessionSummary[]> {
+  if (scope.kind === "all") {
+    return listAllProjectSessions();
+  }
+  return listSessions(scope.projectRoot!);
+}
+
+async function runSessionsAction(action: () => Promise<void>): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exit(1);
+  }
 }
 
 /**
@@ -441,39 +561,26 @@ function formatToolOutput(output: string, maxLen: number = 200, maxLines: number
 
 export function createSessionsCommand(): Command {
   const sessionsCmd = new Command("sessions")
-    .description("View session logs")
-    .argument("[id]", "Session ID to show details (supports partial match)")
-    .option("-s, --subagents", "Include subagent sessions")
-    .option("-n, --limit <n>", "Limit number of sessions to show", "10")
-    .option("-j, --json", "Output as JSON")
-    .option("-f, --full", "Show full tool input/output (not truncated)")
-    .action(async (sessionId?: string, options?: { subagents?: boolean; limit?: string; json?: boolean; full?: boolean }) => {
+    .description("Manage AgentUse sessions")
+    .action(async () => runSessionsAction(async () => {
       const projectContext = resolveProjectContext(process.cwd());
-
-      if (sessionId) {
-        // Show specific session
-        const showOptions: { json?: boolean; full?: boolean } = {};
-        if (options?.json) showOptions.json = options.json;
-        if (options?.full) showOptions.full = options.full;
-        await showSession(projectContext.projectRoot, sessionId, showOptions);
-      } else {
-        // List sessions
-        await listSessionsCommand(projectContext.projectRoot, options);
-      }
-    });
+      await listSessionsCommand({ kind: "project", projectRoot: projectContext.projectRoot }, { limit: "10" });
+    }));
 
   // Add explicit list subcommand for clarity
   sessionsCmd
     .command("list")
     .alias("ls")
-    .description("List all sessions")
+    .description("List sessions")
     .option("-s, --subagents", "Include subagent sessions")
     .option("-n, --limit <n>", "Limit number of sessions to show", "10")
     .option("-j, --json", "Output as JSON")
-    .action(async (options: { subagents?: boolean; limit?: string; json?: boolean }) => {
-      const projectContext = resolveProjectContext(process.cwd());
-      await listSessionsCommand(projectContext.projectRoot, options);
-    });
+    .option("--all", "Show sessions across all projects")
+    .option("--project [path]", "Show sessions for a project path; defaults to the current project")
+    .action(async (options: { subagents?: boolean; limit?: string; json?: boolean; all?: boolean; project?: string | boolean }) => runSessionsAction(async () => {
+      const scope = resolveSessionScope(options);
+      await listSessionsCommand(scope, options);
+    }));
 
   // Add show subcommand
   sessionsCmd
@@ -481,10 +588,12 @@ export function createSessionsCommand(): Command {
     .description("Show session details")
     .option("-j, --json", "Output as JSON")
     .option("-f, --full", "Show full tool input/output (not truncated)")
-    .action(async (id: string, options: { json?: boolean; full?: boolean }) => {
-      const projectContext = resolveProjectContext(process.cwd());
-      await showSession(projectContext.projectRoot, id, options);
-    });
+    .option("--project [path]", "Search a project path; defaults to the current project")
+    .option("--all-search", "Search all projects if the session is not in the selected project")
+    .action(async (id: string, options: { json?: boolean; full?: boolean; project?: string | boolean; allSearch?: boolean }) => runSessionsAction(async () => {
+      const scope = resolveSessionScope(options);
+      await showSession(scope, id, options);
+    }));
 
   sessionsCmd
     .command("resume <id>")
@@ -494,6 +603,8 @@ export function createSessionsCommand(): Command {
     .option("--comment <comment>", "Send a reviewer comment to a suspended approval request")
     .option("--tool-result <json>", "JSON result for a suspended non-approval await_* tool")
     .option("--prompt <text>", "Instruction for continuing an ended session")
+    .option("--project [path]", "Search a project path; defaults to the current project")
+    .option("--all-search", "Search all projects if the session is not in the selected project")
     .option("-C, --directory <path>", "Run as if agentuse was started in <path> instead of the current directory")
     .option("-d, --debug", "Enable debug logging")
     .action(async (id: string, options: {
@@ -502,33 +613,37 @@ export function createSessionsCommand(): Command {
       comment?: string;
       toolResult?: string;
       prompt?: string;
+      project?: string | boolean;
+      allSearch?: boolean;
       directory?: string;
       debug?: boolean;
-    }) => {
+    }) => runSessionsAction(async () => {
       await resumeSession(id, options);
-    });
+    }));
 
   // Add path subcommand to show storage location
   sessionsCmd
     .command("path")
     .description("Show session storage path")
-    .action(async () => {
-      const projectContext = resolveProjectContext(process.cwd());
+    .option("--project [path]", "Show storage path for a project path; defaults to the current project")
+    .action(async (options: { project?: string | boolean }) => runSessionsAction(async () => {
+      const projectContext = resolveProjectContext(resolveProjectOption(options.project));
       const projectDir = await getProjectDir(projectContext.projectRoot);
       const sessionDir = await getSessionStorageDir(projectContext.projectRoot);
 
+      process.stdout.write(`Project:     ${projectContext.projectRoot}\n`);
       process.stdout.write(`Project dir: ${projectDir}\n`);
       process.stdout.write(`Sessions:    ${sessionDir}\n`);
-    });
+    }));
 
   return sessionsCmd;
 }
 
 async function listSessionsCommand(
-  projectRoot: string,
+  scope: SessionScope,
   options?: { subagents?: boolean; limit?: string; json?: boolean }
 ): Promise<void> {
-  let sessions = await listSessions(projectRoot);
+  let sessions = await sessionsForScope(scope);
 
   // Filter out subagents unless --subagents is specified
   if (!options?.subagents) {
@@ -542,7 +657,12 @@ async function listSessionsCommand(
   }
 
   if (sessions.length === 0) {
-    process.stdout.write("No sessions found\n");
+    if (scope.kind === "all") {
+      process.stdout.write("No sessions found across all projects\n");
+    } else {
+      process.stdout.write(`No sessions for current project: ${scope.projectRoot}\n\n`);
+      process.stdout.write("Use `agentuse sessions list --all` to search all projects.\n");
+    }
     return;
   }
 
@@ -554,67 +674,61 @@ async function listSessionsCommand(
   // Calculate column widths
   const idWidth = 12; // First 12 chars of ULID
   const statusWidth = 9; // "suspended"
+  const projectWidth = scope.kind === "all"
+    ? Math.min(28, Math.max(...sessions.map((s) => projectLabel(s.projectRoot).length)))
+    : 0;
   const agentWidth = Math.min(
     40,
     Math.max(...sessions.map((s) => s.agentId.length))
   );
 
   // Header
-  process.stdout.write(
-    `${"ID".padEnd(idWidth)}  ${"STATUS".padEnd(statusWidth)}  ${"AGENT".padEnd(agentWidth)}  DATE\n`
-  );
-  process.stdout.write(`${"-".repeat(idWidth + statusWidth + agentWidth + 16)}\n`);
+  if (scope.kind === "all") {
+    process.stdout.write("All sessions\n\n");
+    process.stdout.write(
+      `${"ID".padEnd(idWidth)}  ${"STATUS".padEnd(statusWidth)}  ${"PROJECT".padEnd(projectWidth)}  ${"AGENT".padEnd(agentWidth)}  DATE\n`
+    );
+    process.stdout.write(`${"-".repeat(idWidth + statusWidth + projectWidth + agentWidth + 18)}\n`);
+  } else {
+    process.stdout.write(`Sessions for current project: ${scope.projectRoot}\n\n`);
+    process.stdout.write(
+      `${"ID".padEnd(idWidth)}  ${"STATUS".padEnd(statusWidth)}  ${"AGENT".padEnd(agentWidth)}  DATE\n`
+    );
+    process.stdout.write(`${"-".repeat(idWidth + statusWidth + agentWidth + 16)}\n`);
+  }
 
   // Rows
   for (const session of sessions) {
     const shortId = session.id.substring(0, idWidth);
-    const statusText = session.status === 'completed'
-      ? 'done'
-      : session.status === 'error'
-        ? 'fail'
-        : session.status === 'suspended'
-          ? 'suspended'
-          : 'running';
+    const statusText = statusLabel(session.status);
     const agent = truncate(session.agentId, agentWidth).padEnd(agentWidth);
     const date = formatDate(session.created);
 
-    process.stdout.write(`${shortId}  ${statusText.padEnd(statusWidth)}  ${agent}  ${date}\n`);
+    if (scope.kind === "all") {
+      const project = truncate(projectLabel(session.projectRoot), projectWidth).padEnd(projectWidth);
+      process.stdout.write(`${shortId}  ${statusText.padEnd(statusWidth)}  ${project}  ${agent}  ${date}\n`);
+    } else {
+      process.stdout.write(`${shortId}  ${statusText.padEnd(statusWidth)}  ${agent}  ${date}\n`);
+    }
   }
 
   // Footer
   if (sessions.length > 0) {
     process.stdout.write(
-      `\nShowing ${sessions.length} session(s). Use 'agentuse sessions <id>' for details.\n`
+      `\nShowing ${sessions.length} session(s). Use 'agentuse sessions show <id>' for details.\n`
     );
   }
 }
 
 async function showSession(
-  projectRoot: string,
+  scope: SessionScope,
   sessionId: string,
-  options?: { json?: boolean; full?: boolean }
+  options?: { json?: boolean; full?: boolean; allSearch?: boolean }
 ): Promise<void> {
-  // Find session by partial ID match
-  const sessions = await listSessions(projectRoot);
-  const matches = sessions.filter((s) =>
-    s.id.toLowerCase().startsWith(sessionId.toLowerCase())
-  );
-
-  if (matches.length === 0) {
-    process.stderr.write(`No session found matching: ${sessionId}\n`);
-    process.exit(1);
-  }
-
-  if (matches.length > 1) {
-    process.stderr.write(`Multiple sessions match '${sessionId}':\n`);
-    for (const m of matches) {
-      process.stderr.write(`  ${m.id.substring(0, 12)}  ${m.agentName}\n`);
-    }
-    process.stderr.write(`\nPlease use a more specific ID.\n`);
-    process.exit(1);
-  }
-
-  const session = matches[0];
+  const match = await resolveSessionByScope(scope, sessionId, {
+    ...(options?.allSearch !== undefined && { allSearch: options.allSearch })
+  });
+  const session = match.summary;
   const details = await getSessionDetails(session.dirPath);
 
   if (!details.session) {
@@ -623,7 +737,7 @@ async function showSession(
   }
 
   if (options?.json) {
-    process.stdout.write(JSON.stringify(details, null, 2) + "\n");
+    process.stdout.write(JSON.stringify({ ...details, projectRoot: session.projectRoot }, null, 2) + "\n");
     return;
   }
 
@@ -635,6 +749,10 @@ async function showSession(
   process.stdout.write(`\n${"═".repeat(60)}\n`);
   process.stdout.write(`SESSION: ${s.id}\n`);
   process.stdout.write(`${"═".repeat(60)}\n\n`);
+
+  if (match.allSearchMatch) {
+    process.stdout.write(`Found in project: ${session.projectRoot}\n\n`);
+  }
 
   process.stdout.write(`Agent:       ${s.agent.name}\n`);
   if (s.agent.description) {
@@ -853,21 +971,54 @@ async function showSession(
   process.stdout.write(`\n`);
 }
 
-async function resolveSessionByPrefix(projectRoot: string, sessionId: string): Promise<SessionSummary> {
-  const sessions = await listSessions(projectRoot);
-  const matches = sessions.filter((s) =>
+function renderSessionMatches(matches: SessionSummary[], includeProject = false): string {
+  return matches
+    .map((m) => {
+      const project = includeProject ? `  ${projectLabel(m.projectRoot)}` : "";
+      return `  ${m.id.substring(0, 12)}  ${m.agentName}${project}`;
+    })
+    .join("\n");
+}
+
+async function resolveSessionByScope(
+  scope: SessionScope,
+  sessionId: string,
+  options: { allSearch?: boolean } = {}
+): Promise<SessionMatch> {
+  const selectedSessions = await sessionsForScope(scope);
+  const selectedMatches = selectedSessions.filter((s) =>
     s.id.toLowerCase().startsWith(sessionId.toLowerCase())
   );
 
-  if (matches.length === 0) {
-    throw new Error(`No session found matching: ${sessionId}`);
-  }
-  if (matches.length > 1) {
-    const rendered = matches.map((m) => `  ${m.id.substring(0, 12)}  ${m.agentName}`).join("\n");
-    throw new Error(`Multiple sessions match '${sessionId}':\n${rendered}\n\nPlease use a more specific ID.`);
+  if (selectedMatches.length === 1) {
+    return { summary: selectedMatches[0], allSearchMatch: false };
   }
 
-  return matches[0];
+  if (selectedMatches.length > 1) {
+    throw new Error(`Multiple sessions match '${sessionId}':\n${renderSessionMatches(selectedMatches, scope.kind === "all")}\n\nPlease use a more specific ID.`);
+  }
+
+  if (options.allSearch && scope.kind !== "all") {
+    const allMatches = (await listAllProjectSessions()).filter((s) =>
+      s.id.toLowerCase().startsWith(sessionId.toLowerCase())
+    );
+
+    if (allMatches.length === 1) {
+      return { summary: allMatches[0], allSearchMatch: true };
+    }
+
+    if (allMatches.length > 1) {
+      throw new Error(`Multiple sessions match '${sessionId}' across projects:\n${renderSessionMatches(allMatches, true)}\n\nPlease use a more specific ID or pass --project <path>.`);
+    }
+  }
+
+  const scopeText = scope.kind === "all"
+    ? "all projects"
+    : `current project: ${scope.projectRoot}`;
+  const suggestion = scope.kind === "all" || options.allSearch
+    ? ""
+    : "\n\nTry:\n  agentuse sessions list --all\n  agentuse sessions show " + sessionId + " --all-search";
+  throw new Error(`Session ${sessionId} was not found in ${scopeText}.${suggestion}`);
 }
 
 async function resumeSession(
@@ -878,6 +1029,8 @@ async function resumeSession(
     comment?: string;
     toolResult?: string;
     prompt?: string;
+    project?: string | boolean;
+    allSearch?: boolean;
     directory?: string;
     debug?: boolean;
   }
@@ -887,10 +1040,27 @@ async function resumeSession(
     ...(options.debug && { enableDebug: true })
   });
 
-  const cwd = options.directory ? path.resolve(options.directory) : process.cwd();
-  const projectContext = resolveProjectContext(cwd, {
-    ...(options.directory && { projectRoot: cwd })
+  if (options.directory && options.project !== undefined) {
+    throw new Error("--directory and --project cannot be used together");
+  }
+
+  const selectedCwd = options.directory
+    ? path.resolve(options.directory)
+    : resolveProjectOption(options.project);
+  const selectedProjectContext = options.directory
+    ? resolveProjectContext(selectedCwd, { projectRoot: selectedCwd })
+    : resolveProjectContext(selectedCwd);
+  const selectedScope: SessionScope = { kind: "project", projectRoot: selectedProjectContext.projectRoot };
+  const resolved = await resolveSessionByScope(selectedScope, sessionId, {
+    ...(options.allSearch !== undefined && { allSearch: options.allSearch })
   });
+  const summary = resolved.summary;
+  const cwd = options.directory
+    ? selectedCwd
+    : resolved.allSearchMatch
+      ? summary.projectRoot
+      : selectedCwd;
+  const projectContext = resolveProjectContext(cwd, { projectRoot: summary.projectRoot });
 
   loadGlobalEnv();
   if (projectContext.envFile) {
@@ -902,7 +1072,6 @@ async function resumeSession(
   }
 
   await initStorage(projectContext.projectRoot);
-  const summary = await resolveSessionByPrefix(projectContext.projectRoot, sessionId);
   const sessionManager = new SessionManager();
   const found = await sessionManager.findSession(summary.id);
   if (!found) {

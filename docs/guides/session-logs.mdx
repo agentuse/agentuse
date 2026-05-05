@@ -9,13 +9,13 @@ AgentUse automatically tracks every agent execution with detailed logs, providin
 agentuse sessions
 
 # View session details (partial ID match supported)
-agentuse sessions 01JFN8
+agentuse sessions show 01JFN8
 
 # Show full tool inputs/outputs
-agentuse sessions 01JFN8 --full
+agentuse sessions show 01JFN8 --full
 
 # Export as JSON
-agentuse sessions 01JFN8 --json
+agentuse sessions show 01JFN8 --json
 ```
 
 ## What Gets Tracked
@@ -34,35 +34,41 @@ Each session captures:
 ### List Sessions
 
 ```bash
-agentuse sessions [options]
 agentuse sessions list [options]
 agentuse sessions ls [options]
 ```
 
 **Options:**
-- `-a, --all` - Include subagent sessions
+- `-s, --subagents` - Include subagent sessions
 - `-n, --limit <n>` - Limit results (default: 10)
 - `-j, --json` - Output as JSON
+- `--all` - Show sessions across all projects
+- `--project [path]` - Show sessions for a project path; defaults to the current project
 
 **Example output:**
 ```
-ID            AGENT                 MODEL                 DATE
-----------------------------------------------------------
-01JFN8K3M2P1  daily-reporter        claude-sonnet-4       Today 14:32
-01JFN7XYZAB  seo-analyzer          gpt-5                 Yesterday 09:15
-01JFN6DEFGH  code-reviewer         claude-sonnet-4       Mon 16:45
+Sessions for current project: /Users/you/project
+
+ID            STATUS     AGENT                 DATE
+--------------------------------------------------
+01JFN8K3M2P1  done       daily-reporter        Today 14:32
+01JFN7XYZAB   suspended  seo-analyzer          Yesterday 09:15
+01JFN6DEFGH   fail       code-reviewer         Mon 16:45
 ```
+
+Session state is stored globally and partitioned by project. The CLI defaults to the current project; use `agentuse sessions list --all` when you are looking for a session but are not sure which project owns it.
 
 ### Show Session Details
 
 ```bash
-agentuse sessions <id>
 agentuse sessions show <id> [options]
 ```
 
 **Options:**
 - `-f, --full` - Show complete tool input/output (not truncated)
 - `-j, --json` - Output as JSON
+- `--project [path]` - Search a project path; defaults to the current project
+- `--all-search` - Search all projects if not found in the selected project
 
 **Example output:**
 ```
@@ -98,16 +104,17 @@ Generated your daily quote successfully!
 
 ```bash
 agentuse sessions path
+agentuse sessions path --project ../other-project
 ```
 
 Shows where session data is stored for the current project.
 
 ## Subagent Sessions
 
-Use `--all` flag to include subagent sessions in listings:
+Use `--subagents` to include subagent sessions in listings:
 
 ```bash
-agentuse sessions --all
+agentuse sessions list --subagents
 ```
 
 ## Use Cases
@@ -116,17 +123,17 @@ agentuse sessions --all
 
 ```bash
 # Find recent failed session
-agentuse sessions | grep -i error
+agentuse sessions list | grep -i fail
 
 # View full details with complete tool outputs
-agentuse sessions 01JFN8 --full
+agentuse sessions show 01JFN8 --full
 ```
 
 ### Cost Tracking
 
 ```bash
 # Export sessions as JSON for analysis
-agentuse sessions --json > sessions.json
+agentuse sessions list --json > sessions.json
 
 # Query costs with jq
 cat sessions.json | jq '.[].cost'
