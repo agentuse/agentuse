@@ -927,6 +927,7 @@ async function runInternalWorker() {
     sessionId: string;
     agentId: string;
     agentName: string;
+    agentDescription?: string;
     agentFilePath?: string;
     status: ApprovalSummaryStatus;
     sessionStatus: string;
@@ -1360,6 +1361,7 @@ async function runInternalWorker() {
           sessionId: session.id,
           agentId,
           agentName: session.agent.name || session.agent.id,
+          ...(session.agent.description && { agentDescription: session.agent.description }),
           ...(session.agent.filePath && { agentFilePath: session.agent.filePath }),
           status,
           sessionStatus: session.status,

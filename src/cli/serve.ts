@@ -133,6 +133,7 @@ interface ApprovalSummary {
   sessionId: string;
   agentId: string;
   agentName: string;
+  agentDescription?: string;
   agentFilePath?: string;
   status: ApprovalSummaryStatus;
   sessionStatus: string;
@@ -607,8 +608,8 @@ function renderApprovalRow(row: { projectId: string; multiProject: boolean; appr
   params.set('project', projectId);
   const href = linkable ? `/approvals/${encodeURIComponent(approval.sessionId)}?${params.toString()}` : null;
 
-  const promptText = approval.summary || approval.prompt || '(no prompt summary)';
-  const truncated = promptText.length > 220 ? `${promptText.slice(0, 220)}…` : promptText;
+  const titleText = approval.agentDescription || approval.prompt || approval.agentName || '(untitled approval)';
+  const truncated = titleText.length > 220 ? `${titleText.slice(0, 220)}…` : titleText;
 
   const timeLabel = approval.status === 'pending'
     ? (approval.expiresAt
@@ -618,9 +619,7 @@ function renderApprovalRow(row: { projectId: string; multiProject: boolean; appr
       ? `expired ${formatApprovalTime(approval.decisionAt ?? approval.expiresAt)}`
       : `decided ${formatApprovalTime(approval.decisionAt)}`;
 
-  const decisionLabel = approval.decisionStatus
-    ? `${approval.decisionStatus}${approval.decisionReviewer ? ` by ${approval.decisionReviewer}` : ''}`
-    : approval.errorMessage || '';
+  const decisionLabel = approval.errorMessage || approval.decisionComment || '';
 
   const projectChip = multiProject ? `<span class="chip project">${escapeHtml(projectId)}</span>` : '';
 
@@ -631,8 +630,8 @@ function renderApprovalRow(row: { projectId: string; multiProject: boolean; appr
       <span class="chip agent">${escapeHtml(approval.agentName)}</span>
       <span class="row-time">${escapeHtml(timeLabel)}</span>
     </div>
-    <div class="row-body">${escapeHtml(truncated)}</div>
-    ${decisionLabel ? `<div class="row-decision">${escapeHtml(decisionLabel)}${approval.decisionComment ? `: ${escapeHtml(approval.decisionComment)}` : ''}</div>` : ''}
+    <div class="row-title">${escapeHtml(truncated)}</div>
+    ${decisionLabel ? `<div class="row-decision">${escapeHtml(decisionLabel)}</div>` : ''}
     <div class="row-meta"><code>${escapeHtml(approval.sessionId)}</code></div>
   `;
 
@@ -1031,10 +1030,11 @@ function renderApprovalsListPage(options: {
       margin-bottom: 8px;
     }
     .row-time { color: var(--muted-2); font-size: 12px; margin-left: auto; }
-    .row-body {
+    .row-title {
       font-family: var(--sans);
-      font-size: 14px;
-      color: var(--muted-3);
+      font-size: 16px;
+      line-height: 1.35;
+      color: var(--fg);
       white-space: pre-wrap; overflow-wrap: anywhere;
     }
     .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
