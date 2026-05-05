@@ -882,7 +882,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'approval-info' | 'sweep-expired' | 'list-approvals';
+    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'sweep-expired' | 'list-approvals';
     agentPath?: string;
     projectRoot: string;
     prompt?: string;
@@ -894,6 +894,7 @@ async function runInternalWorker() {
     toolResult?: unknown;
     resumeToken?: string;
     allowHistorical?: boolean;
+    runNotificationHandles?: Array<{ channel: string; ts: string; channelId?: string; name?: string }>;
   }
 
   interface ExpiredApproval {
@@ -944,6 +945,9 @@ async function runInternalWorker() {
     resumeToken?: string;
     errorMessage?: string;
     notification?: { type?: string; channel?: string; ts?: string; url?: string };
+    notifications?: {
+      slack?: Array<{ channel: string; ts: string; channelId?: string; name?: string }>;
+    };
   }
 
   function valueAsRecord(value: unknown): Record<string, unknown> {
@@ -959,15 +963,75 @@ async function runInternalWorker() {
       : JSON.stringify(value, null, 2);
   }
 
+  function isRejectDecision(toolResult: unknown): boolean {
+    const result = valueAsRecord(toolResult);
+    const status = typeof result.status === 'string' ? result.status.toLowerCase() : '';
+    return status === 'reject' || status === 'rejected';
+  }
+
+  function approvalRejectionText(toolResult: unknown): string {
+    const result = valueAsRecord(toolResult);
+    const reviewer = valueAsRecord(result.reviewer);
+    const reviewerName = typeof reviewer.username === 'string'
+      ? reviewer.username
+      : typeof reviewer.name === 'string'
+        ? reviewer.name
+        : typeof reviewer.id === 'string'
+          ? reviewer.id
+          : undefined;
+    const comment = typeof result.comment === 'string' && result.comment.trim()
+      ? result.comment.trim()
+      : undefined;
+
+    return [
+      `❌ **Rejected**${reviewerName ? ` by ${reviewerName}` : ''}`,
+      comment ? `\n${comment}` : undefined
+    ].filter(Boolean).join('\n');
+  }
+
+  async function lastAssistantText(sessionManager: InstanceType<typeof SessionManager>, sessionId: string, agentId: string): Promise<string | undefined> {
+    const messages = await sessionManager.getSessionMessages(sessionId, agentId);
+    for (const message of [...messages].reverse()) {
+      const parts = await sessionManager.getMessageParts(sessionId, agentId, message.id);
+      const text = [...parts].reverse().find((part: any) =>
+        part?.type === 'text' &&
+        part?.role !== 'user' &&
+        typeof part.text === 'string' &&
+        part.text.trim().length > 0
+      ) as any;
+      if (text) return text.text.trim();
+    }
+    return undefined;
+  }
+
+  async function buildContinuationPrompt(
+    sessionManager: InstanceType<typeof SessionManager>,
+    sessionId: string,
+    agentId: string,
+    session: { id: string; status: string },
+    prompt?: string
+  ): Promise<string> {
+    const previous = await lastAssistantText(sessionManager, sessionId, agentId);
+    return [
+      `Continue from previous AgentUse session ${session.id}.`,
+      `Previous session status: ${session.status}.`,
+      previous ? `Previous final assistant output:\n${previous}` : undefined,
+      prompt?.trim()
+        ? `New instruction:\n${prompt.trim()}`
+        : 'New instruction:\nContinue from where the previous session left off.'
+    ].filter(Boolean).join('\n\n');
+  }
+
   function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; tool?: string; status?: string; title: string; message?: string; time?: number; details?: ApprovalLogDetails }> {
     return parts.map((part: any) => {
       if (part?.type === 'text') {
         const message = formatApprovalLogValue(part.text);
+        const isUser = part.role === 'user';
         return {
           id: String(part.id),
           type: 'text',
           ...(typeof part.time?.end === 'number' ? { status: 'completed' } : { status: 'streaming' }),
-          title: 'Assistant response',
+          title: isUser ? 'User response' : 'Assistant response',
           ...(message !== undefined && { message }),
           ...(typeof part.time?.start === 'number' && { time: part.time.start })
         };
@@ -1284,7 +1348,8 @@ async function runInternalWorker() {
               ...(typeof notification.ts === 'string' && { ts: notification.ts }),
               ...(typeof notification.url === 'string' && { url: notification.url })
             }
-          })
+          }),
+          ...(session.notifications && { notifications: session.notifications })
         });
       }
 
@@ -1434,6 +1499,8 @@ async function runInternalWorker() {
 
       const sessionManager = new SessionManager();
       let existingSessionId: string | undefined = req.sessionId;
+      let runPrompt = req.prompt;
+      let runCwd = req.projectRoot;
       if (req.type === 'resume') {
         if (!req.sessionId) {
           return {
@@ -1456,8 +1523,86 @@ async function runInternalWorker() {
             error: { code: 'AGENT_NOT_FOUND', message: `Session ${req.sessionId} does not record an agent file path` },
           };
         }
+        if (isRejectDecision(req.toolResult)) {
+          const message = await sessionManager.getPrimaryMessage(req.sessionId, resumed.agentId);
+          const text = approvalRejectionText(req.toolResult);
+          if (message) {
+            const now = Date.now();
+            await sessionManager.addPart(req.sessionId, resumed.agentId, message.id, {
+              type: 'text',
+              synthetic: true,
+              text,
+              time: { start: now, end: now }
+            } as any);
+            await sessionManager.updateMessage(req.sessionId, resumed.agentId, message.id, {
+              time: { completed: now }
+            });
+          }
+          await sessionManager.setSessionCompleted(req.sessionId, resumed.agentId);
+          return {
+            id: req.id,
+            success: true,
+            result: {
+              text,
+              finishReason: 'rejected',
+              duration: Date.now() - startTime,
+              toolCalls: 0,
+              sessionId: req.sessionId
+            }
+          };
+        }
         agentPath = resumed.agentFilePath;
         existingSessionId = req.sessionId;
+      } else if (req.type === 'continue-session') {
+        if (!req.sessionId) {
+          return {
+            id: req.id,
+            success: false,
+            error: { code: 'SESSION_REQUIRED', message: 'Missing sessionId for continue request' },
+          };
+        }
+
+        const found = await sessionManager.findSession(req.sessionId);
+        if (!found) {
+          return {
+            id: req.id,
+            success: false,
+            error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${req.sessionId}` },
+          };
+        }
+        if (found.session.status === 'running') {
+          return {
+            id: req.id,
+            success: false,
+            error: { code: 'SESSION_RUNNING', message: `Session ${req.sessionId} is already running` },
+          };
+        }
+        if (found.session.status === 'suspended') {
+          return {
+            id: req.id,
+            success: false,
+            error: { code: 'SESSION_SUSPENDED', message: `Session ${req.sessionId} is suspended; submit an approval decision instead` },
+          };
+        }
+        if (!found.session.agent.filePath) {
+          return {
+            id: req.id,
+            success: false,
+            error: { code: 'AGENT_NOT_FOUND', message: `Session ${req.sessionId} does not record an agent file path` },
+          };
+        }
+
+        agentPath = found.session.agent.filePath;
+        existingSessionId = req.sessionId;
+        runCwd = found.session.project.cwd || req.projectRoot;
+        await sessionManager.setSessionRunning(req.sessionId, found.agentId);
+        runPrompt = await buildContinuationPrompt(
+          sessionManager,
+          req.sessionId,
+          found.agentId,
+          found.session,
+          req.prompt
+        );
       }
 
       const agent = await parseAgent(agentPath);
@@ -1501,13 +1646,15 @@ async function runInternalWorker() {
           agentPath,
           req.maxSteps,
           sessionManager,
-          { projectRoot: req.projectRoot, cwd: req.projectRoot },
-          req.prompt,
+          { projectRoot: req.projectRoot, cwd: runCwd },
+          runPrompt,
           undefined,
           true,
           pluginManager,
           true,
-          existingSessionId
+          existingSessionId,
+          req.runNotificationHandles,
+          req.type === 'continue-session' ? req.prompt : undefined
         );
 
         clearTimeout(timeoutId);
@@ -1589,7 +1736,7 @@ async function runInternalWorker() {
         listAllApprovals(request).then((response) => {
           console.log(JSON.stringify(response));
         });
-      } else if (request.type === 'execute' || request.type === 'resume') {
+      } else if (request.type === 'execute' || request.type === 'resume' || request.type === 'continue-session') {
         // Don't await - handle requests concurrently
         // Each request runs in parallel, response sent when complete
         executeAgent(request).then((response) => {

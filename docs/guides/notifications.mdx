@@ -39,6 +39,16 @@ To get a Slack bot token:
 4. Click **Install to Workspace** or **Reinstall to Workspace**.
 5. Copy the **Bot User OAuth Token**. It starts with `xoxb-`.
 
+Optional: add `assistant:write` if you want Slack Assistant thread status while a live run is active.
+
+Approval notifications can also accept Slack thread decisions. For Approve/Reject/Comment buttons and plain thread replies, configure Socket Mode:
+
+```bash
+export SLACK_APP_TOKEN="xapp-..."
+```
+
+The app-level token needs `connections:write`. To resume from normal thread replies, enable Slack event subscriptions for `message.channels` and, if you use private channels, `message.groups`; add `channels:history` and/or `groups:history` bot scopes as needed.
+
 To get a channel id:
 
 1. Open the channel in Slack.
@@ -105,25 +115,34 @@ Supported event names:
 
 Use `completion`, not `complete` or `completed`.
 
-`completion` and `failure` are terminal run events. They do not fire while an agent is suspended and waiting for approval. If a reviewer approves an approval request and the resumed agent later finishes, AgentUse can send the matching run notification for that resumed run.
+`completion` and `failure` are terminal run events. Slack routes that listen for `approval`, or for both `completion` and `failure`, post a run-start card immediately and update the same card when the run completes, fails, or waits for approval. Single-outcome routes such as `on: [failure]` stay terminal-only so they do not leave stale running messages.
 
 ## Slack Messages
 
-Approval notifications are compact and link to the AgentUse approval page. The approval page is the source of truth for review state.
+Slack uses one concise channel message as the status card and puts supporting detail in that message's thread.
+
+Approval notifications include:
+
+- Channel card with prompt, session/project metadata, status, and a Review approval button
+- Thread details with summary, draft, artifact, context, and risk when the agent provides them
+- Thread actions for Approve, Reject, and Comment when Slack interactivity is enabled
+- Plain thread replies become `comment` decisions when Socket Mode message events are enabled
+
+The AgentUse approval page remains the source of truth for review state.
 
 Completion notifications include:
 
-- Agent name
-- Session id when available
-- Status and duration
+- Channel card with agent name, session id, status, and duration
 - Thread details with the final answer, tool call count, and token count when available
 
 Failure notifications include:
 
-- Agent name
-- Session id when available
-- Status and duration when available
+- Channel card with agent name, session id, status, and duration when available
 - Thread details with the error message and run metadata
+
+When Slack Socket Mode message events are enabled, a reviewer can reply in a completed or failed run notification thread to continue from that session with the reply as the new instruction.
+
+For live run cards, AgentUse also tries Slack Assistant thread status while the run is active. This is best effort; Slack may ignore it when the app does not have Assistant support.
 
 ## Approval Gates
 

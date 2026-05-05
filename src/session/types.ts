@@ -62,6 +62,17 @@ export interface SessionInfo {
     code: string;
     time: number;                    // Unix timestamp (ms)
   };
+
+  // Durable notification anchors. These let resume/follow-up paths update the
+  // same external thread even when they run in a different serve worker.
+  notifications?: {
+    slack?: Array<{
+      channel: string;               // Slack channel/conversation id
+      ts: string;                    // Root message timestamp for this session
+      channelId?: string;            // Configured channel id, when distinct/known
+      name?: string;                 // Notification route name
+    }>;
+  };
 }
 
 // Message Schema (contains both user input and assistant response in one exchange)
@@ -239,6 +250,7 @@ export type Part =
 export interface TextPart extends PartBase {
   type: 'text';
   text: string;
+  role?: 'assistant' | 'user';
   synthetic?: boolean;
   time?: {
     start: number;

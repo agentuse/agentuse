@@ -2,8 +2,17 @@ import { WebClient } from '@slack/web-api';
 import type { ParsedAgent } from '../parser';
 import type { RunAgentResult } from '../runner/types';
 import { logger } from '../utils/logger';
+import {
+  bestEffortClearSlackThreadStatus,
+  bestEffortSlackThreadStatus,
+  postSlackRootMessage,
+  postSlackThreadMessages,
+  updateSlackRootMessage,
+  type SlackThreadMessage
+} from '../slack/lifecycle';
 
 type RunNotificationEvent = 'completion' | 'failure';
+type RunLifecycleStatus = 'running' | 'suspended' | 'completed' | 'failed';
 
 type SlackRoute = {
   name?: string;
@@ -11,6 +20,7 @@ type SlackRoute = {
 };
 
 type SlackRunSender = (route: SlackRoute, options: RunNotificationOptions) => Promise<void>;
+type SlackRunStartSender = (route: SlackRoute, options: RunNotificationStartOptions) => Promise<RunNotificationHandle | undefined>;
 
 export interface RunNotificationOptions {
   event: RunNotificationEvent;
@@ -20,6 +30,23 @@ export interface RunNotificationOptions {
   result?: RunAgentResult;
   error?: unknown;
   startTime?: number;
+}
+
+export interface RunNotificationStartOptions {
+  agent: ParsedAgent;
+  agentFilePath?: string;
+  sessionId?: string;
+  startTime?: number;
+}
+
+export interface RunNotificationHandle extends SlackRoute {
+  channel: string;
+  ts: string;
+}
+
+interface RunNotificationDisplayOptions extends Omit<RunNotificationOptions, 'event'> {
+  event?: RunNotificationEvent;
+  lifecycleStatus?: RunLifecycleStatus;
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -55,16 +82,53 @@ function slackRoutesForEvent(agent: ParsedAgent, event: RunNotificationEvent): S
   return routes;
 }
 
+function slackLiveRoutesForRun(agent: ParsedAgent): SlackRoute[] {
+  const routes = new Map<string, SlackRoute>();
+  for (const route of agent.config.notifications?.routes ?? []) {
+    if (route.enabled === false) continue;
+    const isApprovalRoute = route.on.includes('approval');
+    const isTerminalRunRoute = route.on.includes('completion') && route.on.includes('failure');
+    if (!isApprovalRoute && !isTerminalRunRoute) continue;
+    const destinations = route.to as Record<string, unknown>;
+    const slack = destinations.slack;
+    if (slack === undefined) continue;
+    const slackConfig = slack && typeof slack === 'object'
+      ? slack as { channel_id?: unknown }
+      : {};
+    const slackRoute = {
+      ...(route.name && { name: route.name }),
+      ...(typeof slackConfig.channel_id === 'string' && { channelId: slackConfig.channel_id })
+    };
+    const key = resolveSlackChannelId(slackRoute) ?? `route:${route.name ?? routes.size}`;
+    if (!routes.has(key)) routes.set(key, slackRoute);
+  }
+  return [...routes.values()];
+}
+
 function resolveSlackChannelId(route: SlackRoute): string | undefined {
   return route.channelId ?? process.env.SLACK_APPROVAL_CHANNEL;
 }
 
-function runDurationMs(options: RunNotificationOptions): number | undefined {
+function runDurationMs(options: Pick<RunNotificationOptions, 'startTime'>): number | undefined {
   return options.startTime !== undefined ? Date.now() - options.startTime : undefined;
 }
 
-function runStatus(options: RunNotificationOptions): 'completed' | 'failed' {
+function runStatus(options: RunNotificationDisplayOptions): RunLifecycleStatus {
+  if (options.lifecycleStatus) return options.lifecycleStatus;
   return options.event === 'completion' ? 'completed' : 'failed';
+}
+
+function runTitle(status: RunLifecycleStatus): string {
+  switch (status) {
+    case 'running':
+      return 'AgentUse run started';
+    case 'suspended':
+      return 'AgentUse run waiting for approval';
+    case 'completed':
+      return 'AgentUse run completed';
+    case 'failed':
+      return 'AgentUse run failed';
+  }
 }
 
 function runPreview(options: RunNotificationOptions): string {
@@ -74,8 +138,11 @@ function runPreview(options: RunNotificationOptions): string {
   return options.error !== undefined ? errorMessage(options.error) : 'Agent run failed.';
 }
 
-function buildRunRootBlocks(options: RunNotificationOptions): any[] {
-  const completed = options.event === 'completion';
+function approvalUrl(options: RunNotificationDisplayOptions): string | undefined {
+  return options.result?.approvalUrl;
+}
+
+function buildRunRootBlocks(options: RunNotificationDisplayOptions): any[] {
   const durationMs = runDurationMs(options);
   const status = runStatus(options);
   const fields = [
@@ -102,17 +169,29 @@ function buildRunRootBlocks(options: RunNotificationOptions): any[] {
       type: 'header',
       text: {
         type: 'plain_text',
-        text: completed ? 'AgentUse run completed' : 'AgentUse run failed'
+        text: runTitle(status)
       }
     },
     {
       type: 'section',
       fields
-    }
+    },
+    ...(approvalUrl(options) ? [{
+      type: 'actions',
+      elements: [{
+        type: 'button',
+        text: {
+          type: 'plain_text',
+          text: 'Review approval'
+        },
+        url: approvalUrl(options),
+        style: 'primary'
+      }]
+    }] : [])
   ];
 }
 
-function buildRunThreadMessages(options: RunNotificationOptions): Array<{ text: string; blocks: any[] }> {
+function buildRunThreadMessages(options: RunNotificationOptions): SlackThreadMessage[] {
   const durationMs = runDurationMs(options);
   const details = [
     `Agent: ${options.agent.name}`,
@@ -124,7 +203,7 @@ function buildRunThreadMessages(options: RunNotificationOptions): Array<{ text: 
     ...(options.agent.config.model ? [`Model: ${options.agent.config.model}`] : []),
     ...(options.agentFilePath ? [`Agent file: ${options.agentFilePath}`] : [])
   ];
-  const messages: Array<{ text: string; blocks: any[] }> = [];
+  const messages: SlackThreadMessage[] = [];
 
   messages.push({
     text: options.event === 'completion'
@@ -159,19 +238,20 @@ function buildRunSlackBlocks(options: RunNotificationOptions): any[] {
   return buildRunRootBlocks(options);
 }
 
-async function postRunThreadMessages(web: WebClient, channelId: string, threadTs: string, options: RunNotificationOptions): Promise<void> {
-  for (const message of buildRunThreadMessages(options)) {
-    try {
-      await web.chat.postMessage({
-        channel: channelId,
-        thread_ts: threadTs,
-        text: message.text,
-        blocks: message.blocks
-      });
-    } catch (err) {
-      logger.warn(`Slack run thread message failed: ${(err as Error).message}`);
-    }
-  }
+function matchesHandle(handle: RunNotificationHandle, route: SlackRoute): boolean {
+  const routeChannel = resolveSlackChannelId(route);
+  return Boolean(routeChannel) &&
+    (handle.channel === routeChannel || handle.channelId === route.channelId);
+}
+
+function findHandle(handles: RunNotificationHandle[], route: SlackRoute): RunNotificationHandle | undefined {
+  return handles.find((handle) => matchesHandle(handle, route));
+}
+
+function terminalText(options: RunNotificationOptions): string {
+  return options.event === 'completion'
+    ? `AgentUse run completed: ${options.agent.name}`
+    : `AgentUse run failed: ${options.agent.name}`;
 }
 
 async function sendSlackRunNotification(route: SlackRoute, options: RunNotificationOptions): Promise<void> {
@@ -183,31 +263,148 @@ async function sendSlackRunNotification(route: SlackRoute, options: RunNotificat
   }
 
   const web = new WebClient(botToken);
-  const response = await web.chat.postMessage({
+  const message = await postSlackRootMessage(web, channelId, {
     channel: channelId,
-    text: options.event === 'completion'
-      ? `AgentUse run completed: ${options.agent.name}`
-      : `AgentUse run failed: ${options.agent.name}`,
+    text: terminalText(options),
     blocks: buildRunRootBlocks(options)
   });
-  const ts = typeof response.ts === 'string' ? response.ts : undefined;
-  if (!ts) {
-    logger.warn('Slack run notification sent without a message timestamp; skipping thread details');
+  await postSlackThreadMessages(
+    web,
+    message.channel,
+    message.ts,
+    buildRunThreadMessages(options),
+    { logPrefix: 'Slack run thread message' }
+  );
+}
+
+async function sendSlackRunStartNotification(route: SlackRoute, options: RunNotificationStartOptions): Promise<RunNotificationHandle | undefined> {
+  const botToken = process.env.SLACK_BOT_TOKEN;
+  const channelId = resolveSlackChannelId(route);
+  if (!botToken || !channelId) {
+    logger.warn('Slack run start notification skipped: missing SLACK_BOT_TOKEN and route channel_id or SLACK_APPROVAL_CHANNEL');
+    return undefined;
+  }
+
+  const web = new WebClient(botToken);
+  const message = await postSlackRootMessage(web, channelId, {
+    channel: channelId,
+    text: `AgentUse run started: ${options.agent.name}`,
+    blocks: buildRunRootBlocks({
+      ...options,
+      lifecycleStatus: 'running'
+    })
+  });
+  void bestEffortSlackThreadStatus(web, message.channel, message.ts, 'is working...');
+  return {
+    ...route,
+    channel: message.channel,
+    ts: message.ts
+  };
+}
+
+async function updateSlackRunNotification(handle: RunNotificationHandle, options: RunNotificationOptions): Promise<void> {
+  const botToken = process.env.SLACK_BOT_TOKEN;
+  if (!botToken) {
+    logger.warn('Slack run notification update skipped: missing SLACK_BOT_TOKEN');
     return;
   }
-  await postRunThreadMessages(web, channelId, ts, options);
+
+  const web = new WebClient(botToken);
+  await updateSlackRootMessage(web, {
+    channel: handle.channel,
+    ts: handle.ts,
+    text: terminalText(options),
+    blocks: buildRunRootBlocks(options)
+  });
+  void bestEffortClearSlackThreadStatus(web, handle.channel, handle.ts);
+  await postSlackThreadMessages(
+    web,
+    handle.channel,
+    handle.ts,
+    buildRunThreadMessages(options),
+    { logPrefix: 'Slack run thread message' }
+  );
+}
+
+async function updateSlackRunSuspendedNotification(handle: RunNotificationHandle, options: RunNotificationStartOptions & { result: RunAgentResult }): Promise<void> {
+  const botToken = process.env.SLACK_BOT_TOKEN;
+  if (!botToken) {
+    logger.warn('Slack run suspension update skipped: missing SLACK_BOT_TOKEN');
+    return;
+  }
+
+  const web = new WebClient(botToken);
+  await updateSlackRootMessage(web, {
+    channel: handle.channel,
+    ts: handle.ts,
+    text: `AgentUse run waiting for approval: ${options.agent.name}`,
+    blocks: buildRunRootBlocks({
+      ...options,
+      result: options.result,
+      lifecycleStatus: 'suspended'
+    })
+  });
+  void bestEffortClearSlackThreadStatus(web, handle.channel, handle.ts);
+}
+
+export async function startRunNotifications(
+  options: RunNotificationStartOptions,
+  sender: SlackRunStartSender = sendSlackRunStartNotification
+): Promise<RunNotificationHandle[]> {
+  const handles: RunNotificationHandle[] = [];
+  const routes = slackLiveRoutesForRun(options.agent);
+  for (const route of routes) {
+    try {
+      const handle = await sender(route, options);
+      if (handle) handles.push(handle);
+    } catch (err) {
+      logger.warn(`Slack run start notification failed: ${(err as Error).message}`);
+    }
+  }
+  return handles;
 }
 
 export async function sendRunNotifications(
   options: RunNotificationOptions,
-  sender: SlackRunSender = sendSlackRunNotification
+  sender: SlackRunSender = sendSlackRunNotification,
+  handles: RunNotificationHandle[] = []
 ): Promise<void> {
   const routes = slackRoutesForEvent(options.agent, options.event);
+  const updatedHandles = new Set<RunNotificationHandle>();
+  if (handles.length > 0 && sender === sendSlackRunNotification) {
+    for (const handle of handles) {
+      try {
+        await updateSlackRunNotification(handle, options);
+        updatedHandles.add(handle);
+      } catch (err) {
+        logger.warn(`Slack run notification update failed: ${(err as Error).message}`);
+      }
+    }
+  }
+
   for (const route of routes) {
     try {
+      const handle = findHandle(handles, route);
+      if (handle && updatedHandles.has(handle)) continue;
       await sender(route, options);
     } catch (err) {
       logger.warn(`Slack run notification failed: ${(err as Error).message}`);
+    }
+  }
+}
+
+export async function suspendRunNotifications(
+  options: RunNotificationStartOptions & { result: RunAgentResult },
+  handles: RunNotificationHandle[]
+): Promise<void> {
+  const routes = slackLiveRoutesForRun(options.agent);
+  for (const route of routes) {
+    const handle = findHandle(handles, route);
+    if (!handle) continue;
+    try {
+      await updateSlackRunSuspendedNotification(handle, options);
+    } catch (err) {
+      logger.warn(`Slack run suspension notification failed: ${(err as Error).message}`);
     }
   }
 }
@@ -216,6 +413,7 @@ export const __testing = {
   buildRunRootBlocks,
   buildRunSlackBlocks,
   buildRunThreadMessages,
+  slackLiveRoutesForRun,
   resolveSlackChannelId,
   slackRoutesForEvent
 };

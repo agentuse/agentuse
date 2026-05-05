@@ -1,6 +1,13 @@
 import { SocketModeClient, LogLevel as SlackSocketLogLevel } from '@slack/socket-mode';
 import { WebClient } from '@slack/web-api';
 import { logger } from '../utils/logger';
+import {
+  bestEffortClearSlackThreadStatus,
+  bestEffortSlackThreadStatus,
+  postSlackRootMessage,
+  postSlackThreadMessages,
+  updateSlackRootMessage
+} from './lifecycle';
 
 export interface SlackApprovalAction {
   id: string;
@@ -44,6 +51,26 @@ export interface SlackApprovalDecision {
       teamId?: string;
     };
   };
+}
+
+export interface SlackApprovalThreadComment {
+  channel: string;
+  threadTs: string;
+  messageTs?: string;
+  text: string;
+  userId?: string;
+  username?: string;
+  teamId?: string;
+}
+
+export interface SlackApprovalThreadCommentResult {
+  handled: boolean;
+  done?: Promise<void>;
+}
+
+export interface SlackRunThreadCommentResult {
+  handled: boolean;
+  done?: Promise<void>;
 }
 
 const ACTION_ID_PREFIX = 'agentuse_approval_action';
@@ -267,6 +294,22 @@ function buildDetailThreadMessages(request: SlackApprovalRequest): Array<{ text:
   return messages;
 }
 
+function buildActionThreadMessage(request: SlackApprovalRequest & { rootChannelId: string; rootMessageTs: string }): { text: string; blocks: any[] } {
+  return {
+    text: `Approval decision: ${request.prompt}`,
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: '*Decision*\nApprove, reject, or comment from this thread.'
+        }
+      },
+      ...buildActionBlocks(request)
+    ]
+  };
+}
+
 function sectionBlock(title: string, value: string, maxLength: number): any {
   return {
     type: 'section',
@@ -458,6 +501,7 @@ function buildReviewStatusBlocks(options: {
 export const __testing = {
   buildApprovalBlocks,
   buildActionBlocks,
+  buildActionThreadMessage,
   buildDetailThreadMessages,
   buildReviewLinkBlocks,
   buildReviewStatusBlocks,
@@ -473,19 +517,50 @@ export async function sendSlackApprovalRequest(request: SlackApprovalRequest): P
   }
 
   const web = new WebClient(request.botToken);
-  const response = await postSlackApprovalMessage(web, request.channelId, {
+  const message = await postSlackApprovalMessage(web, request.channelId, {
     channel: request.channelId,
     text: `AgentUse approval requested: ${request.prompt}`,
     blocks: buildReviewLinkBlocks(request)
   });
 
-  const channel = typeof response.channel === 'string' ? response.channel : request.channelId;
-  const ts = typeof response.ts === 'string' ? response.ts : undefined;
-  if (!ts) {
-    throw new Error('Slack approval message was sent but Slack did not return a message timestamp');
-  }
+  await postSlackThreadMessages(
+    web,
+    message.channel,
+    message.ts,
+    [
+      ...buildDetailThreadMessages(request),
+      buildActionThreadMessage({
+        ...request,
+        rootChannelId: message.channel,
+        rootMessageTs: message.ts
+      })
+    ],
+    { logPrefix: 'Slack approval detail thread message' }
+  );
 
-  return { channel, ts };
+  return message;
+}
+
+export async function sendSlackApprovalRequestToThread(
+  request: SlackApprovalRequest,
+  root: SlackApprovalMessage
+): Promise<SlackApprovalMessage> {
+  await postSlackThreadMessages(
+    new WebClient(request.botToken),
+    root.channel,
+    root.ts,
+    [
+      ...buildDetailThreadMessages(request),
+      buildActionThreadMessage({
+        ...request,
+        rootChannelId: root.channel,
+        rootMessageTs: root.ts
+      })
+    ],
+    { logPrefix: 'Slack approval detail thread message' }
+  );
+
+  return root;
 }
 
 export async function updateSlackApprovalRequestStatus(options: {
@@ -497,12 +572,12 @@ export async function updateSlackApprovalRequestStatus(options: {
   projectId?: string;
   approvalUrl?: string;
   expiresAt?: string;
-  status: 'resuming' | 'completed' | 'failed';
+  status: 'waiting' | 'resuming' | 'completed' | 'failed';
   decision?: string;
   error?: unknown;
 }): Promise<void> {
   const web = new WebClient(options.botToken);
-  await web.chat.update({
+  await updateSlackRootMessage(web, {
     channel: options.channelId,
     ts: options.ts,
     text: `AgentUse approval ${options.status}`,
@@ -517,11 +592,16 @@ export async function updateSlackApprovalRequestStatus(options: {
       ...(options.error !== undefined && { error: options.error })
     })
   });
+  if (options.status === 'resuming') {
+    void bestEffortSlackThreadStatus(web, options.channelId, options.ts, 'is working...');
+  } else {
+    void bestEffortClearSlackThreadStatus(web, options.channelId, options.ts);
+  }
 }
 
 async function postSlackApprovalMessage(web: WebClient, channelId: string, payload: any) {
   try {
-    return await web.chat.postMessage(payload);
+    return await postSlackRootMessage(web, channelId, payload);
   } catch (err) {
     const message = slackApprovalPostErrorMessage(channelId, err);
     if (message) throw new Error(message);
@@ -586,7 +666,9 @@ function resolvedBlocks(status: string, reviewer?: SlackApprovalDecision['toolRe
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*Decision recorded*\n${who} submitted \`${status}\`. The channel message is the source of truth for status.${commentText}`
+        text: status === 'comment'
+          ? `*Comment received*\n${who} commented. AgentUse is resuming the session with this feedback.${commentText}`
+          : `*Decision recorded*\n${who} submitted \`${status}\`. The channel message is the source of truth for status.${commentText}`
       }
     }
   ];
@@ -630,11 +712,14 @@ function resumeFailedBlocks(options: {
 export class SlackApprovalSocket {
   private readonly socket: SocketModeClient;
   private readonly web: WebClient;
+  private readonly seenThreadComments = new Set<string>();
 
   constructor(private readonly options: {
     appToken: string;
     botToken: string;
     onDecision: (decision: SlackApprovalDecision) => Promise<void>;
+    onThreadComment?: (comment: SlackApprovalThreadComment) => Promise<SlackApprovalThreadCommentResult>;
+    onRunThreadComment?: (comment: SlackApprovalThreadComment) => Promise<SlackRunThreadCommentResult>;
     debug?: boolean;
   }) {
     this.socket = new SocketModeClient({
@@ -644,6 +729,9 @@ export class SlackApprovalSocket {
     this.web = new WebClient(options.botToken);
     this.socket.on('interactive', (event: any) => {
       void this.handleInteractive(event);
+    });
+    this.socket.on('message', (event: any) => {
+      void this.handleMessageEvent(event);
     });
     this.socket.on('error', (error: Error) => {
       logger.warn(`Slack approval socket error: ${error.message}`);
@@ -679,6 +767,198 @@ export class SlackApprovalSocket {
       }
     } catch (err) {
       logger.warn(`Slack approval interaction failed: ${(err as Error).message}`);
+    }
+  }
+
+  private async handleMessageEvent(envelope: any): Promise<void> {
+    const ack = typeof envelope?.ack === 'function' ? envelope.ack : async () => undefined;
+    try {
+      await ack();
+    } catch (err) {
+      logger.warn(`Slack approval message ack failed: ${(err as Error).message}`);
+    }
+
+    const rawEvent = envelope?.event && typeof envelope.event === 'object'
+      ? envelope.event
+      : envelope;
+    const event = await this.normalizeThreadReplyEvent(rawEvent);
+    const channel = event.channel;
+    const threadTs = event.threadTs;
+    const messageTs = event.messageTs;
+    const text = event.text.trim();
+
+    if (!this.options.onThreadComment && !this.options.onRunThreadComment) return;
+    if (!channel || !threadTs || !messageTs || !text) return;
+    if (messageTs === threadTs) return;
+    if (event.botId) return;
+    const commentKey = `${channel}:${messageTs}`;
+    if (this.seenThreadComments.has(commentKey)) return;
+    this.rememberThreadComment(commentKey);
+
+    const comment: SlackApprovalThreadComment = {
+      channel,
+      threadTs,
+      messageTs,
+      text,
+      ...(event.userId && { userId: event.userId }),
+      ...(event.username && { username: event.username }),
+      ...(event.teamId && { teamId: event.teamId })
+    };
+
+    const reviewer = {
+      ...(comment.userId && { id: comment.userId }),
+      ...(comment.username && { username: comment.username }),
+      ...(comment.teamId && { teamId: comment.teamId })
+    };
+
+    const handleResult = async (
+      result: SlackApprovalThreadCommentResult | SlackRunThreadCommentResult,
+      options: { text: string; blocks: any[] }
+    ) => {
+      if (!result.handled) return;
+
+      void bestEffortSlackThreadStatus(this.web, channel, threadTs, 'is working...');
+      void this.web.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: options.text,
+        blocks: options.blocks
+      }).catch((err) => {
+        logger.warn(`Slack thread comment acknowledgement failed: ${(err as Error).message}`);
+      });
+
+      await result.done;
+      await bestEffortClearSlackThreadStatus(this.web, channel, threadTs);
+    };
+
+    const handleFailure = async (err: unknown, failureText: string) => {
+      await bestEffortClearSlackThreadStatus(this.web, channel, threadTs);
+      await this.web.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: failureText,
+        blocks: resumeFailedBlocks({
+          status: 'comment',
+          sessionId: 'unknown',
+          error: err,
+          reviewer
+        })
+      });
+      logger.warn(`Slack thread comment failed: ${(err as Error).message}`);
+    };
+
+    const approvalCommentResult = this.options.onThreadComment
+      ? this.options.onThreadComment(comment)
+      : Promise.resolve({ handled: false });
+
+    approvalCommentResult.then(async (result) => {
+      if (result.handled) {
+        await handleResult(result, {
+          text: 'AgentUse approval comment received',
+          blocks: resolvedBlocks('comment', reviewer, text)
+        });
+        return;
+      }
+
+      if (!this.options.onRunThreadComment) return;
+      const runResult = await this.options.onRunThreadComment(comment);
+      await handleResult(runResult, {
+        text: 'AgentUse run follow-up received',
+        blocks: [{
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*Follow-up received*\nAgentUse is continuing the session with this feedback.\n>${truncate(text, 1500)}`
+          }
+        }]
+      });
+    }).catch(async (err) => {
+      await handleFailure(err, 'AgentUse thread comment failed');
+    });
+  }
+
+  private async normalizeThreadReplyEvent(event: any): Promise<{
+    channel?: string;
+    threadTs?: string;
+    messageTs?: string;
+    text: string;
+    userId?: string;
+    username?: string;
+    teamId?: string;
+    botId?: string;
+  }> {
+    if (event?.subtype === 'message_replied') {
+      const channel = typeof event.channel === 'string' ? event.channel : undefined;
+      const root = event.message && typeof event.message === 'object' ? event.message : {};
+      const threadTs = typeof root.thread_ts === 'string'
+        ? root.thread_ts
+        : typeof root.ts === 'string'
+          ? root.ts
+          : undefined;
+      const latestReplyTs = typeof root.latest_reply === 'string'
+        ? root.latest_reply
+        : Array.isArray(root.replies)
+          ? [...root.replies].reverse().find((reply: any) => typeof reply?.ts === 'string')?.ts
+          : undefined;
+
+      if (!channel || !threadTs || !latestReplyTs) {
+        return { text: '' };
+      }
+
+      const reply = await this.fetchSlackThreadReply(channel, threadTs, latestReplyTs);
+      if (!reply) {
+        return { text: '' };
+      }
+
+      return {
+        channel,
+        threadTs,
+        messageTs: typeof reply.ts === 'string' ? reply.ts : latestReplyTs,
+        text: typeof reply.text === 'string' ? reply.text : '',
+        ...(typeof reply.user === 'string' && { userId: reply.user }),
+        ...(typeof reply.username === 'string' && { username: reply.username }),
+        ...(typeof reply.team === 'string' && { teamId: reply.team }),
+        ...(typeof reply.bot_id === 'string' && { botId: reply.bot_id })
+      };
+    }
+
+    if (event?.subtype && event.subtype !== 'thread_broadcast') {
+      return { text: '', ...(typeof event.bot_id === 'string' && { botId: event.bot_id }) };
+    }
+
+    return {
+      ...(typeof event?.channel === 'string' && { channel: event.channel }),
+      ...(typeof event?.thread_ts === 'string' && { threadTs: event.thread_ts }),
+      ...(typeof event?.ts === 'string' && { messageTs: event.ts }),
+      text: typeof event?.text === 'string' ? event.text : '',
+      ...(typeof event?.user === 'string' && { userId: event.user }),
+      ...(typeof event?.username === 'string' && { username: event.username }),
+      ...(typeof event?.team === 'string' && { teamId: event.team }),
+      ...(typeof event?.bot_id === 'string' && { botId: event.bot_id })
+    };
+  }
+
+  private rememberThreadComment(key: string): void {
+    this.seenThreadComments.add(key);
+    if (this.seenThreadComments.size <= 500) return;
+    const oldest = this.seenThreadComments.values().next().value;
+    if (oldest) this.seenThreadComments.delete(oldest);
+  }
+
+  private async fetchSlackThreadReply(channel: string, threadTs: string, replyTs: string): Promise<any | undefined> {
+    try {
+      const response = await this.web.conversations.replies({
+        channel,
+        ts: threadTs,
+        oldest: replyTs,
+        latest: replyTs,
+        inclusive: true,
+        limit: 1
+      });
+      return response.messages?.find((message: any) => message?.ts === replyTs) ?? response.messages?.[0];
+    } catch (err) {
+      logger.warn(`Slack thread reply lookup failed: ${(err as Error).message}`);
+      return undefined;
     }
   }
 
@@ -719,6 +999,7 @@ export class SlackApprovalSocket {
     }).then(async () => {
       await rootUpdate;
       if (target) {
+        void bestEffortClearSlackThreadStatus(this.web, target.channel, target.ts);
         await this.updateRootMessage(target, {
           phase: 'completed',
           decision: value.action,
@@ -729,6 +1010,7 @@ export class SlackApprovalSocket {
     }).catch(async (err) => {
       await rootUpdate;
       if (target) {
+        void bestEffortClearSlackThreadStatus(this.web, target.channel, target.ts);
         await this.updateRootMessage(target, {
           phase: 'failed',
           decision: value.action,
@@ -798,7 +1080,7 @@ export class SlackApprovalSocket {
     const metadata = JSON.parse(body.view.private_metadata) as { channel?: unknown; messageTs?: unknown };
     let actionUpdate: Promise<void> = Promise.resolve();
     if (typeof metadata.channel === 'string' && typeof metadata.messageTs === 'string') {
-      actionUpdate = this.updateMessage(metadata.channel, metadata.messageTs, 'AgentUse approval received: comment', resolvedBlocks('comment', reviewer, comment)).catch((err) => {
+      actionUpdate = this.updateMessage(metadata.channel, metadata.messageTs, 'AgentUse approval comment received', resolvedBlocks('comment', reviewer, comment)).catch((err) => {
         logger.warn(`Slack approval action message update failed: ${(err as Error).message}`);
       });
     }
@@ -827,6 +1109,7 @@ export class SlackApprovalSocket {
     }).then(async () => {
       await rootUpdate;
       if (target) {
+        void bestEffortClearSlackThreadStatus(this.web, target.channel, target.ts);
         await this.updateRootMessage(target, {
           phase: 'completed',
           decision: 'comment',
@@ -837,6 +1120,7 @@ export class SlackApprovalSocket {
     }).catch(async (err) => {
       await rootUpdate;
       if (target) {
+        void bestEffortClearSlackThreadStatus(this.web, target.channel, target.ts);
         await this.updateRootMessage(target, {
           phase: 'failed',
           decision: 'comment',
@@ -875,6 +1159,9 @@ export class SlackApprovalSocket {
       error?: unknown;
     }
   ): Promise<void> {
+    if (options.phase === 'resuming') {
+      void bestEffortSlackThreadStatus(this.web, target.channel, target.ts, 'is working...');
+    }
     await this.updateMessage(
       target.channel,
       target.ts,
@@ -900,6 +1187,6 @@ export class SlackApprovalSocket {
   }
 
   private async updateMessage(channel: string, ts: string, text: string, blocks: any[]): Promise<void> {
-    await this.web.chat.update({ channel, ts, text, blocks });
+    await updateSlackRootMessage(this.web, { channel, ts, text, blocks });
   }
 }

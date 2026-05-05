@@ -6,8 +6,14 @@ import type { AgentPart } from '../types/parts';
 import type { ToolStateCompleted, ToolStateError } from '../session/types';
 import { logger } from '../utils/logger';
 import { formatToolResultForDisplay } from '../utils/format-tool-result';
-import { sendSlackApprovalRequest } from '../slack/approval';
+import { sendSlackApprovalRequest, sendSlackApprovalRequestToThread } from '../slack/approval';
 import type { AgentChunk } from './types';
+
+type SlackRunNotificationHandle = {
+  channel: string;
+  ts: string;
+  channelId?: string;
+};
 
 async function notifyApprovalRequested(options: {
   sessionId?: string;
@@ -51,6 +57,7 @@ async function sendPersistedSlackApproval(options: {
   input?: unknown;
   expiresAt?: number;
   notificationRequest?: unknown;
+  slackRunNotificationHandles?: SlackRunNotificationHandle[];
 }): Promise<{ type: 'slack-message'; channel: string; ts: string; url: string } | undefined> {
   const request = options.notificationRequest && typeof options.notificationRequest === 'object'
     ? options.notificationRequest as Record<string, unknown>
@@ -68,7 +75,7 @@ async function sendPersistedSlackApproval(options: {
     ? options.input as Record<string, unknown>
     : {};
   try {
-    const message = await sendSlackApprovalRequest({
+    const approvalRequest = {
       botToken,
       channelId,
       sessionId: options.sessionId,
@@ -83,7 +90,13 @@ async function sendPersistedSlackApproval(options: {
       resumeToken: options.resumeToken,
       approvalUrl: options.approvalUrl,
       ...(options.expiresAt !== undefined && { expiresAt: new Date(options.expiresAt).toISOString() })
-    });
+    };
+    const root = options.slackRunNotificationHandles?.find((handle) =>
+      handle.channel === channelId || handle.channelId === channelId || (handle.channelId === undefined && handle.channel === channelId)
+    );
+    const message = root
+      ? await sendSlackApprovalRequestToThread(approvalRequest, root)
+      : await sendSlackApprovalRequest(approvalRequest);
 
     return {
       type: 'slack-message',
@@ -110,6 +123,7 @@ export async function processAgentStream(
     messageID?: string;
     agentId?: string;
     doomLoopDetector?: DoomLoopDetector;
+    slackRunNotificationHandles?: SlackRunNotificationHandle[];
     /** Suppress console output (for serve mode) */
     quiet?: boolean;
   }
@@ -566,7 +580,8 @@ export async function processAgentStream(
                   ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
                   ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
                   input: pending.input,
-                  notificationRequest: payload.notificationRequest
+                  notificationRequest: payload.notificationRequest,
+                  ...(options.slackRunNotificationHandles && { slackRunNotificationHandles: options.slackRunNotificationHandles })
                 });
                 if (sentNotification) {
                   notification = sentNotification;

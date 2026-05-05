@@ -57,6 +57,13 @@ describe('rehydrateMessages', () => {
         time: { start: 1, end: 1 }
       } as any);
       await sessionManager.addPart(sessionID, agentId, messageID, {
+        type: 'text',
+        role: 'user',
+        synthetic: true,
+        text: 'Please add Hello World to the title.',
+        time: { start: 2, end: 2 }
+      } as any);
+      await sessionManager.addPart(sessionID, agentId, messageID, {
         type: 'tool',
         callID: 'call-1',
         tool: 'await_human',
@@ -64,7 +71,7 @@ describe('rehydrateMessages', () => {
           status: 'completed',
           input: { prompt: 'Review?' },
           output: { action: 'approve' },
-          time: { start: 2, end: 3 }
+          time: { start: 3, end: 4 }
         }
       } as any);
 
@@ -74,13 +81,14 @@ describe('rehydrateMessages', () => {
       expect(messages[1]).toEqual({ role: 'system', content: 'system two' });
       expect(messages[2]).toEqual({ role: 'user', content: 'Write the draft\n\nMake it concise' });
       expect(messages[3]).toEqual({ role: 'assistant', content: 'Draft ready.' });
-      expect((messages[4] as any).content[0]).toMatchObject({
+      expect(messages[4]).toEqual({ role: 'user', content: 'Please add Hello World to the title.' });
+      expect((messages[5] as any).content[0]).toMatchObject({
         type: 'tool-call',
         toolCallId: 'call-1',
         toolName: 'await_human',
         input: { prompt: 'Review?' }
       });
-      expect((messages[5] as any).content[0]).toMatchObject({
+      expect((messages[6] as any).content[0]).toMatchObject({
         type: 'tool-result',
         toolCallId: 'call-1',
         output: {

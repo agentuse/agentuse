@@ -86,10 +86,6 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     if (!found) {
       throw new Error(`Session not found: ${existingSessionId}`);
     }
-    if (found.session.status === 'error' || found.session.status === 'completed') {
-      throw new Error(`Cannot resume session ${existingSessionId} with status ${found.session.status}`);
-    }
-
     sessionID = existingSessionId;
     agentId = found.agentId;
     const message = await sessionManager.getPrimaryMessage(existingSessionId, found.agentId);
@@ -102,6 +98,13 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       ? `${message.user.prompt.task}\n\n${message.user.prompt.user}`
       : message.user.prompt.task;
     resumedMessages ??= await rehydrateMessages(sessionManager, existingSessionId, found.agentId);
+    if (userPrompt?.trim()) {
+      resumedMessages = [
+        ...resumedMessages,
+        { role: 'user', content: userPrompt.trim() } as any
+      ];
+      userMessage = userPrompt.trim();
+    }
   } else {
     // Build system messages (Anthropic prompt, autonomous prompt, manager prompt if applicable)
     const systemMessagesResult = await buildSystemMessages({

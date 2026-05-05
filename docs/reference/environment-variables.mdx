@@ -152,7 +152,7 @@ model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
 </ParamField>
 
 <ParamField path="SLACK_APP_TOKEN" type="string">
-  Optional Slack app-level token used by the legacy Socket Mode approval listener. Web approval pages do not require this token. If set, the app-level token needs `connections:write`.
+  Optional Slack app-level token used for Socket Mode approval actions in Slack. Web approval pages and notification-only Slack messages do not require this token. If set, the app-level token needs `connections:write`; plain thread-reply comments also require Slack message event subscriptions and the relevant channel history scopes.
 
   ```bash
   export SLACK_APP_TOKEN="xapp-..."

@@ -44,7 +44,10 @@ export async function rehydrateMessages(
     switch (part.type) {
       case 'text':
         if (part.text) {
-          messages.push({ role: 'assistant', content: part.text } as ModelMessage);
+          messages.push({
+            role: part.role === 'user' ? 'user' : 'assistant',
+            content: part.text
+          } as ModelMessage);
         }
         break;
       case 'tool':

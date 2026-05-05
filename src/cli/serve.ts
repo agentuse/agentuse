@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { createServer, IncomingMessage, ServerResponse } from "http";
+import { WebClient } from "@slack/web-api";
 import { timingSafeEqual } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
 import { join, resolve, basename, relative } from "path";
@@ -21,7 +22,7 @@ import { version as packageVersion } from "../../package.json";
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
-import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision } from "../slack/approval";
+import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
 import {
@@ -150,6 +151,9 @@ interface ApprovalSummary {
   resumeToken?: string;
   errorMessage?: string;
   notification?: { type?: string; channel?: string; ts?: string; url?: string };
+  notifications?: {
+    slack?: Array<{ channel: string; ts: string; channelId?: string; name?: string }>;
+  };
 }
 
 interface WorkerListApprovalsResult {
@@ -367,6 +371,23 @@ class AgentWorker {
     }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
   }
 
+  continueSession(options: {
+    projectRoot: string;
+    sessionId: string;
+    prompt?: string | undefined;
+    debug?: boolean | undefined;
+    runNotificationHandles?: Array<{ channel: string; ts: string; channelId?: string; name?: string }>;
+  }): Promise<WorkerExecuteResult | WorkerExecuteError> {
+    return this.request({
+      type: "continue-session",
+      projectRoot: options.projectRoot,
+      sessionId: options.sessionId,
+      prompt: options.prompt,
+      debug: options.debug,
+      runNotificationHandles: options.runNotificationHandles,
+    }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
+  }
+
   getApprovalInfo(options: {
     projectRoot: string;
     sessionId: string;
@@ -528,7 +549,7 @@ function renderLogItems(
       entry.status === 'pending' &&
       Boolean(entry.details) &&
       (!currentResumeToken || entry.details?.resumeToken === currentResumeToken);
-    const isApprovalEntry = entry.status === 'pending' && Boolean(entry.details?.resumeToken);
+    const isApprovalEntry = Boolean(entry.details?.resumeToken);
     const expandable = entry.type === 'tool' && !isApprovalEntry;
     const expanded = !expandable;
     const resumeTokenAttr = entry.details?.resumeToken
@@ -601,6 +622,19 @@ function renderApprovalDetailBlock(details: ApprovalLogDetails): string {
     ${details.decisionComment ? `<section class="approval-section approval-secondary"><div class="approval-section-title">Comment</div><div class="approval-section-body">${renderLogContentValue(details.decisionComment, { forceMarkdown: true })}</div></section>` : ''}
     ${details.errorMessage ? `<section class="approval-section approval-risk"><div class="approval-section-title">Error</div><div class="approval-section-body">${escapeHtml(details.errorMessage)}</div></section>` : ''}
   </div>`;
+}
+
+function latestReviewerComment(logs: ApprovalLogEntry[]): { comment: string; reviewer?: string; status?: string } | undefined {
+  for (const entry of [...logs].reverse()) {
+    const details = entry.details;
+    if (!details?.decisionComment) continue;
+    return {
+      comment: details.decisionComment,
+      ...(details.decisionReviewer && { reviewer: details.decisionReviewer }),
+      ...(details.decisionStatus && { status: details.decisionStatus })
+    };
+  }
+  return undefined;
 }
 
 function renderApprovalRow(row: { projectId: string; multiProject: boolean; approval: ApprovalSummary }): string {
@@ -1115,6 +1149,7 @@ function renderApprovalPage(options: {
         : approval.sessionStatus;
   const actions = approvalActionList(approval.actions);
   const initialLogs = approval.logs ?? [];
+  const initialReviewerComment = latestReviewerComment(initialLogs);
   const agentLabel = approval.agent.name || approval.agent.id;
   const agentHeadline = approval.agent.description || agentLabel;
 
@@ -1332,6 +1367,31 @@ function renderApprovalPage(options: {
     .notice { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
     .notice.error { color: var(--red); }
     .notice.error::before { content: "✗ "; }
+    .reviewer-comment {
+      margin: 0 0 18px;
+      border-color: var(--cyan-border);
+      background: var(--cyan-soft);
+    }
+    .reviewer-comment[hidden] { display: none; }
+    .reviewer-comment .label {
+      color: var(--cyan);
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .reviewer-comment .body {
+      color: var(--fg);
+      font-family: var(--sans);
+      font-size: 15px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+    .reviewer-comment .meta-line {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
 
     /* logs */
     .logs { list-style: none; margin: 0; padding: 0; }
@@ -1847,6 +1907,12 @@ function renderApprovalPage(options: {
 
     ${error ? `<p class="notice error">${escapeHtml(error)}</p>` : ''}
 
+    <div id="reviewer-comment" class="panel reviewer-comment"${initialReviewerComment ? '' : ' hidden'}>
+      <div class="label">latest reviewer comment</div>
+      <div id="reviewer-comment-body" class="body">${initialReviewerComment ? renderLogContentValue(initialReviewerComment.comment, { forceMarkdown: true }) : ''}</div>
+      <div id="reviewer-comment-meta" class="meta-line">${initialReviewerComment?.reviewer ? `from ${escapeHtml(initialReviewerComment.reviewer)}` : ''}</div>
+    </div>
+
     <div class="section-title"><span>session log</span><span class="rule"></span></div>
     <div class="panel">
       <ul id="logs" class="logs">${renderLogItems(initialLogs, { actions, actionable, currentResumeToken: approval.currentResumeToken, projectId })}</ul>
@@ -1892,6 +1958,9 @@ function renderApprovalPage(options: {
     let pendingActionable = ${JSON.stringify(actionable)};
     const statusEl = document.querySelector('.status');
     const logsEl = document.getElementById('logs');
+    const reviewerCommentEl = document.getElementById('reviewer-comment');
+    const reviewerCommentBodyEl = document.getElementById('reviewer-comment-body');
+    const reviewerCommentMetaEl = document.getElementById('reviewer-comment-meta');
 
     // theme toggle
     ${approvalsThemeToggleScript()}
@@ -2084,6 +2153,33 @@ function renderApprovalPage(options: {
     function objectValue(value) {
       return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     }
+    function latestReviewerComment(logs) {
+      if (!Array.isArray(logs)) return null;
+      for (let i = logs.length - 1; i >= 0; i--) {
+        const details = logs[i] && logs[i].details;
+        if (details && typeof details.decisionComment === 'string' && details.decisionComment) {
+          return {
+            comment: details.decisionComment,
+            reviewer: typeof details.decisionReviewer === 'string' ? details.decisionReviewer : '',
+            status: typeof details.decisionStatus === 'string' ? details.decisionStatus : ''
+          };
+        }
+      }
+      return null;
+    }
+    function updateReviewerComment(logs) {
+      if (!reviewerCommentEl || !reviewerCommentBodyEl || !reviewerCommentMetaEl) return;
+      const latest = latestReviewerComment(logs);
+      if (!latest) {
+        reviewerCommentEl.setAttribute('hidden', '');
+        reviewerCommentBodyEl.innerHTML = '';
+        reviewerCommentMetaEl.textContent = '';
+        return;
+      }
+      reviewerCommentEl.removeAttribute('hidden');
+      reviewerCommentBodyEl.innerHTML = renderLogContentValue(latest.comment, { forceMarkdown: true });
+      reviewerCommentMetaEl.textContent = latest.reviewer ? 'from ' + latest.reviewer : '';
+    }
     function storeItemTitle(item) {
       if (item && typeof item.title === 'string' && item.title) return item.title;
       const data = objectValue(item && item.data);
@@ -2159,7 +2255,7 @@ function renderApprovalPage(options: {
       '</div>';
     }
     function logEntryHtml(entry) {
-      const isApprovalEntry = entry.status === 'pending' && Boolean(entry.details && entry.details.resumeToken);
+      const isApprovalEntry = Boolean(entry.details && entry.details.resumeToken);
       const expandable = entry.type === 'tool' && !isApprovalEntry;
       const expanded = !expandable || expandedLogIds.has(String(entry.id));
       const resumeTokenAttr = entry.details && entry.details.resumeToken
@@ -2206,6 +2302,7 @@ function renderApprovalPage(options: {
       if (!changed) return;
       const ordered = [...renderedLogs.values()].sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
       logsEl.innerHTML = ordered.map(logEntryHtml).join('');
+      updateReviewerComment(ordered);
       scrollToActiveApproval();
     }
     let lastScrolledResumeToken = null;
@@ -2995,8 +3092,10 @@ export function createServeCommand(): Command {
           : (effectiveDefault ? projectsById.get(effectiveDefault) : projects[0]);
       };
 
-      const activeApprovalResumes = new Set<string>();
+      const activeApprovalResumes = new Map<string, Promise<unknown>>();
       const loggedApprovalRequests = new Set<string>();
+      const slackBotToken = process.env.SLACK_BOT_TOKEN;
+      const slackAppToken = process.env.SLACK_APP_TOKEN;
 
       const resumeSuspendedSession = async (decision: SlackApprovalDecision): Promise<void> => {
         const reviewer = decision.toolResult.reviewer?.id
@@ -3014,31 +3113,341 @@ export function createServeCommand(): Command {
           throw new Error(`No worker for project ${project.id}`);
         }
 
-        const resumeStart = Date.now();
-        approvalLog.resumeStarted(decision.sessionId);
-        const result = await projectWorker.execute({
-          projectRoot: project.root,
-          sessionId: decision.sessionId,
-          toolResult: decision.toolResult,
-          resumeToken: decision.resumeToken,
-          debug: options.debug,
+        const activeKey = `${project.id}:${decision.sessionId}`;
+        const existingResume = activeApprovalResumes.get(activeKey);
+        if (existingResume) {
+          await existingResume;
+          return;
+        }
+
+        const resumePromise = Promise.resolve().then(async () => {
+          const info = await projectWorker.getApprovalInfo({
+            projectRoot: project.root,
+            sessionId: decision.sessionId,
+            resumeToken: decision.resumeToken,
+            allowHistorical: true
+          });
+          if (info.success && info.approval.sessionStatus === 'completed') {
+            approvalLog.resumeCompleted(decision.sessionId, 0);
+            return;
+          }
+
+          const resumeStart = Date.now();
+          approvalLog.resumeStarted(decision.sessionId);
+          const result = await projectWorker.execute({
+            projectRoot: project.root,
+            sessionId: decision.sessionId,
+            toolResult: decision.toolResult,
+            resumeToken: decision.resumeToken,
+            debug: options.debug,
+          });
+
+          if (!result.success) {
+            const alreadyCompleted = /SESSION_NOT_SUSPENDED:\s*completed/i.test(result.error.message);
+            if (alreadyCompleted) {
+              approvalLog.resumeCompleted(decision.sessionId, Date.now() - resumeStart);
+              return;
+            }
+            approvalLog.resumeFailed(decision.sessionId, Date.now() - resumeStart, result.error.message);
+            throw new Error(result.error.message);
+          }
+          approvalLog.resumeCompleted(decision.sessionId, Date.now() - resumeStart);
+        }).finally(() => {
+          if (activeApprovalResumes.get(activeKey) === resumePromise) {
+            activeApprovalResumes.delete(activeKey);
+          }
         });
 
-        if (!result.success) {
-          approvalLog.resumeFailed(decision.sessionId, Date.now() - resumeStart, result.error.message);
-          throw new Error(result.error.message);
+        activeApprovalResumes.set(activeKey, resumePromise);
+        await resumePromise;
+      };
+
+      const updateSlackThreadApprovalStatus = (
+        project: Project,
+        approval: ApprovalSummary,
+        status: 'waiting' | 'resuming' | 'completed' | 'failed',
+        decision: string,
+        error?: unknown
+      ): void => {
+        if (
+          !slackBotToken ||
+          approval.notification?.type !== 'slack-message' ||
+          !approval.notification.channel ||
+          !approval.notification.ts ||
+          !approval.prompt
+        ) {
+          return;
         }
-        approvalLog.resumeCompleted(decision.sessionId, Date.now() - resumeStart);
+
+        void updateSlackApprovalRequestStatus({
+          botToken: slackBotToken,
+          channelId: approval.notification.channel,
+          ts: approval.notification.ts,
+          prompt: approval.prompt,
+          sessionId: approval.sessionId,
+          projectId: project.id,
+          ...(approval.notification.url && { approvalUrl: approval.notification.url }),
+          ...(approval.expiresAt && { expiresAt: new Date(approval.expiresAt).toISOString() }),
+          status,
+          decision,
+          ...(error !== undefined && { error })
+        }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
+      };
+
+      const postSlackApprovalThreadNote = (
+        approval: ApprovalSummary,
+        message: string,
+        approvalUrl?: string
+      ): void => {
+        if (
+          !slackBotToken ||
+          approval.notification?.type !== 'slack-message' ||
+          !approval.notification.channel ||
+          !approval.notification.ts
+        ) {
+          return;
+        }
+
+        const web = new WebClient(slackBotToken);
+        void web.chat.postMessage({
+          channel: approval.notification.channel,
+          thread_ts: approval.notification.ts,
+          text: message,
+          blocks: [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: approvalUrl
+                  ? `*AgentUse processed your comment.*\nThe agent updated the work and requested another approval.`
+                  : `*AgentUse processed your comment.*\nThe agent continued after receiving the feedback.`
+              }
+            },
+            ...(approvalUrl ? [{
+              type: 'actions',
+              elements: [{
+                type: 'button',
+                text: {
+                  type: 'plain_text',
+                  text: 'Review latest approval'
+                },
+                url: approvalUrl,
+                style: 'primary'
+              }]
+            }] : [])
+          ] as any[]
+        }).catch((err) => logger.warn(`Slack approval thread note failed: ${(err as Error).message}`));
+      };
+
+      const extractSessionIdFromSlackMessage = (message: unknown): string | undefined => {
+        const text = JSON.stringify(message ?? {});
+        return text.match(/\b[0-9A-HJKMNP-TV-Z]{26}\b/)?.[0];
+      };
+
+      const sessionIdForLocalApprovalThread = async (comment: SlackApprovalThreadComment): Promise<string | undefined> => {
+        for (const project of projects) {
+          const projectWorker = workers.get(project.id);
+          if (!projectWorker) continue;
+          const result = await projectWorker.listApprovals(project.root);
+          if (!result.success) {
+            logger.debug(`Slack approval thread lookup failed for ${project.id}: ${result.error.message}`);
+            continue;
+          }
+          const approval = result.approvals.find((item) =>
+            (
+              item.notification?.type === 'slack-message' &&
+              item.notification.channel === comment.channel &&
+              item.notification.ts === comment.threadTs
+            ) ||
+            item.notifications?.slack?.some((handle) =>
+              handle.channel === comment.channel &&
+              handle.ts === comment.threadTs
+            )
+          );
+          if (approval) return approval.sessionId;
+        }
+        return undefined;
+      };
+
+      const sessionIdForSlackThread = async (comment: SlackApprovalThreadComment): Promise<string | undefined> => {
+        const localApprovalSessionId = await sessionIdForLocalApprovalThread(comment);
+        if (localApprovalSessionId) return localApprovalSessionId;
+        if (!slackBotToken) return undefined;
+        const web = new WebClient(slackBotToken);
+        const response = await web.conversations.replies({
+          channel: comment.channel,
+          ts: comment.threadTs,
+          inclusive: true,
+          limit: 1
+        });
+        return extractSessionIdFromSlackMessage(response.messages?.[0]);
+      };
+
+      const postSlackRunThreadNote = (
+        comment: SlackApprovalThreadComment,
+        text: string,
+        blocks: any[]
+      ): void => {
+        if (!slackBotToken) return;
+        const web = new WebClient(slackBotToken);
+        void web.chat.postMessage({
+          channel: comment.channel,
+          thread_ts: comment.threadTs,
+          text,
+          blocks
+        }).catch((err) => logger.warn(`Slack run thread note failed: ${(err as Error).message}`));
+      };
+
+      const continueSlackRunThread = async (comment: SlackApprovalThreadComment): Promise<SlackRunThreadCommentResult> => {
+        let sessionId: string | undefined;
+        try {
+          sessionId = await sessionIdForSlackThread(comment);
+        } catch (err) {
+          logger.warn(`Slack run thread lookup failed: ${(err as Error).message}`);
+          return { handled: false };
+        }
+        if (!sessionId) return { handled: false };
+
+        const done = (async () => {
+          for (const project of projects) {
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) continue;
+
+            const result = await projectWorker.continueSession({
+              projectRoot: project.root,
+              sessionId,
+              prompt: comment.text,
+              debug: options.debug,
+              runNotificationHandles: [{
+                channel: comment.channel,
+                ts: comment.threadTs
+              }]
+            });
+            if (!result.success && result.error.code === 'SESSION_NOT_FOUND') {
+              continue;
+            }
+            if (!result.success) {
+              throw new Error(result.error.message);
+            }
+
+            postSlackRunThreadNote(comment, 'AgentUse continued the session', [{
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: `*AgentUse resumed the session.*\nContinued \`${sessionId}\` with your follow-up.`
+              }
+            }]);
+            return;
+          }
+
+          throw new Error(`Session ${sessionId} was not found in this serve instance`);
+        })();
+
+        return { handled: true, done };
+      };
+
+      const resumeSlackThreadComment = async (comment: SlackApprovalThreadComment): Promise<SlackApprovalThreadCommentResult> => {
+        for (const project of projects) {
+          const projectWorker = workers.get(project.id);
+          if (!projectWorker) continue;
+
+          const result = await projectWorker.listApprovals(project.root);
+          if (!result.success) {
+            logger.debug(`Slack approval comment lookup failed for ${project.id}: ${result.error.message}`);
+            continue;
+          }
+
+          const approval = result.approvals.find((item) =>
+            item.status === 'pending' &&
+            item.sessionStatus === 'suspended' &&
+            item.resumeToken &&
+            item.notification?.type === 'slack-message' &&
+            item.notification.channel === comment.channel &&
+            item.notification.ts === comment.threadTs
+          );
+          if (!approval?.resumeToken) continue;
+
+          const activeKey = `${project.id}:${approval.sessionId}`;
+          if (activeApprovalResumes.has(activeKey)) {
+            throw new Error(`Approval decision has already been submitted and session ${approval.sessionId} is resuming`);
+          }
+
+          const reviewer = comment.userId ? `<@${comment.userId}>` : comment.username ?? 'slack';
+          approvalLog.received('slack', 'comment', approval.sessionId, reviewer);
+          const resumeStart = Date.now();
+          approvalLog.resumeStarted(approval.sessionId);
+          updateSlackThreadApprovalStatus(project, approval, 'resuming', 'comment');
+
+          const done = Promise.resolve().then(async () => {
+            try {
+              const resumeResult = await projectWorker.execute({
+                projectRoot: project.root,
+                sessionId: approval.sessionId,
+                toolResult: {
+                  status: 'comment',
+                  comment: comment.text,
+                  reviewer: {
+                    ...(comment.userId && { id: comment.userId }),
+                    ...(comment.username && { username: comment.username }),
+                    ...(comment.teamId && { teamId: comment.teamId })
+                  }
+                },
+                resumeToken: approval.resumeToken,
+                debug: options.debug,
+              });
+
+              if (!resumeResult.success) {
+                approvalLog.resumeFailed(approval.sessionId, Date.now() - resumeStart, resumeResult.error.message);
+                logger.warn(`Approval resume ${approval.sessionId} failed: ${resumeResult.error.message}`);
+                updateSlackThreadApprovalStatus(project, approval, 'failed', 'comment', resumeResult.error.message);
+                throw new Error(resumeResult.error.message);
+              }
+
+              approvalLog.resumeCompleted(approval.sessionId, Date.now() - resumeStart);
+              if (resumeResult.result.finishReason === 'suspended' || resumeResult.result.approvalUrl) {
+                const refreshed = await projectWorker.listApprovals(project.root);
+                const nextApproval = refreshed.success
+                  ? refreshed.approvals.find((item) =>
+                    item.sessionId === approval.sessionId &&
+                    item.status === 'pending' &&
+                    item.resumeToken &&
+                    item.resumeToken !== approval.resumeToken
+                  )
+                  : undefined;
+                const nextApprovalUrl = nextApproval?.notification?.url ?? resumeResult.result.approvalUrl;
+                updateSlackThreadApprovalStatus(project, approval, 'completed', 'comment');
+                postSlackApprovalThreadNote(
+                  approval,
+                  nextApprovalUrl
+                    ? 'AgentUse processed your comment and requested another approval.'
+                    : 'AgentUse processed your comment and continued the session.',
+                  nextApprovalUrl
+                );
+                return;
+              }
+
+              updateSlackThreadApprovalStatus(project, approval, 'completed', 'comment');
+            } finally {
+              if (activeApprovalResumes.get(activeKey) === done) {
+                activeApprovalResumes.delete(activeKey);
+              }
+            }
+          });
+          activeApprovalResumes.set(activeKey, done);
+          return { handled: true, done };
+        }
+
+        return { handled: false };
       };
 
       let slackApprovalSocket: SlackApprovalSocket | null = null;
-      const slackBotToken = process.env.SLACK_BOT_TOKEN;
-      const slackAppToken = process.env.SLACK_APP_TOKEN;
       if (slackBotToken && slackAppToken) {
         slackApprovalSocket = new SlackApprovalSocket({
           botToken: slackBotToken,
           appToken: slackAppToken,
           onDecision: resumeSuspendedSession,
+          onThreadComment: resumeSlackThreadComment,
+          onRunThreadComment: continueSlackRunThread,
           ...(options.debug !== undefined && { debug: options.debug })
         });
         slackApprovalSocket.start()
@@ -3534,7 +3943,6 @@ export function createServeCommand(): Command {
               return;
             }
 
-            activeApprovalResumes.add(activeKey);
             approvalLog.received('web', status, sessionId, 'web');
             const resumeStart = Date.now();
             approvalLog.resumeStarted(sessionId);
@@ -3562,7 +3970,7 @@ export function createServeCommand(): Command {
                 decision: status
               }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
             }
-            projectWorker.execute({
+            const resumePromise = Promise.resolve().then(() => projectWorker.execute({
               projectRoot: project.root,
               sessionId,
               toolResult: {
@@ -3572,8 +3980,14 @@ export function createServeCommand(): Command {
               },
               resumeToken: token,
               debug: options.debug,
-            }).then(result => {
+            })
+            ).then(result => {
               if (!result.success) {
+                const alreadyCompleted = /SESSION_NOT_SUSPENDED:\s*completed/i.test(result.error.message);
+                if (alreadyCompleted) {
+                  approvalLog.resumeCompleted(sessionId, Date.now() - resumeStart);
+                  return;
+                }
                 approvalLog.resumeFailed(sessionId, Date.now() - resumeStart, result.error.message);
                 logger.warn(`Approval resume ${sessionId} failed: ${result.error.message}`);
                 if (slackNotification && info.approval.prompt) {
@@ -3609,8 +4023,11 @@ export function createServeCommand(): Command {
                 }
               }
             }).finally(() => {
-              activeApprovalResumes.delete(activeKey);
+              if (activeApprovalResumes.get(activeKey) === resumePromise) {
+                activeApprovalResumes.delete(activeKey);
+              }
             });
+            activeApprovalResumes.set(activeKey, resumePromise);
 
             res.writeHead(202, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ sessionId, status: "resuming" }));

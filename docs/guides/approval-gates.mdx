@@ -121,6 +121,7 @@ When a local `agentuse serve` is already running for the project, AgentUse uses 
 ## Optional Slack Notifications
 
 Slack can notify reviewers when an approval is waiting. Approval state still lives in the AgentUse approval page.
+The Slack channel message stays concise; summary, draft, artifact, context, risk, and approval actions are posted in the message thread when available.
 
 ```yaml
 approval: true
@@ -151,6 +152,8 @@ Reviewer actions are fixed:
 - `Approve`: resumes the agent with `status: "approve"`
 - `Reject`: resumes the agent with `status: "reject"`
 - `Comment`: resumes the agent with `status: "comment"` and the reviewer comment
+
+When Slack Socket Mode is configured, a normal reply in the approval notification thread also resumes the agent as a `comment` decision.
 
 When the agent receives a comment, it decides whether to revise, ask for approval again, or stop with a clear explanation.
 

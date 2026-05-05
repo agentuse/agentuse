@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { ParsedAgent } from '../src/parser';
-import { __testing, sendRunNotifications } from '../src/notifications/run';
+import { __testing, sendRunNotifications, startRunNotifications } from '../src/notifications/run';
 
 function agentWithRoutes(routes: NonNullable<ParsedAgent['config']['notifications']>['routes']): ParsedAgent {
   return {
@@ -70,6 +70,96 @@ describe('run notifications', () => {
     expect(sent).toEqual([{ channelId: 'C_COMPLETE', event: 'completion' }]);
   });
 
+  it('starts live run notifications for approval routes and full terminal routes', async () => {
+    const agent = agentWithRoutes([
+      {
+        on: ['completion'],
+        to: { slack: { channel_id: 'C_COMPLETE' } }
+      },
+      {
+        on: ['failure'],
+        to: { slack: { channel_id: 'C_FAIL' } }
+      },
+      {
+        name: 'approval-review',
+        on: ['approval'],
+        to: { slack: { channel_id: 'C_APPROVAL' } }
+      },
+      {
+        name: 'live-run',
+        on: ['completion', 'failure'],
+        to: { slack: { channel_id: 'C_LIVE' } }
+      }
+    ]);
+    const started: string[] = [];
+
+    const handles = await startRunNotifications({
+      agent,
+      sessionId: 'session-1'
+    }, async (route) => {
+      started.push(route.channelId ?? 'missing');
+      return {
+        ...route,
+        channel: route.channelId ?? 'C_UNKNOWN',
+        ts: '111.222'
+      };
+    });
+
+    expect(started).toEqual(['C_APPROVAL', 'C_LIVE']);
+    expect(handles).toEqual([
+      {
+        name: 'approval-review',
+        channelId: 'C_APPROVAL',
+        channel: 'C_APPROVAL',
+        ts: '111.222'
+      },
+      {
+        name: 'live-run',
+        channelId: 'C_LIVE',
+        channel: 'C_LIVE',
+        ts: '111.222'
+      }
+    ]);
+    expect(__testing.slackLiveRoutesForRun(agent)).toEqual([
+      { name: 'approval-review', channelId: 'C_APPROVAL' },
+      { name: 'live-run', channelId: 'C_LIVE' }
+    ]);
+  });
+
+  it('dedupes live Slack run cards by destination channel', async () => {
+    const agent = agentWithRoutes([
+      {
+        name: 'approval-review',
+        on: ['approval'],
+        to: { slack: { channel_id: 'C_SHARED' } }
+      },
+      {
+        name: 'run-result',
+        on: ['completion', 'failure'],
+        to: { slack: { channel_id: 'C_SHARED' } }
+      }
+    ]);
+    const started: string[] = [];
+
+    const handles = await startRunNotifications({
+      agent,
+      sessionId: 'session-1'
+    }, async (route) => {
+      started.push(route.channelId ?? 'missing');
+      return {
+        ...route,
+        channel: route.channelId ?? 'C_UNKNOWN',
+        ts: '111.222'
+      };
+    });
+
+    expect(started).toEqual(['C_SHARED']);
+    expect(handles).toHaveLength(1);
+    expect(__testing.slackLiveRoutesForRun(agent)).toEqual([
+      { name: 'approval-review', channelId: 'C_SHARED' }
+    ]);
+  });
+
   it('prefers route Slack channel over env fallback', () => {
     const previous = process.env.SLACK_APPROVAL_CHANNEL;
     process.env.SLACK_APPROVAL_CHANNEL = 'C_ENV';
@@ -110,6 +200,34 @@ describe('run notifications', () => {
     expect(text).not.toContain('Tool calls');
     expect(text).not.toContain('Tokens');
     expect(text).not.toContain('Final answer');
+  });
+
+  it('renders running and suspended live run cards', () => {
+    const running = __testing.buildRunRootBlocks({
+      lifecycleStatus: 'running',
+      agent: agentWithRoutes([]),
+      sessionId: 'session-1'
+    });
+    const suspended = __testing.buildRunRootBlocks({
+      lifecycleStatus: 'suspended',
+      agent: agentWithRoutes([]),
+      sessionId: 'session-1',
+      result: {
+        status: 'suspended',
+        text: '',
+        toolCallCount: 1,
+        hasTextOutput: false,
+        approvalUrl: 'https://agentuse.example.com/approvals/session-1?token=abc'
+      }
+    });
+    const runningText = JSON.stringify(running);
+    const suspendedText = JSON.stringify(suspended);
+
+    expect(runningText).toContain('AgentUse run started');
+    expect(runningText).toContain('running');
+    expect(suspendedText).toContain('AgentUse run waiting for approval');
+    expect(suspendedText).toContain('suspended');
+    expect(suspendedText).toContain('Review approval');
   });
 
   it('renders completion thread messages with full answer and run details', () => {
