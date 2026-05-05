@@ -120,7 +120,7 @@ When a local `agentuse serve` is already running for the project, AgentUse uses 
 
 ## Optional Slack Notifications
 
-Slack is configured as a notification channel, not inside `approval`.
+Slack can notify reviewers when an approval is waiting. Approval state still lives in the AgentUse approval page.
 
 ```yaml
 approval: true
@@ -128,43 +128,10 @@ approval: true
 notifications:
   routes:
     - on: [approval]
-      to:
-        slack:
-          channel_id: C0123456789
-```
-
-Configure a Slack bot token:
-
-```bash
-export SLACK_BOT_TOKEN="xoxb-..."
-```
-
-The Slack app needs:
-
-- A bot token installed in the workspace
-- Bot scope `chat:write`
-- The bot invited to the approval channel
-
-If you do not want to put the channel id in every agent, set it once:
-
-```bash
-export SLACK_APPROVAL_CHANNEL="C0123456789"
-```
-
-Then the agent can omit `channel_id`:
-
-```yaml
-notifications:
-  routes:
-    - on: [approval]
       to: slack
 ```
 
-To find a Slack channel id, open the channel in Slack, click the channel name, and look near the bottom of the channel details panel for the channel id. You can also copy a channel link; the id is the `C...` or `G...` value in the URL.
-
-Slack approval messages are compact. They show the prompt, session/project metadata, status, and a `Review approval` button. The full review context stays on the AgentUse approval page.
-
-For completion and failure notifications, or more route examples, see [Notifications](/guides/notifications).
+See [Notifications](/guides/notifications) for Slack setup, channel ids, route examples, and completion/failure notifications.
 
 ## Reviewer Flow
 

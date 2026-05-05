@@ -31,11 +31,23 @@ export SLACK_BOT_TOKEN="xoxb-..."
 export SLACK_APPROVAL_CHANNEL="C0123456789"
 ```
 
-The Slack app needs:
+To get a Slack bot token:
 
-- A bot token installed in the workspace
-- Bot scope `chat:write`
-- The bot invited to the target channel
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and create or open a Slack app.
+2. Open **OAuth & Permissions**.
+3. Add the bot token scope `chat:write`.
+4. Click **Install to Workspace** or **Reinstall to Workspace**.
+5. Copy the **Bot User OAuth Token**. It starts with `xoxb-`.
+
+To get a channel id:
+
+1. Open the channel in Slack.
+2. Click the channel name.
+3. Copy the channel id from the channel details panel. It starts with `C...` for public channels or `G...` for private channels.
+
+You can also copy a channel link and use the `C...` or `G...` value from the URL.
+
+Invite the bot to the target channel before sending notifications. For private channels, this is required.
 
 ## Routes
 
@@ -104,15 +116,14 @@ Completion notifications include:
 - Agent name
 - Session id when available
 - Status and duration
-- Tool call count and token count when available
-- Final answer, truncated for Slack readability
+- Thread details with the final answer, tool call count, and token count when available
 
 Failure notifications include:
 
 - Agent name
 - Session id when available
 - Status and duration when available
-- Error message, truncated for Slack readability
+- Thread details with the error message and run metadata
 
 ## Approval Gates
 
