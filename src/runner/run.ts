@@ -5,7 +5,7 @@ import type { AgentCompleteEvent, PluginManager } from '../plugin';
 import { AuthenticationError } from '../models';
 import { logger } from '../utils/logger';
 import { extractLearnings } from '../learning/index.js';
-import { sendTerminalRunNotifications } from '../notifications/terminal';
+import { sendRunNotifications } from '../notifications/run';
 import { executeAgentCore } from './execution';
 import { prepareAgentExecution } from './preparation';
 import { processAgentStream } from './stream';
@@ -211,7 +211,7 @@ export async function runAgent(
 
     const consoleOutput = captureActive ? logger.stopCapture() : '';
     captureActive = false;
-    await sendTerminalRunNotifications({
+    await sendRunNotifications({
       event: 'completion',
       agent,
       result: runResult,
@@ -256,7 +256,7 @@ export async function runAgent(
       logger.stopCapture();
       captureActive = false;
     }
-    await sendTerminalRunNotifications({
+    await sendRunNotifications({
       event: 'failure',
       agent,
       error,

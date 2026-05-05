@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { ParsedAgent } from '../src/parser';
-import { __testing, sendTerminalRunNotifications } from '../src/notifications/terminal';
+import { __testing, sendRunNotifications } from '../src/notifications/run';
 
 function agentWithRoutes(routes: NonNullable<ParsedAgent['config']['notifications']>['routes']): ParsedAgent {
   return {
@@ -13,7 +13,7 @@ function agentWithRoutes(routes: NonNullable<ParsedAgent['config']['notification
   };
 }
 
-describe('terminal notifications', () => {
+describe('run notifications', () => {
   it('filters Slack routes by event and enabled flag', () => {
     const agent = agentWithRoutes([
       {
@@ -40,7 +40,7 @@ describe('terminal notifications', () => {
     ]);
   });
 
-  it('sends terminal notifications through matching routes only', async () => {
+  it('sends run notifications through matching routes only', async () => {
     const agent = agentWithRoutes([
       {
         on: ['completion'],
@@ -53,7 +53,7 @@ describe('terminal notifications', () => {
     ]);
     const sent: Array<{ channelId?: string; event: string }> = [];
 
-    await sendTerminalRunNotifications({
+    await sendRunNotifications({
       event: 'completion',
       agent,
       sessionId: 'session-1',
@@ -85,14 +85,14 @@ describe('terminal notifications', () => {
     }
   });
 
-  it('renders completion cards with the final answer', () => {
-    const blocks = __testing.buildTerminalSlackBlocks({
+  it('renders compact completion cards without the final answer', () => {
+    const blocks = __testing.buildRunRootBlocks({
       event: 'completion',
       agent: agentWithRoutes([]),
       sessionId: 'session-1',
       result: {
         status: 'completed',
-        text: 'The launch announcement is ready.',
+        text: 'The launch announcement is ready.'.repeat(30),
         toolCallCount: 3,
         usage: {
           inputTokens: 10,
@@ -106,12 +106,42 @@ describe('terminal notifications', () => {
 
     expect(text).toContain('AgentUse run completed');
     expect(text).toContain('session-1');
-    expect(text).toContain('The launch announcement is ready.');
-    expect(text).toContain('30');
+    expect(text).not.toContain('The launch announcement is ready.');
+    expect(text).not.toContain('Tool calls');
+    expect(text).not.toContain('Tokens');
+    expect(text).not.toContain('Final answer');
   });
 
-  it('renders failure cards with the error message', () => {
-    const blocks = __testing.buildTerminalSlackBlocks({
+  it('renders completion thread messages with full answer and run details', () => {
+    const messages = __testing.buildRunThreadMessages({
+      event: 'completion',
+      agent: agentWithRoutes([]),
+      agentFilePath: '/tmp/notify.agentuse',
+      sessionId: 'session-1',
+      result: {
+        status: 'completed',
+        text: 'The launch announcement is ready.',
+        toolCallCount: 3,
+        usage: {
+          inputTokens: 10,
+          outputTokens: 20,
+          totalTokens: 30
+        },
+        hasTextOutput: true
+      }
+    });
+    const text = JSON.stringify(messages);
+
+    expect(messages).toHaveLength(2);
+    expect(text).toContain('Final answer');
+    expect(text).toContain('The launch announcement is ready.');
+    expect(text).toContain('Tool calls: 3');
+    expect(text).toContain('Tokens: 30');
+    expect(text).toContain('/tmp/notify.agentuse');
+  });
+
+  it('renders compact failure cards without the error message', () => {
+    const blocks = __testing.buildRunRootBlocks({
       event: 'failure',
       agent: agentWithRoutes([]),
       sessionId: 'session-1',
@@ -121,6 +151,24 @@ describe('terminal notifications', () => {
 
     expect(text).toContain('AgentUse run failed');
     expect(text).toContain('session-1');
+    expect(text).not.toContain('Publish failed');
+    expect(text).not.toContain('*Error*');
+  });
+
+  it('renders failure thread messages with error and run details', () => {
+    const messages = __testing.buildRunThreadMessages({
+      event: 'failure',
+      agent: agentWithRoutes([]),
+      agentFilePath: '/tmp/notify.agentuse',
+      sessionId: 'session-1',
+      error: new Error('Publish failed')
+    });
+    const text = JSON.stringify(messages);
+
+    expect(messages).toHaveLength(2);
+    expect(text).toContain('Error');
     expect(text).toContain('Publish failed');
+    expect(text).toContain('Status: failed');
+    expect(text).toContain('/tmp/notify.agentuse');
   });
 });
