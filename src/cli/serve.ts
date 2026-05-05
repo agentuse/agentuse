@@ -535,10 +535,13 @@ function renderLogItems(
       ? ` data-resume-token="${escapeHtml(entry.details.resumeToken)}"`
       : '';
     const storeEventHtml = renderStoreToolEvent(entry, options?.projectId);
+    const markerHtml = entry.status === 'streaming'
+      ? '<span class="log-spinner" aria-label="streaming"></span>'
+      : '⋮';
     return `
         <li class="log-item ${escapeHtml(entry.status ?? '')}${expandable ? ' expandable' : ''}${expanded ? ' expanded' : ''}" data-log-id="${escapeHtml(entry.id)}" data-log-type="${escapeHtml(entry.type)}"${resumeTokenAttr}${expandable ? ` aria-expanded="${expanded ? 'true' : 'false'}" tabindex="0"` : ''}>
           <span class="log-time">${escapeHtml(formatLogTime(entry.time))}</span>
-          <span class="log-marker">⋮</span>
+          <span class="log-marker">${markerHtml}</span>
           <span class="log-main">
             <span class="log-title">${escapeHtml(entry.title)}</span>
             <span class="log-content">
@@ -1342,7 +1345,25 @@ function renderApprovalPage(options: {
     }
     .log-item:last-child { border-bottom: 0; }
     .log-time { color: var(--muted-2); font-size: 12px; padding-top: 1px; }
-    .log-marker { color: var(--cyan); opacity: 0.6; }
+    .log-marker {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      width: 12px;
+      min-height: 18px;
+      color: var(--cyan);
+      opacity: 0.6;
+    }
+    .log-spinner {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      border: 1.5px solid var(--cyan-border);
+      border-top-color: var(--cyan);
+      animation: log-spin 700ms linear infinite;
+    }
+    @keyframes log-spin { to { transform: rotate(360deg); } }
+    .log-item.streaming .log-marker { opacity: 1; }
     .log-item.error .log-marker, .log-item.failed .log-marker { color: var(--red); }
     .log-item.completed .log-marker, .log-item.approved .log-marker { color: var(--green); }
     .log-item.resuming .log-marker { color: var(--amber); }
@@ -2145,9 +2166,12 @@ function renderApprovalPage(options: {
         ? ' data-resume-token="' + escapeText(entry.details.resumeToken) + '"'
         : '';
       const storeHtml = storeEventHtml(entry);
+      const markerHtml = entry.status === 'streaming'
+        ? '<span class="log-spinner" aria-label="streaming"></span>'
+        : '⋮';
       return '<li class="log-item ' + escapeText(entry.status || '') + (expandable ? ' expandable' : '') + (expanded ? ' expanded' : '') + '" data-log-id="' + escapeText(entry.id) + '" data-log-type="' + escapeText(entry.type) + '"' + resumeTokenAttr + (expandable ? ' aria-expanded="' + String(expanded) + '" tabindex="0"' : '') + '>' +
         '<span class="log-time">' + escapeText(formatTime(entry.time)) + '</span>' +
-        '<span class="log-marker">⋮</span>' +
+        '<span class="log-marker">' + markerHtml + '</span>' +
         '<span class="log-main"><span class="log-title">' + escapeText(entry.title) + '</span>' +
         '<span class="log-content">' +
         storeHtml +
@@ -2157,8 +2181,8 @@ function renderApprovalPage(options: {
         logActionsHtml(entry) +
         '</span></li>';
     }
-    function renderLogs(logs) {
-      let changed = false;
+    function renderLogs(logs, force) {
+      let changed = Boolean(force);
       if (Array.isArray(logs)) {
         for (const entry of logs) {
           if (!entry || entry.id == null) continue;
@@ -2223,6 +2247,8 @@ function renderApprovalPage(options: {
       }
       const result = document.getElementById('result');
       if (result) { result.textContent = ''; result.className = 'notice'; }
+      const commentInput = document.getElementById('comment');
+      if (commentInput) commentInput.value = '';
       submittingDecision = false;
       for (const b of document.querySelectorAll('button[data-action]')) b.disabled = false;
       // Keep the URL in sync so a refresh lands on the active gate.
@@ -2231,7 +2257,17 @@ function renderApprovalPage(options: {
       }
       scrollToActiveApproval(true);
     }
+    function isLiveStatus(status, logs) {
+      if (status === 'run' || status === 'running' || status === 'resuming') return true;
+      return Array.isArray(logs) && logs.some(function (entry) { return entry && entry.status === 'streaming'; });
+    }
+    let refreshTimer = null;
+    function scheduleRefresh(delay) {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(refreshStatus, delay);
+    }
     async function refreshStatus() {
+      let nextDelay = 1500;
       try {
         const url = new URL(location.pathname + '/status', location.origin);
         url.searchParams.set('token', token);
@@ -2243,16 +2279,24 @@ function renderApprovalPage(options: {
         statusEl.textContent = status;
         statusEl.className = 'status ' + status;
         const nextToken = payload.approval?.currentResumeToken;
-        if (nextToken && nextToken !== currentResumeToken && status === 'waiting') {
+        const approvalWaiting = status === 'waiting' || payload.approval?.sessionStatus === 'suspended';
+        let forceLogRender = false;
+        if (nextToken && nextToken !== currentResumeToken && approvalWaiting) {
           currentResumeToken = nextToken;
+          pendingActionable = true;
+          forceLogRender = true;
           renderActiveGate(payload.approval);
+        } else {
+          pendingActionable = Boolean(nextToken && approvalWaiting);
         }
-        renderLogs(payload.logs || payload.approval?.logs || []);
+        const logs = payload.logs || payload.approval?.logs || [];
+        renderLogs(logs, forceLogRender);
+        nextDelay = isLiveStatus(status, logs) ? 500 : 1500;
       } catch {}
+      scheduleRefresh(nextDelay);
     }
     refreshStatus();
     scrollToActiveApproval();
-    setInterval(refreshStatus, 1500);
 
     let submittingDecision = false;
     async function submitDecision(actionId, opts) {
@@ -2277,6 +2321,7 @@ function renderApprovalPage(options: {
         });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload?.error?.message || 'Approval failed');
+        if (actionId === 'comment' && commentInput) commentInput.value = '';
         result.textContent = '✓ decision recorded — agentuse is resuming the session.';
         statusEl.textContent = 'resuming';
         statusEl.className = 'status resuming';
@@ -2621,9 +2666,10 @@ export function createServeCommand(): Command {
           );
         });
         if (clash) {
-          console.error(chalk.red(`\nError: a server is already running for ${p.scopeRoot}.`));
-          console.error(chalk.dim(`\n  PID:  ${clash.pid}`));
-          console.error(chalk.dim(`  Port: ${clash.port}`));
+          console.error(chalk.red(`\nError: another serve is already using AgentUse data at ${join(p.root, '.agentuse')}.`));
+          console.error(chalk.dim(`\n  PID:   ${clash.pid}`));
+          console.error(chalk.dim(`  Port:  ${clash.port}`));
+          console.error(chalk.dim(`  Scope: ${p.scopeRoot}`));
           console.error(chalk.dim(`\nTo see all running servers: agentuse serve ps`));
           process.exit(1);
         }
@@ -3924,11 +3970,10 @@ export function createServeCommand(): Command {
         console.log(`  ${chalk.dim("Server")}    ${chalk.cyan(serverUrl)}`);
         console.log(`  ${chalk.dim("Public")}    ${chalk.cyan(effectivePublicUrl)}`);
         if (!multiProject) {
-          console.log(`  ${chalk.dim("Project")}   ${projects[0].root}`);
-          if (projects[0].scopeRoot !== projects[0].root) {
-            console.log(`  ${chalk.dim("Scope")}     ${projects[0].scopeRoot}`);
-          }
-          console.log(`  ${chalk.dim("Store")}     ${join(projects[0].root, '.agentuse', 'store')}`);
+          console.log(`  ${chalk.dim("AgentUse data")}`);
+          console.log(`    ${chalk.dim("Global")}  ${chalk.dim("~/.agentuse")}`);
+          console.log(`    ${chalk.dim("Project")} ${chalk.dim(join(projects[0].root, '.agentuse'))}`);
+          console.log(`  ${chalk.dim("Scope")}     ${projects[0].scopeRoot}`);
         } else {
           console.log(`  ${chalk.dim("Projects")}  ${projects.length}`);
           for (const p of projects) {
