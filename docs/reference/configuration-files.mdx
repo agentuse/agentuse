@@ -56,9 +56,11 @@ notifications:
       to:
         slack:
           channel_id: C0123456789
+    - on: [completion, failure]
+      to: slack
 ```
 
-See [Approval Gates](/guides/approval-gates) for the approval dashboard and API workflow.
+See [Notifications](/guides/notifications) for event route semantics and [Approval Gates](/guides/approval-gates) for the approval dashboard and API workflow.
 
 ## Environment files
 

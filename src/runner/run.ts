@@ -5,6 +5,7 @@ import type { AgentCompleteEvent, PluginManager } from '../plugin';
 import { AuthenticationError } from '../models';
 import { logger } from '../utils/logger';
 import { extractLearnings } from '../learning/index.js';
+import { sendTerminalRunNotifications } from '../notifications/terminal';
 import { executeAgentCore } from './execution';
 import { prepareAgentExecution } from './preparation';
 import { processAgentStream } from './stream';
@@ -204,11 +205,20 @@ export async function runAgent(
       ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
       ...(result.finishReason && { finishReason: result.finishReason }),
       ...(result.finishReasons && { finishReasons: result.finishReasons }),
-      hasTextOutput: result.hasTextOutput
+      hasTextOutput: result.hasTextOutput,
+      ...(prepSessionID && { sessionId: prepSessionID })
     };
 
     const consoleOutput = captureActive ? logger.stopCapture() : '';
     captureActive = false;
+    await sendTerminalRunNotifications({
+      event: 'completion',
+      agent,
+      result: runResult,
+      ...(prepSessionID && { sessionId: prepSessionID }),
+      ...(agentFilePath !== undefined && { agentFilePath }),
+      ...(startTime !== undefined && { startTime })
+    });
     await runPostLifecycle({
       agent,
       result: runResult,
@@ -242,6 +252,18 @@ export async function runAgent(
       // Timeout already handled by caller
       throw error;
     }
+    if (captureActive) {
+      logger.stopCapture();
+      captureActive = false;
+    }
+    await sendTerminalRunNotifications({
+      event: 'failure',
+      agent,
+      error,
+      ...(sessionID && { sessionId: sessionID }),
+      ...(agentFilePath !== undefined && { agentFilePath }),
+      ...(startTime !== undefined && { startTime })
+    });
     logger.error('Agent execution failed', error as Error);
     throw error;
   } finally {

@@ -164,6 +164,8 @@ To find a Slack channel id, open the channel in Slack, click the channel name, a
 
 Slack approval messages are compact. They show the prompt, session/project metadata, status, and a `Review approval` button. The full review context stays on the AgentUse approval page.
 
+For completion and failure notifications, or more route examples, see [Notifications](/guides/notifications).
+
 ## Reviewer Flow
 
 The approval page shows the best available review details from the agent:
@@ -216,7 +218,7 @@ notifications:
 ```
 
 - `notifications.routes`: ordered notification subscriptions
-- `notifications.routes[].on`: events for that route. `approval` is supported now; `completion` and `failure` are reserved for broader notification workflows.
+- `notifications.routes[].on`: events for that route. Approval gates use `approval`; terminal run events are documented in [Notifications](/guides/notifications).
 - `notifications.routes[].to`: one destination for that route. Use `slack`, `slack: {}`, or `slack.channel_id`.
 - `notifications.routes[].name`: optional route name for logs and debugging
 - `notifications.routes[].enabled`: optional switch for temporarily disabling a route

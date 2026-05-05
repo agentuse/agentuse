@@ -218,6 +218,22 @@ Write a draft.`;
       ]);
     });
 
+    it('rejects complete and completed notification aliases', () => {
+      const complete = `---
+model: anthropic:claude-sonnet-4-0
+notifications:
+  routes:
+    - on: [complete]
+      to: slack
+---
+
+Write a draft.`;
+      const completed = complete.replace('[complete]', '[completed]');
+
+      expect(() => parseAgentContent(complete, 'test')).toThrow('Invalid agent configuration');
+      expect(() => parseAgentContent(completed, 'test')).toThrow('Invalid agent configuration');
+    });
+
     it('rejects removed approval delivery fields', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0

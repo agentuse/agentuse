@@ -1,0 +1,131 @@
+---
+title: Notifications
+description: Send agent run events such as approval, completion, and failure to Slack
+tag: Experimental
+---
+
+<Warning>
+  **Experimental Feature**: Notification routes are experimental. Event names and channel configuration may evolve as AgentUse adds more destinations.
+</Warning>
+
+Notifications let an agent send run events to external channels. In the current release, Slack is the implemented channel.
+
+Use notifications when a person should know that an agent needs review, finished successfully, or failed.
+
+## Basic Slack Setup
+
+Add a notification route to the agent frontmatter:
+
+```yaml
+notifications:
+  routes:
+    - name: run-result
+      on: [completion, failure]
+      to: slack
+```
+
+Set a Slack bot token and default channel:
+
+```bash
+export SLACK_BOT_TOKEN="xoxb-..."
+export SLACK_APPROVAL_CHANNEL="C0123456789"
+```
+
+The Slack app needs:
+
+- A bot token installed in the workspace
+- Bot scope `chat:write`
+- The bot invited to the target channel
+
+## Routes
+
+Routes subscribe to one or more events and send them to one destination.
+
+```yaml
+notifications:
+  routes:
+    - name: approval-review
+      on: [approval]
+      to:
+        slack:
+          channel_id: C_APPROVALS
+
+    - name: run-results
+      on: [completion, failure]
+      to:
+        slack:
+          channel_id: C_RESULTS
+```
+
+Fields:
+
+- `routes[].name`: optional route name for logs and debugging
+- `routes[].enabled`: set to `false` to temporarily disable a route
+- `routes[].on`: event or list of events
+- `routes[].to`: one destination for the route
+
+Slack destinations can be written in any of these forms:
+
+```yaml
+to: slack
+```
+
+```yaml
+to:
+  slack: {}
+```
+
+```yaml
+to:
+  slack:
+    channel_id: C0123456789
+```
+
+If `channel_id` is omitted, AgentUse uses `SLACK_APPROVAL_CHANNEL`.
+
+## Events
+
+Supported event names:
+
+- `approval`: the agent created an approval request and is waiting for review
+- `completion`: the agent finished successfully
+- `failure`: the agent ended with an execution error
+
+Use `completion`, not `complete` or `completed`.
+
+`completion` and `failure` are terminal run events. They do not fire while an agent is suspended and waiting for approval. If a reviewer approves an approval request and the resumed agent later finishes, AgentUse can send the matching terminal notification for that resumed run.
+
+## Slack Messages
+
+Approval notifications are compact and link to the AgentUse approval page. The approval page is the source of truth for review state.
+
+Completion notifications include:
+
+- Agent name
+- Session id when available
+- Status and duration
+- Tool call count and token count when available
+- Final answer, truncated for Slack readability
+
+Failure notifications include:
+
+- Agent name
+- Session id when available
+- Status and duration when available
+- Error message, truncated for Slack readability
+
+## Approval Gates
+
+Approval Gates use notifications only to alert reviewers. Configure the approval policy separately:
+
+```yaml
+approval: true
+
+notifications:
+  routes:
+    - name: review-needed
+      on: [approval]
+      to: slack
+```
+
+See [Approval Gates](/guides/approval-gates) for the approval dashboard, reviewer flow, and Approval API.
