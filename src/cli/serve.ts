@@ -842,11 +842,11 @@ function renderApprovalDetailBlock(details: ApprovalLogDetails): string {
 
   return `<div class="approval-card">
     ${details.prompt ? `<div class="approval-question">${renderInlineMarkdown(details.prompt)}</div>` : ''}
+    ${details.context ? `<section class="approval-section approval-context"><div class="approval-section-title">Source context</div><div class="approval-section-body">${renderLogContentValue(details.context, { forceMarkdown: true })}</div></section>` : ''}
     ${primary ? `<section class="approval-section approval-primary"><div class="approval-section-title">${escapeHtml(primary.title)}</div><div class="approval-section-body">${primary.html}</div></section>` : ''}
-    ${details.risk ? `<section class="approval-section approval-risk"><div class="approval-section-title">Risk / consequence</div><div class="approval-section-body">${renderLogContentValue(details.risk, { forceMarkdown: true })}</div></section>` : ''}
     ${linkRows ? `<section class="approval-section approval-links"><div class="approval-section-title">Links</div><div class="approval-link-row">${linkRows}</div></section>` : ''}
     ${showSummary ? `<section class="approval-section approval-secondary"><div class="approval-section-title">Why this request</div><div class="approval-section-body">${renderLogContentValue(details.summary!, { forceMarkdown: true })}</div></section>` : ''}
-    ${details.context ? `<details class="approval-section approval-context"><summary>Source context</summary><div class="approval-section-body">${renderLogContentValue(details.context, { forceMarkdown: true })}</div></details>` : ''}
+    ${details.risk ? `<section class="approval-section approval-risk"><div class="approval-section-title">Risk / consequence</div><div class="approval-section-body">${renderLogContentValue(details.risk, { forceMarkdown: true })}</div></section>` : ''}
     ${decisionLabel ? `<section class="approval-section approval-decision"><div class="approval-section-title">Decision</div><div class="approval-section-body">${escapeHtml(decisionLabel)}</div></section>` : ''}
     ${details.decisionComment ? `<section class="approval-section approval-secondary"><div class="approval-section-title">Comment</div><div class="approval-section-body">${renderLogContentValue(details.decisionComment, { forceMarkdown: true })}</div></section>` : ''}
     ${details.errorMessage ? `<section class="approval-section approval-risk"><div class="approval-section-title">Error</div><div class="approval-section-body">${escapeHtml(details.errorMessage)}</div></section>` : ''}
@@ -2567,11 +2567,11 @@ function renderApprovalPage(options: {
       ].filter(Boolean).join('');
       const sections = [];
       if (details.prompt) sections.push('<div class="approval-question">' + renderInlineMarkdown(details.prompt) + '</div>');
+      if (details.context) sections.push('<section class="approval-section approval-context"><div class="approval-section-title">Source context</div><div class="approval-section-body">' + renderLogContentValue(details.context, { forceMarkdown: true }) + '</div></section>');
       if (primary) sections.push('<section class="approval-section approval-primary"><div class="approval-section-title">' + escapeText(primary.title) + '</div><div class="approval-section-body">' + primary.html + '</div></section>');
-      if (details.risk) sections.push('<section class="approval-section approval-risk"><div class="approval-section-title">Risk / consequence</div><div class="approval-section-body">' + renderLogContentValue(details.risk, { forceMarkdown: true }) + '</div></section>');
       if (links) sections.push('<section class="approval-section approval-links"><div class="approval-section-title">Links</div><div class="approval-link-row">' + links + '</div></section>');
       if (showSummary) sections.push('<section class="approval-section approval-secondary"><div class="approval-section-title">Why this request</div><div class="approval-section-body">' + renderLogContentValue(details.summary, { forceMarkdown: true }) + '</div></section>');
-      if (details.context) sections.push('<details class="approval-section approval-context"><summary>Source context</summary><div class="approval-section-body">' + renderLogContentValue(details.context, { forceMarkdown: true }) + '</div></details>');
+      if (details.risk) sections.push('<section class="approval-section approval-risk"><div class="approval-section-title">Risk / consequence</div><div class="approval-section-body">' + renderLogContentValue(details.risk, { forceMarkdown: true }) + '</div></section>');
       if (details.decisionStatus) {
         const reviewer = details.decisionReviewer ? ' by ' + details.decisionReviewer : '';
         sections.push('<section class="approval-section approval-decision"><div class="approval-section-title">Decision</div><div class="approval-section-body">' + escapeText(details.decisionStatus + reviewer) + '</div></section>');
