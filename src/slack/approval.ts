@@ -31,6 +31,7 @@ export interface SlackApprovalRequest {
   resumeToken: string;
   approvalUrl?: string;
   expiresAt?: string;
+  interactive?: boolean;
 }
 
 export interface SlackApprovalMessage {
@@ -421,6 +422,15 @@ function buildReviewLinkBlocks(request: SlackApprovalRequest): any[] {
   ];
 }
 
+function buildApprovalThreadMessages(
+  request: SlackApprovalRequest & { rootChannelId: string; rootMessageTs: string }
+): Array<{ text: string; blocks: any[] }> {
+  return [
+    ...buildDetailThreadMessages(request),
+    ...(request.interactive ? [buildActionThreadMessage(request)] : [])
+  ];
+}
+
 function buildReviewStatusBlocks(options: {
   prompt: string;
   sessionId?: string;
@@ -502,6 +512,7 @@ export const __testing = {
   buildApprovalBlocks,
   buildActionBlocks,
   buildActionThreadMessage,
+  buildApprovalThreadMessages,
   buildDetailThreadMessages,
   buildReviewLinkBlocks,
   buildReviewStatusBlocks,
@@ -527,14 +538,11 @@ export async function sendSlackApprovalRequest(request: SlackApprovalRequest): P
     web,
     message.channel,
     message.ts,
-    [
-      ...buildDetailThreadMessages(request),
-      buildActionThreadMessage({
-        ...request,
-        rootChannelId: message.channel,
-        rootMessageTs: message.ts
-      })
-    ],
+    buildApprovalThreadMessages({
+      ...request,
+      rootChannelId: message.channel,
+      rootMessageTs: message.ts
+    }),
     { logPrefix: 'Slack approval detail thread message' }
   );
 
@@ -549,14 +557,11 @@ export async function sendSlackApprovalRequestToThread(
     new WebClient(request.botToken),
     root.channel,
     root.ts,
-    [
-      ...buildDetailThreadMessages(request),
-      buildActionThreadMessage({
-        ...request,
-        rootChannelId: root.channel,
-        rootMessageTs: root.ts
-      })
-    ],
+    buildApprovalThreadMessages({
+      ...request,
+      rootChannelId: root.channel,
+      rootMessageTs: root.ts
+    }),
     { logPrefix: 'Slack approval detail thread message' }
   );
 

@@ -89,6 +89,7 @@ async function sendPersistedSlackApproval(options: {
       ...(typeof input.risk === 'string' && { risk: input.risk }),
       resumeToken: options.resumeToken,
       approvalUrl: options.approvalUrl,
+      interactive: Boolean(process.env.SLACK_APP_TOKEN),
       ...(options.expiresAt !== undefined && { expiresAt: new Date(options.expiresAt).toISOString() })
     };
     const root = options.slackRunNotificationHandles?.find((handle) =>

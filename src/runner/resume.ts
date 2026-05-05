@@ -1,4 +1,13 @@
 import type { SessionManager } from '../session';
+import type { ToolState } from '../session/types';
+
+export interface ResumeToolRollback {
+  sessionId: string;
+  agentId: string;
+  messageId: string;
+  partId: string;
+  state: ToolState;
+}
 
 export async function applyResumeToolResult(options: {
   sessionManager: SessionManager;
@@ -6,7 +15,7 @@ export async function applyResumeToolResult(options: {
   toolResult: unknown;
   resumeToken?: string;
   skipTokenValidation?: boolean;
-}): Promise<{ agentId: string; agentFilePath?: string }> {
+}): Promise<{ agentId: string; agentFilePath?: string; rollback?: ResumeToolRollback }> {
   const { sessionManager, sessionId, toolResult, resumeToken, skipTokenValidation } = options;
   const found = await sessionManager.findSession(sessionId);
   if (!found) {
@@ -35,6 +44,13 @@ export async function applyResumeToolResult(options: {
     };
   }
 
+  const rollback: ResumeToolRollback = {
+    sessionId,
+    agentId: found.agentId,
+    messageId: pending.message.id,
+    partId: pending.part.id,
+    state: pending.part.state
+  };
   const input = 'input' in pending.part.state ? pending.part.state.input : undefined;
   const resumePayload = pending.part.state.status === 'pending'
     ? pending.part.state.resumePayload
@@ -61,6 +77,24 @@ export async function applyResumeToolResult(options: {
 
   return {
     agentId: found.agentId,
-    ...(found.session.agent.filePath && { agentFilePath: found.session.agent.filePath })
+    ...(found.session.agent.filePath && { agentFilePath: found.session.agent.filePath }),
+    rollback
   };
+}
+
+export async function restoreResumeToolResult(options: {
+  sessionManager: SessionManager;
+  rollback?: ResumeToolRollback | undefined;
+}): Promise<void> {
+  const { sessionManager, rollback } = options;
+  if (!rollback) return;
+
+  await sessionManager.updatePart(
+    rollback.sessionId,
+    rollback.agentId,
+    rollback.messageId,
+    rollback.partId,
+    { state: rollback.state } as any
+  );
+  await sessionManager.setSessionSuspended(rollback.sessionId, rollback.agentId);
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
-import { runAgent, prepareAgentExecution, applyResumeToolResult, type PreparedAgentExecution } from './runner';
+import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, type PreparedAgentExecution } from './runner';
 import { isApprovalEnabled } from './runner/approval';
 import { Command } from 'commander';
 import { createProviderCommand, createAuthCommand } from './cli/auth';
@@ -1471,6 +1471,8 @@ async function runInternalWorker() {
   async function executeAgent(req: ExecuteRequest) {
     const startTime = Date.now();
     let mcp: Awaited<ReturnType<typeof connectMCP>> = [];
+    let sessionManager: InstanceType<typeof SessionManager> | undefined;
+    let resumeRollback: Awaited<ReturnType<typeof applyResumeToolResult>>['rollback'] | undefined;
 
     try {
       let agentPath = req.agentPath ? resolve(req.projectRoot, req.agentPath) : '';
@@ -1497,7 +1499,7 @@ async function runInternalWorker() {
         // Ignore storage init errors
       }
 
-      const sessionManager = new SessionManager();
+      sessionManager = new SessionManager();
       let existingSessionId: string | undefined = req.sessionId;
       let runPrompt = req.prompt;
       let runCwd = req.projectRoot;
@@ -1516,6 +1518,7 @@ async function runInternalWorker() {
           toolResult: req.toolResult,
           ...(req.resumeToken && { resumeToken: req.resumeToken })
         });
+        resumeRollback = resumed.rollback;
         if (!resumed.agentFilePath) {
           return {
             id: req.id,
@@ -1524,6 +1527,7 @@ async function runInternalWorker() {
           };
         }
         if (isRejectDecision(req.toolResult)) {
+          resumeRollback = undefined;
           const message = await sessionManager.getPrimaryMessage(req.sessionId, resumed.agentId);
           const text = approvalRejectionText(req.toolResult);
           if (message) {
@@ -1658,6 +1662,7 @@ async function runInternalWorker() {
         );
 
         clearTimeout(timeoutId);
+        resumeRollback = undefined;
         const duration = Date.now() - startTime;
 
         return {
@@ -1680,6 +1685,12 @@ async function runInternalWorker() {
         };
       } catch (err) {
         clearTimeout(timeoutId);
+        if (sessionManager && resumeRollback) {
+          await restoreResumeToolResult({ sessionManager, rollback: resumeRollback }).catch((restoreErr) => {
+            logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
+          });
+          resumeRollback = undefined;
+        }
         if (abortController.signal.aborted) {
           return {
             id: req.id,
@@ -1694,6 +1705,11 @@ async function runInternalWorker() {
         };
       }
     } catch (err) {
+      if (sessionManager && resumeRollback) {
+        await restoreResumeToolResult({ sessionManager, rollback: resumeRollback }).catch((restoreErr) => {
+          logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
+        });
+      }
       return {
         id: req.id,
         success: false,

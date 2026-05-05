@@ -126,6 +126,41 @@ describe('Slack approval blocks', () => {
     ]);
   });
 
+  it('omits Slack thread actions by default for web-first approvals', () => {
+    const messages = __testing.buildApprovalThreadMessages({
+      botToken: 'xoxb-test',
+      channelId: 'C123',
+      sessionId: 'session-1',
+      prompt: 'Approve this deployment?',
+      summary: 'Deploying the release candidate',
+      resumeToken: 'resume-token',
+      approvalUrl: 'https://agentuse.example.com/approvals/session-1?token=resume-token',
+      rootChannelId: 'C123',
+      rootMessageTs: '111.222'
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].blocks.some((block: any) => block.type === 'actions')).toBe(false);
+  });
+
+  it('includes Slack thread actions when interactivity is enabled', () => {
+    const messages = __testing.buildApprovalThreadMessages({
+      botToken: 'xoxb-test',
+      channelId: 'C123',
+      sessionId: 'session-1',
+      prompt: 'Approve this deployment?',
+      resumeToken: 'resume-token',
+      approvalUrl: 'https://agentuse.example.com/approvals/session-1?token=resume-token',
+      rootChannelId: 'C123',
+      rootMessageTs: '111.222',
+      interactive: true
+    });
+
+    expect(messages).toHaveLength(1);
+    const threadActions = messages[0].blocks.find((block: any) => block.type === 'actions') as any;
+    expect(threadActions.elements.map((element: any) => element.text.text)).toEqual(['Approve', 'Reject', 'Comment']);
+  });
+
   it('renders compact Slack status updates without review details', () => {
     const blocks = __testing.buildReviewStatusBlocks({
       prompt: 'Approve this deployment?',

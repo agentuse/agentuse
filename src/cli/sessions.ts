@@ -11,7 +11,7 @@ import { loadGlobalEnv } from "../utils/global-config";
 import { logger, LogLevel } from "../utils/logger";
 import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
-import { applyResumeToolResult, runAgent } from "../runner";
+import { applyResumeToolResult, restoreResumeToolResult, runAgent } from "../runner";
 
 interface SessionSummary {
   id: string;
@@ -1108,46 +1108,52 @@ async function resumeSession(
       throw new Error(`Session ${summary.id} is waiting on ${pending.part.tool}. Use --tool-result <json>.`);
     }
 
-    const { agentFilePath } = await applyResumeToolResult({
+    const resumed = await applyResumeToolResult({
       sessionManager,
       sessionId: summary.id,
       toolResult,
       skipTokenValidation: true
     });
+    try {
+      const agentPath = resumed.agentFilePath ?? found.session.agent.filePath;
+      const agent = await parseAgent(agentPath);
+      const mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, path.dirname(agentPath));
 
-    const agentPath = agentFilePath ?? found.session.agent.filePath;
-    const agent = await parseAgent(agentPath);
-    const mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, path.dirname(agentPath));
+      const result = await runAgent(
+        agent,
+        mcp,
+        options.debug ?? false,
+        undefined,
+        Date.now(),
+        options.debug ?? false,
+        agentPath,
+        undefined,
+        sessionManager,
+        { projectRoot: projectContext.projectRoot, cwd },
+        undefined,
+        undefined,
+        false,
+        undefined,
+        true,
+        summary.id
+      );
 
-    const result = await runAgent(
-      agent,
-      mcp,
-      options.debug ?? false,
-      undefined,
-      Date.now(),
-      options.debug ?? false,
-      agentPath,
-      undefined,
-      sessionManager,
-      { projectRoot: projectContext.projectRoot, cwd },
-      undefined,
-      undefined,
-      false,
-      undefined,
-      true,
-      summary.id
-    );
-
-    process.stdout.write(JSON.stringify({
-      success: true,
-      sessionId: summary.id,
-      status: result.status ?? "completed",
-      result: {
-        text: result.text,
-        finishReason: result.finishReason,
-        toolCalls: result.toolCallCount
-      }
-    }, null, 2) + "\n");
+      process.stdout.write(JSON.stringify({
+        success: true,
+        sessionId: summary.id,
+        status: result.status ?? "completed",
+        result: {
+          text: result.text,
+          finishReason: result.finishReason,
+          toolCalls: result.toolCallCount
+        }
+      }, null, 2) + "\n");
+    } catch (err) {
+      await restoreResumeToolResult({ sessionManager, rollback: resumed.rollback }).catch((restoreErr) => {
+        logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
+      });
+      throw err;
+    }
     return;
   }
 
