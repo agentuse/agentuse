@@ -63,14 +63,14 @@ export interface SessionInfo {
     time: number;                    // Unix timestamp (ms)
   };
 
-  // Durable notification anchors. These let resume/follow-up paths update the
-  // same external thread even when they run in a different serve worker.
-  notifications?: {
+  // Durable channel anchors. These let resume/follow-up paths update the same
+  // external thread even when they run in a different serve worker.
+  channels?: {
     slack?: Array<{
       channel: string;               // Slack channel/conversation id
       ts: string;                    // Root message timestamp for this session
       channelId?: string;            // Configured channel id, when distinct/known
-      name?: string;                 // Notification route name
+      events: Array<'approval' | 'completion' | 'failure'>;
     }>;
   };
 }
@@ -182,7 +182,7 @@ export type ToolStatePending = {
     approvalUrl?: string;
     expiresAt?: number;
     resumeToken?: string;
-    notification?: {
+    channelMessage?: {
       type: 'slack-message';
       ts?: string;
       channel?: string;

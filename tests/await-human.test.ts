@@ -64,7 +64,7 @@ describe('await_human approval URL', () => {
       if (!isSuspendSignal(err)) return;
       expect(err.payload.expiresAt).toBeUndefined();
       expect(err.payload.approvalUrl).toContain('/approvals/session-1?token=');
-      expect(err.payload.notification).toBeUndefined();
+      expect(err.payload.channelMessage).toBeUndefined();
     }
   });
 

@@ -446,7 +446,7 @@ describe('Slack approval blocks', () => {
     expect(statuses).toEqual([]);
   });
 
-  it('continues run notification threads when approval lookup does not handle the reply', async () => {
+  it('continues run channel threads when approval lookup does not handle the reply', async () => {
     let runComment: any;
     const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
       appToken: 'xapp-test',
@@ -504,7 +504,7 @@ describe('Slack approval blocks', () => {
     expect(statuses.some((entry) => entry.payload.status === '')).toBe(true);
   });
 
-  it('continues run notification threads from Slack message_replied events', async () => {
+  it('continues run channel threads from Slack message_replied events', async () => {
     let runComment: any;
     const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
       appToken: 'xapp-test',
@@ -565,7 +565,7 @@ describe('Slack approval blocks', () => {
     });
   });
 
-  it('continues run notification threads from Slack thread_broadcast replies', async () => {
+  it('continues run channel threads from Slack thread_broadcast replies', async () => {
     let runComment: any;
     const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
       appToken: 'xapp-test',

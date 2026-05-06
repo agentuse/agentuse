@@ -69,64 +69,61 @@ const ApprovalConfigSchema = z.union([
   }).strict()
 ]);
 
-const NotificationEventSchema = z.enum(['approval', 'completion', 'failure']);
-const NotificationEventListSchema = z.union([
-  NotificationEventSchema.transform((event) => [event]),
-  z.array(NotificationEventSchema).min(1)
+const CHANNEL_EVENTS = ['approval', 'completion', 'failure'] as const;
+const DEFAULT_CHANNEL_EVENTS = [...CHANNEL_EVENTS];
+const ChannelEventSchema = z.enum(CHANNEL_EVENTS);
+const ChannelEventListSchema = z.union([
+  ChannelEventSchema.transform((event) => [event]),
+  z.array(ChannelEventSchema).min(1)
 ]);
 
-const SlackNotificationConfigSchema = z.object({
-  channel_id: z.string().optional()
+const NormalizedSlackChannelSchema = z.object({
+  enabled: z.boolean(),
+  events: z.array(ChannelEventSchema).min(1),
+  channelId: z.string().optional()
 }).strict();
 
-const NotificationProviderConfigSchema = z.union([
-  z.record(z.unknown()),
-  z.null()
-]).transform((config) => config ?? {});
+const SlackChannelConfigSchema = z.union([
+  z.boolean().transform((enabled) => ({
+    enabled,
+    events: [...DEFAULT_CHANNEL_EVENTS]
+  })),
+  z.object({
+    enabled: z.boolean().optional(),
+    events: ChannelEventListSchema.optional(),
+    channel_id: z.string().optional()
+  }).strict().transform((config) => ({
+    enabled: config.enabled ?? true,
+    events: config.events ?? [...DEFAULT_CHANNEL_EVENTS],
+    ...(config.channel_id && { channelId: config.channel_id })
+  }))
+]).pipe(NormalizedSlackChannelSchema);
 
-const NotificationToSchema = z.union([
-  z.string().min(1).transform((provider) => ({ [provider]: {} })),
-  z.record(NotificationProviderConfigSchema).superRefine((value, ctx) => {
-    const providers = Object.keys(value);
-    if (providers.length !== 1) {
+const ChannelsConfigSchema = z.union([
+  z.array(z.literal('slack')).min(1).superRefine((providers, ctx) => {
+    if (new Set(providers).size !== providers.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'Notification route "to" must define exactly one channel provider'
+        message: 'channels list must not contain duplicate providers'
       });
-      return;
     }
-
-    const provider = providers[0];
-    const config = value[provider] ?? {};
-    if (provider === 'slack') {
-      const result = SlackNotificationConfigSchema.safeParse(config);
-      if (!result.success) {
-        for (const issue of result.error.issues) {
-          ctx.addIssue({
-            ...issue,
-            path: [provider, ...issue.path]
-          });
-        }
-      }
+  }).transform(() => ({
+    slack: {
+      enabled: true,
+      events: [...DEFAULT_CHANNEL_EVENTS]
+    }
+  })),
+  z.object({
+    slack: SlackChannelConfigSchema.optional()
+  }).strict().superRefine((value, ctx) => {
+    if (Object.keys(value).length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'channels must enable at least one provider'
+      });
     }
   })
-]).transform((to) => {
-  if (typeof to === 'string') {
-    return { [to]: {} };
-  }
-
-  const [[provider, config]] = Object.entries(to);
-  return { [provider]: config ?? {} };
-});
-
-const NotificationsConfigSchema = z.object({
-  routes: z.array(z.object({
-    name: z.string().optional(),
-    enabled: z.boolean().optional(),
-    on: NotificationEventListSchema,
-    to: NotificationToSchema
-  }).strict()).optional()
-}).strict();
+]).transform((channels) => channels);
 
 // Schema for agent configuration as per spec
 // Supports both mcp_servers (deprecated) and mcpServers (preferred)
@@ -165,9 +162,9 @@ const AgentSchema = z.object({
   // Declarative suspension gate. Enables hidden await_human tooling and
   // injects an approval step so markdown instructions can stay business-only.
   approval: ApprovalConfigSchema.optional(),
-  // Event/channel based notifications. Approval notifications are delivered
-  // outside the approval policy itself.
-  notifications: NotificationsConfigSchema.optional()
+  // External collaboration channels. Web approvals are built in; channels
+  // configure optional external surfaces such as Slack.
+  channels: ChannelsConfigSchema.optional()
 }).transform((data) => {
   // Handle backward compatibility: support both mcp_servers and mcpServers
   if (data.mcp_servers && data.mcpServers) {
@@ -213,6 +210,14 @@ export function parseAgentContent(content: string, name: string): ParsedAgent {
   try {
     // Parse YAML frontmatter
     const { data, content: instructions } = matter(content);
+
+    if (data && typeof data === 'object' && 'notifications' in data) {
+      throw new ConfigError(
+        'Invalid agent configuration: "notifications" has been replaced by "channels". Use channels: [slack] or channels.slack instead.',
+        'notifications',
+        'deprecated'
+      );
+    }
     
     // Validate configuration with Zod
     const config = AgentSchema.parse(data);

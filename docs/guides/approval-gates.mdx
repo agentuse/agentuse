@@ -5,7 +5,7 @@ tag: Experimental
 ---
 
 <Warning>
-  **Experimental Feature**: Approval gates and the Approval API are experimental. The web UI, API response shape, and notification config may change based on production feedback.
+  **Experimental Feature**: Approval gates and the Approval API are experimental. The web UI, API response shape, and channel config may change based on production feedback.
 </Warning>
 
 Approval gates let an agent prepare work, pause before finalizing it, and continue only after a reviewer approves, rejects, or comments.
@@ -58,10 +58,9 @@ For a social publishing agent:
 ---
 model: anthropic:claude-sonnet-4-6
 approval: true
-notifications:
-  routes:
-    - on: [approval]
-      to: slack
+channels:
+  slack:
+    events: [approval]
 ---
 
 Draft the social post and save any working files under `.agentuse/tmp/`.
@@ -118,21 +117,20 @@ agentuse serve --public-url https://agentuse.mycompany.com
 
 When a local `agentuse serve` is already running for the project, AgentUse uses that server's registered port for approval links. Use `--public-url` when the reviewer needs a URL other than the local server address.
 
-## Optional Slack Notifications
+## Optional Slack Channel
 
-Slack can notify reviewers when an approval is waiting. Approval state still lives in the AgentUse approval page.
+Slack can alert reviewers when an approval is waiting. Approval state still lives in the AgentUse approval page.
 The Slack channel message stays concise, and supporting approval details are posted in the message thread when the agent provides them. Those thread details can include summary, draft, artifact, context, and risk.
 
 ```yaml
 approval: true
 
-notifications:
-  routes:
-    - on: [approval]
-      to: slack
+channels:
+  slack:
+    events: [approval]
 ```
 
-See [Notifications](/guides/notifications) for Slack setup, channel ids, route examples, and completion/failure notifications.
+See [Channels](/guides/channels) for Slack setup, channel ids, events, and completion/failure channel messages.
 
 ## Reviewer Flow
 
@@ -175,23 +173,19 @@ approval:
 - `approval`: `true` or an object to enable the approval gate
 - `approval.timeout`: optional suspension timeout, such as `30m`, `24h`, or `7d`
 
-Notification config is separate:
+Channel config is separate:
 
 ```yaml
-notifications:
-  routes:
-    - name: approval-review
-      on: [approval]
-      to:
-        slack:
-          channel_id: C0123456789
+channels:
+  slack:
+    events: [approval]
+    channel_id: C0123456789
 ```
 
-- `notifications.routes`: ordered notification subscriptions
-- `notifications.routes[].on`: events for that route. Approval gates use `approval`; terminal run events are documented in [Notifications](/guides/notifications).
-- `notifications.routes[].to`: one destination for that route. Use `slack`, `slack: {}`, or `slack.channel_id`.
-- `notifications.routes[].name`: optional route name for logs and debugging
-- `notifications.routes[].enabled`: optional switch for temporarily disabling a route
+- `channels`: optional external collaboration channels, such as `channels: [slack]`
+- `channels.slack.events`: events for Slack. Approval gates use `approval`; terminal run events are documented in [Channels](/guides/channels).
+- `channels.slack.channel_id`: Slack channel id. If omitted, AgentUse uses `SLACK_APPROVAL_CHANNEL`.
+- `channels.slack.enabled`: optional switch for temporarily disabling Slack
 
 ## Experimental Approval API
 
@@ -250,4 +244,4 @@ agentuse sessions resume session_abc123 --reject "Not ready"
 agentuse sessions resume session_abc123 --comment "Shorten this and add pricing"
 ```
 
-Prefer the `/approvals` UI for normal review, Slack for reviewer notification, the Approval API for custom review surfaces, and `agentuse sessions resume` for local testing.
+Prefer the `/approvals` UI for normal review, Slack for reviewer alerts, the Approval API for custom review surfaces, and `agentuse sessions resume` for local testing.

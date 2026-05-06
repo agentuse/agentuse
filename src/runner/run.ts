@@ -6,76 +6,76 @@ import { AuthenticationError } from '../models';
 import { logger } from '../utils/logger';
 import { extractLearnings } from '../learning/index.js';
 import {
-  sendRunNotifications,
-  startRunNotifications,
-  suspendRunNotifications,
-  type RunNotificationHandle
-} from '../notifications/run';
+  sendRunChannelMessages,
+  startRunChannels,
+  suspendRunChannels,
+  type RunChannelHandle
+} from '../channels/run';
 import { executeAgentCore } from './execution';
 import { prepareAgentExecution } from './preparation';
 import { processAgentStream } from './stream';
 import type { PreparedAgentExecution, RunAgentResult } from './types';
 
-type PersistedSlackRunNotificationHandle = {
+type PersistedSlackRunChannelHandle = {
   channel: string;
   ts: string;
   channelId?: string;
-  name?: string;
+  events: Array<'approval' | 'completion' | 'failure'>;
 };
 
-function normalizeRunNotificationHandle(handle: RunNotificationHandle): PersistedSlackRunNotificationHandle {
+function normalizeRunChannelHandle(handle: RunChannelHandle): PersistedSlackRunChannelHandle {
   return {
     channel: handle.channel,
     ts: handle.ts,
     ...(handle.channelId !== undefined && { channelId: handle.channelId }),
-    ...(handle.name !== undefined && { name: handle.name })
+    events: handle.events
   };
 }
 
-function sessionRunNotificationHandles(session: SessionInfo | undefined): RunNotificationHandle[] {
-  return (session?.notifications?.slack ?? []).map(handle => ({
+function sessionRunChannelHandles(session: SessionInfo | undefined): RunChannelHandle[] {
+  return (session?.channels?.slack ?? []).map(handle => ({
     channel: handle.channel,
     ts: handle.ts,
     ...(handle.channelId !== undefined && { channelId: handle.channelId }),
-    ...(handle.name !== undefined && { name: handle.name })
+    events: handle.events
   }));
 }
 
-function mergeSlackRunNotificationHandles(
-  existing: PersistedSlackRunNotificationHandle[] = [],
-  next: RunNotificationHandle[]
-): PersistedSlackRunNotificationHandle[] {
-  const merged = new Map<string, PersistedSlackRunNotificationHandle>();
+function mergeSlackRunChannelHandles(
+  existing: PersistedSlackRunChannelHandle[] = [],
+  next: RunChannelHandle[]
+): PersistedSlackRunChannelHandle[] {
+  const merged = new Map<string, PersistedSlackRunChannelHandle>();
   for (const handle of existing) {
     merged.set(`${handle.channel}:${handle.ts}`, handle);
   }
   for (const handle of next) {
-    const persisted = normalizeRunNotificationHandle(handle);
+    const persisted = normalizeRunChannelHandle(handle);
     merged.set(`${persisted.channel}:${persisted.ts}`, persisted);
   }
   return Array.from(merged.values());
 }
 
-async function persistRunNotificationHandles(options: {
+async function persistRunChannelHandles(options: {
   sessionManager?: SessionManager;
   sessionId?: string;
   agentId?: string;
-  handles: RunNotificationHandle[];
+  handles: RunChannelHandle[];
 }): Promise<void> {
   const { sessionManager, sessionId, agentId, handles } = options;
   if (!sessionManager || !sessionId || !agentId || handles.length === 0) return;
 
   try {
     const found = await sessionManager.findSession(sessionId);
-    const existingNotifications = found?.session.notifications ?? {};
+    const existingChannels = found?.session.channels ?? {};
     await sessionManager.updateSession(sessionId, agentId, {
-      notifications: {
-        ...existingNotifications,
-        slack: mergeSlackRunNotificationHandles(existingNotifications.slack, handles)
+      channels: {
+        ...existingChannels,
+        slack: mergeSlackRunChannelHandles(existingChannels.slack, handles)
       }
     });
   } catch (error) {
-    logger.debug(`Failed to persist run notification handles: ${(error as Error).message}`);
+    logger.debug(`Failed to persist run channel handles: ${(error as Error).message}`);
   }
 }
 
@@ -125,7 +125,7 @@ export async function runAgent(
   pluginManager?: PluginManager | null,
   captureConsole: boolean = true,
   existingSessionId?: string,
-  initialRunNotificationHandles?: RunNotificationHandle[],
+  initialRunChannelHandles?: RunChannelHandle[],
   sessionLogUserPrompt?: string
 ): Promise<RunAgentResult> {
   // Track session info for error logging (set during preparation)
@@ -133,7 +133,7 @@ export async function runAgent(
   let agentId: string | undefined;
   let preparation: PreparedAgentExecution | undefined;
   let captureActive = false;
-  let runNotificationHandles: RunNotificationHandle[] = initialRunNotificationHandles ?? [];
+  let runChannelHandles: RunChannelHandle[] = initialRunChannelHandles ?? [];
 
   try {
     if (captureConsole) {
@@ -198,28 +198,28 @@ export async function runAgent(
       } as any);
     }
 
-    if (runNotificationHandles.length === 0 && sessionManager && prepSessionID) {
+    if (runChannelHandles.length === 0 && sessionManager && prepSessionID) {
       try {
         const found = await sessionManager.findSession(prepSessionID);
-        runNotificationHandles = sessionRunNotificationHandles(found?.session);
+        runChannelHandles = sessionRunChannelHandles(found?.session);
       } catch (error) {
-        logger.debug(`Failed to load run notification handles: ${(error as Error).message}`);
+        logger.debug(`Failed to load run channel handles: ${(error as Error).message}`);
       }
     }
 
-    if (runNotificationHandles.length === 0) {
-      runNotificationHandles = await startRunNotifications({
+    if (runChannelHandles.length === 0) {
+      runChannelHandles = await startRunChannels({
         agent,
         ...(prepSessionID && { sessionId: prepSessionID }),
         ...(agentFilePath !== undefined && { agentFilePath }),
         ...(startTime !== undefined && { startTime })
       });
     }
-    await persistRunNotificationHandles({
+    await persistRunChannelHandles({
       ...(sessionManager !== undefined && { sessionManager }),
       ...(prepSessionID !== undefined && { sessionId: prepSessionID }),
       ...(prepAgentId !== undefined && { agentId: prepAgentId }),
-      handles: runNotificationHandles
+      handles: runChannelHandles
     });
 
     // Execute using the core generator
@@ -241,7 +241,7 @@ export async function runAgent(
         messageID: assistantMsgID,
         agentId: prepAgentId,
         doomLoopDetector,
-        slackRunNotificationHandles: runNotificationHandles,
+        slackRunChannelHandles: runChannelHandles,
         quiet
       } : {
         collectToolCalls: true,
@@ -274,13 +274,13 @@ export async function runAgent(
         ...(prepSessionID && { sessionId: prepSessionID }),
         ...(result.approvalUrl && { approvalUrl: result.approvalUrl })
       };
-      await suspendRunNotifications({
+      await suspendRunChannels({
         agent,
         result: suspendedResult,
         ...(prepSessionID && { sessionId: prepSessionID }),
         ...(agentFilePath !== undefined && { agentFilePath }),
         ...(startTime !== undefined && { startTime })
-      }, runNotificationHandles);
+      }, runChannelHandles);
 
       return suspendedResult;
     }
@@ -334,14 +334,14 @@ export async function runAgent(
 
     const consoleOutput = captureActive ? logger.stopCapture() : '';
     captureActive = false;
-    await sendRunNotifications({
+    await sendRunChannelMessages({
       event: 'completion',
       agent,
       result: runResult,
       ...(prepSessionID && { sessionId: prepSessionID }),
       ...(agentFilePath !== undefined && { agentFilePath }),
       ...(startTime !== undefined && { startTime })
-    }, undefined, runNotificationHandles);
+    }, undefined, runChannelHandles);
     await runPostLifecycle({
       agent,
       result: runResult,
@@ -379,14 +379,14 @@ export async function runAgent(
       logger.stopCapture();
       captureActive = false;
     }
-    await sendRunNotifications({
+    await sendRunChannelMessages({
       event: 'failure',
       agent,
       error,
       ...(sessionID && { sessionId: sessionID }),
       ...(agentFilePath !== undefined && { agentFilePath }),
       ...(startTime !== undefined && { startTime })
-    }, undefined, runNotificationHandles);
+    }, undefined, runChannelHandles);
     logger.error('Agent execution failed', error as Error);
     throw error;
   } finally {

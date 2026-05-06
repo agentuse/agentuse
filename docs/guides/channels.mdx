@@ -1,27 +1,32 @@
 ---
-title: Notifications
-description: Send agent run events such as approval, completion, and failure to Slack
+title: Channels
+description: Connect AgentUse lifecycle events such as approval, completion, and failure to Slack
 tag: Experimental
 ---
 
 <Warning>
-  **Experimental Feature**: Notification routes are experimental. Event names and channel configuration may evolve as AgentUse adds more destinations.
+  **Experimental Feature**: Channels are experimental. Event names and channel configuration may evolve as AgentUse adds more destinations.
 </Warning>
 
-Notifications let an agent send run events to external channels. In the current release, Slack is the implemented channel.
+Channels connect AgentUse lifecycle events to external collaboration surfaces. In the current release, Slack is the implemented channel.
 
-Use notifications when a person should know that an agent needs review, finished successfully, or failed.
+Use channels when a person should know that an agent needs review, finished successfully, or failed, or when Slack thread replies should continue a run.
 
 ## Basic Slack Setup
 
-Add a notification route to the agent frontmatter:
+Add Slack to the agent frontmatter:
 
 ```yaml
-notifications:
-  routes:
-    - name: run-result
-      on: [completion, failure]
-      to: slack
+channels: [slack]
+```
+
+For explicit event selection:
+
+```yaml
+channels:
+  slack:
+    events: [completion, failure]
+    channel_id: C0123456789
 ```
 
 Set a Slack bot token and default channel:
@@ -41,7 +46,7 @@ To get a Slack bot token:
 
 Optional: add `assistant:write` if you want Slack Assistant thread status while a live run is active.
 
-Approval notification threads can also accept decisions. For Approve/Reject/Comment buttons and plain thread replies, configure Socket Mode:
+Approval channel threads can also accept decisions. For Approve/Reject/Comment buttons and plain thread replies, configure Socket Mode:
 
 ```bash
 export SLACK_APP_TOKEN="xapp-..."
@@ -57,49 +62,41 @@ To get a channel id:
 
 You can also copy a channel link and use the `C...` or `G...` value from the URL.
 
-Invite the bot to the target channel before sending notifications. For private channels, this is required.
+Invite the bot to the target channel before sending channel messages. For private channels, this is required.
 
-## Routes
+## Slack Config
 
-Routes subscribe to one or more events and send them to one destination.
+V1 supports one Slack channel per agent.
 
 ```yaml
-notifications:
-  routes:
-    - name: approval-review
-      on: [approval]
-      to:
-        slack:
-          channel_id: C_APPROVALS
-
-    - name: run-results
-      on: [completion, failure]
-      to:
-        slack:
-          channel_id: C_RESULTS
+channels:
+  slack:
+    events: [approval, completion, failure]
+    channel_id: C0123456789
 ```
 
 Fields:
 
-- `routes[].name`: optional route name for logs and debugging
-- `routes[].enabled`: set to `false` to temporarily disable a route
-- `routes[].on`: event or list of events
-- `routes[].to`: one destination for the route
+- `channels.slack`: `true` or an object to enable Slack
+- `channels.slack.enabled`: set to `false` to temporarily disable Slack
+- `channels.slack.events`: event or list of events
+- `channels.slack.channel_id`: Slack channel id for this agent
 
-Slack destinations can be written in any of these forms:
+Slack can be written in any of these forms:
 
 ```yaml
-to: slack
+channels: [slack]
 ```
 
 ```yaml
-to:
-  slack: {}
+channels:
+  slack: true
 ```
 
 ```yaml
-to:
+channels:
   slack:
+    events: [approval]
     channel_id: C0123456789
 ```
 
@@ -115,13 +112,15 @@ Supported event names:
 
 Use `completion`, not `complete` or `completed`.
 
-`completion` and `failure` are terminal run events. Slack routes that listen for `approval`, or for both `completion` and `failure`, post a run-start card immediately and update the same card when the run completes, fails, or waits for approval. Single-outcome routes such as `on: [failure]` stay terminal-only so they do not leave stale running messages.
+If `events` is omitted, AgentUse enables all supported events.
+
+`completion` and `failure` are terminal run events. A Slack channel that listens for `approval`, or for both `completion` and `failure`, posts a run-start card immediately and updates the same card when the run completes, fails, or waits for approval. Single-outcome channels such as `events: [failure]` stay terminal-only so they do not leave stale running messages.
 
 ## Slack Messages
 
 Slack uses one concise channel message as the status card and puts approval details in that message's thread.
 
-Approval notifications include:
+Approval channel messages include:
 
 - Channel card with prompt, session/project metadata, status, and a Review approval button
 - Thread details with summary, draft, artifact, context, and risk when the agent provides them
@@ -130,32 +129,30 @@ Approval notifications include:
 
 The AgentUse approval page remains the source of truth for review state.
 
-Completion notifications include:
+Completion channel messages include:
 
 - Channel card with agent name, session id, status, and duration
 - Thread details with the final answer, tool call count, and token count when available
 
-Failure notifications include:
+Failure channel messages include:
 
 - Channel card with agent name, session id, status, and duration when available
 - Thread details with the error message and run metadata
 
-When Slack Socket Mode message events are enabled, a reviewer can reply in a completed or failed run notification thread to continue from that session with the reply as the new instruction.
+When Slack Socket Mode message events are enabled, a reviewer can reply in a completed or failed run channel thread to continue from that session with the reply as the new instruction.
 
 For live run cards, AgentUse also tries Slack Assistant thread status while the run is active. This is best effort; Slack may ignore it when the app does not have Assistant support.
 
 ## Approval Gates
 
-Approval Gates use notifications only to alert reviewers. Configure the approval policy separately:
+Approval Gates use channels only to alert reviewers. Configure the approval policy separately:
 
 ```yaml
 approval: true
 
-notifications:
-  routes:
-    - name: review-needed
-      on: [approval]
-      to: slack
+channels:
+  slack:
+    events: [approval]
 ```
 
 See [Approval Gates](/guides/approval-gates) for the approval dashboard, reviewer flow, and Approval API.

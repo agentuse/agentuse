@@ -11,19 +11,19 @@ import {
   type SlackThreadMessage
 } from '../slack/lifecycle';
 
-type RunNotificationEvent = 'completion' | 'failure';
+type RunChannelEvent = 'completion' | 'failure';
 type RunLifecycleStatus = 'running' | 'suspended' | 'completed' | 'failed';
 
-type SlackRoute = {
-  name?: string;
+type SlackChannel = {
   channelId?: string;
+  events: Array<'approval' | 'completion' | 'failure'>;
 };
 
-type SlackRunSender = (route: SlackRoute, options: RunNotificationOptions) => Promise<void>;
-type SlackRunStartSender = (route: SlackRoute, options: RunNotificationStartOptions) => Promise<RunNotificationHandle | undefined>;
+type SlackRunSender = (channel: SlackChannel, options: RunChannelOptions) => Promise<void>;
+type SlackRunStartSender = (channel: SlackChannel, options: RunChannelStartOptions) => Promise<RunChannelHandle | undefined>;
 
-export interface RunNotificationOptions {
-  event: RunNotificationEvent;
+export interface RunChannelOptions {
+  event: RunChannelEvent;
   agent: ParsedAgent;
   agentFilePath?: string;
   sessionId?: string;
@@ -32,20 +32,20 @@ export interface RunNotificationOptions {
   startTime?: number;
 }
 
-export interface RunNotificationStartOptions {
+export interface RunChannelStartOptions {
   agent: ParsedAgent;
   agentFilePath?: string;
   sessionId?: string;
   startTime?: number;
 }
 
-export interface RunNotificationHandle extends SlackRoute {
+export interface RunChannelHandle extends SlackChannel {
   channel: string;
   ts: string;
 }
 
-interface RunNotificationDisplayOptions extends Omit<RunNotificationOptions, 'event'> {
-  event?: RunNotificationEvent;
+interface RunChannelDisplayOptions extends Omit<RunChannelOptions, 'event'> {
+  event?: RunChannelEvent;
   lifecycleStatus?: RunLifecycleStatus;
 }
 
@@ -64,56 +64,38 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
-function slackRoutesForEvent(agent: ParsedAgent, event: RunNotificationEvent): SlackRoute[] {
-  const routes: SlackRoute[] = [];
-  for (const route of agent.config.notifications?.routes ?? []) {
-    if (route.enabled === false || !route.on.includes(event)) continue;
-    const destinations = route.to as Record<string, unknown>;
-    const slack = destinations.slack;
-    if (slack === undefined) continue;
-    const slackConfig = slack && typeof slack === 'object'
-      ? slack as { channel_id?: unknown }
-      : {};
-    routes.push({
-      ...(route.name && { name: route.name }),
-      ...(typeof slackConfig.channel_id === 'string' && { channelId: slackConfig.channel_id })
-    });
-  }
-  return routes;
+function slackChannelForEvent(agent: ParsedAgent, event: RunChannelEvent): SlackChannel[] {
+  const slack = agent.config.channels?.slack;
+  if (!slack || slack.enabled === false || !slack.events.includes(event)) return [];
+  const channelId = 'channelId' in slack ? slack.channelId : undefined;
+  return [{
+    events: slack.events,
+    ...(channelId && { channelId })
+  }];
 }
 
-function slackLiveRoutesForRun(agent: ParsedAgent): SlackRoute[] {
-  const routes = new Map<string, SlackRoute>();
-  for (const route of agent.config.notifications?.routes ?? []) {
-    if (route.enabled === false) continue;
-    const isApprovalRoute = route.on.includes('approval');
-    const isTerminalRunRoute = route.on.includes('completion') && route.on.includes('failure');
-    if (!isApprovalRoute && !isTerminalRunRoute) continue;
-    const destinations = route.to as Record<string, unknown>;
-    const slack = destinations.slack;
-    if (slack === undefined) continue;
-    const slackConfig = slack && typeof slack === 'object'
-      ? slack as { channel_id?: unknown }
-      : {};
-    const slackRoute = {
-      ...(route.name && { name: route.name }),
-      ...(typeof slackConfig.channel_id === 'string' && { channelId: slackConfig.channel_id })
-    };
-    const key = resolveSlackChannelId(slackRoute) ?? `route:${route.name ?? routes.size}`;
-    if (!routes.has(key)) routes.set(key, slackRoute);
-  }
-  return [...routes.values()];
+function slackLiveChannelForRun(agent: ParsedAgent): SlackChannel[] {
+  const slack = agent.config.channels?.slack;
+  if (!slack || slack.enabled === false) return [];
+  const isApprovalChannel = slack.events.includes('approval');
+  const isTerminalRunChannel = slack.events.includes('completion') && slack.events.includes('failure');
+  if (!isApprovalChannel && !isTerminalRunChannel) return [];
+  const channelId = 'channelId' in slack ? slack.channelId : undefined;
+  return [{
+    events: slack.events,
+    ...(channelId && { channelId })
+  }];
 }
 
-function resolveSlackChannelId(route: SlackRoute): string | undefined {
-  return route.channelId ?? process.env.SLACK_APPROVAL_CHANNEL;
+function resolveSlackChannelId(channel: SlackChannel): string | undefined {
+  return channel.channelId ?? process.env.SLACK_APPROVAL_CHANNEL;
 }
 
-function runDurationMs(options: Pick<RunNotificationOptions, 'startTime'>): number | undefined {
+function runDurationMs(options: Pick<RunChannelOptions, 'startTime'>): number | undefined {
   return options.startTime !== undefined ? Date.now() - options.startTime : undefined;
 }
 
-function runStatus(options: RunNotificationDisplayOptions): RunLifecycleStatus {
+function runStatus(options: RunChannelDisplayOptions): RunLifecycleStatus {
   if (options.lifecycleStatus) return options.lifecycleStatus;
   return options.event === 'completion' ? 'completed' : 'failed';
 }
@@ -131,18 +113,18 @@ function runTitle(status: RunLifecycleStatus): string {
   }
 }
 
-function runPreview(options: RunNotificationOptions): string {
+function runPreview(options: RunChannelOptions): string {
   if (options.event === 'completion') {
     return options.result?.text?.trim() || 'Agent completed without a final answer.';
   }
   return options.error !== undefined ? errorMessage(options.error) : 'Agent run failed.';
 }
 
-function approvalUrl(options: RunNotificationDisplayOptions): string | undefined {
+function approvalUrl(options: RunChannelDisplayOptions): string | undefined {
   return options.result?.approvalUrl;
 }
 
-function buildRunRootBlocks(options: RunNotificationDisplayOptions): any[] {
+function buildRunRootBlocks(options: RunChannelDisplayOptions): any[] {
   const durationMs = runDurationMs(options);
   const status = runStatus(options);
   const fields = [
@@ -191,7 +173,7 @@ function buildRunRootBlocks(options: RunNotificationDisplayOptions): any[] {
   ];
 }
 
-function buildRunThreadMessages(options: RunNotificationOptions): SlackThreadMessage[] {
+function buildRunThreadMessages(options: RunChannelOptions): SlackThreadMessage[] {
   const durationMs = runDurationMs(options);
   const details = [
     `Agent: ${options.agent.name}`,
@@ -234,31 +216,35 @@ function buildRunThreadMessages(options: RunNotificationOptions): SlackThreadMes
   return messages;
 }
 
-function buildRunSlackBlocks(options: RunNotificationOptions): any[] {
+function buildRunSlackBlocks(options: RunChannelOptions): any[] {
   return buildRunRootBlocks(options);
 }
 
-function matchesHandle(handle: RunNotificationHandle, route: SlackRoute): boolean {
-  const routeChannel = resolveSlackChannelId(route);
-  return Boolean(routeChannel) &&
-    (handle.channel === routeChannel || handle.channelId === route.channelId);
+function matchesHandle(handle: RunChannelHandle, channel: SlackChannel): boolean {
+  const resolvedChannel = resolveSlackChannelId(channel);
+  return Boolean(resolvedChannel) &&
+    (handle.channel === resolvedChannel || handle.channelId === channel.channelId);
 }
 
-function findHandle(handles: RunNotificationHandle[], route: SlackRoute): RunNotificationHandle | undefined {
-  return handles.find((handle) => matchesHandle(handle, route));
+function findHandle(handles: RunChannelHandle[], channel: SlackChannel): RunChannelHandle | undefined {
+  return handles.find((handle) => matchesHandle(handle, channel));
 }
 
-function terminalText(options: RunNotificationOptions): string {
+function shouldUpdateHandleForEvent(handle: RunChannelHandle, event: RunChannelEvent): boolean {
+  return handle.events.includes(event) || handle.events.includes('approval');
+}
+
+function terminalText(options: RunChannelOptions): string {
   return options.event === 'completion'
     ? `AgentUse run completed: ${options.agent.name}`
     : `AgentUse run failed: ${options.agent.name}`;
 }
 
-async function sendSlackRunNotification(route: SlackRoute, options: RunNotificationOptions): Promise<void> {
+async function sendSlackRunChannelMessage(channel: SlackChannel, options: RunChannelOptions): Promise<void> {
   const botToken = process.env.SLACK_BOT_TOKEN;
-  const channelId = resolveSlackChannelId(route);
+  const channelId = resolveSlackChannelId(channel);
   if (!botToken || !channelId) {
-    logger.warn('Slack run notification skipped: missing SLACK_BOT_TOKEN and route channel_id or SLACK_APPROVAL_CHANNEL');
+    logger.warn('Slack run channel skipped: missing SLACK_BOT_TOKEN and channels.slack.channel_id or SLACK_APPROVAL_CHANNEL');
     return;
   }
 
@@ -277,11 +263,11 @@ async function sendSlackRunNotification(route: SlackRoute, options: RunNotificat
   );
 }
 
-async function sendSlackRunStartNotification(route: SlackRoute, options: RunNotificationStartOptions): Promise<RunNotificationHandle | undefined> {
+async function sendSlackRunStartChannelMessage(channel: SlackChannel, options: RunChannelStartOptions): Promise<RunChannelHandle | undefined> {
   const botToken = process.env.SLACK_BOT_TOKEN;
-  const channelId = resolveSlackChannelId(route);
+  const channelId = resolveSlackChannelId(channel);
   if (!botToken || !channelId) {
-    logger.warn('Slack run start notification skipped: missing SLACK_BOT_TOKEN and route channel_id or SLACK_APPROVAL_CHANNEL');
+    logger.warn('Slack run start channel skipped: missing SLACK_BOT_TOKEN and channels.slack.channel_id or SLACK_APPROVAL_CHANNEL');
     return undefined;
   }
 
@@ -296,16 +282,16 @@ async function sendSlackRunStartNotification(route: SlackRoute, options: RunNoti
   });
   void bestEffortSlackThreadStatus(web, message.channel, message.ts, 'is working...');
   return {
-    ...route,
+    ...channel,
     channel: message.channel,
     ts: message.ts
   };
 }
 
-async function updateSlackRunNotification(handle: RunNotificationHandle, options: RunNotificationOptions): Promise<void> {
+async function updateSlackRunChannelMessage(handle: RunChannelHandle, options: RunChannelOptions): Promise<void> {
   const botToken = process.env.SLACK_BOT_TOKEN;
   if (!botToken) {
-    logger.warn('Slack run notification update skipped: missing SLACK_BOT_TOKEN');
+    logger.warn('Slack run channel update skipped: missing SLACK_BOT_TOKEN');
     return;
   }
 
@@ -326,10 +312,10 @@ async function updateSlackRunNotification(handle: RunNotificationHandle, options
   );
 }
 
-async function updateSlackRunSuspendedNotification(handle: RunNotificationHandle, options: RunNotificationStartOptions & { result: RunAgentResult }): Promise<void> {
+async function updateSlackRunSuspendedChannelMessage(handle: RunChannelHandle, options: RunChannelStartOptions & { result: RunAgentResult }): Promise<void> {
   const botToken = process.env.SLACK_BOT_TOKEN;
   if (!botToken) {
-    logger.warn('Slack run suspension update skipped: missing SLACK_BOT_TOKEN');
+    logger.warn('Slack run suspension channel update skipped: missing SLACK_BOT_TOKEN');
     return;
   }
 
@@ -347,64 +333,65 @@ async function updateSlackRunSuspendedNotification(handle: RunNotificationHandle
   void bestEffortClearSlackThreadStatus(web, handle.channel, handle.ts);
 }
 
-export async function startRunNotifications(
-  options: RunNotificationStartOptions,
-  sender: SlackRunStartSender = sendSlackRunStartNotification
-): Promise<RunNotificationHandle[]> {
-  const handles: RunNotificationHandle[] = [];
-  const routes = slackLiveRoutesForRun(options.agent);
-  for (const route of routes) {
+export async function startRunChannels(
+  options: RunChannelStartOptions,
+  sender: SlackRunStartSender = sendSlackRunStartChannelMessage
+): Promise<RunChannelHandle[]> {
+  const handles: RunChannelHandle[] = [];
+  const channels = slackLiveChannelForRun(options.agent);
+  for (const channel of channels) {
     try {
-      const handle = await sender(route, options);
+      const handle = await sender(channel, options);
       if (handle) handles.push(handle);
     } catch (err) {
-      logger.warn(`Slack run start notification failed: ${(err as Error).message}`);
+      logger.warn(`Slack run start channel failed: ${(err as Error).message}`);
     }
   }
   return handles;
 }
 
-export async function sendRunNotifications(
-  options: RunNotificationOptions,
-  sender: SlackRunSender = sendSlackRunNotification,
-  handles: RunNotificationHandle[] = []
+export async function sendRunChannelMessages(
+  options: RunChannelOptions,
+  sender: SlackRunSender = sendSlackRunChannelMessage,
+  handles: RunChannelHandle[] = []
 ): Promise<void> {
-  const routes = slackRoutesForEvent(options.agent, options.event);
-  const updatedHandles = new Set<RunNotificationHandle>();
-  if (handles.length > 0 && sender === sendSlackRunNotification) {
+  const channels = slackChannelForEvent(options.agent, options.event);
+  const updatedHandles = new Set<RunChannelHandle>();
+  if (handles.length > 0 && sender === sendSlackRunChannelMessage) {
     for (const handle of handles) {
+      if (!shouldUpdateHandleForEvent(handle, options.event)) continue;
       try {
-        await updateSlackRunNotification(handle, options);
+        await updateSlackRunChannelMessage(handle, options);
         updatedHandles.add(handle);
       } catch (err) {
-        logger.warn(`Slack run notification update failed: ${(err as Error).message}`);
+        logger.warn(`Slack run channel update failed: ${(err as Error).message}`);
       }
     }
   }
 
-  for (const route of routes) {
+  for (const channel of channels) {
     try {
-      const handle = findHandle(handles, route);
+      const handle = findHandle(handles, channel);
       if (handle && updatedHandles.has(handle)) continue;
-      await sender(route, options);
+      await sender(channel, options);
     } catch (err) {
-      logger.warn(`Slack run notification failed: ${(err as Error).message}`);
+      logger.warn(`Slack run channel failed: ${(err as Error).message}`);
     }
   }
 }
 
-export async function suspendRunNotifications(
-  options: RunNotificationStartOptions & { result: RunAgentResult },
-  handles: RunNotificationHandle[]
+export async function suspendRunChannels(
+  options: RunChannelStartOptions & { result: RunAgentResult },
+  handles: RunChannelHandle[]
 ): Promise<void> {
-  const routes = slackLiveRoutesForRun(options.agent);
-  for (const route of routes) {
-    const handle = findHandle(handles, route);
+  const channels = slackLiveChannelForRun(options.agent);
+  for (const channel of channels) {
+    const handle = findHandle(handles, channel);
     if (!handle) continue;
     try {
-      await updateSlackRunSuspendedNotification(handle, options);
+      await updateSlackRunSuspendedChannelMessage(handle, options);
     } catch (err) {
-      logger.warn(`Slack run suspension notification failed: ${(err as Error).message}`);
+      logger.warn(`Slack run suspension channel failed: ${(err as Error).message}`);
     }
   }
 }
@@ -413,7 +400,8 @@ export const __testing = {
   buildRunRootBlocks,
   buildRunSlackBlocks,
   buildRunThreadMessages,
-  slackLiveRoutesForRun,
+  slackLiveChannelForRun,
   resolveSlackChannelId,
-  slackRoutesForEvent
+  slackChannelForEvent,
+  shouldUpdateHandleForEvent
 };

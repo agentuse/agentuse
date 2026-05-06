@@ -120,7 +120,7 @@ interface ExpiredApproval {
   prompt?: string;
   expiresAt: number;
   suspendedAt?: number;
-  notification?: { type?: string; channel?: string; ts?: string; url?: string };
+  channelMessage?: { type?: string; channel?: string; ts?: string; url?: string };
 }
 
 interface WorkerSweepExpiredResult {
@@ -150,9 +150,9 @@ interface ApprovalSummary {
   decisionReviewer?: string;
   resumeToken?: string;
   errorMessage?: string;
-  notification?: { type?: string; channel?: string; ts?: string; url?: string };
-  notifications?: {
-    slack?: Array<{ channel: string; ts: string; channelId?: string; name?: string }>;
+  channelMessage?: { type?: string; channel?: string; ts?: string; url?: string };
+  channels?: {
+    slack?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
   };
 }
 
@@ -177,12 +177,12 @@ interface ApprovalPageInfo {
   artifactUrl?: string;
   context?: string;
   risk?: string;
-  channel?: string;
+  surface?: string;
   approvalUrl?: string;
   currentResumeToken?: string;
   expiresAt?: number;
   suspendedAt?: number;
-  notification?: {
+  channelMessage?: {
     type?: string;
     channel?: string;
     ts?: string;
@@ -375,7 +375,7 @@ class AgentWorker {
     sessionId: string;
     prompt?: string | undefined;
     debug?: boolean | undefined;
-    runNotificationHandles?: Array<{ channel: string; ts: string; channelId?: string; name?: string }>;
+    runChannelHandles?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
   }): Promise<WorkerExecuteResult | WorkerExecuteError> {
     return this.request({
       type: "continue-session",
@@ -383,7 +383,7 @@ class AgentWorker {
       sessionId: options.sessionId,
       prompt: options.prompt,
       debug: options.debug,
-      runNotificationHandles: options.runNotificationHandles,
+      runChannelHandles: options.runChannelHandles,
     }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
   }
 
@@ -3153,9 +3153,9 @@ export function createServeCommand(): Command {
       ): void => {
         if (
           !slackBotToken ||
-          approval.notification?.type !== 'slack-message' ||
-          !approval.notification.channel ||
-          !approval.notification.ts ||
+          approval.channelMessage?.type !== 'slack-message' ||
+          !approval.channelMessage.channel ||
+          !approval.channelMessage.ts ||
           !approval.prompt
         ) {
           return;
@@ -3163,12 +3163,12 @@ export function createServeCommand(): Command {
 
         void updateSlackApprovalRequestStatus({
           botToken: slackBotToken,
-          channelId: approval.notification.channel,
-          ts: approval.notification.ts,
+          channelId: approval.channelMessage.channel,
+          ts: approval.channelMessage.ts,
           prompt: approval.prompt,
           sessionId: approval.sessionId,
           projectId: project.id,
-          ...(approval.notification.url && { approvalUrl: approval.notification.url }),
+          ...(approval.channelMessage.url && { approvalUrl: approval.channelMessage.url }),
           ...(approval.expiresAt && { expiresAt: new Date(approval.expiresAt).toISOString() }),
           status,
           decision,
@@ -3183,17 +3183,17 @@ export function createServeCommand(): Command {
       ): void => {
         if (
           !slackBotToken ||
-          approval.notification?.type !== 'slack-message' ||
-          !approval.notification.channel ||
-          !approval.notification.ts
+          approval.channelMessage?.type !== 'slack-message' ||
+          !approval.channelMessage.channel ||
+          !approval.channelMessage.ts
         ) {
           return;
         }
 
         const web = new WebClient(slackBotToken);
         void web.chat.postMessage({
-          channel: approval.notification.channel,
-          thread_ts: approval.notification.ts,
+          channel: approval.channelMessage.channel,
+          thread_ts: approval.channelMessage.ts,
           text: message,
           blocks: [
             {
@@ -3237,11 +3237,11 @@ export function createServeCommand(): Command {
           }
           const approval = result.approvals.find((item) =>
             (
-              item.notification?.type === 'slack-message' &&
-              item.notification.channel === comment.channel &&
-              item.notification.ts === comment.threadTs
+              item.channelMessage?.type === 'slack-message' &&
+              item.channelMessage.channel === comment.channel &&
+              item.channelMessage.ts === comment.threadTs
             ) ||
-            item.notifications?.slack?.some((handle) =>
+            item.channels?.slack?.some((handle) =>
               handle.channel === comment.channel &&
               handle.ts === comment.threadTs
             )
@@ -3300,9 +3300,10 @@ export function createServeCommand(): Command {
               sessionId,
               prompt: comment.text,
               debug: options.debug,
-              runNotificationHandles: [{
+              runChannelHandles: [{
                 channel: comment.channel,
-                ts: comment.threadTs
+                ts: comment.threadTs,
+                events: ['approval', 'completion', 'failure']
               }]
             });
             if (!result.success && result.error.code === 'SESSION_NOT_FOUND') {
@@ -3343,9 +3344,9 @@ export function createServeCommand(): Command {
             item.status === 'pending' &&
             item.sessionStatus === 'suspended' &&
             item.resumeToken &&
-            item.notification?.type === 'slack-message' &&
-            item.notification.channel === comment.channel &&
-            item.notification.ts === comment.threadTs
+            item.channelMessage?.type === 'slack-message' &&
+            item.channelMessage.channel === comment.channel &&
+            item.channelMessage.ts === comment.threadTs
           );
           if (!approval?.resumeToken) continue;
 
@@ -3396,7 +3397,7 @@ export function createServeCommand(): Command {
                     item.resumeToken !== approval.resumeToken
                   )
                   : undefined;
-                const nextApprovalUrl = nextApproval?.notification?.url ?? resumeResult.result.approvalUrl;
+                const nextApprovalUrl = nextApproval?.channelMessage?.url ?? resumeResult.result.approvalUrl;
                 updateSlackThreadApprovalStatus(project, approval, 'completed', 'comment');
                 postSlackApprovalThreadNote(
                   approval,
@@ -3463,19 +3464,19 @@ export function createServeCommand(): Command {
 
               if (
                 slackBotToken &&
-                item.notification?.type === 'slack-message' &&
-                item.notification.channel &&
-                item.notification.ts &&
+                item.channelMessage?.type === 'slack-message' &&
+                item.channelMessage.channel &&
+                item.channelMessage.ts &&
                 item.prompt
               ) {
                 void updateSlackApprovalRequestStatus({
                   botToken: slackBotToken,
-                  channelId: item.notification.channel,
-                  ts: item.notification.ts,
+                  channelId: item.channelMessage.channel,
+                  ts: item.channelMessage.ts,
                   prompt: item.prompt,
                   sessionId: item.sessionId,
                   projectId: project.id,
-                  ...(item.notification.url && { approvalUrl: item.notification.url }),
+                  ...(item.channelMessage.url && { approvalUrl: item.channelMessage.url }),
                   expiresAt: new Date(item.expiresAt).toISOString(),
                   status: 'failed',
                   decision: 'expired',
@@ -3928,25 +3929,25 @@ export function createServeCommand(): Command {
             approvalLog.received('web', status, sessionId, 'web');
             const resumeStart = Date.now();
             approvalLog.resumeStarted(sessionId);
-            const slackNotification = info.approval.notification?.type === 'slack-message' &&
-              info.approval.notification.channel &&
-              info.approval.notification.ts &&
+            const slackChannelMessage = info.approval.channelMessage?.type === 'slack-message' &&
+              info.approval.channelMessage.channel &&
+              info.approval.channelMessage.ts &&
               slackBotToken
               ? {
-                channelId: info.approval.notification.channel,
-                ts: info.approval.notification.ts,
-                approvalUrl: info.approval.notification.url
+                channelId: info.approval.channelMessage.channel,
+                ts: info.approval.channelMessage.ts,
+                approvalUrl: info.approval.channelMessage.url
               }
               : undefined;
-            if (slackNotification && info.approval.prompt) {
+            if (slackChannelMessage && info.approval.prompt) {
               void updateSlackApprovalRequestStatus({
                 botToken: slackBotToken!,
-                channelId: slackNotification.channelId,
-                ts: slackNotification.ts,
+                channelId: slackChannelMessage.channelId,
+                ts: slackChannelMessage.ts,
                 prompt: info.approval.prompt,
                 sessionId,
                 projectId: project.id,
-                ...(slackNotification.approvalUrl && { approvalUrl: slackNotification.approvalUrl }),
+                ...(slackChannelMessage.approvalUrl && { approvalUrl: slackChannelMessage.approvalUrl }),
                 ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
                 status: 'resuming',
                 decision: status
@@ -3972,15 +3973,15 @@ export function createServeCommand(): Command {
                 }
                 approvalLog.resumeFailed(sessionId, Date.now() - resumeStart, result.error.message);
                 logger.warn(`Approval resume ${sessionId} failed: ${result.error.message}`);
-                if (slackNotification && info.approval.prompt) {
+                if (slackChannelMessage && info.approval.prompt) {
                   void updateSlackApprovalRequestStatus({
                     botToken: slackBotToken!,
-                    channelId: slackNotification.channelId,
-                    ts: slackNotification.ts,
+                    channelId: slackChannelMessage.channelId,
+                    ts: slackChannelMessage.ts,
                     prompt: info.approval.prompt,
                     sessionId,
                     projectId: project.id,
-                    ...(slackNotification.approvalUrl && { approvalUrl: slackNotification.approvalUrl }),
+                    ...(slackChannelMessage.approvalUrl && { approvalUrl: slackChannelMessage.approvalUrl }),
                     ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
                     status: 'failed',
                     decision: status,
@@ -3989,15 +3990,15 @@ export function createServeCommand(): Command {
                 }
               } else {
                 approvalLog.resumeCompleted(sessionId, Date.now() - resumeStart);
-                if (slackNotification && info.approval.prompt) {
+                if (slackChannelMessage && info.approval.prompt) {
                   void updateSlackApprovalRequestStatus({
                     botToken: slackBotToken!,
-                    channelId: slackNotification.channelId,
-                    ts: slackNotification.ts,
+                    channelId: slackChannelMessage.channelId,
+                    ts: slackChannelMessage.ts,
                     prompt: info.approval.prompt,
                     sessionId,
                     projectId: project.id,
-                    ...(slackNotification.approvalUrl && { approvalUrl: slackNotification.approvalUrl }),
+                    ...(slackChannelMessage.approvalUrl && { approvalUrl: slackChannelMessage.approvalUrl }),
                     ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
                     status: 'completed',
                     decision: status

@@ -256,17 +256,12 @@ describe('prepareAgentExecution', () => {
           approval: {
             timeout: '24h'
           },
-          notifications: {
-            routes: [
-              {
-                on: ['approval'],
-                to: {
-                  slack: {
-                    channel_id: 'C0123456789'
-                  }
-                }
-              }
-            ]
+          channels: {
+            slack: {
+              enabled: true,
+              events: ['approval'],
+              channelId: 'C0123456789'
+            }
           }
         }
       });
@@ -288,22 +283,17 @@ describe('prepareAgentExecution', () => {
       expect(result.userMessage).toContain('comment: use the reviewer comment');
     });
 
-    it('routes Slack approval notifications through notifications config', () => {
+    it('routes Slack approval channels through channels config', () => {
       const agent = createMockAgent({
         config: {
           model: 'anthropic:claude-sonnet-4-0',
           approval: true,
-          notifications: {
-            routes: [
-              {
-                on: ['approval'],
-                to: {
-                  slack: {
-                    channel_id: 'C0123456789'
-                  }
-                }
-              }
-            ]
+          channels: {
+            slack: {
+              enabled: true,
+              events: ['approval'],
+              channelId: 'C0123456789'
+            }
           }
         }
       });
@@ -313,20 +303,16 @@ describe('prepareAgentExecution', () => {
       });
     });
 
-    it('supports env-backed Slack approval notification routes', () => {
+    it('supports env-backed Slack approval channels', () => {
       const agent = createMockAgent({
         config: {
           model: 'anthropic:claude-sonnet-4-0',
           approval: true,
-          notifications: {
-            routes: [
-              {
-                on: ['approval'],
-                to: {
-                  slack: {}
-                }
-              }
-            ]
+          channels: {
+            slack: {
+              enabled: true,
+              events: ['approval']
+            }
           }
         }
       });
@@ -336,39 +322,41 @@ describe('prepareAgentExecution', () => {
       });
     });
 
-    it('ignores disabled and non-approval Slack notification routes', () => {
-      const agent = createMockAgent({
+    it('ignores disabled Slack channels', () => {
+      const disabled = createMockAgent({
         config: {
           model: 'anthropic:claude-sonnet-4-0',
           approval: true,
-          notifications: {
-            routes: [
-              {
-                enabled: false,
-                on: ['approval'],
-                to: {
-                  slack: {
-                    channel_id: 'C_DISABLED'
-                  }
-                }
-              },
-              {
-                on: ['completion'],
-                to: {
-                  slack: {
-                    channel_id: 'C_COMPLETION'
-                  }
-                }
-              }
-            ]
+          channels: {
+            slack: {
+              enabled: false,
+              events: ['approval'],
+              channelId: 'C_DISABLED'
+            }
           }
         }
       });
 
-      expect(approvalToolDefaults(agent.config)?.slack).toBeUndefined();
+      expect(approvalToolDefaults(disabled.config)?.slack).toBeUndefined();
+
+      const nonApproval = createMockAgent({
+        config: {
+          model: 'anthropic:claude-sonnet-4-0',
+          approval: true,
+          channels: {
+            slack: {
+              enabled: true,
+              events: ['completion'],
+              channelId: 'C_COMPLETION'
+            }
+          }
+        }
+      });
+
+      expect(approvalToolDefaults(nonApproval.config)?.slack).toBeUndefined();
     });
 
-    it('does not route Slack approval notifications from approval config', () => {
+    it('does not route Slack approval channels from approval config', () => {
       const agent = createMockAgent({
         config: {
           model: 'anthropic:claude-sonnet-4-0',

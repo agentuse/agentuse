@@ -13,15 +13,13 @@ function getApprovalObject(config: AgentConfig): ApprovalObject | undefined {
     : undefined;
 }
 
-function getSlackApprovalRoute(config: AgentConfig): { channel_id?: string } | undefined {
-  for (const route of config.notifications?.routes ?? []) {
-    if (route.enabled === false || !route.on.includes('approval')) continue;
-    const destinations = route.to as Record<string, unknown>;
-    const slack = destinations.slack;
-    if (slack === undefined) continue;
-    return slack as { channel_id?: string };
-  }
-  return undefined;
+function getSlackApprovalChannel(config: AgentConfig): { channelId?: string } | undefined {
+  const slack = config.channels?.slack;
+  if (!slack || slack.enabled === false || !slack.events.includes('approval')) return undefined;
+  const channelId = 'channelId' in slack ? slack.channelId : undefined;
+  return {
+    ...(channelId && { channelId })
+  };
 }
 
 export function approvalToolDefaults(config: AgentConfig): {
@@ -31,13 +29,13 @@ export function approvalToolDefaults(config: AgentConfig): {
   if (!isApprovalEnabled(config)) return undefined;
 
   const approval = getApprovalObject(config);
-  const slack = getSlackApprovalRoute(config);
+  const slack = getSlackApprovalChannel(config);
 
   return {
     ...(approval?.timeout && { timeout: approval.timeout }),
     ...(slack && {
       slack: {
-        ...(slack.channel_id && { channelId: slack.channel_id })
+        ...(slack.channelId && { channelId: slack.channelId })
       }
     })
   };

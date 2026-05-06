@@ -890,7 +890,7 @@ async function showSession(
                 resumePayload?: {
                   kind?: string;
                   approvalUrl?: string;
-                  notification?: {
+                  channelMessage?: {
                     url?: string;
                   };
                 };
@@ -932,7 +932,7 @@ async function showSession(
               process.stdout.write(formatValueFull(tool.state.input, "  ") + "\n");
             }
 
-            const approvalUrl = tool.state.resumePayload?.approvalUrl ?? tool.state.resumePayload?.notification?.url;
+            const approvalUrl = tool.state.resumePayload?.approvalUrl ?? tool.state.resumePayload?.channelMessage?.url;
             if (tool.state.status === "pending" && tool.state.resumePayload?.kind === "await_human") {
               process.stdout.write(`Approval: pending\n`);
               if (approvalUrl) {

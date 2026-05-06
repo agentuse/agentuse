@@ -42,25 +42,21 @@ tools:
 Review open pull requests and summarize anything blocked.
 ```
 
-Common frontmatter fields include `model`, `tools`, `schedule`, `mcpServers`, `subagents`, `store`, `learning`, `sandbox`, `approval`, `notifications`, `timeout`, and `maxSteps`.
+Common frontmatter fields include `model`, `tools`, `schedule`, `mcpServers`, `subagents`, `store`, `learning`, `sandbox`, `approval`, `channels`, `timeout`, and `maxSteps`.
 
 See [Agent Syntax](/reference/agent-syntax) for the full schema.
 
-Approval notifications are configured separately from approval policy:
+Approval channels are configured separately from approval policy:
 
 ```yaml
 approval: true
-notifications:
-  routes:
-    - on: [approval]
-      to:
-        slack:
-          channel_id: C0123456789
-    - on: [completion, failure]
-      to: slack
+channels:
+  slack:
+    events: [approval]
+    channel_id: C0123456789
 ```
 
-See [Notifications](/guides/notifications) for event route semantics and [Approval Gates](/guides/approval-gates) for the approval dashboard and API workflow.
+See [Channels](/guides/channels) for event semantics and [Approval Gates](/guides/approval-gates) for the approval dashboard and API workflow.
 
 ## Environment files
 

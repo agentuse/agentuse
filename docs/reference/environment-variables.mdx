@@ -144,7 +144,7 @@ model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
 ## Approval Gates
 
 <ParamField path="SLACK_BOT_TOKEN" type="string">
-  Slack bot token used to post and update notification messages when a notification route listens for `approval`, `completion`, or `failure` and sends to Slack. The app needs the `chat:write` bot scope, and the bot must be in the target channel unless you also grant `chat:write.public` for public channels.
+  Slack bot token used to post and update channel messages when `channels.slack` listens for `approval`, `completion`, or `failure`. The app needs the `chat:write` bot scope, and the bot must be in the target channel unless you also grant `chat:write.public` for public channels.
 
   ```bash
   export SLACK_BOT_TOKEN="xoxb-..."
@@ -152,7 +152,7 @@ model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
 </ParamField>
 
 <ParamField path="SLACK_APP_TOKEN" type="string">
-  Optional Slack app-level token used for Socket Mode approval actions in Slack. Web approval pages and notification-only Slack messages do not require this token. If set, the app-level token needs `connections:write`; plain thread-reply comments also require Slack message event subscriptions and the relevant channel history scopes.
+  Optional Slack app-level token used for Socket Mode approval actions in Slack. Web approval pages and channel-only Slack messages do not require this token. If set, the app-level token needs `connections:write`; plain thread-reply comments also require Slack message event subscriptions and the relevant channel history scopes.
 
   ```bash
   export SLACK_APP_TOKEN="xapp-..."
@@ -160,7 +160,7 @@ model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
 </ParamField>
 
 <ParamField path="SLACK_APPROVAL_CHANNEL" type="string">
-  Default Slack channel id for Slack notification routes. Agents can override this with `notifications.routes[].to.slack.channel_id`.
+  Default Slack channel id for Slack channels. Agents can override this with `channels.slack.channel_id`.
 
   ```bash
   export SLACK_APPROVAL_CHANNEL="C0123456789"

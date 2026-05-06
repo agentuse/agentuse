@@ -9,13 +9,14 @@ import { formatToolResultForDisplay } from '../utils/format-tool-result';
 import { sendSlackApprovalRequest, sendSlackApprovalRequestToThread } from '../slack/approval';
 import type { AgentChunk } from './types';
 
-type SlackRunNotificationHandle = {
+type SlackRunChannelHandle = {
   channel: string;
   ts: string;
   channelId?: string;
+  events?: Array<'approval' | 'completion' | 'failure'>;
 };
 
-async function notifyApprovalRequested(options: {
+async function announceApprovalRequested(options: {
   sessionId?: string;
   resumeToken?: string;
   approvalUrl?: string;
@@ -56,18 +57,18 @@ async function sendPersistedSlackApproval(options: {
   prompt?: string;
   input?: unknown;
   expiresAt?: number;
-  notificationRequest?: unknown;
-  slackRunNotificationHandles?: SlackRunNotificationHandle[];
+  channelRequest?: unknown;
+  slackRunChannelHandles?: SlackRunChannelHandle[];
 }): Promise<{ type: 'slack-message'; channel: string; ts: string; url: string } | undefined> {
-  const request = options.notificationRequest && typeof options.notificationRequest === 'object'
-    ? options.notificationRequest as Record<string, unknown>
+  const request = options.channelRequest && typeof options.channelRequest === 'object'
+    ? options.channelRequest as Record<string, unknown>
     : undefined;
   if (request?.type !== 'slack-message') return undefined;
 
   const botToken = process.env.SLACK_BOT_TOKEN;
   const channelId = typeof request.channel === 'string' ? request.channel : process.env.SLACK_APPROVAL_CHANNEL;
   if (!botToken || !channelId || !options.sessionId || !options.resumeToken || !options.approvalUrl || !options.prompt) {
-    logger.warn('Slack approval notification skipped: missing bot token, channel, session id, resume token, approval URL, or prompt');
+    logger.warn('Slack approval channel skipped: missing bot token, channel, session id, resume token, approval URL, or prompt');
     return undefined;
   }
 
@@ -92,7 +93,7 @@ async function sendPersistedSlackApproval(options: {
       interactive: Boolean(process.env.SLACK_APP_TOKEN),
       ...(options.expiresAt !== undefined && { expiresAt: new Date(options.expiresAt).toISOString() })
     };
-    const root = options.slackRunNotificationHandles?.find((handle) =>
+    const root = options.slackRunChannelHandles?.find((handle) =>
       handle.channel === channelId || handle.channelId === channelId || (handle.channelId === undefined && handle.channel === channelId)
     );
     const message = root
@@ -106,7 +107,7 @@ async function sendPersistedSlackApproval(options: {
       url: options.approvalUrl
     };
   } catch (err) {
-    logger.warn(`Slack approval notification failed: ${(err as Error).message}`);
+    logger.warn(`Slack approval channel failed: ${(err as Error).message}`);
     return undefined;
   }
 }
@@ -124,7 +125,7 @@ export async function processAgentStream(
     messageID?: string;
     agentId?: string;
     doomLoopDetector?: DoomLoopDetector;
-    slackRunNotificationHandles?: SlackRunNotificationHandle[];
+    slackRunChannelHandles?: SlackRunChannelHandle[];
     /** Suppress console output (for serve mode) */
     quiet?: boolean;
   }
@@ -550,47 +551,47 @@ export async function processAgentStream(
             const partID = await pending.addPartPromise;
             if (partID) {
               const payload = suspendPayload;
-              let notification = payload.notification && typeof payload.notification === 'object'
-                ? payload.notification as any
+              let channelMessage = payload.channelMessage && typeof payload.channelMessage === 'object'
+                ? payload.channelMessage as any
                 : undefined;
               const suspendedAt = Date.now();
-              const buildPendingState = (activeNotification?: any) => ({
+              const buildPendingState = (activeChannelMessage?: any) => ({
                 status: 'pending',
                 input: pending.input,
                 suspendedAt,
                 resumePayload: {
                   kind: 'await_human',
                   ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
-                  ...(typeof payload.channel === 'string' && { channel: payload.channel }),
+                  ...(typeof payload.surface === 'string' && { surface: payload.surface }),
                   ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
                   ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
                   ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
-                  ...(activeNotification ? { notification: activeNotification } : {})
+                  ...(activeChannelMessage ? { channelMessage: activeChannelMessage } : {})
                 }
               });
               const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentId, options.messageID, partID, {
-                state: buildPendingState(notification)
+                state: buildPendingState(channelMessage)
               } as any).catch(err => logger.debug(`Failed to mark tool part pending: ${err.message}`));
               trackSessionUpdate(updatePromise);
               await updatePromise;
               if (payload.kind === 'await_human') {
-                const sentNotification = await sendPersistedSlackApproval({
+                const sentChannelMessage = await sendPersistedSlackApproval({
                   sessionId: options.sessionID,
                   ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
                   ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
                   ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
                   ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
                   input: pending.input,
-                  notificationRequest: payload.notificationRequest,
-                  ...(options.slackRunNotificationHandles && { slackRunNotificationHandles: options.slackRunNotificationHandles })
+                  channelRequest: payload.channelRequest,
+                  ...(options.slackRunChannelHandles && { slackRunChannelHandles: options.slackRunChannelHandles })
                 });
-                if (sentNotification) {
-                  notification = sentNotification;
+                if (sentChannelMessage) {
+                  channelMessage = sentChannelMessage;
                   await options.sessionManager.updatePart(options.sessionID, options.agentId, options.messageID, partID, {
-                    state: buildPendingState(sentNotification)
+                    state: buildPendingState(sentChannelMessage)
                   } as any);
                 }
-                await notifyApprovalRequested({
+                await announceApprovalRequested({
                   sessionId: options.sessionID,
                   ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
                   ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),

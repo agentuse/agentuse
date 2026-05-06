@@ -1,12 +1,16 @@
 export interface SuspendPayload {
   kind: 'await_human';
   prompt: string;
-  channel?: string;
-  notification?: {
+  surface?: 'web';
+  channelMessage?: {
     type: 'slack-message';
     url?: string;
     channel?: string;
     ts?: string;
+  };
+  channelRequest?: {
+    type: 'slack-message';
+    channel: string;
   };
   expiresAt?: number;
   resumeToken?: string;

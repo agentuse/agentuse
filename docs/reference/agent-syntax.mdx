@@ -242,30 +242,28 @@ Additional instructions or context.
   See [Approval Gates](/guides/approval-gates) for the full setup guide and Approval API examples.
 </ParamField>
 
-<ParamField path="notifications" type="object" required={false}>
-  Configure event/channel notifications separately from approval policy.
+<ParamField path="channels" type="array | object" required={false}>
+  Configure optional external collaboration channels separately from approval policy.
 
   ```yaml
-  notifications:
-    routes:
-      - name: approval-review
-        on: [approval]
-        to:
-          slack:
-            channel_id: C0123456789
-      - name: run-result
-        on: [completion, failure]
-        to: slack
+  channels: [slack]
+  ```
+
+  ```yaml
+  channels:
+    slack:
+      events: [approval, completion, failure]
+      channel_id: C0123456789
   ```
 
   **Fields:**
-  - `routes`: ordered notification subscriptions.
-  - `routes[].name`: optional route name for logs and debugging.
-  - `routes[].enabled`: optional switch for temporarily disabling a route.
-  - `routes[].on`: events for that route. Supported values are `approval`, `completion`, and `failure`. Use `completion`, not `complete` or `completed`.
-  - `routes[].to`: one destination for that route. Use `slack`, `slack: {}`, or `slack.channel_id`. If omitted from Slack config, AgentUse uses `SLACK_APPROVAL_CHANNEL`.
+  - `channels`: `[slack]` enables Slack with default events and channel env fallback.
+  - `channels.slack`: `true` or an object to enable Slack.
+  - `channels.slack.enabled`: optional switch for temporarily disabling Slack.
+  - `channels.slack.events`: event or list of events. Supported values are `approval`, `completion`, and `failure`. Use `completion`, not `complete` or `completed`.
+  - `channels.slack.channel_id`: Slack channel id. If omitted, AgentUse uses `SLACK_APPROVAL_CHANNEL`.
 
-  See [Notifications](/guides/notifications) for event semantics, Slack setup, and examples.
+  See [Channels](/guides/channels) for event semantics, Slack setup, and examples.
 </ParamField>
 
 ## Tools Configuration

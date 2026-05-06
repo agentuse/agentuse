@@ -1,59 +1,50 @@
 import { describe, expect, it } from 'bun:test';
 import type { ParsedAgent } from '../src/parser';
-import { __testing, sendRunNotifications, startRunNotifications } from '../src/notifications/run';
+import { __testing, sendRunChannelMessages, startRunChannels } from '../src/channels/run';
 
-function agentWithRoutes(routes: NonNullable<ParsedAgent['config']['notifications']>['routes']): ParsedAgent {
+type SlackConfig = NonNullable<ParsedAgent['config']['channels']>['slack'];
+
+function agentWithSlack(slack?: SlackConfig): ParsedAgent {
   return {
-    name: 'notify-test',
+    name: 'channel-test',
     instructions: 'Return a result.',
     config: {
       model: 'demo:welcome',
-      notifications: { routes }
+      ...(slack && { channels: { slack } })
     }
   };
 }
 
-describe('run notifications', () => {
-  it('filters Slack routes by event and enabled flag', () => {
-    const agent = agentWithRoutes([
-      {
-        enabled: false,
-        on: ['completion'],
-        to: { slack: { channel_id: 'C_DISABLED' } }
-      },
-      {
-        on: ['approval'],
-        to: { slack: { channel_id: 'C_APPROVAL' } }
-      },
-      {
-        name: 'run-result',
-        on: ['completion', 'failure'],
-        to: { slack: { channel_id: 'C_TERMINAL' } }
-      }
-    ]);
+describe('run channels', () => {
+  it('filters Slack channel by event and enabled flag', () => {
+    const agent = agentWithSlack({
+      enabled: true,
+      events: ['completion', 'failure'],
+      channelId: 'C_TERMINAL'
+    });
 
-    expect(__testing.slackRoutesForEvent(agent, 'completion')).toEqual([
-      { name: 'run-result', channelId: 'C_TERMINAL' }
+    expect(__testing.slackChannelForEvent(agent, 'completion')).toEqual([
+      { events: ['completion', 'failure'], channelId: 'C_TERMINAL' }
     ]);
-    expect(__testing.slackRoutesForEvent(agent, 'failure')).toEqual([
-      { name: 'run-result', channelId: 'C_TERMINAL' }
+    expect(__testing.slackChannelForEvent(agent, 'failure')).toEqual([
+      { events: ['completion', 'failure'], channelId: 'C_TERMINAL' }
     ]);
+    expect(__testing.slackChannelForEvent(agentWithSlack({
+      enabled: false,
+      events: ['completion'],
+      channelId: 'C_DISABLED'
+    }), 'completion')).toEqual([]);
   });
 
-  it('sends run notifications through matching routes only', async () => {
-    const agent = agentWithRoutes([
-      {
-        on: ['completion'],
-        to: { slack: { channel_id: 'C_COMPLETE' } }
-      },
-      {
-        on: ['failure'],
-        to: { slack: { channel_id: 'C_FAIL' } }
-      }
-    ]);
+  it('sends run channel messages through matching Slack channel only', async () => {
+    const agent = agentWithSlack({
+      enabled: true,
+      events: ['completion'],
+      channelId: 'C_COMPLETE'
+    });
     const sent: Array<{ channelId?: string; event: string }> = [];
 
-    await sendRunNotifications({
+    await sendRunChannelMessages({
       event: 'completion',
       agent,
       sessionId: 'session-1',
@@ -63,109 +54,93 @@ describe('run notifications', () => {
         toolCallCount: 2,
         hasTextOutput: true
       }
-    }, async (route, options) => {
-      sent.push({ channelId: route.channelId, event: options.event });
+    }, async (channel, options) => {
+      sent.push({ channelId: channel.channelId, event: options.event });
     });
 
     expect(sent).toEqual([{ channelId: 'C_COMPLETE', event: 'completion' }]);
   });
 
-  it('starts live run notifications for approval routes and full terminal routes', async () => {
-    const agent = agentWithRoutes([
-      {
-        on: ['completion'],
-        to: { slack: { channel_id: 'C_COMPLETE' } }
-      },
-      {
-        on: ['failure'],
-        to: { slack: { channel_id: 'C_FAIL' } }
-      },
-      {
-        name: 'approval-review',
-        on: ['approval'],
-        to: { slack: { channel_id: 'C_APPROVAL' } }
-      },
-      {
-        name: 'live-run',
-        on: ['completion', 'failure'],
-        to: { slack: { channel_id: 'C_LIVE' } }
-      }
-    ]);
+  it('updates approval live channel handles on terminal events', async () => {
+    expect(__testing.shouldUpdateHandleForEvent({
+      events: ['approval'],
+      channelId: 'C_APPROVAL',
+      channel: 'C_APPROVAL',
+      ts: '111.222'
+    }, 'completion')).toBe(true);
+    expect(__testing.shouldUpdateHandleForEvent({
+      events: ['failure'],
+      channelId: 'C_FAILURE',
+      channel: 'C_FAILURE',
+      ts: '111.222'
+    }, 'completion')).toBe(false);
+  });
+
+  it('starts live run channels for approval and full terminal Slack channels', async () => {
+    const agent = agentWithSlack({
+      enabled: true,
+      events: ['approval', 'completion', 'failure'],
+      channelId: 'C_LIVE'
+    });
     const started: string[] = [];
 
-    const handles = await startRunNotifications({
+    const handles = await startRunChannels({
       agent,
       sessionId: 'session-1'
-    }, async (route) => {
-      started.push(route.channelId ?? 'missing');
+    }, async (channel) => {
+      started.push(channel.channelId ?? 'missing');
       return {
-        ...route,
-        channel: route.channelId ?? 'C_UNKNOWN',
+        ...channel,
+        channel: channel.channelId ?? 'C_UNKNOWN',
         ts: '111.222'
       };
     });
 
-    expect(started).toEqual(['C_APPROVAL', 'C_LIVE']);
+    expect(started).toEqual(['C_LIVE']);
     expect(handles).toEqual([
       {
-        name: 'approval-review',
-        channelId: 'C_APPROVAL',
-        channel: 'C_APPROVAL',
-        ts: '111.222'
-      },
-      {
-        name: 'live-run',
         channelId: 'C_LIVE',
+        events: ['approval', 'completion', 'failure'],
         channel: 'C_LIVE',
         ts: '111.222'
       }
     ]);
-    expect(__testing.slackLiveRoutesForRun(agent)).toEqual([
-      { name: 'approval-review', channelId: 'C_APPROVAL' },
-      { name: 'live-run', channelId: 'C_LIVE' }
+    expect(__testing.slackLiveChannelForRun(agent)).toEqual([
+      { events: ['approval', 'completion', 'failure'], channelId: 'C_LIVE' }
     ]);
   });
 
-  it('dedupes live Slack run cards by destination channel', async () => {
-    const agent = agentWithRoutes([
-      {
-        name: 'approval-review',
-        on: ['approval'],
-        to: { slack: { channel_id: 'C_SHARED' } }
-      },
-      {
-        name: 'run-result',
-        on: ['completion', 'failure'],
-        to: { slack: { channel_id: 'C_SHARED' } }
-      }
-    ]);
+  it('keeps single terminal events terminal-only', async () => {
+    const agent = agentWithSlack({
+      enabled: true,
+      events: ['completion'],
+      channelId: 'C_COMPLETE'
+    });
     const started: string[] = [];
 
-    const handles = await startRunNotifications({
+    const handles = await startRunChannels({
       agent,
       sessionId: 'session-1'
-    }, async (route) => {
-      started.push(route.channelId ?? 'missing');
+    }, async (channel) => {
+      started.push(channel.channelId ?? 'missing');
       return {
-        ...route,
-        channel: route.channelId ?? 'C_UNKNOWN',
+        ...channel,
+        channel: channel.channelId ?? 'C_UNKNOWN',
         ts: '111.222'
       };
     });
 
-    expect(started).toEqual(['C_SHARED']);
-    expect(handles).toHaveLength(1);
-    expect(__testing.slackLiveRoutesForRun(agent)).toEqual([
-      { name: 'approval-review', channelId: 'C_SHARED' }
-    ]);
+    expect(started).toEqual([]);
+    expect(handles).toHaveLength(0);
+    expect(__testing.slackLiveChannelForRun(agent)).toEqual([]);
   });
 
-  it('prefers route Slack channel over env fallback', () => {
+  it('prefers configured Slack channel over env fallback', () => {
     const previous = process.env.SLACK_APPROVAL_CHANNEL;
     process.env.SLACK_APPROVAL_CHANNEL = 'C_ENV';
     try {
-      expect(__testing.resolveSlackChannelId({ channelId: 'C_ROUTE' })).toBe('C_ROUTE');
-      expect(__testing.resolveSlackChannelId({})).toBe('C_ENV');
+      expect(__testing.resolveSlackChannelId({ events: ['completion'], channelId: 'C_CONFIG' })).toBe('C_CONFIG');
+      expect(__testing.resolveSlackChannelId({ events: ['completion'] })).toBe('C_ENV');
     } finally {
       if (previous === undefined) {
         delete process.env.SLACK_APPROVAL_CHANNEL;
@@ -178,7 +153,7 @@ describe('run notifications', () => {
   it('renders compact completion cards without the final answer', () => {
     const blocks = __testing.buildRunRootBlocks({
       event: 'completion',
-      agent: agentWithRoutes([]),
+      agent: agentWithSlack(),
       sessionId: 'session-1',
       result: {
         status: 'completed',
@@ -205,12 +180,12 @@ describe('run notifications', () => {
   it('renders running and suspended live run cards', () => {
     const running = __testing.buildRunRootBlocks({
       lifecycleStatus: 'running',
-      agent: agentWithRoutes([]),
+      agent: agentWithSlack(),
       sessionId: 'session-1'
     });
     const suspended = __testing.buildRunRootBlocks({
       lifecycleStatus: 'suspended',
-      agent: agentWithRoutes([]),
+      agent: agentWithSlack(),
       sessionId: 'session-1',
       result: {
         status: 'suspended',
@@ -233,8 +208,8 @@ describe('run notifications', () => {
   it('renders completion thread messages with full answer and run details', () => {
     const messages = __testing.buildRunThreadMessages({
       event: 'completion',
-      agent: agentWithRoutes([]),
-      agentFilePath: '/tmp/notify.agentuse',
+      agent: agentWithSlack(),
+      agentFilePath: '/tmp/channel.agentuse',
       sessionId: 'session-1',
       result: {
         status: 'completed',
@@ -255,13 +230,13 @@ describe('run notifications', () => {
     expect(text).toContain('The launch announcement is ready.');
     expect(text).toContain('Tool calls: 3');
     expect(text).toContain('Tokens: 30');
-    expect(text).toContain('/tmp/notify.agentuse');
+    expect(text).toContain('/tmp/channel.agentuse');
   });
 
   it('renders compact failure cards without the error message', () => {
     const blocks = __testing.buildRunRootBlocks({
       event: 'failure',
-      agent: agentWithRoutes([]),
+      agent: agentWithSlack(),
       sessionId: 'session-1',
       error: new Error('Publish failed')
     });
@@ -276,8 +251,8 @@ describe('run notifications', () => {
   it('renders failure thread messages with error and run details', () => {
     const messages = __testing.buildRunThreadMessages({
       event: 'failure',
-      agent: agentWithRoutes([]),
-      agentFilePath: '/tmp/notify.agentuse',
+      agent: agentWithSlack(),
+      agentFilePath: '/tmp/channel.agentuse',
       sessionId: 'session-1',
       error: new Error('Publish failed')
     });
@@ -287,6 +262,6 @@ describe('run notifications', () => {
     expect(text).toContain('Error');
     expect(text).toContain('Publish failed');
     expect(text).toContain('Status: failed');
-    expect(text).toContain('/tmp/notify.agentuse');
+    expect(text).toContain('/tmp/channel.agentuse');
   });
 });

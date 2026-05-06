@@ -152,18 +152,15 @@ Test agent`;
   });
 
   describe('Other agent config fields', () => {
-    it('parses minimal approval configuration with notifications', () => {
+    it('parses minimal approval configuration with channels', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0
 approval:
   timeout: 24h
-notifications:
-  routes:
-    - name: approval-review
-      on: [approval, completion]
-      to:
-        slack:
-          channel_id: C0123456789
+channels:
+  slack:
+    events: [approval, completion]
+    channel_id: C0123456789
 ---
 
 Write a draft.`;
@@ -173,58 +170,64 @@ Write a draft.`;
       expect(agent.config.approval).toMatchObject({
         timeout: '24h'
       });
-      expect(agent.config.notifications).toMatchObject({
-        routes: [
-          {
-            name: 'approval-review',
-            on: ['approval', 'completion'],
-            to: {
-              slack: {
-                channel_id: 'C0123456789'
-              }
-            }
-          }
-        ]
+      expect(agent.config.channels).toMatchObject({
+        slack: {
+          enabled: true,
+          events: ['approval', 'completion'],
+          channelId: 'C0123456789'
+        }
       });
       expect(agent.instructions).toBe('Write a draft.');
     });
 
-    it('normalizes shorthand notification routes', () => {
+    it('normalizes shorthand channel list and boolean config', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0
 approval: true
-notifications:
-  routes:
-    - on: approval
-      to: slack
-    - on: [approval]
-      to:
-        slack:
+channels: [slack]
 ---
 
 Write a draft.`;
 
       const agent = parseAgentContent(content, 'test');
 
-      expect(agent.config.notifications?.routes).toEqual([
-        {
-          on: ['approval'],
-          to: { slack: {} }
-        },
-        {
-          on: ['approval'],
-          to: { slack: {} }
-        }
-      ]);
+      expect(agent.config.channels?.slack).toEqual({
+        enabled: true,
+        events: ['approval', 'completion', 'failure']
+      });
+
+      const boolAgent = parseAgentContent(`---
+model: anthropic:claude-sonnet-4-0
+channels:
+  slack: true
+---
+
+Write a draft.`, 'test');
+
+      expect(boolAgent.config.channels?.slack).toEqual({
+        enabled: true,
+        events: ['approval', 'completion', 'failure']
+      });
     });
 
-    it('rejects complete and completed notification aliases', () => {
+    it('rejects empty Slack channel config', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+channels:
+  slack:
+---
+
+Write a draft.`;
+
+      expect(() => parseAgentContent(content, 'test')).toThrow('Invalid agent configuration');
+    });
+
+    it('rejects complete and completed channel event aliases', () => {
       const complete = `---
 model: anthropic:claude-sonnet-4-0
-notifications:
-  routes:
-    - on: [complete]
-      to: slack
+channels:
+  slack:
+    events: [complete]
 ---
 
 Write a draft.`;
@@ -232,6 +235,20 @@ Write a draft.`;
 
       expect(() => parseAgentContent(complete, 'test')).toThrow('Invalid agent configuration');
       expect(() => parseAgentContent(completed, 'test')).toThrow('Invalid agent configuration');
+    });
+
+    it('rejects removed notifications config', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+notifications:
+  routes:
+    - on: [approval]
+      to: slack
+---
+
+Write a draft.`;
+
+      expect(() => parseAgentContent(content, 'test')).toThrow('has been replaced by "channels"');
     });
 
     it('rejects removed approval delivery fields', () => {

@@ -894,7 +894,7 @@ async function runInternalWorker() {
     toolResult?: unknown;
     resumeToken?: string;
     allowHistorical?: boolean;
-    runNotificationHandles?: Array<{ channel: string; ts: string; channelId?: string; name?: string }>;
+    runChannelHandles?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
   }
 
   interface ExpiredApproval {
@@ -904,7 +904,7 @@ async function runInternalWorker() {
     prompt?: string;
     expiresAt: number;
     suspendedAt?: number;
-    notification?: { type?: string; channel?: string; ts?: string; url?: string };
+    channelMessage?: { type?: string; channel?: string; ts?: string; url?: string };
   }
 
   type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
@@ -944,9 +944,9 @@ async function runInternalWorker() {
     decisionReviewer?: string;
     resumeToken?: string;
     errorMessage?: string;
-    notification?: { type?: string; channel?: string; ts?: string; url?: string };
-    notifications?: {
-      slack?: Array<{ channel: string; ts: string; channelId?: string; name?: string }>;
+    channelMessage?: { type?: string; channel?: string; ts?: string; url?: string };
+    channels?: {
+      slack?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
     };
   }
 
@@ -1248,11 +1248,11 @@ async function runInternalWorker() {
         };
       }
 
-      const notification = valueAsRecord(resumePayload.notification);
+      const channelMessage = valueAsRecord(resumePayload.channelMessage);
       const approvalUrl = typeof resumePayload.approvalUrl === 'string'
         ? resumePayload.approvalUrl
-        : typeof notification.url === 'string'
-          ? notification.url
+        : typeof channelMessage.url === 'string'
+          ? channelMessage.url
           : undefined;
       return {
         id: req.id,
@@ -1273,12 +1273,12 @@ async function runInternalWorker() {
           ...(typeof input.artifact_url === 'string' && { artifactUrl: input.artifact_url }),
           ...(typeof input.context === 'string' && { context: input.context }),
           ...(typeof input.risk === 'string' && { risk: input.risk }),
-          ...(typeof resumePayload.channel === 'string' && { channel: resumePayload.channel }),
+          ...(typeof resumePayload.surface === 'string' && { surface: resumePayload.surface }),
           ...(approvalUrl && { approvalUrl }),
           ...(state.status === 'pending' && expectedToken && { currentResumeToken: expectedToken }),
           ...(typeof resumePayload.expiresAt === 'number' && { expiresAt: resumePayload.expiresAt }),
           ...(typeof state.suspendedAt === 'number' && { suspendedAt: state.suspendedAt }),
-          ...(Object.keys(notification).length > 0 && { notification }),
+          ...(Object.keys(channelMessage).length > 0 && { channelMessage }),
           ...(state.status === 'completed' && { decision: state.output }),
           logs
         },
@@ -1332,7 +1332,7 @@ async function runInternalWorker() {
         }).catch(() => {});
 
         const input = valueAsRecord(state.input);
-        const notification = valueAsRecord(resumePayload?.notification);
+        const channelMessage = valueAsRecord(resumePayload?.channelMessage);
         expired.push({
           sessionId: session.id,
           agentId,
@@ -1340,15 +1340,15 @@ async function runInternalWorker() {
           ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
           expiresAt,
           ...(typeof state.suspendedAt === 'number' && { suspendedAt: state.suspendedAt }),
-          ...(Object.keys(notification).length > 0 && {
-            notification: {
-              ...(typeof notification.type === 'string' && { type: notification.type }),
-              ...(typeof notification.channel === 'string' && { channel: notification.channel }),
-              ...(typeof notification.ts === 'string' && { ts: notification.ts }),
-              ...(typeof notification.url === 'string' && { url: notification.url })
+          ...(Object.keys(channelMessage).length > 0 && {
+            channelMessage: {
+              ...(typeof channelMessage.type === 'string' && { type: channelMessage.type }),
+              ...(typeof channelMessage.channel === 'string' && { channel: channelMessage.channel }),
+              ...(typeof channelMessage.ts === 'string' && { ts: channelMessage.ts }),
+              ...(typeof channelMessage.url === 'string' && { url: channelMessage.url })
             }
           }),
-          ...(session.notifications && { notifications: session.notifications })
+          ...(session.channels && { channels: session.channels })
         });
       }
 
@@ -1390,7 +1390,7 @@ async function runInternalWorker() {
         const resumePayload = state.status === 'pending'
           ? valueAsRecord(state.resumePayload)
           : valueAsRecord(metadata.resumePayload);
-        const notification = valueAsRecord(resumePayload.notification);
+        const channelMessage = valueAsRecord(resumePayload.channelMessage);
         const output = valueAsRecord(state.output);
         const reviewer = valueAsRecord(output.reviewer);
 
@@ -1442,14 +1442,15 @@ async function runInternalWorker() {
           ...(typeof reviewer.username === 'string' && { decisionReviewer: reviewer.username }),
           ...(typeof resumePayload.resumeToken === 'string' && { resumeToken: resumePayload.resumeToken }),
           ...(errorMessage && { errorMessage }),
-          ...(Object.keys(notification).length > 0 && {
-            notification: {
-              ...(typeof notification.type === 'string' && { type: notification.type }),
-              ...(typeof notification.channel === 'string' && { channel: notification.channel }),
-              ...(typeof notification.ts === 'string' && { ts: notification.ts }),
-              ...(typeof notification.url === 'string' && { url: notification.url })
+          ...(Object.keys(channelMessage).length > 0 && {
+            channelMessage: {
+              ...(typeof channelMessage.type === 'string' && { type: channelMessage.type }),
+              ...(typeof channelMessage.channel === 'string' && { channel: channelMessage.channel }),
+              ...(typeof channelMessage.ts === 'string' && { ts: channelMessage.ts }),
+              ...(typeof channelMessage.url === 'string' && { url: channelMessage.url })
             }
-          })
+          }),
+          ...(session.channels && { channels: session.channels })
         });
       }
 
@@ -1656,7 +1657,7 @@ async function runInternalWorker() {
           pluginManager,
           true,
           existingSessionId,
-          req.runNotificationHandles,
+          req.runChannelHandles,
           req.type === 'continue-session' ? req.prompt : undefined
         );
 

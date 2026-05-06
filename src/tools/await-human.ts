@@ -69,15 +69,15 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       const projectId = process.env.AGENTUSE_PROJECT_ID;
       const approvalUrl = getApprovalUrl(sessionId, resumeToken, projectId, defaults?.projectRoot);
 
-      let notificationRequest: { type: 'slack-message'; channel: string } | undefined;
+      let channelRequest: { type: 'slack-message'; channel: string } | undefined;
       if (defaults?.slack) {
         const botToken = process.env.SLACK_BOT_TOKEN;
         const slackChannelId = defaults.slack.channelId ?? process.env.SLACK_APPROVAL_CHANNEL;
         if (!botToken || !slackChannelId || !approvalUrl) {
-          throw new Error('Slack approval notifications require SLACK_BOT_TOKEN, notifications.routes[].to.slack.channel_id or SLACK_APPROVAL_CHANNEL, and a session id');
+          throw new Error('Slack approval channels require SLACK_BOT_TOKEN, channels.slack.channel_id or SLACK_APPROVAL_CHANNEL, and a session id');
         }
 
-        notificationRequest = {
+        channelRequest = {
           type: 'slack-message',
           channel: slackChannelId
         };
@@ -86,11 +86,11 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       throw new SuspendSignal({
         kind: 'await_human',
         prompt,
-        channel: 'web',
+        surface: 'web',
         ...(expiresAt !== undefined && { expiresAt }),
         resumeToken,
         ...(approvalUrl && { approvalUrl }),
-        ...(notificationRequest ? { notificationRequest } : {})
+        ...(channelRequest ? { channelRequest } : {})
       });
     }
   };
