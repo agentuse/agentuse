@@ -131,8 +131,8 @@ export class PathValidator {
 
   constructor(configs: FilesystemPathConfig[], context: PathResolverContext) {
     this.configs = configs;
-    this.projectRoot = context.projectRoot;
-    this.agentDir = context.agentDir;
+    this.projectRoot = resolveRealPath(context.projectRoot);
+    this.agentDir = context.agentDir ? resolveRealPath(context.agentDir) : undefined;
     this.tmpDir = resolveRealPath(context.tmpDir ?? os.tmpdir());
   }
 
@@ -151,7 +151,15 @@ export class PathValidator {
       result = result.replace(/\$\{agentDir\}/g, this.agentDir);
     }
 
-    return result;
+    if (result.includes('${')) {
+      return path.normalize(result);
+    }
+
+    if (!path.isAbsolute(result)) {
+      result = path.resolve(this.projectRoot, result);
+    }
+
+    return path.normalize(result);
   }
 
   /**

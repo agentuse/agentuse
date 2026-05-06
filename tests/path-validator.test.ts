@@ -732,6 +732,46 @@ describe('PathValidator - Concurrent Access', () => {
   });
 });
 
+describe('PathValidator relative project paths', () => {
+  it('allows absolute writes under a configured relative directory', () => {
+    const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agentuse-path-root-')));
+    try {
+      fs.mkdirSync(path.join(projectRoot, 'outreach', 'prospects', 'zaymo'), { recursive: true });
+      const validator = new PathValidator([
+        { path: './outreach', permissions: ['read', 'write', 'edit'] },
+      ], { projectRoot });
+
+      const result = validator.validate(
+        path.join(projectRoot, 'outreach', 'prospects', 'zaymo', 'connect-note.md'),
+        'write'
+      );
+
+      expect(result.allowed).toBe(true);
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('allows absolute writes under a configured relative tmp directory for new files', () => {
+    const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agentuse-path-root-')));
+    try {
+      fs.mkdirSync(path.join(projectRoot, 'tmp'), { recursive: true });
+      const validator = new PathValidator([
+        { path: './tmp', permissions: ['read', 'write', 'edit'] },
+      ], { projectRoot });
+
+      const result = validator.validate(
+        path.join(projectRoot, 'tmp', 'connect-note-zaymo.md'),
+        'write'
+      );
+
+      expect(result.allowed).toBe(true);
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('resolveSafeVariables', () => {
   const projectRoot = '/test/project';
   const agentDir = '/test/project/agents';
