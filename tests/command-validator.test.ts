@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { CommandValidator } from '../src/tools/command-validator';
+import { CommandValidator, getBuiltinPayloadCommandInvocation } from '../src/tools/command-validator';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'node:fs';
@@ -275,6 +275,82 @@ describe('CommandValidator', () => {
   });
 
   describe('Edge cases', () => {
+    test('allows agent-browser eval payloads with JavaScript syntax as one built-in payload command', async () => {
+      const validator = new CommandValidator(['agent-browser eval *'], projectRoot);
+
+      const result = await validator.validate('agent-browser eval Array.from(document.querySelectorAll(\'a[href*="/in/"]\')).map(a=>({text:a.innerText,href:a.href})).slice(0,20)');
+
+      expect(result.allowed).toBe(true);
+      expect(result.matchedPattern).toBe('agent-browser eval *');
+    });
+
+    test('does not treat agent-browser eval as payload command unless explicitly allowlisted', async () => {
+      const validator = new CommandValidator(['agent-browser snapshot'], projectRoot);
+
+      const result = await validator.validate('agent-browser eval Array.from(document.querySelectorAll(\'a[href*="/in/"]\'))');
+
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('not in allowlist');
+    });
+
+    test('rejects shell pipelines after agent-browser eval payloads', async () => {
+      const validator = new CommandValidator(['agent-browser eval *'], projectRoot);
+
+      const result = await validator.validate('agent-browser eval "echo(\'hello\')" | rm -rf .');
+
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('shell pipeline');
+    });
+
+    test('rejects shell command chains after agent-browser eval payloads', async () => {
+      const validator = new CommandValidator(['agent-browser eval *'], projectRoot);
+
+      const result = await validator.validate('agent-browser eval "x" && curl example.com');
+
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('shell command chain');
+    });
+
+    test('builds direct argv for built-in payload commands', () => {
+      const invocation = getBuiltinPayloadCommandInvocation(
+        'agent-browser eval "document.querySelectorAll(\\"a\\").length"',
+        ['agent-browser eval *']
+      );
+
+      expect(invocation).toEqual({
+        command: 'agent-browser',
+        args: ['eval', 'document.querySelectorAll("a").length'],
+        matchedPattern: 'agent-browser eval *',
+      });
+    });
+
+    test('blocks cat output redirection that waits for stdin', async () => {
+      const validator = new CommandValidator(['cat *'], projectRoot);
+
+      const result = await validator.validate('cat > outreach/prospects/zaymo/connect-note.md');
+
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('waits for stdin');
+      expect(result.error).toContain('filesystem write tool');
+    });
+
+    test('blocks tee without piped input because it waits for stdin', async () => {
+      const validator = new CommandValidator(['tee *'], projectRoot);
+
+      const result = await validator.validate('tee outreach/prospects/zaymo/connect-note.md');
+
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('waits for stdin');
+    });
+
+    test('allows tee when explicit input is piped in', async () => {
+      const validator = new CommandValidator(['echo *', 'tee *'], projectRoot);
+
+      const result = await validator.validate('echo hello | tee tmp/hello.txt');
+
+      expect(result.allowed).toBe(true);
+    });
+
     test('handles empty commands', async () => {
       const validator = new CommandValidator(['*'], projectRoot);
 

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { spawn } from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
-import { CommandValidator } from './command-validator.js';
+import { CommandValidator, getBuiltinPayloadCommandInvocation } from './command-validator.js';
 import type { BashConfig, ToolOutput, ToolErrorOutput } from './types.js';
 import { resolveRealPath, type PathResolverContext } from './path-validator.js';
 import { logger } from '../utils/logger.js';
@@ -280,13 +280,23 @@ Commands not matching these patterns will be rejected.`;
         let stdoutTruncated = false;
         let stderrTruncated = false;
 
-        // Spawn the command with sanitized environment
-        const child = spawn(command, {
-          shell: true,
-          cwd,
-          detached: true, // Create new process group for cleanup
-          env: createSafeEnvironment(cwd),
-        });
+        const payloadInvocation = getBuiltinPayloadCommandInvocation(command, config.commands);
+
+        // Spawn built-in payload commands without a shell so embedded languages
+        // like JavaScript are passed as data, not re-parsed as shell syntax.
+        const child = payloadInvocation && !payloadInvocation.matchedPattern.startsWith('blocked:')
+          ? spawn(payloadInvocation.command, payloadInvocation.args, {
+            shell: false,
+            cwd,
+            detached: true, // Create new process group for cleanup
+            env: createSafeEnvironment(cwd),
+          })
+          : spawn(command, {
+            shell: true,
+            cwd,
+            detached: true, // Create new process group for cleanup
+            env: createSafeEnvironment(cwd),
+          });
 
         // Set up timeout
         const timeoutHandle = setTimeout(async () => {

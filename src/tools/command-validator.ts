@@ -66,6 +66,130 @@ const BUILTIN_DENYLIST: Record<string, boolean> = {
   'cat /etc/shadow': true,
 };
 
+interface BuiltinPayloadCommand {
+  pattern: string;
+  prefix: string[];
+}
+
+export interface PayloadCommandInvocation {
+  command: string;
+  args: string[];
+  matchedPattern: string;
+}
+
+const BUILTIN_PAYLOAD_COMMANDS: BuiltinPayloadCommand[] = [
+  {
+    pattern: 'agent-browser eval *',
+    prefix: ['agent-browser', 'eval'],
+  },
+];
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stripOuterShellQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) return trimmed;
+
+  const quote = trimmed[0];
+  if ((quote !== '"' && quote !== "'") || trimmed[trimmed.length - 1] !== quote) {
+    return trimmed;
+  }
+
+  const inner = trimmed.slice(1, -1);
+  if (quote === "'") return inner;
+
+  return inner
+    .replace(/\\(["\\$`])/g, '$1')
+    .replace(/\\n/g, '\n');
+}
+
+function unsafeShellSyntaxInPayload(payload: string): string | undefined {
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+
+  for (let i = 0; i < payload.length; i += 1) {
+    const char = payload[i];
+    const next = payload[i + 1];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      if (char === quote) quote = null;
+      if (quote !== "'" && char === '$' && next === '(') {
+        return 'command substitution';
+      }
+      if (quote !== "'" && char === '`') {
+        return 'command substitution';
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (char === ';' || char === '\n') return 'command separator';
+    if (char === '|') return 'pipeline';
+    if (char === '&') return 'command chain';
+    if (char === '$' && next === '(') return 'command substitution';
+    if (char === '`') return 'command substitution';
+    if (
+      (char === '>' || char === '<') &&
+      /\s/.test(payload[i - 1] ?? ' ') &&
+      /\s/.test(next ?? ' ')
+    ) {
+      return 'redirection';
+    }
+  }
+
+  return undefined;
+}
+
+export function getBuiltinPayloadCommandInvocation(
+  command: string,
+  allowedPatterns: Iterable<string>
+): PayloadCommandInvocation | undefined {
+  const allowed = new Set(allowedPatterns);
+  const normalized = command.trim();
+
+  for (const payloadCommand of BUILTIN_PAYLOAD_COMMANDS) {
+    if (!allowed.has(payloadCommand.pattern)) continue;
+
+    const prefixPattern = payloadCommand.prefix.map(escapeRegex).join('\\s+');
+    const match = normalized.match(new RegExp(`^${prefixPattern}(?:\\s+([\\s\\S]*))?$`));
+    if (!match) continue;
+
+    const payload = match[1]?.trim() ?? '';
+    const unsafe = unsafeShellSyntaxInPayload(payload);
+    if (unsafe) {
+      return {
+        command: '',
+        args: [],
+        matchedPattern: `blocked:${unsafe}`,
+      };
+    }
+
+    return {
+      command: payloadCommand.prefix[0],
+      args: [...payloadCommand.prefix.slice(1), stripOuterShellQuotes(payload)],
+      matchedPattern: payloadCommand.pattern,
+    };
+  }
+
+  return undefined;
+}
+
 export class CommandValidator {
   private readonly allowedPatterns: Record<string, 'allow' | 'deny'>;
   private readonly projectRoot: string | null;
@@ -309,6 +433,25 @@ export class CommandValidator {
   }
 
   /**
+   * Block commands that wait for stdin in non-interactive agent runs.
+   */
+  private checkInteractiveStdinCommand(command: string): string | null {
+    if (/^\s*cat\s*(?:>|>>)\s*\S+/i.test(command)) {
+      return 'Command waits for stdin and will hang: "cat > ...". Use the filesystem write tool instead.';
+    }
+
+    if (/^\s*tee\s+\S+/i.test(command)) {
+      return 'Command waits for stdin and will hang: "tee ...". Use the filesystem write tool instead, or pipe explicit input into tee.';
+    }
+
+    if (/^\s*read(?:\s|$)/i.test(command)) {
+      return 'Command waits for stdin and will hang: "read". Use a non-interactive command instead.';
+    }
+
+    return null;
+  }
+
+  /**
    * Validate a command (handles compound commands)
    */
   async validate(command: string): Promise<CommandValidationResult> {
@@ -316,6 +459,26 @@ export class CommandValidator {
 
     if (!normalizedCommand) {
       return { allowed: false, error: 'Empty command' };
+    }
+
+    const interactiveError = this.checkInteractiveStdinCommand(normalizedCommand);
+    if (interactiveError) {
+      return { allowed: false, error: interactiveError };
+    }
+
+    const payloadInvocation = getBuiltinPayloadCommandInvocation(
+      normalizedCommand,
+      Object.keys(this.allowedPatterns).filter((pattern) => this.allowedPatterns[pattern] === 'allow')
+    );
+    if (payloadInvocation?.matchedPattern.startsWith('blocked:')) {
+      const reason = payloadInvocation.matchedPattern.slice('blocked:'.length);
+      return {
+        allowed: false,
+        error: `Payload command contains shell ${reason}. Quote the payload or remove shell operators.`,
+      };
+    }
+    if (payloadInvocation) {
+      return { allowed: true, matchedPattern: payloadInvocation.matchedPattern };
     }
 
     // Parse command using tree-sitter
