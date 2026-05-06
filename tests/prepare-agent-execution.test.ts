@@ -280,7 +280,8 @@ describe('prepareAgentExecution', () => {
       expect(result.userMessage).toContain('## Approval Gate');
       expect(result.userMessage).toContain('call the `await_human` tool');
       expect(result.userMessage).toContain('expires after 24h');
-      expect(result.userMessage).toContain('comment: use the reviewer comment');
+      expect(result.userMessage).toContain('comment: treat the reviewer comment as feedback, not approval');
+      expect(result.userMessage).toContain('call `await_human` again');
     });
 
     it('routes Slack approval channels through channels config', () => {
