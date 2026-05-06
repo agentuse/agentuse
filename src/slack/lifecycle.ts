@@ -49,20 +49,26 @@ export async function postSlackThreadMessages(
   options?: {
     logPrefix?: string;
   }
-): Promise<void> {
+): Promise<Array<SlackPostedMessage | undefined>> {
+  const posted: Array<SlackPostedMessage | undefined> = [];
   for (const message of messages) {
     try {
-      await web.chat.postMessage({
+      const response = await web.chat.postMessage({
         channel: channelId,
         thread_ts: threadTs,
         text: message.text,
         ...(message.blocks && { blocks: message.blocks })
       });
+      const channel = typeof response.channel === 'string' ? response.channel : channelId;
+      const ts = typeof response.ts === 'string' ? response.ts : undefined;
+      posted.push(ts ? { channel, ts } : undefined);
     } catch (err) {
       const prefix = options?.logPrefix ?? 'Slack thread message';
       logger.warn(`${prefix} failed: ${(err as Error).message}`);
+      posted.push(undefined);
     }
   }
+  return posted;
 }
 
 export async function setSlackThreadStatus(

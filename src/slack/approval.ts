@@ -30,6 +30,7 @@ export interface SlackApprovalRequest {
 export interface SlackApprovalMessage {
   channel: string;
   ts: string;
+  actionTs?: string;
 }
 
 export interface SlackApprovalDecision {
@@ -299,6 +300,16 @@ function buildActionThreadMessage(request: SlackApprovalRequest & { rootChannelI
   };
 }
 
+function isActionThreadMessage(message: { blocks?: any[] }): boolean {
+  return message.blocks?.some((block: any) =>
+    block?.type === 'actions' &&
+    Array.isArray(block.elements) &&
+    block.elements.some((element: any) =>
+      typeof element?.action_id === 'string' && element.action_id.startsWith(ACTION_ID_PREFIX)
+    )
+  ) ?? false;
+}
+
 function sectionBlock(title: string, value: string, maxLength: number): any {
   return {
     type: 'section',
@@ -508,38 +519,48 @@ export async function sendSlackApprovalRequest(request: SlackApprovalRequest): P
     blocks: buildReviewLinkBlocks(request)
   });
 
-  await postSlackThreadMessages(
+  const threadMessages = buildApprovalThreadMessages({
+    ...request,
+    rootChannelId: message.channel,
+    rootMessageTs: message.ts
+  });
+  const posted = await postSlackThreadMessages(
     web,
     message.channel,
     message.ts,
-    buildApprovalThreadMessages({
-      ...request,
-      rootChannelId: message.channel,
-      rootMessageTs: message.ts
-    }),
+    threadMessages,
     { logPrefix: 'Slack approval detail thread message' }
   );
 
-  return message;
+  const actionIndex = threadMessages.findIndex(isActionThreadMessage);
+  return {
+    ...message,
+    ...(actionIndex >= 0 && posted[actionIndex]?.ts && { actionTs: posted[actionIndex]!.ts })
+  };
 }
 
 export async function sendSlackApprovalRequestToThread(
   request: SlackApprovalRequest,
   root: SlackApprovalMessage
 ): Promise<SlackApprovalMessage> {
-  await postSlackThreadMessages(
+  const threadMessages = buildApprovalThreadMessages({
+    ...request,
+    rootChannelId: root.channel,
+    rootMessageTs: root.ts
+  });
+  const posted = await postSlackThreadMessages(
     new WebClient(request.botToken),
     root.channel,
     root.ts,
-    buildApprovalThreadMessages({
-      ...request,
-      rootChannelId: root.channel,
-      rootMessageTs: root.ts
-    }),
+    threadMessages,
     { logPrefix: 'Slack approval detail thread message' }
   );
 
-  return root;
+  const actionIndex = threadMessages.findIndex(isActionThreadMessage);
+  return {
+    ...root,
+    ...(actionIndex >= 0 && posted[actionIndex]?.ts && { actionTs: posted[actionIndex]!.ts })
+  };
 }
 
 export async function updateSlackApprovalRequestStatus(options: {
@@ -550,6 +571,7 @@ export async function updateSlackApprovalRequestStatus(options: {
   sessionId?: string;
   projectId?: string;
   approvalUrl?: string;
+  actionTs?: string;
   expiresAt?: string;
   status: 'waiting' | 'resuming' | 'completed' | 'failed';
   decision?: string;
@@ -575,6 +597,14 @@ export async function updateSlackApprovalRequestStatus(options: {
     void bestEffortSlackThreadStatus(web, options.channelId, options.ts, 'is working...');
   } else {
     void bestEffortClearSlackThreadStatus(web, options.channelId, options.ts);
+  }
+  if (options.actionTs && options.decision) {
+    await updateSlackRootMessage(web, {
+      channel: options.channelId,
+      ts: options.actionTs,
+      text: `AgentUse approval received: ${options.decision}`,
+      blocks: resolvedBlocks(options.decision, { username: 'web' })
+    });
   }
 }
 
@@ -638,7 +668,7 @@ function statusLabel(status: string): string {
 }
 
 function resolvedBlocks(status: string, reviewer?: SlackApprovalDecision['toolResult']['reviewer'], comment?: string): any[] {
-  const who = reviewer?.id ? `<@${reviewer.id}>` : 'A reviewer';
+  const who = reviewer?.id ? `<@${reviewer.id}>` : reviewer?.username ?? 'A reviewer';
   const commentText = comment ? `\n>${truncate(comment, 1500)}` : '';
   return [
     {

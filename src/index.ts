@@ -904,7 +904,7 @@ async function runInternalWorker() {
     prompt?: string;
     expiresAt: number;
     suspendedAt?: number;
-    channelMessage?: { type?: string; channel?: string; ts?: string; url?: string };
+    channelMessage?: { type?: string; channel?: string; ts?: string; actionTs?: string; url?: string };
   }
 
   type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
@@ -944,7 +944,7 @@ async function runInternalWorker() {
     decisionReviewer?: string;
     resumeToken?: string;
     errorMessage?: string;
-    channelMessage?: { type?: string; channel?: string; ts?: string; url?: string };
+    channelMessage?: { type?: string; channel?: string; ts?: string; actionTs?: string; url?: string };
     channels?: {
       slack?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
     };
@@ -1345,6 +1345,7 @@ async function runInternalWorker() {
               ...(typeof channelMessage.type === 'string' && { type: channelMessage.type }),
               ...(typeof channelMessage.channel === 'string' && { channel: channelMessage.channel }),
               ...(typeof channelMessage.ts === 'string' && { ts: channelMessage.ts }),
+              ...(typeof channelMessage.actionTs === 'string' && { actionTs: channelMessage.actionTs }),
               ...(typeof channelMessage.url === 'string' && { url: channelMessage.url })
             }
           }),
@@ -1447,6 +1448,7 @@ async function runInternalWorker() {
               ...(typeof channelMessage.type === 'string' && { type: channelMessage.type }),
               ...(typeof channelMessage.channel === 'string' && { channel: channelMessage.channel }),
               ...(typeof channelMessage.ts === 'string' && { ts: channelMessage.ts }),
+              ...(typeof channelMessage.actionTs === 'string' && { actionTs: channelMessage.actionTs }),
               ...(typeof channelMessage.url === 'string' && { url: channelMessage.url })
             }
           }),

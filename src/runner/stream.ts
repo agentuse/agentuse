@@ -59,7 +59,7 @@ async function sendPersistedSlackApproval(options: {
   expiresAt?: number;
   channelRequest?: unknown;
   slackRunChannelHandles?: SlackRunChannelHandle[];
-}): Promise<{ type: 'slack-message'; channel: string; ts: string; url: string } | undefined> {
+}): Promise<{ type: 'slack-message'; channel: string; ts: string; actionTs?: string; url: string } | undefined> {
   const request = options.channelRequest && typeof options.channelRequest === 'object'
     ? options.channelRequest as Record<string, unknown>
     : undefined;
@@ -104,6 +104,7 @@ async function sendPersistedSlackApproval(options: {
       type: 'slack-message',
       channel: message.channel,
       ts: message.ts,
+      ...(message.actionTs && { actionTs: message.actionTs }),
       url: options.approvalUrl
     };
   } catch (err) {

@@ -120,7 +120,7 @@ interface ExpiredApproval {
   prompt?: string;
   expiresAt: number;
   suspendedAt?: number;
-  channelMessage?: { type?: string; channel?: string; ts?: string; url?: string };
+  channelMessage?: { type?: string; channel?: string; ts?: string; actionTs?: string; url?: string };
 }
 
 interface WorkerSweepExpiredResult {
@@ -150,7 +150,7 @@ interface ApprovalSummary {
   decisionReviewer?: string;
   resumeToken?: string;
   errorMessage?: string;
-  channelMessage?: { type?: string; channel?: string; ts?: string; url?: string };
+  channelMessage?: { type?: string; channel?: string; ts?: string; actionTs?: string; url?: string };
   channels?: {
     slack?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
   };
@@ -186,6 +186,7 @@ interface ApprovalPageInfo {
     type?: string;
     channel?: string;
     ts?: string;
+    actionTs?: string;
     url?: string;
   };
   decision?: unknown;
@@ -3230,6 +3231,7 @@ export function createServeCommand(): Command {
           botToken: slackBotToken,
           channelId: approval.channelMessage.channel,
           ts: approval.channelMessage.ts,
+          ...(approval.channelMessage.actionTs && { actionTs: approval.channelMessage.actionTs }),
           prompt: approval.prompt,
           sessionId: approval.sessionId,
           projectId: project.id,
@@ -3538,6 +3540,7 @@ export function createServeCommand(): Command {
                   botToken: slackBotToken,
                   channelId: item.channelMessage.channel,
                   ts: item.channelMessage.ts,
+                  ...(item.channelMessage.actionTs && { actionTs: item.channelMessage.actionTs }),
                   prompt: item.prompt,
                   sessionId: item.sessionId,
                   projectId: project.id,
@@ -3961,6 +3964,7 @@ export function createServeCommand(): Command {
               ? {
                 channelId: info.approval.channelMessage.channel,
                 ts: info.approval.channelMessage.ts,
+                actionTs: info.approval.channelMessage.actionTs,
                 approvalUrl: info.approval.channelMessage.url
               }
               : undefined;
@@ -3969,6 +3973,7 @@ export function createServeCommand(): Command {
                 botToken: slackBotToken!,
                 channelId: slackChannelMessage.channelId,
                 ts: slackChannelMessage.ts,
+                ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
                 prompt: info.approval.prompt,
                 sessionId,
                 projectId: project.id,
@@ -4003,6 +4008,7 @@ export function createServeCommand(): Command {
                     botToken: slackBotToken!,
                     channelId: slackChannelMessage.channelId,
                     ts: slackChannelMessage.ts,
+                    ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
                     prompt: info.approval.prompt,
                     sessionId,
                     projectId: project.id,
@@ -4020,6 +4026,7 @@ export function createServeCommand(): Command {
                     botToken: slackBotToken!,
                     channelId: slackChannelMessage.channelId,
                     ts: slackChannelMessage.ts,
+                    ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
                     prompt: info.approval.prompt,
                     sessionId,
                     projectId: project.id,

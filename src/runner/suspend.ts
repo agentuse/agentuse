@@ -7,6 +7,7 @@ export interface SuspendPayload {
     url?: string;
     channel?: string;
     ts?: string;
+    actionTs?: string;
   };
   channelRequest?: {
     type: 'slack-message';

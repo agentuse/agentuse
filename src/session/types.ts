@@ -185,6 +185,7 @@ export type ToolStatePending = {
     channelMessage?: {
       type: 'slack-message';
       ts?: string;
+      actionTs?: string;
       channel?: string;
       url?: string;
     };
