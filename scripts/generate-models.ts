@@ -42,7 +42,7 @@ const PROVIDER_MAPPINGS: Record<string, {
   // Anthropic models
   'anthropic': {
     ourProvider: 'anthropic',
-    filter: (id: string) => id.includes('claude') && /4-[56]/.test(id),
+    filter: (id: string) => id.includes('claude') && parseModelVersion(id) >= 4005 && parseModelVersion(id) < 5000,
     transform: (id: string) => id,
   },
   // OpenAI models
@@ -357,10 +357,50 @@ This page lists recommended models for AgentUse, organized by provider.
 - **Anthropic**: \`anthropic:${defaultAnthropic}\` (balanced performance)
 - **OpenAI**: \`openai:${defaultOpenai}\` (latest GPT)
 - **OpenRouter**: \`openrouter:${defaultOpenrouter}\` (open source)
+- **Amazon Bedrock**: \`bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0\`
 
 ## Recommended Models
 
 ${rows.join('\n')}
+
+### Amazon Bedrock
+
+Bedrock model IDs are passed through unchanged and are not validated against the static registry. Use any model ID supported by your AWS account and region.
+
+| Model ID (example) | Notes |
+|--------------------|-------|
+| \`bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0\` | Claude Sonnet 4.5 (US cross-region inference profile) |
+| \`bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0\` | Claude 3.5 Sonnet v2 |
+| \`bedrock:anthropic.claude-3-haiku-20240307-v1:0\` | Claude 3 Haiku |
+| \`bedrock:meta.llama3-70b-instruct-v1:0\` | Llama 3 70B Instruct |
+| \`bedrock:mistral.mistral-large-2402-v1:0\` | Mistral Large |
+| \`bedrock:us.amazon.nova-pro-v1:0\` | Amazon Nova Pro |
+
+See the [Amazon Bedrock model catalog](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list. Model availability depends on the AWS region and on the [model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) granted in your account.
+
+Authentication uses standard AWS environment variables (\`AWS_ACCESS_KEY_ID\` / \`AWS_SECRET_ACCESS_KEY\` / \`AWS_REGION\`, optional \`AWS_SESSION_TOKEN\`) or \`AWS_BEARER_TOKEN_BEDROCK\`. See the [Model Configuration guide](/guides/model-configuration#amazon-bedrock) for details.
+
+## Custom Providers (Local LLMs)
+
+In addition to the built-in providers above, you can connect any OpenAI-compatible endpoint as a custom provider:
+
+\`\`\`bash
+# Add Ollama
+agentuse provider add ollama --url http://localhost:11434/v1
+
+# Add LM Studio
+agentuse provider add lmstudio --url http://localhost:1234/v1
+\`\`\`
+
+Then use any model available on those endpoints:
+
+\`\`\`bash
+agentuse run agent.agentuse -m ollama:glm-4.7-flash:q4_K_M
+agentuse run agent.agentuse -m ollama:qwen3.5:0.8b
+agentuse run agent.agentuse -m lmstudio:qwen/qwen3.5-9b
+\`\`\`
+
+See [Model Configuration](/guides/model-configuration#custom-providers-local-llms) for full setup details.
 
 ## Usage
 
@@ -376,6 +416,7 @@ Or override via CLI:
 
 \`\`\`bash
 agentuse run agent.agentuse -m openai:${defaultOpenai}
+agentuse run agent.agentuse -m ollama:glm-4.7-flash:q4_K_M
 \`\`\`
 `;
 }

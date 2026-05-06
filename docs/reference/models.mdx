@@ -15,7 +15,7 @@ This page lists recommended models for AgentUse, organized by provider.
 
 **Default models:**
 - **Anthropic**: `anthropic:claude-sonnet-4-6` (balanced performance)
-- **OpenAI**: `openai:gpt-5.4` (latest GPT)
+- **OpenAI**: `openai:gpt-5.5` (latest GPT)
 - **OpenRouter**: `openrouter:z-ai/glm-4.7` (open source)
 - **Amazon Bedrock**: `bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0`
 
@@ -26,8 +26,8 @@ This page lists recommended models for AgentUse, organized by provider.
 
 | Model ID | Name | Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
-| `anthropic:claude-opus-4-6` | Claude Opus 4.6 | 200,000 | 128,000 | Reasoning, Vision, Tools |
-| `anthropic:claude-sonnet-4-6` | Claude Sonnet 4.6 | 200,000 | 64,000 | Reasoning, Vision, Tools |
+| `anthropic:claude-opus-4-7` | Claude Opus 4.7 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
+| `anthropic:claude-sonnet-4-6` | Claude Sonnet 4.6 | 1,000,000 | 64,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-haiku-4-5` | Claude Haiku 4.5 (latest) | 200,000 | 64,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-haiku-4-5-20251001` | Claude Haiku 4.5 | 200,000 | 64,000 | Reasoning, Vision, Tools |
 
@@ -35,9 +35,14 @@ This page lists recommended models for AgentUse, organized by provider.
 
 | Model ID | Name | Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
+| `openai:gpt-5.5` | GPT-5.5 | 1,050,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.5-pro` | GPT-5.5 Pro | 1,050,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.4` | GPT-5.4 | 1,050,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.4-pro` | GPT-5.4 Pro | 1,050,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.4-mini` | GPT-5.4 mini | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.4-nano` | GPT-5.4 nano | 400,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.3-codex` | GPT-5.3 Codex | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.3-chat-latest` | GPT-5.3 Chat (latest) | 128,000 | 16,384 | Vision, Tools |
 | `openai:gpt-5.3-codex-spark` | GPT-5.3 Codex Spark | 128,000 | 32,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.2` | GPT-5.2 | 400,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.2-pro` | GPT-5.2 Pro | 400,000 | 128,000 | Reasoning, Vision, Tools |
@@ -121,6 +126,6 @@ model: anthropic:claude-sonnet-4-6
 Or override via CLI:
 
 ```bash
-agentuse run agent.agentuse -m openai:gpt-5.4
+agentuse run agent.agentuse -m openai:gpt-5.5
 agentuse run agent.agentuse -m ollama:glm-4.7-flash:q4_K_M
 ```
