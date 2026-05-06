@@ -97,7 +97,7 @@ Good approval boundaries usually separate reversible preparation from external s
 
 ## Start the Server
 
-Start AgentUse:
+Start the AgentUse daemon:
 
 ```bash
 agentuse serve
@@ -115,7 +115,7 @@ If reviewers open approval links from another machine, start `serve` with a reac
 agentuse serve --public-url https://agentuse.mycompany.com
 ```
 
-When a local `agentuse serve` is already running for the project, AgentUse uses that server's registered port for approval links. Use `--public-url` when the reviewer needs a URL other than the local server address.
+AgentUse runs one serve daemon at a time. When the daemon is serving this project, approval links use its registered port. Use `--public-url` when reviewers need a URL other than the local server address.
 
 ## Optional Slack Channel
 

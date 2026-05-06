@@ -802,7 +802,7 @@ function renderStoresIndexPage(options: {
       ${rows ? `<table class="store-table">
         <thead><tr><th>Store</th><th>Items</th><th>Updated</th><th>Types</th><th>Status</th></tr></thead>
         <tbody>${rows}</tbody>
-      </table>` : '<div class="empty">No stores found for this serve instance.</div>'}
+      </table>` : '<div class="empty">No stores found for this serve daemon.</div>'}
     </div>
   </main>
   <script>${approvalsThemeToggleScript()}</script>
@@ -852,7 +852,7 @@ function renderStoreItemsPage(options: {
     <header>
       <div class="eyebrow">store table</div>
       <h1>${escapeHtml(options.storeName)}</h1>
-      <p class="lede">${allRows.length} item${allRows.length === 1 ? '' : 's'} visible in this serve instance.</p>
+      <p class="lede">${allRows.length} item${allRows.length === 1 ? '' : 's'} visible in this serve daemon.</p>
     </header>
     ${errors}
     <div class="panel">
@@ -2730,28 +2730,23 @@ export function createServeCommand(): Command {
         }
       }
 
-      // Check if any requested project root is already served
       const existingServers = listServers();
-      for (const p of projectSeeds) {
-        const clash = existingServers.find((s) => {
-          const servedRoots = s.projects && s.projects.length > 0
-            ? s.projects.flatMap((sp) => [sp.root, ...(sp.scopeRoot ? [sp.scopeRoot] : [])])
-            : [s.projectRoot];
-          return servedRoots.some((servedRoot) =>
-            servedRoot === p.root ||
-            servedRoot === p.scopeRoot ||
-            isPathInside(servedRoot, p.scopeRoot) ||
-            isPathInside(p.scopeRoot, servedRoot)
-          );
-        });
-        if (clash) {
-          console.error(chalk.red(`\nError: another serve is already using AgentUse data at ${join(p.root, '.agentuse')}.`));
-          console.error(chalk.dim(`\n  PID:   ${clash.pid}`));
-          console.error(chalk.dim(`  Port:  ${clash.port}`));
-          console.error(chalk.dim(`  Scope: ${p.scopeRoot}`));
-          console.error(chalk.dim(`\nTo see all running servers: agentuse serve ps`));
-          process.exit(1);
+      if (existingServers.length > 0) {
+        const current = existingServers[0];
+        console.error(chalk.red(`\nError: agentuse serve is already running.`));
+        console.error(chalk.dim(`\nAgentUse uses one serve daemon for approvals, Slack, sessions, and API traffic.`));
+        console.error(chalk.dim(`Add projects to the existing daemon configuration, or stop it before starting another one.`));
+        console.error(chalk.dim(`\n  PID:      ${current.pid}`));
+        console.error(chalk.dim(`  Address:  http://${current.host}:${current.port}`));
+        console.error(chalk.dim(`  Projects: ${summarizeServerProjects(current)}`));
+        if (current.logFile) {
+          console.error(chalk.dim(`  Log:      ${current.logFile}`));
         }
+        if (existingServers.length > 1) {
+          console.error(chalk.yellow(`\nWarning: ${existingServers.length} serve daemons are registered. Stop the extras; only one should remain.`));
+        }
+        console.error(chalk.dim(`\nInspect the daemon with: agentuse serve ps`));
+        process.exit(1);
       }
 
       // Initialize storage per project (non-blocking if one fails)
@@ -3288,11 +3283,6 @@ export function createServeCommand(): Command {
         }).catch((err) => logger.warn(`Slack approval thread note failed: ${(err as Error).message}`));
       };
 
-      const extractSessionIdFromSlackMessage = (message: unknown): string | undefined => {
-        const text = JSON.stringify(message ?? {});
-        return text.match(/\b[0-9A-HJKMNP-TV-Z]{26}\b/)?.[0];
-      };
-
       const sessionIdForLocalApprovalThread = async (comment: SlackApprovalThreadComment): Promise<string | undefined> => {
         for (const project of projects) {
           const projectWorker = workers.get(project.id);
@@ -3318,20 +3308,6 @@ export function createServeCommand(): Command {
         return undefined;
       };
 
-      const sessionIdForSlackThread = async (comment: SlackApprovalThreadComment): Promise<string | undefined> => {
-        const localApprovalSessionId = await sessionIdForLocalApprovalThread(comment);
-        if (localApprovalSessionId) return localApprovalSessionId;
-        if (!slackBotToken) return undefined;
-        const web = new WebClient(slackBotToken);
-        const response = await web.conversations.replies({
-          channel: comment.channel,
-          ts: comment.threadTs,
-          inclusive: true,
-          limit: 1
-        });
-        return extractSessionIdFromSlackMessage(response.messages?.[0]);
-      };
-
       const postSlackRunThreadNote = (
         comment: SlackApprovalThreadComment,
         text: string,
@@ -3350,7 +3326,7 @@ export function createServeCommand(): Command {
       const continueSlackRunThread = async (comment: SlackApprovalThreadComment): Promise<SlackRunThreadCommentResult> => {
         let sessionId: string | undefined;
         try {
-          sessionId = await sessionIdForSlackThread(comment);
+          sessionId = await sessionIdForLocalApprovalThread(comment);
         } catch (err) {
           logger.warn(`Slack run thread lookup failed: ${(err as Error).message}`);
           return { handled: false };
@@ -3390,7 +3366,7 @@ export function createServeCommand(): Command {
             return;
           }
 
-          throw new Error(`Session ${sessionId} was not found in this serve instance`);
+          throw new Error(`Session ${sessionId} was not found in this serve daemon`);
         })();
 
         return { handled: true, done };
@@ -4347,7 +4323,7 @@ export function createServeCommand(): Command {
           console.error(chalk.red(`\nError: Port ${port} is already in use.`));
           console.error(chalk.dim(`\nTry one of these:`));
           console.error(chalk.dim(`  • Use a different port: agentuse serve --port ${port + 1}`));
-          console.error(chalk.dim(`  • See running servers:  agentuse serve ps`));
+          console.error(chalk.dim(`  • See the running daemon: agentuse serve ps`));
           process.exit(1);
         }
         // Re-throw other errors
@@ -4525,9 +4501,19 @@ function formatPsTable(servers: ServerEntry[]): string {
   return blocks.join("\n");
 }
 
+function summarizeServerProjects(server: ServerEntry): string {
+  const projects = server.projects && server.projects.length > 0
+    ? server.projects
+    : [{ id: basename(server.projectRoot), root: server.projectRoot }];
+  if (projects.length === 1) return truncatePath(projects[0].root, 80);
+  const shown = projects.slice(0, 3).map((project) => project.id).join(", ");
+  const hidden = projects.length - 3;
+  return hidden > 0 ? `${shown}, +${hidden} more` : shown;
+}
+
 function createPsSubcommand(): Command {
   return new Command("ps")
-    .description("List running agentuse serve instances")
+    .description("Show the running agentuse serve daemon")
     .option("--json", "Output as JSON")
     .action((options: { json?: boolean }) => {
       const servers = listServers();
@@ -4538,14 +4524,17 @@ function createPsSubcommand(): Command {
       }
 
       if (servers.length === 0) {
-        console.log(chalk.dim("No running agentuse serve instances found."));
+        console.log(chalk.dim("No running agentuse serve daemon found."));
         console.log(chalk.dim("\nStart a server with: agentuse serve"));
         return;
       }
 
       console.log(formatPsTable(servers));
       console.log();
-      console.log(chalk.dim(`${servers.length} server${servers.length === 1 ? "" : "s"} running`));
+      console.log(chalk.dim(`${servers.length} serve daemon${servers.length === 1 ? "" : "s"} running`));
+      if (servers.length > 1) {
+        console.log(chalk.yellow("Only one serve daemon should be running. Stop the extras before starting new work."));
+      }
     });
 }
 
@@ -4559,18 +4548,18 @@ function resolveTargetServer(pidArg: string | undefined): ServerEntry | null {
     }
     const found = servers.find((s) => s.pid === pid);
     if (!found) {
-      console.error(chalk.red(`No running agentuse serve instance with pid ${pid}.`));
-      console.error(chalk.dim(`Use \`agentuse serve ps\` to see running servers.`));
+      console.error(chalk.red(`No running agentuse serve daemon with pid ${pid}.`));
+      console.error(chalk.dim(`Use \`agentuse serve ps\` to see the running daemon.`));
       return null;
     }
     return found;
   }
   if (servers.length === 0) {
-    console.error(chalk.dim("No running agentuse serve instances found."));
+    console.error(chalk.dim("No running agentuse serve daemon found."));
     return null;
   }
   if (servers.length > 1) {
-    console.error(chalk.red("Multiple servers running; specify a pid."));
+    console.error(chalk.red("Multiple serve daemons are running; specify a pid."));
     console.error();
     console.error(formatPsTable(servers));
     return null;
@@ -4580,8 +4569,8 @@ function resolveTargetServer(pidArg: string | undefined): ServerEntry | null {
 
 function createLogsSubcommand(): Command {
   return new Command("logs")
-    .description("Show the log file for a running agentuse serve instance")
-    .argument("[pid]", "PID of the server to tail (omit when only one server is running)")
+    .description("Show the log file for the running agentuse serve daemon")
+    .argument("[pid]", "PID of the daemon to tail (omit when only one daemon is running)")
     .option("-n, --lines <number>", "Number of lines to show from the end of the file", "50")
     .option("-f, --follow", "Follow the log as it grows")
     .option("--path", "Print only the log file path and exit")

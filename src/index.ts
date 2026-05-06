@@ -14,7 +14,7 @@ import { createBenchmarkCommand } from './cli/benchmark';
 import { createAgentsCommand } from './cli/agents';
 import { createAddCommand } from './cli/add';
 import { logger, LogLevel } from './utils/logger';
-import { basename, resolve, dirname, join, relative } from 'path';
+import { basename, resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
@@ -41,31 +41,15 @@ import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
 import { telemetry, categorizeError, aggregateToolCalls, countSteps, parseModel } from './telemetry';
 import type { SessionManager as SessionManagerType } from './session';
-import { listServers } from './utils/server-registry';
+import { findServerForProject } from './utils/server-registry';
 
 const program = new Command();
 
-function isSameOrNested(parent: string, child: string): boolean {
-  const rel = relative(resolve(parent), resolve(child));
-  return rel === '' || (!rel.startsWith('..') && !rel.startsWith('/') && rel !== '..');
-}
-
 function hasServeForApprovalRun(projectRoot: string, agentFilePath?: string): boolean {
-  const targets = [
-    projectRoot,
-    ...(agentFilePath ? [agentFilePath, dirname(agentFilePath)] : [])
-  ].map((target) => resolve(target));
-
-  return listServers().some((server) => {
-    const roots = [
-      ...(server.projects?.map((project) => project.root) ?? []),
-      server.projectRoot
-    ].map((root) => resolve(root));
-
-    return roots.some((root) =>
-      targets.some((target) => isSameOrNested(root, target) || isSameOrNested(target, root))
-    );
-  });
+  return Boolean(
+    findServerForProject(projectRoot) ??
+    (agentFilePath ? findServerForProject(dirname(resolve(agentFilePath))) : undefined)
+  );
 }
 
 // Helper function to prompt user

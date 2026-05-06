@@ -7,7 +7,7 @@ Run agents on-demand via HTTP webhooks using `agentuse serve`. Integrate with ex
 
 ## Quick Start
 
-1. Start the server:
+1. Start the daemon:
 
 ```bash
 agentuse serve
@@ -23,7 +23,7 @@ curl -X POST http://127.0.0.1:12233/run \
 
 ## Serving Multiple Projects
 
-Repeat `-C` to serve multiple project roots:
+AgentUse runs one serve daemon at a time. Repeat `-C` on that daemon to serve multiple project roots:
 
 ```bash
 agentuse serve -C ./projA -C ./projB

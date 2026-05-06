@@ -159,6 +159,46 @@ describe("Server Registry", () => {
       expect(fs.existsSync(fakeEntryPath)).toBe(false);
     });
 
+    it("should keep entries when process existence checks are denied", () => {
+      const fakePid = 999999997;
+      const fakeEntryPath = path.join(REGISTRY_DIR, `${fakePid}.json`);
+      const originalKill = process.kill;
+
+      fs.mkdirSync(REGISTRY_DIR, { recursive: true });
+      fs.writeFileSync(
+        fakeEntryPath,
+        JSON.stringify({
+          pid: fakePid,
+          port: 99997,
+          host: "127.0.0.1",
+          projectRoot: "/restricted/project",
+          startTime: Date.now(),
+          agentCount: 1,
+          scheduleCount: 0,
+          version: "1.0.0",
+        })
+      );
+
+      (process as any).kill = (pid: number, signal?: NodeJS.Signals | 0) => {
+        if (pid === fakePid && signal === 0) {
+          const err = new Error("operation not permitted") as NodeJS.ErrnoException;
+          err.code = "EPERM";
+          throw err;
+        }
+        return originalKill(pid, signal);
+      };
+
+      try {
+        const servers = listServers();
+
+        expect(servers.some((server) => server.pid === fakePid)).toBe(true);
+        expect(fs.existsSync(fakeEntryPath)).toBe(true);
+      } finally {
+        (process as any).kill = originalKill;
+        fs.rmSync(fakeEntryPath, { force: true });
+      }
+    });
+
     it("should also delete the log file when sweeping a stale entry", () => {
       const fakePid = 999999998;
       const fakeEntryPath = path.join(REGISTRY_DIR, `${fakePid}.json`);
@@ -221,7 +261,7 @@ describe("Server Registry", () => {
       expect(server?.publicUrl).toBe("http://127.0.0.1:12345");
     });
 
-    it("falls back to the only running server when the project root differs", () => {
+    it("does not guess a server for an unrelated project root", () => {
       registerServer({
         port: 12345,
         host: "127.0.0.1",
@@ -236,8 +276,7 @@ describe("Server Registry", () => {
 
       const server = findServerForProject("/different/worktree");
 
-      expect(server?.pid).toBe(process.pid);
-      expect(server?.publicUrl).toBe("http://127.0.0.1:12345");
+      expect(server).toBeUndefined();
     });
 
     it("matches a server whose served root is nested under the run project root", () => {

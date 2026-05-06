@@ -65,7 +65,10 @@ function isProcessRunning(pid: number): boolean {
     // Sending signal 0 doesn't kill the process, just checks if it exists
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EPERM") {
+      return true;
+    }
     return false;
   }
 }
@@ -122,7 +125,7 @@ export function unregisterServer(): void {
 }
 
 /**
- * List all running servers, cleaning up stale entries.
+ * List all running serve daemons, cleaning up stale entries.
  */
 export function listServers(): ServerEntry[] {
   ensureRegistryDir();
@@ -192,7 +195,7 @@ export function findServerForProject(projectRoot?: string): ServerEntry | undefi
     .sort((a, b) => b.bestRootLength - a.bestRootLength);
   if (related.length > 0) return related[0].server;
 
-  return servers.length === 1 ? servers[0] : undefined;
+  return undefined;
 }
 
 function isSameOrNested(parent: string, child: string): boolean {

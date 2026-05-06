@@ -309,7 +309,7 @@ agentuse sessions path --project ../other-project
 
 ## agentuse serve
 
-Start an HTTP server to run agents via API. This enables integration with external applications, webhooks, or any system that can make HTTP requests.
+Start the AgentUse HTTP daemon to run agents via API. This enables integration with external applications, webhooks, approvals, Slack notifications, or any system that can make HTTP requests.
 
 ### Syntax
 
@@ -331,7 +331,7 @@ agentuse serve [options]
 
 ### Serving Multiple Projects
 
-Repeat `-C` to serve multiple scopes/projects:
+AgentUse runs one serve daemon at a time. Repeat `-C` on that daemon to serve multiple scopes/projects:
 
 ```bash
 agentuse serve -C ./projA -C ./projB
@@ -340,6 +340,8 @@ agentuse serve -C ./projA -C ./projB
 Project ids default to the `-C` directory basename. Duplicate ids fail startup. Each scope detects its project root independently, and each project loads its own `.env` / `.env.local` in its worker process.
 
 Use the request `project` field to choose a project. In multi-project mode, omitting it returns `400 PROJECT_REQUIRED` unless `--default <id>` is set.
+
+Starting a second daemon fails with the PID, address, projects, and log path of the daemon that is already running. This keeps approval links, Slack replies, session resumes, and API traffic routed through one owner.
 
 ### Global Config
 
@@ -560,19 +562,18 @@ schedule: "1h"
 
 ### serve ps
 
-List running `agentuse serve` instances.
+Show the running `agentuse serve` daemon.
 
 ```bash
 agentuse serve ps [--json]
 ```
 
-Shows PID, port, project summary, total agent/schedule counts, and uptime. Multi-project servers show the first project id plus `+N` additional projects.
+Shows PID, port, project summary, total agent/schedule counts, and uptime. Multi-project daemons show the first project id plus `+N` additional projects.
 
 ```
 PID      PORT     PROJECTS                       AGENTS   SCHEDULES   UPTIME
 ────────────────────────────────────────────────────────────────────────────
-63398    12233    ~/workspace/agentuse           9        1           2h 15m
-71245    12234    projA +2                       12       3           45m
+63398    12233    projA +2                       12       3           2h 15m
 ```
 
 Use `--json` for scripting. Stale entries are automatically cleaned up.
@@ -879,8 +880,8 @@ AgentUse currently supports these commands:
 
 ```bash
 agentuse run <file> [prompt...]          # Run an agent with optional prompt
-agentuse serve [options]                 # Start HTTP server to run agents via API
-agentuse serve ps [--json]               # List running serve instances
+agentuse serve [options]                 # Start the HTTP daemon to run agents via API
+agentuse serve ps [--json]               # Show the running serve daemon
 agentuse provider login [provider]       # Authenticate with a provider
 agentuse provider add <name> --url <url> # Add custom provider (Ollama, LM Studio, etc.)
 agentuse provider logout [provider]      # Remove stored credentials

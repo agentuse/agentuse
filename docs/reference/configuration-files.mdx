@@ -100,6 +100,8 @@ Put long-lived `agentuse serve` defaults in `~/.agentuse/config.json`:
 
 Use `AGENTUSE_CONFIG=/path/to/config.json` to load a different file. Project paths may start with `~` or `~/`.
 
+AgentUse runs one serve daemon at a time. Put every project that should accept `/run`, approval, and notification traffic into `serve.projects`, or pass repeated `-C` flags when starting the daemon.
+
 | Config key | Type | Description |
 |------------|------|-------------|
 | `serve.projects` | array | Directories to serve agents from. Each item needs `path`; AgentUse detects the project root upward; `id` is optional |
