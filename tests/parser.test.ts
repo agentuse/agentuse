@@ -264,6 +264,35 @@ Write a draft.`;
       expect(() => parseAgentContent(content, 'test')).toThrow('approval');
     });
 
+    it('accepts all OpenAI reasoning effort levels', () => {
+      const levels = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+
+      for (const level of levels) {
+        const content = `---
+model: openai:gpt-5
+openai:
+  reasoningEffort: ${level}
+---
+
+Test OpenAI thinking effort.`;
+
+        const agent = parseAgentContent(content, 'test');
+        expect(agent.config.openai?.reasoningEffort).toBe(level);
+      }
+    });
+
+    it('rejects invalid OpenAI reasoning effort levels', () => {
+      const content = `---
+model: openai:gpt-5
+openai:
+  reasoningEffort: extreme
+---
+
+Test OpenAI thinking effort.`;
+
+      expect(() => parseAgentContent(content, 'test')).toThrow('Invalid agent configuration');
+    });
+
     it('parses complete agent configuration', () => {
       const content = `---
 model: openai:gpt-5

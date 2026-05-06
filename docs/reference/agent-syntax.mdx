@@ -153,8 +153,9 @@ Additional instructions or context.
   OpenAI-specific options for GPT-5 and other OpenAI models.
 
   **Supported Options:**
-  - `reasoningEffort`: Controls the computational effort for reasoning models (`'low'`, `'medium'`, `'high'`)
+  - `reasoningEffort`: Controls thinking effort for reasoning models (`'none'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`)
   - `textVerbosity`: Controls response length and detail (`'low'`, `'medium'`, `'high'`)
+  - Defaults: when omitted, AgentUse does not set these fields and uses the OpenAI/AI SDK defaults. For reasoning effort, that is typically `medium` on reasoning models.
 
   ```yaml
   openai:
@@ -163,7 +164,7 @@ Additional instructions or context.
   ```
 
   <Note>
-    These options are particularly useful with GPT-5 models to balance between response quality, speed, and cost.
+    These options are particularly useful with GPT-5 models to balance response quality, latency, and cost. Some effort levels are model-specific; for example, `xhigh` and `none` are only accepted by OpenAI models that support them.
   </Note>
 </ParamField>
 
@@ -605,7 +606,7 @@ Assist the user with their request using all available capabilities.
 7. **Tool Restrictions**: `disallowedTools` must be an array of strings (supports wildcards)
 8. **OpenAI Options**:
    - `openai` field is only valid for OpenAI models
-   - `reasoningEffort` must be one of: `'low'`, `'medium'`, `'high'`
+   - `reasoningEffort` must be one of: `'none'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`
    - `textVerbosity` must be one of: `'low'`, `'medium'`, `'high'`
    - No other options are allowed under `openai`
 

@@ -323,28 +323,35 @@ Configure provider-specific settings for fine-tuned model behavior:
 
 ### OpenAI Provider Options
 
-For OpenAI models (especially GPT-5), you can control reasoning and verbosity:
+For OpenAI models (especially GPT-5), you can control thinking effort and verbosity:
 
 ```yaml
 ---
 model: openai:gpt-5
 openai:
-  reasoningEffort: high  # Options: 'low', 'medium', 'high'
+  reasoningEffort: high  # Options: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'
   textVerbosity: low     # Options: 'low', 'medium', 'high'
 ---
 ```
 
 <Info>
-  **reasoningEffort**: Controls computational effort for reasoning
+  **reasoningEffort**: Controls thinking effort for reasoning
+  - `none`: Disable reasoning when the selected model supports it
+  - `minimal`: Use the lightest reasoning mode
   - `low`: Faster responses with less thorough reasoning
   - `medium`: Balanced performance (default)
   - `high`: More comprehensive reasoning, slower responses
+  - `xhigh`: Maximum reasoning for models that support it
 
   **textVerbosity**: Controls response length and detail
   - `low`: Concise, minimal prose
   - `medium`: Balanced detail (default)  
   - `high`: Verbose, detailed explanations
 </Info>
+
+<Note>
+  If you omit `reasoningEffort` or `textVerbosity`, AgentUse leaves the field unset and uses the OpenAI/AI SDK defaults. Reasoning effort is typically `medium` on reasoning models. `none` and `xhigh` are model-specific OpenAI options; if a model does not support a selected effort level, OpenAI will reject the request.
+</Note>
 
 These options help you optimize for:
 - **Speed vs Quality**: Lower reasoning effort for faster responses

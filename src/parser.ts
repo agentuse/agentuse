@@ -139,7 +139,7 @@ const AgentSchema = z.object({
   timeout: z.number().positive().optional(),
   maxSteps: z.number().positive().int().optional(),
   openai: z.object({
-    reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
+    reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
     textVerbosity: z.enum(['low', 'medium', 'high']).optional()
   }).strict().optional(),
   mcp_servers: z.record(MCPServerSchema).optional(),  // Deprecated: use mcpServers
