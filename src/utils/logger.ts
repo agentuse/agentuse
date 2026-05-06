@@ -1090,4 +1090,16 @@ export const approvalLog = {
   resumeFailed(sessionId: string, durationMs: number, error: string): void {
     console.log(`${this.formatTimestamp()} ${chalk.red('Approval resume failed:')} ${sessionId} (${this.formatDuration(durationMs)}) - ${error}`);
   },
+
+  continueStarted(sessionId: string): void {
+    console.log(`${this.formatTimestamp()} ${chalk.cyan('Session continue started:')} ${sessionId}`);
+  },
+
+  continueCompleted(sessionId: string, durationMs: number): void {
+    console.log(`${this.formatTimestamp()} ${chalk.green('Session continue completed:')} ${sessionId} (${this.formatDuration(durationMs)})`);
+  },
+
+  continueFailed(sessionId: string, durationMs: number, error: string): void {
+    console.log(`${this.formatTimestamp()} ${chalk.red('Session continue failed:')} ${sessionId} (${this.formatDuration(durationMs)}) - ${error}`);
+  },
 };

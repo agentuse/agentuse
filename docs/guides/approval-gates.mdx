@@ -21,6 +21,7 @@ The main approval surface is `agentuse serve` at `/approvals`. Slack is optional
 5. Reviewers open `/approvals` or a tokenized approval link.
 6. A reviewer approves, rejects, or comments.
 7. AgentUse resumes the suspended session with the reviewer result.
+8. After the session finishes, reviewers can send follow-up instructions from the same approval page to continue the session with its existing context.
 
 ## Create an Agent with Approval
 
@@ -155,6 +156,8 @@ When Slack Socket Mode is configured, the approval details thread can also accep
 
 When the agent receives a comment, it decides whether to revise, ask for approval again, or stop with a clear explanation.
 
+After the run completes, the same approval page becomes a lightweight continuation surface. Add a follow-up instruction in the **Continue session** box to resume the completed or errored session with its existing context. This matches Slack thread replies, but keeps the web approval page as the source of truth for details and logs.
+
 ## Configuration Fields
 
 Approval config is intentionally small:
@@ -227,7 +230,28 @@ The decision endpoint returns immediately while the suspended session resumes in
 }
 ```
 
-`/approvals` follows the `agentuse serve` auth setting. Tokenized approval detail, status, and decision URLs validate the approval token so reviewers can open Slack links without a separate API-key login.
+Continue a completed or errored session from an approval page token:
+
+```bash
+curl -X POST "http://127.0.0.1:12233/approvals/session_abc123/continue" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Please revise the CTA and run the smoke test again",
+    "resumeToken": "'"$resumeToken"'",
+    "project": "optional-project-id"
+  }'
+```
+
+The continuation endpoint also returns immediately while AgentUse starts the follow-up run:
+
+```json
+{
+  "sessionId": "session_abc123",
+  "status": "continuing"
+}
+```
+
+`/approvals` follows the `agentuse serve` auth setting. Tokenized approval detail, status, decision, and continuation URLs validate the approval token so reviewers can open Slack links without a separate API-key login.
 
 ## Local Testing
 

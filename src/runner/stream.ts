@@ -158,7 +158,7 @@ export async function processAgentStream(
   let suspendApprovalUrl: string | undefined;
 
   // Track current text part for streaming updates with debouncing
-  let currentTextPart: { partID: string; text: string; startTime: number } | null = null;
+  let currentTextPart: { partID?: string; text: string; startTime: number; createPromise?: Promise<void> } | null = null;
   let textUpdateTimer: NodeJS.Timeout | null = null;
   const TEXT_UPDATE_DEBOUNCE_MS = 500; // Write to disk every 500ms max
 
@@ -179,16 +179,24 @@ export async function processAgentStream(
     }
 
     if (currentTextPart && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
+      const textPart = currentTextPart;
+      if (textPart.createPromise) {
+        await textPart.createPromise;
+      }
+      if (!textPart.partID) {
+        currentTextPart = null;
+        return;
+      }
       try {
         await options.sessionManager.updatePart(
           options.sessionID,
           options.agentId,
           options.messageID,
-          currentTextPart.partID,
+          textPart.partID,
           {
-            text: currentTextPart.text.trimEnd(),
+            text: textPart.text.trimEnd(),
             time: {
-              start: currentTextPart.startTime,
+              start: textPart.startTime,
               end: Date.now()
             }
           }
@@ -221,24 +229,24 @@ export async function processAgentStream(
           if (!currentTextPart) {
             // First text chunk: create new part (await to ensure partID is available)
             const startTime = Date.now();
+            const textPart: { partID?: string; text: string; startTime: number; createPromise?: Promise<void> } = {
+              text: chunk.text!,
+              startTime
+            };
+            currentTextPart = textPart;
             const addPromise = options.sessionManager.addPart(options.sessionID, options.agentId, options.messageID, {
               type: 'text',
               text: chunk.text!,
               time: { start: startTime }
             } as any).then(partID => {
-              currentTextPart = {
-                partID,
-                text: chunk.text!,
-                startTime
-              };
+              textPart.partID = partID;
             }).catch(err => logger.debug(`Failed to create text part: ${err.message}`));
+            textPart.createPromise = addPromise;
             trackSessionUpdate(addPromise);
           } else {
             // Subsequent chunks: update in-memory immediately, debounce disk writes
-            // TypeScript can't track that currentTextPart is set in the async .then() above,
-            // but in practice chunks arrive slowly enough that this is safe
             if (currentTextPart) {
-              const textPart = currentTextPart as { partID: string; text: string; startTime: number };
+              const textPart = currentTextPart;
               textPart.text += chunk.text!;
 
               // Clear existing timer and schedule new debounced write
@@ -247,20 +255,27 @@ export async function processAgentStream(
               }
 
               // Capture current state for the timeout callback
-              const partID = textPart.partID;
               const getText = () => currentTextPart?.text || '';
 
               textUpdateTimer = setTimeout(() => {
                 if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
-                  const updatePromise = options.sessionManager.updatePart(
-                    options.sessionID,
-                    options.agentId,
-                    options.messageID,
-                    partID,
-                    {
-                      text: getText()
-                    }
-                  ).catch(err => logger.debug(`Failed to update text part: ${err.message}`));
+                  const updatePromise = Promise.resolve()
+                    .then(async () => {
+                      if (textPart.createPromise) {
+                        await textPart.createPromise;
+                      }
+                      if (!textPart.partID) return;
+                      await options.sessionManager!.updatePart(
+                        options.sessionID!,
+                        options.agentId!,
+                        options.messageID!,
+                        textPart.partID,
+                        {
+                          text: getText()
+                        }
+                      );
+                    })
+                    .catch(err => logger.debug(`Failed to update text part: ${err.message}`));
                   trackSessionUpdate(updatePromise);
                 }
                 textUpdateTimer = null;

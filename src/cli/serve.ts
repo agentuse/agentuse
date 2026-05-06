@@ -1117,17 +1117,40 @@ function renderApprovalsListPage(options: {
 </html>`;
 }
 
+function isEndedSessionStatus(status: string | undefined): boolean {
+  return status === 'completed' || status === 'error';
+}
+
+function canContinueApprovalSession(options: {
+  approval: ApprovalPageInfo;
+  resuming?: boolean | undefined;
+  continuing?: boolean | undefined;
+  error?: string | undefined;
+}): boolean {
+  const { approval, resuming, continuing, error } = options;
+  return isEndedSessionStatus(approval.sessionStatus) &&
+    !resuming &&
+    !continuing &&
+    !error &&
+    Boolean(approval.agent.filePath);
+}
+
 function renderApprovalPage(options: {
   approval: ApprovalPageInfo;
   token: string;
   projectId?: string;
   resuming?: boolean;
+  continuing?: boolean;
   error?: string;
 }): string {
-  const { approval, token, projectId, resuming, error } = options;
+  const { approval, token, projectId, resuming, continuing, error } = options;
   const expired = approval.expiresAt !== undefined && approval.expiresAt <= Date.now();
-  const actionable = approval.sessionStatus === 'suspended' && !expired && !resuming && !error && Boolean(approval.prompt);
-  const status = resuming
+  const busy = Boolean(resuming || continuing);
+  const actionable = approval.sessionStatus === 'suspended' && !expired && !busy && !error && Boolean(approval.prompt);
+  const continueActionable = canContinueApprovalSession({ approval, resuming, continuing, error });
+  const status = continuing
+    ? 'continuing'
+    : resuming
     ? 'resuming'
     : expired
       ? 'expired'
@@ -1138,6 +1161,20 @@ function renderApprovalPage(options: {
   const initialReviewerComment = latestReviewerComment(initialLogs);
   const agentLabel = approval.agent.name || approval.agent.id;
   const agentHeadline = approval.agent.description || agentLabel;
+  const eyebrow = actionable
+    ? 'human approval requested'
+    : continueActionable
+      ? 'session completed'
+      : 'approval history';
+  const promptText = actionable
+    ? 'Review the pending request in the session log below, then approve, reject, or send a comment back to the agent. The session is paused until you respond.'
+    : continueActionable
+      ? 'This run has finished. Send a follow-up instruction to continue the same session with its existing context.'
+      : busy
+        ? 'AgentUse is continuing this session. The session log updates as new work arrives.'
+        : expired
+          ? 'This approval request has expired. The session log remains available for review.'
+          : 'This approval request is not accepting decisions right now. The session log remains available for review.';
 
   return `<!doctype html>
 <html lang="en">
@@ -1270,8 +1307,8 @@ function renderApprovalPage(options: {
     }
     .status.waiting { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
     .status.waiting::before { animation: pulse 1.4s ease-in-out infinite; }
-    .status.resuming { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
-    .status.resuming::before { animation: pulse 0.8s ease-in-out infinite; }
+    .status.resuming, .status.continuing { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
+    .status.resuming::before, .status.continuing::before { animation: pulse 0.8s ease-in-out infinite; }
     .status.completed, .status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
     .status.expired, .status.error, .status.rejected { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
@@ -1859,7 +1896,50 @@ function renderApprovalPage(options: {
       color: var(--muted);
       font-size: 13px;
     }
+    .inactive-banner[hidden] { display: none; }
     .inactive-banner::before { content: "⋮ "; color: var(--muted-2); }
+
+    .continue-panel {
+      margin-top: 24px;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      display: grid;
+      gap: 12px;
+    }
+    .continue-panel[hidden] { display: none; }
+    .continue-label {
+      color: var(--muted-2);
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    .continue-label::before { content: "⋮ "; color: var(--cyan); opacity: 0.7; }
+    .continue-panel textarea {
+      min-height: 112px;
+    }
+    .continue-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .continue-hint {
+      color: var(--muted-2);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+    .continue-hint .kbd {
+      display: inline-block;
+      padding: 1px 6px;
+      margin: 0 2px;
+      font-size: 11px;
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+      color: var(--muted-3);
+      background: var(--bg);
+    }
 
     /* responsive */
     @media (max-width: 640px) {
@@ -1868,6 +1948,8 @@ function renderApprovalPage(options: {
       .log-actions-hint { display: none; }
       .log-actions-buttons { justify-content: stretch; }
       .log-actions-buttons button { flex: 1; }
+      .continue-actions { flex-direction: column; align-items: stretch; }
+      .continue-actions button { width: 100%; }
     }
   </style>
 </head>
@@ -1880,9 +1962,9 @@ function renderApprovalPage(options: {
   <main>
     <header>
       <span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span>
-      <div class="eyebrow">human approval requested</div>
+      <div class="eyebrow">${escapeHtml(eyebrow)}</div>
       <h1>${escapeHtml(agentHeadline)}</h1>
-      <p class="prompt">Review the pending request in the session log below, then approve, reject, or send a comment back to the agent. The session is paused until you respond.</p>
+      <p class="prompt">${escapeHtml(promptText)}</p>
       <div class="meta" id="approval-meta">
         <div class="cell"><span class="label">session</span><code>${escapeHtml(approval.sessionId)}</code></div>
         <div class="cell"><span class="label">project</span><code>${escapeHtml(projectId ?? 'default')}</code></div>
@@ -1904,8 +1986,16 @@ function renderApprovalPage(options: {
       <ul id="logs" class="logs">${renderLogItems(initialLogs, { actionable, currentResumeToken: approval.currentResumeToken, projectId })}</ul>
     </div>
 
-    ${actionable ? '' : `
-    <div class="inactive-banner">This approval request is not accepting decisions right now.</div>`}
+    <div id="continue-panel" class="continue-panel"${continueActionable ? '' : ' hidden'}>
+      <div class="continue-label">continue session</div>
+      <textarea id="continue-prompt" placeholder="tell the agent what to do next"></textarea>
+      <div class="continue-actions">
+        <span class="continue-hint"><span class="kbd">⌘⏎</span> continue with this instruction</span>
+        <button id="continue-submit" type="button" class="primary">Continue session</button>
+      </div>
+    </div>
+
+    <div id="inactive-banner" class="inactive-banner"${actionable || continueActionable || busy ? ' hidden' : ''}>This approval request is not accepting decisions right now.</div>
 
     <p id="result" class="notice"></p>
   </main>
@@ -1941,11 +2031,16 @@ function renderApprovalPage(options: {
     // so it stays valid across gates within the same session.
     let currentResumeToken = ${JSON.stringify(approval.currentResumeToken ?? token)};
     let pendingActionable = ${JSON.stringify(actionable)};
+    let continueActionable = ${JSON.stringify(continueActionable)};
     const statusEl = document.querySelector('.status');
     const logsEl = document.getElementById('logs');
     const reviewerCommentEl = document.getElementById('reviewer-comment');
     const reviewerCommentBodyEl = document.getElementById('reviewer-comment-body');
     const reviewerCommentMetaEl = document.getElementById('reviewer-comment-meta');
+    const continuePanel = document.getElementById('continue-panel');
+    const continueInput = document.getElementById('continue-prompt');
+    const continueSubmit = document.getElementById('continue-submit');
+    const inactiveBanner = document.getElementById('inactive-banner');
 
     // theme toggle
     ${approvalsThemeToggleScript()}
@@ -2337,8 +2432,39 @@ function renderApprovalPage(options: {
       scrollToActiveApproval(true);
     }
     function isLiveStatus(status, logs) {
-      if (status === 'run' || status === 'running' || status === 'resuming') return true;
+      if (status === 'completed' || status === 'error' || status === 'expired' || status === 'failed') return false;
+      if (status === 'run' || status === 'running' || status === 'resuming' || status === 'continuing') return true;
       return Array.isArray(logs) && logs.some(function (entry) { return entry && entry.status === 'streaming'; });
+    }
+    function isEndedStatus(status) {
+      return status === 'completed' || status === 'error';
+    }
+    function updateContinuationSurface(status, approval, logs) {
+      const live = isLiveStatus(status, logs);
+      const sessionStatus = approval && approval.sessionStatus ? approval.sessionStatus : status;
+      const hasAgentFile = Boolean(approval && approval.agent && approval.agent.filePath);
+      continueActionable = isEndedStatus(sessionStatus) && !live && hasAgentFile;
+
+      if (continuePanel && continueInput && continueSubmit) {
+        if (continueActionable) {
+          submittingContinue = false;
+          continuePanel.removeAttribute('hidden');
+          continueInput.disabled = false;
+          continueSubmit.disabled = false;
+        } else {
+          continuePanel.setAttribute('hidden', '');
+          continueInput.disabled = true;
+          continueSubmit.disabled = true;
+        }
+      }
+
+      if (inactiveBanner) {
+        if (pendingActionable || continueActionable || live) {
+          inactiveBanner.setAttribute('hidden', '');
+        } else {
+          inactiveBanner.removeAttribute('hidden');
+        }
+      }
     }
     let refreshTimer = null;
     function scheduleRefresh(delay) {
@@ -2370,6 +2496,15 @@ function renderApprovalPage(options: {
         }
         const logs = payload.logs || payload.approval?.logs || [];
         renderLogs(logs, forceLogRender);
+        updateContinuationSurface(status, payload.approval, logs);
+        const resultEl = document.getElementById('result');
+        if (resultEl && status === 'completed' && /continuing session|follow-up recorded/.test(resultEl.textContent || '')) {
+          resultEl.textContent = '✓ session completed.';
+          resultEl.className = 'notice';
+        } else if (resultEl && status === 'error' && /continuing session|follow-up recorded/.test(resultEl.textContent || '')) {
+          resultEl.textContent = 'Session finished with an error. Check the latest log entry for details.';
+          resultEl.className = 'notice error';
+        }
         nextDelay = isLiveStatus(status, logs) ? 500 : 1500;
       } catch {}
       scheduleRefresh(nextDelay);
@@ -2378,6 +2513,7 @@ function renderApprovalPage(options: {
     scrollToActiveApproval();
 
     let submittingDecision = false;
+    let submittingContinue = false;
     async function submitDecision(actionId, opts) {
       if (submittingDecision) return;
       const button = document.querySelector('button[data-action="' + actionId + '"]');
@@ -2410,6 +2546,48 @@ function renderApprovalPage(options: {
         result.className = 'notice error';
         submittingDecision = false;
         for (const b of document.querySelectorAll('button[data-action]')) b.disabled = false;
+      }
+    }
+
+    async function submitContinue() {
+      if (submittingContinue || !continueActionable || !continueInput || !continueSubmit) return;
+      const prompt = String(continueInput.value || '').trim();
+      if (!prompt) {
+        continueInput.focus();
+        return;
+      }
+      submittingContinue = true;
+      continueInput.disabled = true;
+      continueSubmit.disabled = true;
+      const result = document.getElementById('result');
+      result.textContent = '⋮ continuing session…';
+      result.className = 'notice';
+      try {
+        const response = await fetch(location.pathname + '/continue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            resumeToken: currentResumeToken,
+            project
+          })
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error?.message || 'Continue failed');
+        result.textContent = '✓ follow-up recorded — agentuse is continuing the session.';
+        statusEl.textContent = payload.status || 'continuing';
+        statusEl.className = 'status ' + (payload.status || 'continuing');
+        continueInput.value = '';
+        continuePanel?.setAttribute('hidden', '');
+        refreshStatus();
+      } catch (err) {
+        result.textContent = err.message || String(err);
+        result.className = 'notice error';
+        submittingContinue = false;
+        if (continueActionable) {
+          continueInput.disabled = false;
+          continueSubmit.disabled = false;
+        }
       }
     }
 
@@ -2447,6 +2625,13 @@ function renderApprovalPage(options: {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitComment(); }
       });
     }
+    continueSubmit?.addEventListener('click', submitContinue);
+    continueInput?.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        submitContinue();
+      }
+    });
 
     function toggleLogEntry(item) {
       if (!item || !item.classList.contains('expandable')) return;
@@ -3136,6 +3321,7 @@ export function createServeCommand(): Command {
       };
 
       const activeApprovalResumes = new Map<string, Promise<unknown>>();
+      const activeSessionContinuations = new Map<string, Promise<unknown>>();
       const loggedApprovalRequests = new Set<string>();
       const slackBotToken = process.env.SLACK_BOT_TOKEN;
       const slackAppToken = process.env.SLACK_APP_TOKEN;
@@ -3791,6 +3977,7 @@ export function createServeCommand(): Command {
             token,
             projectId: found.project.id,
             resuming: activeApprovalResumes.has(activeKey),
+            continuing: activeSessionContinuations.has(activeKey),
           }));
           return;
         }
@@ -3864,6 +4051,8 @@ export function createServeCommand(): Command {
           const activeKey = `${found.project.id}:${sessionId}`;
           const status = activeApprovalResumes.has(activeKey)
             ? 'resuming'
+            : activeSessionContinuations.has(activeKey)
+              ? 'continuing'
             : found.info.approval.sessionStatus === 'suspended'
               ? 'waiting'
               : found.info.approval.sessionStatus;
@@ -3907,6 +4096,14 @@ export function createServeCommand(): Command {
               sendError(res, found.status, found.code, found.message);
               return;
             }
+            if (
+              !found.info.approval.currentResumeToken &&
+              !found.info.approval.approvalUrl &&
+              found.info.approval.decision === undefined
+            ) {
+              sendError(res, 404, "APPROVAL_NOT_FOUND", `Approval request not found for session ${sessionId}`);
+              return;
+            }
 
             const project = found.project;
             const projectWorker = workers.get(project.id);
@@ -3916,7 +4113,7 @@ export function createServeCommand(): Command {
             }
 
             const activeKey = `${project.id}:${sessionId}`;
-            if (activeApprovalResumes.has(activeKey)) {
+            if (activeApprovalResumes.has(activeKey) || activeSessionContinuations.has(activeKey)) {
               sendError(res, 409, "APPROVAL_RESUMING", "Approval decision has already been submitted and the session is resuming");
               return;
             }
@@ -4022,6 +4219,102 @@ export function createServeCommand(): Command {
 
             res.writeHead(202, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ sessionId, status: "resuming" }));
+          } catch (err) {
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        const approvalContinueMatch = req.method === "POST" ? requestUrl.pathname.match(/^\/approvals\/([^/?#]+)\/continue$/) : null;
+        if (approvalContinueMatch) {
+          try {
+            const sessionId = decodeURIComponent(approvalContinueMatch[1]);
+            const body = await parseJSONBody(req);
+            const token = typeof body.resumeToken === 'string' ? body.resumeToken : undefined;
+            const prompt = typeof body.prompt === 'string' && body.prompt.trim().length > 0 ? body.prompt.trim() : undefined;
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+
+            if (!token) {
+              sendError(res, 401, "RESUME_TOKEN_REQUIRED", "Missing approval token");
+              return;
+            }
+            if (!prompt) {
+              sendError(res, 400, "PROMPT_REQUIRED", "Missing continuation prompt");
+              return;
+            }
+
+            const found = await findApprovalInfo({
+              ...(projectId && { projectId }),
+              sessionId,
+              resumeToken: token,
+              allowHistorical: true
+            });
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+            if (
+              !found.info.approval.currentResumeToken &&
+              !found.info.approval.approvalUrl &&
+              found.info.approval.decision === undefined
+            ) {
+              sendError(res, 404, "APPROVAL_NOT_FOUND", `Approval request not found for session ${sessionId}`);
+              return;
+            }
+
+            const project = found.project;
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) {
+              sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
+              return;
+            }
+
+            const activeKey = `${project.id}:${sessionId}`;
+            if (activeApprovalResumes.has(activeKey) || activeSessionContinuations.has(activeKey)) {
+              sendError(res, 409, "SESSION_ACTIVE", `Session ${sessionId} is already being resumed`);
+              return;
+            }
+
+            const sessionStatus = found.info.approval.sessionStatus;
+            if (sessionStatus === 'suspended') {
+              sendError(res, 409, "SESSION_SUSPENDED", "Session is suspended; submit an approval decision instead");
+              return;
+            }
+            if (sessionStatus === 'running') {
+              sendError(res, 409, "SESSION_RUNNING", `Session ${sessionId} is already running`);
+              return;
+            }
+            if (!isEndedSessionStatus(sessionStatus)) {
+              sendError(res, 409, "SESSION_NOT_ENDED", `Session is ${sessionStatus}`);
+              return;
+            }
+
+            const continueStart = Date.now();
+            approvalLog.continueStarted(sessionId);
+            const continuePromise = Promise.resolve()
+              .then(() => projectWorker.continueSession({
+                projectRoot: project.root,
+                sessionId,
+                prompt,
+                debug: options.debug,
+              }))
+              .then(result => {
+                if (!result.success) {
+                  approvalLog.continueFailed(sessionId, Date.now() - continueStart, result.error.message);
+                  logger.warn(`Session continue ${sessionId} failed: ${result.error.message}`);
+                  return;
+                }
+                approvalLog.continueCompleted(sessionId, Date.now() - continueStart);
+              })
+              .finally(() => {
+                if (activeSessionContinuations.get(activeKey) === continuePromise) {
+                  activeSessionContinuations.delete(activeKey);
+                }
+              });
+            activeSessionContinuations.set(activeKey, continuePromise);
+
+            res.writeHead(202, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ sessionId, status: "continuing" }));
           } catch (err) {
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
@@ -4615,3 +4908,9 @@ function createLogsSubcommand(): Command {
       }
     });
 }
+
+export const __testing = {
+  renderApprovalPage,
+  canContinueApprovalSession,
+  isEndedSessionStatus,
+};

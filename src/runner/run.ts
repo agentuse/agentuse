@@ -302,21 +302,25 @@ export async function runAgent(
       });
     }
 
-    // Update session message with final token usage and mark session completed
-    if (sessionManager && prepSessionID && assistantMsgID && prepAgentId && result.usage) {
+    // Mark the session completed even when a provider omits final usage data.
+    // Short continuation replies can otherwise leave the approval page polling
+    // a finished-looking run as still live.
+    if (sessionManager && prepSessionID && assistantMsgID && prepAgentId) {
       try {
         await sessionManager.updateMessage(prepSessionID, prepAgentId, assistantMsgID, {
           time: { completed: Date.now() },
-          assistant: {
-            tokens: {
-              input: result.usage.inputTokens || 0,
-              output: result.usage.outputTokens || 0
+          ...(result.usage && {
+            assistant: {
+              tokens: {
+                input: result.usage.inputTokens || 0,
+                output: result.usage.outputTokens || 0
+              }
             }
-          }
+          })
         });
         await sessionManager.setSessionCompleted(prepSessionID, prepAgentId);
       } catch (error) {
-        logger.debug(`Failed to update message with token usage: ${(error as Error).message}`);
+        logger.debug(`Failed to mark session completed: ${(error as Error).message}`);
       }
     }
 
