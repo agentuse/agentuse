@@ -629,7 +629,6 @@ function renderApprovalRow(row: { projectId: string; multiProject: boolean; appr
   const linkable = approval.resumeToken !== undefined;
   const params = new URLSearchParams();
   if (approval.resumeToken) params.set('token', approval.resumeToken);
-  params.set('project', projectId);
   const href = linkable ? `/approvals/${encodeURIComponent(approval.sessionId)}?${params.toString()}` : null;
 
   const titleText = approval.agentDescription || approval.prompt || approval.agentName || '(untitled approval)';
@@ -3074,6 +3073,72 @@ export function createServeCommand(): Command {
           : (effectiveDefault ? projectsById.get(effectiveDefault) : projects[0]);
       };
 
+      const findApprovalInfo = async (options: {
+        projectId?: string;
+        sessionId: string;
+        resumeToken: string;
+        allowHistorical?: boolean;
+      }): Promise<
+        | { success: true; project: Project; info: WorkerApprovalInfoResult }
+        | { success: false; status: number; code: string; message: string }
+      > => {
+        const selectedProjects = options.projectId
+          ? projects.filter((project) => project.id === options.projectId)
+          : (effectiveDefault ? [projectsById.get(effectiveDefault)!] : projects);
+
+        if (selectedProjects.length === 0) {
+          return {
+            success: false,
+            status: 404,
+            code: "PROJECT_NOT_FOUND",
+            message: options.projectId
+              ? `Project not found: ${options.projectId}`
+              : "Project not found for approval request",
+          };
+        }
+
+        const nonSessionErrors: Array<{ status: number; code: string; message: string }> = [];
+        for (const project of selectedProjects) {
+          const projectWorker = workers.get(project.id);
+          if (!projectWorker) {
+            nonSessionErrors.push({
+              status: 500,
+              code: "WORKER_UNAVAILABLE",
+              message: `No worker for project ${project.id}`,
+            });
+            continue;
+          }
+
+          const info = await projectWorker.getApprovalInfo({
+            projectRoot: project.root,
+            sessionId: options.sessionId,
+            resumeToken: options.resumeToken,
+            allowHistorical: options.allowHistorical ?? false,
+          });
+          if (info.success) {
+            return { success: true, project, info };
+          }
+
+          if (info.error.code !== 'SESSION_NOT_FOUND') {
+            nonSessionErrors.push({
+              status: info.error.code === 'RESUME_TOKEN_INVALID' ? 401 : 404,
+              code: info.error.code,
+              message: info.error.message,
+            });
+          }
+        }
+
+        if (nonSessionErrors.length > 0) {
+          return { success: false, ...nonSessionErrors[0] };
+        }
+        return {
+          success: false,
+          status: 404,
+          code: "SESSION_NOT_FOUND",
+          message: `Session not found: ${options.sessionId}`,
+        };
+      };
+
       const activeApprovalResumes = new Map<string, Promise<unknown>>();
       const loggedApprovalRequests = new Set<string>();
       const slackBotToken = process.env.SLACK_BOT_TOKEN;
@@ -3730,34 +3795,22 @@ export function createServeCommand(): Command {
             return;
           }
 
-          const project = resolveResumeProject(projectId);
-          if (!project) {
-            sendHTML(res, 404, '<!doctype html><title>AgentUse Approval</title><p>Project not found for approval request.</p>');
-            return;
-          }
-
-          const projectWorker = workers.get(project.id);
-          if (!projectWorker) {
-            sendHTML(res, 500, '<!doctype html><title>AgentUse Approval</title><p>Worker unavailable for approval request.</p>');
-            return;
-          }
-
-          const info = await projectWorker.getApprovalInfo({
-            projectRoot: project.root,
+          const found = await findApprovalInfo({
+            ...(projectId && { projectId }),
             sessionId,
             resumeToken: token,
             allowHistorical: true,
           });
-          if (!info.success) {
-            sendHTML(res, info.error.code === 'RESUME_TOKEN_INVALID' ? 401 : 404, `<!doctype html><title>AgentUse Approval</title><p>${escapeHtml(info.error.message)}</p>`);
+          if (!found.success) {
+            sendHTML(res, found.status, `<!doctype html><title>AgentUse Approval</title><p>${escapeHtml(found.message)}</p>`);
             return;
           }
 
-          const activeKey = `${project.id}:${sessionId}`;
+          const activeKey = `${found.project.id}:${sessionId}`;
           sendHTML(res, 200, renderApprovalPage({
-            approval: info.approval,
+            approval: found.info.approval,
             token,
-            projectId: project.id,
+            projectId: found.project.id,
             resuming: activeApprovalResumes.has(activeKey),
           }));
           return;
@@ -3777,38 +3830,26 @@ export function createServeCommand(): Command {
               return;
             }
 
-            const project = resolveResumeProject(projectId);
-            if (!project) {
-              sendError(res, 404, "PROJECT_NOT_FOUND", "Project not found for approval request");
-              return;
-            }
-
-            const projectWorker = workers.get(project.id);
-            if (!projectWorker) {
-              sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
-              return;
-            }
-
-            const info = await projectWorker.getApprovalInfo({
-              projectRoot: project.root,
+            const found = await findApprovalInfo({
+              ...(projectId && { projectId }),
               sessionId,
-              resumeToken: token
+              resumeToken: token,
             });
-            if (!info.success) {
-              sendError(res, info.error.code === 'RESUME_TOKEN_INVALID' ? 401 : 404, info.error.code, info.error.message);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
               return;
             }
 
-            const logKey = `${project.id}:${sessionId}:${token}`;
+            const logKey = `${found.project.id}:${sessionId}:${token}`;
             if (!loggedApprovalRequests.has(logKey)) {
               loggedApprovalRequests.add(logKey);
-              const filePath = info.approval.agent.filePath;
+              const filePath = found.info.approval.agent.filePath;
               const agentLabel = filePath
-                ? relative(project.root, filePath)
-                : info.approval.agent.name;
+                ? relative(found.project.root, filePath)
+                : found.info.approval.agent.name;
               approvalLog.sent(
-                multiProject ? `${project.id}/${agentLabel}` : agentLabel,
-                info.approval.approvalUrl ?? approvalUrl,
+                multiProject ? `${found.project.id}/${agentLabel}` : agentLabel,
+                found.info.approval.approvalUrl ?? approvalUrl,
                 sessionId
               );
             }
@@ -3830,43 +3871,31 @@ export function createServeCommand(): Command {
             return;
           }
 
-          const project = resolveResumeProject(projectId);
-          if (!project) {
-            sendError(res, 404, "PROJECT_NOT_FOUND", "Project not found for approval request");
-            return;
-          }
-
-          const projectWorker = workers.get(project.id);
-          if (!projectWorker) {
-            sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
-            return;
-          }
-
-          const info = await projectWorker.getApprovalInfo({
-            projectRoot: project.root,
+          const found = await findApprovalInfo({
+            ...(projectId && { projectId }),
             sessionId,
             resumeToken: token,
             allowHistorical: true,
           });
-          if (!info.success) {
-            sendError(res, info.error.code === 'RESUME_TOKEN_INVALID' ? 401 : 404, info.error.code, info.error.message);
+          if (!found.success) {
+            sendError(res, found.status, found.code, found.message);
             return;
           }
 
-          const activeKey = `${project.id}:${sessionId}`;
+          const activeKey = `${found.project.id}:${sessionId}`;
           const status = activeApprovalResumes.has(activeKey)
             ? 'resuming'
-            : info.approval.sessionStatus === 'suspended'
+            : found.info.approval.sessionStatus === 'suspended'
               ? 'waiting'
-              : info.approval.sessionStatus;
+              : found.info.approval.sessionStatus;
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             success: true,
             sessionId,
             status,
-            approval: info.approval,
-            logs: info.approval.logs ?? [],
-            decision: info.approval.decision
+            approval: found.info.approval,
+            logs: found.info.approval.logs ?? [],
+            decision: found.info.approval.decision
           }));
           return;
         }
@@ -3890,12 +3919,17 @@ export function createServeCommand(): Command {
               return;
             }
 
-            const project = resolveResumeProject(projectId);
-            if (!project) {
-              sendError(res, 404, "PROJECT_NOT_FOUND", "Project not found for approval request");
+            const found = await findApprovalInfo({
+              ...(projectId && { projectId }),
+              sessionId,
+              resumeToken: token
+            });
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
               return;
             }
 
+            const project = found.project;
             const projectWorker = workers.get(project.id);
             if (!projectWorker) {
               sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
@@ -3907,16 +3941,7 @@ export function createServeCommand(): Command {
               sendError(res, 409, "APPROVAL_RESUMING", "Approval decision has already been submitted and the session is resuming");
               return;
             }
-
-            const info = await projectWorker.getApprovalInfo({
-              projectRoot: project.root,
-              sessionId,
-              resumeToken: token
-            });
-            if (!info.success) {
-              sendError(res, info.error.code === 'RESUME_TOKEN_INVALID' ? 401 : 404, info.error.code, info.error.message);
-              return;
-            }
+            const info = found.info;
             if (info.approval.sessionStatus !== 'suspended') {
               sendError(res, 409, "SESSION_NOT_SUSPENDED", `Session is ${info.approval.sessionStatus}`);
               return;

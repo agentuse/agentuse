@@ -15,12 +15,12 @@ describe('await_human approval URL', () => {
     unregisterServer();
   });
 
-  it('builds a token-protected approval page URL with project routing', () => {
+  it('builds a token-protected approval page URL without project routing in the reviewer link', () => {
     process.env.AGENTUSE_RESUME_PUBLIC_URL = 'https://agentuse.example.com/';
     delete process.env.AGENTUSE_SERVE_URL;
 
     expect(getApprovalUrl('session-1', 'resume-token', 'project-1')).toBe(
-      'https://agentuse.example.com/approvals/session-1?token=resume-token&project=project-1'
+      'https://agentuse.example.com/approvals/session-1?token=resume-token'
     );
   });
 
@@ -49,7 +49,30 @@ describe('await_human approval URL', () => {
     });
 
     expect(getApprovalUrl('session-1', 'resume-token', 'project-a', '/tmp/project-a')).toBe(
-      'http://127.0.0.1:12234/approvals/session-1?token=resume-token&project=project-a'
+      'http://127.0.0.1:12234/approvals/session-1?token=resume-token'
+    );
+  });
+
+  it('keeps multi-project approval URLs clean and project-free', () => {
+    delete process.env.AGENTUSE_RESUME_PUBLIC_URL;
+    delete process.env.AGENTUSE_SERVE_URL;
+    registerServer({
+      port: 12235,
+      host: '127.0.0.1',
+      publicUrl: 'http://127.0.0.1:12235',
+      projectRoot: '/tmp/angle-content-system',
+      startTime: Date.now(),
+      agentCount: 2,
+      scheduleCount: 0,
+      version: 'test',
+      projects: [
+        { id: 'angle-content-system', root: '/tmp/angle-content-system', agentCount: 1, scheduleCount: 0 },
+        { id: 'consulting-ops', root: '/tmp/consulting-ops', agentCount: 1, scheduleCount: 0 }
+      ]
+    });
+
+    expect(getApprovalUrl('session-1', 'resume-token', undefined, '/tmp/consulting-ops')).toBe(
+      'http://127.0.0.1:12235/approvals/session-1?token=resume-token'
     );
   });
 

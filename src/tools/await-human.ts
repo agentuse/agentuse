@@ -22,17 +22,15 @@ function parseTimeout(value?: string): number | undefined {
 
 function getApprovalBaseUrl(projectRoot?: string): string {
   const explicit = process.env.AGENTUSE_RESUME_PUBLIC_URL ?? process.env.AGENTUSE_SERVE_URL;
-  if (explicit) return explicit;
   const server = findServerForProject(projectRoot);
-  return server?.publicUrl ?? `http://${server?.host ?? '127.0.0.1'}:${server?.port ?? 12233}`;
+  return explicit ?? server?.publicUrl ?? `http://${server?.host ?? '127.0.0.1'}:${server?.port ?? 12233}`;
 }
 
-export function getApprovalUrl(sessionId: string | undefined, resumeToken: string, projectId?: string, projectRoot?: string): string | undefined {
+export function getApprovalUrl(sessionId: string | undefined, resumeToken: string, _projectId?: string, projectRoot?: string): string | undefined {
   if (!sessionId) return undefined;
-  const base = getApprovalBaseUrl(projectRoot);
-  const url = new URL(`${base.replace(/\/$/, '')}/approvals/${encodeURIComponent(sessionId)}`);
+  const baseUrl = getApprovalBaseUrl(projectRoot);
+  const url = new URL(`${baseUrl.replace(/\/$/, '')}/approvals/${encodeURIComponent(sessionId)}`);
   url.searchParams.set('token', resumeToken);
-  if (projectId) url.searchParams.set('project', projectId);
   return url.toString();
 }
 
@@ -66,8 +64,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       const timeoutMs = parseTimeout(defaults?.timeout);
       const expiresAt = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
       const resumeToken = randomBytes(24).toString('base64url');
-      const projectId = process.env.AGENTUSE_PROJECT_ID;
-      const approvalUrl = getApprovalUrl(sessionId, resumeToken, projectId, defaults?.projectRoot);
+      const approvalUrl = getApprovalUrl(sessionId, resumeToken, undefined, defaults?.projectRoot);
 
       let channelRequest: { type: 'slack-message'; channel: string } | undefined;
       if (defaults?.slack) {

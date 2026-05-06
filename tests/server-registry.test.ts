@@ -258,6 +258,7 @@ describe("Server Registry", () => {
       expect(server?.pid).toBe(process.pid);
       expect(server?.publicUrl).toBe("http://127.0.0.1:12345");
     });
+
   });
 
   describe("formatUptime", () => {
