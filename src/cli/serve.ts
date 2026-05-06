@@ -149,6 +149,7 @@ interface ApprovalSummary {
   decisionComment?: string;
   decisionReviewer?: string;
   resumeToken?: string;
+  errorCode?: string;
   errorMessage?: string;
   channelMessage?: { type?: string; channel?: string; ts?: string; actionTs?: string; url?: string };
   channels?: {
@@ -190,6 +191,8 @@ interface ApprovalPageInfo {
     url?: string;
   };
   decision?: unknown;
+  errorCode?: string;
+  errorMessage?: string;
   logs?: ApprovalLogEntry[];
 }
 
@@ -1135,6 +1138,17 @@ function canContinueApprovalSession(options: {
     Boolean(approval.agent.filePath);
 }
 
+function approvalSessionErrorText(approval: Pick<ApprovalPageInfo, 'sessionStatus' | 'errorCode' | 'errorMessage'>): string {
+  if (approval.sessionStatus !== 'error') return '';
+  if (!approval.errorCode && !approval.errorMessage) {
+    return 'Session finished with an error. Check the session log for details.';
+  }
+  return `Session finished with an error: ${[
+    approval.errorCode,
+    approval.errorMessage
+  ].filter(Boolean).join(': ')}`;
+}
+
 function renderApprovalPage(options: {
   approval: ApprovalPageInfo;
   token: string;
@@ -1164,17 +1178,21 @@ function renderApprovalPage(options: {
   const eyebrow = actionable
     ? 'human approval requested'
     : continueActionable
-      ? 'session completed'
+      ? approval.sessionStatus === 'error' ? 'session needs attention' : 'session completed'
       : 'approval history';
   const promptText = actionable
     ? 'Review the pending request in the session log below, then approve, reject, or send a comment back to the agent. The session is paused until you respond.'
     : continueActionable
-      ? 'This run has finished. Send a follow-up instruction to continue the same session with its existing context.'
+      ? approval.sessionStatus === 'error'
+        ? 'This run stopped with an error. Review the session log, then send a follow-up instruction to continue the same session with its existing context.'
+        : 'This run has finished. Send a follow-up instruction to continue the same session with its existing context.'
       : busy
         ? 'AgentUse is continuing this session. The session log updates as new work arrives.'
         : expired
           ? 'This approval request has expired. The session log remains available for review.'
           : 'This approval request is not accepting decisions right now. The session log remains available for review.';
+  const sessionErrorText = approvalSessionErrorText(approval);
+  const initialResultText = error || sessionErrorText;
 
   return `<!doctype html>
 <html lang="en">
@@ -1997,7 +2015,7 @@ function renderApprovalPage(options: {
 
     <div id="inactive-banner" class="inactive-banner"${actionable || continueActionable || busy ? ' hidden' : ''}>This approval request is not accepting decisions right now.</div>
 
-    <p id="result" class="notice"></p>
+    <p id="result" class="notice${initialResultText ? ' error' : ''}">${initialResultText ? escapeHtml(initialResultText) : ''}</p>
   </main>
 
   ${actionable ? `
@@ -2041,6 +2059,7 @@ function renderApprovalPage(options: {
     const continueInput = document.getElementById('continue-prompt');
     const continueSubmit = document.getElementById('continue-submit');
     const inactiveBanner = document.getElementById('inactive-banner');
+    try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch {}
 
     // theme toggle
     ${approvalsThemeToggleScript()}
@@ -2355,6 +2374,7 @@ function renderApprovalPage(options: {
         '</span></li>';
     }
     function renderLogs(logs, force) {
+      const shouldFollowEnd = isNearPageEnd();
       let changed = Boolean(force);
       if (Array.isArray(logs)) {
         for (const entry of logs) {
@@ -2380,23 +2400,21 @@ function renderApprovalPage(options: {
       const ordered = [...renderedLogs.values()].sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
       logsEl.innerHTML = ordered.map(logEntryHtml).join('');
       updateReviewerComment(ordered);
-      scrollToActiveApproval();
+      scrollToPageEnd({ follow: shouldFollowEnd });
     }
-    let lastScrolledResumeToken = null;
-    function activeApprovalElement() {
-      if (currentResumeToken) {
-        return logsEl.querySelector('[data-resume-token="' + CSS.escape(currentResumeToken) + '"]');
-      }
-      return logsEl.querySelector('.log-item.pending') || logsEl.lastElementChild;
+    let hasScrolledToPageEnd = false;
+    function isNearPageEnd() {
+      const page = document.documentElement;
+      return window.innerHeight + window.scrollY >= page.scrollHeight - 240;
     }
-    function scrollToActiveApproval(force) {
-      const target = activeApprovalElement();
-      if (!target) return;
-      const tokenForScroll = currentResumeToken || 'latest';
-      if (!force && lastScrolledResumeToken === tokenForScroll) return;
-      lastScrolledResumeToken = tokenForScroll;
+    function scrollToPageEnd(options) {
+      const force = Boolean(options && options.force);
+      const follow = Boolean(options && options.follow);
+      if (!force && hasScrolledToPageEnd && !follow) return;
+      hasScrolledToPageEnd = true;
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' });
       requestAnimationFrame(function () {
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' });
       });
     }
     function formatExpires(value) {
@@ -2429,7 +2447,7 @@ function renderApprovalPage(options: {
       if (approval.approvalUrl) {
         try { history.replaceState(null, '', approval.approvalUrl); } catch {}
       }
-      scrollToActiveApproval(true);
+      scrollToPageEnd({ force: true });
     }
     function isLiveStatus(status, logs) {
       if (status === 'completed' || status === 'error' || status === 'expired' || status === 'failed') return false;
@@ -2438,6 +2456,13 @@ function renderApprovalPage(options: {
     }
     function isEndedStatus(status) {
       return status === 'completed' || status === 'error';
+    }
+    function sessionErrorText(approval) {
+      if (!approval || approval.sessionStatus !== 'error') return '';
+      const code = typeof approval.errorCode === 'string' ? approval.errorCode : '';
+      const message = typeof approval.errorMessage === 'string' ? approval.errorMessage : '';
+      if (!code && !message) return 'Session finished with an error. Check the session log for details.';
+      return 'Session finished with an error: ' + [code, message].filter(Boolean).join(': ');
     }
     function updateContinuationSurface(status, approval, logs) {
       const live = isLiveStatus(status, logs);
@@ -2498,19 +2523,21 @@ function renderApprovalPage(options: {
         renderLogs(logs, forceLogRender);
         updateContinuationSurface(status, payload.approval, logs);
         const resultEl = document.getElementById('result');
-        if (resultEl && status === 'completed' && /continuing session|follow-up recorded/.test(resultEl.textContent || '')) {
+        const transitionResult = /submitting decision|decision recorded|resuming the session|continuing session|follow-up recorded/.test(resultEl?.textContent || '');
+        const errorText = sessionErrorText(payload.approval);
+        if (resultEl && (status === 'error' || payload.approval?.sessionStatus === 'error')) {
+          resultEl.textContent = errorText || 'Session finished with an error. Check the latest log entry for details.';
+          resultEl.className = 'notice error';
+        } else if (resultEl && status === 'completed' && transitionResult) {
           resultEl.textContent = '✓ session completed.';
           resultEl.className = 'notice';
-        } else if (resultEl && status === 'error' && /continuing session|follow-up recorded/.test(resultEl.textContent || '')) {
-          resultEl.textContent = 'Session finished with an error. Check the latest log entry for details.';
-          resultEl.className = 'notice error';
         }
         nextDelay = isLiveStatus(status, logs) ? 500 : 1500;
       } catch {}
       scheduleRefresh(nextDelay);
     }
     refreshStatus();
-    scrollToActiveApproval();
+    scrollToPageEnd({ force: true });
 
     let submittingDecision = false;
     let submittingContinue = false;

@@ -31,6 +31,11 @@ describe('approval web page', () => {
     expect(html).toContain('id="continue-panel" class="continue-panel"');
     expect(html).toContain("location.pathname + '/continue'");
     expect(html).toContain('Continue session');
+    expect(html).toContain('decision recorded|resuming the session');
+    expect(html).toContain("history.scrollRestoration = 'manual'");
+    expect(html).toContain('scrollToPageEnd({ force: true })');
+    expect(html).not.toContain('scrollToActiveApproval');
+    expect(html).not.toContain("scrollIntoView({ behavior: 'smooth'");
   });
 
   it('keeps suspended approvals on the decision flow', () => {
@@ -63,5 +68,25 @@ describe('approval web page', () => {
     expect(html).toContain('human approval requested');
     expect(html).toContain('data-action="approve"');
     expect(html).toContain('id="continue-panel" class="continue-panel" hidden');
+  });
+
+  it('surfaces session-level continuation errors on the approval page', () => {
+    const approval = {
+      ...baseApproval,
+      sessionStatus: 'error',
+      errorCode: 'EXECUTION_ERROR',
+      errorMessage: 'Failed after 4 attempts. Last error: Error'
+    };
+
+    const html = __testing.renderApprovalPage({
+      approval,
+      token: 'token-1',
+      projectId: 'project-1'
+    });
+
+    expect(html).toContain('session needs attention');
+    expect(html).toContain('This run stopped with an error.');
+    expect(html).toContain('Session finished with an error: EXECUTION_ERROR: Failed after 4 attempts. Last error: Error');
+    expect(html).toContain("payload.approval?.sessionStatus === 'error'");
   });
 });

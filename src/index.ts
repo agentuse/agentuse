@@ -927,6 +927,7 @@ async function runInternalWorker() {
     decisionComment?: string;
     decisionReviewer?: string;
     resumeToken?: string;
+    errorCode?: string;
     errorMessage?: string;
     channelMessage?: { type?: string; channel?: string; ts?: string; actionTs?: string; url?: string };
     channels?: {
@@ -945,6 +946,14 @@ async function runInternalWorker() {
     return typeof value === 'string'
       ? value
       : JSON.stringify(value, null, 2);
+  }
+
+  function sessionErrorFields(session: { status?: string; error?: { code?: string; message?: string } }) {
+    if (session.status !== 'error' || !session.error) return {};
+    return {
+      ...(typeof session.error.code === 'string' && session.error.code ? { errorCode: session.error.code } : {}),
+      ...(typeof session.error.message === 'string' && session.error.message ? { errorMessage: session.error.message } : {})
+    };
   }
 
   function isRejectDecision(toolResult: unknown): boolean {
@@ -1171,6 +1180,7 @@ async function runInternalWorker() {
           approval: {
             sessionId: req.sessionId,
             sessionStatus: found.session.status,
+            ...sessionErrorFields(found.session),
             agent: {
               id: found.session.agent.id,
               name: found.session.agent.name,
@@ -1221,6 +1231,7 @@ async function runInternalWorker() {
           approval: {
             sessionId: req.sessionId,
             sessionStatus: found.session.status,
+            ...sessionErrorFields(found.session),
             agent: {
               id: found.session.agent.id,
               name: found.session.agent.name,
@@ -1244,6 +1255,7 @@ async function runInternalWorker() {
         approval: {
           sessionId: req.sessionId,
           sessionStatus: found.session.status,
+          ...sessionErrorFields(found.session),
           agent: {
             id: found.session.agent.id,
             name: found.session.agent.name,
@@ -1402,6 +1414,8 @@ async function runInternalWorker() {
         } else {
           status = 'errored';
         }
+        const sessionError = sessionErrorFields(session) as { errorCode?: string; errorMessage?: string };
+        if (sessionError.errorMessage) errorMessage = sessionError.errorMessage;
 
         const decisionAt = state.status === 'completed' || state.status === 'error'
           ? (typeof state.time?.end === 'number' ? state.time.end : undefined)
@@ -1426,6 +1440,7 @@ async function runInternalWorker() {
           ...(typeof output.comment === 'string' && { decisionComment: output.comment }),
           ...(typeof reviewer.username === 'string' && { decisionReviewer: reviewer.username }),
           ...(typeof resumePayload.resumeToken === 'string' && { resumeToken: resumePayload.resumeToken }),
+          ...(sessionError.errorCode && { errorCode: sessionError.errorCode }),
           ...(errorMessage && { errorMessage }),
           ...(Object.keys(channelMessage).length > 0 && {
             channelMessage: {
