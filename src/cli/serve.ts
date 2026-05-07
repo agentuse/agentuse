@@ -129,6 +129,7 @@ interface WorkerSweepExpiredResult {
 }
 
 type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
+const APPROVAL_LIST_DEFAULT_DAYS = 30;
 
 interface ApprovalSummary {
   sessionId: string;
@@ -415,10 +416,14 @@ class AgentWorker {
     }) as Promise<WorkerSweepExpiredResult | WorkerExecuteError>;
   }
 
-  listApprovals(projectRoot: string): Promise<WorkerListApprovalsResult | WorkerExecuteError> {
+  listApprovals(
+    projectRoot: string,
+    options: { createdAfter?: number } = {}
+  ): Promise<WorkerListApprovalsResult | WorkerExecuteError> {
     return this.request({
       type: "list-approvals",
       projectRoot,
+      approvalCreatedAfter: options.createdAfter,
       timeout: 30,
     }) as Promise<WorkerListApprovalsResult | WorkerExecuteError>;
   }
@@ -525,6 +530,18 @@ function sendError(res: ServerResponse, status: number, code: string, message: s
 function sendHTML(res: ServerResponse, status: number, html: string) {
   res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" });
   res.end(html);
+}
+
+function approvalListCreatedAfter(requestUrl: URL, now = Date.now()): number | undefined {
+  const daysParam = requestUrl.searchParams.get('days');
+  if (daysParam === 'all') return undefined;
+
+  const days = daysParam === null
+    ? APPROVAL_LIST_DEFAULT_DAYS
+    : Number(daysParam);
+  if (!Number.isFinite(days) || days <= 0) return now - APPROVAL_LIST_DEFAULT_DAYS * 24 * 60 * 60 * 1000;
+
+  return now - Math.floor(days) * 24 * 60 * 60 * 1000;
 }
 
 function renderLogItems(
@@ -3926,20 +3943,30 @@ export function createServeCommand(): Command {
           type ProjectRow = { projectId: string; multiProject: boolean; approval: ApprovalSummary };
           const rows: ProjectRow[] = [];
           const errors: Array<{ projectId: string; message: string }> = [];
+          const createdAfter = approvalListCreatedAfter(requestUrl);
 
-          for (const project of projects) {
+          const projectResults = await Promise.all(projects.map(async (project) => {
             const projectWorker = workers.get(project.id);
             if (!projectWorker) {
-              errors.push({ projectId: project.id, message: 'Worker unavailable' });
-              continue;
+              return { project, error: 'Worker unavailable' };
             }
-            const result = await projectWorker.listApprovals(project.root);
+            const result = await projectWorker.listApprovals(
+              project.root,
+              createdAfter === undefined ? {} : { createdAfter }
+            );
             if (!result.success) {
-              errors.push({ projectId: project.id, message: result.error.message });
+              return { project, error: result.error.message };
+            }
+            return { project, approvals: result.approvals };
+          }));
+
+          for (const result of projectResults) {
+            if (result.error) {
+              errors.push({ projectId: result.project.id, message: result.error });
               continue;
             }
-            for (const approval of result.approvals) {
-              rows.push({ projectId: project.id, multiProject, approval });
+            for (const approval of result.approvals ?? []) {
+              rows.push({ projectId: result.project.id, multiProject, approval });
             }
           }
 
@@ -3967,6 +3994,10 @@ export function createServeCommand(): Command {
                 pending: buckets.pending.map(serializeRow),
                 completed: buckets.completed.map(serializeRow),
                 expired: buckets.expired.map(serializeRow)
+              },
+              window: {
+                days: requestUrl.searchParams.get('days') === 'all' ? 'all' : Math.floor((Date.now() - createdAfter!) / (24 * 60 * 60 * 1000)),
+                ...(createdAfter !== undefined && { createdAfter })
               },
               errors
             });
@@ -4940,4 +4971,5 @@ export const __testing = {
   renderApprovalPage,
   canContinueApprovalSession,
   isEndedSessionStatus,
+  approvalListCreatedAfter,
 };

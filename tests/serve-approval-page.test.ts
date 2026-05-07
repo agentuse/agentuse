@@ -16,6 +16,17 @@ const baseApproval = {
 };
 
 describe('approval web page', () => {
+  it('defaults approval list scans to 30 days and allows all history', () => {
+    const now = Date.UTC(2026, 4, 6);
+
+    expect(__testing.approvalListCreatedAfter(new URL('http://127.0.0.1:12233/approvals'), now))
+      .toBe(now - 30 * 24 * 60 * 60 * 1000);
+    expect(__testing.approvalListCreatedAfter(new URL('http://127.0.0.1:12233/approvals?days=7'), now))
+      .toBe(now - 7 * 24 * 60 * 60 * 1000);
+    expect(__testing.approvalListCreatedAfter(new URL('http://127.0.0.1:12233/approvals?days=all'), now))
+      .toBeUndefined();
+  });
+
   it('offers a continuation form for completed approval sessions', () => {
     expect(__testing.canContinueApprovalSession({
       approval: baseApproval

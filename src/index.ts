@@ -40,7 +40,7 @@ import { resolveTimeout } from './utils/config';
 import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
 import { telemetry, categorizeError, aggregateToolCalls, countSteps, parseModel } from './telemetry';
-import type { SessionManager as SessionManagerType } from './session';
+import type { SessionInfo, SessionManager as SessionManagerType } from './session';
 import { findServerForProject } from './utils/server-registry';
 
 const program = new Command();
@@ -878,6 +878,7 @@ async function runInternalWorker() {
     toolResult?: unknown;
     resumeToken?: string;
     allowHistorical?: boolean;
+    approvalCreatedAfter?: number;
     runChannelHandles?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
   }
 
@@ -1367,19 +1368,17 @@ async function runInternalWorker() {
     try {
       await initStorage(req.projectRoot);
       const sessionManager = new SessionManager();
-      const sessions = await sessionManager.listAllSessions();
+      const sessions = typeof req.approvalCreatedAfter === 'number'
+        ? await sessionManager.listSessionsCreatedAfter(req.approvalCreatedAfter)
+        : await sessionManager.listAllSessions();
       const approvals: ApprovalSummary[] = [];
+      const sessionBatchSize = 16;
 
-      for (const { session, agentId } of sessions) {
-        const messages = await sessionManager.getSessionMessages(session.id, agentId);
-        const parts = (await Promise.all(
-          messages.map((message) => sessionManager.getMessageParts(session.id, agentId, message.id))
-        )).flat();
-
-        const approvalPart = [...parts].reverse().find((part: any) =>
-          part?.type === 'tool' && part?.tool === 'await_human'
-        ) as any;
-        if (!approvalPart) continue;
+      const summarizeApproval = async (
+        { session, agentId }: { session: SessionInfo; agentId: string }
+      ): Promise<ApprovalSummary | null> => {
+        const approvalPart = await sessionManager.getLatestApprovalPart(session.id, agentId) as any;
+        if (!approvalPart) return null;
 
         const state = approvalPart.state ?? {};
         const input = valueAsRecord(state.input);
@@ -1421,7 +1420,7 @@ async function runInternalWorker() {
           ? (typeof state.time?.end === 'number' ? state.time.end : undefined)
           : undefined;
 
-        approvals.push({
+        return {
           sessionId: session.id,
           agentId,
           agentName: session.agent.name || session.agent.id,
@@ -1452,7 +1451,13 @@ async function runInternalWorker() {
             }
           }),
           ...(session.channels && { channels: session.channels })
-        });
+        };
+      };
+
+      for (let i = 0; i < sessions.length; i += sessionBatchSize) {
+        const batch = sessions.slice(i, i + sessionBatchSize);
+        const summaries = await Promise.all(batch.map(summarizeApproval));
+        approvals.push(...summaries.filter((approval): approval is ApprovalSummary => approval !== null));
       }
 
       return {

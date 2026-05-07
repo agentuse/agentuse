@@ -1,4 +1,4 @@
-import { ulid } from 'ulid';
+import { decodeTime, ulid } from 'ulid';
 import fs from 'fs/promises';
 import path from 'path';
 import { writeJSON, readJSON, listKeys, getStorageState, sanitizeAgentName } from '../storage';
@@ -63,6 +63,12 @@ export class SessionManager {
       return `${this.parentPath}/${sessionDir}`;
     }
     return sessionDir;
+  }
+
+  private sessionIdFromDirName(dirName: string): string | null {
+    const ulidLength = 26;
+    if (dirName.length < ulidLength + 2 || dirName[ulidLength] !== '-') return null;
+    return dirName.slice(0, ulidLength);
   }
 
   /**
@@ -344,6 +350,32 @@ export class SessionManager {
   }
 
   /**
+   * Return the latest await_human part in a session without reading message
+   * records. Approval list pages only need the approval tool payload, and
+   * large session stores make repeatedly loading messages noticeably slow.
+   */
+  async getLatestApprovalPart(sessionID: string, agentId: string): Promise<ToolPart | null> {
+    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const keys = await listKeys(sessionPath);
+    const partKeys = keys
+      .filter(key => key.startsWith(`${sessionPath}/`) && key.includes('/part/'))
+      .sort();
+
+    const parts = await Promise.all(
+      partKeys.map(async (key) => {
+        const part = await readJSON<Part>(key);
+        return part?.type === 'tool' && part.tool === 'await_human'
+          ? part
+          : null;
+      })
+    );
+
+    return parts
+      .filter((part): part is ToolPart => part !== null)
+      .sort((a, b) => getPartOrder(b) - getPartOrder(a) || b.id.localeCompare(a.id))[0] ?? null;
+  }
+
+  /**
    * Mark session as suspended on an external event.
    */
   async setSessionSuspended(sessionID: string, agentId: string): Promise<void> {
@@ -362,7 +394,8 @@ export class SessionManager {
   }
 
   private async scanSessions(
-    predicate?: (session: SessionInfo) => boolean
+    predicate?: (session: SessionInfo) => boolean,
+    options: { createdAfter?: number } = {}
   ): Promise<Array<{ session: SessionInfo; agentId: string }>> {
     const state = await getStorageState();
     const entries = await fs.readdir(state.dir, { withFileTypes: true }).catch(() => []);
@@ -370,6 +403,14 @@ export class SessionManager {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      const sessionId = this.sessionIdFromDirName(entry.name);
+      if (options.createdAfter !== undefined && sessionId) {
+        try {
+          if (decodeTime(sessionId) < options.createdAfter) continue;
+        } catch {
+          // Fall through and read the session file for legacy/non-ULID data.
+        }
+      }
       const session = await readJSON<SessionInfo>(`${entry.name}/session`);
       if (!session) continue;
       if (predicate && !predicate(session)) continue;
@@ -386,6 +427,10 @@ export class SessionManager {
 
   async listAllSessions(): Promise<Array<{ session: SessionInfo; agentId: string }>> {
     return this.scanSessions();
+  }
+
+  async listSessionsCreatedAfter(createdAfter: number): Promise<Array<{ session: SessionInfo; agentId: string }>> {
+    return this.scanSessions(undefined, { createdAfter });
   }
 
   async findPendingTool(sessionID: string, agentId: string): Promise<{ message: Message; part: ToolPart } | null> {
