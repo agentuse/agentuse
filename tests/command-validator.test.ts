@@ -284,6 +284,15 @@ describe('CommandValidator', () => {
       expect(result.matchedPattern).toBe('agent-browser eval *');
     });
 
+    test('allows quoted agent-browser eval payloads with shell-like JavaScript tokens', async () => {
+      const validator = new CommandValidator(['agent-browser eval *'], projectRoot);
+
+      const result = await validator.validate(String.raw`agent-browser eval "(() => {const html=document.documentElement.innerHTML; const ids=[...new Set([...html.matchAll(/urn:li:activity:([0-9]+)/g)].map(m=>m[1]))]; return ids.map(id=>{const i=html.indexOf(id); const s=html.slice(Math.max(0,i-1200), i+1200); return {id, snippet:s.replace(/<[^>]+>/g,' ').replace(/&quot;/g,'\"').replace(/&amp;/g,'&').replace(/\s+/g,' ').slice(0,1500)};});})()"`);
+
+      expect(result.allowed).toBe(true);
+      expect(result.matchedPattern).toBe('agent-browser eval *');
+    });
+
     test('does not treat agent-browser eval as payload command unless explicitly allowlisted', async () => {
       const validator = new CommandValidator(['agent-browser snapshot'], projectRoot);
 

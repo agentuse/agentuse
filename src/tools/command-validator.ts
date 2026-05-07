@@ -106,6 +106,40 @@ function stripOuterShellQuotes(value: string): string {
 }
 
 function unsafeShellSyntaxInPayload(payload: string): string | undefined {
+  const trimmed = payload.trim();
+  const first = trimmed[0];
+
+  if (first === '"' || first === "'") {
+    let escaped = false;
+
+    for (let i = 1; i < trimmed.length; i += 1) {
+      const char = trimmed[i];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (first === '"' && char === '\\') {
+        escaped = true;
+        continue;
+      }
+
+      if (char !== first) continue;
+
+      const suffix = trimmed.slice(i + 1).trim();
+      if (!suffix) return undefined;
+      if (suffix.startsWith('|')) return 'pipeline';
+      if (suffix.startsWith('&')) return 'command chain';
+      if (suffix.startsWith(';') || suffix.startsWith('\n')) return 'command separator';
+      if (suffix.startsWith('$(') || suffix.startsWith('`')) return 'command substitution';
+      if (suffix.startsWith('>') || suffix.startsWith('<')) return 'redirection';
+      return 'suffix';
+    }
+
+    return undefined;
+  }
+
   let quote: '"' | "'" | null = null;
   let escaped = false;
 
