@@ -722,6 +722,25 @@ function renderStoreStyles(): string {
     .store-table { width: 100%; border-collapse: collapse; }
     .store-table th, .store-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
     .store-table th { color: var(--muted-2); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 500; background: var(--panel); }
+    .store-table th[aria-sort] { color: var(--muted-3); }
+    .sort-header {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      letter-spacing: inherit;
+      text-transform: inherit;
+      cursor: pointer;
+    }
+    .sort-header:hover { color: var(--fg); }
+    .sort-indicator { width: 10px; color: var(--cyan); text-transform: none; letter-spacing: 0; }
+    .sort-indicator::before { content: ""; }
+    th[aria-sort="ascending"] .sort-indicator::before { content: "^"; }
+    th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
     .store-table tr:last-child td { border-bottom: 0; }
     .store-table tbody tr { transition: background 160ms ease, box-shadow 160ms ease; }
     .store-table tbody tr:hover { background: var(--panel-hover); }
@@ -780,16 +799,105 @@ function renderStoreStyles(): string {
   `;
 }
 
+function sortableStoreHeader(
+  label: string,
+  key: string,
+  type: 'text' | 'number' = 'text',
+  defaultDirection: 'asc' | 'desc' = type === 'number' ? 'desc' : 'asc'
+): string {
+  return `<th data-sort-key="${escapeHtml(key)}" data-sort-type="${type}" data-default-direction="${defaultDirection}"><button class="sort-header" type="button">${escapeHtml(label)}<span class="sort-indicator" aria-hidden="true"></span></button></th>`;
+}
+
+function sortableStoreTableScript(): string {
+  return `
+    document.querySelectorAll('table[data-sortable="true"]').forEach((table) => {
+      const tbody = table.querySelector('tbody');
+      if (!tbody) return;
+      const headers = Array.from(table.querySelectorAll('th[data-sort-key]'));
+
+      const valueFor = (row, key, type) => {
+        const raw = row.getAttribute('data-sort-' + key) || '';
+        if (type === 'number') {
+          const parsed = Number(raw);
+          return Number.isFinite(parsed) ? parsed : 0;
+        }
+        return raw.toLocaleLowerCase();
+      };
+
+      const updateHeaders = (activeHeader, direction) => {
+        headers.forEach((header) => {
+          if (header === activeHeader) {
+            header.setAttribute('aria-sort', direction === 'asc' ? 'ascending' : 'descending');
+          } else {
+            header.removeAttribute('aria-sort');
+          }
+        });
+      };
+
+      const sortBy = (header, direction) => {
+        const key = header.getAttribute('data-sort-key');
+        const type = header.getAttribute('data-sort-type') || 'text';
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        rows.sort((a, b) => {
+          const left = valueFor(a, key, type);
+          const right = valueFor(b, key, type);
+          const primary = type === 'number'
+            ? left - right
+            : String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' });
+          if (primary !== 0) return direction === 'asc' ? primary : -primary;
+          return Number(a.getAttribute('data-row-index') || 0) - Number(b.getAttribute('data-row-index') || 0);
+        });
+        rows.forEach((row) => tbody.appendChild(row));
+        updateHeaders(header, direction);
+      };
+
+      headers.forEach((header) => {
+        const button = header.querySelector('button');
+        if (!button) return;
+        button.addEventListener('click', () => {
+          const isActive = header.hasAttribute('aria-sort');
+          const current = header.getAttribute('aria-sort') === 'ascending' ? 'asc' : 'desc';
+          const direction = isActive
+            ? (current === 'asc' ? 'desc' : 'asc')
+            : (header.getAttribute('data-default-direction') || 'asc');
+          sortBy(header, direction);
+        });
+      });
+
+      const defaultKey = table.getAttribute('data-default-sort-key');
+      const defaultHeader = defaultKey
+        ? headers.find((header) => header.getAttribute('data-sort-key') === defaultKey)
+        : null;
+      if (defaultHeader) sortBy(defaultHeader, table.getAttribute('data-default-sort-direction') || 'desc');
+    });
+  `;
+}
+
+function compareStoreBrowserSummaries(a: StoreBrowserSummary, b: StoreBrowserSummary): number {
+  return (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
+    || a.name.localeCompare(b.name)
+    || a.projectId.localeCompare(b.projectId);
+}
+
 function renderStoresIndexPage(options: {
   stores: StoreBrowserSummary[];
   errors: Array<{ projectId: string; storeName?: string; message: string }>;
   multiProject: boolean;
 }): string {
-  const rows = options.stores.map((store) => {
+  const sortedStores = [...options.stores].sort(compareStoreBrowserSummaries);
+  const rows = sortedStores.map((store, index) => {
     const params = new URLSearchParams();
     if (options.multiProject) params.set('project', store.projectId);
     const href = `/stores/${encodeURIComponent(store.name)}${params.toString() ? `?${params.toString()}` : ''}`;
-    return `<tr>
+    const sortAttrs = [
+      `data-row-index="${index}"`,
+      `data-sort-store="${escapeHtml(store.name)}"`,
+      `data-sort-items="${store.itemCount}"`,
+      `data-sort-updated="${store.updatedAt ?? 0}"`,
+      `data-sort-types="${escapeHtml(store.types.join(' '))}"`,
+      `data-sort-status="${escapeHtml(store.statuses.join(' '))}"`
+    ].join(' ');
+    return `<tr ${sortAttrs}>
       <td class="title-cell"><a href="${escapeHtml(href)}">${escapeHtml(store.name)}</a>${options.multiProject ? `<span class="muted">${escapeHtml(store.projectId)}</span>` : ''}</td>
       <td>${store.itemCount}</td>
       <td>${store.updatedAt ? escapeHtml(formatApprovalTime(store.updatedAt)) : '<span class="muted">never</span>'}</td>
@@ -819,13 +927,13 @@ function renderStoresIndexPage(options: {
     </header>
     ${errors}
     <div class="panel">
-      ${rows ? `<table class="store-table">
-        <thead><tr><th>Store</th><th>Items</th><th>Updated</th><th>Types</th><th>Status</th></tr></thead>
+      ${rows ? `<table class="store-table" data-sortable="true" data-default-sort-key="updated" data-default-sort-direction="desc">
+        <thead><tr>${sortableStoreHeader('Store', 'store')}${sortableStoreHeader('Items', 'items', 'number')}${sortableStoreHeader('Updated', 'updated', 'number')}${sortableStoreHeader('Types', 'types')}${sortableStoreHeader('Status', 'status')}</tr></thead>
         <tbody>${rows}</tbody>
       </table>` : '<div class="empty">No stores found for this serve daemon.</div>'}
     </div>
   </main>
-  <script>${approvalsThemeToggleScript()}</script>
+  <script>${approvalsThemeToggleScript()}${sortableStoreTableScript()}</script>
 </body>
 </html>`;
 }
@@ -837,13 +945,25 @@ function renderStoreItemsPage(options: {
   highlight?: string;
   multiProject: boolean;
 }): string {
-  const allRows = options.rows.flatMap((group) => group.items.map((item) => ({ projectId: group.projectId, item })));
-  const rows = allRows.map(({ projectId, item }) => {
+  const allRows = options.rows
+    .flatMap((group) => group.items.map((item) => ({ projectId: group.projectId, item })))
+    .sort((a, b) => (Date.parse(b.item.updatedAt) || 0) - (Date.parse(a.item.updatedAt) || 0)
+      || storeItemTitle(a.item).localeCompare(storeItemTitle(b.item))
+      || a.projectId.localeCompare(b.projectId));
+  const rows = allRows.map(({ projectId, item }, index) => {
     const highlighted = options.highlight && item.id === options.highlight;
     const params = new URLSearchParams();
     if (options.multiProject) params.set('project', projectId);
     const href = `/stores/${encodeURIComponent(options.storeName)}/${encodeURIComponent(item.id)}${params.toString() ? `?${params.toString()}` : ''}`;
-    return `<tr id="store-item-${escapeHtml(item.id)}" class="clickable${highlighted ? ' highlighted' : ''}" data-store-item-id="${escapeHtml(item.id)}" data-href="${escapeHtml(href)}">
+    const sortAttrs = [
+      `data-row-index="${index}"`,
+      `data-sort-item="${escapeHtml(storeItemTitle(item))}"`,
+      `data-sort-status="${escapeHtml(`${item.status ?? ''} ${item.type ?? ''}`)}"`,
+      `data-sort-updated="${Date.parse(item.updatedAt) || 0}"`,
+      `data-sort-created-by="${escapeHtml(item.createdBy ?? '')}"`,
+      `data-sort-id="${escapeHtml(item.id)}"`
+    ].join(' ');
+    return `<tr id="store-item-${escapeHtml(item.id)}" class="clickable${highlighted ? ' highlighted' : ''}" data-store-item-id="${escapeHtml(item.id)}" data-href="${escapeHtml(href)}" ${sortAttrs}>
       <td class="title-cell">
         <a href="${escapeHtml(href)}">${escapeHtml(storeItemTitle(item))}</a>
         <span class="preview">${escapeHtml(storeItemPreview(item))}</span>
@@ -876,14 +996,15 @@ function renderStoreItemsPage(options: {
     </header>
     ${errors}
     <div class="panel">
-      ${rows ? `<table class="store-table">
-        <thead><tr><th>Item</th><th>Status / type</th><th>Updated</th><th>Created by</th><th>ID</th></tr></thead>
+      ${rows ? `<table class="store-table" data-sortable="true" data-default-sort-key="updated" data-default-sort-direction="desc">
+        <thead><tr>${sortableStoreHeader('Item', 'item')}${sortableStoreHeader('Status / type', 'status')}${sortableStoreHeader('Updated', 'updated', 'number')}${sortableStoreHeader('Created by', 'created-by')}${sortableStoreHeader('ID', 'id')}</tr></thead>
         <tbody>${rows}</tbody>
       </table>` : '<div class="empty">No items found in this store.</div>'}
     </div>
   </main>
   <script>
     ${approvalsThemeToggleScript()}
+    ${sortableStoreTableScript()}
     const highlight = ${JSON.stringify(options.highlight ?? null)};
     if (highlight && window.CSS && CSS.escape) {
       const row = document.querySelector('[data-store-item-id="' + CSS.escape(highlight) + '"]');
@@ -3820,6 +3941,7 @@ export function createServeCommand(): Command {
             stores.push(...result.stores);
             errors.push(...result.errors.map((error) => ({ projectId: project.id, ...error })));
           }
+          stores.sort(compareStoreBrowserSummaries);
 
           if (wantsJson(requestUrl, req)) {
             sendJSON(res, 200, { success: true, stores, errors });
@@ -4969,6 +5091,7 @@ function createLogsSubcommand(): Command {
 
 export const __testing = {
   renderApprovalPage,
+  renderStoresIndexPage,
   canContinueApprovalSession,
   isEndedSessionStatus,
   approvalListCreatedAfter,
