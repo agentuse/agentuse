@@ -100,4 +100,34 @@ describe('approval web page', () => {
     expect(html).toContain('Session finished with an error: EXECUTION_ERROR: Failed after 4 attempts. Last error: Error');
     expect(html).toContain("payload.approval?.sessionStatus === 'error'");
   });
+
+  it('renders running tool steps with input details before output exists', () => {
+    const html = __testing.renderApprovalPage({
+      approval: {
+        ...baseApproval,
+        sessionStatus: 'running',
+        logs: [{
+          id: 'tool-1',
+          type: 'tool',
+          tool: 'sandbox__exec',
+          status: 'running',
+          title: 'sandbox__exec running',
+          details: {
+            input: JSON.stringify({ cmd: 'pnpm test' }, null, 2)
+          },
+          time: Date.now()
+        }]
+      },
+      token: 'token-1',
+      projectId: 'project-1',
+      continuing: true
+    });
+
+    expect(html).toContain('log-item running expandable');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('log-spinner');
+    expect(html).toContain('Input');
+    expect(html).toContain('pnpm test');
+    expect(html).toContain("entry.status === 'streaming' || entry.status === 'running'");
+  });
 });

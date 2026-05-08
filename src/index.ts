@@ -897,6 +897,8 @@ async function runInternalWorker() {
   interface ApprovalLogDetails {
     resumeToken?: string;
     prompt?: string;
+    input?: string;
+    output?: string;
     summary?: string;
     context?: string;
     risk?: string;
@@ -1043,7 +1045,7 @@ async function runInternalWorker() {
       if (part?.type === 'tool') {
         const state = part.state ?? {};
         const isAwaitHuman = part.tool === 'await_human';
-        const details = isAwaitHuman ? buildAwaitHumanDetails(state) : undefined;
+        const details = isAwaitHuman ? buildAwaitHumanDetails(state) : buildToolDetails(state);
         const message = details
           ? undefined
           : state.status === 'completed'
@@ -1127,6 +1129,22 @@ async function runInternalWorker() {
     } else if (state?.status === 'error') {
       const errText = typeof state.error === 'string' ? state.error : undefined;
       if (errText) fields.errorMessage = errText;
+    }
+
+    return Object.keys(fields).length > 0 ? fields : undefined;
+  }
+
+  function buildToolDetails(state: any): ApprovalLogDetails | undefined {
+    const fields: ApprovalLogDetails = {};
+    const input = formatApprovalLogValue(state?.input);
+    if (input !== undefined) fields.input = input;
+
+    if (state?.status === 'completed') {
+      const output = formatApprovalLogValue(state.output);
+      if (output !== undefined) fields.output = output;
+    } else if (state?.status === 'error') {
+      const error = formatApprovalLogValue(state.error);
+      if (error !== undefined) fields.errorMessage = error;
     }
 
     return Object.keys(fields).length > 0 ? fields : undefined;

@@ -211,6 +211,8 @@ interface ApprovalLogEntry {
 interface ApprovalLogDetails {
   resumeToken?: string;
   prompt?: string;
+  input?: string;
+  output?: string;
   summary?: string;
   context?: string;
   risk?: string;
@@ -560,12 +562,12 @@ function renderLogItems(
       (!currentResumeToken || entry.details?.resumeToken === currentResumeToken);
     const isApprovalEntry = Boolean(entry.details?.resumeToken);
     const expandable = entry.type === 'tool' && !isApprovalEntry;
-    const expanded = !expandable;
+    const expanded = !expandable || entry.status === 'running';
     const resumeTokenAttr = entry.details?.resumeToken
       ? ` data-resume-token="${escapeHtml(entry.details.resumeToken)}"`
       : '';
     const storeEventHtml = renderStoreToolEvent(entry, options?.projectId);
-    const markerHtml = entry.status === 'streaming'
+    const markerHtml = entry.status === 'streaming' || entry.status === 'running'
       ? '<span class="log-spinner" aria-label="streaming"></span>'
       : '⋮';
     return `
@@ -576,7 +578,7 @@ function renderLogItems(
             <span class="log-title">${escapeHtml(entry.title)}</span>
             <span class="log-content">
               ${storeEventHtml}
-              ${entry.details ? renderApprovalDetailBlock(entry.details) : ''}
+              ${renderLogDetailBlock(entry)}
               ${entry.message && !storeEventHtml ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : ''}
             </span>
             ${showActions ? renderInlineActions() : ''}
@@ -630,6 +632,29 @@ function renderApprovalDetailBlock(details: ApprovalLogDetails): string {
     ${details.decisionComment ? `<section class="approval-section approval-secondary"><div class="approval-section-title">Comment</div><div class="approval-section-body">${renderLogContentValue(details.decisionComment, { forceMarkdown: true })}</div></section>` : ''}
     ${details.errorMessage ? `<section class="approval-section approval-risk"><div class="approval-section-title">Error</div><div class="approval-section-body">${escapeHtml(details.errorMessage)}</div></section>` : ''}
   </div>`;
+}
+
+function renderToolDetailBlock(details: ApprovalLogDetails): string {
+  const rows = [
+    details.input ? { label: 'Input', value: details.input } : undefined,
+    details.output ? { label: 'Output', value: details.output } : undefined,
+    details.errorMessage ? { label: 'Error', value: details.errorMessage } : undefined
+  ].filter((row): row is { label: string; value: string } => Boolean(row));
+  if (rows.length === 0) return '';
+
+  return `<div class="log-details">${rows.map((row) => `
+    <div class="log-detail">
+      <div class="log-detail-label">${escapeHtml(row.label)}</div>
+      <div class="log-detail-value">${renderLogContentValue(row.value)}</div>
+    </div>
+  `).join('')}</div>`;
+}
+
+function renderLogDetailBlock(entry: ApprovalLogEntry): string {
+  if (!entry.details) return '';
+  return entry.details.resumeToken
+    ? renderApprovalDetailBlock(entry.details)
+    : renderToolDetailBlock(entry.details);
 }
 
 function latestReviewerComment(logs: ApprovalLogEntry[]): { comment: string; reviewer?: string; status?: string } | undefined {
@@ -1602,7 +1627,7 @@ function renderApprovalPage(options: {
       animation: log-spin 700ms linear infinite;
     }
     @keyframes log-spin { to { transform: rotate(360deg); } }
-    .log-item.streaming .log-marker { opacity: 1; }
+    .log-item.streaming .log-marker, .log-item.running .log-marker { opacity: 1; }
     .log-item.error .log-marker, .log-item.failed .log-marker { color: var(--red); }
     .log-item.completed .log-marker, .log-item.approved .log-marker { color: var(--green); }
     .log-item.resuming .log-marker { color: var(--amber); }
@@ -2355,7 +2380,7 @@ function renderApprovalPage(options: {
     for (const entry of initialEntries) {
       if (entry && entry.id != null) renderedLogs.set(String(entry.id), entry);
     }
-    function logDetailsHtml(details) {
+    function approvalDetailsHtml(details) {
       if (!details) return '';
       const primary = details.draft
         ? { title: 'Draft', html: renderLogContentValue(details.draft, { forceMarkdown: true }) }
@@ -2386,6 +2411,25 @@ function renderApprovalPage(options: {
       if (details.errorMessage) sections.push('<section class="approval-section approval-risk"><div class="approval-section-title">Error</div><div class="approval-section-body">' + escapeText(details.errorMessage) + '</div></section>');
       if (sections.length === 0) return '';
       return '<div class="approval-card">' + sections.join('') + '</div>';
+    }
+    function toolDetailsHtml(details) {
+      if (!details) return '';
+      const rows = [];
+      if (details.input) rows.push({ label: 'Input', value: details.input });
+      if (details.output) rows.push({ label: 'Output', value: details.output });
+      if (details.errorMessage) rows.push({ label: 'Error', value: details.errorMessage });
+      if (rows.length === 0) return '';
+      return '<div class="log-details">' + rows.map((row) =>
+        '<div class="log-detail">' +
+          '<div class="log-detail-label">' + escapeText(row.label) + '</div>' +
+          '<div class="log-detail-value">' + renderLogContentValue(row.value) + '</div>' +
+        '</div>'
+      ).join('') + '</div>';
+    }
+    function logDetailsHtml(entry) {
+      const details = entry && entry.details;
+      if (!details) return '';
+      return details.resumeToken ? approvalDetailsHtml(details) : toolDetailsHtml(details);
     }
     function objectValue(value) {
       return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -2491,12 +2535,12 @@ function renderApprovalPage(options: {
     function logEntryHtml(entry) {
       const isApprovalEntry = Boolean(entry.details && entry.details.resumeToken);
       const expandable = entry.type === 'tool' && !isApprovalEntry;
-      const expanded = !expandable || expandedLogIds.has(String(entry.id));
+      const expanded = !expandable || entry.status === 'running' || expandedLogIds.has(String(entry.id));
       const resumeTokenAttr = entry.details && entry.details.resumeToken
         ? ' data-resume-token="' + escapeText(entry.details.resumeToken) + '"'
         : '';
       const storeHtml = storeEventHtml(entry);
-      const markerHtml = entry.status === 'streaming'
+      const markerHtml = entry.status === 'streaming' || entry.status === 'running'
         ? '<span class="log-spinner" aria-label="streaming"></span>'
         : '⋮';
       return '<li class="log-item ' + escapeText(entry.status || '') + (expandable ? ' expandable' : '') + (expanded ? ' expanded' : '') + '" data-log-id="' + escapeText(entry.id) + '" data-log-type="' + escapeText(entry.type) + '"' + resumeTokenAttr + (expandable ? ' aria-expanded="' + String(expanded) + '" tabindex="0"' : '') + '>' +
@@ -2505,7 +2549,7 @@ function renderApprovalPage(options: {
         '<span class="log-main"><span class="log-title">' + escapeText(entry.title) + '</span>' +
         '<span class="log-content">' +
         storeHtml +
-        logDetailsHtml(entry.details) +
+        logDetailsHtml(entry) +
         (entry.message && !storeHtml ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : '') +
         '</span>' +
         logActionsHtml(entry) +
@@ -2590,7 +2634,9 @@ function renderApprovalPage(options: {
     function isLiveStatus(status, logs) {
       if (status === 'completed' || status === 'error' || status === 'expired' || status === 'failed') return false;
       if (status === 'run' || status === 'running' || status === 'resuming' || status === 'continuing') return true;
-      return Array.isArray(logs) && logs.some(function (entry) { return entry && entry.status === 'streaming'; });
+      return Array.isArray(logs) && logs.some(function (entry) {
+        return entry && (entry.status === 'streaming' || entry.status === 'running');
+      });
     }
     function isEndedStatus(status) {
       return status === 'completed' || status === 'error';
