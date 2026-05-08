@@ -1497,6 +1497,17 @@ async function runInternalWorker() {
     let mcp: Awaited<ReturnType<typeof connectMCP>> = [];
     let sessionManager: InstanceType<typeof SessionManager> | undefined;
     let resumeRollback: Awaited<ReturnType<typeof applyResumeToolResult>>['rollback'] | undefined;
+    let continuationSession: { sessionId: string; agentId: string } | undefined;
+
+    const restoreResumeAndReturn = async <T>(response: T): Promise<T> => {
+      if (sessionManager && resumeRollback) {
+        await restoreResumeToolResult({ sessionManager, rollback: resumeRollback }).catch((restoreErr) => {
+          logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
+        });
+        resumeRollback = undefined;
+      }
+      return response;
+    };
 
     try {
       let agentPath = req.agentPath ? resolve(req.projectRoot, req.agentPath) : '';
@@ -1544,11 +1555,11 @@ async function runInternalWorker() {
         });
         resumeRollback = resumed.rollback;
         if (!resumed.agentFilePath) {
-          return {
+          return restoreResumeAndReturn({
             id: req.id,
             success: false,
             error: { code: 'AGENT_NOT_FOUND', message: `Session ${req.sessionId} does not record an agent file path` },
-          };
+          });
         }
         if (isRejectDecision(req.toolResult)) {
           resumeRollback = undefined;
@@ -1623,7 +1634,7 @@ async function runInternalWorker() {
         agentPath = found.session.agent.filePath;
         existingSessionId = req.sessionId;
         runCwd = found.session.project.cwd || req.projectRoot;
-        await sessionManager.setSessionRunning(req.sessionId, found.agentId);
+        continuationSession = { sessionId: req.sessionId, agentId: found.agentId };
         runPrompt = await buildContinuationPrompt(
           sessionManager,
           req.sessionId,
@@ -1637,11 +1648,11 @@ async function runInternalWorker() {
 
       const envValidation = validateAgentEnvVars(agent.config);
       if (!envValidation.valid) {
-        return {
+        return restoreResumeAndReturn({
           id: req.id,
           success: false,
           error: { code: 'ENV_MISSING', message: formatEnvValidationError(envValidation) },
-        };
+        });
       }
 
       if (req.model) {
@@ -1661,6 +1672,10 @@ async function runInternalWorker() {
         await pluginManager.loadPlugins(projectContext.pluginDirs);
       } catch {
         pluginManager = null;
+      }
+
+      if (continuationSession) {
+        await sessionManager.setSessionRunning(continuationSession.sessionId, continuationSession.agentId);
       }
 
       try {
