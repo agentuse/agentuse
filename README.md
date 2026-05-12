@@ -15,7 +15,7 @@
 
 <p align="center">
   <strong>Any model.</strong> Works with Claude, GPT, and open-source models.<br/>
-  <strong>Run anywhere.</strong> Webhooks, built-in cron, CI/CD, Mac, Linux, Windows or Docker.<br/>
+  <strong>Run anywhere.</strong> Webhooks, built-in cron, approvals, CI/CD, Mac, Linux, Windows or Docker.<br/>
   <strong>No SDK required.</strong> Define your agent in Markdown.
 </p>
 
@@ -105,6 +105,19 @@ schedule: "0 9 * * *"
 ---
 ```
 
+**Approval Gates** - Pause before external side effects:
+```yaml
+---
+model: anthropic:claude-sonnet-4-6
+approval: true
+channels:
+  slack:
+    events: [approval]
+---
+```
+
+Review pending approvals at `http://127.0.0.1:12233/approvals`. Approval gates, approval pages, and Slack channels are experimental in this pre-1.0 release.
+
 ## Features
 
 ### 🤖 Multi-Provider Support
@@ -112,6 +125,9 @@ Works with Anthropic (Claude), OpenAI (GPT), OpenRouter (open source models like
 
 ### 🌐 Webhooks & HTTP API
 Trigger agents via HTTP webhooks. Integrate with Zapier, Make, GitHub Actions, or any system that can POST. Supports streaming responses for real-time output.
+
+### ✅ Human Approval Gates
+Pause an agent before publishing, sending, deploying, or changing external state. Reviewers can approve, reject, or comment from the web approval dashboard, with optional Slack notifications and threaded review context. Experimental while the API and channel configuration settle.
 
 ### ⏰ Cron Scheduling
 Schedule agents to run automatically with built-in cron support. Use intervals for sub-daily (`5m`, `2h`) or cron expressions for daily+ (`0 9 * * *`).

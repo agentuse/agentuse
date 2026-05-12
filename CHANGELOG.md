@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.13.0] - 2026-05-12
+
+This is a large pre-1.0 release centered on human-in-the-loop agent workflows. Approval gates, the Approval API, web approval pages, and channels/Slack integrations are currently **experimental**: the core workflow is ready to try, but configuration shape, UI details, and API response formats may evolve based on production feedback.
+
+### Added
+
+- **Approval gates**: agents can now pause for human review with `approval: true`, then resume after a reviewer approves, rejects, or comments.
+- **Web approval dashboard**: `agentuse serve` now exposes `/approvals` for reviewing pending approvals, inspecting approval context, and continuing completed or errored approval sessions.
+- **Slack channels**: agents can post approval, completion, and failure updates to Slack using `channels.slack`, with support for compact status cards, threaded approval details, and Socket Mode actions.
+- **Slack review threads**: approval notifications keep the channel message concise while placing summaries, drafts, artifacts, context, and risks in the Slack thread.
+- **Session continuation**: `agentuse sessions resume` can approve, reject, comment on suspended approval sessions, provide tool results for suspended `await_*` tools, or continue ended sessions with a follow-up prompt.
+- **Store browser**: `serve` includes a web UI for browsing agent stores, including sortable tables and links from session/tool activity to relevant store items.
+- **Expanded OpenAI reasoning effort support**: OpenAI model configuration now accepts the full supported effort set, including `none`, `minimal`, and `xhigh` where the selected model supports them.
+
+### Changed
+
+- `serve` now enforces a single daemon owner so approval links, Slack replies, session resumes, and API traffic route through one process.
+- Approval pages, session logs, and serve navigation were redesigned for better review flow and clearer running tool details.
+
+### Fixed
+
+- Restores pending approval state when resume preflight or resumed execution fails.
+- Persists gate notifications and improves page status feedback during approval and resume flows.
+- Allows quoted `agent-browser eval` payloads while hardening bash command validation against unsafe command chaining.
+- Resolves relative filesystem paths more consistently in tool/path validation.
+- Treats built-in `demo:` models as valid even though they are intentionally not listed in the generated external model registry.
+- Skips Docker sandbox orphan cleanup for containers owned by live AgentUse processes and guards cleanup against PID reuse.
+
+### Documentation
+
+- Added guides for Approval Gates and Channels.
+- Updated agent syntax, CLI commands, environment variables, configuration files, session logs, store, model configuration, webhooks, CI/CD, and related guides for the new approval/channel workflow.
+
 ## [0.12.0] - 2026-04-28
 
 ### Added
