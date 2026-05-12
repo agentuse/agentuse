@@ -36,10 +36,10 @@ importers:
         specifier: ^0.4.3
         version: 0.4.3(arctic@2.3.4)(hono@4.9.4)
       '@slack/socket-mode':
-        specifier: ^2.0.7
+        specifier: 2.0.7
         version: 2.0.7
       '@slack/web-api':
-        specifier: ^7.15.1
+        specifier: 7.15.1
         version: 7.15.1
       ai:
         specifier: 6.0.3
