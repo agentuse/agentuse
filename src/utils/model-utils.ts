@@ -17,6 +17,10 @@ export interface ValidationResult {
  * Validate a model string and return suggestions if invalid
  */
 export function validateModel(modelString: string): ValidationResult {
+  if (modelString.startsWith('demo:')) {
+    return { valid: true };
+  }
+
   // Check if model exists in registry
   const model = getModelFromRegistry(modelString);
   if (model) {
