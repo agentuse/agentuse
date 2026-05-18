@@ -3,6 +3,7 @@ import { AuthStorage } from "./storage.js";
 
 export namespace AnthropicAuth {
   const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+  const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
   export async function authorize(mode: "max" | "console") {
     const pkce = await generatePKCE();
@@ -62,7 +63,7 @@ export namespace AnthropicAuth {
     // Priority 2: Fall back to file-based storage
     const info = await AuthStorage.getOAuth("anthropic");
     if (!info || info.type !== "oauth") return;
-    if (info.access && info.expires > Date.now()) return info.access;
+    if (info.access && info.expires > Date.now() + REFRESH_BUFFER_MS) return info.access;
 
     const refreshed = await refreshToken(info.refresh);
     if (!refreshed) return;
