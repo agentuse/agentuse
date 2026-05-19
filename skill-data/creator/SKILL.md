@@ -83,6 +83,63 @@ delegation brief for a trusted teammate:
 - enough context to finish unattended
 - external status or delivery through tools when needed
 
+## Gotchas
+
+Recurring mistakes to avoid when authoring or reviewing `.agentuse` files.
+
+### Approval gates are async; do not pad `timeout:` for human review
+
+`approval: true` and `await_human`-style gates suspend the run while waiting
+for a human. The agent's `timeout:` clock does not tick during that wait.
+Size `timeout:` for the active work between gates, not for the worst-case
+human response time. Padding the timeout for "two approvals × N minutes" is
+a misread of how the runtime schedules these waits.
+
+### Agents cannot prompt the user mid-run
+
+Never write workflow steps like "stop and ask the user to do X." There are
+only three legitimate branches when the agent hits a blocker:
+
+- exit with a clear error message,
+- record the condition to the configured store and continue or stop,
+- fire an approval / notification through the configured channel.
+
+The approval gate is the only sanctioned human-in-the-loop path.
+
+### Validate models against `agentuse models`, not assumptions
+
+The model catalog moves. Before flagging a model name as invalid, check
+`agentuse models` - it lists every model the installed CLI accepts. Naming
+patterns from other tools (e.g. assuming "5.5" cannot exist because another
+provider stops at "5.2") will mislead you.
+
+### Defer to skills; do not hardcode their internals
+
+When an agent uses a skill, reference the skill (`/linkedin`, `/agent-browser-w-cdp`)
+and let the skill own its script paths and eval patterns. Copying the
+skill's `cat .../scripts/foo.js | agent-browser eval ...` into the agent
+body causes drift the moment the skill reorganises files. Treat the skill
+as the source of truth.
+
+### Skill scripts read via bash need explicit filesystem + bash allowlist entries
+
+Skills that ship scripts under `~/.claude/skills/<name>/scripts/` and expect
+the agent to `cat` them must be granted:
+
+- `tools.filesystem` read on the skill's directory (absolute path - `~`
+  may not expand in every context),
+- a narrow `bash.commands` entry like
+  `cat /Users/<you>/.claude/skills/<name>/scripts/*`.
+
+Avoid the lazy `cat *` blanket - it is far broader than the skill needs.
+
+### Slack / notifications: match the body text to the actual frontmatter key
+
+`channels.slack` is the configured key. Older drafts sometimes describe
+Slack delivery as "configured through `notifications.routes`," which no
+longer matches. When reviewing an agent, ensure the prose section names
+the same key the frontmatter uses.
+
 ## References
 
 - Creating agents: https://docs.agentuse.io/guides/creating-agents.md
