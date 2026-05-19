@@ -142,11 +142,16 @@ the same key the frontmatter uses.
 
 ## References
 
-- Creating agents: https://docs.agentuse.io/guides/creating-agents.md
-- Agent syntax: https://docs.agentuse.io/reference/agent-syntax.md
-- Agent design patterns: https://docs.agentuse.io/guides/agent-design-patterns.md
-- Subagents: https://docs.agentuse.io/guides/subagents.md
-- Skills: https://docs.agentuse.io/guides/skills.md
-- Approval gates: https://docs.agentuse.io/guides/approval-gates.md
-- Schedule: https://docs.agentuse.io/guides/schedule.md
-- Configuration files: https://docs.agentuse.io/reference/configuration-files.md
+Do not rely on a hardcoded list here - it goes stale. When you need a doc
+page (anything about frontmatter, tools, channels, store, subagents,
+approvals, scheduling, sandbox, learning, etc.), fetch the canonical
+index first, then load the specific page(s) you need:
+
+```
+https://docs.agentuse.io/llms.txt
+```
+
+That file enumerates every current guide and reference page with a short
+description. Pick the matching `.md` URLs from there and fetch them
+directly. This keeps the skill aligned with whatever the docs site
+publishes right now.
