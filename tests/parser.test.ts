@@ -293,6 +293,23 @@ Test OpenAI thinking effort.`;
       expect(() => parseAgentContent(content, 'test')).toThrow('Invalid agent configuration');
     });
 
+    it('defaults learning.apply to false when omitted', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+learning:
+  evaluate: true
+---
+
+Capture useful execution learnings for manual review.`;
+
+      const agent = parseAgentContent(content, 'test');
+
+      expect(agent.config.learning).toEqual({
+        evaluate: true,
+        apply: false
+      });
+    });
+
     it('parses complete agent configuration', () => {
       const content = `---
 model: openai:gpt-5

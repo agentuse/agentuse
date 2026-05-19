@@ -5,7 +5,7 @@ import { z } from 'zod';
  */
 export const LearningConfigSchema = z.object({
   evaluate: z.union([z.literal(true), z.string()]),
-  apply: z.boolean(),
+  apply: z.boolean().default(false),
   file: z.string().optional(),  // Custom file path (relative to agent file)
 });
 
