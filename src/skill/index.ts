@@ -8,7 +8,7 @@ export type {
 export { SkillFrontmatterSchema } from './types.js';
 
 // Discovery
-export { discoverSkills, getSkill, getAllSkills } from './discovery.js';
+export { discoverSkills, discoverSkillsInDirectories, getSkill, getAllSkills, getDiscoveryDirectories } from './discovery.js';
 
 // Parser
 export { parseSkillFrontmatter, parseSkillContent } from './parser.js';

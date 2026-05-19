@@ -36,6 +36,8 @@
   "files": [
     "bin/cli.js",
     "dist",
+    "skills",
+    "skill-data",
     "README.md",
     "LICENSE"
   ],

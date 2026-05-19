@@ -12,7 +12,7 @@ import { logger } from '../utils/logger.js';
  * 2. ~/.agentuse/skills/ - User-global
  * 3. .claude/skills/ - Claude ecosystem compatibility
  */
-function getDiscoveryDirectories(projectRoot: string): string[] {
+export function getDiscoveryDirectories(projectRoot: string): string[] {
   const home = homedir();
   return [
     join(projectRoot, '.agentuse', 'skills'),
@@ -34,13 +34,8 @@ async function directoryExists(dir: string): Promise<boolean> {
   }
 }
 
-/**
- * Discover all skills from configured directories
- * Returns map of skill name to SkillInfo
- */
-export async function discoverSkills(projectRoot: string): Promise<Map<string, SkillInfo>> {
+async function discoverSkillsFromDirectories(directories: string[]): Promise<Map<string, SkillInfo>> {
   const skills = new Map<string, SkillInfo>();
-  const directories = getDiscoveryDirectories(projectRoot);
 
   for (const dir of directories) {
     if (!await directoryExists(dir)) {
@@ -72,6 +67,21 @@ export async function discoverSkills(projectRoot: string): Promise<Map<string, S
   }
 
   return skills;
+}
+
+/**
+ * Discover all skills from configured directories
+ * Returns map of skill name to SkillInfo
+ */
+export async function discoverSkills(projectRoot: string): Promise<Map<string, SkillInfo>> {
+  return discoverSkillsFromDirectories(getDiscoveryDirectories(projectRoot));
+}
+
+/**
+ * Discover all skills from explicit directories.
+ */
+export async function discoverSkillsInDirectories(directories: string[]): Promise<Map<string, SkillInfo>> {
+  return discoverSkillsFromDirectories(directories);
 }
 
 /**

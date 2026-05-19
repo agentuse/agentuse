@@ -621,28 +621,66 @@ agentuse provider logout openai       # remove built-in credentials
 
 ```bash
 agentuse provider list
+```
 
 ---
 
 ## agentuse skills
 
-List available skills discovered from the project and user skill directories.
+List and retrieve AgentUse builtin skills that ship with the installed CLI version. Use the `installed` subcommand to inspect project and user-installed skills.
 
 ### Syntax
 
 ```bash
-agentuse skills [options]
+agentuse skills [subcommand] [options]
+```
+
+### Subcommands
+
+```bash
+agentuse skills                 # List AgentUse builtin skills
+agentuse skills list            # Explicit builtin list command
+agentuse skills get <name>      # Output builtin skill content
+agentuse skills get <name> --full
+agentuse skills get --all       # Output every builtin skill
+agentuse skills path [name]     # Print builtin skill paths
+agentuse skills installed       # List installed/discovered skills
+agentuse skills installed get <name>
+agentuse skills installed path [name]
 ```
 
 ### Options
 
 ```bash
--v, --verbose    Show skill file paths and tool requirements
+-v, --verbose    Show skill file paths and tool requirements when listing
+-j, --json       Output machine-readable JSON
+--full           Include supporting files when using get
+--all            Output every skill for the selected source when using get
 ```
 
-### Discovery Locations
+### Builtin Skills
 
-Skills are discovered from these directories (in priority order):
+Builtin skills are stored in the AgentUse package `skill-data/` directory and match the installed CLI version. This mirrors the `agent-browser skills` model: agents can fetch current official instructions without reading a user's entire local skill library.
+
+### AI Coding Assistants
+
+Install the assistant-facing AgentUse skill stub:
+
+```bash
+npx skills add agentuse/agentuse
+```
+
+For local development, install from this checkout:
+
+```bash
+npx skills add .
+```
+
+This installs the thin `agentuse` skill from `skills/agentuse/SKILL.md`. The stub points assistants at `agentuse skills get core`, so the real workflow guidance stays version-aligned with the installed AgentUse CLI.
+
+### Installed Skill Locations
+
+Installed skills are discovered from these directories (in priority order):
 
 1. `.agentuse/skills/` - Project-specific skills
 2. `~/.agentuse/skills/` - User-global skills
@@ -652,32 +690,65 @@ Skills are discovered from these directories (in priority order):
 ### Examples
 
 ```bash
-# List all available skills
+# List AgentUse builtin skills
 agentuse skills
+agentuse skills list
 
 # Show verbose output with file paths and tool requirements
 agentuse skills -v
 agentuse skills --verbose
+
+# Return machine-readable metadata
+agentuse skills --json
+agentuse skills list --json
+
+# Print builtin skill content for an agent or script
+agentuse skills get core
+agentuse skills get runner
+agentuse skills get creator
+agentuse skills get core --full
+agentuse skills get --all --json
+
+# Print builtin paths
+agentuse skills path
+agentuse skills path core
+
+# Inspect project and user-installed skills
+agentuse skills installed
+agentuse skills installed list --json
+agentuse skills installed get code-review
+agentuse skills installed get code-review --full
+agentuse skills installed path code-review
 ```
 
 ### Output Example
 
 ```
-Found 2 skill(s):
+Found 3 builtin skill(s):
+
+agentuse builtins
+  core
+    Core AgentUse usage guide...
+  creator
+    Create, improve, and review AgentUse agent files...
+  runner
+    Run and manage AgentUse agents from the CLI...
+```
+
+Installed skills:
+
+```
+Found 2 installed skill(s):
 
 .agentuse/skills
   code-review
     Review code for quality, security, and maintainability...
-
-~/.agentuse/skills
-  seo-analyzer
-    Analyze content for SEO optimization...
 ```
 
 With verbose mode (`-v`):
 
 ```
-Found 2 skill(s):
+Found 2 installed skill(s):
 
 .agentuse/skills
   code-review

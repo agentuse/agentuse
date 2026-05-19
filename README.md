@@ -50,6 +50,29 @@ Run it:
 agentuse run my-agent.agentuse
 ```
 
+## AI Coding Assistants
+
+Install the AgentUse assistant skill:
+
+```bash
+npx skills add agentuse/agentuse
+```
+
+This installs a thin `agentuse` discovery stub for Claude Code, Codex, Cursor,
+Gemini CLI, GitHub Copilot, Goose, OpenCode, Windsurf, and other assistants
+that support Agent Skills. The stub loads current instructions from your
+installed AgentUse CLI:
+
+```bash
+agentuse skills get core
+```
+
+For local development from this checkout:
+
+```bash
+npx skills add .
+```
+
 ## Example
 
 A real-world agent with MCP tools:
