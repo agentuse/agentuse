@@ -115,11 +115,21 @@ function buildToolDescription(skills: SkillInfo[]): string {
   ].join('\n');
 }
 
+const SKILL_DIRECTORY_VARIABLES = [
+  '${skillDir}', // Legacy AgentUse placeholder
+  '${SKILL_DIR}', // Generic/cross-agent convention
+  '${CLAUDE_SKILL_DIR}', // Claude Code compatibility
+];
+
 /**
- * Substitute ${skillDir} variable in skill content
+ * Substitute skill directory variables in skill content
  */
 function substituteSkillVariables(content: string, directory: string): string {
-  return content.replace(/\$\{skillDir\}/g, directory);
+  let resolved = content;
+  for (const variable of SKILL_DIRECTORY_VARIABLES) {
+    resolved = resolved.replaceAll(variable, directory);
+  }
+  return resolved;
 }
 
 /**
@@ -131,7 +141,7 @@ function formatSkillOutput(
   content: string,
   warning: string | null
 ): string {
-  // Substitute ${skillDir} with actual directory path
+  // Substitute skill directory placeholders with the actual directory path
   const resolvedContent = substituteSkillVariables(content, directory);
 
   const parts = [

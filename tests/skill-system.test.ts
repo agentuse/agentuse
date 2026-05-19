@@ -559,6 +559,35 @@ Do this and that.`);
       expect(result).toContain('Base directory');
     });
 
+    it('substitutes supported skill directory placeholders in loaded content', async () => {
+      const skillsDir = join(testDir, '.agentuse', 'skills');
+      const skillDir = join(skillsDir, 'portable-skill');
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(join(skillDir, 'SKILL.md'), `---
+name: portable-skill
+description: Uses portable paths
+---
+
+# Portable Skill
+
+- Legacy: \${skillDir}/scripts/legacy.sh
+- Generic: \${SKILL_DIR}/scripts/generic.sh
+- Claude: \${CLAUDE_SKILL_DIR}/scripts/claude.sh
+- Literal: $SKILL_DIR/scripts/runtime.sh`);
+
+      const { tool } = await createSkillTool(testDir, undefined);
+
+      const result = await tool.execute!({ name: 'portable-skill' });
+
+      expect(result).toContain(`Legacy: ${skillDir}/scripts/legacy.sh`);
+      expect(result).toContain(`Generic: ${skillDir}/scripts/generic.sh`);
+      expect(result).toContain(`Claude: ${skillDir}/scripts/claude.sh`);
+      expect(result).toContain('Literal: $SKILL_DIR/scripts/runtime.sh');
+      expect(result).not.toContain('${skillDir}');
+      expect(result).not.toContain('${SKILL_DIR}');
+      expect(result).not.toContain('${CLAUDE_SKILL_DIR}');
+    });
+
     it('throws error when skill not found', async () => {
       const { tool } = await createSkillTool(testDir, undefined);
 
