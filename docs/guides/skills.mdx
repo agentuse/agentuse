@@ -139,6 +139,39 @@ If validation fails:
 
 Skills run with the **agent's tools**. For a skill to use the tools it documents, the agent must have them configured.
 
+Agents use `skills: auto` by default, even when the field is omitted. This makes installed skills discoverable and lets the model load relevant skills on demand.
+
+Use `skills: trusted` for sandboxed or yolo-style agents. It keeps auto skill loading, but treats loaded skills as trusted to use the tools already configured on the agent. It does not enable new tools or new bash commands.
+
+```yaml
+skills: trusted
+```
+
+Define a skill explicitly when it is core to the agent. Explicit skills are preloaded before the task starts, so the agent does not need to infer the trigger from the user instruction:
+
+```yaml
+skills: [linkedin]
+```
+
+```yaml
+skills:
+  linkedin:
+    allow: [agent-browser]
+```
+
+`allow` entries are user-authored command-family grants. AgentUse does not infer or validate command needs from skill text. For example, `allow: [agent-browser]` grants the `agent-browser *` command family. Use `allow: ["*"]` only for trusted skills that may use all tools already configured for the agent.
+
+To inspect a skill's grants:
+
+```bash
+agentuse doctor path/to/agent.agentuse
+agentuse doctor path/to/agent.agentuse --last-run
+```
+
+Doctor also shows command-looking snippets mentioned by the skill. This is advisory: it extracts command names from shell code blocks, inline command snippets, `allowed-tools`, pipes, and command substitutions. AgentUse does not treat the output as a permission manifest.
+
+Add `--last-run` when the agent has already failed or behaved unexpectedly. Doctor will inspect the latest recorded session for that agent and report actual blocked bash commands from runtime, which is more accurate than static skill-doc extraction.
+
 ### Example
 
 **Skill** (`code-review/SKILL.md`):

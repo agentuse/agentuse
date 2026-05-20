@@ -6,7 +6,7 @@ import type { Tool } from 'ai';
 import { discoverSkills } from './discovery.js';
 import { parseSkillContent } from './parser.js';
 import { validateAllowedTools } from './validate.js';
-import type { SkillInfo } from './types.js';
+import type { SkillContent, SkillInfo } from './types.js';
 import type { ToolsConfig } from '../tools/types.js';
 import { PathValidator, resolveRealPath } from '../tools/path-validator.js';
 
@@ -159,6 +159,36 @@ function formatSkillOutput(
   return parts.join('\n');
 }
 
+async function buildSkillOutput(
+  skillContent: SkillContent,
+  agentToolsConfig: ToolsConfig | undefined,
+  projectRoot: string
+): Promise<string> {
+  const pathWarning = await checkSkillPathAccess(
+    skillContent.directory,
+    agentToolsConfig,
+    projectRoot
+  );
+
+  const unsatisfied = validateAllowedTools(skillContent.allowedTools, agentToolsConfig);
+  const warnings: string[] = [];
+
+  if (pathWarning) {
+    warnings.push(`> ⚠️ WARNING: ${pathWarning}`);
+  }
+
+  if (unsatisfied.length > 0) {
+    warnings.push(`> ⚠️ WARNING: This skill requires tools not available: ${unsatisfied.map(r => r.pattern).join(', ')}. Do not attempt to use these tools.`);
+  }
+
+  return formatSkillOutput(
+    skillContent.name,
+    skillContent.directory,
+    skillContent.content,
+    warnings.length > 0 ? warnings.join('\n\n') : null
+  );
+}
+
 /**
  * Result type for createSkillTools
  */
@@ -169,6 +199,18 @@ export interface SkillToolsResult {
   skillReadTool: Tool;
   /** List of discovered skills */
   skills: SkillInfo[];
+}
+
+export interface SkillToolsOptions {
+  /** Whether all discovered skills should be visible for on-demand loading */
+  auto?: boolean | undefined;
+  /** Explicit skill names that should be visible and marked loaded for skill_read */
+  explicitSkillNames?: string[] | undefined;
+}
+
+export interface SkillPromptOutput {
+  name: string;
+  output: string;
 }
 
 /**
@@ -187,14 +229,25 @@ export async function createSkillTool(
  */
 export async function createSkillTools(
   projectRoot: string,
-  agentToolsConfig: ToolsConfig | undefined
+  agentToolsConfig: ToolsConfig | undefined,
+  options: SkillToolsOptions = {}
 ): Promise<SkillToolsResult> {
   // Discover all available skills
   const skillsMap = await discoverSkills(projectRoot);
-  const skills = Array.from(skillsMap.values());
+  const explicitSkillNames = options.explicitSkillNames ?? [];
+  const availableSkillsMap = options.auto === false
+    ? new Map(explicitSkillNames.map((name) => [name, skillsMap.get(name)]).filter((entry): entry is [string, SkillInfo] => Boolean(entry[1])))
+    : skillsMap;
+  const skills = Array.from(availableSkillsMap.values());
 
   // Track loaded skills: name -> directory (shared between both tools)
   const loadedSkills = new Map<string, string>();
+  for (const name of explicitSkillNames) {
+    const skill = skillsMap.get(name);
+    if (!skill) continue;
+    const skillContent = await parseSkillContent(skill.location);
+    loadedSkills.set(name, skillContent.directory);
+  }
 
   // Main skill loading tool
   const skillTool: Tool = {
@@ -204,7 +257,7 @@ export async function createSkillTools(
     }),
     execute: async ({ name }: { name: string }) => {
       // Find the skill
-      const skill = skillsMap.get(name);
+      const skill = availableSkillsMap.get(name);
       if (!skill) {
         const available = skills.map(s => s.name).join(', ') || 'none';
         throw new Error(`Skill "${name}" not found. Available skills: ${available}`);
@@ -216,38 +269,7 @@ export async function createSkillTools(
       // Track loaded skill directory for skill_read tool
       loadedSkills.set(name, skillContent.directory);
 
-      // Check if skill directory is accessible via bash allowedPaths
-      const pathWarning = await checkSkillPathAccess(
-        skillContent.directory,
-        agentToolsConfig,
-        projectRoot
-      );
-
-      // Validate allowed-tools
-      const unsatisfied = validateAllowedTools(skillContent.allowedTools, agentToolsConfig);
-
-      // Collect all warnings (included in skill output for LLM visibility)
-      const warnings: string[] = [];
-
-      if (pathWarning) {
-        warnings.push(`> ⚠️ WARNING: ${pathWarning}`);
-      }
-
-      if (unsatisfied.length > 0) {
-        warnings.push(`> ⚠️ WARNING: This skill requires tools not available: ${unsatisfied.map(r => r.pattern).join(', ')}. Do not attempt to use these tools.`);
-      }
-
-      // Combine warnings for output
-      const warning = warnings.length > 0 ? warnings.join('\n\n') : null;
-
-      const output = formatSkillOutput(
-        skillContent.name,
-        skillContent.directory,
-        skillContent.content,
-        warning
-      );
-
-      return output;
+      return buildSkillOutput(skillContent, agentToolsConfig, projectRoot);
     },
   };
 
@@ -315,4 +337,33 @@ export async function createSkillTools(
   };
 
   return { skillTool, skillReadTool, skills };
+}
+
+export async function loadSkillPromptOutputs(
+  projectRoot: string,
+  agentToolsConfig: ToolsConfig | undefined,
+  names: string[]
+): Promise<SkillPromptOutput[]> {
+  if (names.length === 0) {
+    return [];
+  }
+
+  const skillsMap = await discoverSkills(projectRoot);
+  const outputs: SkillPromptOutput[] = [];
+
+  for (const name of names) {
+    const skill = skillsMap.get(name);
+    if (!skill) {
+      const available = Array.from(skillsMap.keys()).sort().join(', ') || 'none';
+      throw new Error(`Explicit skill "${name}" not found. Available skills: ${available}`);
+    }
+
+    const skillContent = await parseSkillContent(skill.location);
+    outputs.push({
+      name,
+      output: await buildSkillOutput(skillContent, agentToolsConfig, projectRoot),
+    });
+  }
+
+  return outputs;
 }

@@ -17,5 +17,21 @@ export { parseSkillFrontmatter, parseSkillContent } from './parser.js';
 export { validateAllowedTools, formatToolsWarning } from './validate.js';
 
 // Tool
-export { createSkillTool, createSkillTools } from './tool.js';
-export type { SkillToolsResult } from './tool.js';
+export { createSkillTool, createSkillTools, loadSkillPromptOutputs } from './tool.js';
+export type { SkillPromptOutput, SkillToolsOptions, SkillToolsResult } from './tool.js';
+
+// Config/allow expansion
+export {
+  SkillsConfigSchema,
+  defaultSkillsConfig,
+  getExplicitSkillNames,
+  getGrantedSkillAllows,
+  hasFullSkillGrant,
+} from './config.js';
+export type { NormalizedSkillsConfig, SkillGrantConfig } from './config.js';
+export {
+  expandSkillAllows,
+} from './capabilities.js';
+
+export { extractSkillCommandMentions } from './command-extract.js';
+export type { SkillCommandMention } from './command-extract.js';

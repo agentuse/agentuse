@@ -5,7 +5,9 @@ import { tmpdir } from 'os';
 import { parseSkillFrontmatter, parseSkillContent } from '../src/skill/parser';
 import { discoverSkills, getSkill, getAllSkills } from '../src/skill/discovery';
 import { validateAllowedTools, formatToolsWarning } from '../src/skill/validate';
-import { createSkillTool } from '../src/skill/tool';
+import { createSkillTool, createSkillTools, loadSkillPromptOutputs } from '../src/skill/tool';
+import { expandSkillAllows } from '../src/skill/capabilities';
+import { extractSkillCommandMentions } from '../src/skill/command-extract';
 import type { ToolsConfig } from '../src/tools/types';
 import { logger } from '../src/utils/logger';
 
@@ -646,6 +648,91 @@ Content`);
       const result = await tool.execute!({ name: 'safe-skill' });
 
       expect(result).not.toContain('⚠️ WARNING');
+    });
+
+    it('limits on-demand skills to explicit skills when auto is false', async () => {
+      const skillsDir = join(testDir, '.agentuse', 'skills');
+      await mkdir(join(skillsDir, 'visible-skill'), { recursive: true });
+      await writeFile(join(skillsDir, 'visible-skill', 'SKILL.md'), `---
+name: visible-skill
+description: Visible
+---
+
+Visible content`);
+
+      await mkdir(join(skillsDir, 'hidden-skill'), { recursive: true });
+      await writeFile(join(skillsDir, 'hidden-skill', 'SKILL.md'), `---
+name: hidden-skill
+description: Hidden
+---
+
+Hidden content`);
+
+      const { skillTool, skills } = await createSkillTools(testDir, undefined, {
+        auto: false,
+        explicitSkillNames: ['visible-skill'],
+      });
+
+      expect(skills.map((skill) => skill.name)).toEqual(['visible-skill']);
+      expect(skillTool.description).toContain('visible-skill');
+      expect(skillTool.description).not.toContain('hidden-skill');
+      await expect(skillTool.execute!({ name: 'hidden-skill' })).rejects.toThrow('Skill "hidden-skill" not found');
+    });
+
+    it('preloads explicit skill prompt output', async () => {
+      const skillsDir = join(testDir, '.agentuse', 'skills');
+      const skillDir = join(skillsDir, 'preload-skill');
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(join(skillDir, 'SKILL.md'), `---
+name: preload-skill
+description: Preloaded
+---
+
+# Preloaded Instructions`);
+
+      const outputs = await loadSkillPromptOutputs(testDir, undefined, ['preload-skill']);
+
+      expect(outputs).toHaveLength(1);
+      expect(outputs[0].name).toBe('preload-skill');
+      expect(outputs[0].output).toContain('# Preloaded Instructions');
+      expect(outputs[0].output).toContain(`**Base directory**: ${skillDir}`);
+    });
+  });
+
+  describe('skill allows', () => {
+    it('expands allow entries into generic bash command families', () => {
+      const config = expandSkillAllows(undefined, ['agent-browser', 'python3']);
+
+      expect(config?.bash?.commands).toContain('agent-browser *');
+      expect(config?.bash?.commands).toContain('python3 *');
+    });
+  });
+
+  describe('extractSkillCommandMentions', () => {
+    it('extracts command families from shell snippets, pipes, and command substitution', async () => {
+      const mentions = await extractSkillCommandMentions({
+        name: 'browser-skill',
+        description: 'Browser skill',
+        location: join(testDir, 'SKILL.md'),
+        directory: testDir,
+        allowedTools: ['Bash(git:*)'],
+        content: [
+          '```bash',
+          'agent-browser snapshot | grep "Post"',
+          'agent-browser eval "$(cat scripts/feed.js)"',
+          '```',
+          'Run `python3 scripts/check.py` after extraction.',
+          'Ignore `window.AUTHOR` and `.claude/skills/foo` inline code.',
+        ].join('\n'),
+      });
+
+      expect(mentions.map((mention) => mention.command)).toEqual([
+        'agent-browser',
+        'cat',
+        'git',
+        'grep',
+        'python3',
+      ]);
     });
   });
 });

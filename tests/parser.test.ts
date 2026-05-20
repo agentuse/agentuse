@@ -152,6 +152,93 @@ Test agent`;
   });
 
   describe('Other agent config fields', () => {
+    it('defaults missing skills config to auto mode', () => {
+      const agent = parseAgentContent(`---
+model: anthropic:claude-sonnet-4-0
+---
+
+Test agent`, 'test');
+
+      expect(agent.config.skills).toEqual({ auto: true, trusted: false, explicit: {} });
+    });
+
+    it('parses skills auto shorthand', () => {
+      const agent = parseAgentContent(`---
+model: anthropic:claude-sonnet-4-0
+skills: auto
+---
+
+Test agent`, 'test');
+
+      expect(agent.config.skills).toEqual({ auto: true, trusted: false, explicit: {} });
+    });
+
+    it('parses skills trusted shorthand', () => {
+      const agent = parseAgentContent(`---
+model: anthropic:claude-sonnet-4-0
+skills: trusted
+---
+
+Test agent`, 'test');
+
+      expect(agent.config.skills).toEqual({ auto: true, trusted: true, explicit: {} });
+    });
+
+    it('parses explicit skill preload list', () => {
+      const agent = parseAgentContent(`---
+model: anthropic:claude-sonnet-4-0
+skills: [linkedin, browser]
+---
+
+Test agent`, 'test');
+
+      expect(agent.config.skills).toEqual({
+        auto: false,
+        trusted: false,
+        explicit: {
+          linkedin: {},
+          browser: {},
+        },
+      });
+    });
+
+    it('parses explicit skill grants with mixed auto mode', () => {
+      const agent = parseAgentContent(`---
+model: anthropic:claude-sonnet-4-0
+skills:
+  auto: true
+  linkedin:
+    allow: [agent-browser]
+  trusted-skill:
+    allow: ["*"]
+---
+
+Test agent`, 'test');
+
+      expect(agent.config.skills).toEqual({
+        auto: true,
+        trusted: false,
+        explicit: {
+          linkedin: { allow: ['agent-browser'] },
+          'trusted-skill': { allow: ['*'] },
+        },
+      });
+    });
+
+    it('accepts arbitrary skill allow names', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+skills:
+  linkedin:
+    allow: [spaceship]
+---
+
+Test agent`;
+
+      const agent = parseAgentContent(content, 'test');
+      expect(agent.config.skills?.explicit.linkedin?.allow).toEqual(['spaceship']);
+    });
+
     it('parses minimal approval configuration with channels', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0

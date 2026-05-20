@@ -333,6 +333,15 @@ describe('CommandValidator', () => {
       });
     });
 
+    test('handles payload eval commands without hardcoded CLI names', async () => {
+      const validator = new CommandValidator(['custom-browser eval *'], projectRoot);
+
+      const result = await validator.validate('custom-browser eval Array.from(document.querySelectorAll("a")).map(a=>a.href)');
+
+      expect(result.allowed).toBe(true);
+      expect(result.matchedPattern).toBe('custom-browser eval *');
+    });
+
     test('blocks cat output redirection that waits for stdin', async () => {
       const validator = new CommandValidator(['cat *'], projectRoot);
 

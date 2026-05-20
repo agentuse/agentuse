@@ -237,9 +237,14 @@ Commands not matching these patterns will be rejected.`;
       // Validate command (async with tree-sitter)
       const validation = await validator.validate(command);
       if (!validation.allowed) {
+        const message = [
+          'Command blocked by agent configuration.',
+          `Reason: ${validation.error || 'Command validation failed'}`,
+          'Run `agentuse doctor <agent-file>` to diagnose missing tools or skill grants.',
+        ].filter(Boolean).join('\n');
         const error: ToolErrorOutput = {
           success: false,
-          error: validation.error || 'Command validation failed',
+          error: message,
         };
 
         // Log warning after tool result is displayed (next tick)

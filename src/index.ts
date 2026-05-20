@@ -13,6 +13,7 @@ import { createSkillsCommand } from './cli/skills';
 import { createBenchmarkCommand } from './cli/benchmark';
 import { createAgentsCommand } from './cli/agents';
 import { createAddCommand } from './cli/add';
+import { createDoctorCommand } from './cli/doctor';
 import { logger, LogLevel } from './utils/logger';
 import { basename, resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -139,6 +140,9 @@ program.addCommand(createAgentsCommand());
 
 // Add add command
 program.addCommand(createAddCommand());
+
+// Add doctor command
+program.addCommand(createDoctorCommand());
 
 // Add benchmark command (hidden from help)
 program.addCommand(createBenchmarkCommand(), { hidden: true });

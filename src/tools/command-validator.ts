@@ -66,7 +66,7 @@ const BUILTIN_DENYLIST: Record<string, boolean> = {
   'cat /etc/shadow': true,
 };
 
-interface BuiltinPayloadCommand {
+interface PayloadCommandPattern {
   pattern: string;
   prefix: string[];
 }
@@ -77,15 +77,26 @@ export interface PayloadCommandInvocation {
   matchedPattern: string;
 }
 
-const BUILTIN_PAYLOAD_COMMANDS: BuiltinPayloadCommand[] = [
-  {
-    pattern: 'agent-browser eval *',
-    prefix: ['agent-browser', 'eval'],
-  },
-];
-
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getPayloadCommandPatterns(allowedPatterns: Iterable<string>): PayloadCommandPattern[] {
+  const patterns: PayloadCommandPattern[] = [];
+
+  for (const pattern of allowedPatterns) {
+    const parts = pattern.trim().split(/\s+/);
+    if (parts.length !== 3) continue;
+    if (parts[1] !== 'eval' || parts[2] !== '*') continue;
+    if (parts[0].includes('*')) continue;
+
+    patterns.push({
+      pattern,
+      prefix: [parts[0], parts[1]],
+    });
+  }
+
+  return patterns;
 }
 
 function stripOuterShellQuotes(value: string): string {
@@ -194,12 +205,9 @@ export function getBuiltinPayloadCommandInvocation(
   command: string,
   allowedPatterns: Iterable<string>
 ): PayloadCommandInvocation | undefined {
-  const allowed = new Set(allowedPatterns);
   const normalized = command.trim();
 
-  for (const payloadCommand of BUILTIN_PAYLOAD_COMMANDS) {
-    if (!allowed.has(payloadCommand.pattern)) continue;
-
+  for (const payloadCommand of getPayloadCommandPatterns(allowedPatterns)) {
     const prefixPattern = payloadCommand.prefix.map(escapeRegex).join('\\s+');
     const match = normalized.match(new RegExp(`^${prefixPattern}(?:\\s+([\\s\\S]*))?$`));
     if (!match) continue;

@@ -8,6 +8,7 @@ import { ScheduleConfigSchema } from './scheduler/index.js';
 import { StoreConfigSchema } from './store/index.js';
 import { LearningConfigSchema } from './learning/index.js';
 import { SandboxConfigSchema } from './sandbox.js';
+import { SkillsConfigSchema, defaultSkillsConfig } from './skill/config.js';
 
 const warnedExperimental = new Set<string>();
 function warnExperimentalOnce(key: string, label: string): void {
@@ -159,6 +160,8 @@ const AgentSchema = z.object({
   learning: LearningConfigSchema.optional(),
   // Sandbox configuration: isolated cloud VM for command execution
   sandbox: SandboxConfigSchema.optional(),
+  // Skill configuration: auto discovery by default, explicit keys preload skills
+  skills: SkillsConfigSchema.optional(),
   // Declarative suspension gate. Enables hidden await_human tooling and
   // injects an approval step so markdown instructions can stay business-only.
   approval: ApprovalConfigSchema.optional(),
@@ -188,7 +191,10 @@ const AgentSchema = z.object({
   if (data.learning) warnExperimentalOnce('learning', 'Learning feature');
   if (data.sandbox) warnExperimentalOnce('sandbox', 'Sandbox feature');
 
-  return data;
+  return {
+    ...data,
+    skills: data.skills ?? defaultSkillsConfig(),
+  };
 });
 
 export type AgentConfig = z.infer<typeof AgentSchema>;

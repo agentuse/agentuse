@@ -17,6 +17,11 @@ import { createSessionAndMessage } from './session-helper';
 import { bindToolsToSnapshot, createToolsSnapshot } from './tool-snapshot';
 import { rehydrateMessages } from '../session';
 import { appendApprovalInstructions } from './approval';
+import {
+  expandSkillAllows,
+  getExplicitSkillNames,
+  loadSkillPromptOutputs,
+} from '../skill/index.js';
 
 /**
  * Prepare agent execution - shared setup logic for both streaming and non-streaming modes
@@ -45,6 +50,31 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   let resolvedInstructions = resolveSafeVariables(agent.instructions, pathContext);
   if (!existingSessionId) {
     resolvedInstructions = appendApprovalInstructions(resolvedInstructions, agent.config);
+  }
+
+  if (!existingSessionId && projectContext) {
+    const explicitSkillNames = getExplicitSkillNames(agent.config.skills);
+    if (explicitSkillNames.length > 0) {
+      const effectiveToolsConfig = expandSkillAllows(
+        agent.config.tools,
+        explicitSkillNames.flatMap((name) =>
+          agent.config.skills!.explicit[name]?.allow?.filter((allow) => allow !== '*') ?? []
+        )
+      );
+      const preloadedSkills = await loadSkillPromptOutputs(
+        projectContext.projectRoot,
+        effectiveToolsConfig,
+        explicitSkillNames
+      );
+      if (preloadedSkills.length > 0) {
+        resolvedInstructions = [
+          resolvedInstructions,
+          '## Preloaded Skills',
+          preloadedSkills.map((skill) => skill.output).join('\n\n'),
+        ].join('\n\n');
+        logger.debug(`[Skills] Preloaded ${preloadedSkills.map((skill) => skill.name).join(', ')}`);
+      }
+    }
   }
 
   // Append learnings to instructions if apply is enabled. Resume uses the

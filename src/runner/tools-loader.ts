@@ -3,6 +3,12 @@ import { getMCPTools, type MCPConnection } from '../mcp';
 import { computeAgentId } from '../utils/agent-id';
 import { getTools as getConfiguredTools, type PathResolverContext } from '../tools/index.js';
 import { createSkillTools } from '../skill/index.js';
+import {
+  expandSkillAllows,
+  getExplicitSkillNames,
+  getGrantedSkillAllows,
+  hasFullSkillGrant,
+} from '../skill/index.js';
 import { createStore, createStoreTools, type Store } from '../store/index.js';
 import { createSandbox, createSandboxTools, type SandboxInstance } from '../sandbox.js';
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
@@ -68,13 +74,21 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
 
   // Convert MCP tools to AI SDK format
   const mcpTools = await getMCPTools(mcpConnections);
+  const explicitSkillNames = getExplicitSkillNames(agent.config.skills);
+  const grantedAllows = getGrantedSkillAllows(agent.config.skills);
+  const effectiveToolsConfig = expandSkillAllows(agent.config.tools, grantedAllows);
+  if (agent.config.skills?.trusted) {
+    logger.warn(`${logPrefix}Skill configuration uses skills: trusted. Loaded skills can use all configured agent tools.`);
+  } else if (hasFullSkillGrant(agent.config.skills)) {
+    logger.warn(`${logPrefix}Skill configuration uses allow: ["*"]. Explicit skills can use all configured agent tools.`);
+  }
 
   // Get configured builtin tools (filesystem, bash)
   let configuredTools: Record<string, Tool> = {};
-  if ((agent.config.tools || isApprovalEnabled(agent.config)) && projectContext) {
+  if ((effectiveToolsConfig || isApprovalEnabled(agent.config)) && projectContext) {
     try {
       const toolsConfig = {
-        ...(agent.config.tools ?? {}),
+        ...(effectiveToolsConfig ?? {}),
         ...(isApprovalEnabled(agent.config) && { await_human: true })
       };
       configuredTools = getConfiguredTools(toolsConfig, {
@@ -95,7 +109,14 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   let skillTools: Record<string, Tool> = {};
   if (projectContext) {
     try {
-      const { skillTool, skillReadTool, skills } = await createSkillTools(projectContext.projectRoot, agent.config.tools);
+      const { skillTool, skillReadTool, skills } = await createSkillTools(
+        projectContext.projectRoot,
+        effectiveToolsConfig,
+        {
+          auto: agent.config.skills!.auto,
+          explicitSkillNames,
+        }
+      );
       if (skills.length > 0) {
         skillTools['tools__skill_load'] = skillTool;
         skillTools['tools__skill_read'] = skillReadTool;

@@ -168,6 +168,57 @@ Additional instructions or context.
   </Note>
 </ParamField>
 
+<ParamField path="skills" type='"auto" | "trusted" | string[] | object' required={false}>
+  Controls which installed skills are available to the agent.
+
+  Default: `auto`
+
+  ```yaml
+  skills: auto
+  ```
+
+  `auto` preserves the default behavior: all discovered skills are available for on-demand loading when relevant.
+
+  `trusted` keeps auto discovery and trusts loaded skills to use the tools already configured on the agent. It does not enable new tools or new bash commands:
+
+  ```yaml
+  skills: trusted
+  ```
+
+  To preload a skill before the task starts, define it explicitly:
+
+  ```yaml
+  skills: [linkedin]
+  ```
+
+  Add `allow` when a preloaded skill should grant a command family:
+
+  ```yaml
+  skills:
+    linkedin:
+      allow: [agent-browser]
+  ```
+
+  Explicit skills are loaded into the agent's initial context. `allow` grants user-authored command families needed by that skill. For example, `agent-browser` expands to `agent-browser *`. AgentUse does not infer or validate command needs from skill text.
+
+  You can combine auto discovery with explicit preloads:
+
+  ```yaml
+  skills:
+    auto: true
+    linkedin:
+      allow: [agent-browser]
+  ```
+
+  Use `allow: ["*"]` only for trusted skills that may use all tools already configured for the agent.
+
+  <Tip>
+    Run `agentuse doctor <agent-file>` to inspect skill grants.
+    Doctor can show commands mentioned in the skill docs, but the output is advisory and not a permission manifest.
+    Add `--last-run` to inspect the latest recorded session and diagnose actual blocked commands from runtime.
+  </Tip>
+</ParamField>
+
 <ParamField path="sandbox" type="true | object" required={false}>
   Run agent commands inside an isolated Docker container. Requires Docker to be installed and running. Use `sandbox: true` for defaults or provide a config object.
 
