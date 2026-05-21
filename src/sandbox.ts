@@ -7,7 +7,7 @@ import type Dockerode from 'dockerode';
 import { z } from 'zod';
 import { execFileSync } from 'child_process';
 import { mkdirSync, existsSync, readdirSync, rmdirSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
 import { homedir } from 'os';
 import type { ResolvedMount } from './tools/path-validator.js';
 import { logger } from './utils/logger';
@@ -209,6 +209,25 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
   // Ensure per-session sandbox output directory exists
   const sandboxDir = join(projectRoot, '.agentuse', 'sandbox', ...(sessionId ? [sessionId] : []));
   mkdirSync(sandboxDir, { recursive: true });
+
+  // Refuse to silently bind-mount $HOME (or any of its ancestors) as the
+  // implicit project root. If a marker like .git/.agentuse/package.json
+  // lives at $HOME (claude-code config, dotfile repos), an upstream
+  // mis-resolution can otherwise expose ~/.ssh, ~/.aws, browser profiles,
+  // and the rest of the home directory to the sandbox.
+  const resolvedHome = resolve(homedir());
+  const resolvedProjectRoot = resolve(projectRoot);
+  const isHomeOrAbove = (p: string) => {
+    const r = resolve(p);
+    return r === resolvedHome || resolvedHome.startsWith(r + sep) || r === sep;
+  };
+  if (isHomeOrAbove(resolvedProjectRoot)) {
+    throw new Error(
+      `[Sandbox] Refusing to mount '${projectRoot}' into the sandbox — it is $HOME or an ancestor. ` +
+      `This usually means a project marker (.git, .agentuse, package.json) was found at $HOME. ` +
+      `Run the agent from inside a real project directory, or declare an explicit \`filesystem\` mount.`
+    );
+  }
 
   // Build bind mounts — each filesystem path mounted at its real host path
   const binds: string[] = [`${sandboxDir}:/output:rw`];

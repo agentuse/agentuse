@@ -1,10 +1,17 @@
 import { existsSync, statSync } from 'fs';
-import { dirname, resolve } from 'path';
+import { dirname, resolve, sep } from 'path';
+import { homedir } from 'os';
 import { logger } from './logger';
 
 /**
  * Find project root by searching upward from a starting directory.
  * Looks for common project markers in order of specificity.
+ *
+ * The upward walk stops at $HOME. Markers like `.agentuse`, `.git`, and
+ * `package.json` commonly exist at the user's home directory (per-user
+ * config dirs, dotfile repos), and escalating to $HOME would expose the
+ * entire home directory to anything that uses projectRoot as a trust
+ * boundary (e.g. sandbox bind mounts).
  *
  * @param startPath - Starting directory or file path
  * @returns Project root directory path
@@ -28,11 +35,17 @@ export function findProjectRoot(startPath: string): string {
   const fallbackDir = currentDir;
   currentDir = resolve(currentDir);
   const root = dirname(currentDir) === currentDir ? currentDir : '/';
+  const home = resolve(homedir());
 
   logger.debug(`Searching for project root starting from: ${currentDir}`);
 
-  // Search upward for project markers
+  // Search upward for project markers, but never escalate to $HOME or above.
   while (currentDir !== root) {
+    if (currentDir === home || home.startsWith(currentDir + sep)) {
+      logger.debug(`Reached $HOME (${home}) without finding a project marker — not escalating further`);
+      break;
+    }
+
     // Check for project markers in priority order
     const markers = [
       '.agentuse',            // Agentuse plugins directory (if using plugins)
