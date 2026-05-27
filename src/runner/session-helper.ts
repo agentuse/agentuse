@@ -3,7 +3,10 @@ import type { SessionManager } from '../session';
 import { computeAgentId } from '../utils/agent-id';
 
 export interface SessionContext {
+  /** cwd-derived project root: drives env, plugins, sandbox, store parent. */
   projectRoot: string;
+  /** Agent-file-derived state root: drives session storage and agentId. */
+  stateRoot: string;
   cwd: string;
 }
 
@@ -46,8 +49,9 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
     parentSessionID,
   } = params;
 
-  // Extract agent ID from file path (relative path without extension)
-  const agentId = computeAgentId(agentFilePath, projectContext.projectRoot, agent.name);
+  // Extract agent ID from file path (relative to stateRoot, the agent's own
+  // project) so the ID is stable regardless of which cwd ran the agent.
+  const agentId = computeAgentId(agentFilePath, projectContext.stateRoot, agent.name);
 
   const sessionID = await sessionManager.createSession({
     ...(parentSessionID ? { parentSessionID } : {}),
@@ -67,7 +71,10 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
       ...(config.subagents && { subagents: config.subagents }),
     },
     project: {
-      root: projectContext.projectRoot,
+      // Record stateRoot so serve discovery (which scans by project root)
+      // finds this session under the agent's home, not the cwd the user
+      // happened to be in.
+      root: projectContext.stateRoot,
       cwd: projectContext.cwd,
     },
   });

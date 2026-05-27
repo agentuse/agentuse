@@ -35,6 +35,16 @@ interface SessionMatch {
   allSearchMatch: boolean;
 }
 
+interface ResumeExecutionContext {
+  cwd: string;
+  projectContext: {
+    projectRoot: string;
+    stateRoot: string;
+    envFile: string;
+    pluginDirs: string[];
+  };
+}
+
 /**
  * Compute agent ID from file path and project root
  * Used for migrating old sessions that don't have agent.id
@@ -44,6 +54,28 @@ function computeAgentId(filePath: string | undefined, projectRoot: string, agent
     return path.relative(projectRoot, filePath).replace(/\.agentuse$/, '');
   }
   return agentName;
+}
+
+export function resolveResumeExecutionContext(
+  session: SessionInfo,
+  stateRoot: string,
+  options: { directory?: string },
+  fallbackCwd: string
+): ResumeExecutionContext {
+  const cwd = options.directory
+    ? path.resolve(options.directory)
+    : session.project.cwd || fallbackCwd;
+  const executionContext = resolveProjectContext(cwd);
+
+  return {
+    cwd,
+    projectContext: {
+      ...executionContext,
+      // Persisted session project.root is the storage/identity root. Keep it
+      // separate from the cwd-derived execution root used for env/plugins/tools.
+      stateRoot,
+    },
+  };
 }
 
 /**
@@ -1055,12 +1087,24 @@ async function resumeSession(
     ...(options.allSearch !== undefined && { allSearch: options.allSearch })
   });
   const summary = resolved.summary;
-  const cwd = options.directory
-    ? selectedCwd
-    : resolved.allSearchMatch
-      ? summary.projectRoot
-      : selectedCwd;
-  const projectContext = resolveProjectContext(cwd, { projectRoot: summary.projectRoot });
+
+  await initStorage(summary.projectRoot);
+  const sessionManager = new SessionManager();
+  const found = await sessionManager.findSession(summary.id);
+  if (!found) {
+    throw new Error(`Session not found: ${summary.id}`);
+  }
+  if (!found.session.agent.filePath) {
+    throw new Error(`Session ${summary.id} does not record an agent file path`);
+  }
+
+  const fallbackCwd = resolved.allSearchMatch ? summary.projectRoot : selectedCwd;
+  const { cwd, projectContext } = resolveResumeExecutionContext(
+    found.session,
+    summary.projectRoot,
+    { ...(options.directory && { directory: options.directory }) },
+    fallbackCwd
+  );
 
   loadGlobalEnv();
   if (projectContext.envFile) {
@@ -1069,16 +1113,6 @@ async function resumeSession(
     } catch {
       // Best-effort env loading, matching the rest of the CLI's forgiving posture.
     }
-  }
-
-  await initStorage(projectContext.projectRoot);
-  const sessionManager = new SessionManager();
-  const found = await sessionManager.findSession(summary.id);
-  if (!found) {
-    throw new Error(`Session not found: ${summary.id}`);
-  }
-  if (!found.session.agent.filePath) {
-    throw new Error(`Session ${summary.id} does not record an agent file path`);
   }
 
   if (found.session.status === "running") {
@@ -1129,7 +1163,7 @@ async function resumeSession(
         agentPath,
         undefined,
         sessionManager,
-        { projectRoot: projectContext.projectRoot, cwd },
+        { projectRoot: projectContext.projectRoot, stateRoot: projectContext.stateRoot, cwd },
         undefined,
         undefined,
         false,
@@ -1179,7 +1213,7 @@ async function resumeSession(
     found.session.agent.filePath,
     undefined,
     sessionManager,
-    { projectRoot: projectContext.projectRoot, cwd },
+    { projectRoot: projectContext.projectRoot, stateRoot: projectContext.stateRoot, cwd },
     continuationPrompt,
     undefined,
     false,
