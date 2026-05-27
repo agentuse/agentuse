@@ -56,7 +56,7 @@ export async function createSubAgentTool(
   sessionManager?: SessionManager,
   parentSessionID?: string,
   parentAgentId?: string,
-  projectContext?: { projectRoot: string; cwd: string },
+  projectContext?: { projectRoot: string; stateRoot: string; cwd: string },
   abortSignal?: AbortSignal
 ): Promise<Tool> {
   // Resolve the path relative to the base path if provided
@@ -86,8 +86,9 @@ export async function createSubAgentTool(
     execute: async ({ task, context }) => {
       const startTime = Date.now();
 
-      // Compute agentId (file-path-based identifier) for session operations
-      const agentId = computeAgentId(resolvedPath, projectContext?.projectRoot, agent.name);
+      // Compute agentId relative to the agent's stateRoot (file-path-based,
+      // stable across cwds) for session/store naming.
+      const agentId = computeAgentId(resolvedPath, projectContext?.stateRoot, agent.name);
 
       // Declare session variables outside try block so they're accessible in catch
       let subagentSessionID: string | undefined;
@@ -134,6 +135,7 @@ export async function createSubAgentTool(
             isSubAgent: true,
             agentFilePath: resolvedPath,
             projectRoot: projectContext?.projectRoot,
+            stateRoot: projectContext?.stateRoot,
           });
           const systemMessages = systemMessagesResult.messages;
 
@@ -337,7 +339,7 @@ export async function createSubAgentTools(
   sessionManager?: SessionManager,
   parentSessionID?: string,
   parentAgentId?: string,
-  projectContext?: { projectRoot: string; cwd: string },
+  projectContext?: { projectRoot: string; stateRoot: string; cwd: string },
   abortSignal?: AbortSignal
 ): Promise<Record<string, Tool>> {
   if (!subAgents || subAgents.length === 0) {

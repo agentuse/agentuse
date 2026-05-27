@@ -35,7 +35,7 @@ const version = getVersionString();
 import { AuthenticationError } from './models';
 import * as dotenv from 'dotenv';
 import { existsSync } from 'fs';
-import { resolveProjectContext } from './utils/project';
+import { resolveLocalAgentPath, resolveProjectContext } from './utils/project';
 import { loadGlobalEnv } from './utils/global-config';
 import { resolveTimeout } from './utils/config';
 import { printLogo, type BrandingStyle } from './utils/branding';
@@ -269,18 +269,28 @@ program
 
       // Detect project root from the working directory. `-C` is the starting
       // scope, not necessarily the state boundary; .agentuse/.git/package.json
-      // in a parent directory can own sessions, stores, env, and plugins.
+      // in a parent directory can own env and plugins.
+      //
+      // For state (sessions, agentId), we use a separate `stateRoot` derived
+      // from the agent file's own project when the agent is a local file.
+      // That way sessions follow the agent file across cwds. URL/stdin agents
+      // (no resolvable file path) fall back to projectRoot.
+      const localAgentFilePath = resolveLocalAgentPath(file);
       const projectContext = resolveProjectContext(process.cwd(), {
         ...(options.envFile && { envFile: options.envFile }),
+        ...(localAgentFilePath && { agentFilePath: localAgentFilePath }),
       });
       logger.debug(`Using project root: ${projectContext.projectRoot}`);
+      if (projectContext.stateRoot !== projectContext.projectRoot) {
+        logger.debug(`Using state root: ${projectContext.stateRoot}`);
+      }
 
       // Initialize storage and session manager
       try {
         const { initStorage } = await import('./storage/index.js');
         const { SessionManager } = await import('./session/index.js');
 
-        await initStorage(projectContext.projectRoot);
+        await initStorage(projectContext.stateRoot);
         sessionManager = new SessionManager();
 
         logger.debug('Session storage initialized');
@@ -544,7 +554,7 @@ program
         agentFilePath,
         cliMaxSteps,
         sessionManager,
-        projectContext: { projectRoot: projectContext.projectRoot, cwd: process.cwd() },
+        projectContext: { projectRoot: projectContext.projectRoot, stateRoot: projectContext.stateRoot, cwd: process.cwd() },
         userPrompt: additionalPrompt || undefined,
         abortSignal: abortController.signal,
         verbose: options.debug,
@@ -593,7 +603,7 @@ program
           agentFilePath,
           cliMaxSteps,
           sessionManager,
-          { projectRoot: projectContext.projectRoot, cwd: process.cwd() },
+          { projectRoot: projectContext.projectRoot, stateRoot: projectContext.stateRoot, cwd: process.cwd() },
           additionalPrompt || undefined,
           preparedExecution,
           false,
@@ -1693,7 +1703,9 @@ async function runInternalWorker() {
           agentPath,
           req.maxSteps,
           sessionManager,
-          { projectRoot: req.projectRoot, cwd: runCwd },
+          // Serve registers projects explicitly; agents live in their registered
+          // project so stateRoot equals projectRoot here.
+          { projectRoot: req.projectRoot, stateRoot: req.projectRoot, cwd: runCwd },
           runPrompt,
           undefined,
           true,

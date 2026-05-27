@@ -100,7 +100,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   // Create session first so sandbox can use the session ID for its output directory
   let sessionID: string | undefined;
   let assistantMsgID: string | undefined;
-  let agentId = computeAgentId(agentFilePath, projectContext?.projectRoot, agent.name);
+  let agentId = computeAgentId(agentFilePath, projectContext?.stateRoot, agent.name);
   let systemMessages: Array<{ role: string; content: string }>;
   let resumedMessages = prebuiltMessages;
   let userMessage: string;
@@ -142,6 +142,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       isSubAgent: false,
       agentFilePath,
       projectRoot: projectContext?.projectRoot,
+      stateRoot: projectContext?.stateRoot,
     });
     systemMessages = systemMessagesResult.messages;
 

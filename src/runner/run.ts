@@ -100,7 +100,7 @@ export async function runAgent(
   agentFilePath?: string,
   cliMaxSteps?: number,
   sessionManager?: SessionManager,
-  projectContext?: { projectRoot: string; cwd: string },
+  projectContext?: { projectRoot: string; stateRoot: string; cwd: string },
   userPrompt?: string,
   /**
    * Optional pre-computed execution context to avoid duplicate preparation work.

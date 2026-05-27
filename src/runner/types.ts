@@ -11,7 +11,7 @@ export interface PrepareAgentOptions {
   agentFilePath?: string | undefined;
   cliMaxSteps?: number | undefined;
   sessionManager?: SessionManager | undefined;
-  projectContext?: { projectRoot: string; cwd: string } | undefined;
+  projectContext?: { projectRoot: string; stateRoot: string; cwd: string } | undefined;
   userPrompt?: string | undefined;
   abortSignal?: AbortSignal | undefined;
   verbose?: boolean | undefined;

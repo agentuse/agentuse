@@ -22,8 +22,8 @@ import { approvalToolDefaults, isApprovalEnabled } from './approval';
 export interface LoadAgentToolsOptions {
   /** Parsed agent configuration */
   agent: ParsedAgent;
-  /** Project context with root and cwd */
-  projectContext?: { projectRoot: string; cwd: string } | undefined;
+  /** Project context with cwd-derived projectRoot, agent-derived stateRoot, and cwd */
+  projectContext?: { projectRoot: string; stateRoot: string; cwd: string } | undefined;
   /** Directory containing the agent file (for resolving relative paths) */
   agentDir?: string | undefined;
   /** Full path to the agent file (for computing agentId) */
@@ -69,8 +69,9 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     sessionId,
   } = options;
 
-  // Compute agentId (file-path-based identifier) for store naming
-  const agentId = computeAgentId(agentFilePath, projectContext?.projectRoot, agent.name);
+  // Compute agentId relative to the agent's own project (stateRoot) so the
+  // id is stable across cwds. Stores still live under projectRoot below.
+  const agentId = computeAgentId(agentFilePath, projectContext?.stateRoot, agent.name);
 
   // Convert MCP tools to AI SDK format
   const mcpTools = await getMCPTools(mcpConnections);

@@ -19,8 +19,10 @@ export interface BuildSystemMessagesOptions {
   isSubAgent?: boolean | undefined;
   /** Path to the agent file (needed for manager prompt to resolve subagent descriptions) */
   agentFilePath?: string | undefined;
-  /** Project root directory (needed for computing agentId for store naming) */
+  /** Project root (cwd-derived). Used for sandbox bind mounts. */
   projectRoot?: string | undefined;
+  /** State root (agent-file-derived). Used for computing agentId. */
+  stateRoot?: string | undefined;
 }
 
 /**
@@ -37,7 +39,7 @@ export interface BuildSystemMessagesResult {
  * This is shared logic between main agent (preparation.ts) and subagents (subagent.ts)
  */
 export async function buildSystemMessages(options: BuildSystemMessagesOptions): Promise<BuildSystemMessagesResult> {
-  const { agent, isSubAgent = false, agentFilePath, projectRoot } = options;
+  const { agent, isSubAgent = false, agentFilePath, projectRoot, stateRoot } = options;
 
   let systemMessages: Array<{ role: string; content: string }> = [];
 
@@ -57,7 +59,7 @@ export async function buildSystemMessages(options: BuildSystemMessagesOptions): 
 
   // If this is a manager agent, inject the manager prompt
   if (agent.config.type === 'manager') {
-    const managerPrompt = await buildManagerSystemPrompt(agent, agentFilePath, projectRoot);
+    const managerPrompt = await buildManagerSystemPrompt(agent, agentFilePath, stateRoot ?? projectRoot);
     if (managerPrompt) {
       systemMessages.push({
         role: 'system',
