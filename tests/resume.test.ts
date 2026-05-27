@@ -1,4 +1,9 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import type { SessionInfo } from '../src/session/types';
+import { resolveResumeExecutionContext } from '../src/cli/sessions';
 import { applyResumeToolResult, restoreResumeToolResult } from '../src/runner/resume';
 
 describe('resume tool result', () => {
@@ -63,5 +68,46 @@ describe('resume tool result', () => {
 
     expect(updates[2][4].state).toBe(pendingState);
     expect(updates[3]).toEqual(['suspended', 'session-1', 'agent']);
+  });
+});
+
+describe('resume execution context', () => {
+  let scratchDir: string;
+
+  beforeEach(async () => {
+    scratchDir = await mkdtemp(join(tmpdir(), 'agentuse-resume-context-'));
+  });
+
+  afterEach(async () => {
+    await rm(scratchDir, { recursive: true, force: true });
+  });
+
+  it('uses persisted cwd to rebuild execution root while preserving session stateRoot', async () => {
+    const executionProject = join(scratchDir, 'execution-project');
+    const stateProject = join(scratchDir, 'state-project');
+    const originalCwd = join(executionProject, 'work');
+    await mkdir(originalCwd, { recursive: true });
+    await mkdir(join(stateProject, 'agents'), { recursive: true });
+    await writeFile(join(executionProject, 'package.json'), '{}');
+    await writeFile(join(stateProject, 'package.json'), '{}');
+
+    const session = {
+      project: {
+        root: stateProject,
+        cwd: originalCwd,
+      },
+      agent: {
+        id: 'agents/foo',
+        name: 'foo',
+        filePath: join(stateProject, 'agents', 'foo.agentuse'),
+        isSubAgent: false,
+      },
+    } as SessionInfo;
+
+    const resolved = resolveResumeExecutionContext(session, stateProject, {}, stateProject);
+
+    expect(resolved.cwd).toBe(originalCwd);
+    expect(resolved.projectContext.projectRoot).toBe(executionProject);
+    expect(resolved.projectContext.stateRoot).toBe(stateProject);
   });
 });
