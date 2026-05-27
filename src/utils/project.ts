@@ -78,19 +78,54 @@ export function findProjectRoot(startPath: string): string {
 }
 
 /**
- * Resolve project context based on current directory and CLI options
+ * Resolve a CLI agent argument to the local file that will be parsed.
+ *
+ * This intentionally mirrors the run command's supported extensionless
+ * invocation: `agentuse run agents/foo` should resolve `agents/foo.agentuse`
+ * before stateRoot is chosen, not only later when parsing.
+ */
+export function resolveLocalAgentPath(file: string, cwd = process.cwd()): string | undefined {
+  if (!file || file === '-') return undefined;
+  if (file.startsWith('http://') || file.startsWith('https://')) return undefined;
+
+  const absolute = resolve(cwd, file);
+  if (existsSync(absolute)) return absolute;
+
+  if (!file.endsWith('.agentuse')) {
+    const withExt = `${absolute}.agentuse`;
+    if (existsSync(withExt)) return withExt;
+  }
+
+  return undefined;
+}
+
+/**
+ * Resolve project context based on current directory and CLI options.
+ *
+ * Returns two distinct roots:
+ * - `projectRoot`: cwd-derived. Drives execution context (env, plugins,
+ *   sandbox bind mounts, the model's `path.root`). What "I'm running in"
+ *   means.
+ * - `stateRoot`: agent-file-derived when an `agentFilePath` is supplied.
+ *   Drives state identity (session storage path, agentId). What "this agent's
+ *   home" means. Falls back to `projectRoot` for URL/stdin agents.
+ *
+ * Splitting these means a session for `/repo-A/agents/foo.agentuse` always
+ * lands under `/repo-A`'s storage, regardless of which shell you invoked it
+ * from. Today the two are conflated, so the same agent gets fragmented
+ * session history across cwds.
  *
  * @param currentDir - Current working directory
  * @param options - CLI options. When `projectRoot` is provided, it is used
- *   directly (no upward walk for `.git`/`package.json`). This matches
- *   `serve -C <dir>` semantics: an explicit directory is authoritative.
- * @returns Project context with resolved paths
+ *   directly (no upward walk). This matches `serve -C <dir>` semantics: an
+ *   explicit directory is authoritative.
  */
 export function resolveProjectContext(
   currentDir: string,
-  options: { envFile?: string; projectRoot?: string } = {}
+  options: { envFile?: string; projectRoot?: string; agentFilePath?: string } = {}
 ): {
   projectRoot: string;
+  stateRoot: string;
   envFile: string;
   pluginDirs: string[];
 } {
@@ -99,6 +134,12 @@ export function resolveProjectContext(
   const projectRoot = options.projectRoot
     ? resolve(options.projectRoot)
     : findProjectRoot(currentDir);
+
+  // stateRoot follows the agent file's own project when available so sessions
+  // and agentId are stable per-agent regardless of cwd.
+  const stateRoot = options.agentFilePath && existsSync(options.agentFilePath)
+    ? findProjectRoot(options.agentFilePath)
+    : projectRoot;
 
   // Resolve env file path
   let envFile: string;
@@ -123,6 +164,7 @@ export function resolveProjectContext(
 
   return {
     projectRoot,
+    stateRoot,
     envFile,
     pluginDirs,
   };
