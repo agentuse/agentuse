@@ -138,4 +138,37 @@ Do the task.`);
     expect(output).toContain('custom-browser eval "document.title"');
     expect(output).toContain('- custom-browser *');
   });
+
+  it('reports no prior sessions when --last-run has no matching session', async () => {
+    const agentPath = join(testDir, 'lonely.agentuse');
+    await writeFile(agentPath, `---
+name: Lonely Agent
+model: demo:test
+---
+
+Idle.`);
+
+    await runDoctor(agentPath, { lastRun: true });
+
+    const output = logs.join('\n');
+    expect(output).toContain('Runtime Analysis From Last Run');
+    expect(output).toContain('No prior sessions found');
+  });
+
+  it('reports skill trust banner when skills: trusted', async () => {
+    const agentPath = join(testDir, 'trusted.agentuse');
+    await writeFile(agentPath, `---
+name: Trusted Agent
+model: demo:test
+skills: trusted
+---
+
+Trusted mode agent.`);
+
+    await runDoctor(agentPath);
+
+    const output = logs.join('\n');
+    expect(output).toContain('Skill trust: trusted');
+    expect(output).not.toContain('Skill grants:');
+  });
 });

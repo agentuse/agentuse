@@ -49,6 +49,16 @@ Skills are discovered from these directories (in priority order):
 If duplicate skill names exist, the first discovered skill takes precedence.
 </Note>
 
+### For AI Coding Assistants
+
+Install the assistant-facing AgentUse skill so Claude Code, Codex, Cursor, and other assistants can drive AgentUse workflows:
+
+```bash
+npx skills add agentuse/agentuse
+```
+
+The stub redirects to `agentuse skills get core`, keeping instructions aligned with the installed CLI version.
+
 ## Skill Structure
 
 Each skill lives in its own directory with a `SKILL.md` file:
@@ -237,6 +247,22 @@ skill_read(skill: "code-review", path: "templates/pr-template.md")
 <Note>
 The skill must be loaded first before reading files from its directory.
 </Note>
+
+### Skill Directory Variables
+
+When a skill is loaded, AgentUse substitutes these placeholders in the skill's content with the skill's absolute directory path. Use them so bundled scripts and assets resolve regardless of where the skill is installed:
+
+| Placeholder | Purpose |
+|-------------|---------|
+| `${skillDir}` | Legacy AgentUse placeholder |
+| `${SKILL_DIR}` | Cross-agent convention |
+| `${CLAUDE_SKILL_DIR}` | Claude ecosystem compatibility |
+
+```markdown
+Run `bash ${SKILL_DIR}/scripts/setup.sh` before generating output.
+```
+
+Only the curly-brace form is replaced. Literal `$SKILL_DIR` (no braces) is left untouched so runtime shell expansion still works inside scripts.
 
 ## Example Skills
 

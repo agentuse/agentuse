@@ -219,7 +219,7 @@ async function printLastRunAnalysis(
 
 export async function runDoctor(file: string, options: DoctorOptions = {}): Promise<void> {
   const agentFilePath = resolve(file);
-  const projectContext = resolveProjectContext(process.cwd());
+  const projectContext = resolveProjectContext(path.dirname(agentFilePath));
   const agent = await parseAgent(agentFilePath);
 
   console.log(chalk.bold(`Agent: ${agent.name}`));

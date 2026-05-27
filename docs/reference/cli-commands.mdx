@@ -763,6 +763,43 @@ Found 2 installed skill(s):
 
 ---
 
+## agentuse doctor
+
+Diagnose an agent's skill capability configuration. Static mode inspects the agent file; `--last-run` inspects the most recent recorded session.
+
+### Syntax
+
+```bash
+agentuse doctor <file> [--last-run]
+```
+
+### What It Checks
+
+Static mode:
+- Explicit skills that don't exist on disk.
+- Explicit skills with no `allow` grants.
+- Commands mentioned in skill docs vs. what the agent has granted (advisory; not a permission manifest).
+
+`--last-run` mode:
+- Finds the latest non-subagent session for this agent.
+- Reports blocked bash commands from runtime and prints a suggested `tools.bash.commands` snippet.
+
+### Examples
+
+```bash
+# Static inspection
+agentuse doctor agents/research.agentuse
+
+# Diagnose actual blocked commands from the last run
+agentuse doctor agents/research.agentuse --last-run
+```
+
+<Tip>
+  Use `--last-run` after an agent fails or behaves unexpectedly. It uses real tool errors and is more accurate than static skill-doc extraction.
+</Tip>
+
+---
+
 ## agentuse agents
 
 Discover and list all agent files in the current project.
@@ -959,7 +996,8 @@ agentuse provider logout [provider]      # Remove stored credentials
 agentuse provider remove <name>          # Remove a custom provider
 agentuse provider list                   # Show all providers and credentials
 agentuse provider help                   # Show detailed auth help
-agentuse skills [options]                # List available skills
+agentuse skills [subcommand] [options]   # List/get builtin or installed skills
+agentuse doctor <file> [--last-run]      # Diagnose agent skill capability config
 agentuse agents [options]                # Discover and list project agents
 agentuse add <source> [options]          # Add skills/agents from GitHub or local path
 agentuse --version                       # Show version

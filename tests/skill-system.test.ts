@@ -706,6 +706,40 @@ description: Preloaded
       expect(config?.bash?.commands).toContain('agent-browser *');
       expect(config?.bash?.commands).toContain('python3 *');
     });
+
+    it('returns baseConfig unchanged when only "*" is requested', () => {
+      const baseConfig = { bash: { commands: ['git *'] } };
+
+      const config = expandSkillAllows(baseConfig, ['*']);
+
+      expect(config).toBe(baseConfig);
+    });
+
+    it('preserves existing bash.allowedPaths and merges new commands', () => {
+      const baseConfig = {
+        bash: {
+          commands: ['git *'],
+          allowedPaths: ['/tmp', '~/workspace'],
+          timeout: 60000,
+        },
+      };
+
+      const config = expandSkillAllows(baseConfig, ['agent-browser']);
+
+      expect(config?.bash?.commands).toEqual(['git *', 'agent-browser *']);
+      expect(config?.bash?.allowedPaths).toEqual(['/tmp', '~/workspace']);
+      expect(config?.bash?.timeout).toBe(60000);
+      expect(config?.bash?.commands).not.toBe(baseConfig.bash.commands);
+      expect(config?.bash?.allowedPaths).not.toBe(baseConfig.bash.allowedPaths);
+    });
+
+    it('does not append a duplicate when allow already matches an existing pattern', () => {
+      const baseConfig = { bash: { commands: ['agent-browser *'] } };
+
+      const config = expandSkillAllows(baseConfig, ['agent-browser', 'agent-browser']);
+
+      expect(config?.bash?.commands).toEqual(['agent-browser *']);
+    });
   });
 
   describe('extractSkillCommandMentions', () => {

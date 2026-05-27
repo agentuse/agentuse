@@ -206,10 +206,6 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
   const image = config.image ?? 'node:22-slim';
   const timeout = config.timeout ?? 300;
 
-  // Ensure per-session sandbox output directory exists
-  const sandboxDir = join(projectRoot, '.agentuse', 'sandbox', ...(sessionId ? [sessionId] : []));
-  mkdirSync(sandboxDir, { recursive: true });
-
   // Refuse to silently bind-mount $HOME (or any of its ancestors) as the
   // implicit project root. If a marker like .git/.agentuse/package.json
   // lives at $HOME (claude-code config, dotfile repos), an upstream
@@ -228,6 +224,10 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
       `Run the agent from inside a real project directory, or declare an explicit \`filesystem\` mount.`
     );
   }
+
+  // Ensure per-session sandbox output directory exists
+  const sandboxDir = join(projectRoot, '.agentuse', 'sandbox', ...(sessionId ? [sessionId] : []));
+  mkdirSync(sandboxDir, { recursive: true });
 
   // Build bind mounts — each filesystem path mounted at its real host path
   const binds: string[] = [`${sandboxDir}:/output:rw`];

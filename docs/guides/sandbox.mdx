@@ -71,6 +71,10 @@ tools:
   Glob patterns (e.g. `${root}/**/*.ts`) are skipped — only concrete directories can be mounted. If no filesystem tool is configured, the project root is mounted read-only.
 </Note>
 
+<Warning>
+  Sandbox refuses to bind-mount `$HOME` (or any ancestor) as the project root. If a project marker like `.git`, `.agentuse`, or `package.json` exists at `$HOME` (common for dotfile repos or per-user config dirs), creation fails with a clear error. Run the agent from inside a real project directory, or declare an explicit `filesystem` mount.
+</Warning>
+
 ## Configuration
 
 Use `sandbox: true` for defaults (Docker, `node:22-slim`), or provide a config object:
