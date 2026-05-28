@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import { __testing } from '../src/slack/approval';
 
 describe('Slack approval blocks', () => {
@@ -664,5 +664,40 @@ describe('Slack approval blocks', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
 
     expect(count).toBe(1);
+  });
+
+  it('summarizes repeated Slack socket errors', async () => {
+    const { SlackApprovalSocket } = await import('../src/slack/approval');
+    const { logger } = await import('../src/utils/logger');
+    const warnSpy = spyOn(logger, 'warn').mockImplementation(() => {});
+    const originalNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+
+    try {
+      const socket = new SlackApprovalSocket({
+        appToken: 'xapp-test',
+        botToken: 'xoxb-test',
+        onDecision: async () => undefined
+      });
+
+      (socket as any).handleSocketError(new Error('Unexpected server response: 408'));
+      (socket as any).handleSocketError(new Error('Unexpected server response: 408'));
+      (socket as any).handleSocketError(new Error('Unexpected server response: 408'));
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      now += 61_000;
+      (socket as any).handleSocketError(new Error('Unexpected server response: 408'));
+
+      expect(warnSpy).toHaveBeenCalledTimes(3);
+      expect(warnSpy.mock.calls.map(call => call[0])).toEqual([
+        'Slack approval socket error: Unexpected server response: 408',
+        'Slack approval socket error repeated 2 more times: Unexpected server response: 408',
+        'Slack approval socket error: Unexpected server response: 408'
+      ]);
+    } finally {
+      Date.now = originalNow;
+      warnSpy.mockRestore();
+    }
   });
 });

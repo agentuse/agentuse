@@ -1,4 +1,4 @@
-import { SocketModeClient, LogLevel as SlackSocketLogLevel } from '@slack/socket-mode';
+import { SocketModeClient, LogLevel as SlackSocketLogLevel, type Logger as SlackSocketLogger } from '@slack/socket-mode';
 import { WebClient } from '@slack/web-api';
 import { logger } from '../utils/logger';
 import {
@@ -72,11 +72,85 @@ const ACTION_ID_PREFIX = 'agentuse_approval_action';
 const COMMENT_CALLBACK_ID = 'agentuse_approval_comment';
 const COMMENT_BLOCK_ID = 'comment';
 const COMMENT_INPUT_ID = 'value';
+const SLACK_SOCKET_ERROR_DEDUPE_MS = 60_000;
 const SLACK_APPROVAL_ACTIONS: Array<{ id: string; label: string; style?: 'primary' | 'danger' }> = [
   { id: 'approve', label: 'Approve', style: 'primary' },
   { id: 'reject', label: 'Reject', style: 'danger' },
   { id: 'comment', label: 'Comment' }
 ];
+
+const SLACK_LOG_SEVERITY: Record<SlackSocketLogLevel, number> = {
+  [SlackSocketLogLevel.DEBUG]: 0,
+  [SlackSocketLogLevel.INFO]: 1,
+  [SlackSocketLogLevel.WARN]: 2,
+  [SlackSocketLogLevel.ERROR]: 3
+};
+
+class SlackSocketSdkLogger implements SlackSocketLogger {
+  private level: SlackSocketLogLevel;
+  private name = 'socket-mode';
+
+  constructor(private readonly debugEnabled: boolean) {
+    this.level = debugEnabled ? SlackSocketLogLevel.DEBUG : SlackSocketLogLevel.ERROR;
+  }
+
+  setLevel(level: SlackSocketLogLevel): void {
+    this.level = level;
+  }
+
+  getLevel(): SlackSocketLogLevel {
+    return this.level;
+  }
+
+  setName(name: string): void {
+    this.name = name;
+  }
+
+  debug(...msg: any[]): void {
+    if (this.shouldLog(SlackSocketLogLevel.DEBUG)) {
+      logger.debug(this.format(msg));
+    }
+  }
+
+  info(...msg: any[]): void {
+    if (this.shouldLog(SlackSocketLogLevel.INFO)) {
+      logger.debug(this.format(msg));
+    }
+  }
+
+  warn(...msg: any[]): void {
+    if (this.shouldLog(SlackSocketLogLevel.WARN)) {
+      logger.warn(this.format(msg));
+    }
+  }
+
+  error(...msg: any[]): void {
+    if (this.shouldLog(SlackSocketLogLevel.ERROR)) {
+      logger.error(this.format(msg));
+    }
+  }
+
+  private shouldLog(level: SlackSocketLogLevel): boolean {
+    return this.debugEnabled && SLACK_LOG_SEVERITY[level] >= SLACK_LOG_SEVERITY[this.level];
+  }
+
+  private format(msg: any[]): string {
+    const body = msg.map((part) => {
+      if (part instanceof Error) {
+        return part.message;
+      }
+      if (typeof part === 'string') {
+        return part;
+      }
+      try {
+        return JSON.stringify(part);
+      } catch {
+        return String(part);
+      }
+    }).join(' ');
+    return `Slack ${this.name}: ${body}`;
+  }
+}
 
 function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
@@ -722,6 +796,9 @@ export class SlackApprovalSocket {
   private readonly socket: SocketModeClient;
   private readonly web: WebClient;
   private readonly seenThreadComments = new Set<string>();
+  private lastSocketErrorMessage: string | null = null;
+  private lastSocketErrorAt = 0;
+  private suppressedSocketErrorCount = 0;
 
   constructor(private readonly options: {
     appToken: string;
@@ -733,7 +810,7 @@ export class SlackApprovalSocket {
   }) {
     this.socket = new SocketModeClient({
       appToken: options.appToken,
-      logLevel: options.debug ? SlackSocketLogLevel.DEBUG : SlackSocketLogLevel.ERROR
+      logger: new SlackSocketSdkLogger(options.debug === true)
     });
     this.web = new WebClient(options.botToken);
     this.socket.on('interactive', (event: any) => {
@@ -743,7 +820,7 @@ export class SlackApprovalSocket {
       void this.handleMessageEvent(event);
     });
     this.socket.on('error', (error: Error) => {
-      logger.warn(`Slack approval socket error: ${error.message}`);
+      this.handleSocketError(error);
     });
   }
 
@@ -752,7 +829,42 @@ export class SlackApprovalSocket {
   }
 
   async stop(): Promise<void> {
-    await this.socket.disconnect();
+    this.flushSuppressedSocketErrors();
+    try {
+      await this.socket.disconnect();
+    } finally {
+      this.flushSuppressedSocketErrors();
+    }
+  }
+
+  private handleSocketError(error: Error): void {
+    const message = error.message || String(error);
+    const now = Date.now();
+    if (
+      this.lastSocketErrorMessage === message &&
+      now - this.lastSocketErrorAt < SLACK_SOCKET_ERROR_DEDUPE_MS
+    ) {
+      this.lastSocketErrorAt = now;
+      this.suppressedSocketErrorCount += 1;
+      return;
+    }
+
+    this.flushSuppressedSocketErrors();
+    logger.warn(`Slack approval socket error: ${message}`);
+    this.lastSocketErrorMessage = message;
+    this.lastSocketErrorAt = now;
+  }
+
+  private flushSuppressedSocketErrors(): void {
+    if (!this.lastSocketErrorMessage || this.suppressedSocketErrorCount === 0) {
+      return;
+    }
+
+    const suffix = this.suppressedSocketErrorCount === 1 ? '' : 's';
+    logger.warn(
+      `Slack approval socket error repeated ${this.suppressedSocketErrorCount} more time${suffix}: ${this.lastSocketErrorMessage}`
+    );
+    this.suppressedSocketErrorCount = 0;
   }
 
   private async handleInteractive(event: any): Promise<void> {
