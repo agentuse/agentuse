@@ -11,10 +11,118 @@ export class AuthStorage {
     "agentuse",
     "auth.json"
   );
+  private static readonly LOCK_TIMEOUT_MS = 30_000;
+  private static readonly STALE_LOCK_MS = 5 * 60_000;
 
   private static async ensureDir() {
     const dir = path.dirname(this.AUTH_FILE);
     await fs.mkdir(dir, { recursive: true });
+  }
+
+  private static async sleep(ms: number) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private static async writeAll(data: Record<string, AuthInfo>): Promise<void> {
+    await this.ensureDir();
+    const dir = path.dirname(this.AUTH_FILE);
+    const tmpFile = path.join(
+      dir,
+      `.auth.json.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
+    );
+
+    try {
+      await fs.writeFile(tmpFile, JSON.stringify(data, null, 2));
+      await fs.chmod(tmpFile, 0o600);
+      await fs.rename(tmpFile, this.AUTH_FILE);
+    } catch (error) {
+      await fs.rm(tmpFile, { force: true }).catch(() => {});
+      throw error;
+    }
+  }
+
+  private static lockDir(): string {
+    return `${this.AUTH_FILE}.lock`;
+  }
+
+  static async withAuthLock<T>(callback: () => Promise<T>): Promise<T> {
+    await this.ensureDir();
+    const lockDir = this.lockDir();
+    const startedAt = Date.now();
+
+    while (true) {
+      try {
+        await fs.mkdir(lockDir);
+        break;
+      } catch (error) {
+        if ((error as { code?: string }).code !== "EEXIST") {
+          throw error;
+        }
+
+        try {
+          const stat = await fs.stat(lockDir);
+          if (Date.now() - stat.mtimeMs > this.STALE_LOCK_MS) {
+            await fs.rm(lockDir, { recursive: true, force: true });
+            continue;
+          }
+        } catch {
+          continue;
+        }
+
+        if (Date.now() - startedAt > this.LOCK_TIMEOUT_MS) {
+          throw new Error(`Timed out waiting for auth storage lock: ${lockDir}`);
+        }
+
+        await this.sleep(50 + Math.floor(Math.random() * 50));
+      }
+    }
+
+    try {
+      return await callback();
+    } finally {
+      await fs.rm(lockDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  private static async mutate<T>(callback: (data: Record<string, AuthInfo>) => Promise<T> | T): Promise<T> {
+    return this.withAuthLock(async () => {
+      const data = await this.all();
+      const result = await callback(data);
+      await this.writeAll(data);
+      return result;
+    });
+  }
+
+  /**
+   * Run a provider-specific OAuth update while holding the shared auth-file lock.
+   * The callback receives freshly re-read credentials so concurrent workers do not
+   * all try to refresh the same rotating token.
+   */
+  static async updateOAuth<T>(
+    providerID: string,
+    callback: (current: OAuthTokens | CodexOAuthTokens | undefined) => Promise<{
+      value: T;
+      next?: OAuthTokens | CodexOAuthTokens;
+    }>
+  ): Promise<T> {
+    return this.withAuthLock(async () => {
+      const current = await this.getOAuth(providerID);
+      const { value, next } = await callback(current);
+
+      if (next) {
+        const data = await this.all();
+        data[`${providerID}:oauth`] = next;
+
+        const legacy = data[providerID];
+        if (legacy && (legacy.type === "oauth" || legacy.type === "codex-oauth")) {
+          delete data[providerID];
+        }
+
+        await this.writeAll(data);
+      }
+
+      return value;
+    });
   }
 
   /**
@@ -124,12 +232,9 @@ export class AuthStorage {
    * Prefer using setOAuth/setApiKey for new code
    */
   static async set(providerID: string, info: AuthInfo): Promise<void> {
-    await this.ensureDir();
-    const data = await this.all();
-    data[providerID] = info;
-    await fs.writeFile(this.AUTH_FILE, JSON.stringify(data, null, 2));
-    // Set file permissions to user read/write only
-    await fs.chmod(this.AUTH_FILE, 0o600);
+    await this.mutate((data) => {
+      data[providerID] = info;
+    });
   }
 
   /**
@@ -137,20 +242,16 @@ export class AuthStorage {
    * Stores under {provider}:oauth key (does not overwrite API key)
    */
   static async setOAuth(providerID: string, info: OAuthTokens | CodexOAuthTokens): Promise<void> {
-    await this.ensureDir();
-    const data = await this.all();
+    await this.mutate((data) => {
+      // Store in new format
+      data[`${providerID}:oauth`] = info;
 
-    // Store in new format
-    data[`${providerID}:oauth`] = info;
-
-    // Clean up legacy format if it was OAuth (migrate to new format)
-    const legacy = data[providerID];
-    if (legacy && (legacy.type === "oauth" || legacy.type === "codex-oauth")) {
-      delete data[providerID];
-    }
-
-    await fs.writeFile(this.AUTH_FILE, JSON.stringify(data, null, 2));
-    await fs.chmod(this.AUTH_FILE, 0o600);
+      // Clean up legacy format if it was OAuth (migrate to new format)
+      const legacy = data[providerID];
+      if (legacy && (legacy.type === "oauth" || legacy.type === "codex-oauth")) {
+        delete data[providerID];
+      }
+    });
   }
 
   /**
@@ -158,61 +259,52 @@ export class AuthStorage {
    * Stores under {provider}:api key (does not overwrite OAuth)
    */
   static async setApiKey(providerID: string, info: ApiKeyAuth): Promise<void> {
-    await this.ensureDir();
-    const data = await this.all();
+    await this.mutate((data) => {
+      // Store in new format
+      data[`${providerID}:api`] = info;
 
-    // Store in new format
-    data[`${providerID}:api`] = info;
-
-    // Clean up legacy format if it was API key (migrate to new format)
-    const legacy = data[providerID];
-    if (legacy && legacy.type === "api") {
-      delete data[providerID];
-    }
-
-    await fs.writeFile(this.AUTH_FILE, JSON.stringify(data, null, 2));
-    await fs.chmod(this.AUTH_FILE, 0o600);
+      // Clean up legacy format if it was API key (migrate to new format)
+      const legacy = data[providerID];
+      if (legacy && legacy.type === "api") {
+        delete data[providerID];
+      }
+    });
   }
 
   static async remove(providerID: string): Promise<void> {
-    const data = await this.all();
-    delete data[providerID];
-    await this.ensureDir();
-    await fs.writeFile(this.AUTH_FILE, JSON.stringify(data, null, 2));
+    await this.mutate((data) => {
+      delete data[providerID];
+    });
   }
 
   /**
    * Remove OAuth tokens for a provider
    */
   static async removeOAuth(providerID: string): Promise<void> {
-    const data = await this.all();
-    delete data[`${providerID}:oauth`];
+    await this.mutate((data) => {
+      delete data[`${providerID}:oauth`];
 
-    // Also remove legacy format if it was OAuth
-    const legacy = data[providerID];
-    if (legacy && (legacy.type === "oauth" || legacy.type === "codex-oauth")) {
-      delete data[providerID];
-    }
-
-    await this.ensureDir();
-    await fs.writeFile(this.AUTH_FILE, JSON.stringify(data, null, 2));
+      // Also remove legacy format if it was OAuth
+      const legacy = data[providerID];
+      if (legacy && (legacy.type === "oauth" || legacy.type === "codex-oauth")) {
+        delete data[providerID];
+      }
+    });
   }
 
   /**
    * Remove API key for a provider
    */
   static async removeApiKey(providerID: string): Promise<void> {
-    const data = await this.all();
-    delete data[`${providerID}:api`];
+    await this.mutate((data) => {
+      delete data[`${providerID}:api`];
 
-    // Also remove legacy format if it was API key
-    const legacy = data[providerID];
-    if (legacy && legacy.type === "api") {
-      delete data[providerID];
-    }
-
-    await this.ensureDir();
-    await fs.writeFile(this.AUTH_FILE, JSON.stringify(data, null, 2));
+      // Also remove legacy format if it was API key
+      const legacy = data[providerID];
+      if (legacy && legacy.type === "api") {
+        delete data[providerID];
+      }
+    });
   }
 
   /**
@@ -220,16 +312,14 @@ export class AuthStorage {
    * Stores under custom:<name> key
    */
   static async setCustomProvider(name: string, config: { baseURL: string; key?: string }): Promise<void> {
-    await this.ensureDir();
-    const data = await this.all();
-    const entry: CustomProviderAuth = {
-      type: "custom",
-      baseURL: config.baseURL,
-      ...(config.key && { key: config.key }),
-    };
-    data[`custom:${name}`] = entry;
-    await fs.writeFile(this.AUTH_FILE, JSON.stringify(data, null, 2));
-    await fs.chmod(this.AUTH_FILE, 0o600);
+    await this.mutate((data) => {
+      const entry: CustomProviderAuth = {
+        type: "custom",
+        baseURL: config.baseURL,
+        ...(config.key && { key: config.key }),
+      };
+      data[`custom:${name}`] = entry;
+    });
   }
 
   /**
@@ -269,15 +359,14 @@ export class AuthStorage {
    * Remove a custom provider configuration
    */
   static async removeCustomProvider(name: string): Promise<boolean> {
-    const data = await this.all();
-    const key = `custom:${name}`;
-    if (!(key in data)) {
-      return false;
-    }
-    delete data[key];
-    await this.ensureDir();
-    await fs.writeFile(this.AUTH_FILE, JSON.stringify(data, null, 2));
-    return true;
+    return this.mutate((data) => {
+      const key = `custom:${name}`;
+      if (!(key in data)) {
+        return false;
+      }
+      delete data[key];
+      return true;
+    });
   }
 
   static getFilePath(): string {

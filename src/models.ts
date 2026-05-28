@@ -170,6 +170,9 @@ export async function createModel(modelString: string) {
         apiKey: '', // Empty API key for OAuth
         fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
           const access = await AnthropicAuth.access();
+          if (!access) {
+            throw new Error('Anthropic OAuth token expired');
+          }
           const headers: Record<string, string> = {
             ...((init?.headers || {}) as Record<string, string>),
             'authorization': `Bearer ${access}`,

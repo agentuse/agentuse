@@ -155,27 +155,27 @@ export namespace CodexAuth {
   }
 
   export async function access(): Promise<{ token: string; accountId: string | undefined } | undefined> {
-    const info = await AuthStorage.getOAuth("openai");
-    if (!info || info.type !== "codex-oauth") return undefined;
-
-    // Check if token is still valid (with 5 minute buffer)
-    if (info.access && info.expires > Date.now() + 5 * 60 * 1000) {
-      return { token: info.access, accountId: info.accountId };
-    }
-
-    // Refresh the token
     try {
-      const tokens = await refreshAccessToken(info.refresh);
-      const accountId = extractAccountId(tokens) || info.accountId;
-      const newInfo = {
-        type: "codex-oauth" as const,
-        refresh: tokens.refresh_token,
-        access: tokens.access_token,
-        expires: Date.now() + (tokens.expires_in ?? 3600) * 1000,
-        accountId,
-      };
-      await AuthStorage.setOAuth("openai", newInfo);
-      return { token: tokens.access_token, accountId };
+      return await AuthStorage.updateOAuth("openai", async (info) => {
+        if (!info || info.type !== "codex-oauth") return { value: undefined };
+
+        // Check if token is still valid (with 5 minute buffer)
+        if (info.access && info.expires > Date.now() + 5 * 60 * 1000) {
+          return { value: { token: info.access, accountId: info.accountId } };
+        }
+
+        // Refresh is locked across processes because OAuth refresh tokens can rotate.
+        const tokens = await refreshAccessToken(info.refresh);
+        const accountId = extractAccountId(tokens) || info.accountId;
+        const next = {
+          type: "codex-oauth" as const,
+          refresh: tokens.refresh_token,
+          access: tokens.access_token,
+          expires: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+          accountId,
+        };
+        return { value: { token: next.access, accountId }, next };
+      });
     } catch {
       return undefined;
     }

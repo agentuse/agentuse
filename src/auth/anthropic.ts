@@ -60,21 +60,29 @@ export namespace AnthropicAuth {
       return claudeCodeOAuthToken;
     }
 
-    // Priority 2: Fall back to file-based storage
-    const info = await AuthStorage.getOAuth("anthropic");
-    if (!info || info.type !== "oauth") return;
-    if (info.access && info.expires > Date.now() + REFRESH_BUFFER_MS) return info.access;
+    // Priority 2: Fall back to file-based storage. Refresh is locked across
+    // processes because OAuth refresh tokens can rotate.
+    try {
+      return await AuthStorage.updateOAuth("anthropic", async (info) => {
+        if (!info || info.type !== "oauth") return { value: undefined };
+        if (info.access && info.expires > Date.now() + REFRESH_BUFFER_MS) {
+          return { value: info.access };
+        }
 
-    const refreshed = await refreshToken(info.refresh);
-    if (!refreshed) return;
+        const refreshed = await refreshToken(info.refresh);
+        if (!refreshed) return { value: undefined };
 
-    await AuthStorage.setOAuth("anthropic", {
-      type: "oauth",
-      refresh: refreshed.refresh,
-      access: refreshed.access,
-      expires: refreshed.expires,
-    });
-    return refreshed.access;
+        const next = {
+          type: "oauth" as const,
+          refresh: refreshed.refresh,
+          access: refreshed.access,
+          expires: refreshed.expires,
+        };
+        return { value: next.access, next };
+      });
+    } catch {
+      return undefined;
+    }
   }
 
   async function refreshToken(refresh: string) {
