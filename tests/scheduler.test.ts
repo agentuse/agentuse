@@ -1,16 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { parseScheduleExpression } from "../src/scheduler/parser";
-import { Scheduler } from "../src/scheduler/scheduler";
+import { calculateScheduleJitterMs, Scheduler } from "../src/scheduler/scheduler";
 import { logger, executionLog } from "../src/utils/logger";
 
 // Suppress logging during tests
 let loggerDebugSpy: ReturnType<typeof spyOn>;
+let loggerInfoSpy: ReturnType<typeof spyOn>;
 let executionLogStartSpy: ReturnType<typeof spyOn>;
 let executionLogCompleteSpy: ReturnType<typeof spyOn>;
 let executionLogFailedSpy: ReturnType<typeof spyOn>;
 
 beforeEach(() => {
   loggerDebugSpy = spyOn(logger, "debug").mockImplementation(() => {});
+  loggerInfoSpy = spyOn(logger, "info").mockImplementation(() => {});
   executionLogStartSpy = spyOn(executionLog, "start").mockImplementation(() => {});
   executionLogCompleteSpy = spyOn(executionLog, "complete").mockImplementation(() => {});
   executionLogFailedSpy = spyOn(executionLog, "failed").mockImplementation(() => {});
@@ -18,6 +20,7 @@ beforeEach(() => {
 
 afterEach(() => {
   loggerDebugSpy.mockRestore();
+  loggerInfoSpy.mockRestore();
   executionLogStartSpy.mockRestore();
   executionLogCompleteSpy.mockRestore();
   executionLogFailedSpy.mockRestore();
@@ -164,6 +167,39 @@ describe("Scheduler", () => {
 
       expect(schedule.nextRun).toBeInstanceOf(Date);
     });
+
+    it("assigns deterministic bounded jitter per scheduled agent", () => {
+      const first = calculateScheduleJitterMs("test-project", "agent1.agentuse", "0 9 * * *", 120_000);
+      const second = calculateScheduleJitterMs("test-project", "agent1.agentuse", "0 9 * * *", 120_000);
+      const otherAgent = calculateScheduleJitterMs("test-project", "agent2.agentuse", "0 9 * * *", 120_000);
+
+      expect(first).toBe(second);
+      expect(first).toBeGreaterThanOrEqual(0);
+      expect(first).toBeLessThanOrEqual(120_000);
+      expect(otherAgent).not.toBe(first);
+    });
+
+    it("caps jitter to half the cadence for short interval schedules", () => {
+      const jitter = calculateScheduleJitterMs("test-project", "fast.agentuse", "*/5 * * * * *", 120_000);
+
+      expect(jitter).toBeGreaterThanOrEqual(0);
+      expect(jitter).toBeLessThanOrEqual(2_500);
+    });
+
+    it("can disable scheduled-run jitter for deterministic test or local setups", () => {
+      const noJitterScheduler = new Scheduler({
+        onExecute: mockOnExecute,
+        scheduleJitterMs: 0,
+      });
+
+      try {
+        const schedule = noJitterScheduler.add("test-project", "test.agentuse", "0 9 * * *");
+
+        expect(schedule.jitterMs).toBe(0);
+      } finally {
+        noJitterScheduler.shutdown();
+      }
+    });
   });
 
   describe("get()", () => {
@@ -260,6 +296,49 @@ describe("Scheduler", () => {
       await scheduler.trigger("nonexistent-id");
 
       expect(mockOnExecute).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("scheduled queue jitter", () => {
+    it("delays cron-driven execution by the schedule jitter", async () => {
+      const localScheduler = new Scheduler({
+        onExecute: mockOnExecute,
+        scheduleJitterMs: 0,
+      });
+
+      try {
+        const schedule = localScheduler.add("test-project", "test.agentuse", "0 9 * * *");
+        schedule.jitterMs = 10;
+
+        (localScheduler as any).queueScheduledRun(schedule.id);
+
+        expect(mockOnExecute).not.toHaveBeenCalled();
+        await new Promise(resolve => setTimeout(resolve, 25));
+        expect(mockOnExecute).toHaveBeenCalledTimes(1);
+      } finally {
+        localScheduler.shutdown();
+      }
+    });
+
+    it("clears pending jittered runs when a schedule is removed", async () => {
+      const localExecute = mock(() => Promise.resolve({ success: true, duration: 100 }));
+      const localScheduler = new Scheduler({
+        onExecute: localExecute,
+        scheduleJitterMs: 0,
+      });
+
+      try {
+        const schedule = localScheduler.add("test-project", "test.agentuse", "0 9 * * *");
+        schedule.jitterMs = 20;
+
+        (localScheduler as any).queueScheduledRun(schedule.id);
+        localScheduler.removeByAgentPath("test-project", "test.agentuse");
+
+        await new Promise(resolve => setTimeout(resolve, 35));
+        expect(localExecute).not.toHaveBeenCalled();
+      } finally {
+        localScheduler.shutdown();
+      }
     });
   });
 

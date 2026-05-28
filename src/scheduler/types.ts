@@ -33,6 +33,7 @@ export interface Schedule {
   timezone: string;
   enabled: boolean;
   source: "yaml";
+  jitterMs: number;
 
   // Runtime state
   nextRun: Date | null;
