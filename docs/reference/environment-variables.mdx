@@ -135,7 +135,7 @@ model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
 
   Clients authenticate via Bearer token:
   ```bash
-  curl -X POST http://server:12233/run \
+  curl -X POST http://server:12233/api/run \
     -H "Authorization: Bearer your-secret-key" \
     -d '{"agent": "my-agent.agentuse"}'
   ```

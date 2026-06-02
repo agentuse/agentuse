@@ -16,7 +16,7 @@ agentuse serve
 2. Trigger an agent via HTTP:
 
 ```bash
-curl -X POST http://127.0.0.1:12233/run \
+curl -X POST http://127.0.0.1:12233/api/run \
   -H "Content-Type: application/json" \
   -d '{"agent": "assistant.agentuse"}'
 ```
@@ -34,7 +34,7 @@ Project ids default to directory basenames. Duplicate ids fail startup.
 Select a project in the request body:
 
 ```bash
-curl -X POST http://127.0.0.1:12233/run \
+curl -X POST http://127.0.0.1:12233/api/run \
   -H "Content-Type: application/json" \
   -d '{"project": "projA", "agent": "assistant.agentuse"}'
 ```
@@ -57,9 +57,19 @@ Each project loads its own `.env` / `.env.local` in its worker process; env vars
 
 ## API Reference
 
-### GET /
+All JSON endpoints live under the `/api/*` prefix. The root paths (`/agents`,
+`/schedules`, `/stores`, `/approvals`) serve the HTML dashboard pages instead.
 
-Returns version, default project, and served projects.
+<Note>
+`POST /run`, `POST /resume/:id`, and the `POST /approvals/:id/...` action
+endpoints are also still reachable at their original (un-prefixed) paths for
+backward compatibility. Prefer the `/api/*` paths; the legacy aliases will be
+removed in a future release.
+</Note>
+
+### GET /api
+
+Returns version, default project, and served projects. (Also served at `/`.)
 
 ```json
 {
@@ -72,9 +82,9 @@ Returns version, default project, and served projects.
 }
 ```
 
-### POST /run
+### POST /api/run
 
-Execute an agent and receive the result.
+Execute an agent and receive the result. (Legacy alias: `POST /run`.)
 
 **Request:**
 
@@ -136,12 +146,43 @@ Execute an agent and receive the result.
 | `TIMEOUT` | 504 | Execution timed out |
 | `EXECUTION_ERROR` | 500 | Runtime error |
 
+### GET /api/agents
+
+Lists the agents the daemon loaded as JSON. `path` matches what `POST /api/run`
+expects. (The browsable HTML page is at `/agents`.)
+
+```json
+{
+  "success": true,
+  "agents": [
+    { "projectId": "projA", "path": "daily.agentuse", "name": "Daily Digest", "model": "anthropic:claude-sonnet-4-6", "schedule": "0 9 * * *" }
+  ],
+  "errors": []
+}
+```
+
+### GET /api/schedules
+
+Lists scheduled agents as JSON, soonest next run first. (The browsable HTML page
+is at `/schedules`.)
+
+```json
+{
+  "success": true,
+  "schedules": [
+    { "projectId": "projA", "agentPath": "daily.agentuse", "expression": "0 9 * * *", "human": "Daily 9am", "enabled": true, "nextRun": "2026-06-03T16:00:00.000Z", "lastRun": null }
+  ]
+}
+```
+
+From the terminal, `agentuse serve agents` and `agentuse serve schedules` render these as tables. See [CLI Commands](/reference/cli-commands#serve-agents).
+
 ## Streaming Response
 
 For real-time output, request NDJSON streaming:
 
 ```bash
-curl -N -X POST http://127.0.0.1:12233/run \
+curl -N -X POST http://127.0.0.1:12233/api/run \
   -H "Content-Type: application/json" \
   -H "Accept: application/x-ndjson" \
   -d '{"agent": "analyzer.agentuse"}'
@@ -172,7 +213,7 @@ agentuse serve --host 0.0.0.0
 Include the key in requests:
 
 ```bash
-curl -X POST http://server:12233/run \
+curl -X POST http://server:12233/api/run \
   -H "Authorization: Bearer your-secret-key" \
   -H "Content-Type: application/json" \
   -d '{"agent": "assistant.agentuse"}'
@@ -232,7 +273,7 @@ Process the incoming GitHub event and take appropriate action.
 Configure a GitHub webhook to POST to your server:
 
 ```
-URL: https://your-server.com/run
+URL: https://your-server.com/api/run
 Content-Type: application/json
 Body: {"agent": "github-handler.agentuse", "prompt": "<webhook payload>"}
 ```
@@ -243,7 +284,7 @@ Slack slash commands require a response within 3 seconds and signature verificat
 
 **With n8n or Make:**
 1. Add Slack trigger node (receives slash commands)
-2. Add HTTP Request node → POST to `http://server:12233/run`
+2. Add HTTP Request node → POST to `http://server:12233/api/run`
 3. Return agent response to Slack
 
 **With Zapier:**
@@ -259,7 +300,7 @@ Direct Slack integration requires handling the 3-second timeout, form-urlencoded
 
 Use HTTP request nodes to trigger agents:
 
-1. Set URL to `http://your-server:12233/run`
+1. Set URL to `http://your-server:12233/api/run`
 2. Method: POST
 3. Headers: `Content-Type: application/json`
 4. Body:
@@ -276,7 +317,7 @@ Trigger from system cron instead of built-in scheduler:
 
 ```bash
 # /etc/cron.d/agent-tasks
-0 * * * * curl -s -X POST http://127.0.0.1:12233/run \
+0 * * * * curl -s -X POST http://127.0.0.1:12233/api/run \
   -H "Content-Type: application/json" \
   -d '{"agent": "hourly-task.agentuse"}'
 ```

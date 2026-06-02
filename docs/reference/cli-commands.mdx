@@ -323,7 +323,7 @@ agentuse serve [options]
 -p, --port <number>     Port to listen on (default: 12233)
 -H, --host <string>     Host to bind to (default: 127.0.0.1)
 -C, --directory <path>  Directory to serve agents from; project state is detected upward
---default <id>          Default project for POST /run when `project` is omitted
+--default <id>          Default project for POST /api/run when `project` is omitted
 -d, --debug             Enable debug mode
 --no-auth               Disable API key requirement for exposed hosts (dangerous)
 --no-log-file           Disable writing serve logs to a file
@@ -361,7 +361,7 @@ agentuse serve --host 0.0.0.0
 
 Clients must include the key in requests:
 ```bash
-curl -X POST http://server:12233/run \
+curl -X POST http://server:12233/api/run \
   -H "Authorization: Bearer your-secret-key" \
   -H "Content-Type: application/json" \
   -d '{"agent": "my-agent.agentuse"}'
@@ -373,9 +373,15 @@ curl -X POST http://server:12233/run \
 
 ### API Endpoints
 
-#### GET /
+All JSON endpoints are served under the `/api/*` prefix; the un-prefixed root
+paths (`/agents`, `/schedules`, `/stores`, `/approvals`) serve the HTML dashboard
+pages. `POST /run`, `POST /resume/:id`, and the `POST /approvals/:id/...` action
+endpoints remain reachable at their original paths for backward compatibility
+(prefer the `/api/*` paths; the legacy aliases will be removed later).
 
-Returns version, default project, and served projects.
+#### GET /api
+
+Returns version, default project, and served projects. (Also served at `/`.)
 
 ```json
 {
@@ -390,9 +396,9 @@ Returns version, default project, and served projects.
 
 `default` is `null` in multi-project mode without `--default`; single-project mode returns the sole project id.
 
-#### POST /run
+#### POST /api/run
 
-Execute an agent and receive the result.
+Execute an agent and receive the result. (Legacy alias: `POST /run`.)
 
 **Request Body:**
 
@@ -443,9 +449,72 @@ Execute an agent and receive the result.
 }
 ```
 
+#### GET /api/agents
+
+Lists the agents loaded by the daemon as JSON. `path` is relative to the project
+root, exactly as accepted by `POST /api/run`. Agents that fail to parse are
+reported in `errors` rather than failing the request. The browsable HTML page is
+at `/agents`.
+
+```bash
+curl "http://127.0.0.1:12233/api/agents"
+```
+
+```json
+{
+  "success": true,
+  "agents": [
+    {
+      "projectId": "projA",
+      "path": "daily.agentuse",
+      "name": "Daily Digest",
+      "description": "Posts a daily digest",
+      "model": "anthropic:claude-sonnet-4-6",
+      "schedule": "0 9 * * *"
+    }
+  ],
+  "errors": []
+}
+```
+
+`description` and `schedule` are present only when the agent declares them.
+
+#### GET /api/schedules
+
+Lists the scheduled agents currently registered with the running daemon as JSON,
+sorted by next run (soonest first, disabled last). The browsable HTML page is at
+`/schedules`.
+
+```bash
+curl "http://127.0.0.1:12233/api/schedules"
+```
+
+```json
+{
+  "success": true,
+  "schedules": [
+    {
+      "id": "3252d076-d203-4921-b1c4-013d8748406b",
+      "projectId": "projA",
+      "agentPath": "daily.agentuse",
+      "expression": "0 9 * * *",
+      "human": "Daily 9am",
+      "timezone": "America/Vancouver",
+      "enabled": true,
+      "jitterMs": 78721,
+      "nextRun": "2026-06-03T16:00:00.000Z",
+      "lastRun": null,
+      "createdAt": "2026-06-02T21:00:42.371Z"
+    }
+  ]
+}
+```
+
+`nextRun` and `lastRun` are ISO timestamps (or `null`). `lastResult` is included once a scheduled run has completed.
+
 | Error Code | HTTP Status | Description |
 |------------|-------------|-------------|
-| `NOT_FOUND` | 404 | Endpoint not found (use `POST /run` or `GET /`) |
+| `NOT_FOUND` | 404 | Endpoint not found (use `POST /api/run` or `GET /api`) |
 | `AGENT_NOT_FOUND` | 404 | Agent file doesn't exist |
 | `PROJECT_NOT_FOUND` | 404 | Unknown project id in multi-project mode |
 | `PROJECT_REQUIRED` | 400 | Multi-project request without `project` or `--default` |
@@ -461,7 +530,7 @@ Execute an agent and receive the result.
 For real-time output, request NDJSON streaming by setting the `Accept` header:
 
 ```bash
-curl -N -X POST http://127.0.0.1:12233/run \
+curl -N -X POST http://127.0.0.1:12233/api/run \
   -H "Content-Type: application/json" \
   -H "Accept: application/x-ndjson" \
   -d '{"agent": "my-agent.agentuse"}'
@@ -501,7 +570,7 @@ agentuse serve -C /path/to/project-or-subdir
 # Host multiple projects from one process
 agentuse serve -C ./projA -C ./projB
 
-# Default POST /run to projA when `project` is omitted
+# Default POST /api/run to projA when `project` is omitted
 agentuse serve -C ./projA -C ./projB --default projA
 
 # Start with debug logging
@@ -512,28 +581,28 @@ agentuse serve --debug
 
 ```bash
 # Run an agent (JSON response)
-curl -X POST http://127.0.0.1:12233/run \
+curl -X POST http://127.0.0.1:12233/api/run \
   -H "Content-Type: application/json" \
   -d '{"agent": "agents/assistant.agentuse"}'
 
 # Run with additional prompt
-curl -X POST http://127.0.0.1:12233/run \
+curl -X POST http://127.0.0.1:12233/api/run \
   -H "Content-Type: application/json" \
   -d '{"agent": "agents/writer.agentuse", "prompt": "Write about AI"}'
 
 # Override model
-curl -X POST http://127.0.0.1:12233/run \
+curl -X POST http://127.0.0.1:12233/api/run \
   -H "Content-Type: application/json" \
   -d '{"agent": "agents/helper.agentuse", "model": "openai:gpt-5-mini"}'
 
 # Streaming response
-curl -N -X POST http://127.0.0.1:12233/run \
+curl -N -X POST http://127.0.0.1:12233/api/run \
   -H "Content-Type: application/json" \
   -H "Accept: application/x-ndjson" \
   -d '{"agent": "agents/analyzer.agentuse"}'
 
 # Multi-project: pick which project runs the agent
-curl -X POST http://127.0.0.1:12233/run \
+curl -X POST http://127.0.0.1:12233/api/run \
   -H "Content-Type: application/json" \
   -d '{"project": "projA", "agent": "assistant.agentuse"}'
 
@@ -577,6 +646,39 @@ PID      PORT     PROJECTS                       AGENTS   SCHEDULES   UPTIME
 ```
 
 Use `--json` for scripting. Stale entries are automatically cleaned up.
+
+While `serve ps` shows counts across daemons, use `serve agents` and `serve schedules` to inspect what a single running daemon actually loaded.
+
+### serve agents
+
+List the agents loaded by the running daemon (queries its live `GET /api/agents` endpoint).
+
+```bash
+agentuse serve agents [pid] [--json]
+```
+
+```
+AGENT           NAME          MODEL                        SCHEDULE
+────────────────────────────────────────────────────────────────────
+adhoc.agentuse  Adhoc Helper  anthropic:claude-haiku-4-5   —
+daily.agentuse  Daily Digest  anthropic:claude-sonnet-4-6  0 9 * * *
+```
+
+Omit `pid` when only one daemon is running. Agents that failed to parse are listed after the table. Use `--json` for the raw payload. When the daemon requires an API key, set `AGENTUSE_API_KEY` so the command can authenticate.
+
+### serve schedules
+
+List the scheduled agents in the running daemon (queries its live `GET /api/schedules` endpoint), sorted by next run.
+
+```bash
+agentuse serve schedules [pid] [--json]
+```
+
+```
+NEXT RUN       AGENT           SCHEDULE   LAST RUN
+──────────────────────────────────────────────────
+Jun 03, 09:00  daily.agentuse  Daily 9am  never
+```
 
 ---
 

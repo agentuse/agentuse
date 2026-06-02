@@ -194,24 +194,26 @@ channels:
 
 The Approval API is experimental and mirrors the web approval page contract. Use it to build custom approval UIs or integrations.
 
+All endpoints live under the `/api/*` prefix. The action endpoints
+(`/api/approvals/:id/status`, `/decision`, `/continue`) are also reachable at
+their original un-prefixed paths for backward compatibility, but prefer `/api/*`.
+
 List approvals as JSON:
 
 ```bash
-curl "http://127.0.0.1:12233/approvals?format=json"
+curl "http://127.0.0.1:12233/api/approvals"
 ```
-
-You can also send `Accept: application/json`.
 
 Check one approval:
 
 ```bash
-curl "http://127.0.0.1:12233/approvals/session_abc123/status?token=$resumeToken"
+curl "http://127.0.0.1:12233/api/approvals/session_abc123/status?token=$resumeToken"
 ```
 
 Submit a decision:
 
 ```bash
-curl -X POST "http://127.0.0.1:12233/approvals/session_abc123/decision" \
+curl -X POST "http://127.0.0.1:12233/api/approvals/session_abc123/decision" \
   -H "Content-Type: application/json" \
   -d '{
     "status": "approve",
@@ -233,7 +235,7 @@ The decision endpoint returns immediately while the suspended session resumes in
 Continue a completed or errored session from an approval page token:
 
 ```bash
-curl -X POST "http://127.0.0.1:12233/approvals/session_abc123/continue" \
+curl -X POST "http://127.0.0.1:12233/api/approvals/session_abc123/continue" \
   -H "Content-Type: application/json" \
   -d '{
     "prompt": "Please revise the CTA and run the smoke test again",

@@ -33,7 +33,7 @@ docker run -d --name agentuse \
 Test it:
 
 ```bash
-curl http://localhost:12233/run \
+curl http://localhost:12233/api/run \
   -H "Content-Type: application/json" \
   -d '{"agent": "/agents/hello.agentuse"}'
 ```
@@ -125,7 +125,7 @@ services:
       - ./agents:/agents
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:12233/run"]
+      test: ["CMD", "curl", "-f", "http://localhost:12233/api"]
       interval: 30s
       timeout: 10s
       retries: 3

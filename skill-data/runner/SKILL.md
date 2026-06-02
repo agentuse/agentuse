@@ -31,6 +31,8 @@ agentuse sessions --json
 agentuse serve
 agentuse serve -p 8080
 agentuse serve ps
+agentuse serve agents
+agentuse serve schedules
 ```
 
 ## Operating Guidance
@@ -44,6 +46,9 @@ agentuse serve ps
 - Use `agentuse sessions` to inspect prior runs and debug failures.
 - Use `agentuse serve` for webhooks, approval review pages, Slack channels,
   and scheduled agents.
+- Use `agentuse serve agents` and `agentuse serve schedules` to see what a
+  running daemon actually loaded (live data, not just the `serve ps` counts).
+  Both also serve `/agents` and `/schedules` pages in the serve web UI.
 - Use `agentuse skills installed` only when inspecting project or user-installed
   skills.
 
