@@ -35,7 +35,7 @@ export function findProjectRoot(startPath: string): string {
   const fallbackDir = currentDir;
   currentDir = resolve(currentDir);
   const root = dirname(currentDir) === currentDir ? currentDir : '/';
-  const home = resolve(homedir());
+  const home = resolve(process.env.HOME || homedir());
 
   logger.debug(`Searching for project root starting from: ${currentDir}`);
 

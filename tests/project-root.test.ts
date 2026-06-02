@@ -1,27 +1,39 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises';
 import { join } from 'path';
-import { homedir, tmpdir } from 'os';
+import { tmpdir } from 'os';
 import { findProjectRoot, resolveLocalAgentPath, resolveProjectContext } from '../src/utils/project';
 
 describe('findProjectRoot $HOME guard', () => {
+  let fakeHome: string;
   let homeTempDir: string;
+  let originalHome: string | undefined;
 
   beforeEach(async () => {
-    homeTempDir = await mkdtemp(join(homedir(), '.agentuse-project-test-'));
+    originalHome = process.env.HOME;
+    fakeHome = await mkdtemp(join(tmpdir(), 'agentuse-home-'));
+    process.env.HOME = fakeHome;
+    homeTempDir = join(fakeHome, 'workspace');
+    await mkdir(homeTempDir, { recursive: true });
   });
 
   afterEach(async () => {
-    await rm(homeTempDir, { recursive: true, force: true });
+    if (originalHome !== undefined) {
+      process.env.HOME = originalHome;
+    } else {
+      delete process.env.HOME;
+    }
+    await rm(fakeHome, { recursive: true, force: true });
   });
 
   it('stops walking at $HOME even when a marker exists there', async () => {
+    await writeFile(join(fakeHome, 'package.json'), '{}');
     const nested = join(homeTempDir, 'a', 'b', 'c');
     await mkdir(nested, { recursive: true });
 
     const result = findProjectRoot(nested);
 
-    expect(result).not.toBe(homedir());
+    expect(result).not.toBe(fakeHome);
     expect(result.startsWith(homeTempDir)).toBe(true);
   });
 
