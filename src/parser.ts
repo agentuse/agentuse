@@ -180,7 +180,8 @@ const AgentSchema = z.object({
     return {
       ...data,
       mcpServers: data.mcp_servers,
-      mcp_servers: undefined  // Remove deprecated field
+      mcp_servers: undefined,  // Remove deprecated field
+      skills: data.skills ?? defaultSkillsConfig(),
     };
   }
 

@@ -91,6 +91,7 @@ Test agent`;
       expect(agent.config.mcpServers).toBeDefined();
       expect(agent.config.mcpServers?.filesystem.command).toBe('npx');
       expect(agent.config.mcpServers?.filesystem.requiredEnvVars).toEqual(['TEST_VAR']);
+      expect(agent.config.skills).toEqual({ auto: true, trusted: false, explicit: {} });
     });
 
     it('works with HTTP MCP server configuration', () => {
