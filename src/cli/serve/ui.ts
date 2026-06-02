@@ -1,9 +1,15 @@
-import type { IncomingMessage } from "http";
-
-export function wantsJson(requestUrl: URL, req: IncomingMessage): boolean {
-  if (requestUrl.searchParams.get('format') === 'json') return true;
-  const accept = req.headers.accept;
-  return typeof accept === 'string' && accept.split(',').some(value => value.trim().startsWith('application/json'));
+/**
+ * Split an incoming request pathname into the `/api/*` data surface vs the
+ * root-level HTML/page surface. `/api/agents` -> { isApi: true, routePath: '/agents' };
+ * `/api` and `/api/` collapse to routePath '/'. Non-prefixed paths pass through
+ * unchanged. Uses a slash-aware prefix test so `/apiary` is NOT treated as API.
+ */
+export function normalizeApiPath(pathname: string): { isApi: boolean; routePath: string } {
+  if (pathname === '/api' || pathname.startsWith('/api/')) {
+    const rest = pathname.slice('/api'.length);
+    return { isApi: true, routePath: rest === '' ? '/' : rest };
+  }
+  return { isApi: false, routePath: pathname };
 }
 
 export function escapeHtml(value: unknown): string {
@@ -370,13 +376,23 @@ export function approvalsThemeToggleScript(): string {
   `;
 }
 
-export function approvalsTopbarMarkup(opts: { right?: string; isCurrentPage?: boolean; currentPage?: 'approvals' | 'stores' }): string {
+export type TopbarPage = 'agents' | 'schedules' | 'stores' | 'approvals';
+
+export function approvalsTopbarMarkup(opts: { right?: string; isCurrentPage?: boolean; currentPage?: TopbarPage }): string {
   const currentPage = opts.currentPage ?? (opts.isCurrentPage ? 'approvals' : undefined);
-  const approvalsMarkup = `<a class="nav-item${currentPage === 'approvals' ? ' active' : ''}" href="/approvals"${currentPage === 'approvals' ? ' aria-current="page"' : ''}>approvals</a>`;
-  const storesMarkup = `<a class="nav-item${currentPage === 'stores' ? ' active' : ''}" href="/stores"${currentPage === 'stores' ? ' aria-current="page"' : ''}>stores</a>`;
+  const navItem = (page: TopbarPage, label: string): string => {
+    const active = currentPage === page;
+    return `<a class="nav-item${active ? ' active' : ''}" href="/${page}"${active ? ' aria-current="page"' : ''}>${label}</a>`;
+  };
+  const nav = [
+    navItem('agents', 'agents'),
+    navItem('schedules', 'schedules'),
+    navItem('stores', 'stores'),
+    navItem('approvals', 'approvals'),
+  ].join('');
   return `<div class="topbar">
     <span class="brand"><span class="brand-name">agentuse</span></span>
-    <span class="nav-wrap"><span class="nav" role="navigation" aria-label="AgentUse serve">${approvalsMarkup}${storesMarkup}</span></span>
+    <span class="nav-wrap"><span class="nav" role="navigation" aria-label="AgentUse serve">${nav}</span></span>
     <span class="right">${opts.right ?? ''}</span>
   </div>`;
 }

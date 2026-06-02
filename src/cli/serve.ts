@@ -15,7 +15,7 @@ import { findProjectRoot, resolveProjectContext } from "../utils/project";
 import { logger, LogLevel, executionLog, approvalLog } from "../utils/logger";
 import { printLogo } from "../utils/branding";
 import { initStorage } from "../storage/index.js";
-import { Scheduler, type Schedule } from "../scheduler";
+import { Scheduler, type Schedule, type SerializedSchedule } from "../scheduler";
 import { FileWatcher } from "../watcher";
 import { telemetry, parseModel } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
@@ -38,7 +38,7 @@ import {
   renderInlineMarkdown,
   renderLogContentValue,
   valueAsRecord,
-  wantsJson
+  normalizeApiPath
 } from "./serve/ui";
 import {
   findStoreItem,
@@ -902,6 +902,418 @@ function compareStoreBrowserSummaries(a: StoreBrowserSummary, b: StoreBrowserSum
   return (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
     || a.name.localeCompare(b.name)
     || a.projectId.localeCompare(b.projectId);
+}
+
+interface AgentSummary {
+  projectId: string;
+  /** Path relative to the project root, as accepted by POST /run. */
+  path: string;
+  name: string;
+  description?: string;
+  model: string;
+  /** Raw schedule expression when the agent declares one. */
+  schedule?: string;
+}
+
+interface CollectAgentsResult {
+  agents: AgentSummary[];
+  errors: Array<{ projectId: string; path: string; message: string }>;
+}
+
+/**
+ * Parse every loaded agent file and summarize it for the /agents endpoint.
+ * Parse errors are collected per-agent rather than failing the whole request.
+ */
+async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> {
+  const agents: AgentSummary[] = [];
+  const errors: CollectAgentsResult['errors'] = [];
+  for (const project of projects) {
+    for (const agentFile of project.agentFiles) {
+      try {
+        const parsed = await parseAgent(resolveScopedAgentPath(project, agentFile));
+        agents.push({
+          projectId: project.id,
+          path: toProjectRelativeAgentPath(project, agentFile),
+          name: parsed.name,
+          ...(parsed.config.description && { description: parsed.config.description }),
+          model: parsed.config.model,
+          ...(parsed.config.schedule && { schedule: parsed.config.schedule }),
+        });
+      } catch (err) {
+        errors.push({ projectId: project.id, path: agentFile, message: (err as Error).message });
+      }
+    }
+  }
+  agents.sort((a, b) => a.projectId.localeCompare(b.projectId) || a.path.localeCompare(b.path));
+  return { agents, errors };
+}
+
+/** Extra styles for the grouped agents view and the schedule timetable. */
+function renderAgentsSchedulesStyles(): string {
+  return `
+    .group { margin-bottom: 26px; }
+    .group-title, .day-title {
+      display: flex; align-items: baseline; gap: 10px;
+      margin: 26px 0 12px;
+      font-family: var(--sans);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--fg);
+    }
+    .group-title::before, .day-title::before { content: "⋮"; color: var(--cyan); transform: translateY(1px); }
+    .group-title .path { color: var(--muted-2); font-size: 12px; font-family: var(--mono); }
+    .group-title .count, .day-title .count { color: var(--muted-2); font-size: 12px; font-family: var(--mono); }
+    .group-title .rule, .day-title .rule { flex: 1; height: 1px; background: var(--line); }
+    .day { margin-bottom: 22px; }
+    .timetable {
+      display: flex; flex-direction: column; gap: 1px;
+      background: var(--line);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .slot {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      background: var(--bg);
+      padding: 12px 16px;
+      transition: background 120ms ease;
+    }
+    .slot:hover { background: var(--panel-hover); }
+    .slot.disabled .slot-time { color: var(--muted-2); }
+    .slot-time {
+      font-family: var(--mono);
+      font-size: 17px;
+      color: var(--cyan);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .slot-main { min-width: 0; }
+    .slot-agent { color: var(--fg); font-family: var(--sans); overflow-wrap: anywhere; }
+    .slot-agent code { color: var(--fg); font-family: var(--mono); font-size: 13px; }
+    .slot-proj { color: var(--cyan); font-size: 11px; letter-spacing: 0.04em; }
+    .slot-cadence { color: var(--muted-3); font-size: 12px; margin-top: 3px; }
+    .slot-cadence code { color: var(--muted-2); font-size: 11.5px; }
+    .slot-side { text-align: right; color: var(--muted-2); font-size: 11.5px; white-space: nowrap; }
+    .slot-side .ok { color: var(--green); }
+    .slot-side .failed { color: var(--red); }
+    @media (max-width: 640px) {
+      .slot { grid-template-columns: 64px minmax(0, 1fr); }
+      .slot-side { grid-column: 2; text-align: left; margin-top: 2px; }
+    }
+    /* One shared grid for the whole tree so the header and every row align to
+       the same column tracks (subgrid), regardless of nesting depth or chip
+       width. The two trailing columns size to the widest content across all
+       rows, not per-row. */
+    .tree {
+      display: grid;
+      grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr) auto auto;
+      column-gap: 14px;
+    }
+    .tree-head, .tree-row {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: subgrid;
+    }
+    .tree-head {
+      align-items: center;
+      color: var(--muted-2);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+    .tree-head > span { padding: 8px 0; }
+    .tree-row { align-items: stretch; min-height: 38px; border-bottom: 1px solid var(--line); transition: background 120ms ease; }
+    .tree-row:last-child { border-bottom: 0; }
+    .tree-row:hover { background: var(--panel-hover); }
+    .tree-row > span { display: flex; align-items: center; min-width: 0; }
+    .tree-row.dir { background: var(--panel); }
+    .tree-row.dir:hover { background: var(--panel-hover); }
+    .tree-row.dir .tree-path { grid-column: 1 / -1; }
+    /* Edge insets live on the first/last cells, not the row, so they don't
+       shift the subgrid tracks out of alignment. */
+    .tree-head > span:first-child, .tree-path { padding-left: 14px; }
+    .tree-head > span:last-child, .tree-row > span:last-child { padding-right: 14px; }
+    .tree-path { font-family: var(--mono); font-size: 13px; color: var(--fg); }
+    .tree-label { padding: 7px 0 7px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tree-row.dir .tree-label { color: var(--cyan); }
+    /* CSS-drawn tree guides: fixed-width, full-row-height segments so the
+       vertical connectors stay continuous and aligned across padded rows. */
+    .guide { position: relative; flex: 0 0 22px; align-self: stretch; }
+    .guide.v::before, .guide.elbow::before {
+      content: ""; position: absolute; left: 11px; top: 0; bottom: 0; width: 1px; background: var(--muted-2);
+    }
+    .guide.elbow.last::before { bottom: auto; height: 50%; }
+    .guide.elbow::after {
+      content: ""; position: absolute; left: 11px; top: 50%; width: 11px; height: 1px; background: var(--muted-2);
+    }
+    .tree-row .tree-name { flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; font-family: var(--sans); color: var(--muted-3); font-size: 13px; overflow-wrap: anywhere; padding: 7px 0; }
+    .tree-desc { color: var(--muted-2); font-size: 11.5px; margin-top: 2px; }
+    .tree-row .chip { white-space: nowrap; }
+    @media (max-width: 700px) {
+      .tree-head { display: none; }
+      .group .panel { overflow-x: auto; }
+      .tree { min-width: 600px; }
+    }
+    /* Parse-error badge + popover (collapses the old full-width error banner).
+       A <details> disclosure anchors the panel directly under the badge. */
+    .issues { position: relative; display: inline-block; margin-top: 12px; }
+    .issues-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 11px;
+      border: 1px solid var(--amber-border);
+      background: var(--amber-soft);
+      color: var(--amber);
+      border-radius: 999px;
+      font-family: var(--mono);
+      font-size: 12px;
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+    .issues-badge::-webkit-details-marker { display: none; }
+    .issues-badge::marker { content: ""; }
+    .issues-badge:hover, .issues[open] .issues-badge { border-color: var(--amber); }
+    .issues-popover {
+      position: absolute; top: calc(100% + 6px); left: 0; z-index: 50;
+      width: min(620px, calc(100vw - 32px));
+      border: 1px solid var(--amber-border);
+      background: var(--bg);
+      color: var(--fg);
+      border-radius: 12px;
+      padding: 16px 18px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.32);
+    }
+    .issues-popover h3 { margin: 0 0 10px; font-family: var(--sans); font-size: 13px; font-weight: 500; color: var(--amber); }
+    .issues-popover ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+    .issues-popover li { font-size: 12.5px; }
+    .issues-popover code { color: var(--fg); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+    .issues-popover .msg { display: block; margin-top: 3px; color: var(--muted-3); }
+  `;
+}
+
+interface AgentTreeNode {
+  name: string;
+  children: Map<string, AgentTreeNode>;
+  agent?: AgentSummary;
+}
+
+/** Build a directory tree from agent paths within a single project. */
+function buildAgentTree(agents: AgentSummary[]): AgentTreeNode {
+  const root: AgentTreeNode = { name: '', children: new Map() };
+  for (const agent of agents) {
+    const parts = agent.path.split('/');
+    let node = root;
+    parts.forEach((part, i) => {
+      let child = node.children.get(part);
+      if (!child) {
+        child = { name: part, children: new Map() };
+        node.children.set(part, child);
+      }
+      if (i === parts.length - 1) child.agent = agent;
+      node = child;
+    });
+  }
+  return root;
+}
+
+/** Render an agent file tree as grid rows with CSS-drawn tree guides. */
+function renderAgentTree(agents: AgentSummary[]): string {
+  const root = buildAgentTree(agents);
+  const rows: string[] = [];
+
+  const sortChildren = (node: AgentTreeNode): AgentTreeNode[] =>
+    [...node.children.values()].sort((a, b) => {
+      const aDir = a.agent === undefined;
+      const bDir = b.agent === undefined;
+      if (aDir !== bDir) return aDir ? -1 : 1; // directories before files
+      return a.name.localeCompare(b.name);
+    });
+
+  // `guides` tracks, per ancestor level, whether that level still has a
+  // continuing sibling (and therefore a vertical line through this row).
+  const guideHtml = (guides: boolean[], last: boolean): string =>
+    guides.map((continues) => `<span class="guide${continues ? ' v' : ''}"></span>`).join('') +
+    `<span class="guide elbow${last ? ' last' : ''}"></span>`;
+
+  const walk = (node: AgentTreeNode, guides: boolean[]) => {
+    const children = sortChildren(node);
+    children.forEach((child, idx) => {
+      const last = idx === children.length - 1;
+      const prefix = guideHtml(guides, last);
+      if (child.agent) {
+        const a = child.agent;
+        const scheduleCell = a.schedule
+          ? `<span class="chip status">${escapeHtml(a.schedule)}</span>`
+          : '<span class="muted">—</span>';
+        rows.push(`<div class="tree-row">
+          <span class="tree-path">${prefix}<span class="tree-label">${escapeHtml(child.name)}</span></span>
+          <span class="tree-name">${escapeHtml(a.name)}${a.description ? `<div class="tree-desc">${escapeHtml(a.description)}</div>` : ''}</span>
+          <span><span class="chip">${escapeHtml(a.model)}</span></span>
+          <span>${scheduleCell}</span>
+        </div>`);
+      } else {
+        rows.push(`<div class="tree-row dir">
+          <span class="tree-path">${prefix}<span class="tree-label">${escapeHtml(child.name)}/</span></span>
+        </div>`);
+        walk(child, [...guides, !last]);
+      }
+    });
+  };
+
+  walk(root, []);
+  return rows.join('');
+}
+
+function renderAgentsPage(options: {
+  agents: AgentSummary[];
+  errors: Array<{ projectId: string; path: string; message: string }>;
+  multiProject: boolean;
+}): string {
+  // Preserve the input order (sorted by project, then path) when grouping.
+  const byProject = new Map<string, AgentSummary[]>();
+  for (const agent of options.agents) {
+    const list = byProject.get(agent.projectId);
+    if (list) list.push(agent);
+    else byProject.set(agent.projectId, [agent]);
+  }
+
+  const groups = [...byProject.entries()].map(([projectId, agents]) => `
+    <section class="group">
+      <h2 class="group-title"><span>${escapeHtml(projectId)}</span><span class="count">${agents.length} agent${agents.length === 1 ? '' : 's'}</span><span class="rule"></span></h2>
+      <div class="panel">
+        <div class="tree">
+          <div class="tree-head"><span>Tree</span><span>Name</span><span>Model</span><span>Schedule</span></div>
+          ${renderAgentTree(agents)}
+        </div>
+      </div>
+    </section>`).join('');
+
+  // Parse failures collapse into a small badge that opens a popover, rather
+  // than a full-width banner pushing the agent list down.
+  const issues = options.errors.length > 0
+    ? `<details class="issues">
+        <summary class="issues-badge">⚠ ${options.errors.length} failed to parse</summary>
+        <div class="issues-popover">
+          <h3>${options.errors.length} agent${options.errors.length === 1 ? '' : 's'} failed to parse</h3>
+          <ul>${options.errors.map((err) => `<li><code>${escapeHtml(err.projectId)}/${escapeHtml(err.path)}</code><span class="msg">${escapeHtml(err.message.split('\n')[0])}</span></li>`).join('')}</ul>
+        </div>
+      </details>`
+    : '';
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentUse Agents</title>
+  <meta http-equiv="refresh" content="30">
+  <script>${approvalThemeBootScript()}</script>
+  <style>${approvalListThemeStyles()}${renderStoreStyles()}${renderAgentsSchedulesStyles()}</style>
+</head>
+<body>
+  ${approvalsTopbarMarkup({ currentPage: 'agents', right: approvalsThemeToggleHtml() })}
+  <main>
+    <header>
+      <div class="eyebrow">loaded agents</div>
+      <h1>Agents</h1>
+      <p class="lede">${options.agents.length} agent${options.agents.length === 1 ? '' : 's'} across ${byProject.size} project${byProject.size === 1 ? '' : 's'} in this serve daemon.</p>
+      ${issues}
+    </header>
+    ${groups || '<div class="panel"><div class="empty">No agents loaded by this serve daemon.</div></div>'}
+  </main>
+  <script>${approvalsThemeToggleScript()}</script>
+</body>
+</html>`;
+}
+
+function renderSchedulesPage(options: {
+  schedules: SerializedSchedule[];
+  multiProject: boolean;
+}): string {
+  // Group the (already next-run-sorted) schedules into day buckets, with
+  // disabled schedules (no next run) collected at the end.
+  const dayLabel = (ms: number) => new Date(ms).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: '2-digit' });
+  const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+  const days = new Map<string, SerializedSchedule[]>();
+  const disabled: SerializedSchedule[] = [];
+  for (const schedule of options.schedules) {
+    if (!schedule.nextRun) {
+      disabled.push(schedule);
+      continue;
+    }
+    const label = dayLabel(Date.parse(schedule.nextRun));
+    const list = days.get(label);
+    if (list) list.push(schedule);
+    else days.set(label, [schedule]);
+  }
+
+  const renderSlot = (schedule: SerializedSchedule): string => {
+    const ms = schedule.nextRun ? Date.parse(schedule.nextRun) : NaN;
+    const time = Number.isFinite(ms) ? escapeHtml(timeLabel(ms)) : '—';
+    const proj = options.multiProject ? `<div class="slot-proj">${escapeHtml(schedule.projectId)}</div>` : '';
+    // Exact cron + stagger live in a tooltip, not the row: the human cadence
+    // already conveys the schedule, and stagger is operational trivia.
+    const staggerNote = schedule.jitterMs > 0 ? ` · stagger +${Math.round(schedule.jitterMs / 1000)}s` : '';
+    const cadenceTitle = escapeHtml(`${schedule.expression}${staggerNote}`);
+    // Only surface last-run once it has actually run (the in-memory state
+    // resets on daemon restart, so "never run" would otherwise dominate).
+    const lastRun = schedule.lastRun
+      ? schedule.lastResult
+        ? `<span class="${schedule.lastResult.success ? 'ok' : 'failed'}">ran ${schedule.lastResult.success ? 'ok' : 'failed'}</span> ${escapeHtml(formatApprovalTime(Date.parse(schedule.lastRun)))}`
+        : `ran ${escapeHtml(formatApprovalTime(Date.parse(schedule.lastRun)))}`
+      : '';
+    return `<div class="slot${schedule.nextRun ? '' : ' disabled'}">
+      <div class="slot-time">${time}</div>
+      <div class="slot-main">
+        ${proj}
+        <div class="slot-agent"><code>${escapeHtml(schedule.agentPath)}</code></div>
+        <div class="slot-cadence" title="${cadenceTitle}">${escapeHtml(schedule.human)}</div>
+      </div>
+      <div class="slot-side">${lastRun}</div>
+    </div>`;
+  };
+
+  const renderDay = (label: string, schedules: SerializedSchedule[]): string => `
+    <section class="day">
+      <h2 class="day-title"><span>${escapeHtml(label)}</span><span class="count">${schedules.length}</span><span class="rule"></span></h2>
+      <div class="timetable">${schedules.map(renderSlot).join('')}</div>
+    </section>`;
+
+  const dayMarkup = [...days.entries()].map(([label, schedules]) => renderDay(label, schedules)).join('');
+  const disabledMarkup = disabled.length > 0 ? renderDay('Disabled', disabled) : '';
+  const body = dayMarkup || disabledMarkup
+    ? `${dayMarkup}${disabledMarkup}`
+    : '<div class="panel"><div class="empty">No scheduled agents. Add a <code>schedule:</code> field to an agent file.</div></div>';
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentUse Schedules</title>
+  <meta http-equiv="refresh" content="30">
+  <script>${approvalThemeBootScript()}</script>
+  <style>${approvalListThemeStyles()}${renderStoreStyles()}${renderAgentsSchedulesStyles()}</style>
+</head>
+<body>
+  ${approvalsTopbarMarkup({ currentPage: 'schedules', right: approvalsThemeToggleHtml() })}
+  <main>
+    <header>
+      <div class="eyebrow">scheduled agents</div>
+      <h1>Schedules</h1>
+      <p class="lede">${options.schedules.length} scheduled agent${options.schedules.length === 1 ? '' : 's'}, upcoming runs first.</p>
+    </header>
+    ${body}
+  </main>
+  <script>${approvalsThemeToggleScript()}</script>
+</body>
+</html>`;
 }
 
 function renderStoresIndexPage(options: {
@@ -2683,6 +3095,11 @@ function renderApprovalPage(options: {
     async function refreshStatus() {
       let nextDelay = 1500;
       try {
+        // LEGACY ROUTES: this page fetches its sibling action endpoints by relative
+        // path (/approvals/:id/{status,decision,continue}). Canonical paths are
+        // /api/approvals/:id/*. Kept relative for back-compat (relative path also
+        // preserves nothing but the ?token query we re-add); migrate when legacy
+        // routes are removed.
         const url = new URL(location.pathname + '/status', location.origin);
         url.searchParams.set('token', token);
         if (project) url.searchParams.set('project', project);
@@ -3933,7 +4350,11 @@ export function createServeCommand(): Command {
 
       const server = createServer(async (req, res) => {
         const requestUrl = new URL(req.url || '/', serverUrl);
-        const isApprovalRoute = requestUrl.pathname.startsWith('/approvals/');
+        // Canonical data/action endpoints live under `/api/*`; HTML pages live at
+        // root. `routePath` is the path with any `/api` prefix stripped so a single
+        // set of matchers serves both surfaces, and `isApi` decides JSON vs HTML.
+        const { isApi, routePath } = normalizeApiPath(requestUrl.pathname);
+        const isApprovalRoute = routePath.startsWith('/approvals/');
 
         // CORS headers
         res.setHeader("Access-Control-Allow-Origin", "*");
@@ -3952,8 +4373,8 @@ export function createServeCommand(): Command {
           return;
         }
 
-        // GET / returns server info
-        if (req.method === "GET" && (req.url === "/" || req.url === "")) {
+        // GET / (and GET /api) return server info
+        if (req.method === "GET" && routePath === "/") {
           const info = {
             version: packageVersion,
             default: effectiveDefault ?? (multiProject ? null : projects[0].id),
@@ -3970,7 +4391,27 @@ export function createServeCommand(): Command {
           return;
         }
 
-        if (req.method === "GET" && requestUrl.pathname === '/stores') {
+        if (req.method === "GET" && routePath === '/agents') {
+          const { agents, errors } = await collectAgents(projects);
+          if (isApi) {
+            sendJSON(res, 200, { success: true, agents, errors });
+            return;
+          }
+          sendHTML(res, 200, renderAgentsPage({ agents, errors, multiProject }));
+          return;
+        }
+
+        if (req.method === "GET" && routePath === '/schedules') {
+          const schedules = scheduler.listSerialized();
+          if (isApi) {
+            sendJSON(res, 200, { success: true, schedules });
+            return;
+          }
+          sendHTML(res, 200, renderSchedulesPage({ schedules, multiProject }));
+          return;
+        }
+
+        if (req.method === "GET" && routePath === '/stores') {
           const requestedProject = requestUrl.searchParams.get('project') ?? undefined;
           const selectedProjects = requestedProject
             ? projects.filter((project) => project.id === requestedProject)
@@ -3989,7 +4430,7 @@ export function createServeCommand(): Command {
           }
           stores.sort(compareStoreBrowserSummaries);
 
-          if (wantsJson(requestUrl, req)) {
+          if (isApi) {
             sendJSON(res, 200, { success: true, stores, errors });
             return;
           }
@@ -3998,7 +4439,7 @@ export function createServeCommand(): Command {
           return;
         }
 
-        const storePageMatch = req.method === "GET" ? requestUrl.pathname.match(/^\/stores\/([^/?#]+)$/) : null;
+        const storePageMatch = req.method === "GET" ? routePath.match(/^\/stores\/([^/?#]+)$/) : null;
         if (storePageMatch) {
           const storeName = decodeURIComponent(storePageMatch[1]);
           if (!isSafeStoreName(storeName)) {
@@ -4034,7 +4475,7 @@ export function createServeCommand(): Command {
             return;
           }
 
-          if (wantsJson(requestUrl, req)) {
+          if (isApi) {
             sendJSON(res, 200, { success: true, store: storeName, rows, errors });
             return;
           }
@@ -4050,7 +4491,7 @@ export function createServeCommand(): Command {
           return;
         }
 
-        const storeItemPageMatch = req.method === "GET" ? requestUrl.pathname.match(/^\/stores\/([^/?#]+)\/([^/?#]+)$/) : null;
+        const storeItemPageMatch = req.method === "GET" ? routePath.match(/^\/stores\/([^/?#]+)\/([^/?#]+)$/) : null;
         if (storeItemPageMatch) {
           const storeName = decodeURIComponent(storeItemPageMatch[1]);
           const itemId = decodeURIComponent(storeItemPageMatch[2]);
@@ -4094,7 +4535,7 @@ export function createServeCommand(): Command {
             return;
           }
 
-          if (wantsJson(requestUrl, req)) {
+          if (isApi) {
             sendJSON(res, 200, { success: true, store: storeName, project: found.projectId, item: found.item });
             return;
           }
@@ -4107,7 +4548,7 @@ export function createServeCommand(): Command {
           return;
         }
 
-        if (req.method === "GET" && requestUrl.pathname === '/approvals') {
+        if (req.method === "GET" && routePath === '/approvals') {
           type ProjectRow = { projectId: string; multiProject: boolean; approval: ApprovalSummary };
           const rows: ProjectRow[] = [];
           const errors: Array<{ projectId: string; message: string }> = [];
@@ -4150,7 +4591,7 @@ export function createServeCommand(): Command {
               .sort((a, b) => (b.approval.decisionAt ?? b.approval.expiresAt ?? 0) - (a.approval.decisionAt ?? a.approval.expiresAt ?? 0))
           };
 
-          if (wantsJson(requestUrl, req)) {
+          if (isApi) {
             const serializeRow = (row: ProjectRow) => ({
               project: row.projectId,
               ...row.approval
@@ -4176,7 +4617,9 @@ export function createServeCommand(): Command {
           return;
         }
 
-        const approvalPageMatch = req.method === "GET" ? requestUrl.pathname.match(/^\/approvals\/([^/?#]+)$/) : null;
+        // The single-approval view is an HTML page (embedded in Slack); it has no
+        // JSON twin, so it only matches at root, never under `/api/*`.
+        const approvalPageMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/approvals\/([^/?#]+)$/) : null;
         if (approvalPageMatch) {
           const sessionId = decodeURIComponent(approvalPageMatch[1]);
           const token = requestUrl.searchParams.get('token') ?? undefined;
@@ -4208,7 +4651,7 @@ export function createServeCommand(): Command {
           return;
         }
 
-        const approvalRequestedMatch = req.method === "POST" ? requestUrl.pathname.match(/^\/approvals\/([^/?#]+)\/requested$/) : null;
+        const approvalRequestedMatch = req.method === "POST" ? routePath.match(/^\/approvals\/([^/?#]+)\/requested$/) : null;
         if (approvalRequestedMatch) {
           try {
             const sessionId = decodeURIComponent(approvalRequestedMatch[1]);
@@ -4253,7 +4696,7 @@ export function createServeCommand(): Command {
           return;
         }
 
-        const approvalStatusMatch = req.method === "GET" ? requestUrl.pathname.match(/^\/approvals\/([^/?#]+)\/status$/) : null;
+        const approvalStatusMatch = req.method === "GET" ? routePath.match(/^\/approvals\/([^/?#]+)\/status$/) : null;
         if (approvalStatusMatch) {
           const sessionId = decodeURIComponent(approvalStatusMatch[1]);
           const token = requestUrl.searchParams.get('token') ?? undefined;
@@ -4294,7 +4737,7 @@ export function createServeCommand(): Command {
           return;
         }
 
-        const approvalDecisionMatch = req.method === "POST" ? requestUrl.pathname.match(/^\/approvals\/([^/?#]+)\/decision$/) : null;
+        const approvalDecisionMatch = req.method === "POST" ? routePath.match(/^\/approvals\/([^/?#]+)\/decision$/) : null;
         if (approvalDecisionMatch) {
           try {
             const sessionId = decodeURIComponent(approvalDecisionMatch[1]);
@@ -4451,7 +4894,7 @@ export function createServeCommand(): Command {
           return;
         }
 
-        const approvalContinueMatch = req.method === "POST" ? requestUrl.pathname.match(/^\/approvals\/([^/?#]+)\/continue$/) : null;
+        const approvalContinueMatch = req.method === "POST" ? routePath.match(/^\/approvals\/([^/?#]+)\/continue$/) : null;
         if (approvalContinueMatch) {
           try {
             const sessionId = decodeURIComponent(approvalContinueMatch[1]);
@@ -4547,7 +4990,7 @@ export function createServeCommand(): Command {
           return;
         }
 
-        const resumeMatch = req.method === "POST" ? req.url?.match(/^\/resume\/([^/?#]+)/) : null;
+        const resumeMatch = req.method === "POST" ? routePath.match(/^\/resume\/([^/?#]+)/) : null;
         if (resumeMatch) {
           try {
             const body = await parseJSONBody(req);
@@ -4590,8 +5033,8 @@ export function createServeCommand(): Command {
           return;
         }
 
-        if (req.method !== "POST" || req.url !== "/run") {
-          sendError(res, 404, "NOT_FOUND", "Endpoint not found. Use POST /run or GET /");
+        if (req.method !== "POST" || routePath !== "/run") {
+          sendError(res, 404, "NOT_FOUND", "Endpoint not found. Use POST /api/run or GET /api");
           return;
         }
 
@@ -4965,6 +5408,8 @@ export function createServeCommand(): Command {
   // Add ps and logs subcommands
   serveCmd.addCommand(createPsSubcommand());
   serveCmd.addCommand(createLogsSubcommand());
+  serveCmd.addCommand(createAgentsSubcommand());
+  serveCmd.addCommand(createSchedulesSubcommand());
 
   return serveCmd;
 }
@@ -5135,9 +5580,138 @@ function createLogsSubcommand(): Command {
     });
 }
 
+/**
+ * Fetch a JSON payload from a running serve daemon's read endpoint.
+ * Reuses AGENTUSE_API_KEY from the environment when the daemon requires auth.
+ */
+async function fetchDaemonJson(server: ServerEntry, path: string): Promise<unknown> {
+  const host = server.host === "0.0.0.0" || server.host === "::" ? "127.0.0.1" : server.host;
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const apiKey = process.env.AGENTUSE_API_KEY;
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
+  const res = await fetch(`http://${host}:${server.port}${path}`, { headers });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      detail = body?.error?.message ?? "";
+    } catch {
+      // Non-JSON error body; fall back to status only.
+    }
+    const authHint = res.status === 401 ? " (set AGENTUSE_API_KEY to match the daemon)" : "";
+    throw new Error(`Request to ${path} failed: ${res.status}${detail ? ` ${detail}` : ""}${authHint}`);
+  }
+  return res.json();
+}
+
+/** Render an aligned, headered table for CLI output (mirrors `serve ps`). */
+function renderCliTable(headers: string[], rows: string[][]): string {
+  const widths = headers.map((header, i) =>
+    Math.max(header.length, ...rows.map((row) => (row[i] ?? "").length))
+  );
+  const line = (cells: string[]) => cells.map((cell, i) => (cell ?? "").padEnd(widths[i])).join("  ");
+  const out = [chalk.dim(line(headers)), chalk.dim(widths.map((w) => "─".repeat(w)).join("──"))];
+  for (const row of rows) out.push(line(row));
+  return out.join("\n");
+}
+
+function formatAgentsTable(agents: AgentSummary[]): string {
+  if (agents.length === 0) return chalk.dim("No agents loaded by this serve daemon.");
+  const multiProject = new Set(agents.map((a) => a.projectId)).size > 1;
+  const rows = agents.map((a) => [
+    multiProject ? `${a.projectId}/${a.path}` : a.path,
+    a.name,
+    a.model,
+    a.schedule ?? "—",
+  ]);
+  return renderCliTable(["AGENT", "NAME", "MODEL", "SCHEDULE"], rows);
+}
+
+function formatLocalDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms)
+    ? new Date(ms).toLocaleString("en-US", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })
+    : "—";
+}
+
+function formatSchedulesTable(schedules: SerializedSchedule[]): string {
+  if (schedules.length === 0) return chalk.dim("No scheduled agents in this serve daemon.");
+  const multiProject = new Set(schedules.map((s) => s.projectId)).size > 1;
+  const rows = schedules.map((s) => [
+    s.nextRun ? formatLocalDateTime(s.nextRun) : "disabled",
+    multiProject ? `${s.projectId}/${s.agentPath}` : s.agentPath,
+    s.human,
+    s.lastRun ? `${formatLocalDateTime(s.lastRun)}${s.lastResult ? (s.lastResult.success ? " ok" : " failed") : ""}` : "never",
+  ]);
+  return renderCliTable(["NEXT RUN", "AGENT", "SCHEDULE", "LAST RUN"], rows);
+}
+
+function createAgentsSubcommand(): Command {
+  return new Command("agents")
+    .description("List agents loaded by the running agentuse serve daemon")
+    .argument("[pid]", "PID of the daemon to query (omit when only one daemon is running)")
+    .option("--json", "Output as JSON")
+    .action(async (pidArg: string | undefined, options: { json?: boolean }) => {
+      const target = resolveTargetServer(pidArg);
+      if (!target) process.exit(1);
+      try {
+        const data = (await fetchDaemonJson(target, "/api/agents")) as {
+          agents: AgentSummary[];
+          errors: Array<{ projectId: string; path: string; message: string }>;
+        };
+        if (options.json) {
+          console.log(JSON.stringify(data, null, 2));
+          return;
+        }
+        console.log(formatAgentsTable(data.agents));
+        if (data.errors.length > 0) {
+          console.log();
+          console.log(chalk.yellow(`${data.errors.length} agent${data.errors.length === 1 ? "" : "s"} failed to parse:`));
+          for (const err of data.errors) {
+            console.log(chalk.dim(`  ${err.projectId}/${err.path}: ${err.message}`));
+          }
+        }
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+        process.exit(1);
+      }
+    });
+}
+
+function createSchedulesSubcommand(): Command {
+  return new Command("schedules")
+    .description("List scheduled agents in the running agentuse serve daemon")
+    .argument("[pid]", "PID of the daemon to query (omit when only one daemon is running)")
+    .option("--json", "Output as JSON")
+    .action(async (pidArg: string | undefined, options: { json?: boolean }) => {
+      const target = resolveTargetServer(pidArg);
+      if (!target) process.exit(1);
+      try {
+        const data = (await fetchDaemonJson(target, "/api/schedules")) as {
+          schedules: SerializedSchedule[];
+        };
+        if (options.json) {
+          console.log(JSON.stringify(data, null, 2));
+          return;
+        }
+        console.log(formatSchedulesTable(data.schedules));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+        process.exit(1);
+      }
+    });
+}
+
 export const __testing = {
   renderApprovalPage,
   renderStoresIndexPage,
+  renderAgentsPage,
+  renderSchedulesPage,
+  collectAgents,
+  formatAgentsTable,
+  formatSchedulesTable,
   canContinueApprovalSession,
   isEndedSessionStatus,
   approvalListCreatedAfter,

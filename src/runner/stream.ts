@@ -29,6 +29,8 @@ async function announceApprovalRequested(options: {
     const timeout = setTimeout(() => controller.abort(), 750);
     const url = new URL(options.approvalUrl);
     const project = url.searchParams.get('project') ?? undefined;
+    // LEGACY ROUTE: canonical path is `/api/approvals/:id/requested`. Kept on the
+    // legacy path for back-compat; switch here when the legacy routes are removed.
     url.pathname = `/approvals/${encodeURIComponent(options.sessionId)}/requested`;
     url.search = '';
 
