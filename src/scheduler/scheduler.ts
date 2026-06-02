@@ -9,6 +9,32 @@ export interface SchedulerOptions {
   scheduleJitterMs?: number;
 }
 
+/** JSON-friendly view of a Schedule, as returned by Scheduler.listSerialized(). */
+export interface SerializedSchedule {
+  id: string;
+  projectId: string;
+  agentPath: string;
+  expression: string;
+  /** Human-readable description of the cron expression. */
+  human: string;
+  timezone: string;
+  enabled: boolean;
+  jitterMs: number;
+  /** ISO timestamp of the next scheduled run, or null when disabled/unknown. */
+  nextRun: string | null;
+  /** ISO timestamp of the last run, or null if it has never run. */
+  lastRun: string | null;
+  lastResult?: { success: boolean; duration: number; error?: string; sessionId?: string };
+  createdAt: string;
+}
+
+/** Sort comparator: soonest next run first, schedules without a next run last. */
+function compareByNextRun(a: Schedule, b: Schedule): number {
+  if (!a.nextRun) return 1;
+  if (!b.nextRun) return -1;
+  return a.nextRun.getTime() - b.nextRun.getTime();
+}
+
 export const DEFAULT_SCHEDULE_JITTER_MS = 120_000;
 
 function stableHash(value: string): number {
@@ -231,6 +257,31 @@ export class Scheduler {
   }
 
   /**
+   * List schedules as plain JSON-friendly objects, sorted by next run
+   * (soonest first, disabled/null last). Includes a human-readable
+   * description of the cron expression. Used by the serve `/schedules`
+   * endpoint and the `serve schedules` CLI command.
+   */
+  listSerialized(): SerializedSchedule[] {
+    return this.list()
+      .sort(compareByNextRun)
+      .map((s) => ({
+        id: s.id,
+        projectId: s.projectId,
+        agentPath: s.agentPath,
+        expression: s.expression,
+        human: this.cronToHuman(s.expression),
+        timezone: s.timezone,
+        enabled: s.enabled,
+        jitterMs: s.jitterMs,
+        nextRun: s.nextRun ? s.nextRun.toISOString() : null,
+        lastRun: s.lastRun ? s.lastRun.toISOString() : null,
+        ...(s.lastResult && { lastResult: s.lastResult }),
+        createdAt: s.createdAt.toISOString(),
+      }));
+  }
+
+  /**
    * Find a schedule by project + agent path
    */
   getByAgentPath(projectId: string, agentPath: string): Schedule | undefined {
@@ -375,11 +426,7 @@ export class Scheduler {
     }
 
     // Sort by next run time (soonest first, null/disabled at end)
-    schedules.sort((a, b) => {
-      if (!a.nextRun) return 1;
-      if (!b.nextRun) return -1;
-      return a.nextRun.getTime() - b.nextRun.getTime();
-    });
+    schedules.sort(compareByNextRun);
 
     // Show the project prefix only when more than one project has schedules.
     const uniqueProjects = new Set(schedules.map((s) => s.projectId));
