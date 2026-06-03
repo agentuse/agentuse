@@ -42,6 +42,7 @@ import {
   valueAsRecord,
   normalizeApiPath
 } from "./serve/ui";
+import { FAVICON_SVG } from "./serve/brand";
 import {
   findStoreItem,
   isSafeStoreName,
@@ -1015,7 +1016,8 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
 /** Extra styles for the grouped agents view and the schedule timetable. */
 function renderAgentsSchedulesStyles(): string {
   return `
-    .group { margin-bottom: 26px; }
+    .group { margin-bottom: 26px; scroll-margin-top: 80px; }
+    .group:target .group-title span:first-child { color: var(--cyan); }
     .group-title, .day-title {
       display: flex; align-items: baseline; gap: 10px;
       margin: 26px 0 12px;
@@ -1237,6 +1239,122 @@ function renderAgentTree(agents: AgentSummary[]): string {
   return rows.join('');
 }
 
+/**
+ * Fragment id for a project's section on the agents page, so the dashboard
+ * project rows can deep-link straight to that group. Shared by renderHomePage
+ * (the link) and renderAgentsPage (the anchor) so the two never drift.
+ */
+function projectAnchor(projectId: string): string {
+  return `project-${projectId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
+/** Dashboard-specific styles: the nav-card grid and the project list. */
+function renderHomeStyles(): string {
+  return `
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    .card {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 18px 18px 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      text-decoration: none;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+    .card:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+    .card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    .card-title { font-family: var(--sans); font-size: 16px; font-weight: 500; color: var(--fg); }
+    .card-count { font-family: var(--mono); font-size: 12px; color: var(--cyan); white-space: nowrap; }
+    .card-desc { color: var(--muted-3); font-size: 12.5px; line-height: 1.4; }
+    .proj { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+    a.proj { color: inherit; text-decoration: none; border-bottom: 1px solid var(--line); transition: background 120ms ease; }
+    a.proj:hover { background: var(--panel-hover); }
+    .proj:last-child, a.proj:last-child { border-bottom: 0; }
+    .proj-counts .proj-go { color: var(--muted-2); margin-left: 8px; }
+    .proj-id { font-family: var(--sans); font-size: 14px; color: var(--fg); display: inline-flex; align-items: center; gap: 8px; }
+    .proj-default { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--cyan); border: 1px solid var(--cyan-border); border-radius: 999px; padding: 1px 7px; }
+    .proj-path { font-family: var(--mono); font-size: 11.5px; color: var(--muted-2); overflow-wrap: anywhere; margin-top: 2px; }
+    .proj-counts { font-family: var(--mono); font-size: 12px; color: var(--muted-3); white-space: nowrap; text-align: right; }
+    .api-hint { margin-top: 28px; color: var(--muted-2); font-size: 12px; }
+    .api-hint code { color: var(--muted-3); }
+  `;
+}
+
+function renderHomePage(options: {
+  version: string;
+  defaultProject: string | null;
+  projects: Array<{ id: string; path: string; scope?: string; agentCount: number; scheduleCount: number }>;
+  multiProject: boolean;
+}): string {
+  const totalAgents = options.projects.reduce((sum, p) => sum + p.agentCount, 0);
+  const totalSchedules = options.projects.reduce((sum, p) => sum + p.scheduleCount, 0);
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  const card = (href: string, title: string, desc: string, count?: string): string => `
+    <a class="card" href="${href}">
+      <div class="card-top"><span class="card-title">${title}</span>${count ? `<span class="card-count">${count}</span>` : ''}</div>
+      <div class="card-desc">${desc}</div>
+    </a>`;
+
+  const cards = [
+    card('/agents', 'Agents', 'Browse the agents loaded by this daemon.', plural(totalAgents, 'agent')),
+    card('/sessions', 'Sessions', 'Run logs and approvals for every run.'),
+    card('/schedules', 'Schedules', 'Upcoming and recent scheduled runs.', plural(totalSchedules, 'run')),
+    card('/stores', 'Stores', 'Key-value data written by agents.'),
+    card('/approvals', 'Approvals', 'Tool calls awaiting a decision.'),
+  ].join('');
+
+  const projects = options.projects.map((p) => `
+    <a class="proj" href="/agents#${projectAnchor(p.id)}">
+      <div>
+        <div class="proj-id">${escapeHtml(p.id)}${p.id === options.defaultProject ? '<span class="proj-default">default</span>' : ''}</div>
+        <div class="proj-path">${escapeHtml(p.path)}${p.scope && p.scope !== p.path ? ` · scope ${escapeHtml(p.scope)}` : ''}</div>
+      </div>
+      <div class="proj-counts">${p.agentCount} agent${p.agentCount === 1 ? '' : 's'} · ${p.scheduleCount} schedule${p.scheduleCount === 1 ? '' : 's'}<span class="proj-go" aria-hidden="true">›</span></div>
+    </a>`).join('');
+
+  const projectCount = options.projects.length;
+  const lede = options.multiProject
+    ? `${plural(projectCount, 'project')} · ${plural(totalAgents, 'agent')} · ${plural(totalSchedules, 'scheduled run')}.`
+    : `${plural(totalAgents, 'agent')} · ${plural(totalSchedules, 'scheduled run')} in this serve daemon.`;
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <title>AgentUse</title>
+  <script>${approvalThemeBootScript()}</script>
+  <style>${approvalListThemeStyles()}${renderStoreStyles()}${renderAgentsSchedulesStyles()}${renderHomeStyles()}</style>
+</head>
+<body>
+  ${approvalsTopbarMarkup({ right: approvalsThemeToggleHtml() })}
+  <main>
+    <header>
+      <div class="eyebrow">serve daemon</div>
+      <h1>AgentUse</h1>
+      <p class="lede">${lede}</p>
+    </header>
+    <div class="cards">${cards}</div>
+    <section class="group">
+      <h2 class="group-title"><span>Projects</span><span class="count">${projectCount}</span><span class="rule"></span></h2>
+      <div class="panel">${projects || '<div class="empty">No projects loaded.</div>'}</div>
+    </section>
+    <p class="api-hint">Programmatic clients: server info JSON at <code>/api</code>, JSON twins at <code>/api/agents</code>, <code>/api/sessions</code>, <code>/api/schedules</code>. v${escapeHtml(options.version)}</p>
+  </main>
+  <script>${approvalsThemeToggleScript()}</script>
+</body>
+</html>`;
+}
+
 function renderAgentsPage(options: {
   agents: AgentSummary[];
   errors: Array<{ projectId: string; path: string; message: string }>;
@@ -1251,7 +1369,7 @@ function renderAgentsPage(options: {
   }
 
   const groups = [...byProject.entries()].map(([projectId, agents]) => `
-    <section class="group">
+    <section class="group" id="${projectAnchor(projectId)}">
       <h2 class="group-title"><span>${escapeHtml(projectId)}</span><span class="count">${agents.length} agent${agents.length === 1 ? '' : 's'}</span><span class="rule"></span></h2>
       <div class="panel">
         <div class="tree">
@@ -1278,6 +1396,7 @@ function renderAgentsPage(options: {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>AgentUse Agents</title>
   <meta http-equiv="refresh" content="30">
   <script>${approvalThemeBootScript()}</script>
@@ -1370,6 +1489,7 @@ function renderSchedulesPage(options: {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>AgentUse Schedules</title>
   <meta http-equiv="refresh" content="30">
   <script>${approvalThemeBootScript()}</script>
@@ -1424,6 +1544,7 @@ function renderStoresIndexPage(options: {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>AgentUse Stores</title>
   <script>${approvalThemeBootScript()}</script>
   <style>${approvalListThemeStyles()}${renderStoreStyles()}</style>
@@ -1493,6 +1614,7 @@ function renderStoreItemsPage(options: {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>AgentUse Store - ${escapeHtml(options.storeName)}</title>
   <script>${approvalThemeBootScript()}</script>
   <style>${approvalListThemeStyles()}${renderStoreStyles()}</style>
@@ -1567,6 +1689,7 @@ function renderStoreItemDetailPage(options: {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>AgentUse Store Item - ${escapeHtml(storeItemTitle(item))}</title>
   <script>${approvalThemeBootScript()}</script>
   <style>${approvalListThemeStyles()}${renderStoreStyles()}</style>
@@ -1644,6 +1767,7 @@ function renderApprovalsListPage(options: {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>AgentUse / Approvals</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1836,6 +1960,7 @@ function renderSessionsListPage(options: {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>AgentUse / Sessions</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2144,6 +2269,7 @@ function renderSessionPage(options: SessionPageOptions): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>${escapeHtml(agentName)} · AgentUse session</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -4965,6 +5091,15 @@ export function createServeCommand(): Command {
           return;
         }
 
+        // Favicon: public (served before the auth gate so browsers get the tab
+        // icon on every page without a key). One theme-aware SVG, served at both
+        // the auto-requested `/favicon.ico` and the canonical `/favicon.svg`.
+        if (req.method === "GET" && (routePath === "/favicon.ico" || routePath === "/favicon.svg")) {
+          res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" });
+          res.end(FAVICON_SVG);
+          return;
+        }
+
         // Auth check
         if (apiKey && !isCapabilityRoute && !validateApiKey(req, apiKey)) {
           sendError(res, 401, "UNAUTHORIZED", "Invalid or missing Authorization header. Use: Authorization: Bearer <key>");
@@ -4977,21 +5112,30 @@ export function createServeCommand(): Command {
         const sessionAuthorized = (sessionId: string, token?: string): boolean =>
           !apiKey || validateApiKey(req, apiKey) || validateSessionToken(token, sessionId, apiKey);
 
-        // GET / (and GET /api) return server info
+        // GET /api returns server-info JSON; GET / serves the HTML dashboard.
+        // Both share the same project rollup so the two surfaces never drift.
         if (req.method === "GET" && routePath === "/") {
-          const info = {
+          const defaultProject = effectiveDefault ?? (multiProject ? null : projects[0].id);
+          const projectInfo = projects.map((p) => ({
+            id: p.id,
+            path: p.root,
+            ...(p.scopeRoot !== p.root && { scope: p.scopeRoot }),
+            agentCount: agentCounts.get(p.id) ?? 0,
+            scheduleCount: scheduler.list().filter((s) => s.projectId === p.id).length,
+          }));
+
+          if (isApi) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ version: packageVersion, default: defaultProject, projects: projectInfo }));
+            return;
+          }
+
+          sendHTML(res, 200, renderHomePage({
             version: packageVersion,
-            default: effectiveDefault ?? (multiProject ? null : projects[0].id),
-            projects: projects.map((p) => ({
-              id: p.id,
-              path: p.root,
-              ...(p.scopeRoot !== p.root && { scope: p.scopeRoot }),
-              agentCount: agentCounts.get(p.id) ?? 0,
-              scheduleCount: scheduler.list().filter((s) => s.projectId === p.id).length,
-            })),
-          };
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(info));
+            defaultProject,
+            projects: projectInfo,
+            multiProject,
+          }));
           return;
         }
 
@@ -6471,6 +6615,7 @@ function createSchedulesSubcommand(): Command {
 }
 
 export const __testing = {
+  renderHomePage,
   renderApprovalPage,
   renderSessionPage,
   renderSessionTimeline,

@@ -1,3 +1,5 @@
+import { WORDMARK_SVG } from "./brand";
+
 /**
  * Split an incoming request pathname into the `/api/*` data surface vs the
  * root-level HTML/page surface. `/api/agents` -> { isApi: true, routePath: '/agents' };
@@ -263,7 +265,9 @@ export function approvalsTopbarStyles(): string {
       font-size: 12px;
       color: var(--muted);
     }
-    .topbar .brand { display: inline-flex; align-items: center; color: var(--fg); font-weight: 500; letter-spacing: 0.02em; }
+    .topbar .brand { display: inline-flex; align-items: center; color: var(--fg); text-decoration: none; border-bottom: 0; }
+    .topbar .brand svg { height: 18px; width: auto; display: block; }
+    .topbar a.brand:hover { color: var(--fg); opacity: 0.8; }
     .topbar .brand-name { color: var(--fg); }
     .topbar .nav-wrap { justify-self: center; }
     .topbar .nav {
@@ -392,7 +396,7 @@ export function approvalsTopbarMarkup(opts: { right?: string; isCurrentPage?: bo
     navItem('approvals', 'approvals'),
   ].join('');
   return `<div class="topbar">
-    <span class="brand"><span class="brand-name">agentuse</span></span>
+    <a class="brand" href="/" aria-label="AgentUse home">${WORDMARK_SVG}</a>
     <span class="nav-wrap"><span class="nav" role="navigation" aria-label="AgentUse serve">${nav}</span></span>
     <span class="right">${opts.right ?? ''}</span>
   </div>`;

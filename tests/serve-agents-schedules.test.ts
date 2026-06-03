@@ -116,6 +116,8 @@ describe('renderAgentsPage', () => {
     expect(html).toContain('0 9 * * *');
     expect(html).toContain('href="/agents"');
     expect(html).toContain('aria-current="page"');
+    // Group carries the anchor id the dashboard project rows link to
+    expect(html).toContain('id="project-demo"');
     // Parse error is surfaced behind a popover badge, not a full-width banner
     expect(html).toContain('<details class="issues">');
     expect(html).toContain('class="issues-badge"');
@@ -171,6 +173,51 @@ describe('renderAgentsPage', () => {
     expect(html).toContain('>demo<');
     expect(html).toContain('>second<');
     expect(html).toContain('2 agents');
+  });
+});
+
+describe('renderHomePage', () => {
+  const projects = [
+    { id: 'demo', path: '/work/demo', agentCount: 3, scheduleCount: 1 },
+    { id: 'other', path: '/work/other', scope: '/work/other/scope', agentCount: 0, scheduleCount: 0 },
+  ];
+
+  it('renders the dashboard with nav cards and project rollup', () => {
+    const html = __testing.renderHomePage({ version: '1.2.3', defaultProject: 'demo', projects, multiProject: true });
+
+    expect(html).toContain('<h1>AgentUse</h1>');
+    // Brand renders the wordmark SVG (currentColor, theme-aware) and the page
+    // declares the SVG favicon.
+    expect(html).toContain('<a class="brand" href="/" aria-label="AgentUse home"><svg');
+    expect(html).toContain('fill="currentColor"');
+    expect(html).toContain('<link rel="icon" type="image/svg+xml" href="/favicon.svg">');
+    // Nav cards link to each human-facing page
+    expect(html).toContain('href="/agents"');
+    expect(html).toContain('href="/sessions"');
+    expect(html).toContain('href="/schedules"');
+    expect(html).toContain('href="/stores"');
+    expect(html).toContain('href="/approvals"');
+    // Aggregate counts (3 + 0 agents, 1 + 0 schedules)
+    expect(html).toContain('3 agents');
+    expect(html).toContain('1 run');
+    // Project rows deep-link into the agents view at that project's section
+    expect(html).toContain('<a class="proj" href="/agents#project-demo">');
+    expect(html).toContain('<a class="proj" href="/agents#project-other">');
+    // Project list with default badge and scope
+    expect(html).toContain('>demo<');
+    expect(html).toContain('>other<');
+    expect(html).toContain('<span class="proj-default">default</span>');
+    expect(html).toContain('/work/other/scope');
+    // API hint mentions the JSON surface, and version is surfaced
+    expect(html).toContain('/api');
+    expect(html).toContain('1.2.3');
+    // No active nav item on the dashboard itself
+    expect(html).not.toContain('aria-current="page"');
+  });
+
+  it('omits the default badge when no project is marked default', () => {
+    const html = __testing.renderHomePage({ version: '1.0.0', defaultProject: null, projects, multiProject: true });
+    expect(html).not.toContain('<span class="proj-default">default</span>');
   });
 });
 

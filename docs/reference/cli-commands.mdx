@@ -374,8 +374,10 @@ curl -X POST http://server:12233/api/run \
 ### API Endpoints
 
 All JSON endpoints are served under the `/api/*` prefix; the un-prefixed root
-paths (`/agents`, `/sessions`, `/schedules`, `/stores`, `/approvals`) serve the
-HTML dashboard pages. The per-session page `/sessions/:id` and its action
+paths (`/`, `/agents`, `/sessions`, `/schedules`, `/stores`, `/approvals`) serve
+HTML dashboard pages. `GET /` is the dashboard home: it links to those pages and
+lists the served projects with their agent and schedule counts. The per-session
+page `/sessions/:id` and its action
 subroutes (`/decision`, `/continue`, `/status`) carry their own capability auth
 (session token / API key / local). `POST /run`, `POST /resume/:id`, and the
 `POST /approvals/:id/...` action endpoints remain reachable at their original
@@ -385,7 +387,8 @@ will be removed later).
 
 #### GET /api
 
-Returns version, default project, and served projects. (Also served at `/`.)
+Returns version, default project, and served projects. (`GET /` serves the HTML
+dashboard built from the same data.)
 
 ```json
 {
