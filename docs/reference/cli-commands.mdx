@@ -374,10 +374,14 @@ curl -X POST http://server:12233/api/run \
 ### API Endpoints
 
 All JSON endpoints are served under the `/api/*` prefix; the un-prefixed root
-paths (`/agents`, `/schedules`, `/stores`, `/approvals`) serve the HTML dashboard
-pages. `POST /run`, `POST /resume/:id`, and the `POST /approvals/:id/...` action
-endpoints remain reachable at their original paths for backward compatibility
-(prefer the `/api/*` paths; the legacy aliases will be removed later).
+paths (`/agents`, `/sessions`, `/schedules`, `/stores`, `/approvals`) serve the
+HTML dashboard pages. The per-session page `/sessions/:id` and its action
+subroutes (`/decision`, `/continue`, `/status`) carry their own capability auth
+(session token / API key / local). `POST /run`, `POST /resume/:id`, and the
+`POST /approvals/:id/...` action endpoints remain reachable at their original
+paths for backward compatibility, and `GET /approvals/:id` redirects to
+`/sessions/:id` (prefer the `/api/*` and `/sessions` paths; the legacy aliases
+will be removed later).
 
 #### GET /api
 
@@ -510,7 +514,47 @@ curl "http://127.0.0.1:12233/api/schedules"
 }
 ```
 
-`nextRun` and `lastRun` are ISO timestamps (or `null`). `lastResult` is included once a scheduled run has completed.
+`nextRun` and `lastRun` are ISO timestamps (or `null`). `lastResult` is included
+once a scheduled run has completed, and carries the run's `sessionId` so the
+dashboard can deep-link to its log.
+
+#### GET /api/sessions
+
+Lists every run (top-level sessions only) as JSON, newest first. Filters:
+`?agent=<id>`, `?trigger=scheduled|manual|slack|api`, `?days=<n|all>` (default
+~7 days). The browsable HTML page is at `/sessions`.
+
+```bash
+curl "http://127.0.0.1:12233/api/sessions?agent=daily&trigger=scheduled" \
+  -H "Authorization: Bearer $AGENTUSE_API_KEY"
+```
+
+```json
+{
+  "success": true,
+  "sessions": [
+    {
+      "project": "projA",
+      "sessionId": "01JFN8K3M2P1",
+      "agent": { "id": "daily", "name": "Daily Digest", "description": "Posts a daily digest" },
+      "status": "completed",
+      "trigger": "scheduled",
+      "createdAt": 1717430400000,
+      "updatedAt": 1717430412000
+    }
+  ],
+  "window": { "days": 7, "createdAfter": 1716825600000 },
+  "errors": []
+}
+```
+
+`trigger` is `scheduled`, `api`, `slack`, or `manual` (CLI runs and the default).
+
+#### GET /api/sessions/:id
+
+Returns one session including its run-log entries (`logs`). API-key gated. The
+human-facing view + approve page is `/sessions/:id`; see
+[Approval Gates](/guides/approval-gates#experimental-session--approval-api).
 
 | Error Code | HTTP Status | Description |
 |------------|-------------|-------------|

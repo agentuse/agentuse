@@ -58,13 +58,17 @@ Each project loads its own `.env` / `.env.local` in its worker process; env vars
 ## API Reference
 
 All JSON endpoints live under the `/api/*` prefix. The root paths (`/agents`,
-`/schedules`, `/stores`, `/approvals`) serve the HTML dashboard pages instead.
+`/sessions`, `/schedules`, `/stores`, `/approvals`) serve the HTML dashboard
+pages instead. The per-session page `/sessions/:id` and its action subroutes
+carry their own capability auth (session token / API key / local); see
+[Approval Gates](/guides/approval-gates#auth-and-the-session-token).
 
 <Note>
 `POST /run`, `POST /resume/:id`, and the `POST /approvals/:id/...` action
 endpoints are also still reachable at their original (un-prefixed) paths for
-backward compatibility. Prefer the `/api/*` paths; the legacy aliases will be
-removed in a future release.
+backward compatibility. `GET /approvals/:id` now redirects to `/sessions/:id`.
+Prefer the `/api/*` and `/sessions` paths; the legacy aliases will be removed in
+a future release.
 </Note>
 
 ### GET /api
@@ -176,6 +180,51 @@ is at `/schedules`.)
 ```
 
 From the terminal, `agentuse serve agents` and `agentuse serve schedules` render these as tables. See [CLI Commands](/reference/cli-commands#serve-agents).
+
+### GET /api/sessions
+
+Lists every run (top-level sessions; subagent sessions are excluded) as JSON,
+newest first. Filter with `?agent=<id>`, `?trigger=scheduled|manual|slack|api`,
+and `?days=<n|all>` (default ~7 days). The browsable HTML page is at `/sessions`.
+
+```bash
+curl "http://127.0.0.1:12233/api/sessions?trigger=scheduled" \
+  -H "Authorization: Bearer $AGENTUSE_API_KEY"
+```
+
+```json
+{
+  "success": true,
+  "sessions": [
+    {
+      "project": "projA",
+      "sessionId": "01JFN8K3M2P1",
+      "agent": { "id": "daily", "name": "Daily Digest" },
+      "status": "completed",
+      "trigger": "scheduled",
+      "createdAt": 1717430400000,
+      "updatedAt": 1717430412000
+    }
+  ],
+  "window": { "days": 7, "createdAfter": 1716825600000 },
+  "errors": []
+}
+```
+
+`trigger` records how the run started: `scheduled` (the built-in scheduler),
+`api` (`POST /api/run`), `slack`, or `manual` (CLI runs and the default).
+
+### GET /api/sessions/:id
+
+Returns one session including its run-log entries. API-key gated.
+
+```bash
+curl "http://127.0.0.1:12233/api/sessions/01JFN8K3M2P1" \
+  -H "Authorization: Bearer $AGENTUSE_API_KEY"
+```
+
+For the human-facing view + approve page, the redirect target, and the session
+token, see [Approval Gates](/guides/approval-gates#experimental-session--approval-api).
 
 ## Streaming Response
 

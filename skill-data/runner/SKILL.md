@@ -49,6 +49,10 @@ agentuse serve schedules
 - Use `agentuse serve agents` and `agentuse serve schedules` to see what a
   running daemon actually loaded (live data, not just the `serve ps` counts).
   Both also serve `/agents` and `/schedules` pages in the serve web UI.
+- The serve web UI also has `/sessions` (every run, filter by `?agent=` /
+  `?trigger=`) and the per-session page `/sessions/<id>`, which is both the run
+  log and the approve/reject/continue surface when a run is suspended on an
+  approval gate. `/approvals` is the filtered list of sessions awaiting review.
 - Use `agentuse skills installed` only when inspecting project or user-installed
   skills.
 

@@ -10,18 +10,18 @@ tag: Experimental
 
 Approval gates let an agent prepare work, pause before finalizing it, and continue only after a reviewer approves, rejects, or comments.
 
-The main approval surface is `agentuse serve` at `/approvals`. Slack is optional: it can notify reviewers and link them into the approval page, but Slack is not where approval state lives.
+Every run is a session. The review surface is the unified **session page** at `/sessions/<id>` in `agentuse serve`: it shows the run log, and when the session is suspended on an approval gate it also offers approve / reject / comment right there. `/approvals` remains as a filtered list of sessions currently waiting for review, and each row links to the session page. Slack is optional: it can notify reviewers and link them into the session page, but Slack is not where approval state lives.
 
 ## How It Works
 
 1. Add `approval: true` to the agent frontmatter.
 2. Run `agentuse serve`.
 3. The agent works normally until it reaches the approval point.
-4. AgentUse creates a pending approval request.
-5. Reviewers open `/approvals` or a tokenized approval link.
+4. AgentUse suspends the session on a pending approval gate.
+5. Reviewers open the session page (`/sessions/<id>`), either from `/approvals` or from a tokenized link.
 6. A reviewer approves, rejects, or comments.
 7. AgentUse resumes the suspended session with the reviewer result.
-8. After the session finishes, reviewers can send follow-up instructions from the same approval page to continue the session with its existing context.
+8. After the session finishes, reviewers can send follow-up instructions from the same session page to continue the session with its existing context.
 
 ## Create an Agent with Approval
 
@@ -104,13 +104,16 @@ Start the AgentUse daemon:
 agentuse serve
 ```
 
-Open the approval dashboard:
+Open the sessions dashboard (every run) or the approvals view (sessions waiting for review):
 
 ```text
+http://127.0.0.1:12233/sessions
 http://127.0.0.1:12233/approvals
 ```
 
-If reviewers open approval links from another machine, start `serve` with a reachable public URL:
+Both link into the per-session page at `/sessions/<id>`.
+
+If reviewers open links from another machine, start `serve` with a reachable public URL:
 
 ```bash
 agentuse serve --public-url https://agentuse.mycompany.com
@@ -120,7 +123,7 @@ AgentUse runs one serve daemon at a time. When the daemon is serving this projec
 
 ## Optional Slack Channel
 
-Slack can alert reviewers when an approval is waiting. Approval state still lives in the AgentUse approval page.
+Slack can alert reviewers when an approval is waiting. Approval state still lives in the AgentUse session page.
 The Slack channel message stays concise, and supporting approval details are posted in the message thread when the agent provides them. Those thread details can include summary, draft, artifact, context, and risk.
 
 ```yaml
@@ -135,7 +138,7 @@ See [Channels](/guides/channels) for Slack setup, channel ids, events, and compl
 
 ## Reviewer Flow
 
-The approval page shows the best available review details from the agent:
+The session page shows the best available review details from the agent:
 
 - `prompt`: the reviewer-facing decision prompt
 - `summary`: what changed and what is being approved
@@ -152,11 +155,11 @@ Reviewer actions are fixed:
 - `Reject`: resumes the agent with `status: "reject"`
 - `Comment`: resumes the agent with `status: "comment"` and the reviewer comment
 
-When Slack Socket Mode is configured, the approval details thread can also accept Approve, Reject, Comment, and normal thread replies. Without Socket Mode, reviewers use the `Review approval` button to decide in `/approvals`.
+When Slack Socket Mode is configured, the approval details thread can also accept Approve, Reject, Comment, and normal thread replies. Without Socket Mode, reviewers open the session page link to decide.
 
 When the agent receives a comment, it decides whether to revise, ask for approval again, or stop with a clear explanation.
 
-After the run completes, the same approval page becomes a lightweight continuation surface. Add a follow-up instruction in the **Continue session** box to resume the completed or errored session with its existing context. This matches Slack thread replies, but keeps the web approval page as the source of truth for details and logs.
+After the run completes, the same session page becomes a lightweight continuation surface. Add a follow-up instruction in the **Continue session** box to resume the completed or errored session with its existing context. This matches Slack thread replies, but keeps the web session page as the source of truth for details and logs.
 
 ## Configuration Fields
 
@@ -190,37 +193,59 @@ channels:
 - `channels.slack.channel_id`: Slack channel id. If omitted, AgentUse uses `SLACK_APPROVAL_CHANNEL`.
 - `channels.slack.enabled`: optional switch for temporarily disabling Slack
 
-## Experimental Approval API
+## Auth and the session token
 
-The Approval API is experimental and mirrors the web approval page contract. Use it to build custom approval UIs or integrations.
+Authentication follows the deployment invariant:
 
-All endpoints live under the `/api/*` prefix. The action endpoints
-(`/api/approvals/:id/status`, `/decision`, `/continue`) are also reachable at
-their original un-prefixed paths for backward compatibility, but prefer `/api/*`.
+- **Local bind** (`127.0.0.1` / `localhost`): no API key, no token. View and approve are fully open.
+- **Exposed host**: `serve` refuses to start without `AGENTUSE_API_KEY` (use `--no-auth` to bypass, dangerous). The API key (`Authorization: Bearer`) authorizes everything.
 
-List approvals as JSON:
+Because a `Bearer` header is not clickable from a Slack message or an email, each session also has a **session token**: a stateless, per-session value that stands in for the API key on that one session's page.
 
-```bash
-curl "http://127.0.0.1:12233/api/approvals"
+```text
+sessionToken = base64url( HMAC-SHA256(key = AGENTUSE_API_KEY, msg = sessionId) )
 ```
 
-Check one approval:
+One token grants both **view** and **approve** for its session, and the same value works for every gate in that session. It is unguessable without the API key and is scoped to a single session (a token for session A never authorizes session B). On localhost there is no API key, so there is no token and links omit it. `await_human` mints this token when it builds the reviewer link, so Slack/email links are clickable without an API-key login.
+
+<Note>
+While a run is suspended, anyone with its session link can approve it. A completed run has no pending gate, so a shared completed-log link cannot approve anything. The view + approve conflation only matters during the approval window.
+</Note>
+
+## Experimental session / approval API
+
+The API is experimental and mirrors the web session page contract. Use it to build custom review UIs or integrations.
+
+JSON endpoints live under the `/api/*` prefix and are always API-key gated on an exposed host. The HTML session page and its action subroutes carry their own capability auth (session token / API key / local), so a tokenized link works without a `Bearer` header.
+
+List sessions as JSON (filter by `agent`, `trigger`, or time window with `days`):
 
 ```bash
-curl "http://127.0.0.1:12233/api/approvals/session_abc123/status?token=$resumeToken"
+curl "http://127.0.0.1:12233/api/sessions?trigger=scheduled&days=7" \
+  -H "Authorization: Bearer $AGENTUSE_API_KEY"
 ```
 
-Submit a decision:
+Fetch one session (summary + run-log entries):
 
 ```bash
-curl -X POST "http://127.0.0.1:12233/api/approvals/session_abc123/decision" \
+curl "http://127.0.0.1:12233/api/sessions/session_abc123" \
+  -H "Authorization: Bearer $AGENTUSE_API_KEY"
+```
+
+Poll a session's live status (session token works in place of a header):
+
+```bash
+curl "http://127.0.0.1:12233/sessions/session_abc123/status?token=$sessionToken"
+```
+
+Submit a decision. Authorize with the session token (`?token=`) or a `Bearer`
+header; the current pending gate is resolved server-side, so you do not pass a
+gate token:
+
+```bash
+curl -X POST "http://127.0.0.1:12233/sessions/session_abc123/decision?token=$sessionToken" \
   -H "Content-Type: application/json" \
-  -d '{
-    "status": "approve",
-    "comment": "Looks good",
-    "resumeToken": "'"$resumeToken"'",
-    "project": "optional-project-id"
-  }'
+  -d '{ "status": "approve", "comment": "Looks good" }'
 ```
 
 The decision endpoint returns immediately while the suspended session resumes in the background:
@@ -232,16 +257,12 @@ The decision endpoint returns immediately while the suspended session resumes in
 }
 ```
 
-Continue a completed or errored session from an approval page token:
+Continue a completed or errored session:
 
 ```bash
-curl -X POST "http://127.0.0.1:12233/api/approvals/session_abc123/continue" \
+curl -X POST "http://127.0.0.1:12233/sessions/session_abc123/continue?token=$sessionToken" \
   -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "Please revise the CTA and run the smoke test again",
-    "resumeToken": "'"$resumeToken"'",
-    "project": "optional-project-id"
-  }'
+  -d '{ "prompt": "Please revise the CTA and run the smoke test again" }'
 ```
 
 The continuation endpoint also returns immediately while AgentUse starts the follow-up run:
@@ -253,7 +274,9 @@ The continuation endpoint also returns immediately while AgentUse starts the fol
 }
 ```
 
-`/approvals` follows the `agentuse serve` auth setting. Tokenized approval detail, status, decision, and continuation URLs validate the approval token so reviewers can open Slack links without a separate API-key login.
+<Note>
+**Legacy approval routes.** `GET /approvals/:id` now redirects to `/sessions/:id`, and the older `/approvals` JSON list plus the `/api/approvals/:id/{status,decision,continue}` action endpoints remain available for backward compatibility. Those legacy action endpoints still take a gate `resumeToken` in the body. In-flight Slack links from before the upgrade keep working: the session page also accepts a valid gate `resumeToken` as a credential until those approvals expire. Prefer the `/sessions` routes and the session token for new integrations.
+</Note>
 
 ## Local Testing
 
