@@ -190,6 +190,7 @@ interface WorkerListSessionsResult {
 interface ApprovalPageInfo {
   sessionId: string;
   sessionStatus: string;
+  createdAt?: number;
   agent: {
     id: string;
     name: string;
@@ -574,7 +575,12 @@ function sendError(res: ServerResponse, status: number, code: string, message: s
 }
 
 function sendHTML(res: ServerResponse, status: number, html: string) {
-  res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" });
+  // These dashboard pages are dynamic and embed build-specific inline JS, so
+  // never serve a stale copy from a tab that was open across a restart/upgrade.
+  res.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
   res.end(html);
 }
 
@@ -642,6 +648,18 @@ function renderInlineActions(): string {
       <button data-action="comment">Comment</button>
     </div>
   </div>`;
+}
+
+const COPY_ICON_SVG = `<svg class="copy-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5H3A1.5 1.5 0 0 1 1.5 9V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5"/></svg>`;
+const CHECK_ICON_SVG = `<svg class="check-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3 3 7-7"/></svg>`;
+
+/**
+ * A meta-grid cell whose value can be copied to the clipboard with one click.
+ * The button carries the raw value in `data-copy`; the session page's inline JS
+ * delegates clicks on `.copy-btn` and flips it to a check on success.
+ */
+function renderCopyCell(label: string, value: string): string {
+  return `<div class="cell"><span class="label">${escapeHtml(label)}</span><span class="copyable"><code>${escapeHtml(value)}</code><button class="copy-btn" type="button" data-copy="${escapeHtml(value)}" aria-label="Copy ${escapeHtml(label)}" title="Copy ${escapeHtml(label)}">${COPY_ICON_SVG}${CHECK_ICON_SVG}</button></span></div>`;
 }
 
 function renderApprovalDetailBlock(details: ApprovalLogDetails): string {
@@ -1765,27 +1783,34 @@ function renderSessionRow(row: {
   session: SessionSummary;
   token: string;
 }): string {
-  const { session, projectId, multiProject, token } = row;
+  const { session, projectId, token } = row;
   const params = new URLSearchParams();
   if (token) params.set('token', token);
   const query = params.toString();
   const href = `/sessions/${encodeURIComponent(session.sessionId)}${query ? `?${query}` : ''}`;
 
-  const titleText = session.agent.description || session.agent.name || session.agent.id;
-  const truncated = titleText.length > 220 ? `${titleText.slice(0, 220)}…` : titleText;
+  // Primary identity: the agent's display name, falling back to its filename.
+  // The locator below carries the full project/path/filename for disambiguation.
+  const fileName = session.agent.id.split('/').pop() || session.agent.id;
+  const agentName = session.agent.name || fileName;
+  // project-name / project-relative-path/filename.agentuse. agent.id is the path
+  // minus the suffix, so re-add it for the canonical run locator.
+  const locator = `${projectId}/${session.agent.id}.agentuse`;
   const timeLabel = `started ${formatApprovalTime(session.createdAt)}`;
-  const projectChip = multiProject ? `<span class="chip project">${escapeHtml(projectId)}</span>` : '';
+  const description = session.agent.description
+    ? (session.agent.description.length > 200 ? `${session.agent.description.slice(0, 200)}…` : session.agent.description)
+    : '';
   const errorLabel = session.errorMessage || '';
 
   const inner = `
     <div class="row-head">
       <span class="chip status ${renderSessionStatusChipClass(session.status)}">${escapeHtml(session.status)}</span>
       <span class="chip">${escapeHtml(session.trigger)}</span>
-      ${projectChip}
-      <span class="chip agent">${escapeHtml(session.agent.name || session.agent.id)}</span>
       <span class="row-time">${escapeHtml(timeLabel)}</span>
     </div>
-    <div class="row-title">${escapeHtml(truncated)}</div>
+    <div class="row-title">${escapeHtml(agentName)}</div>
+    <div class="row-locator"><code>${escapeHtml(locator)}</code></div>
+    ${description ? `<div class="row-desc">${escapeHtml(description)}</div>` : ''}
     ${errorLabel ? `<div class="row-decision">${escapeHtml(errorLabel)}</div>` : ''}
     <div class="row-meta"><code>${escapeHtml(session.sessionId)}</code></div>
   `;
@@ -1847,7 +1872,10 @@ function renderSessionsListPage(options: {
     a.row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
     .row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
     .row-time { color: var(--muted-2); font-size: 12px; margin-left: auto; }
-    .row-title { font-family: var(--sans); font-size: 16px; line-height: 1.35; color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .row-title { font-family: var(--sans); font-size: 16px; line-height: 1.35; color: var(--fg); font-weight: 500; overflow-wrap: anywhere; }
+    .row-locator { margin-top: 3px; font-family: var(--mono); font-size: 12px; color: var(--muted-3); overflow-wrap: anywhere; }
+    .row-locator code { font-family: var(--mono); }
+    .row-desc { margin-top: 6px; color: var(--muted); font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
     .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
     .row-meta { margin-top: 8px; color: var(--muted-2); font-size: 11px; }
     .row-meta code { font-family: var(--mono); font-size: 11px; }
@@ -1942,8 +1970,12 @@ interface SessionTimelineState {
   projectId?: string | undefined;
   status: string;
   eyebrow: string;
-  agentHeadline: string;
-  agentLabel: string;
+  /** Primary identity: the agent's display name (falls back to its filename). */
+  agentName: string;
+  /** project-relative path + filename.agentuse, for the meta grid locator. */
+  agentFile: string;
+  /** Secondary, demoted from the title. */
+  agentDescription: string;
   promptText: string;
   error?: string | undefined;
   initialReviewerComment: { comment: string; reviewer?: string; status?: string } | undefined;
@@ -1967,8 +1999,9 @@ function renderSessionTimeline(view: SessionTimelineState): string {
     projectId,
     status,
     eyebrow,
-    agentHeadline,
-    agentLabel,
+    agentName,
+    agentFile,
+    agentDescription,
     promptText,
     error,
     initialReviewerComment,
@@ -1982,12 +2015,14 @@ function renderSessionTimeline(view: SessionTimelineState): string {
     <header>
       <span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span>
       <div class="eyebrow">${escapeHtml(eyebrow)}</div>
-      <h1>${escapeHtml(agentHeadline)}</h1>
+      <h1>${escapeHtml(agentName)}</h1>
+      ${agentDescription ? `<p class="agent-desc">${escapeHtml(agentDescription)}</p>` : ''}
       <p class="prompt">${escapeHtml(promptText)}</p>
       <div class="meta" id="approval-meta">
-        <div class="cell"><span class="label">session</span><code>${escapeHtml(approval.sessionId)}</code></div>
+        ${renderCopyCell('session', approval.sessionId)}
         <div class="cell"><span class="label">project</span><code>${escapeHtml(projectId ?? 'default')}</code></div>
-        <div class="cell"><span class="label">agent</span><span class="value">${escapeHtml(agentLabel)}</span></div>
+        ${renderCopyCell('file', agentFile)}
+        <div class="cell"><span class="label">started</span><span class="value">${approval.createdAt !== undefined ? escapeHtml(formatApprovalTime(approval.createdAt)) : '—'}</span></div>
         <div class="cell" id="expires-cell"${approval.expiresAt === undefined ? ' hidden' : ''}><span class="label">expires</span><span class="value" id="expires-value">${approval.expiresAt !== undefined ? escapeHtml(formatApprovalTime(approval.expiresAt)) : ''}</span></div>
       </div>
     </header>
@@ -2081,8 +2116,10 @@ function renderSessionPage(options: SessionPageOptions): string {
         : approval.sessionStatus;
   const initialLogs = approval.logs ?? [];
   const initialReviewerComment = latestReviewerComment(initialLogs);
-  const agentLabel = approval.agent.name || approval.agent.id;
-  const agentHeadline = approval.agent.description || agentLabel;
+  const fileName = approval.agent.id.split('/').pop() || approval.agent.id;
+  const agentName = approval.agent.name || fileName;
+  const agentFile = `${approval.agent.id}.agentuse`;
+  const agentDescription = approval.agent.description ?? '';
   const eyebrow = actionable
     ? 'human approval requested'
     : continueActionable
@@ -2107,7 +2144,7 @@ function renderSessionPage(options: SessionPageOptions): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AgentUse / Approval</title>
+  <title>${escapeHtml(agentName)} · AgentUse session</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
@@ -2253,13 +2290,21 @@ function renderSessionPage(options: SessionPageOptions): string {
       margin: 0 0 18px;
       font-weight: 500;
     }
+    .agent-desc {
+      font-family: var(--sans);
+      font-size: 15px;
+      line-height: 1.5;
+      color: var(--muted-3);
+      margin: 10px 0 0;
+      max-width: 70ch;
+    }
     .prompt {
       font-family: var(--sans);
       font-size: 17px;
       color: var(--muted-3);
       border-left: 2px solid var(--cyan-border);
       padding: 6px 0 6px 16px;
-      margin: 0;
+      margin: 16px 0 0;
     }
 
     /* meta grid */
@@ -2286,6 +2331,31 @@ function renderSessionPage(options: SessionPageOptions): string {
     }
     .meta .label::before { content: "⋮ "; color: var(--cyan); opacity: 0.6; }
     .meta .value, .meta code { color: var(--fg); font-size: 13px; word-break: break-all; }
+    .copyable { display: flex; align-items: flex-start; gap: 6px; }
+    .copyable code { flex: 1; min-width: 0; }
+    .copy-btn {
+      flex: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 0;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      margin-top: -2px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--muted-2);
+      cursor: pointer;
+      transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+    }
+    .copy-btn:hover { color: var(--fg); background: var(--panel-hover); border-color: var(--line-strong); }
+    .copy-btn svg { width: 13px; height: 13px; display: block; }
+    .copy-btn .check-icon { display: none; }
+    .copy-btn.copied { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+    .copy-btn.copied .copy-icon { display: none; }
+    .copy-btn.copied .check-icon { display: block; }
 
     /* sections */
     .section-title {
@@ -2881,7 +2951,7 @@ function renderSessionPage(options: SessionPageOptions): string {
 </head>
 <body>
   ${approvalsTopbarMarkup({
-    currentPage: 'approvals',
+    currentPage: 'sessions',
     right: approvalsThemeToggleHtml()
   })}
 
@@ -2890,8 +2960,9 @@ function renderSessionPage(options: SessionPageOptions): string {
     projectId,
     status,
     eyebrow,
-    agentHeadline,
-    agentLabel,
+    agentName,
+    agentFile,
+    agentDescription,
     promptText,
     error,
     initialReviewerComment,
@@ -3284,7 +3355,11 @@ function renderSessionPage(options: SessionPageOptions): string {
       updateReviewerComment(ordered);
       scrollToPageEnd({ follow: shouldFollowEnd });
     }
-    let hasScrolledToPageEnd = false;
+    // Passive sessions open at the top and must not auto-jump to the bottom on
+    // the first log render; seed as already-handled so a non-follow render is a
+    // no-op. (A user who scrolls to the bottom still gets live follow.) When
+    // there is an active gate we force-scroll to it instead.
+    let hasScrolledToPageEnd = !pendingActionable;
     function isNearPageEnd() {
       const page = document.documentElement;
       return window.innerHeight + window.scrollY >= page.scrollHeight - 240;
@@ -3426,7 +3501,10 @@ function renderSessionPage(options: SessionPageOptions): string {
       scheduleRefresh(nextDelay);
     }
     refreshStatus();
-    scrollToPageEnd({ force: true });
+    // Only auto-scroll to the bottom when there is an active approval gate to
+    // act on (it renders at the end of the log). A finished/passive session
+    // opens at the top so the run reads from the beginning.
+    if (pendingActionable) scrollToPageEnd({ force: true });
 
     let submittingDecision = false;
     let submittingContinue = false;
@@ -3602,6 +3680,27 @@ function renderSessionPage(options: SessionPageOptions): string {
       } else if ((e.key === 'c' || e.key === 'C') && !inField && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const comment = document.querySelector('button[data-action="comment"]');
         if (comment && !comment.disabled) { e.preventDefault(); openCommentDialog(); }
+      }
+    });
+
+    // copy-to-clipboard for the session id and file path
+    document.addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest ? e.target.closest('.copy-btn') : null;
+      if (!btn) return;
+      e.preventDefault();
+      const value = btn.getAttribute('data-copy') || '';
+      const flash = () => { btn.classList.add('copied'); setTimeout(() => btn.classList.remove('copied'), 1200); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(value).then(flash).catch(() => {});
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); flash(); } catch (err) {}
+        document.body.removeChild(ta);
       }
     });
   </script>

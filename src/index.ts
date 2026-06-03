@@ -1219,6 +1219,7 @@ async function runInternalWorker() {
           approval: {
             sessionId: req.sessionId,
             sessionStatus: found.session.status,
+            ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
             ...sessionErrorFields(found.session),
             agent: {
               id: found.session.agent.id,
@@ -1273,6 +1274,7 @@ async function runInternalWorker() {
           approval: {
             sessionId: req.sessionId,
             sessionStatus: found.session.status,
+            ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
             ...sessionErrorFields(found.session),
             agent: {
               id: found.session.agent.id,
@@ -1297,6 +1299,7 @@ async function runInternalWorker() {
         approval: {
           sessionId: req.sessionId,
           sessionStatus: found.session.status,
+          ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
           ...sessionErrorFields(found.session),
           agent: {
             id: found.session.agent.id,
