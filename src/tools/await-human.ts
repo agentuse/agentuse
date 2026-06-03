@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto';
 import { z } from 'zod';
 import { SuspendSignal } from '../runner/suspend';
 import { findServerForProject } from '../utils/server-registry';
+import { sessionViewToken } from '../utils/session-token';
 
 function parseTimeout(value?: string): number | undefined {
   if (!value) return undefined;
@@ -26,11 +27,20 @@ function getApprovalBaseUrl(projectRoot?: string): string {
   return explicit ?? server?.publicUrl ?? `http://${server?.host ?? '127.0.0.1'}:${server?.port ?? 12233}`;
 }
 
-export function getApprovalUrl(sessionId: string | undefined, resumeToken: string, _projectId?: string, projectRoot?: string): string | undefined {
+/**
+ * Build the clickable link for an await_human gate. Points at the unified
+ * session page `/sessions/<id>` and carries the SESSION token
+ * (HMAC(AGENTUSE_API_KEY, sessionId)), not the gate resumeToken: one token that
+ * grants both view and approve for the whole session. When no api key is set
+ * (local bind) there is no token to mint, so the link omits it and the page is
+ * fully open. The worker inherits AGENTUSE_API_KEY from the serve process env.
+ */
+export function getApprovalUrl(sessionId: string | undefined, _resumeToken: string, _projectId?: string, projectRoot?: string): string | undefined {
   if (!sessionId) return undefined;
   const baseUrl = getApprovalBaseUrl(projectRoot);
-  const url = new URL(`${baseUrl.replace(/\/$/, '')}/approvals/${encodeURIComponent(sessionId)}`);
-  url.searchParams.set('token', resumeToken);
+  const url = new URL(`${baseUrl.replace(/\/$/, '')}/sessions/${encodeURIComponent(sessionId)}`);
+  const token = sessionViewToken(sessionId, process.env.AGENTUSE_API_KEY);
+  if (token) url.searchParams.set('token', token);
   return url.toString();
 }
 

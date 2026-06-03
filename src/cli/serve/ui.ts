@@ -376,7 +376,7 @@ export function approvalsThemeToggleScript(): string {
   `;
 }
 
-export type TopbarPage = 'agents' | 'schedules' | 'stores' | 'approvals';
+export type TopbarPage = 'agents' | 'sessions' | 'schedules' | 'stores' | 'approvals';
 
 export function approvalsTopbarMarkup(opts: { right?: string; isCurrentPage?: boolean; currentPage?: TopbarPage }): string {
   const currentPage = opts.currentPage ?? (opts.isCurrentPage ? 'approvals' : undefined);
@@ -386,6 +386,7 @@ export function approvalsTopbarMarkup(opts: { right?: string; isCurrentPage?: bo
   };
   const nav = [
     navItem('agents', 'agents'),
+    navItem('sessions', 'sessions'),
     navItem('schedules', 'schedules'),
     navItem('stores', 'stores'),
     navItem('approvals', 'approvals'),

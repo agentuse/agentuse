@@ -39,7 +39,8 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     abortSignal,
     verbose = false,
     existingSessionId,
-    prebuiltMessages
+    prebuiltMessages,
+    trigger
   } = options;
 
   // Resolve safe variables in instructions (${root}, ${agentDir}, ${tmpDir} - NOT ${env:*})
@@ -163,6 +164,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
         ...(userPrompt !== undefined && { userPrompt }),
         projectContext,
         version: packageVersion,
+        ...(trigger && { trigger }),
         config: {
           ...(agent.config.timeout !== undefined && { timeout: agent.config.timeout }),
           maxSteps,

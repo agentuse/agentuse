@@ -1,5 +1,6 @@
 import type { ParsedAgent } from '../parser';
 import type { SessionManager } from '../session';
+import type { SessionTrigger } from '../session/types';
 import { computeAgentId } from '../utils/agent-id';
 
 export interface SessionContext {
@@ -29,6 +30,7 @@ export interface CreateSessionParams {
   config?: SessionConfigOptions;
   isSubAgent?: boolean;
   parentSessionID?: string;
+  trigger?: SessionTrigger;
 }
 
 /**
@@ -47,6 +49,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
     config = {},
     isSubAgent = false,
     parentSessionID,
+    trigger,
   } = params;
 
   // Extract agent ID from file path (relative to stateRoot, the agent's own
@@ -55,6 +58,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
 
   const sessionID = await sessionManager.createSession({
     ...(parentSessionID ? { parentSessionID } : {}),
+    ...(trigger ? { trigger } : {}),
     agent: {
       id: agentId,
       name: agent.name,

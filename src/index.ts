@@ -41,7 +41,7 @@ import { resolveTimeout } from './utils/config';
 import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
 import { telemetry, categorizeError, aggregateToolCalls, countSteps, parseModel } from './telemetry';
-import type { SessionInfo, SessionManager as SessionManagerType } from './session';
+import type { SessionInfo, SessionManager as SessionManagerType, SessionTrigger } from './session';
 import { findServerForProject } from './utils/server-registry';
 
 const program = new Command();
@@ -880,7 +880,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'sweep-expired' | 'list-approvals';
+    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'sweep-expired' | 'list-approvals' | 'list-sessions';
     agentPath?: string;
     projectRoot: string;
     prompt?: string;
@@ -893,6 +893,12 @@ async function runInternalWorker() {
     resumeToken?: string;
     allowHistorical?: boolean;
     approvalCreatedAfter?: number;
+    sessionsCreatedAfter?: number;
+    // Trusted, server-set only: when the serve process has already authorized
+    // the viewer (session token / api key / local), it asks for full approval
+    // info regardless of the gate resumeToken. Never derived from client input.
+    skipTokenCheck?: boolean;
+    trigger?: SessionTrigger;
     runChannelHandles?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
   }
 
@@ -1250,7 +1256,10 @@ async function runInternalWorker() {
         }
         return false;
       })();
-      if (expectedToken && expectedToken !== req.resumeToken && !tokenMatchesHistory) {
+      // skipTokenCheck is set only by the serve process after it has already
+      // authorized the viewer; it lets the unified /sessions/:id page resolve
+      // the current gate's resumeToken without the caller knowing it.
+      if (expectedToken && expectedToken !== req.resumeToken && !tokenMatchesHistory && !req.skipTokenCheck) {
         return {
           id: req.id,
           success: false,
@@ -1506,6 +1515,48 @@ async function runInternalWorker() {
     }
   }
 
+  async function listSessions(req: ExecuteRequest) {
+    try {
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const sessions = typeof req.sessionsCreatedAfter === 'number'
+        ? await sessionManager.listSessionsCreatedAfter(req.sessionsCreatedAfter)
+        : await sessionManager.listAllSessions();
+
+      // Top-level runs only; subagent sessions are an implementation detail of a
+      // parent run and would clutter the operator surface.
+      const summaries = sessions
+        .filter(({ session }) => !session.parentSessionID && !session.agent.isSubAgent)
+        .map(({ session }) => ({
+          sessionId: session.id,
+          agent: {
+            id: session.agent.id,
+            name: session.agent.name,
+            ...(session.agent.description && { description: session.agent.description }),
+            ...(session.agent.filePath && { filePath: session.agent.filePath }),
+          },
+          status: session.status,
+          trigger: session.trigger ?? 'manual',
+          createdAt: session.time.created,
+          updatedAt: session.time.updated,
+          ...sessionErrorFields(session),
+        }))
+        .sort((a, b) => b.createdAt - a.createdAt);
+
+      return {
+        id: req.id,
+        success: true as const,
+        sessions: summaries
+      };
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false as const,
+        error: { code: 'LIST_SESSIONS_ERROR', message: (err as Error).message }
+      };
+    }
+  }
+
   async function executeAgent(req: ExecuteRequest) {
     const startTime = Date.now();
     let mcp: Awaited<ReturnType<typeof connectMCP>> = [];
@@ -1713,7 +1764,8 @@ async function runInternalWorker() {
           true,
           existingSessionId,
           req.runChannelHandles,
-          req.type === 'continue-session' ? req.prompt : undefined
+          req.type === 'continue-session' ? req.prompt : undefined,
+          req.trigger
         );
 
         clearTimeout(timeoutId);
@@ -1805,6 +1857,10 @@ async function runInternalWorker() {
         });
       } else if (request.type === 'list-approvals') {
         listAllApprovals(request).then((response) => {
+          console.log(JSON.stringify(response));
+        });
+      } else if (request.type === 'list-sessions') {
+        listSessions(request).then((response) => {
           console.log(JSON.stringify(response));
         });
       } else if (request.type === 'execute' || request.type === 'resume' || request.type === 'continue-session') {

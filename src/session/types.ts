@@ -8,10 +8,17 @@ export type DeepPartial<T> = {
 // Session Info Schema
 export type SessionStatus = 'running' | 'completed' | 'error' | 'suspended';
 
+// How a run was triggered. Drives filtering on the /sessions operator surface.
+// 'manual' is the default for CLI direct runs, subagents, and the HTTP run
+// endpoint when no origin is specified; serve sets 'scheduled' / 'api' / 'slack'
+// where it knows the origin.
+export type SessionTrigger = 'scheduled' | 'manual' | 'slack' | 'api';
+
 export interface SessionInfo {
   id: string;                        // ULID
   parentSessionID?: string;          // For subagent sessions - links to parent agent session
   status: SessionStatus;             // Session completion status
+  trigger: SessionTrigger;           // How this run was triggered (defaults to 'manual')
 
   // Agent metadata
   agent: {

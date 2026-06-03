@@ -25,6 +25,8 @@ import { loadGlobalConfig, expandHome, getGlobalConfigPath, getGlobalEnvPath, lo
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
+import type { SessionTrigger } from "../session/types";
+import { sessionViewToken, validateSessionToken } from "../utils/session-token";
 import {
   approvalListThemeStyles,
   approvalThemeBootScript,
@@ -85,6 +87,7 @@ interface WorkerExecuteOptions {
   sessionId?: string | undefined;
   toolResult?: unknown;
   resumeToken?: string | undefined;
+  trigger?: SessionTrigger | undefined;
 }
 
 interface WorkerExecuteResult {
@@ -163,6 +166,27 @@ interface WorkerListApprovalsResult {
   approvals: ApprovalSummary[];
 }
 
+interface SessionSummary {
+  sessionId: string;
+  agent: {
+    id: string;
+    name: string;
+    description?: string;
+    filePath?: string;
+  };
+  status: string;
+  trigger: SessionTrigger;
+  createdAt: number;
+  updatedAt: number;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+interface WorkerListSessionsResult {
+  success: true;
+  sessions: SessionSummary[];
+}
+
 interface ApprovalPageInfo {
   sessionId: string;
   sessionStatus: string;
@@ -239,7 +263,7 @@ class AgentWorker {
   private process: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
   private pendingRequests: Map<string, {
-    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult | WorkerListApprovalsResult) => void;
+    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult) => void;
     timeoutId?: NodeJS.Timeout;
   }> = new Map();
   private requestCounter = 0;
@@ -374,6 +398,7 @@ class AgentWorker {
       sessionId: options.sessionId,
       toolResult: options.toolResult,
       resumeToken: options.resumeToken,
+      trigger: options.trigger,
     }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
   }
 
@@ -399,6 +424,12 @@ class AgentWorker {
     sessionId: string;
     resumeToken?: string;
     allowHistorical?: boolean;
+    /**
+     * Trusted, serve-set only: bypass the gate-token check and return full
+     * approval info (including the current gate's resumeToken). Set this ONLY
+     * after the serve process has already authorized the viewer.
+     */
+    trusted?: boolean;
   }): Promise<WorkerApprovalInfoResult | WorkerExecuteError> {
     return this.request({
       type: "approval-info",
@@ -406,6 +437,7 @@ class AgentWorker {
       sessionId: options.sessionId,
       resumeToken: options.resumeToken,
       allowHistorical: options.allowHistorical ?? false,
+      skipTokenCheck: options.trusted ?? false,
       timeout: 30,
     }) as Promise<WorkerApprovalInfoResult | WorkerExecuteError>;
   }
@@ -430,7 +462,19 @@ class AgentWorker {
     }) as Promise<WorkerListApprovalsResult | WorkerExecuteError>;
   }
 
-  private request(options: Record<string, unknown> & { timeout?: number | undefined }): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult | WorkerListApprovalsResult> {
+  listSessions(
+    projectRoot: string,
+    options: { createdAfter?: number } = {}
+  ): Promise<WorkerListSessionsResult | WorkerExecuteError> {
+    return this.request({
+      type: "list-sessions",
+      projectRoot,
+      sessionsCreatedAfter: options.createdAfter,
+      timeout: 30,
+    }) as Promise<WorkerListSessionsResult | WorkerExecuteError>;
+  }
+
+  private request(options: Record<string, unknown> & { timeout?: number | undefined }): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult> {
     return new Promise((resolve) => {
       if (!this.process || !this.ready) {
         resolve({
@@ -672,10 +716,14 @@ function latestReviewerComment(logs: ApprovalLogEntry[]): { comment: string; rev
 
 function renderApprovalRow(row: { projectId: string; multiProject: boolean; approval: ApprovalSummary }): string {
   const { approval, projectId, multiProject } = row;
-  const linkable = approval.resumeToken !== undefined;
+  // Rows link into the unified session page. Carry the gate resumeToken as the
+  // token; on a remote deploy the session page accepts it as a view credential
+  // (legacy fallback). On local the token is ignored (open). Rows without a
+  // token are still linkable (local), so always link.
   const params = new URLSearchParams();
   if (approval.resumeToken) params.set('token', approval.resumeToken);
-  const href = linkable ? `/approvals/${encodeURIComponent(approval.sessionId)}?${params.toString()}` : null;
+  const query = params.toString();
+  const href = `/sessions/${encodeURIComponent(approval.sessionId)}${query ? `?${query}` : ''}`;
 
   const titleText = approval.agentDescription || approval.prompt || approval.agentName || '(untitled approval)';
   const truncated = titleText.length > 220 ? `${titleText.slice(0, 220)}…` : titleText;
@@ -704,9 +752,7 @@ function renderApprovalRow(row: { projectId: string; multiProject: boolean; appr
     <div class="row-meta"><code>${escapeHtml(approval.sessionId)}</code></div>
   `;
 
-  return href
-    ? `<a class="row" href="${escapeHtml(href)}">${inner}</a>`
-    : `<div class="row row-static">${inner}</div>`;
+  return `<a class="row" href="${escapeHtml(href)}">${inner}</a>`;
 }
 
 function renderApprovalBucket(
@@ -1150,8 +1196,12 @@ function renderAgentTree(agents: AgentSummary[]): string {
         const scheduleCell = a.schedule
           ? `<span class="chip status">${escapeHtml(a.schedule)}</span>`
           : '<span class="muted">—</span>';
+        // Deep-link the agent label to its run history. The session store keys
+        // by computeAgentId (project-relative path minus the .agentuse suffix).
+        const agentId = a.path.replace(/\.agentuse$/, '');
+        const sessionsHref = `/sessions?agent=${encodeURIComponent(agentId)}`;
         rows.push(`<div class="tree-row">
-          <span class="tree-path">${prefix}<span class="tree-label">${escapeHtml(child.name)}</span></span>
+          <span class="tree-path">${prefix}<a class="tree-label" href="${escapeHtml(sessionsHref)}">${escapeHtml(child.name)}</a></span>
           <span class="tree-name">${escapeHtml(a.name)}${a.description ? `<div class="tree-desc">${escapeHtml(a.description)}</div>` : ''}</span>
           <span><span class="chip">${escapeHtml(a.model)}</span></span>
           <span>${scheduleCell}</span>
@@ -1234,6 +1284,7 @@ function renderAgentsPage(options: {
 function renderSchedulesPage(options: {
   schedules: SerializedSchedule[];
   multiProject: boolean;
+  sessionToken?: (sessionId: string) => string;
 }): string {
   // Group the (already next-run-sorted) schedules into day buckets, with
   // disabled schedules (no next run) collected at the end.
@@ -1263,10 +1314,15 @@ function renderSchedulesPage(options: {
     const cadenceTitle = escapeHtml(`${schedule.expression}${staggerNote}`);
     // Only surface last-run once it has actually run (the in-memory state
     // resets on daemon restart, so "never run" would otherwise dominate).
+    // When the run recorded a session, the badge deep-links into its log.
+    const lastRunSessionId = schedule.lastResult?.sessionId;
+    const lastRunBadge = schedule.lastResult
+      ? `<span class="${schedule.lastResult.success ? 'ok' : 'failed'}">ran ${schedule.lastResult.success ? 'ok' : 'failed'}</span> ${escapeHtml(formatApprovalTime(Date.parse(schedule.lastRun!)))}`
+      : `ran ${escapeHtml(formatApprovalTime(Date.parse(schedule.lastRun!)))}`;
     const lastRun = schedule.lastRun
-      ? schedule.lastResult
-        ? `<span class="${schedule.lastResult.success ? 'ok' : 'failed'}">ran ${schedule.lastResult.success ? 'ok' : 'failed'}</span> ${escapeHtml(formatApprovalTime(Date.parse(schedule.lastRun)))}`
-        : `ran ${escapeHtml(formatApprovalTime(Date.parse(schedule.lastRun)))}`
+      ? lastRunSessionId
+        ? `<a href="${escapeHtml(`/sessions/${encodeURIComponent(lastRunSessionId)}${(() => { const t = options.sessionToken?.(lastRunSessionId); return t ? `?token=${encodeURIComponent(t)}` : ''; })()}`)}">${lastRunBadge}</a>`
+        : lastRunBadge
       : '';
     return `<div class="slot${schedule.nextRun ? '' : ' disabled'}">
       <div class="slot-time">${time}</div>
@@ -1695,8 +1751,165 @@ function renderApprovalsListPage(options: {
 </html>`;
 }
 
+function renderSessionStatusChipClass(status: string): string {
+  if (status === 'suspended') return 'pending';
+  if (status === 'completed') return 'approved';
+  if (status === 'running') return 'pending';
+  if (status === 'error') return 'errored';
+  return '';
+}
+
+function renderSessionRow(row: {
+  projectId: string;
+  multiProject: boolean;
+  session: SessionSummary;
+  token: string;
+}): string {
+  const { session, projectId, multiProject, token } = row;
+  const params = new URLSearchParams();
+  if (token) params.set('token', token);
+  const query = params.toString();
+  const href = `/sessions/${encodeURIComponent(session.sessionId)}${query ? `?${query}` : ''}`;
+
+  const titleText = session.agent.description || session.agent.name || session.agent.id;
+  const truncated = titleText.length > 220 ? `${titleText.slice(0, 220)}…` : titleText;
+  const timeLabel = `started ${formatApprovalTime(session.createdAt)}`;
+  const projectChip = multiProject ? `<span class="chip project">${escapeHtml(projectId)}</span>` : '';
+  const errorLabel = session.errorMessage || '';
+
+  const inner = `
+    <div class="row-head">
+      <span class="chip status ${renderSessionStatusChipClass(session.status)}">${escapeHtml(session.status)}</span>
+      <span class="chip">${escapeHtml(session.trigger)}</span>
+      ${projectChip}
+      <span class="chip agent">${escapeHtml(session.agent.name || session.agent.id)}</span>
+      <span class="row-time">${escapeHtml(timeLabel)}</span>
+    </div>
+    <div class="row-title">${escapeHtml(truncated)}</div>
+    ${errorLabel ? `<div class="row-decision">${escapeHtml(errorLabel)}</div>` : ''}
+    <div class="row-meta"><code>${escapeHtml(session.sessionId)}</code></div>
+  `;
+  return `<a class="row" href="${escapeHtml(href)}">${inner}</a>`;
+}
+
+function renderSessionsListPage(options: {
+  rows: Array<{ projectId: string; multiProject: boolean; session: SessionSummary }>;
+  errors: Array<{ projectId: string; message: string }>;
+  multiProject: boolean;
+  agentFilter?: string;
+  triggerFilter?: SessionTrigger;
+  sessionToken: (sessionId: string) => string;
+}): string {
+  const { rows, errors, agentFilter, triggerFilter, sessionToken } = options;
+  const activeFilters = [
+    agentFilter ? `agent <code>${escapeHtml(agentFilter)}</code>` : '',
+    triggerFilter ? `trigger <code>${escapeHtml(triggerFilter)}</code>` : '',
+  ].filter(Boolean).join(' · ');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentUse / Sessions</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>${approvalThemeBootScript()}</script>
+  <meta http-equiv="refresh" content="10">
+  <style>
+    ${approvalListThemeStyles()}
+    * { box-sizing: border-box; }
+    html, body { background: var(--bg); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--fg);
+      font-family: var(--mono);
+      font-size: 14px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      background:
+        radial-gradient(1200px 600px at 50% -200px, var(--glow-1), transparent 60%),
+        radial-gradient(800px 400px at 100% 100%, var(--glow-2), transparent 60%),
+        var(--bg);
+    }
+    a { color: inherit; text-decoration: none; }
+    ${approvalsTopbarStyles()}
+    main { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; padding: 32px 0 48px; }
+    h1 { font-family: var(--sans); font-size: clamp(24px, 3vw, 34px); letter-spacing: -0.02em; margin: 0 0 8px; font-weight: 500; }
+    .filters { color: var(--muted-2); font-size: 12px; margin: 0 0 24px; }
+    .filters code { color: var(--muted-3); }
+    .filters a { color: var(--cyan); }
+    .rows { display: flex; flex-direction: column; gap: 8px; }
+    .row { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; transition: background 120ms ease, border-color 120ms ease; }
+    a.row { cursor: pointer; }
+    a.row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+    .row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .row-time { color: var(--muted-2); font-size: 12px; margin-left: auto; }
+    .row-title { font-family: var(--sans); font-size: 16px; line-height: 1.35; color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
+    .row-meta { margin-top: 8px; color: var(--muted-2); font-size: 11px; }
+    .row-meta code { font-family: var(--mono); font-size: 11px; }
+    .chip { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted-3); }
+    .chip.status.pending { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+    .chip.status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+    .chip.status.errored { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+    .chip.project { color: var(--cyan); }
+    .chip.agent { color: var(--fg); }
+    .empty { color: var(--muted-2); font-style: italic; padding: 14px 0; }
+    .errors { margin: 16px 0 0; padding: 12px 14px; border: 1px solid var(--red-border); background: var(--red-soft); border-radius: 10px; color: var(--red); font-size: 12.5px; }
+    .errors ul { margin: 6px 0 0; padding-left: 20px; }
+    footer { color: var(--muted-2); font-size: 11px; margin-top: 32px; text-align: center; }
+  </style>
+</head>
+<body>
+  ${approvalsTopbarMarkup({
+    currentPage: 'sessions',
+    right: `<span class="session-pill">${rows.length} sessions</span>${approvalsThemeToggleHtml()}`
+  })}
+  <main>
+    <h1>Sessions</h1>
+    ${activeFilters ? `<p class="filters">${activeFilters} · <a href="/sessions">clear</a></p>` : ''}
+    ${errors.length > 0 ? `
+      <div class="errors">
+        Some projects failed to load:
+        <ul>${errors.map((e) => `<li>${escapeHtml(e.projectId)}: ${escapeHtml(e.message)}</li>`).join('')}</ul>
+      </div>
+    ` : ''}
+    <div class="rows">
+      ${rows.length > 0
+        ? rows.map((row) => renderSessionRow({ ...row, token: sessionToken(row.session.sessionId) })).join('')
+        : '<div class="empty">No sessions yet.</div>'}
+    </div>
+    <footer>auto-refreshes every 10s</footer>
+  </main>
+  <script>${approvalsThemeToggleScript()}</script>
+</body>
+</html>`;
+}
+
 function isEndedSessionStatus(status: string | undefined): boolean {
   return status === 'completed' || status === 'error';
+}
+
+/**
+ * Whether a request bypasses the global `Authorization: Bearer` header gate.
+ *
+ * Exempt: any `/approvals/*` route (legacy, token-authenticated) and, only on
+ * the non-API surface, the unified session page `/sessions/:id` plus its action
+ * subroutes `/sessions/:id/{decision,continue,status}`. These carry their own
+ * capability auth (session token / api key / local).
+ *
+ * NOT exempt (stays header-gated): `/sessions` (the list page), and every
+ * `/api/*` route including `/api/sessions` and `/api/sessions/:id`. The `isApi`
+ * qualifier on the session branch is the security boundary that keeps the JSON
+ * session endpoints authenticated on an exposed host.
+ */
+function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
+  if (routePath.startsWith('/approvals/')) return true;
+  if (isApi) return false;
+  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status))?$/.test(routePath);
 }
 
 function canContinueApprovalSession(options: {
@@ -1724,19 +1937,139 @@ function approvalSessionErrorText(approval: Pick<ApprovalPageInfo, 'sessionStatu
   ].filter(Boolean).join(': ')}`;
 }
 
-function renderApprovalPage(options: {
+interface SessionTimelineState {
+  approval: ApprovalPageInfo;
+  projectId?: string | undefined;
+  status: string;
+  eyebrow: string;
+  agentHeadline: string;
+  agentLabel: string;
+  promptText: string;
+  error?: string | undefined;
+  initialReviewerComment: { comment: string; reviewer?: string; status?: string } | undefined;
+  initialLogs: ApprovalLogEntry[];
+  actionable: boolean;
+  continueActionable: boolean;
+  busy: boolean;
+  initialResultText: string;
+}
+
+/**
+ * The session timeline body: agent header + status eyebrow + reviewer comment +
+ * log timeline, plus the action affordances (continue panel, comment dialog).
+ * The action affordances render only when the corresponding `actionable` /
+ * `continueActionable` flag is set (which the caller derives from `canAct`).
+ * Shared by the unified `/sessions/:id` page (renderSessionPage).
+ */
+function renderSessionTimeline(view: SessionTimelineState): string {
+  const {
+    approval,
+    projectId,
+    status,
+    eyebrow,
+    agentHeadline,
+    agentLabel,
+    promptText,
+    error,
+    initialReviewerComment,
+    initialLogs,
+    actionable,
+    continueActionable,
+    busy,
+    initialResultText,
+  } = view;
+  return `<main>
+    <header>
+      <span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span>
+      <div class="eyebrow">${escapeHtml(eyebrow)}</div>
+      <h1>${escapeHtml(agentHeadline)}</h1>
+      <p class="prompt">${escapeHtml(promptText)}</p>
+      <div class="meta" id="approval-meta">
+        <div class="cell"><span class="label">session</span><code>${escapeHtml(approval.sessionId)}</code></div>
+        <div class="cell"><span class="label">project</span><code>${escapeHtml(projectId ?? 'default')}</code></div>
+        <div class="cell"><span class="label">agent</span><span class="value">${escapeHtml(agentLabel)}</span></div>
+        <div class="cell" id="expires-cell"${approval.expiresAt === undefined ? ' hidden' : ''}><span class="label">expires</span><span class="value" id="expires-value">${approval.expiresAt !== undefined ? escapeHtml(formatApprovalTime(approval.expiresAt)) : ''}</span></div>
+      </div>
+    </header>
+
+    ${error ? `<p class="notice error">${escapeHtml(error)}</p>` : ''}
+
+    <div id="reviewer-comment" class="panel reviewer-comment"${initialReviewerComment ? '' : ' hidden'}>
+      <div class="label">latest reviewer comment</div>
+      <div id="reviewer-comment-body" class="body">${initialReviewerComment ? renderLogContentValue(initialReviewerComment.comment, { forceMarkdown: true }) : ''}</div>
+      <div id="reviewer-comment-meta" class="meta-line">${initialReviewerComment?.reviewer ? `from ${escapeHtml(initialReviewerComment.reviewer)}` : ''}</div>
+    </div>
+
+    <div class="section-title"><span>session log</span><span class="rule"></span></div>
+    <div class="panel">
+      <ul id="logs" class="logs">${renderLogItems(initialLogs, { actionable, currentResumeToken: approval.currentResumeToken, projectId })}</ul>
+    </div>
+
+    <div id="continue-panel" class="continue-panel"${continueActionable ? '' : ' hidden'}>
+      <div class="continue-label">continue session</div>
+      <textarea id="continue-prompt" placeholder="tell the agent what to do next"></textarea>
+      <div class="continue-actions">
+        <span class="continue-hint"><span class="kbd">⌘⏎</span> continue with this instruction</span>
+        <button id="continue-submit" type="button" class="primary">Continue session</button>
+      </div>
+    </div>
+
+    <div id="inactive-banner" class="inactive-banner"${actionable || continueActionable || busy ? ' hidden' : ''}>This approval request is not accepting decisions right now.</div>
+
+    <p id="result" class="notice${initialResultText ? ' error' : ''}">${initialResultText ? escapeHtml(initialResultText) : ''}</p>
+  </main>
+
+  ${actionable ? `
+  <dialog id="comment-dialog" aria-labelledby="comment-dialog-title">
+    <form method="dialog">
+      <div class="dialog-head">
+        <span id="comment-dialog-title" class="title">leave a comment</span>
+        <button type="button" class="dialog-close" data-comment-cancel aria-label="Close">×</button>
+      </div>
+      <div class="dialog-body">
+        <span class="prefix">&gt;</span>
+        <textarea id="comment" placeholder="explain your decision, ask for a tweak, or send context back to the agent" autofocus></textarea>
+      </div>
+      <div class="dialog-foot">
+        <span class="hint"><span class="kbd">⌘⏎</span> send <span class="kbd">esc</span> cancel</span>
+        <span class="actions">
+          <button type="button" data-comment-cancel>Cancel</button>
+          <button type="button" class="primary" data-comment-submit>Send comment</button>
+        </span>
+      </div>
+    </form>
+  </dialog>` : ''}`;
+}
+
+interface SessionPageOptions {
   approval: ApprovalPageInfo;
   token: string;
   projectId?: string;
   resuming?: boolean;
   continuing?: boolean;
   error?: string;
-}): string {
-  const { approval, token, projectId, resuming, continuing, error } = options;
+  /**
+   * Whether the viewer is authorized to act on this session (approve / reject /
+   * comment / continue). Defaults to true so this renders identically to the
+   * legacy approval page. The unified `/sessions/:id` route passes the result
+   * of its auth check here; an unauthorized viewer never reaches render (the
+   * route returns 401 first), so on that route this is effectively always true.
+   */
+  canAct?: boolean;
+}
+
+/**
+ * Full `/sessions/:id` page: doctype + head + topbar + the session timeline
+ * (delegated to renderSessionTimeline) + the inline JS that polls status and
+ * drives the action affordances. This is the single page for both viewing a
+ * run log and approving/continuing it.
+ */
+function renderSessionPage(options: SessionPageOptions): string {
+  const { approval, token, projectId, resuming, continuing, error, canAct = true } = options;
   const expired = approval.expiresAt !== undefined && approval.expiresAt <= Date.now();
   const busy = Boolean(resuming || continuing);
-  const actionable = approval.sessionStatus === 'suspended' && !expired && !busy && !error && Boolean(approval.prompt);
-  const continueActionable = canContinueApprovalSession({ approval, resuming, continuing, error });
+  const actionable = canAct && approval.sessionStatus === 'suspended' && !expired && !busy && !error && Boolean(approval.prompt);
+  const continueActionable = canAct && canContinueApprovalSession({ approval, resuming, continuing, error });
   const status = continuing
     ? 'continuing'
     : resuming
@@ -2552,67 +2885,22 @@ function renderApprovalPage(options: {
     right: approvalsThemeToggleHtml()
   })}
 
-  <main>
-    <header>
-      <span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span>
-      <div class="eyebrow">${escapeHtml(eyebrow)}</div>
-      <h1>${escapeHtml(agentHeadline)}</h1>
-      <p class="prompt">${escapeHtml(promptText)}</p>
-      <div class="meta" id="approval-meta">
-        <div class="cell"><span class="label">session</span><code>${escapeHtml(approval.sessionId)}</code></div>
-        <div class="cell"><span class="label">project</span><code>${escapeHtml(projectId ?? 'default')}</code></div>
-        <div class="cell"><span class="label">agent</span><span class="value">${escapeHtml(agentLabel)}</span></div>
-        <div class="cell" id="expires-cell"${approval.expiresAt === undefined ? ' hidden' : ''}><span class="label">expires</span><span class="value" id="expires-value">${approval.expiresAt !== undefined ? escapeHtml(formatApprovalTime(approval.expiresAt)) : ''}</span></div>
-      </div>
-    </header>
-
-    ${error ? `<p class="notice error">${escapeHtml(error)}</p>` : ''}
-
-    <div id="reviewer-comment" class="panel reviewer-comment"${initialReviewerComment ? '' : ' hidden'}>
-      <div class="label">latest reviewer comment</div>
-      <div id="reviewer-comment-body" class="body">${initialReviewerComment ? renderLogContentValue(initialReviewerComment.comment, { forceMarkdown: true }) : ''}</div>
-      <div id="reviewer-comment-meta" class="meta-line">${initialReviewerComment?.reviewer ? `from ${escapeHtml(initialReviewerComment.reviewer)}` : ''}</div>
-    </div>
-
-    <div class="section-title"><span>session log</span><span class="rule"></span></div>
-    <div class="panel">
-      <ul id="logs" class="logs">${renderLogItems(initialLogs, { actionable, currentResumeToken: approval.currentResumeToken, projectId })}</ul>
-    </div>
-
-    <div id="continue-panel" class="continue-panel"${continueActionable ? '' : ' hidden'}>
-      <div class="continue-label">continue session</div>
-      <textarea id="continue-prompt" placeholder="tell the agent what to do next"></textarea>
-      <div class="continue-actions">
-        <span class="continue-hint"><span class="kbd">⌘⏎</span> continue with this instruction</span>
-        <button id="continue-submit" type="button" class="primary">Continue session</button>
-      </div>
-    </div>
-
-    <div id="inactive-banner" class="inactive-banner"${actionable || continueActionable || busy ? ' hidden' : ''}>This approval request is not accepting decisions right now.</div>
-
-    <p id="result" class="notice${initialResultText ? ' error' : ''}">${initialResultText ? escapeHtml(initialResultText) : ''}</p>
-  </main>
-
-  ${actionable ? `
-  <dialog id="comment-dialog" aria-labelledby="comment-dialog-title">
-    <form method="dialog">
-      <div class="dialog-head">
-        <span id="comment-dialog-title" class="title">leave a comment</span>
-        <button type="button" class="dialog-close" data-comment-cancel aria-label="Close">×</button>
-      </div>
-      <div class="dialog-body">
-        <span class="prefix">&gt;</span>
-        <textarea id="comment" placeholder="explain your decision, ask for a tweak, or send context back to the agent" autofocus></textarea>
-      </div>
-      <div class="dialog-foot">
-        <span class="hint"><span class="kbd">⌘⏎</span> send <span class="kbd">esc</span> cancel</span>
-        <span class="actions">
-          <button type="button" data-comment-cancel>Cancel</button>
-          <button type="button" class="primary" data-comment-submit>Send comment</button>
-        </span>
-      </div>
-    </form>
-  </dialog>` : ''}
+  ${renderSessionTimeline({
+    approval,
+    projectId,
+    status,
+    eyebrow,
+    agentHeadline,
+    agentLabel,
+    promptText,
+    error,
+    initialReviewerComment,
+    initialLogs,
+    actionable,
+    continueActionable,
+    busy,
+    initialResultText,
+  })}
 
   <script>
     const token = ${JSON.stringify(token)};
@@ -3152,7 +3440,7 @@ function renderApprovalPage(options: {
       result.textContent = '⋮ submitting decision…';
       result.className = 'notice';
       try {
-        const response = await fetch(location.pathname + '/decision', {
+        const response = await fetch(location.pathname + '/decision' + (token ? '?token=' + encodeURIComponent(token) : ''), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -3191,7 +3479,7 @@ function renderApprovalPage(options: {
       result.textContent = '⋮ continuing session…';
       result.className = 'notice';
       try {
-        const response = await fetch(location.pathname + '/continue', {
+        const response = await fetch(location.pathname + '/continue' + (token ? '?token=' + encodeURIComponent(token) : ''), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -3319,6 +3607,16 @@ function renderApprovalPage(options: {
   </script>
 </body>
 </html>`;
+}
+
+/**
+ * Back-compat alias for the legacy approval page. The unified session page
+ * (renderSessionPage) defaults `canAct` to true, so this renders identically to
+ * the historical `/approvals/:id` page. Retained for the transition `/approvals`
+ * routes and existing tests.
+ */
+function renderApprovalPage(options: SessionPageOptions): string {
+  return renderSessionPage(options);
 }
 
 function isExposedHost(host: string): boolean {
@@ -3657,6 +3955,7 @@ export function createServeCommand(): Command {
           timeout: agent.config.timeout,
           maxSteps: agent.config.maxSteps,
           debug: options.debug,
+          trigger: 'scheduled',
         });
 
         const duration = Date.now() - startTime;
@@ -3689,6 +3988,7 @@ export function createServeCommand(): Command {
           return {
             success: true,
             duration,
+            ...(spawnResult.result.sessionId && { sessionId: spawnResult.result.sessionId }),
           };
         } else {
           totalExecutions++;
@@ -3948,11 +4248,203 @@ export function createServeCommand(): Command {
         };
       };
 
+      // Resolve full session/approval info for an already-authorized viewer of
+      // the unified /sessions/:id page. Unlike findApprovalInfo this needs no
+      // gate resumeToken (the serve process authorized via session token / api
+      // key / local), and uses the trusted worker path so the current gate's
+      // resumeToken comes back for server-side resume.
+      const findSessionInfo = async (
+        sessionId: string,
+        projectId?: string
+      ): Promise<
+        | { success: true; project: Project; info: WorkerApprovalInfoResult }
+        | { success: false; status: number; code: string; message: string }
+      > => {
+        const selectedProjects = projectId
+          ? projects.filter((project) => project.id === projectId)
+          : (effectiveDefault ? [projectsById.get(effectiveDefault)!] : projects);
+
+        if (selectedProjects.length === 0) {
+          return {
+            success: false,
+            status: 404,
+            code: "PROJECT_NOT_FOUND",
+            message: projectId ? `Project not found: ${projectId}` : "Project not found for session request",
+          };
+        }
+
+        const nonSessionErrors: Array<{ status: number; code: string; message: string }> = [];
+        for (const project of selectedProjects) {
+          const projectWorker = workers.get(project.id);
+          if (!projectWorker) {
+            nonSessionErrors.push({ status: 500, code: "WORKER_UNAVAILABLE", message: `No worker for project ${project.id}` });
+            continue;
+          }
+          const info = await projectWorker.getApprovalInfo({
+            projectRoot: project.root,
+            sessionId,
+            trusted: true,
+          });
+          if (info.success) {
+            return { success: true, project, info };
+          }
+          if (info.error.code !== 'SESSION_NOT_FOUND') {
+            nonSessionErrors.push({ status: 500, code: info.error.code, message: info.error.message });
+          }
+        }
+
+        if (nonSessionErrors.length > 0) {
+          return { success: false, ...nonSessionErrors[0] };
+        }
+        return { success: false, status: 404, code: "SESSION_NOT_FOUND", message: `Session not found: ${sessionId}` };
+      };
+
       const activeApprovalResumes = new Map<string, Promise<unknown>>();
       const activeSessionContinuations = new Map<string, Promise<unknown>>();
       const loggedApprovalRequests = new Set<string>();
       const slackBotToken = process.env.SLACK_BOT_TOKEN;
       const slackAppToken = process.env.SLACK_APP_TOKEN;
+
+      // Shared resume kickoff for both /approvals/:id/decision and the unified
+      // /sessions/:id/decision. The caller validates auth + state, then hands us
+      // the resolved gate resumeToken; we run the worker resume, update any
+      // Slack thread, track the in-flight promise, and write the 202.
+      const startApprovalResume = (
+        res: ServerResponse,
+        params: { project: Project; sessionId: string; info: WorkerApprovalInfoResult; resumeToken: string; status: string; comment?: string | undefined }
+      ): void => {
+        const { project, sessionId, info, resumeToken, status, comment } = params;
+        const projectWorker = workers.get(project.id)!;
+        const activeKey = `${project.id}:${sessionId}`;
+        approvalLog.received('web', status, sessionId, 'web');
+        const resumeStart = Date.now();
+        approvalLog.resumeStarted(sessionId);
+        const slackChannelMessage = info.approval.channelMessage?.type === 'slack-message' &&
+          info.approval.channelMessage.channel &&
+          info.approval.channelMessage.ts &&
+          slackBotToken
+          ? {
+            channelId: info.approval.channelMessage.channel,
+            ts: info.approval.channelMessage.ts,
+            actionTs: info.approval.channelMessage.actionTs,
+            approvalUrl: info.approval.channelMessage.url
+          }
+          : undefined;
+        if (slackChannelMessage && info.approval.prompt) {
+          void updateSlackApprovalRequestStatus({
+            botToken: slackBotToken!,
+            channelId: slackChannelMessage.channelId,
+            ts: slackChannelMessage.ts,
+            ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
+            prompt: info.approval.prompt,
+            sessionId,
+            projectId: project.id,
+            ...(slackChannelMessage.approvalUrl && { approvalUrl: slackChannelMessage.approvalUrl }),
+            ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
+            status: 'resuming',
+            decision: status
+          }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
+        }
+        const resumePromise = Promise.resolve().then(() => projectWorker.execute({
+          projectRoot: project.root,
+          sessionId,
+          toolResult: {
+            status,
+            ...(comment && { comment }),
+            reviewer: { username: 'web' }
+          },
+          resumeToken,
+          debug: options.debug,
+        })).then(result => {
+          if (!result.success) {
+            const alreadyCompleted = /SESSION_NOT_SUSPENDED:\s*completed/i.test(result.error.message);
+            if (alreadyCompleted) {
+              approvalLog.resumeCompleted(sessionId, Date.now() - resumeStart);
+              return;
+            }
+            approvalLog.resumeFailed(sessionId, Date.now() - resumeStart, result.error.message);
+            logger.warn(`Approval resume ${sessionId} failed: ${result.error.message}`);
+            if (slackChannelMessage && info.approval.prompt) {
+              void updateSlackApprovalRequestStatus({
+                botToken: slackBotToken!,
+                channelId: slackChannelMessage.channelId,
+                ts: slackChannelMessage.ts,
+                ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
+                prompt: info.approval.prompt,
+                sessionId,
+                projectId: project.id,
+                ...(slackChannelMessage.approvalUrl && { approvalUrl: slackChannelMessage.approvalUrl }),
+                ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
+                status: 'failed',
+                decision: status,
+                error: result.error.message
+              }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
+            }
+          } else {
+            approvalLog.resumeCompleted(sessionId, Date.now() - resumeStart);
+            if (slackChannelMessage && info.approval.prompt) {
+              void updateSlackApprovalRequestStatus({
+                botToken: slackBotToken!,
+                channelId: slackChannelMessage.channelId,
+                ts: slackChannelMessage.ts,
+                ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
+                prompt: info.approval.prompt,
+                sessionId,
+                projectId: project.id,
+                ...(slackChannelMessage.approvalUrl && { approvalUrl: slackChannelMessage.approvalUrl }),
+                ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
+                status: 'completed',
+                decision: status
+              }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
+            }
+          }
+        }).finally(() => {
+          if (activeApprovalResumes.get(activeKey) === resumePromise) {
+            activeApprovalResumes.delete(activeKey);
+          }
+        });
+        activeApprovalResumes.set(activeKey, resumePromise);
+
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ sessionId, status: "resuming" }));
+      };
+
+      // Shared continue kickoff for both /approvals/:id/continue and
+      // /sessions/:id/continue.
+      const startSessionContinue = (
+        res: ServerResponse,
+        params: { project: Project; sessionId: string; prompt: string }
+      ): void => {
+        const { project, sessionId, prompt } = params;
+        const projectWorker = workers.get(project.id)!;
+        const activeKey = `${project.id}:${sessionId}`;
+        const continueStart = Date.now();
+        approvalLog.continueStarted(sessionId);
+        const continuePromise = Promise.resolve()
+          .then(() => projectWorker.continueSession({
+            projectRoot: project.root,
+            sessionId,
+            prompt,
+            debug: options.debug,
+          }))
+          .then(result => {
+            if (!result.success) {
+              approvalLog.continueFailed(sessionId, Date.now() - continueStart, result.error.message);
+              logger.warn(`Session continue ${sessionId} failed: ${result.error.message}`);
+              return;
+            }
+            approvalLog.continueCompleted(sessionId, Date.now() - continueStart);
+          })
+          .finally(() => {
+            if (activeSessionContinuations.get(activeKey) === continuePromise) {
+              activeSessionContinuations.delete(activeKey);
+            }
+          });
+        activeSessionContinuations.set(activeKey, continuePromise);
+
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ sessionId, status: "continuing" }));
+      };
 
       const resumeSuspendedSession = async (decision: SlackApprovalDecision): Promise<void> => {
         const reviewer = decision.toolResult.reviewer?.id
@@ -4354,7 +4846,14 @@ export function createServeCommand(): Command {
         // root. `routePath` is the path with any `/api` prefix stripped so a single
         // set of matchers serves both surfaces, and `isApi` decides JSON vs HTML.
         const { isApi, routePath } = normalizeApiPath(requestUrl.pathname);
-        const isApprovalRoute = routePath.startsWith('/approvals/');
+        // The unified session page + its action subroutes carry their own
+        // capability auth (session token / api key / local), so they are exempt
+        // from the global header gate. Crucially the session exemption is
+        // `!isApi`-qualified inside isCapabilityRoute: the JSON twins
+        // `/api/sessions` (list) and `/api/sessions/:id` stay under the header
+        // gate, and the `/sessions` LIST page stays gated too. Only
+        // `/sessions/:id` and `/sessions/:id/{decision,continue,status}` open up.
+        const isCapabilityRoute = isHeaderGateExemptRoute(routePath, isApi);
 
         // CORS headers
         res.setHeader("Access-Control-Allow-Origin", "*");
@@ -4368,10 +4867,16 @@ export function createServeCommand(): Command {
         }
 
         // Auth check
-        if (apiKey && !isApprovalRoute && !validateApiKey(req, apiKey)) {
+        if (apiKey && !isCapabilityRoute && !validateApiKey(req, apiKey)) {
           sendError(res, 401, "UNAUTHORIZED", "Invalid or missing Authorization header. Use: Authorization: Bearer <key>");
           return;
         }
+
+        // Capability auth for the unified session page + its action subroutes:
+        // local (no api key) is open; otherwise either a Bearer api key header
+        // OR a valid per-session `?token=` (sessionViewToken) authorizes.
+        const sessionAuthorized = (sessionId: string, token?: string): boolean =>
+          !apiKey || validateApiKey(req, apiKey) || validateSessionToken(token, sessionId, apiKey);
 
         // GET / (and GET /api) return server info
         if (req.method === "GET" && routePath === "/") {
@@ -4407,7 +4912,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, schedules });
             return;
           }
-          sendHTML(res, 200, renderSchedulesPage({ schedules, multiProject }));
+          sendHTML(res, 200, renderSchedulesPage({ schedules, multiProject, sessionToken: (sessionId: string) => sessionViewToken(sessionId, apiKey) }));
           return;
         }
 
@@ -4548,6 +5053,298 @@ export function createServeCommand(): Command {
           return;
         }
 
+        // GET /sessions (+ /api/sessions): operator surface listing every run.
+        // API-key gated (not a capability route). Filters: ?agent= ?trigger=
+        // ?days=<n|all> (default window mirrors the approvals list).
+        if (req.method === "GET" && routePath === '/sessions') {
+          const agentFilter = requestUrl.searchParams.get('agent') ?? undefined;
+          const triggerFilterRaw = requestUrl.searchParams.get('trigger') ?? undefined;
+          const triggerFilter: SessionTrigger | undefined =
+            triggerFilterRaw === 'scheduled' || triggerFilterRaw === 'manual' || triggerFilterRaw === 'slack' || triggerFilterRaw === 'api'
+              ? triggerFilterRaw
+              : undefined;
+          const createdAfter = approvalListCreatedAfter(requestUrl);
+
+          type SessionRow = { projectId: string; multiProject: boolean; session: SessionSummary };
+          const rows: SessionRow[] = [];
+          const errors: Array<{ projectId: string; message: string }> = [];
+
+          const projectResults = await Promise.all(projects.map(async (project) => {
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) {
+              return { project, error: 'Worker unavailable' };
+            }
+            const result = await projectWorker.listSessions(
+              project.root,
+              createdAfter === undefined ? {} : { createdAfter }
+            );
+            if (!result.success) {
+              return { project, error: result.error.message };
+            }
+            return { project, sessions: result.sessions };
+          }));
+
+          for (const result of projectResults) {
+            if (result.error) {
+              errors.push({ projectId: result.project.id, message: result.error });
+              continue;
+            }
+            for (const session of result.sessions ?? []) {
+              if (agentFilter && session.agent.id !== agentFilter) continue;
+              if (triggerFilter && session.trigger !== triggerFilter) continue;
+              rows.push({ projectId: result.project.id, multiProject, session });
+            }
+          }
+
+          rows.sort((a, b) => b.session.createdAt - a.session.createdAt);
+
+          if (isApi) {
+            sendJSON(res, 200, {
+              success: true,
+              sessions: rows.map((row) => ({ project: row.projectId, ...row.session })),
+              window: {
+                days: requestUrl.searchParams.get('days') === 'all' ? 'all' : Math.floor((Date.now() - createdAfter!) / (24 * 60 * 60 * 1000)),
+                ...(createdAfter !== undefined && { createdAfter })
+              },
+              ...(agentFilter && { agent: agentFilter }),
+              ...(triggerFilter && { trigger: triggerFilter }),
+              errors
+            });
+            return;
+          }
+
+          sendHTML(res, 200, renderSessionsListPage({
+            rows,
+            errors,
+            multiProject,
+            ...(agentFilter && { agentFilter }),
+            ...(triggerFilter && { triggerFilter }),
+            sessionToken: (sessionId: string) => sessionViewToken(sessionId, apiKey),
+          }));
+          return;
+        }
+
+        // GET /api/sessions/:id: JSON twin of the session page. Header-gated
+        // (handled by the global gate above, since this is an `/api/*` route).
+        const sessionApiMatch = (req.method === "GET" && isApi) ? routePath.match(/^\/sessions\/([^/?#]+)$/) : null;
+        if (sessionApiMatch) {
+          const sessionId = decodeURIComponent(sessionApiMatch[1]);
+          const projectId = requestUrl.searchParams.get('project') ?? undefined;
+          const found = await findSessionInfo(sessionId, projectId);
+          if (!found.success) {
+            sendError(res, found.status, found.code, found.message);
+            return;
+          }
+          const activeKey = `${found.project.id}:${sessionId}`;
+          const sessionStatus = activeApprovalResumes.has(activeKey)
+            ? 'resuming'
+            : activeSessionContinuations.has(activeKey)
+              ? 'continuing'
+              : found.info.approval.sessionStatus === 'suspended'
+                ? 'waiting'
+                : found.info.approval.sessionStatus;
+          sendJSON(res, 200, {
+            success: true,
+            session: {
+              ...found.info.approval,
+              status: sessionStatus,
+              project: found.project.id,
+            }
+          });
+          return;
+        }
+
+        // GET /sessions/:id (HTML): the unified view + approve page. Exempt from
+        // the global header gate; authorized via session token / api key / local.
+        const sessionPageMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)$/) : null;
+        if (sessionPageMatch) {
+          const sessionId = decodeURIComponent(sessionPageMatch[1]);
+          const token = requestUrl.searchParams.get('token') ?? undefined;
+          const projectId = requestUrl.searchParams.get('project') ?? undefined;
+
+          let authorized = sessionAuthorized(sessionId, token);
+          // Transition: old Slack links carry a gate resumeToken. Accept any
+          // token that matches a gate ever issued for THIS session as a session
+          // credential until those approvals expire. This is not an escalation:
+          // the legacy /approvals/:id?token=<resumeToken> page already granted
+          // approve to the same holder; we preserve that capability here.
+          if (!authorized && token) {
+            const legacy = await findApprovalInfo({ ...(projectId && { projectId }), sessionId, resumeToken: token, allowHistorical: true });
+            authorized = legacy.success;
+          }
+          if (!authorized) {
+            sendHTML(res, 401, '<!doctype html><title>AgentUse Session</title><p>Not authorized to view this session. A valid token or API key is required.</p>');
+            return;
+          }
+
+          const found = await findSessionInfo(sessionId, projectId);
+          if (!found.success) {
+            sendHTML(res, found.status, `<!doctype html><title>AgentUse Session</title><p>${escapeHtml(found.message)}</p>`);
+            return;
+          }
+
+          const activeKey = `${found.project.id}:${sessionId}`;
+          // Always embed the canonical session token so the page's own fetches
+          // (status poll, decision, continue) authorize via ?token=, even when
+          // the viewer authenticated with an Authorization header the browser
+          // will not resend. Empty on local (no api key), where links omit it.
+          const pageToken = sessionViewToken(sessionId, apiKey);
+          sendHTML(res, 200, renderSessionPage({
+            approval: found.info.approval,
+            token: pageToken,
+            projectId: found.project.id,
+            resuming: activeApprovalResumes.has(activeKey),
+            continuing: activeSessionContinuations.has(activeKey),
+            canAct: true,
+          }));
+          return;
+        }
+
+        // GET /sessions/:id/status: live status poll for the session page.
+        const sessionStatusMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/status$/) : null;
+        if (sessionStatusMatch) {
+          const sessionId = decodeURIComponent(sessionStatusMatch[1]);
+          const token = requestUrl.searchParams.get('token') ?? undefined;
+          const projectId = requestUrl.searchParams.get('project') ?? undefined;
+          if (!sessionAuthorized(sessionId, token)) {
+            sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+            return;
+          }
+          const found = await findSessionInfo(sessionId, projectId);
+          if (!found.success) {
+            sendError(res, found.status, found.code, found.message);
+            return;
+          }
+          const activeKey = `${found.project.id}:${sessionId}`;
+          const status = activeApprovalResumes.has(activeKey)
+            ? 'resuming'
+            : activeSessionContinuations.has(activeKey)
+              ? 'continuing'
+              : found.info.approval.sessionStatus === 'suspended'
+                ? 'waiting'
+                : found.info.approval.sessionStatus;
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            success: true,
+            sessionId,
+            status,
+            approval: found.info.approval,
+            logs: found.info.approval.logs ?? [],
+            decision: found.info.approval.decision
+          }));
+          return;
+        }
+
+        // POST /sessions/:id/decision: approve / reject / comment on the current
+        // pending gate. Authorized via session token / api key / local; the gate
+        // resumeToken is resolved server-side from session state.
+        const sessionDecisionMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/decision$/) : null;
+        if (sessionDecisionMatch) {
+          try {
+            const sessionId = decodeURIComponent(sessionDecisionMatch[1]);
+            const token = requestUrl.searchParams.get('token') ?? undefined;
+            const body = await parseJSONBody(req);
+            const status = typeof body.status === 'string' ? body.status : undefined;
+            const comment = typeof body.comment === 'string' && body.comment.length > 0 ? body.comment : undefined;
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+
+            if (!sessionAuthorized(sessionId, token)) {
+              sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+              return;
+            }
+            if (!status) {
+              sendError(res, 400, "STATUS_REQUIRED", "Missing approval status");
+              return;
+            }
+
+            const found = await findSessionInfo(sessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+
+            const project = found.project;
+            const activeKey = `${project.id}:${sessionId}`;
+            if (activeApprovalResumes.has(activeKey) || activeSessionContinuations.has(activeKey)) {
+              sendError(res, 409, "APPROVAL_RESUMING", "Approval decision has already been submitted and the session is resuming");
+              return;
+            }
+            const info = found.info;
+            if (info.approval.sessionStatus !== 'suspended') {
+              sendError(res, 409, "SESSION_NOT_SUSPENDED", `Session is ${info.approval.sessionStatus}`);
+              return;
+            }
+            const resumeToken = info.approval.currentResumeToken;
+            if (!resumeToken) {
+              sendError(res, 404, "APPROVAL_NOT_FOUND", `No pending approval gate for session ${sessionId}`);
+              return;
+            }
+            if (info.approval.expiresAt !== undefined && info.approval.expiresAt <= Date.now()) {
+              sendError(res, 410, "APPROVAL_EXPIRED", "Approval request has expired");
+              return;
+            }
+
+            startApprovalResume(res, { project, sessionId, info, resumeToken, status, comment });
+          } catch (err) {
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // POST /sessions/:id/continue: send a follow-up instruction to an ended
+        // session, continuing it with its existing context.
+        const sessionContinueMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/continue$/) : null;
+        if (sessionContinueMatch) {
+          try {
+            const sessionId = decodeURIComponent(sessionContinueMatch[1]);
+            const token = requestUrl.searchParams.get('token') ?? undefined;
+            const body = await parseJSONBody(req);
+            const prompt = typeof body.prompt === 'string' && body.prompt.trim().length > 0 ? body.prompt.trim() : undefined;
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+
+            if (!sessionAuthorized(sessionId, token)) {
+              sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+              return;
+            }
+            if (!prompt) {
+              sendError(res, 400, "PROMPT_REQUIRED", "Missing continuation prompt");
+              return;
+            }
+
+            const found = await findSessionInfo(sessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+
+            const project = found.project;
+            const activeKey = `${project.id}:${sessionId}`;
+            if (activeApprovalResumes.has(activeKey) || activeSessionContinuations.has(activeKey)) {
+              sendError(res, 409, "SESSION_ACTIVE", `Session ${sessionId} is already being resumed`);
+              return;
+            }
+
+            const sessionStatus = found.info.approval.sessionStatus;
+            if (sessionStatus === 'suspended') {
+              sendError(res, 409, "SESSION_SUSPENDED", "Session is suspended; submit an approval decision instead");
+              return;
+            }
+            if (sessionStatus === 'running') {
+              sendError(res, 409, "SESSION_RUNNING", `Session ${sessionId} is already running`);
+              return;
+            }
+            if (!isEndedSessionStatus(sessionStatus)) {
+              sendError(res, 409, "SESSION_NOT_ENDED", `Session is ${sessionStatus}`);
+              return;
+            }
+
+            startSessionContinue(res, { project, sessionId, prompt });
+          } catch (err) {
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
         if (req.method === "GET" && routePath === '/approvals') {
           type ProjectRow = { projectId: string; multiProject: boolean; approval: ApprovalSummary };
           const rows: ProjectRow[] = [];
@@ -4619,35 +5416,20 @@ export function createServeCommand(): Command {
 
         // The single-approval view is an HTML page (embedded in Slack); it has no
         // JSON twin, so it only matches at root, never under `/api/*`.
+        // The approval detail page is now the unified session page. Redirect
+        // GET /approvals/:id -> /sessions/:id, carrying any token through. Old
+        // Slack links carry a gate resumeToken; the session page accepts it as a
+        // view credential during the transition window (see sessionPageMatch).
         const approvalPageMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/approvals\/([^/?#]+)$/) : null;
         if (approvalPageMatch) {
           const sessionId = decodeURIComponent(approvalPageMatch[1]);
-          const token = requestUrl.searchParams.get('token') ?? undefined;
-          const projectId = requestUrl.searchParams.get('project') ?? undefined;
-          if (!token) {
-            sendHTML(res, 401, '<!doctype html><title>AgentUse Approval</title><p>Missing approval token.</p>');
-            return;
-          }
-
-          const found = await findApprovalInfo({
-            ...(projectId && { projectId }),
-            sessionId,
-            resumeToken: token,
-            allowHistorical: true,
-          });
-          if (!found.success) {
-            sendHTML(res, found.status, `<!doctype html><title>AgentUse Approval</title><p>${escapeHtml(found.message)}</p>`);
-            return;
-          }
-
-          const activeKey = `${found.project.id}:${sessionId}`;
-          sendHTML(res, 200, renderApprovalPage({
-            approval: found.info.approval,
-            token,
-            projectId: found.project.id,
-            resuming: activeApprovalResumes.has(activeKey),
-            continuing: activeSessionContinuations.has(activeKey),
-          }));
+          const target = new URL(`/sessions/${encodeURIComponent(sessionId)}`, serverUrl);
+          const token = requestUrl.searchParams.get('token');
+          const projectId = requestUrl.searchParams.get('project');
+          if (token) target.searchParams.set('token', token);
+          if (projectId) target.searchParams.set('project', projectId);
+          res.writeHead(302, { Location: `${target.pathname}${target.search}` });
+          res.end();
           return;
         }
 
@@ -4796,98 +5578,7 @@ export function createServeCommand(): Command {
               return;
             }
 
-            approvalLog.received('web', status, sessionId, 'web');
-            const resumeStart = Date.now();
-            approvalLog.resumeStarted(sessionId);
-            const slackChannelMessage = info.approval.channelMessage?.type === 'slack-message' &&
-              info.approval.channelMessage.channel &&
-              info.approval.channelMessage.ts &&
-              slackBotToken
-              ? {
-                channelId: info.approval.channelMessage.channel,
-                ts: info.approval.channelMessage.ts,
-                actionTs: info.approval.channelMessage.actionTs,
-                approvalUrl: info.approval.channelMessage.url
-              }
-              : undefined;
-            if (slackChannelMessage && info.approval.prompt) {
-              void updateSlackApprovalRequestStatus({
-                botToken: slackBotToken!,
-                channelId: slackChannelMessage.channelId,
-                ts: slackChannelMessage.ts,
-                ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
-                prompt: info.approval.prompt,
-                sessionId,
-                projectId: project.id,
-                ...(slackChannelMessage.approvalUrl && { approvalUrl: slackChannelMessage.approvalUrl }),
-                ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
-                status: 'resuming',
-                decision: status
-              }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
-            }
-            const resumePromise = Promise.resolve().then(() => projectWorker.execute({
-              projectRoot: project.root,
-              sessionId,
-              toolResult: {
-                status,
-                ...(comment && { comment }),
-                reviewer: { username: 'web' }
-              },
-              resumeToken: token,
-              debug: options.debug,
-            })
-            ).then(result => {
-              if (!result.success) {
-                const alreadyCompleted = /SESSION_NOT_SUSPENDED:\s*completed/i.test(result.error.message);
-                if (alreadyCompleted) {
-                  approvalLog.resumeCompleted(sessionId, Date.now() - resumeStart);
-                  return;
-                }
-                approvalLog.resumeFailed(sessionId, Date.now() - resumeStart, result.error.message);
-                logger.warn(`Approval resume ${sessionId} failed: ${result.error.message}`);
-                if (slackChannelMessage && info.approval.prompt) {
-                  void updateSlackApprovalRequestStatus({
-                    botToken: slackBotToken!,
-                    channelId: slackChannelMessage.channelId,
-                    ts: slackChannelMessage.ts,
-                    ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
-                    prompt: info.approval.prompt,
-                    sessionId,
-                    projectId: project.id,
-                    ...(slackChannelMessage.approvalUrl && { approvalUrl: slackChannelMessage.approvalUrl }),
-                    ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
-                    status: 'failed',
-                    decision: status,
-                    error: result.error.message
-                  }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
-                }
-              } else {
-                approvalLog.resumeCompleted(sessionId, Date.now() - resumeStart);
-                if (slackChannelMessage && info.approval.prompt) {
-                  void updateSlackApprovalRequestStatus({
-                    botToken: slackBotToken!,
-                    channelId: slackChannelMessage.channelId,
-                    ts: slackChannelMessage.ts,
-                    ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
-                    prompt: info.approval.prompt,
-                    sessionId,
-                    projectId: project.id,
-                    ...(slackChannelMessage.approvalUrl && { approvalUrl: slackChannelMessage.approvalUrl }),
-                    ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
-                    status: 'completed',
-                    decision: status
-                  }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
-                }
-              }
-            }).finally(() => {
-              if (activeApprovalResumes.get(activeKey) === resumePromise) {
-                activeApprovalResumes.delete(activeKey);
-              }
-            });
-            activeApprovalResumes.set(activeKey, resumePromise);
-
-            res.writeHead(202, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ sessionId, status: "resuming" }));
+            startApprovalResume(res, { project, sessionId, info, resumeToken: token, status, comment });
           } catch (err) {
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
@@ -4958,32 +5649,7 @@ export function createServeCommand(): Command {
               return;
             }
 
-            const continueStart = Date.now();
-            approvalLog.continueStarted(sessionId);
-            const continuePromise = Promise.resolve()
-              .then(() => projectWorker.continueSession({
-                projectRoot: project.root,
-                sessionId,
-                prompt,
-                debug: options.debug,
-              }))
-              .then(result => {
-                if (!result.success) {
-                  approvalLog.continueFailed(sessionId, Date.now() - continueStart, result.error.message);
-                  logger.warn(`Session continue ${sessionId} failed: ${result.error.message}`);
-                  return;
-                }
-                approvalLog.continueCompleted(sessionId, Date.now() - continueStart);
-              })
-              .finally(() => {
-                if (activeSessionContinuations.get(activeKey) === continuePromise) {
-                  activeSessionContinuations.delete(activeKey);
-                }
-              });
-            activeSessionContinuations.set(activeKey, continuePromise);
-
-            res.writeHead(202, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ sessionId, status: "continuing" }));
+            startSessionContinue(res, { project, sessionId, prompt });
           } catch (err) {
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
@@ -5106,6 +5772,7 @@ export function createServeCommand(): Command {
             maxSteps: body.maxSteps,
             debug: options.debug,
             sessionId: body.sessionId,
+            trigger: 'api',
           });
 
           clearTimeout(timeoutId);
@@ -5706,6 +6373,10 @@ function createSchedulesSubcommand(): Command {
 
 export const __testing = {
   renderApprovalPage,
+  renderSessionPage,
+  renderSessionTimeline,
+  renderSessionsListPage,
+  isHeaderGateExemptRoute,
   renderStoresIndexPage,
   renderAgentsPage,
   renderSchedulesPage,

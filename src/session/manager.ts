@@ -4,6 +4,7 @@ import path from 'path';
 import { writeJSON, readJSON, listKeys, getStorageState, sanitizeAgentName } from '../storage';
 import type {
   SessionInfo,
+  SessionTrigger,
   Part,
   Message,
   DeepPartial,
@@ -74,7 +75,7 @@ export class SessionManager {
   /**
    * Create a new session
    */
-  async createSession(info: Omit<SessionInfo, 'id' | 'time' | 'status'>): Promise<string> {
+  async createSession(info: Omit<SessionInfo, 'id' | 'time' | 'status' | 'trigger'> & { trigger?: SessionTrigger }): Promise<string> {
     const id = ulid();
     const now = Date.now();
 
@@ -82,6 +83,9 @@ export class SessionManager {
       ...info,
       id,
       status: 'running',
+      // Default 'manual' so every existing caller stays valid; serve sets
+      // 'scheduled' / 'api' where it knows the origin.
+      trigger: info.trigger ?? 'manual',
       time: {
         created: now,
         updated: now

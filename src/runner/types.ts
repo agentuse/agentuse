@@ -4,6 +4,7 @@ import type { MCPConnection } from '../mcp';
 import type { ToolCallTrace } from '../plugin/types';
 import type { DoomLoopDetector } from '../tools/index.js';
 import type { SessionManager } from '../session';
+import type { SessionTrigger } from '../session/types';
 
 export interface PrepareAgentOptions {
   agent: ParsedAgent;
@@ -17,6 +18,8 @@ export interface PrepareAgentOptions {
   verbose?: boolean | undefined;
   existingSessionId?: string | undefined;
   prebuiltMessages?: ModelMessage[] | undefined;
+  /** How this run was triggered. Only the fresh-session path records it. */
+  trigger?: SessionTrigger | undefined;
 }
 
 export interface PreparedAgentExecution {

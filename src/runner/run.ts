@@ -1,6 +1,6 @@
 import type { ParsedAgent } from '../parser';
 import type { MCPConnection } from '../mcp';
-import type { SessionInfo, SessionManager } from '../session';
+import type { SessionInfo, SessionManager, SessionTrigger } from '../session';
 import type { AgentCompleteEvent, PluginManager } from '../plugin';
 import { AuthenticationError } from '../models';
 import { logger } from '../utils/logger';
@@ -126,7 +126,8 @@ export async function runAgent(
   captureConsole: boolean = true,
   existingSessionId?: string,
   initialRunChannelHandles?: RunChannelHandle[],
-  sessionLogUserPrompt?: string
+  sessionLogUserPrompt?: string,
+  trigger?: SessionTrigger
 ): Promise<RunAgentResult> {
   // Track session info for error logging (set during preparation)
   let sessionID: string | undefined;
@@ -160,7 +161,8 @@ export async function runAgent(
       userPrompt,
       abortSignal,
       verbose,
-      existingSessionId
+      existingSessionId,
+      ...(trigger && { trigger })
     });
 
     const {
