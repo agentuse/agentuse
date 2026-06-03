@@ -2,8 +2,8 @@
   "$schema": "https://mintlify.com/docs.json",
   "name": "AgentUse",
   "logo": {
-    "dark": "/static/agentuse-logo-small.png",
-    "light": "/static/agentuse-logo-small.png"
+    "dark": "/static/agentuse-logo-single-white.svg",
+    "light": "/static/agentuse-logo-single-black.svg"
   },
   "favicon": "/static/agentuse-logo-small.png",
   "colors": {
