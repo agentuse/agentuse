@@ -2108,6 +2108,8 @@ interface SessionTimelineState {
   actionable: boolean;
   continueActionable: boolean;
   busy: boolean;
+  /** Whether the run is actively progressing at render time (drives the working indicator). */
+  live: boolean;
   initialResultText: string;
 }
 
@@ -2134,6 +2136,7 @@ function renderSessionTimeline(view: SessionTimelineState): string {
     actionable,
     continueActionable,
     busy,
+    live,
     initialResultText,
   } = view;
   return `<main>
@@ -2163,6 +2166,11 @@ function renderSessionTimeline(view: SessionTimelineState): string {
     <div class="section-title"><span>session log</span><span class="rule"></span></div>
     <div class="panel">
       <ul id="logs" class="logs">${renderLogItems(initialLogs, { actionable, currentResumeToken: approval.currentResumeToken, projectId })}</ul>
+    </div>
+
+    <div id="working-indicator" class="working-indicator"${live ? '' : ' hidden'}>
+      <span class="log-spinner" aria-hidden="true"></span>
+      <span>session running — the agent is working…</span>
     </div>
 
     <div id="continue-panel" class="continue-panel"${continueActionable ? '' : ' hidden'}>
@@ -2240,6 +2248,15 @@ function renderSessionPage(options: SessionPageOptions): string {
         ? 'waiting'
         : approval.sessionStatus;
   const initialLogs = approval.logs ?? [];
+  // Live whenever the run is actively progressing — covers tool execution and
+  // the between-step thinking gaps where no individual log entry is streaming.
+  // Mirrors the client isLiveStatus() (including its terminal-status short
+  // circuit) so the working indicator and eyebrow render correctly before the
+  // first status poll lands.
+  const live = status === 'completed' || status === 'error' || status === 'expired' || status === 'failed'
+    ? false
+    : status === 'running' || status === 'run' || resuming || continuing
+      || initialLogs.some((entry) => entry.status === 'streaming' || entry.status === 'running');
   const initialReviewerComment = latestReviewerComment(initialLogs);
   const fileName = approval.agent.id.split('/').pop() || approval.agent.id;
   const agentName = approval.agent.name || fileName;
@@ -2249,7 +2266,9 @@ function renderSessionPage(options: SessionPageOptions): string {
     ? 'human approval requested'
     : continueActionable
       ? approval.sessionStatus === 'error' ? 'session needs attention' : 'session completed'
-      : 'approval history';
+      : live
+        ? 'session running'
+        : 'approval history';
   const promptText = actionable
     ? 'Review the pending request in the session log below, then approve, reject, or send a comment back to the agent. The session is paused until you respond.'
     : continueActionable
@@ -2396,6 +2415,8 @@ function renderSessionPage(options: SessionPageOptions): string {
     }
     .status.waiting { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
     .status.waiting::before { animation: pulse 1.4s ease-in-out infinite; }
+    .status.running, .status.run { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+    .status.running::before, .status.run::before { animation: pulse 0.8s ease-in-out infinite; }
     .status.resuming, .status.continuing { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
     .status.resuming::before, .status.continuing::before { animation: pulse 0.8s ease-in-out infinite; }
     .status.completed, .status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
@@ -2568,6 +2589,16 @@ function renderSessionPage(options: SessionPageOptions): string {
       animation: log-spin 700ms linear infinite;
     }
     @keyframes log-spin { to { transform: rotate(360deg); } }
+    .working-indicator {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 14px 2px 0;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      color: var(--muted-3);
+    }
+    .working-indicator[hidden] { display: none; }
     .log-item.streaming .log-marker, .log-item.running .log-marker { opacity: 1; }
     .log-item.error .log-marker, .log-item.failed .log-marker { color: var(--red); }
     .log-item.completed .log-marker, .log-item.approved .log-marker { color: var(--green); }
@@ -3096,6 +3127,7 @@ function renderSessionPage(options: SessionPageOptions): string {
     actionable,
     continueActionable,
     busy,
+    live,
     initialResultText,
   })}
 
@@ -3119,6 +3151,7 @@ function renderSessionPage(options: SessionPageOptions): string {
     const continueInput = document.getElementById('continue-prompt');
     const continueSubmit = document.getElementById('continue-submit');
     const inactiveBanner = document.getElementById('inactive-banner');
+    const workingIndicator = document.getElementById('working-indicator');
     try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch {}
 
     // theme toggle
@@ -3573,6 +3606,19 @@ function renderSessionPage(options: SessionPageOptions): string {
           inactiveBanner.setAttribute('hidden', '');
         } else {
           inactiveBanner.removeAttribute('hidden');
+        }
+      }
+
+      // The session log only spins on entries that are actively streaming/running.
+      // Between steps (the agent deciding the next tool call) no entry spins, yet
+      // the run is still live — keep a persistent indicator at the end of the log
+      // so a scrolled-down viewer always sees that work is in progress. Hidden
+      // once an approval gate opens, since that surface signals "your turn".
+      if (workingIndicator) {
+        if (live && !pendingActionable) {
+          workingIndicator.removeAttribute('hidden');
+        } else {
+          workingIndicator.setAttribute('hidden', '');
         }
       }
     }
