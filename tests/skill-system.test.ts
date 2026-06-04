@@ -58,7 +58,7 @@ license: MIT
       expect(skill?.license).toBe('MIT');
     });
 
-    it('rejects skill with missing required fields', async () => {
+    it('accepts skill with missing description (defaults to empty)', async () => {
       const skillPath = join(testDir, 'invalid-skill', 'SKILL.md');
       await mkdir(join(testDir, 'invalid-skill'));
       await writeFile(skillPath, `---
@@ -68,10 +68,12 @@ name: invalid-skill
 Missing description`);
 
       const skill = await parseSkillFrontmatter(skillPath);
-      expect(skill).toBeNull();
+      expect(skill).toBeDefined();
+      expect(skill?.name).toBe('invalid-skill');
+      expect(skill?.description).toBe('');
     });
 
-    it('rejects skill with invalid name format', async () => {
+    it('accepts skill with uppercase and underscore in name', async () => {
       const skillPath = join(testDir, 'Invalid_Skill', 'SKILL.md');
       await mkdir(join(testDir, 'Invalid_Skill'));
       await writeFile(skillPath, `---
@@ -82,10 +84,53 @@ description: Has uppercase and underscore
 Content`);
 
       const skill = await parseSkillFrontmatter(skillPath);
+      expect(skill).toBeDefined();
+      expect(skill?.name).toBe('Invalid_Skill');
+    });
+
+    it('rejects skill name with spaces', async () => {
+      const skillPath = join(testDir, 'space-skill', 'SKILL.md');
+      await mkdir(join(testDir, 'space-skill'));
+      await writeFile(skillPath, `---
+name: my skill name
+description: Has spaces
+---
+
+Content`);
+
+      const skill = await parseSkillFrontmatter(skillPath);
       expect(skill).toBeNull();
     });
 
-    it('rejects skill name with consecutive hyphens', async () => {
+    it('rejects skill name with forward slash', async () => {
+      const skillPath = join(testDir, 'slash-skill', 'SKILL.md');
+      await mkdir(join(testDir, 'slash-skill'));
+      await writeFile(skillPath, `---
+name: my/skill
+description: Has forward slash
+---
+
+Content`);
+
+      const skill = await parseSkillFrontmatter(skillPath);
+      expect(skill).toBeNull();
+    });
+
+    it('rejects skill name with backslash', async () => {
+      const skillPath = join(testDir, 'backslash-skill', 'SKILL.md');
+      await mkdir(join(testDir, 'backslash-skill'));
+      await writeFile(skillPath, `---
+name: "my\\skill"
+description: Has backslash
+---
+
+Content`);
+
+      const skill = await parseSkillFrontmatter(skillPath);
+      expect(skill).toBeNull();
+    });
+
+    it('accepts skill name with consecutive hyphens', async () => {
       const skillPath = join(testDir, 'bad--skill', 'SKILL.md');
       await mkdir(join(testDir, 'bad--skill'));
       await writeFile(skillPath, `---
@@ -96,7 +141,50 @@ description: Has consecutive hyphens
 Content`);
 
       const skill = await parseSkillFrontmatter(skillPath);
-      expect(skill).toBeNull();
+      expect(skill).toBeDefined();
+      expect(skill?.name).toBe('bad--skill');
+    });
+
+    it('accepts skill with no frontmatter fields (infers name from directory)', async () => {
+      const skillPath = join(testDir, 'bare-skill', 'SKILL.md');
+      await mkdir(join(testDir, 'bare-skill'));
+      await writeFile(skillPath, `---
+---
+
+Just content, no name or description`);
+
+      const skill = await parseSkillFrontmatter(skillPath);
+      expect(skill).toBeDefined();
+      expect(skill?.name).toBe('bare-skill');
+      expect(skill?.description).toBe('');
+    });
+
+    it('accepts skill with no frontmatter at all (infers name from directory)', async () => {
+      const skillPath = join(testDir, 'no-frontmatter', 'SKILL.md');
+      await mkdir(join(testDir, 'no-frontmatter'));
+      await writeFile(skillPath, `# My Skill
+
+Just raw markdown, no YAML frontmatter`);
+
+      const skill = await parseSkillFrontmatter(skillPath);
+      expect(skill).toBeDefined();
+      expect(skill?.name).toBe('no-frontmatter');
+      expect(skill?.description).toBe('');
+    });
+
+    it('accepts skill name with colon namespace', async () => {
+      const skillPath = join(testDir, 'lifehack:posthog-query', 'SKILL.md');
+      await mkdir(join(testDir, 'lifehack:posthog-query'));
+      await writeFile(skillPath, `---
+name: lifehack:posthog-query
+description: Query PostHog analytics
+---
+
+Content`);
+
+      const skill = await parseSkillFrontmatter(skillPath);
+      expect(skill).toBeDefined();
+      expect(skill?.name).toBe('lifehack:posthog-query');
     });
 
     it('accepts skill name with single hyphen', async () => {
@@ -179,7 +267,7 @@ This is the skill content body.
       expect(skill.directory).toBe(join(testDir, 'full-skill'));
     });
 
-    it('throws on invalid frontmatter', async () => {
+    it('parses skill with missing description (defaults to empty)', async () => {
       const skillPath = join(testDir, 'bad-skill', 'SKILL.md');
       await mkdir(join(testDir, 'bad-skill'));
       await writeFile(skillPath, `---
@@ -188,9 +276,9 @@ name: bad-skill
 
 Missing description`);
 
-      expect(async () => {
-        await parseSkillContent(skillPath);
-      }).toThrow();
+      const skill = await parseSkillContent(skillPath);
+      expect(skill.name).toBe('bad-skill');
+      expect(skill.description).toBe('');
     });
   });
 
@@ -224,7 +312,7 @@ Content`);
       expect(skills.get('skill-one')?.description).toBe('First skill');
     });
 
-    it('warns when skill name does not match directory', async () => {
+    it('loads skill even when name does not match directory', async () => {
       const skillsDir = join(testDir, '.agentuse', 'skills');
       await mkdir(skillsDir, { recursive: true });
 
@@ -238,8 +326,8 @@ Content`);
 
       const skills = await discoverSkills(testDir);
 
-      // Should not include skill with mismatched name
-      expect(skills.has('correct-name')).toBe(false);
+      expect(skills.has('correct-name')).toBe(true);
+      expect(skills.get('correct-name')?.description).toBe('Name mismatch');
     });
 
     it('discovers skills from nested directories', async () => {

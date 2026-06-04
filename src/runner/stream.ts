@@ -158,6 +158,7 @@ export async function processAgentStream(
   const parts: AgentPart[] = [];
   let suspended = false;
   let suspendApprovalUrl: string | undefined;
+  let hasTextSinceLastToolCall = false;
 
   // Track current text part for streaming updates with debouncing
   let currentTextPart: { partID?: string; text: string; startTime: number; createPromise?: Promise<void> } | null = null;
@@ -221,6 +222,7 @@ export async function processAgentStream(
         finalText += chunk.text!;
         if (chunk.text && chunk.text.trim()) {
           hasTextOutput = true;
+          hasTextSinceLastToolCall = true;
         }
         if (!options?.quiet) {
           logger.response(chunk.text!);
@@ -314,14 +316,19 @@ export async function processAgentStream(
         break;
 
       case 'tool-call':
-        // Finalize any pending text part before tool call
-        await finalizeTextPart();
+        if (hasTextSinceLastToolCall && options?.doomLoopDetector) {
+          options.doomLoopDetector.recordNonToolEvent();
+        }
+        hasTextSinceLastToolCall = false;
 
         // Check for doom loop (repeated identical tool calls)
         if (options?.doomLoopDetector) {
           // This will throw DoomLoopError if threshold exceeded
           options.doomLoopDetector.check(chunk.toolName!, chunk.toolInput);
         }
+
+        // Finalize any pending text part before tool call
+        await finalizeTextPart();
 
         parts.push({
           type: 'tool-call',

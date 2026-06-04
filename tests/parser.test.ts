@@ -52,6 +52,9 @@ Test agent`;
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain('deprecated');
       expect(warnings[0]).toContain('mcpServers');
+
+      parseAgentContent(content, 'test-again');
+      expect(warnings).toHaveLength(1);
     });
 
     it('throws error when both mcp_servers and mcpServers are specified', () => {

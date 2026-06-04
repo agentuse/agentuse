@@ -1,6 +1,6 @@
 import matter from 'gray-matter';
 import { readFile } from 'fs/promises';
-import { dirname } from 'path';
+import { basename, dirname } from 'path';
 import type { ZodError } from 'zod';
 import { SkillFrontmatterSchema, type SkillInfo, type SkillContent } from './types.js';
 import { logger } from '../utils/logger.js';
@@ -42,9 +42,10 @@ export async function parseSkillFrontmatter(filePath: string): Promise<SkillInfo
     }
 
     const frontmatter = parsed.data;
+    const skillName = frontmatter.name || basename(dirname(filePath));
 
     return {
-      name: frontmatter.name,
+      name: skillName,
       description: frontmatter.description,
       location: filePath,
       allowedTools: parseAllowedTools(frontmatter['allowed-tools']),
@@ -72,9 +73,10 @@ export async function parseSkillContent(filePath: string): Promise<SkillContent>
   }
 
   const frontmatter = parsed.data;
+  const skillName = frontmatter.name || basename(dirname(filePath));
 
   return {
-    name: frontmatter.name,
+    name: skillName,
     description: frontmatter.description,
     location: filePath,
     allowedTools: parseAllowedTools(frontmatter['allowed-tools']),

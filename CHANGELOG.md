@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.14.0] - 2026-06-03
+
+This release refines the human-in-the-loop and `serve` surfaces introduced in 0.13.0 and hardens skills, sandboxing, and auth. Approval gates, the session/approval web UI, the JSON API, and channels/Slack remain **experimental**: the core workflow is ready to try, but route shapes, UI details, and API response formats may still evolve based on production feedback.
+
+### Added
+
+- **`agentuse doctor`**: a diagnostics command that checks project context, auth/provider credentials, sandbox readiness, and skill configuration, resolving project context from the agent file path rather than `process.cwd()`.
+- **Unified session page**: `serve` collapses the run log and the approval surface onto one page at `sessions/:id`. The page shows the full run timeline and, when the session is suspended on an `await_human` gate, exposes approve/reject/continue actions. A new sessions list plus `GET /api/sessions` (with `agent` / `trigger` / `days` filters) and `GET /api/sessions/:id` back it.
+- **Session token**: a stateless, session-scoped `?token=` (HMAC-SHA256 of `AGENTUSE_API_KEY` over the session id, base64url, timing-safe compared) makes a `sessions/:id` link clickable without pasting an `Authorization` header. It grants view + approve for that one session and is empty/omitted on local where there is no API key.
+- **Root web dashboard**: `GET /` now serves an HTML dashboard (AgentUse wordmark, theme-aware SVG favicon, nav cards, and a per-project agent/schedule rollup that deep-links into the agents view) instead of raw JSON. Server-info JSON moved under `GET /api`.
+- **Agents & schedules surfaces**: new `GET /api/agents` and `GET /api/schedules` JSON endpoints, matching HTML pages at `/agents` and `/schedules`, and `serve agents` + `serve schedules` CLI subcommands. `Scheduler.listSerialized()` returns JSON-friendly schedule rows sorted by next run.
+- **Skill trust config**: `skills: trusted` keeps auto skill discovery but trusts loaded skills to use the tools already configured on the agent (without enabling new tools or new bash commands), aimed at sandboxed/yolo-style agents.
+- **Portable skill directory placeholders**: skill content can reference `${skillDir}`, `${SKILL_DIR}`, or `${CLAUDE_SKILL_DIR}`, each substituted with the skill's absolute directory so bundled scripts and assets resolve regardless of install location. Literal `$SKILL_DIR` (no braces) is left untouched for runtime shell expansion.
+- **AgentUse assistant skill**: `npx skills add agentuse/agentuse` installs a discovery stub that redirects to `agentuse skills get core`, keeping AI coding assistants aligned with the installed CLI version.
+
+### Changed
+
+- **JSON API moved under an `/api` prefix** (potentially breaking). All JSON `GET` endpoints now live under `/api/*` (`/api`, `/api/agents`, `/api/schedules`, `/api/sessions`), replacing the old `?format=json` content negotiation, which has been **removed**. The root and the `/agents` / `/schedules` paths now return HTML. `POST /api/run`, `POST /api/resume`, and the approval action routes keep working at their original un-prefixed paths (`/run`, `/resume`, …) for backward compatibility, but those legacy aliases are deprecated and will be removed in a future release. Update self-hosting health checks and any scripted JSON consumers to the `/api/*` paths.
+- **Sessions follow the agent file across working directories**: session identity and resume now key off a `stateRoot` derived from the agent file (with extensionless path support) rather than the current working directory, so a session can be inspected and resumed from a different `cwd`. Sandbox bind mounts continue to use the cwd-derived project root.
+- **Scheduled runs are staggered** so many agents sharing the same cron expression no longer all fire in the same instant.
+- **Live session feedback**: the running status pill pulses, finished sessions open at the top of the log while an active gate auto-scrolls to the bottom, and a persistent "session running" footer signals progress during the thinking gap between steps. Dashboard HTML is sent with `Cache-Control: no-store` so a tab left open across a restart never runs stale inline JS.
+- **Autonomous agent prompts are stricter about silent execution**, reducing intermediate narration, tool-call announcements, and repeated summaries before the final terminal-friendly result.
+- `GET /approvals/:id` now redirects to `sessions/:id`; the legacy `approvals/:id/*` action routes remain as transition aliases.
+- `learning.apply` now defaults to `false` when omitted, so learnings are extracted but only injected after manual review unless auto-apply is explicitly enabled.
+
+### Fixed
+
+- **Agent file hot reload works with Chokidar v5**: `serve` now watches concrete `.agentuse` files and reconciles additions/removals, so schedule changes and newly added agents are picked up without relying on unsupported glob watching or broad root-directory watchers that can exhaust file descriptors.
+- **Skill discovery is compatible with existing assistant skills**: `SKILL.md` files may omit `name` or `description`, names are inferred from the containing directory when missing, explicit names may use broader assistant-style formats, and directory/name mismatches no longer cause the skill to be skipped.
+- **Doom-loop detection no longer flags intentional repeated commands** when meaningful model text appears between identical tool calls; truly consecutive identical calls still trigger the guard.
+- **Deprecated `mcp_servers` warnings are emitted once per process** instead of repeating every time an agent is parsed.
+- **Sandbox no longer mounts `$HOME` as the project root**: `findProjectRoot` stops its upward walk at `$HOME` (falling back to the starting directory) instead of treating a marker like `.agentuse`, `.git`, or `package.json` in the home directory as a project root, and `createSandbox` refuses to bind-mount a project root that resolves to `$HOME` or an ancestor. This prevented the Docker sandbox from exposing `~/.ssh`, `~/.aws`, and the rest of `$HOME` to `sandbox__exec`. Project-root detection also respects the `$HOME` env var.
+- **Anthropic OAuth tokens refresh before expiry** (within a 5-minute buffer) and **concurrent refreshes no longer race**, avoiding mid-run auth failures and duplicate refreshes.
+- **Slack Socket Mode log storms reduced**, cutting repetitive connection logging.
+- Agents always receive a default skills config from the parser, so skill loading behaves consistently when `skills` is omitted.
+- **Approval gates in delegated subagents fail loud**: a `type: manager` agent delegating to a subagent with `approval: true` previously completed the run silently while leaving an orphaned, un-resumable pending approval (the subagent never propagated the `await_human` suspension to the parent session). Approval in a delegated subagent is now rejected at load time with a clear error; gates are supported only on the top-level/manager agent. See #107 for the design discussion.
+
+### Documentation
+
+- Documented `agentuse doctor`, the skill directory placeholders, the `skills: trusted` config, the sandbox `$HOME` guard, and the implicit `learning.apply: false` default.
+- Reworked the serve docs around the unified session page and session token: rewrote the approval-gates API section to the `sessions` routes (noting the `approvals` redirect and legacy aliases), documented `GET /api/sessions` and `GET /api/sessions/:id`, added browser-based session browsing to the session-logs guide, and moved the documented JSON endpoints under the `/api` prefix.
+- Fixed the self-hosting Docker health check to ping the `/api` server-info endpoint instead of the POST-only run endpoint, and added agent-authoring gotchas.
+
 ## [0.13.0] - 2026-05-12
 
 This is a large pre-1.0 release centered on human-in-the-loop agent workflows. Approval gates, the Approval API, web approval pages, and channels/Slack integrations are currently **experimental**: the core workflow is ready to try, but configuration shape, UI details, and API response formats may evolve based on production feedback.

@@ -91,6 +91,20 @@ export class DoomLoopDetector {
   }
 
   /**
+   * Record a non-tool event, such as meaningful text output, to break the
+   * consecutive chain. Identical tool calls separated by model text are not a
+   * doom loop; they are separate reasoning steps.
+   */
+  recordNonToolEvent(): void {
+    if (this.history.length > 0) {
+      this.history.push({ name: '__non_tool_event__', args: null });
+      if (this.history.length > this.maxHistorySize) {
+        this.history.shift();
+      }
+    }
+  }
+
+  /**
    * Record a tool call and check for doom loop
    *
    * @param toolName Name of the tool being called

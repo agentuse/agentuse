@@ -38,8 +38,8 @@ describe('buildAutonomousAgentPrompt', () => {
 
     expect(prompt).toContain('autonomous AI agent');
     expect(prompt).toContain('Break it down into clear steps');
-    expect(prompt).toContain('Execute each step thoroughly');
-    expect(prompt).toContain('DO NOT narrate actions');
+    expect(prompt).toContain('execute thoroughly');
+    expect(prompt).toContain('ZERO narration');
   });
 
   it('should add sub-agent specific instruction when isSubAgent is true', () => {

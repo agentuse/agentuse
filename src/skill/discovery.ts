@@ -49,11 +49,10 @@ async function discoverSkillsFromDirectories(directories: string[]): Promise<Map
       const skill = await parseSkillFrontmatter(match);
       if (!skill) continue;
 
-      // Validate that skill name matches directory name
+      // Warn if explicit name differs from directory, but still load it.
       const dirName = match.split('/').slice(-2, -1)[0];
       if (dirName !== skill.name) {
-        logger.warn(`Skill name "${skill.name}" does not match directory "${dirName}" in ${match}`);
-        continue;
+        logger.debug(`Skill name "${skill.name}" differs from directory "${dirName}" in ${match}`);
       }
 
       // Warn on duplicate skill names

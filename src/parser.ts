@@ -10,11 +10,18 @@ import { LearningConfigSchema } from './learning/index.js';
 import { SandboxConfigSchema } from './sandbox.js';
 import { SkillsConfigSchema, defaultSkillsConfig } from './skill/config.js';
 
-const warnedExperimental = new Set<string>();
+const warnedParserMessages = new Set<string>();
+function warnOnce(key: string, message: string): void {
+  if (warnedParserMessages.has(key)) return;
+  warnedParserMessages.add(key);
+  logger.warn(message);
+}
+
 function warnExperimentalOnce(key: string, label: string): void {
-  if (warnedExperimental.has(key)) return;
-  warnedExperimental.add(key);
-  logger.warn(`[Experimental] ${label} is experimental and may change in future versions.`);
+  warnOnce(
+    `experimental:${key}`,
+    `[Experimental] ${label} is experimental and may change in future versions.`
+  );
 }
 
 /**
@@ -176,7 +183,7 @@ const AgentSchema = z.object({
 
   // Normalize to mcpServers and warn about deprecation
   if (data.mcp_servers && !data.mcpServers) {
-    logger.warn('The "mcp_servers" field is deprecated. Please use "mcpServers" (camelCase) instead.');
+    warnOnce('deprecated:mcp_servers', 'The "mcp_servers" field is deprecated. Please use "mcpServers" (camelCase) instead.');
     return {
       ...data,
       mcpServers: data.mcp_servers,

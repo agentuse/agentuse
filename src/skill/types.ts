@@ -2,12 +2,13 @@ import { z } from 'zod';
 
 export const SkillFrontmatterSchema = z.object({
   name: z.string()
-    .min(1, 'Name is required')
     .max(64, 'Name must be 64 characters or less')
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*(?::[a-z0-9]+(?:-[a-z0-9]+)*)*$/, 'Name must be lowercase alphanumeric with single hyphens, optionally namespaced with colons (e.g. my-skill or namespace:my-skill)'),
+    .refine(s => !/[/\\\s]/.test(s), 'Name cannot contain spaces, forward slashes, or backslashes')
+    .optional(),
   description: z.string()
-    .min(1, 'Description is required')
-    .max(1024, 'Description must be 1024 characters or less'),
+    .max(1024, 'Description must be 1024 characters or less')
+    .optional()
+    .default(''),
   license: z.string().optional(),
   compatibility: z.string().max(500).optional(),
   metadata: z.record(z.string(), z.string()).optional(),
