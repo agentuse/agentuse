@@ -733,8 +733,40 @@ function latestReviewerComment(logs: ApprovalLogEntry[]): { comment: string; rev
   return undefined;
 }
 
+/**
+ * Shared list-row + chip styles for the Approvals and Sessions list pages, so
+ * the two row layouts stay identical instead of drifting apart (the cause of
+ * the layouts diverging in the first place).
+ */
+function approvalsListRowStyles(): string {
+  return `
+    .rows { display: flex; flex-direction: column; gap: 8px; }
+    .row { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; transition: background 120ms ease, border-color 120ms ease; }
+    a.row { cursor: pointer; }
+    a.row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+    .row-static { opacity: 0.85; }
+    .row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .row-time { color: var(--muted-2); font-size: 12px; margin-left: auto; }
+    .row-title { font-family: var(--sans); font-size: 16px; line-height: 1.35; color: var(--fg); font-weight: 500; overflow-wrap: anywhere; }
+    .row-locator { margin-top: 3px; font-family: var(--mono); font-size: 12px; color: var(--muted-3); overflow-wrap: anywhere; }
+    .row-locator code { font-family: var(--mono); }
+    .row-desc { margin-top: 6px; color: var(--muted); font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
+    .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
+    .row-meta { margin-top: 8px; color: var(--muted-2); font-size: 11px; }
+    .row-meta code { font-family: var(--mono); font-size: 11px; }
+    .chip { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted-3); }
+    .chip.status.pending { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+    .chip.status.approved, .chip.status.commented { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+    .chip.status.rejected { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
+    .chip.status.expired, .chip.status.errored { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+    .chip.project { color: var(--cyan); }
+    .chip.agent { color: var(--fg); }
+    .empty { color: var(--muted-2); font-style: italic; padding: 14px 0; }
+  `;
+}
+
 function renderApprovalRow(row: { projectId: string; multiProject: boolean; approval: ApprovalSummary }): string {
-  const { approval, projectId, multiProject } = row;
+  const { approval, projectId } = row;
   // Rows link into the unified session page. Carry the gate resumeToken as the
   // token; on a remote deploy the session page accepts it as a view credential
   // (legacy fallback). On local the token is ignored (open). Rows without a
@@ -744,8 +776,12 @@ function renderApprovalRow(row: { projectId: string; multiProject: boolean; appr
   const query = params.toString();
   const href = `/sessions/${encodeURIComponent(approval.sessionId)}${query ? `?${query}` : ''}`;
 
-  const titleText = approval.agentDescription || approval.prompt || approval.agentName || '(untitled approval)';
-  const truncated = titleText.length > 220 ? `${titleText.slice(0, 220)}…` : titleText;
+  // Mirror the sessions list row: the agent name is the title, the
+  // project-relative file path is the locator, and the approval's
+  // description/prompt is demoted to the secondary description line.
+  const fileName = approval.agentId.split('/').pop() || approval.agentId;
+  const agentName = approval.agentName || fileName;
+  const locator = `${projectId}/${approval.agentId}.agentuse`;
 
   const timeLabel = approval.status === 'pending'
     ? (approval.expiresAt
@@ -755,18 +791,18 @@ function renderApprovalRow(row: { projectId: string; multiProject: boolean; appr
       ? `expired ${formatApprovalTime(approval.decisionAt ?? approval.expiresAt)}`
       : `decided ${formatApprovalTime(approval.decisionAt)}`;
 
+  const descriptionText = approval.agentDescription || approval.prompt || '';
+  const description = descriptionText.length > 200 ? `${descriptionText.slice(0, 200)}…` : descriptionText;
   const decisionLabel = approval.errorMessage || approval.decisionComment || '';
-
-  const projectChip = multiProject ? `<span class="chip project">${escapeHtml(projectId)}</span>` : '';
 
   const inner = `
     <div class="row-head">
       <span class="chip status ${escapeHtml(approval.status)}">${escapeHtml(approval.status)}</span>
-      ${projectChip}
-      <span class="chip agent">${escapeHtml(approval.agentName)}</span>
       <span class="row-time">${escapeHtml(timeLabel)}</span>
     </div>
-    <div class="row-title">${escapeHtml(truncated)}</div>
+    <div class="row-title">${escapeHtml(agentName)}</div>
+    <div class="row-locator"><code>${escapeHtml(locator)}</code></div>
+    ${description ? `<div class="row-desc">${escapeHtml(description)}</div>` : ''}
     ${decisionLabel ? `<div class="row-decision">${escapeHtml(decisionLabel)}</div>` : ''}
     <div class="row-meta"><code>${escapeHtml(approval.sessionId)}</code></div>
   `;
@@ -811,6 +847,9 @@ function renderStoreStyles(): string {
     .panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
     .store-table { width: 100%; border-collapse: collapse; }
     .store-table th, .store-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    /* Keep the Updated timestamp on one line so narrow-screen rows don't grow
+       ragged heights when the date would otherwise wrap to 2-3 lines. */
+    .store-table th:nth-child(3), .store-table td:nth-child(3) { white-space: nowrap; }
     .store-table th { color: var(--muted-2); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 500; background: var(--panel); }
     .store-table th[aria-sort] { color: var(--muted-3); }
     .sort-header {
@@ -881,10 +920,15 @@ function renderStoreStyles(): string {
     .raw-json { margin: 0; padding: 14px 16px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; color: var(--muted-3); }
     .back-link { display: inline-flex; margin-bottom: 18px; color: var(--muted-3); border-color: var(--line-strong); }
     code { color: var(--muted-3); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+    /* Narrow screens: a 5-column table can't fit, so let the panel scroll the
+       table horizontally rather than clipping the trailing columns. */
     @media (max-width: 760px) {
-      .store-table th:nth-child(4), .store-table td:nth-child(4),
-      .store-table th:nth-child(5), .store-table td:nth-child(5) { display: none; }
       h1 { font-size: 28px; }
+      .panel:has(.store-table) { overflow-x: auto; }
+      .store-table { min-width: 640px; }
+      /* Keep chip groups on one line so every row settles to the same height
+         (the Types/Status overflow is reachable via the horizontal scroll). */
+      .store-table .chips { flex-wrap: nowrap; }
     }
   `;
 }
@@ -1120,10 +1164,15 @@ function renderAgentsSchedulesStyles(): string {
     .tree-row .tree-name { flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; font-family: var(--sans); color: var(--muted-3); font-size: 13px; overflow-wrap: anywhere; padding: 7px 0; }
     .tree-desc { color: var(--muted-2); font-size: 11.5px; margin-top: 2px; }
     .tree-row .chip { white-space: nowrap; }
+    /* Narrow screens: hide the Description, Model, and Schedule (cron) columns
+       so only the tree and agent name remain, readable without a horizontal
+       scroll. The collapsed columns drop the 600px min-width the desktop tree needs. */
     @media (max-width: 700px) {
       .tree-head { display: none; }
-      .group .panel { overflow-x: auto; }
-      .tree { min-width: 600px; }
+      .tree { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); column-gap: 10px; }
+      .tree-desc { display: none; }
+      .tree-row > span:nth-child(3),
+      .tree-row > span:nth-child(4) { display: none; }
     }
     /* Parse-error badge + popover (collapses the old full-width error banner).
        A <details> disclosure anchors the panel directly under the badge. */
@@ -1812,51 +1861,7 @@ function renderApprovalsListPage(options: {
     .section-title::before { content: "⋮"; color: var(--cyan); font-size: 14px; transform: translateY(1px); }
     .section-title .count { color: var(--muted-3); font-size: 12px; }
     .section-title .rule { flex: 1; height: 1px; background: var(--line); }
-    .empty { color: var(--muted-2); font-style: italic; padding: 14px 0; }
-    .rows { display: flex; flex-direction: column; gap: 8px; }
-    .row {
-      display: block;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 14px 16px;
-      transition: background 120ms ease, border-color 120ms ease;
-    }
-    a.row { cursor: pointer; }
-    a.row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
-    .row-static { opacity: 0.85; }
-    .row-head {
-      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-      margin-bottom: 8px;
-    }
-    .row-time { color: var(--muted-2); font-size: 12px; margin-left: auto; }
-    .row-title {
-      font-family: var(--sans);
-      font-size: 16px;
-      line-height: 1.35;
-      color: var(--fg);
-      white-space: pre-wrap; overflow-wrap: anywhere;
-    }
-    .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
-    .row-meta { margin-top: 8px; color: var(--muted-2); font-size: 11px; }
-    .row-meta code { font-family: var(--mono); font-size: 11px; }
-    .chip {
-      display: inline-flex; align-items: center;
-      padding: 2px 8px;
-      border-radius: 999px;
-      font-size: 10.5px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      border: 1px solid var(--line-strong);
-      background: var(--panel);
-      color: var(--muted-3);
-    }
-    .chip.status.pending { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
-    .chip.status.approved, .chip.status.commented { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
-    .chip.status.rejected { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
-    .chip.status.expired, .chip.status.errored { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
-    .chip.project { color: var(--cyan); }
-    .chip.agent { color: var(--fg); }
+    ${approvalsListRowStyles()}
     .errors {
       margin: 16px 0 0;
       padding: 12px 14px;
@@ -1991,26 +1996,7 @@ function renderSessionsListPage(options: {
     .filters { color: var(--muted-2); font-size: 12px; margin: 0 0 24px; }
     .filters code { color: var(--muted-3); }
     .filters a { color: var(--cyan); }
-    .rows { display: flex; flex-direction: column; gap: 8px; }
-    .row { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; transition: background 120ms ease, border-color 120ms ease; }
-    a.row { cursor: pointer; }
-    a.row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
-    .row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .row-time { color: var(--muted-2); font-size: 12px; margin-left: auto; }
-    .row-title { font-family: var(--sans); font-size: 16px; line-height: 1.35; color: var(--fg); font-weight: 500; overflow-wrap: anywhere; }
-    .row-locator { margin-top: 3px; font-family: var(--mono); font-size: 12px; color: var(--muted-3); overflow-wrap: anywhere; }
-    .row-locator code { font-family: var(--mono); }
-    .row-desc { margin-top: 6px; color: var(--muted); font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
-    .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
-    .row-meta { margin-top: 8px; color: var(--muted-2); font-size: 11px; }
-    .row-meta code { font-family: var(--mono); font-size: 11px; }
-    .chip { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted-3); }
-    .chip.status.pending { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
-    .chip.status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
-    .chip.status.errored { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
-    .chip.project { color: var(--cyan); }
-    .chip.agent { color: var(--fg); }
-    .empty { color: var(--muted-2); font-style: italic; padding: 14px 0; }
+    ${approvalsListRowStyles()}
     .errors { margin: 16px 0 0; padding: 12px 14px; border: 1px solid var(--red-border); background: var(--red-soft); border-radius: 10px; color: var(--red); font-size: 12.5px; }
     .errors ul { margin: 6px 0 0; padding-left: 20px; }
     footer { color: var(--muted-2); font-size: 11px; margin-top: 32px; text-align: center; }
