@@ -96,12 +96,14 @@ Generate an executive summary with trends.
 **Webhook Server** - Trigger agents via HTTP:
 ```bash
 agentuse serve
-curl -X POST http://localhost:12233/run -d '{"agent": "my-agent"}'
+curl -X POST http://localhost:12233/api/run -d '{"agent": "my-agent"}'
 
 # Serve multiple projects from one process:
 agentuse serve -C ./projA -C ./projB
-curl -X POST http://localhost:12233/run -d '{"project":"projA","agent":"my-agent"}'
+curl -X POST http://localhost:12233/api/run -d '{"project":"projA","agent":"my-agent"}'
 ```
+
+JSON endpoints live under the `/api/*` prefix (`/api`, `/api/agents`, `/api/schedules`, `/api/sessions`); the root and `/agents`, `/schedules`, `/sessions` paths serve a browser dashboard. `POST /run` and the other un-prefixed routes still work for backward compatibility but are deprecated.
 
 **Global config** - put serve defaults in `~/.agentuse/config.json`:
 ```jsonc
@@ -139,7 +141,7 @@ channels:
 ---
 ```
 
-Review pending approvals at `http://127.0.0.1:12233/approvals`. Approval gates, approval pages, and Slack channels are experimental in this pre-1.0 release.
+Open the dashboard at `http://127.0.0.1:12233/` and review a run on its session page (`/sessions/:id`), where pending gates can be approved, rejected, or continued. Approval gates, the web UI, and Slack channels are experimental in this pre-1.0 release.
 
 ## Features
 
@@ -168,7 +170,7 @@ Compose complex workflows by delegating tasks to specialized child agents. Paren
 Create reusable agent instructions as `SKILL.md` files. Reuse your existing Claude Code skills directly - AgentUse reads from the same `.claude/skills/` directories. List available skills with `agentuse skills`.
 
 ### 📊 Session Tracking
-Full execution history with message logs, tool call traces, token usage, and timing metrics. Debug and audit agent runs with `agentuse sessions`.
+Full execution history with message logs, tool call traces, token usage, and timing metrics. Debug and audit agent runs with `agentuse sessions` on the CLI, or browse them in the `serve` web dashboard. Run `agentuse doctor` to diagnose project, auth, sandbox, and skill setup.
 
 ## Install
 
@@ -185,6 +187,12 @@ agentuse auth login
 ## Documentation
 
 Full guides and API reference at **[docs.agentuse.io](https://docs.agentuse.io)**
+
+## Commercial Support
+
+AgentUse is free and open source. If your team wants it implemented,
+customized, or supported in production, **[AgentUse Studio](https://agentuse.io/studio)**
+offers hands-on setup, custom agent development, and ongoing support.
 
 ## Contributing
 
