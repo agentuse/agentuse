@@ -1,0 +1,11 @@
+---
+name: smoke-manager
+type: manager
+model: anthropic:claude-haiku-4-5
+maxSteps: 20
+subagents:
+  - path: ./sub-approval-bool.agentuse
+    name: approver
+---
+
+Delegate to the `approver` subagent to run the approval test. Report the human's decision.

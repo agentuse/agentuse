@@ -23,6 +23,10 @@ Every run is a session. The review surface is the unified **session page** at `/
 7. AgentUse resumes the suspended session with the reviewer result.
 8. After the session finishes, reviewers can send follow-up instructions from the same session page to continue the session with its existing context.
 
+<Note>
+Approval gates are only supported on the **top-level agent**, not on delegated sub-agents. Suspend/resume operates on a single top-level session, so an approval gate inside a delegated sub-agent could never suspend the run. If a sub-agent sets `approval` in its frontmatter, AgentUse fails the run at load time with a clear error. Put the gate on the top-level (or `type: manager`) agent instead.
+</Note>
+
 ## Create an Agent with Approval
 
 Use the smallest possible config:

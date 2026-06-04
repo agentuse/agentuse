@@ -1,0 +1,8 @@
+---
+name: sub-approval-bool
+model: anthropic:claude-haiku-4-5
+approval: true
+maxSteps: 20
+---
+
+Prepare some text. Before finalizing, request human approval, then report the decision.

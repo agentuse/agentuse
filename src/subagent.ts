@@ -11,9 +11,32 @@ import { SessionManager } from './session/manager';
 import { loadAgentTools } from './runner/tools-loader';
 import { buildSystemMessages } from './runner/system-messages';
 import { createSessionAndMessage } from './runner/session-helper';
+import { isApprovalEnabled } from './runner/approval';
 
 // Constants
 const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
+
+/**
+ * Thrown at load/validation time when a delegated sub-agent enables the approval
+ * gate (`approval: true`/object). The suspend/resume machinery is single-session:
+ * it suspends and resumes exactly one top-level session, so an `await_human` gate
+ * reached inside a delegated sub-agent would never actually suspend the parent run
+ * and would leave an orphaned "pending" approval that can never be resumed.
+ *
+ * This error is re-thrown (not swallowed) by `createSubAgentTools` so the whole
+ * run fails loudly before any execution, instead of registering a phantom pending
+ * approval. Approval gates are only supported on the top-level agent.
+ */
+export class SubAgentApprovalUnsupportedError extends Error {
+  constructor(public agentName: string, public agentPath: string) {
+    super(
+      `Approval gates are only supported on the top-level agent, not delegated sub-agents. ` +
+      `Sub-agent "${agentName}" (${agentPath}) sets "approval" in its frontmatter. ` +
+      `Move the approval gate to the top-level/manager agent, or remove "approval" from the sub-agent.`
+    );
+    this.name = 'SubAgentApprovalUnsupportedError';
+  }
+}
 
 /**
  * Get the maximum sub-agent nesting depth from environment or use default
@@ -71,6 +94,14 @@ export async function createSubAgentTool(
 
   // Parse the agent file
   const agent = await parseAgent(resolvedPath);
+
+  // Fail loud: approval gates are not supported in delegated sub-agents.
+  // The suspend/resume machinery only suspends/resumes the top-level session,
+  // so an await_human gate here would silently no-op and orphan a pending
+  // approval. Reject at load time before any execution happens.
+  if (isApprovalEnabled(agent.config)) {
+    throw new SubAgentApprovalUnsupportedError(agent.name, resolvedPath);
+  }
 
   // Apply model override if provided
   if (modelOverride) {
@@ -384,6 +415,13 @@ export async function createSubAgentTools(
       // So we won't register @-prefixed versions anymore
       // Users can still reference them with @ in instructions, but the actual tool name won't have @
     } catch (error) {
+      // Approval-in-subagent is a hard configuration error: surface it and abort
+      // the run instead of silently dropping the sub-agent tool (which would leave
+      // the manager flailing with a missing tool).
+      if (error instanceof SubAgentApprovalUnsupportedError) {
+        throw error;
+      }
+
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(`Failed to load sub-agent from ${config.path}: ${errorMsg}`);
 

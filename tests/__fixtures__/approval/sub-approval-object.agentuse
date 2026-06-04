@@ -1,0 +1,9 @@
+---
+name: sub-approval-object
+model: anthropic:claude-haiku-4-5
+approval:
+  timeout: 24h
+maxSteps: 20
+---
+
+Prepare some text. Before finalizing, request human approval, then report the decision.

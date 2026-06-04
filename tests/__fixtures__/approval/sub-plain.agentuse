@@ -1,0 +1,7 @@
+---
+name: sub-plain
+model: anthropic:claude-haiku-4-5
+maxSteps: 20
+---
+
+A plain sub-agent with no approval gate. Just do the task and report.
