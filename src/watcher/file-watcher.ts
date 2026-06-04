@@ -1,5 +1,6 @@
 import chokidar, { type FSWatcher } from "chokidar";
-import { resolve, relative, join } from "path";
+import { resolve, relative } from "path";
+import { glob } from "glob";
 import { logger } from "../utils/logger";
 import * as dotenv from "dotenv";
 
@@ -22,6 +23,9 @@ export class FileWatcher {
   private envWatcher: FSWatcher | null = null;
   private options: FileWatcherOptions;
   private closed = false;
+  private agentScanTimer: NodeJS.Timeout | null = null;
+  private changeDebounceTimers = new Map<string, NodeJS.Timeout>();
+  private watchedAgentPaths = new Set<string>();
 
   constructor(options: FileWatcherOptions) {
     this.options = options;
@@ -51,16 +55,13 @@ export class FileWatcher {
   }
 
   private startAgentWatcher(): void {
-    const { projectRoot, agentRoot, onAgentAdded, onAgentChanged, onAgentRemoved } = this.options;
+    const { projectRoot, agentRoot, onAgentChanged, onAgentRemoved } = this.options;
     const watchRoot = agentRoot ?? projectRoot;
 
-    // Watch only .agentuse files to minimize file descriptors
-    this.agentWatcher = chokidar.watch(join(watchRoot, "**/*.agentuse"), {
-      ignored: [
-        "**/node_modules/**",
-        "**/tmp/**",
-        "**/.git/**",
-      ],
+    // Chokidar v5 does not support glob paths, and watching the entire served
+    // tree can exceed file descriptor limits. Watch discovered agent files
+    // directly, then reconcile add/remove events with a lightweight scan.
+    this.agentWatcher = chokidar.watch([], {
       persistent: true,
       ignoreInitial: true,
       followSymlinks: false,
@@ -71,32 +72,30 @@ export class FileWatcher {
     });
 
     this.agentWatcher
-      .on("add", async (absolutePath) => {
-        if (this.closed) return;
+      .on("change", (absolutePath) => {
+        if (this.closed || !absolutePath.endsWith(".agentuse")) return;
         const relativePath = relative(watchRoot, absolutePath);
         if (this.shouldIgnore(relativePath)) return;
 
-        try {
-          await onAgentAdded(relativePath);
-        } catch (err) {
-          logger.warn(`Hot reload: Failed to add agent ${relativePath}: ${(err as Error).message}`);
-        }
-      })
-      .on("change", async (absolutePath) => {
-        if (this.closed) return;
-        const relativePath = relative(watchRoot, absolutePath);
-        if (this.shouldIgnore(relativePath)) return;
-
-        try {
-          await onAgentChanged(relativePath);
-        } catch (err) {
-          logger.warn(`Hot reload: Failed to reload agent ${relativePath}: ${(err as Error).message}`);
-        }
+        const existing = this.changeDebounceTimers.get(relativePath);
+        if (existing) clearTimeout(existing);
+        this.changeDebounceTimers.set(
+          relativePath,
+          setTimeout(async () => {
+            this.changeDebounceTimers.delete(relativePath);
+            try {
+              await onAgentChanged(relativePath);
+            } catch (err) {
+              logger.warn(`Hot reload: Failed to reload agent ${relativePath}: ${(err as Error).message}`);
+            }
+          }, 300),
+        );
       })
       .on("unlink", (absolutePath) => {
-        if (this.closed) return;
+        if (this.closed || !absolutePath.endsWith(".agentuse")) return;
         const relativePath = relative(watchRoot, absolutePath);
         if (this.shouldIgnore(relativePath)) return;
+        if (!this.watchedAgentPaths.delete(relativePath)) return;
 
         try {
           onAgentRemoved(relativePath);
@@ -107,16 +106,76 @@ export class FileWatcher {
       .on("error", (error: unknown) => {
         logger.warn(`Hot reload: Watcher error: ${(error as Error).message}`);
       });
+
+    void this.reconcileAgentFiles(true);
+    this.agentScanTimer = setInterval(() => {
+      void this.reconcileAgentFiles(false);
+    }, 2_000);
+  }
+
+  private async listAgentFiles(watchRoot: string): Promise<string[]> {
+    const files = await glob("**/*.agentuse", {
+      cwd: watchRoot,
+      ignore: ["node_modules/**", "tmp/**", ".git/**"],
+      nodir: true,
+    });
+    return files.filter((file) => !this.shouldIgnore(file)).sort();
+  }
+
+  private async reconcileAgentFiles(initial: boolean): Promise<void> {
+    const { projectRoot, agentRoot, onAgentAdded, onAgentRemoved } = this.options;
+    const watchRoot = agentRoot ?? projectRoot;
+
+    let files: string[];
+    try {
+      files = await this.listAgentFiles(watchRoot);
+    } catch (err) {
+      logger.warn(`Hot reload: Failed to scan agents: ${(err as Error).message}`);
+      return;
+    }
+    if (this.closed) return;
+
+    const current = new Set(files);
+
+    for (const relativePath of files) {
+      if (this.watchedAgentPaths.has(relativePath)) continue;
+      this.watchedAgentPaths.add(relativePath);
+      this.agentWatcher?.add(resolve(watchRoot, relativePath));
+
+      if (!initial) {
+        try {
+          await onAgentAdded(relativePath);
+        } catch (err) {
+          logger.warn(`Hot reload: Failed to add agent ${relativePath}: ${(err as Error).message}`);
+        }
+      }
+    }
+
+    for (const relativePath of [...this.watchedAgentPaths]) {
+      if (current.has(relativePath)) continue;
+      this.watchedAgentPaths.delete(relativePath);
+      this.agentWatcher?.unwatch(resolve(watchRoot, relativePath));
+
+      if (!initial) {
+        try {
+          onAgentRemoved(relativePath);
+        } catch (err) {
+          logger.warn(`Hot reload: Failed to remove agent ${relativePath}: ${(err as Error).message}`);
+        }
+      }
+    }
   }
 
   private startEnvWatcher(): void {
     const { projectRoot, envFile, onEnvReloaded } = this.options;
 
-    // Watch for env files
+    // Watch env files, including a custom envFile when it differs from defaults.
     const envPath = resolve(projectRoot, ".env");
     const envLocalPath = resolve(projectRoot, ".env.local");
+    const customEnvPath = resolve(projectRoot, envFile);
+    const envPaths = [...new Set([envPath, envLocalPath, customEnvPath])];
 
-    this.envWatcher = chokidar.watch([envPath, envLocalPath], {
+    this.envWatcher = chokidar.watch(envPaths, {
       persistent: true,
       ignoreInitial: true,
       awaitWriteFinish: {
@@ -154,6 +213,17 @@ export class FileWatcher {
    */
   async close(): Promise<void> {
     this.closed = true;
+
+    if (this.agentScanTimer) {
+      clearInterval(this.agentScanTimer);
+      this.agentScanTimer = null;
+    }
+
+    for (const timer of this.changeDebounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.changeDebounceTimers.clear();
+    this.watchedAgentPaths.clear();
 
     const closeWithTimeout = (watcher: FSWatcher | null): Promise<void> => {
       if (!watcher) return Promise.resolve();
