@@ -348,6 +348,28 @@ describe('session tree stopping', () => {
         ...base,
         agent: { id: 'agents/parent', name: 'parent', isSubAgent: false },
       });
+      const parentMessageId = await parentManager.createMessage(parentId, 'agents/parent', {
+        user: { prompt: { task: 'parent task' } },
+        assistant: {
+          system: [],
+          modelID: 'demo:test',
+          providerID: 'demo',
+          mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+      const parentApprovalPartId = await parentManager.addPart(parentId, 'agents/parent', parentMessageId, {
+        type: 'tool',
+        tool: 'await_human',
+        state: {
+          status: 'pending',
+          input: { prompt: 'Approve parent?' },
+          resumePayload: { kind: 'await_human', resumeToken: 'parent-token' },
+          suspendedAt: Date.UTC(2026, 4, 1),
+        },
+      } as any);
 
       const childManager = new SessionManager();
       childManager.setParentPath(parentManager.getFullPath()!);
@@ -356,6 +378,28 @@ describe('session tree stopping', () => {
         parentSessionID: parentId,
         agent: { id: 'agents/child', name: 'child', isSubAgent: true },
       });
+      const childMessageId = await childManager.createMessage(childId, 'agents/child', {
+        user: { prompt: { task: 'child task' } },
+        assistant: {
+          system: [],
+          modelID: 'demo:test',
+          providerID: 'demo',
+          mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+      const childApprovalPartId = await childManager.addPart(childId, 'agents/child', childMessageId, {
+        type: 'tool',
+        tool: 'await_human',
+        state: {
+          status: 'pending',
+          input: { prompt: 'Approve child?' },
+          resumePayload: { kind: 'await_human', resumeToken: 'child-token' },
+          suspendedAt: Date.UTC(2026, 4, 1),
+        },
+      } as any);
 
       const grandchildManager = new SessionManager();
       grandchildManager.setParentPath(childManager.getFullPath()!);
@@ -379,6 +423,18 @@ describe('session tree stopping', () => {
       expect(child?.session.status).toBe('error');
       expect(child?.session.error?.code).toBe('USER_STOPPED');
       expect(grandchild?.session.status).toBe('completed');
+
+      const parentParts = await parentManager.getMessageParts(parentId, 'agents/parent', parentMessageId);
+      const parentApproval = parentParts.find((part) => part.id === parentApprovalPartId) as any;
+      expect(parentApproval?.state.status).toBe('error');
+      expect(parentApproval?.state.error).toBe('Session stopped by user');
+      expect(parentApproval?.state.metadata?.resumePayload?.resumeToken).toBe('parent-token');
+
+      const childParts = await childManager.getMessageParts(childId, 'agents/child', childMessageId);
+      const childApproval = childParts.find((part) => part.id === childApprovalPartId) as any;
+      expect(childApproval?.state.status).toBe('error');
+      expect(childApproval?.state.error).toBe('Session stopped by user');
+      expect(childApproval?.state.metadata?.resumePayload?.resumeToken).toBe('child-token');
 
       const children = await parentManager.listChildSessions(parentId);
       expect(children.map((entry) => entry.session.id)).toEqual([childId]);

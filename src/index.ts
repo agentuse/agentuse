@@ -1462,7 +1462,14 @@ async function runInternalWorker() {
 
         let status: ApprovalSummaryStatus;
         let errorMessage: string | undefined;
-        if (state.status === 'pending') {
+        const sessionError = sessionErrorFields(session) as { errorCode?: string; errorMessage?: string };
+        if (state.status === 'pending' && session.error?.code === 'USER_STOPPED') {
+          status = 'errored';
+          errorMessage = session.error.message || 'Session stopped by user';
+        } else if (state.status === 'pending' && session.error?.code === 'TIMEOUT') {
+          status = 'expired';
+          errorMessage = session.error.message || 'Session timed out';
+        } else if (state.status === 'pending') {
           status = 'pending';
         } else if (state.status === 'completed') {
           const decisionStatus = typeof output.status === 'string' ? output.status.toLowerCase() : '';
@@ -1483,7 +1490,6 @@ async function runInternalWorker() {
         } else {
           status = 'errored';
         }
-        const sessionError = sessionErrorFields(session) as { errorCode?: string; errorMessage?: string };
         if (sessionError.errorMessage) errorMessage = sessionError.errorMessage;
 
         const decisionAt = state.status === 'completed' || state.status === 'error'

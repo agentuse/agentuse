@@ -133,6 +133,40 @@ export class SessionManager {
     });
   }
 
+  private async stopPendingPartsAtPath(sessionPath: string, options: { message: string; time: number }): Promise<void> {
+    const partKeys = (await listKeys(sessionPath))
+      .filter((key) => key.startsWith(`${sessionPath}/`) && key.includes('/part/'));
+
+    await Promise.all(partKeys.map(async (key) => {
+      await this.serializedWrite(key, async () => {
+        const part = await readJSON<Part>(key);
+        if (!part || part.type !== 'tool') return;
+        const state = part.state;
+        if (state.status !== 'pending' && state.status !== 'running') return;
+
+        const input = 'input' in state ? state.input : undefined;
+        const resumePayload = state.status === 'pending' ? state.resumePayload : undefined;
+        const start = state.status === 'running'
+          ? state.time.start
+          : state.suspendedAt ?? options.time;
+
+        await writeJSON(key, {
+          ...part,
+          state: {
+            status: 'error',
+            input: input ?? {},
+            error: options.message,
+            ...(resumePayload && { metadata: { resumePayload } }),
+            time: {
+              start,
+              end: options.time
+            }
+          }
+        } as Part);
+      });
+    }));
+  }
+
   /**
    * Create a new session
    */
@@ -493,19 +527,25 @@ export class SessionManager {
     visit(root);
 
     const now = Date.now();
+    const code = options.code ?? 'USER_STOPPED';
+    const message = options.message ?? 'Session stopped by user';
     const stopped: StoppedSession[] = [];
     for (const entry of ordered) {
       const wasStatus = entry.session.status;
       const shouldStop = wasStatus === 'running' || wasStatus === 'suspended';
+      const shouldStopPendingParts = shouldStop || entry.session.error?.code === code;
       if (shouldStop) {
         await this.updateSessionAtPath(entry.path, {
           status: 'error',
           error: {
-            code: options.code ?? 'USER_STOPPED',
-            message: options.message ?? 'Session stopped by user',
+            code,
+            message,
             time: now
           }
         });
+      }
+      if (shouldStopPendingParts) {
+        await this.stopPendingPartsAtPath(entry.path, { message, time: now });
       }
       stopped.push({
         sessionId: entry.session.id,
