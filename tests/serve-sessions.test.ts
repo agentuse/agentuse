@@ -517,3 +517,76 @@ describe('session tree stopping', () => {
     }
   });
 });
+
+describe('reading nested subagent sessions from a fresh manager', () => {
+  // The serve worker answers session-view requests with a brand-new
+  // SessionManager (no parentPath). Subagent sessions live nested under
+  // `{parent}/subagent/...`, so the reader must resolve the real directory
+  // rather than the computed top-level path. Regression for the subagent
+  // session view rendering "No session events yet" while it was running.
+  it('returns messages and parts for a subagent session', async () => {
+    const originalXdgDataHome = process.env.XDG_DATA_HOME;
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-nested-read-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+    try {
+      await initStorage(projectRoot);
+      const base = {
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      };
+      const assistant = {
+        system: [],
+        modelID: 'demo:test',
+        providerID: 'demo',
+        mode: 'build',
+        path: { cwd: projectRoot, root: projectRoot },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      };
+
+      const parentManager = new SessionManager();
+      const parentId = await parentManager.createSession({
+        ...base,
+        agent: { id: 'agents/parent', name: 'parent', isSubAgent: false },
+      });
+
+      const childManager = new SessionManager();
+      childManager.setParentPath(parentManager.getFullPath()!);
+      const childId = await childManager.createSession({
+        ...base,
+        parentSessionID: parentId,
+        agent: { id: 'agents/child', name: 'child', isSubAgent: true },
+      });
+      const childMessageId = await childManager.createMessage(childId, 'agents/child', {
+        user: { prompt: { task: 'child task' } },
+        assistant,
+      });
+      await childManager.addPart(childId, 'agents/child', childMessageId, {
+        type: 'text',
+        text: 'working on it',
+        time: { start: Date.now(), end: Date.now() },
+      } as any);
+
+      // Fresh reader with no parentPath — mirrors the serve worker.
+      const reader = new SessionManager();
+      const found = await reader.findSession(childId);
+      expect(found?.session.id).toBe(childId);
+
+      const messages = await reader.getSessionMessages(childId, found!.agentId);
+      expect(messages.map((message) => message.id)).toEqual([childMessageId]);
+
+      const parts = await reader.getMessageParts(childId, found!.agentId, childMessageId);
+      const text = parts.find((part) => part.type === 'text') as any;
+      expect(text?.text).toBe('working on it');
+
+      const primary = await reader.getPrimaryMessage(childId, found!.agentId);
+      expect(primary?.id).toBe(childMessageId);
+    } finally {
+      if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdgDataHome;
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+});

@@ -80,6 +80,27 @@ export class SessionManager {
     return sessionDir;
   }
 
+  /**
+   * Resolve the actual on-disk directory for a session.
+   *
+   * `buildSessionPath` only yields the correct location when this instance was
+   * created with the matching `parentPath`. Subagent sessions are stored nested
+   * under `{parent}/subagent/...`, so a fresh reader (e.g. the serve worker
+   * answering a session-view request) computes a top-level path that does not
+   * exist and reads nothing. When the direct path is empty, walk the store and
+   * match by directory basename (`{sessionID}-{sanitizedAgentId}`).
+   */
+  private async resolveSessionDir(sessionID: string, agentId: string): Promise<string> {
+    const direct = this.buildSessionPath(sessionID, agentId);
+    const keys = await listKeys(direct);
+    if (keys.length > 0) return direct;
+
+    const target = `${sessionID}-${sanitizeAgentName(agentId)}`;
+    const state = await getStorageState();
+    const dirs = await this.walkSessionDirs(state.dir);
+    return dirs.find((dir) => path.basename(dir) === target) ?? direct;
+  }
+
   private async walkSessionDirs(baseDir: string, relativeDir = ''): Promise<string[]> {
     const absoluteDir = path.join(baseDir, relativeDir);
     const entries = await fs.readdir(absoluteDir, { withFileTypes: true }).catch(() => []);
@@ -396,7 +417,7 @@ export class SessionManager {
    * assistant exchange, which is the exchange resume needs to continue.
    */
   async getPrimaryMessage(sessionID: string, agentId: string): Promise<Message | null> {
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     const keys = await listKeys(sessionPath);
     const messageKey = keys
       .filter(key => key.startsWith(`${sessionPath}/`) && key.endsWith('/message'))
@@ -405,7 +426,7 @@ export class SessionManager {
   }
 
   async getSessionMessages(sessionID: string, agentId: string): Promise<Message[]> {
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     const keys = await listKeys(sessionPath);
     const messageKeys = keys
       .filter(key => key.startsWith(`${sessionPath}/`) && key.endsWith('/message'))
@@ -420,7 +441,7 @@ export class SessionManager {
    * List all persisted parts for a message in creation order.
    */
   async getMessageParts(sessionID: string, agentId: string, messageID: string): Promise<Part[]> {
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     const partPrefix = `${sessionPath}/${messageID}/part`;
     const keys = await listKeys(partPrefix);
     const parts = await Promise.all(
