@@ -880,7 +880,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'sweep-expired' | 'list-approvals' | 'list-sessions';
+    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'sweep-expired' | 'list-approvals' | 'list-sessions' | 'stop-session';
     agentPath?: string;
     projectRoot: string;
     prompt?: string;
@@ -900,6 +900,7 @@ async function runInternalWorker() {
     skipTokenCheck?: boolean;
     trigger?: SessionTrigger;
     runChannelHandles?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
+    reason?: string;
   }
 
   interface ExpiredApproval {
@@ -911,6 +912,9 @@ async function runInternalWorker() {
     suspendedAt?: number;
     channelMessage?: { type?: string; channel?: string; ts?: string; actionTs?: string; url?: string };
   }
+
+  const activeExecutionControllers = new Map<string, AbortController>();
+  const activeStoppedSessions = new Set<string>();
 
   type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
 
@@ -1170,6 +1174,24 @@ async function runInternalWorker() {
     return Object.keys(fields).length > 0 ? fields : undefined;
   }
 
+  async function childSessionSummaries(sessionManager: InstanceType<typeof SessionManager>, sessionId: string) {
+    const children = await sessionManager.listChildSessions(sessionId);
+    return children.map(({ session }) => ({
+      sessionId: session.id,
+      agent: {
+        id: session.agent.id,
+        name: session.agent.name,
+        ...(session.agent.description && { description: session.agent.description }),
+        ...(session.agent.filePath && { filePath: session.agent.filePath }),
+      },
+      status: session.status,
+      trigger: session.trigger ?? 'manual',
+      createdAt: session.time.created,
+      updatedAt: session.time.updated,
+      ...sessionErrorFields(session),
+    }));
+  }
+
   async function getApprovalInfo(req: ExecuteRequest) {
     try {
       if (!req.sessionId) {
@@ -1196,6 +1218,7 @@ async function runInternalWorker() {
         messages.map((message) => sessionManager.getMessageParts(req.sessionId!, found.agentId, message.id))
       )).flat();
       const logs = buildApprovalLogs(parts);
+      const childSessions = await childSessionSummaries(sessionManager, req.sessionId);
       const approvalParts = parts.filter((part: any) =>
         part?.type === 'tool' &&
         part?.tool === 'await_human' &&
@@ -1227,6 +1250,7 @@ async function runInternalWorker() {
               ...(found.session.agent.filePath && { filePath: found.session.agent.filePath }),
               ...(found.session.agent.description && { description: found.session.agent.description })
             },
+            ...(childSessions.length > 0 && { childSessions }),
             logs
           },
         };
@@ -1282,6 +1306,7 @@ async function runInternalWorker() {
               ...(found.session.agent.filePath && { filePath: found.session.agent.filePath }),
               ...(found.session.agent.description && { description: found.session.agent.description })
             },
+            ...(childSessions.length > 0 && { childSessions }),
             logs
           },
         };
@@ -1321,6 +1346,7 @@ async function runInternalWorker() {
           ...(typeof state.suspendedAt === 'number' && { suspendedAt: state.suspendedAt }),
           ...(Object.keys(channelMessage).length > 0 && { channelMessage }),
           ...(state.status === 'completed' && { decision: state.output }),
+          ...(childSessions.length > 0 && { childSessions }),
           logs
         },
       };
@@ -1566,6 +1592,7 @@ async function runInternalWorker() {
     let sessionManager: InstanceType<typeof SessionManager> | undefined;
     let resumeRollback: Awaited<ReturnType<typeof applyResumeToolResult>>['rollback'] | undefined;
     let continuationSession: { sessionId: string; agentId: string } | undefined;
+    let activeSessionId: string | undefined;
 
     const restoreResumeAndReturn = async <T>(response: T): Promise<T> => {
       if (sessionManager && resumeRollback) {
@@ -1733,17 +1760,38 @@ async function runInternalWorker() {
       const timeoutSeconds = req.timeout ?? agent.config.timeout ?? 300;
       const abortController = new AbortController();
       const timeoutId = setTimeout(() => abortController.abort(), timeoutSeconds * 1000);
+      const projectContext = { projectRoot: req.projectRoot, stateRoot: req.projectRoot, cwd: runCwd };
       let pluginManager: PluginManager | null = null;
       try {
-        const projectContext = resolveProjectContext(req.projectRoot, { projectRoot: req.projectRoot });
+        const pluginContext = resolveProjectContext(req.projectRoot, { projectRoot: req.projectRoot });
         pluginManager = new PluginManager();
-        await pluginManager.loadPlugins(projectContext.pluginDirs);
+        await pluginManager.loadPlugins(pluginContext.pluginDirs);
       } catch {
         pluginManager = null;
       }
 
+      const preparedExecution = await prepareAgentExecution({
+        agent,
+        mcpClients: mcp,
+        agentFilePath: agentPath,
+        cliMaxSteps: req.maxSteps,
+        sessionManager,
+        projectContext,
+        userPrompt: runPrompt,
+        abortSignal: abortController.signal,
+        verbose: req.debug ?? false,
+        existingSessionId,
+        ...(req.trigger && { trigger: req.trigger })
+      });
+
+      activeSessionId = preparedExecution.sessionID ?? existingSessionId;
+
       if (continuationSession) {
         await sessionManager.setSessionRunning(continuationSession.sessionId, continuationSession.agentId);
+      }
+
+      if (activeSessionId) {
+        activeExecutionControllers.set(activeSessionId, abortController);
       }
 
       try {
@@ -1759,9 +1807,9 @@ async function runInternalWorker() {
           sessionManager,
           // Serve registers projects explicitly; agents live in their registered
           // project so stateRoot equals projectRoot here.
-          { projectRoot: req.projectRoot, stateRoot: req.projectRoot, cwd: runCwd },
+          projectContext,
           runPrompt,
-          undefined,
+          preparedExecution,
           true,
           pluginManager,
           true,
@@ -1802,10 +1850,19 @@ async function runInternalWorker() {
           resumeRollback = undefined;
         }
         if (abortController.signal.aborted) {
+          const stoppedByUser = activeSessionId ? activeStoppedSessions.has(activeSessionId) : false;
+          if (stoppedByUser && activeSessionId && sessionManager) {
+            await sessionManager.stopSessionTree(activeSessionId, {
+              code: 'USER_STOPPED',
+              message: 'Session stopped by user'
+            }).catch(() => {});
+          }
           return {
             id: req.id,
             success: false,
-            error: { code: 'TIMEOUT', message: `Agent execution timed out after ${timeoutSeconds}s` },
+            error: stoppedByUser
+              ? { code: 'USER_STOPPED', message: 'Session stopped by user' }
+              : { code: 'TIMEOUT', message: `Agent execution timed out after ${timeoutSeconds}s` },
           };
         }
         return {
@@ -1826,6 +1883,13 @@ async function runInternalWorker() {
         error: { code: 'INTERNAL_ERROR', message: (err as Error).message },
       };
     } finally {
+      if (activeSessionId) {
+        const controller = activeExecutionControllers.get(activeSessionId);
+        if (controller) {
+          activeExecutionControllers.delete(activeSessionId);
+        }
+        activeStoppedSessions.delete(activeSessionId);
+      }
       for (const conn of mcp) {
         try {
           await conn.client.close();
@@ -1833,6 +1897,49 @@ async function runInternalWorker() {
           // Ignore cleanup errors
         }
       }
+    }
+  }
+
+  async function stopSession(req: ExecuteRequest) {
+    try {
+      if (!req.sessionId) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_REQUIRED', message: 'Missing sessionId for stop request' },
+        };
+      }
+
+      const controller = activeExecutionControllers.get(req.sessionId);
+      if (controller) {
+        activeStoppedSessions.add(req.sessionId);
+        controller.abort();
+      }
+
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const stopped = await sessionManager.stopSessionTree(req.sessionId, {
+        code: 'USER_STOPPED',
+        message: req.reason || 'Session stopped by user'
+      });
+      if (stopped.length === 0) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${req.sessionId}` },
+        };
+      }
+      return {
+        id: req.id,
+        success: true,
+        stopped
+      };
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false,
+        error: { code: 'STOP_SESSION_ERROR', message: (err as Error).message },
+      };
     }
   }
 
@@ -1864,6 +1971,10 @@ async function runInternalWorker() {
         });
       } else if (request.type === 'list-sessions') {
         listSessions(request).then((response) => {
+          console.log(JSON.stringify(response));
+        });
+      } else if (request.type === 'stop-session') {
+        stopSession(request).then((response) => {
           console.log(JSON.stringify(response));
         });
       } else if (request.type === 'execute' || request.type === 'resume' || request.type === 'continue-session') {

@@ -183,9 +183,36 @@ interface SessionSummary {
   errorMessage?: string;
 }
 
+interface ChildSessionSummary {
+  sessionId: string;
+  agent: {
+    id: string;
+    name: string;
+    description?: string;
+    filePath?: string;
+  };
+  status: string;
+  trigger: SessionTrigger;
+  createdAt: number;
+  updatedAt: number;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
 interface WorkerListSessionsResult {
   success: true;
   sessions: SessionSummary[];
+}
+
+interface WorkerStopSessionResult {
+  success: true;
+  stopped: Array<{
+    sessionId: string;
+    agentId: string;
+    agentName: string;
+    wasStatus: string;
+    stopped: boolean;
+  }>;
 }
 
 interface ApprovalPageInfo {
@@ -220,6 +247,7 @@ interface ApprovalPageInfo {
   decision?: unknown;
   errorCode?: string;
   errorMessage?: string;
+  childSessions?: ChildSessionSummary[];
   logs?: ApprovalLogEntry[];
 }
 
@@ -265,7 +293,7 @@ class AgentWorker {
   private process: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
   private pendingRequests: Map<string, {
-    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult) => void;
+    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerStopSessionResult) => void;
     timeoutId?: NodeJS.Timeout;
   }> = new Map();
   private requestCounter = 0;
@@ -404,6 +432,20 @@ class AgentWorker {
     }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
   }
 
+  stopSession(options: {
+    projectRoot: string;
+    sessionId: string;
+    reason?: string | undefined;
+  }): Promise<WorkerStopSessionResult | WorkerExecuteError> {
+    return this.request({
+      type: "stop-session",
+      projectRoot: options.projectRoot,
+      sessionId: options.sessionId,
+      reason: options.reason,
+      timeout: 30,
+    }) as Promise<WorkerStopSessionResult | WorkerExecuteError>;
+  }
+
   continueSession(options: {
     projectRoot: string;
     sessionId: string;
@@ -476,7 +518,7 @@ class AgentWorker {
     }) as Promise<WorkerListSessionsResult | WorkerExecuteError>;
   }
 
-  private request(options: Record<string, unknown> & { timeout?: number | undefined }): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult> {
+  private request(options: Record<string, unknown> & { timeout?: number | undefined }): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerStopSessionResult> {
     return new Promise((resolve) => {
       if (!this.process || !this.ready) {
         resolve({
@@ -487,7 +529,9 @@ class AgentWorker {
       }
 
       const id = `req-${++this.requestCounter}`;
-      const timeoutMs = (options.timeout ?? 300) * 1000 + 5000; // Add 5s buffer
+      const longRunningRequest = options.type === "execute" || options.type === "resume" || options.type === "continue-session";
+      const requestTimeoutSeconds = options.timeout ?? (longRunningRequest ? 24 * 60 * 60 : 300);
+      const timeoutMs = requestTimeoutSeconds * 1000 + 5000; // Add 5s buffer
 
       const timeoutId = setTimeout(() => {
         const pending = this.pendingRequests.get(id);
@@ -495,7 +539,7 @@ class AgentWorker {
           this.pendingRequests.delete(id);
           pending.resolve({
             success: false,
-            error: { code: "TIMEOUT", message: `Request timed out after ${options.timeout ?? 300}s` },
+            error: { code: "TIMEOUT", message: `Request timed out after ${requestTimeoutSeconds}s` },
           });
         }
       }, timeoutMs);
@@ -1906,6 +1950,12 @@ function renderSessionStatusChipClass(status: string): string {
   return '';
 }
 
+function renderChildSessionStatus(child: ChildSessionSummary): string {
+  if (child.status === 'error' && child.errorCode === 'USER_STOPPED') return 'stopped';
+  if (child.status === 'error' && child.errorCode === 'TIMEOUT') return 'timeout';
+  return child.status;
+}
+
 function renderSessionRow(row: {
   projectId: string;
   multiProject: boolean;
@@ -2037,7 +2087,7 @@ function isEndedSessionStatus(status: string | undefined): boolean {
  *
  * Exempt: any `/approvals/*` route (legacy, token-authenticated) and, only on
  * the non-API surface, the unified session page `/sessions/:id` plus its action
- * subroutes `/sessions/:id/{decision,continue,status}`. These carry their own
+ * subroutes `/sessions/:id/{decision,continue,status,stop}`. These carry their own
  * capability auth (session token / api key / local).
  *
  * NOT exempt (stays header-gated): `/sessions` (the list page), and every
@@ -2048,7 +2098,7 @@ function isEndedSessionStatus(status: string | undefined): boolean {
 function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
   if (routePath.startsWith('/approvals/')) return true;
   if (isApi) return false;
-  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status))?$/.test(routePath);
+  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop))?$/.test(routePath);
 }
 
 function canContinueApprovalSession(options: {
@@ -2067,6 +2117,12 @@ function canContinueApprovalSession(options: {
 
 function approvalSessionErrorText(approval: Pick<ApprovalPageInfo, 'sessionStatus' | 'errorCode' | 'errorMessage'>): string {
   if (approval.sessionStatus !== 'error') return '';
+  if (approval.errorCode === 'USER_STOPPED') {
+    return approval.errorMessage || 'Session stopped by user.';
+  }
+  if (approval.errorCode === 'TIMEOUT') {
+    return approval.errorMessage || 'Session timed out.';
+  }
   if (!approval.errorCode && !approval.errorMessage) {
     return 'Session finished with an error. Check the session log for details.';
   }
@@ -2079,6 +2135,7 @@ function approvalSessionErrorText(approval: Pick<ApprovalPageInfo, 'sessionStatu
 interface SessionTimelineState {
   approval: ApprovalPageInfo;
   projectId?: string | undefined;
+  childSessionToken?: ((sessionId: string) => string) | undefined;
   status: string;
   eyebrow: string;
   /** Primary identity: the agent's display name (falls back to its filename). */
@@ -2093,6 +2150,7 @@ interface SessionTimelineState {
   initialLogs: ApprovalLogEntry[];
   actionable: boolean;
   continueActionable: boolean;
+  stopActionable: boolean;
   busy: boolean;
   /** Whether the run is actively progressing at render time (drives the working indicator). */
   live: boolean;
@@ -2121,10 +2179,20 @@ function renderSessionTimeline(view: SessionTimelineState): string {
     initialLogs,
     actionable,
     continueActionable,
+    stopActionable,
     busy,
     live,
     initialResultText,
   } = view;
+  const childSessions = approval.childSessions ?? [];
+  const childSessionHref = (sessionId: string): string => {
+    const params = new URLSearchParams();
+    const token = view.childSessionToken?.(sessionId) ?? '';
+    if (token) params.set('token', token);
+    if (projectId) params.set('project', projectId);
+    const query = params.toString();
+    return `/sessions/${encodeURIComponent(sessionId)}${query ? `?${query}` : ''}`;
+  };
   return `<main>
     <header>
       <span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span>
@@ -2140,6 +2208,25 @@ function renderSessionTimeline(view: SessionTimelineState): string {
         <div class="cell" id="expires-cell"${approval.expiresAt === undefined ? ' hidden' : ''}><span class="label">expires</span><span class="value" id="expires-value">${approval.expiresAt !== undefined ? escapeHtml(formatApprovalTime(approval.expiresAt)) : ''}</span></div>
       </div>
     </header>
+
+    ${childSessions.length > 0 ? `
+    <div class="section-title"><span>subagents</span><span class="rule"></span></div>
+    <div class="panel subagents-panel">
+      <div class="subagent-list">
+        ${childSessions.map((child) => {
+          const childStatus = renderChildSessionStatus(child);
+          const href = childSessionHref(child.sessionId);
+          return `
+          <a class="subagent-row" href="${escapeHtml(href)}">
+            <span class="subagent-status ${escapeHtml(childStatus)}">${escapeHtml(childStatus)}</span>
+            <span class="subagent-name">${escapeHtml(child.agent.name || child.agent.id)}</span>
+            <code>${escapeHtml(child.sessionId)}</code>
+            <span class="subagent-command">agentuse sessions show ${escapeHtml(child.sessionId.substring(0, 12))} --all-search</span>
+          </a>
+        `;
+        }).join('')}
+      </div>
+    </div>` : ''}
 
     ${error ? `<p class="notice error">${escapeHtml(error)}</p>` : ''}
 
@@ -2159,6 +2246,11 @@ function renderSessionTimeline(view: SessionTimelineState): string {
       <span>session running — the agent is working…</span>
     </div>
 
+    <div id="stop-panel" class="stop-panel"${stopActionable ? '' : ' hidden'}>
+      <span>Stop this session and any running subagents.</span>
+      <button id="stop-submit" type="button" class="danger">Stop session</button>
+    </div>
+
     <div id="continue-panel" class="continue-panel"${continueActionable ? '' : ' hidden'}>
       <div class="continue-label">continue session</div>
       <textarea id="continue-prompt" placeholder="tell the agent what to do next"></textarea>
@@ -2168,7 +2260,7 @@ function renderSessionTimeline(view: SessionTimelineState): string {
       </div>
     </div>
 
-    <div id="inactive-banner" class="inactive-banner"${actionable || continueActionable || busy ? ' hidden' : ''}>This approval request is not accepting decisions right now.</div>
+    <div id="inactive-banner" class="inactive-banner"${actionable || continueActionable || stopActionable || busy ? ' hidden' : ''}>This approval request is not accepting decisions right now.</div>
 
     <p id="result" class="notice${initialResultText ? ' error' : ''}">${initialResultText ? escapeHtml(initialResultText) : ''}</p>
   </main>
@@ -2199,6 +2291,7 @@ interface SessionPageOptions {
   approval: ApprovalPageInfo;
   token: string;
   projectId?: string;
+  childSessionToken?: (sessionId: string) => string;
   resuming?: boolean;
   continuing?: boolean;
   error?: string;
@@ -2219,12 +2312,13 @@ interface SessionPageOptions {
  * run log and approving/continuing it.
  */
 function renderSessionPage(options: SessionPageOptions): string {
-  const { approval, token, projectId, resuming, continuing, error, canAct = true } = options;
+  const { approval, token, projectId, childSessionToken, resuming, continuing, error, canAct = true } = options;
   const expired = approval.expiresAt !== undefined && approval.expiresAt <= Date.now();
   const busy = Boolean(resuming || continuing);
   const actionable = canAct && approval.sessionStatus === 'suspended' && !expired && !busy && !error && Boolean(approval.prompt);
   const continueActionable = canAct && canContinueApprovalSession({ approval, resuming, continuing, error });
-  const status = continuing
+  const stopActionable = canAct && !busy && !expired && !isEndedSessionStatus(approval.sessionStatus);
+  let status = continuing
     ? 'continuing'
     : resuming
     ? 'resuming'
@@ -2233,6 +2327,8 @@ function renderSessionPage(options: SessionPageOptions): string {
       : approval.sessionStatus === 'suspended'
         ? 'waiting'
         : approval.sessionStatus;
+  if (status === 'error' && approval.errorCode === 'USER_STOPPED') status = 'stopped';
+  if (status === 'error' && approval.errorCode === 'TIMEOUT') status = 'timeout';
   const initialLogs = approval.logs ?? [];
   // Live whenever the run is actively progressing — covers tool execution and
   // the between-step thinking gaps where no individual log entry is streaming.
@@ -2406,7 +2502,7 @@ function renderSessionPage(options: SessionPageOptions): string {
     .status.resuming, .status.continuing { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
     .status.resuming::before, .status.continuing::before { animation: pulse 0.8s ease-in-out infinite; }
     .status.completed, .status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
-    .status.expired, .status.error, .status.rejected { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+    .status.expired, .status.error, .status.rejected, .status.stopped, .status.timeout { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
     .eyebrow {
@@ -2519,6 +2615,56 @@ function renderSessionPage(options: SessionPageOptions): string {
     .notice { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
     .notice.error { color: var(--red); }
     .notice.error::before { content: "✗ "; }
+    .subagents-panel { padding: 0; overflow: hidden; }
+    .subagent-list { display: grid; }
+    .subagent-row {
+      display: grid;
+      grid-template-columns: auto minmax(120px, 1fr) minmax(180px, auto);
+      gap: 10px 14px;
+      align-items: center;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      color: inherit;
+      text-decoration: none;
+    }
+    .subagent-row:hover { background: var(--panel-soft); }
+    .subagent-row:last-child { border-bottom: 0; }
+    .subagent-status {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      color: var(--muted-3);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .subagent-status.running, .subagent-status.suspended { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+    .subagent-status.completed { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+    .subagent-status.error { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+    .subagent-name { color: var(--fg); font-weight: 500; overflow-wrap: anywhere; }
+    .subagent-row code { color: var(--muted-3); overflow-wrap: anywhere; }
+    .subagent-command {
+      grid-column: 2 / -1;
+      color: var(--muted-2);
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+    .stop-panel {
+      margin: 14px 0 0;
+      padding: 12px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      border: 1px solid var(--red-border);
+      border-radius: 8px;
+      background: var(--red-soft);
+      color: var(--fg);
+      font-size: 13px;
+    }
+    .stop-panel button { white-space: nowrap; }
     .reviewer-comment {
       margin: 0 0 18px;
       border-color: var(--cyan-border);
@@ -3083,6 +3229,10 @@ function renderSessionPage(options: SessionPageOptions): string {
     /* responsive */
     @media (max-width: 640px) {
       h1 { font-size: 26px; }
+      .subagent-row { grid-template-columns: 1fr; }
+      .subagent-command { grid-column: auto; }
+      .stop-panel { flex-direction: column; align-items: stretch; }
+      .stop-panel button { width: 100%; }
       .log-actions { flex-direction: column; align-items: stretch; }
       .log-actions-hint { display: none; }
       .log-actions-buttons { justify-content: stretch; }
@@ -3101,6 +3251,7 @@ function renderSessionPage(options: SessionPageOptions): string {
   ${renderSessionTimeline({
     approval,
     projectId,
+    childSessionToken,
     status,
     eyebrow,
     agentName,
@@ -3112,6 +3263,7 @@ function renderSessionPage(options: SessionPageOptions): string {
     initialLogs,
     actionable,
     continueActionable,
+    stopActionable,
     busy,
     live,
     initialResultText,
@@ -3128,6 +3280,7 @@ function renderSessionPage(options: SessionPageOptions): string {
     let currentResumeToken = ${JSON.stringify(approval.currentResumeToken ?? token)};
     let pendingActionable = ${JSON.stringify(actionable)};
     let continueActionable = ${JSON.stringify(continueActionable)};
+    let stopActionable = ${JSON.stringify(stopActionable)};
     const statusEl = document.querySelector('.status');
     const logsEl = document.getElementById('logs');
     const reviewerCommentEl = document.getElementById('reviewer-comment');
@@ -3136,6 +3289,8 @@ function renderSessionPage(options: SessionPageOptions): string {
     const continuePanel = document.getElementById('continue-panel');
     const continueInput = document.getElementById('continue-prompt');
     const continueSubmit = document.getElementById('continue-submit');
+    const stopPanel = document.getElementById('stop-panel');
+    const stopSubmit = document.getElementById('stop-submit');
     const inactiveBanner = document.getElementById('inactive-banner');
     const workingIndicator = document.getElementById('working-indicator');
     try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch {}
@@ -3552,27 +3707,37 @@ function renderSessionPage(options: SessionPageOptions): string {
       scrollToPageEnd({ force: true });
     }
     function isLiveStatus(status, logs) {
-      if (status === 'completed' || status === 'error' || status === 'expired' || status === 'failed') return false;
+      if (status === 'completed' || status === 'error' || status === 'expired' || status === 'failed' || status === 'stopped' || status === 'timeout') return false;
       if (status === 'run' || status === 'running' || status === 'resuming' || status === 'continuing') return true;
       return Array.isArray(logs) && logs.some(function (entry) {
         return entry && (entry.status === 'streaming' || entry.status === 'running');
       });
     }
     function isEndedStatus(status) {
-      return status === 'completed' || status === 'error';
+      return status === 'completed' || status === 'error' || status === 'stopped' || status === 'timeout';
+    }
+    function displaySessionStatus(status, approval) {
+      const code = approval && typeof approval.errorCode === 'string' ? approval.errorCode : '';
+      if (status === 'error' && code === 'USER_STOPPED') return 'stopped';
+      if (status === 'error' && code === 'TIMEOUT') return 'timeout';
+      return status;
     }
     function sessionErrorText(approval) {
       if (!approval || approval.sessionStatus !== 'error') return '';
       const code = typeof approval.errorCode === 'string' ? approval.errorCode : '';
       const message = typeof approval.errorMessage === 'string' ? approval.errorMessage : '';
+      if (code === 'USER_STOPPED') return message || 'Session stopped by user.';
+      if (code === 'TIMEOUT') return message || 'Session timed out.';
       if (!code && !message) return 'Session finished with an error. Check the session log for details.';
       return 'Session finished with an error: ' + [code, message].filter(Boolean).join(': ');
     }
+    let submittingStop = false;
     function updateContinuationSurface(status, approval, logs) {
       const live = isLiveStatus(status, logs);
       const sessionStatus = approval && approval.sessionStatus ? approval.sessionStatus : status;
       const hasAgentFile = Boolean(approval && approval.agent && approval.agent.filePath);
       continueActionable = isEndedStatus(sessionStatus) && !live && hasAgentFile;
+      stopActionable = !isEndedStatus(sessionStatus) && !submittingStop;
 
       if (continuePanel && continueInput && continueSubmit) {
         if (continueActionable) {
@@ -3587,8 +3752,18 @@ function renderSessionPage(options: SessionPageOptions): string {
         }
       }
 
+      if (stopPanel && stopSubmit) {
+        if (stopActionable) {
+          stopPanel.removeAttribute('hidden');
+          stopSubmit.disabled = false;
+        } else {
+          stopPanel.setAttribute('hidden', '');
+          stopSubmit.disabled = true;
+        }
+      }
+
       if (inactiveBanner) {
-        if (pendingActionable || continueActionable || live) {
+        if (pendingActionable || continueActionable || stopActionable || live) {
           inactiveBanner.setAttribute('hidden', '');
         } else {
           inactiveBanner.removeAttribute('hidden');
@@ -3613,6 +3788,47 @@ function renderSessionPage(options: SessionPageOptions): string {
       if (refreshTimer) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(refreshStatus, delay);
     }
+    async function submitStop() {
+      if (submittingStop || !stopSubmit) return;
+      submittingStop = true;
+      stopActionable = false;
+      stopSubmit.disabled = true;
+      const result = document.getElementById('result');
+      if (result) {
+        result.textContent = '⋮ stopping session…';
+        result.className = 'notice';
+      }
+      try {
+        const response = await fetch(location.pathname + '/stop' + (token ? '?token=' + encodeURIComponent(token) : ''), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project,
+            reason: 'Stopped from session UI'
+          })
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error?.message || 'Stop failed');
+        if (result) {
+          result.textContent = '✓ session stopped. Running subagents were stopped too.';
+          result.className = 'notice';
+        }
+        statusEl.textContent = 'stopped';
+        statusEl.className = 'status stopped';
+        stopPanel?.setAttribute('hidden', '');
+        continuePanel?.setAttribute('hidden', '');
+        workingIndicator?.setAttribute('hidden', '');
+        refreshStatus();
+      } catch (err) {
+        if (result) {
+          result.textContent = err.message || String(err);
+          result.className = 'notice error';
+        }
+        submittingStop = false;
+        stopActionable = true;
+        stopSubmit.disabled = false;
+      }
+    }
     async function refreshStatus() {
       let nextDelay = 1500;
       try {
@@ -3627,7 +3843,8 @@ function renderSessionPage(options: SessionPageOptions): string {
         const response = await fetch(url);
         const payload = await response.json();
         if (!response.ok || !payload.success) return;
-        const status = payload.status || payload.approval?.sessionStatus || 'unknown';
+        const rawStatus = payload.status || payload.approval?.sessionStatus || 'unknown';
+        const status = displaySessionStatus(rawStatus, payload.approval);
         statusEl.textContent = status;
         statusEl.className = 'status ' + status;
         const nextToken = payload.approval?.currentResumeToken;
@@ -3778,6 +3995,7 @@ function renderSessionPage(options: SessionPageOptions): string {
       });
     }
     continueSubmit?.addEventListener('click', submitContinue);
+    stopSubmit?.addEventListener('click', submitStop);
     continueInput?.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
@@ -5468,6 +5686,7 @@ export function createServeCommand(): Command {
             approval: found.info.approval,
             token: pageToken,
             projectId: found.project.id,
+            childSessionToken: (childSessionId) => sessionViewToken(childSessionId, apiKey),
             resuming: activeApprovalResumes.has(activeKey),
             continuing: activeSessionContinuations.has(activeKey),
             canAct: true,
@@ -5614,6 +5833,58 @@ export function createServeCommand(): Command {
             }
 
             startSessionContinue(res, { project, sessionId, prompt });
+          } catch (err) {
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // POST /sessions/:id/stop: abort a live session and mark it plus its
+        // subagent children as stopped. Authorized the same way as the session
+        // page: local, session token, or API key.
+        const sessionStopMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/stop$/) : null;
+        if (sessionStopMatch) {
+          try {
+            const sessionId = decodeURIComponent(sessionStopMatch[1]);
+            const token = requestUrl.searchParams.get('token') ?? undefined;
+            const body = await parseJSONBody(req);
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+            const reason = typeof body.reason === 'string' && body.reason.trim().length > 0
+              ? body.reason.trim()
+              : undefined;
+
+            if (!sessionAuthorized(sessionId, token)) {
+              sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+              return;
+            }
+
+            const found = await findSessionInfo(sessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+
+            const project = found.project;
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) {
+              sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
+              return;
+            }
+
+            const activeKey = `${project.id}:${sessionId}`;
+            activeApprovalResumes.delete(activeKey);
+            activeSessionContinuations.delete(activeKey);
+
+            const result = await projectWorker.stopSession({
+              projectRoot: project.root,
+              sessionId,
+              reason,
+            });
+            if (!result.success) {
+              sendError(res, 500, result.error.code, result.error.message);
+              return;
+            }
+            sendJSON(res, 200, { success: true, sessionId, stopped: result.stopped });
           } catch (err) {
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }

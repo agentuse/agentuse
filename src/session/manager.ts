@@ -12,6 +12,20 @@ import type {
   ToolPart
 } from './types';
 
+export interface SessionEntry {
+  session: SessionInfo;
+  agentId: string;
+  path: string;
+}
+
+export interface StoppedSession {
+  sessionId: string;
+  agentId: string;
+  agentName: string;
+  wasStatus: SessionInfo['status'];
+  stopped: boolean;
+}
+
 function getPartOrder(part: Part): number {
   if (part.type === 'text') return part.time?.start ?? Number.MAX_SAFE_INTEGER;
   if (part.type === 'reasoning') return part.time.start;
@@ -66,10 +80,57 @@ export class SessionManager {
     return sessionDir;
   }
 
-  private sessionIdFromDirName(dirName: string): string | null {
-    const ulidLength = 26;
-    if (dirName.length < ulidLength + 2 || dirName[ulidLength] !== '-') return null;
-    return dirName.slice(0, ulidLength);
+  private async walkSessionDirs(baseDir: string, relativeDir = ''): Promise<string[]> {
+    const absoluteDir = path.join(baseDir, relativeDir);
+    const entries = await fs.readdir(absoluteDir, { withFileTypes: true }).catch(() => []);
+    const sessionJson = entries.find((entry) => entry.isFile() && entry.name === 'session.json');
+    const results: string[] = sessionJson ? [relativeDir] : [];
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      results.push(...await this.walkSessionDirs(baseDir, path.join(relativeDir, entry.name)));
+    }
+
+    return results;
+  }
+
+  private async readSessionEntries(options: { createdAfter?: number } = {}): Promise<SessionEntry[]> {
+    const state = await getStorageState();
+    const dirs = await this.walkSessionDirs(state.dir);
+    const results: SessionEntry[] = [];
+
+    for (const dir of dirs) {
+      const session = await readJSON<SessionInfo>(`${dir}/session`);
+      if (!session) continue;
+      if (options.createdAfter !== undefined) {
+        try {
+          if (decodeTime(session.id) < options.createdAfter) continue;
+        } catch {
+          if (session.time.created < options.createdAfter) continue;
+        }
+      }
+      const dirName = path.basename(dir);
+      const prefix = `${session.id}-`;
+      const agentId = dirName.startsWith(prefix)
+        ? dirName.slice(prefix.length)
+        : sanitizeAgentName(session.agent.id);
+      results.push({ session, agentId, path: dir });
+    }
+
+    return results;
+  }
+
+  private async updateSessionAtPath(sessionPath: string, updates: Partial<Omit<SessionInfo, 'id'>>): Promise<void> {
+    const key = `${sessionPath}/session`;
+
+    await this.serializedWrite(key, async () => {
+      const session = await readJSON<SessionInfo>(key);
+      if (session) {
+        Object.assign(session, updates);
+        session.time.updated = Date.now();
+        await writeJSON(key, session);
+      }
+    });
   }
 
   /**
@@ -291,23 +352,9 @@ export class SessionManager {
    * Locate a top-level session by ID without requiring the caller to know the
    * sanitized agent id. Resume endpoints only have the session id in the URL.
    */
-  async findSession(sessionID: string): Promise<{ session: SessionInfo; agentId: string; path: string } | null> {
-    const state = await getStorageState();
-    const entries = await fs.readdir(state.dir, { withFileTypes: true }).catch(() => []);
-    const prefix = `${sessionID}-`;
-
-    for (const entry of entries) {
-      if (!entry.isDirectory() || !entry.name.startsWith(prefix)) continue;
-      const session = await readJSON<SessionInfo>(`${entry.name}/session`);
-      if (!session) continue;
-      return {
-        session,
-        agentId: entry.name.slice(prefix.length),
-        path: entry.name
-      };
-    }
-
-    return null;
+  async findSession(sessionID: string): Promise<SessionEntry | null> {
+    const entries = await this.readSessionEntries();
+    return entries.find((entry) => entry.session.id === sessionID) ?? null;
   }
 
   /**
@@ -401,28 +448,75 @@ export class SessionManager {
     predicate?: (session: SessionInfo) => boolean,
     options: { createdAfter?: number } = {}
   ): Promise<Array<{ session: SessionInfo; agentId: string }>> {
-    const state = await getStorageState();
-    const entries = await fs.readdir(state.dir, { withFileTypes: true }).catch(() => []);
+    const entries = await this.readSessionEntries(options);
     const results: Array<{ session: SessionInfo; agentId: string }> = [];
 
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const sessionId = this.sessionIdFromDirName(entry.name);
-      if (options.createdAfter !== undefined && sessionId) {
-        try {
-          if (decodeTime(sessionId) < options.createdAfter) continue;
-        } catch {
-          // Fall through and read the session file for legacy/non-ULID data.
-        }
-      }
-      const session = await readJSON<SessionInfo>(`${entry.name}/session`);
-      if (!session) continue;
+    for (const { session, agentId } of entries) {
       if (predicate && !predicate(session)) continue;
-      const agentId = entry.name.slice(`${session.id}-`.length);
       results.push({ session, agentId });
     }
 
     return results;
+  }
+
+  async listChildSessions(parentSessionID: string): Promise<SessionEntry[]> {
+    const entries = await this.readSessionEntries();
+    return entries
+      .filter((entry) => entry.session.parentSessionID === parentSessionID)
+      .sort((a, b) => a.session.time.created - b.session.time.created || a.session.id.localeCompare(b.session.id));
+  }
+
+  async stopSessionTree(
+    sessionID: string,
+    options: { message?: string; code?: string } = {}
+  ): Promise<StoppedSession[]> {
+    const entries = await this.readSessionEntries();
+    const byParent = new Map<string, SessionEntry[]>();
+    for (const entry of entries) {
+      const parentId = entry.session.parentSessionID;
+      if (!parentId) continue;
+      const children = byParent.get(parentId) ?? [];
+      children.push(entry);
+      byParent.set(parentId, children);
+    }
+
+    const root = entries.find((entry) => entry.session.id === sessionID);
+    if (!root) return [];
+
+    const ordered: SessionEntry[] = [];
+    const visit = (entry: SessionEntry) => {
+      ordered.push(entry);
+      for (const child of byParent.get(entry.session.id) ?? []) {
+        visit(child);
+      }
+    };
+    visit(root);
+
+    const now = Date.now();
+    const stopped: StoppedSession[] = [];
+    for (const entry of ordered) {
+      const wasStatus = entry.session.status;
+      const shouldStop = wasStatus === 'running' || wasStatus === 'suspended';
+      if (shouldStop) {
+        await this.updateSessionAtPath(entry.path, {
+          status: 'error',
+          error: {
+            code: options.code ?? 'USER_STOPPED',
+            message: options.message ?? 'Session stopped by user',
+            time: now
+          }
+        });
+      }
+      stopped.push({
+        sessionId: entry.session.id,
+        agentId: entry.agentId,
+        agentName: entry.session.agent.name || entry.session.agent.id,
+        wasStatus,
+        stopped: shouldStop
+      });
+    }
+
+    return stopped;
   }
 
   async getSuspendedSessions(): Promise<Array<{ session: SessionInfo; agentId: string }>> {

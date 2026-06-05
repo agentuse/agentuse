@@ -12,6 +12,7 @@ import { logger, LogLevel } from "../utils/logger";
 import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
 import { applyResumeToolResult, restoreResumeToolResult, runAgent } from "../runner";
+import { findServerForProject } from "../utils/server-registry";
 
 interface SessionSummary {
   id: string;
@@ -20,9 +21,12 @@ interface SessionSummary {
   model: string;
   created: Date;
   isSubAgent: boolean;
+  parentSessionID?: string;
   dirPath: string;
   projectRoot: string;
   status?: SessionStatus;
+  errorCode?: string;
+  errorMessage?: string;
 }
 
 interface SessionScope {
@@ -100,6 +104,41 @@ function parseSessionDirName(dirName: string): { id: string; agentName: string }
   return { id, agentName };
 }
 
+async function walkSessionDirs(sessionDir: string, relativeDir = ""): Promise<string[]> {
+  const absoluteDir = path.join(sessionDir, relativeDir);
+  const entries = await fs.readdir(absoluteDir, { withFileTypes: true }).catch(() => []);
+  const results: string[] = entries.some((entry) => entry.isFile() && entry.name === "session.json")
+    ? [relativeDir]
+    : [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    results.push(...await walkSessionDirs(sessionDir, path.join(relativeDir, entry.name)));
+  }
+
+  return results;
+}
+
+function sessionSummaryFromInfo(sessionInfo: SessionInfo & { agent: { id?: string } }, dirPath: string, projectRoot: string): SessionSummary {
+  const agentId = sessionInfo.agent.id
+    ?? computeAgentId(sessionInfo.agent.filePath, sessionInfo.project.root, sessionInfo.agent.name);
+
+  return {
+    id: sessionInfo.id,
+    agentId,
+    agentName: sessionInfo.agent.name,
+    model: sessionInfo.model,
+    created: new Date(sessionInfo.time.created),
+    isSubAgent: sessionInfo.agent.isSubAgent,
+    ...(sessionInfo.parentSessionID && { parentSessionID: sessionInfo.parentSessionID }),
+    dirPath,
+    projectRoot: sessionInfo.project.root || projectRoot,
+    status: sessionInfo.status,
+    ...(sessionInfo.error?.code && { errorCode: sessionInfo.error.code }),
+    ...(sessionInfo.error?.message && { errorMessage: sessionInfo.error.message }),
+  };
+}
+
 /**
  * List all sessions from storage
  */
@@ -108,36 +147,22 @@ async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
   const sessions: SessionSummary[] = [];
 
   try {
-    const entries = await fs.readdir(sessionDir, { withFileTypes: true });
+    const sessionDirs = await walkSessionDirs(sessionDir);
 
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-
-      const parsed = parseSessionDirName(entry.name);
+    for (const relativeDir of sessionDirs) {
+      const dirName = path.basename(relativeDir);
+      const parsed = parseSessionDirName(dirName);
       if (!parsed) continue;
 
       // Try to read session.json for more details
-      const sessionJsonPath = path.join(sessionDir, entry.name, "session.json");
+      const dirPath = path.join(sessionDir, relativeDir);
+      const sessionJsonPath = path.join(dirPath, "session.json");
       try {
         const content = await fs.readFile(sessionJsonPath, "utf-8");
         // Use Partial for agent.id to handle old sessions that don't have it
         const sessionInfo = JSON.parse(content) as SessionInfo & { agent: { id?: string } };
 
-        // Migrate old sessions: compute agentId if missing
-        const agentId = sessionInfo.agent.id
-          ?? computeAgentId(sessionInfo.agent.filePath, sessionInfo.project.root, sessionInfo.agent.name);
-
-        sessions.push({
-          id: sessionInfo.id,
-          agentId,
-          agentName: sessionInfo.agent.name,
-          model: sessionInfo.model,
-          created: new Date(sessionInfo.time.created),
-          isSubAgent: sessionInfo.agent.isSubAgent,
-          dirPath: path.join(sessionDir, entry.name),
-          projectRoot: sessionInfo.project.root,
-          status: sessionInfo.status,
-        });
+        sessions.push(sessionSummaryFromInfo(sessionInfo, dirPath, projectRoot));
       } catch {
         // If session.json is missing or invalid, use parsed info
         sessions.push({
@@ -147,7 +172,7 @@ async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
           model: "unknown",
           created: new Date(0),
           isSubAgent: false,
-          dirPath: path.join(sessionDir, entry.name),
+          dirPath,
           projectRoot,
         });
       }
@@ -171,34 +196,20 @@ async function listAllProjectSessions(): Promise<SessionSummary[]> {
   for (const projectEntry of projectEntries) {
     if (!projectEntry.isDirectory()) continue;
     const sessionDir = path.join(projectsDir, projectEntry.name, "session");
-    const sessionEntries = await fs.readdir(sessionDir, { withFileTypes: true }).catch(() => []);
+    const sessionDirs = await walkSessionDirs(sessionDir).catch(() => []);
 
-    for (const entry of sessionEntries) {
-      if (!entry.isDirectory()) continue;
-
-      const parsed = parseSessionDirName(entry.name);
+    for (const relativeDir of sessionDirs) {
+      const dirName = path.basename(relativeDir);
+      const parsed = parseSessionDirName(dirName);
       if (!parsed) continue;
 
-      const dirPath = path.join(sessionDir, entry.name);
+      const dirPath = path.join(sessionDir, relativeDir);
       const sessionJsonPath = path.join(dirPath, "session.json");
       try {
         const content = await fs.readFile(sessionJsonPath, "utf-8");
         const sessionInfo = JSON.parse(content) as SessionInfo & { agent: { id?: string } };
         const projectRoot = sessionInfo.project.root;
-        const agentId = sessionInfo.agent.id
-          ?? computeAgentId(sessionInfo.agent.filePath, projectRoot, sessionInfo.agent.name);
-
-        sessions.push({
-          id: sessionInfo.id,
-          agentId,
-          agentName: sessionInfo.agent.name,
-          model: sessionInfo.model,
-          created: new Date(sessionInfo.time.created),
-          isSubAgent: sessionInfo.agent.isSubAgent,
-          dirPath,
-          projectRoot,
-          status: sessionInfo.status,
-        });
+        sessions.push(sessionSummaryFromInfo(sessionInfo, dirPath, projectRoot));
       } catch {
         sessions.push({
           id: parsed.id,
@@ -362,7 +373,9 @@ function resolveSessionScope(options?: { all?: boolean; project?: string | boole
   return { kind: "project", projectRoot: projectContext.projectRoot };
 }
 
-function statusLabel(status?: SessionStatus): string {
+function statusLabel(status?: SessionStatus, errorCode?: string): string {
+  if (status === 'error' && errorCode === 'USER_STOPPED') return 'stopped';
+  if (status === 'error' && errorCode === 'TIMEOUT') return 'timeout';
   return status === 'completed'
     ? 'done'
     : status === 'error'
@@ -653,6 +666,18 @@ export function createSessionsCommand(): Command {
       await resumeSession(id, options);
     }));
 
+  sessionsCmd
+    .command("stop <id>")
+    .alias("cancel")
+    .description("Stop a running or suspended session and its subagent children")
+    .option("--reason <text>", "Reason recorded on the stopped session")
+    .option("--project [path]", "Search a project path; defaults to the current project")
+    .option("--all-search", "Search all projects if the session is not in the selected project")
+    .action(async (id: string, options: { reason?: string; project?: string | boolean; allSearch?: boolean }) => runSessionsAction(async () => {
+      const scope = resolveSessionScope(options);
+      await stopSession(scope, id, options);
+    }));
+
   // Add path subcommand to show storage location
   sessionsCmd
     .command("path")
@@ -732,7 +757,7 @@ async function listSessionsCommand(
   // Rows
   for (const session of sessions) {
     const shortId = session.id.substring(0, idWidth);
-    const statusText = statusLabel(session.status);
+    const statusText = statusLabel(session.status, session.errorCode);
     const agent = truncate(session.agentId, agentWidth).padEnd(agentWidth);
     const date = formatDate(session.created);
 
@@ -768,15 +793,19 @@ async function showSession(
     process.exit(1);
   }
 
+  const s = details.session;
+  const childSessions = (await listSessions(session.projectRoot))
+    .filter((child) => child.parentSessionID === s.id)
+    .sort((a, b) => a.created.getTime() - b.created.getTime() || a.id.localeCompare(b.id));
+
   if (options?.json) {
-    process.stdout.write(JSON.stringify({ ...details, projectRoot: session.projectRoot }, null, 2) + "\n");
+    process.stdout.write(JSON.stringify({ ...details, projectRoot: session.projectRoot, childSessions }, null, 2) + "\n");
     return;
   }
 
   const showFull = options?.full ?? false;
 
   // Display session info
-  const s = details.session;
 
   process.stdout.write(`\n${"═".repeat(60)}\n`);
   process.stdout.write(`SESSION: ${s.id}\n`);
@@ -797,7 +826,7 @@ async function showSession(
   process.stdout.write(`Started:     ${new Date(s.time.created).toLocaleString()}\n`);
 
   // Display session status
-  const statusIcon = s.status === 'completed' ? '✓' : s.status === 'error' ? '✗' : '⋯';
+  const statusIcon = s.status === 'completed' ? '✓' : s.status === 'error' ? '✗' : s.status === 'suspended' ? '⏸' : '⋯';
   process.stdout.write(`Status:      ${statusIcon} ${s.status || 'unknown'}\n`);
 
   if (s.config.mcpServers && s.config.mcpServers.length > 0) {
@@ -806,6 +835,16 @@ async function showSession(
 
   process.stdout.write(`\nProject:     ${s.project.root}\n`);
   process.stdout.write(`Working Dir: ${s.project.cwd}\n`);
+
+  if (childSessions.length > 0) {
+    process.stdout.write(`\nSubagents:\n`);
+    for (const child of childSessions) {
+      process.stdout.write(
+        `  - ${child.id.substring(0, 12)}  ${statusLabel(child.status, child.errorCode).padEnd(9)}  ${child.agentId}  ${formatDate(child.created)}\n`
+      );
+    }
+    process.stdout.write(`    Inspect with: agentuse sessions show <subagent-id> --all-search\n`);
+  }
 
   // Display session-level error (failures before LLM calls - auth, MCP, etc.)
   if (s.error) {
@@ -1051,6 +1090,69 @@ async function resolveSessionByScope(
     ? ""
     : "\n\nTry:\n  agentuse sessions list --all\n  agentuse sessions show " + sessionId + " --all-search";
   throw new Error(`Session ${sessionId} was not found in ${scopeText}.${suggestion}`);
+}
+
+async function stopSession(
+  scope: SessionScope,
+  sessionId: string,
+  options: { reason?: string; allSearch?: boolean } = {}
+): Promise<void> {
+  const match = await resolveSessionByScope(scope, sessionId, {
+    ...(options.allSearch !== undefined && { allSearch: options.allSearch })
+  });
+  const summary = match.summary;
+  const serverStopped = await stopSessionViaServer(summary, options.reason);
+
+  await initStorage(summary.projectRoot);
+  const sessionManager = new SessionManager();
+  const stopped = await sessionManager.stopSessionTree(summary.id, {
+    message: options.reason ?? 'Session stopped by user'
+  });
+
+  if (stopped.length === 0) {
+    throw new Error(`Session not found: ${summary.id}`);
+  }
+
+  const changed = stopped.filter((entry) => entry.stopped);
+  if (changed.length === 0) {
+    process.stdout.write(`Session ${summary.id} and its subagents were already ended.\n`);
+    return;
+  }
+
+  process.stdout.write(`Stopped ${changed.length} session(s):\n`);
+  if (serverStopped) {
+    process.stdout.write(`  server: active worker was asked to abort\n`);
+  }
+  for (const entry of stopped) {
+    const marker = entry.stopped ? '✓' : '-';
+    const suffix = entry.stopped ? '' : ` (already ${entry.wasStatus})`;
+    process.stdout.write(`  ${marker} ${entry.sessionId.substring(0, 12)}  ${entry.agentId}  was ${entry.wasStatus}${suffix}\n`);
+  }
+}
+
+async function stopSessionViaServer(summary: SessionSummary, reason?: string): Promise<boolean> {
+  const server = findServerForProject(summary.projectRoot);
+  if (!server) return false;
+
+  const project = server.projects?.find((entry) => path.resolve(entry.root) === path.resolve(summary.projectRoot))
+    ?? server.projects?.find((entry) => path.resolve(summary.projectRoot).startsWith(path.resolve(entry.root) + path.sep))
+    ?? server.projects?.[0];
+  const host = server.host === '0.0.0.0' ? '127.0.0.1' : server.host;
+  const url = `http://${host}:${server.port}/sessions/${encodeURIComponent(summary.id)}/stop`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...(project?.id && { project: project.id }),
+        ...(reason && { reason }),
+      }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function resumeSession(
