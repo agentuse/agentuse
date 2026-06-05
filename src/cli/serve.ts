@@ -2062,8 +2062,8 @@ function renderApprovalsListPage(options: {
   <main>
     <h1>Approvals</h1>
     <nav class="approval-nav" aria-label="Approval history">
-      <a href="${escapeHtml(completedSessionsHref)}">Completed approvals</a>
-      <a href="${escapeHtml(erroredSessionsHref)}">Errored approvals</a>
+      <a href="${escapeHtml(completedSessionsHref)}">Completed</a>
+      <a href="${escapeHtml(erroredSessionsHref)}">Errored</a>
     </nav>
     ${errors.length > 0 ? `
       <div class="errors">

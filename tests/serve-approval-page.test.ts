@@ -56,8 +56,10 @@ describe('approval web page', () => {
     expect(html).toContain('Pending agent');
     expect(html).toContain('href="/sessions?approval=completed&amp;days=30"');
     expect(html).toContain('href="/sessions?approval=errored&amp;days=30"');
-    expect(html).toContain('Completed approvals');
-    expect(html).toContain('Errored approvals');
+    expect(html).toContain('>Completed</a>');
+    expect(html).toContain('>Errored</a>');
+    expect(html).not.toContain('Completed approvals');
+    expect(html).not.toContain('Errored approvals');
     expect(html).not.toContain('Completed approvals in Sessions');
     expect(html).not.toContain('Errored approvals in Sessions');
     expect(html).not.toContain('Expired / Errored');
