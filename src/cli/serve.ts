@@ -1846,7 +1846,6 @@ function renderStoreItemDetailPage(options: {
 function renderApprovalsListPage(options: {
   buckets: {
     pending: Array<{ projectId: string; multiProject: boolean; approval: ApprovalSummary }>;
-    completed: Array<{ projectId: string; multiProject: boolean; approval: ApprovalSummary }>;
     expired: Array<{ projectId: string; multiProject: boolean; approval: ApprovalSummary }>;
   };
   errors: Array<{ projectId: string; message: string }>;
@@ -1933,7 +1932,6 @@ function renderApprovalsListPage(options: {
       </div>
     ` : ''}
     ${renderApprovalBucket('Pending', buckets.pending, 'No approvals waiting.')}
-    ${renderApprovalBucket('Completed', buckets.completed, 'No completed approvals yet.')}
     ${renderApprovalBucket('Expired / Errored', buckets.expired, 'Nothing has expired or errored.')}
     <footer>auto-refreshes every 10s</footer>
   </main>
@@ -5926,9 +5924,6 @@ export function createServeCommand(): Command {
             pending: rows
               .filter((r) => r.approval.status === 'pending')
               .sort((a, b) => (a.approval.expiresAt ?? Number.MAX_SAFE_INTEGER) - (b.approval.expiresAt ?? Number.MAX_SAFE_INTEGER)),
-            completed: rows
-              .filter((r) => r.approval.status === 'approved' || r.approval.status === 'rejected' || r.approval.status === 'commented')
-              .sort((a, b) => (b.approval.decisionAt ?? 0) - (a.approval.decisionAt ?? 0)),
             expired: rows
               .filter((r) => r.approval.status === 'expired' || r.approval.status === 'errored')
               .sort((a, b) => (b.approval.decisionAt ?? b.approval.expiresAt ?? 0) - (a.approval.decisionAt ?? a.approval.expiresAt ?? 0))
@@ -5944,7 +5939,6 @@ export function createServeCommand(): Command {
               approvals: rows.map(serializeRow),
               buckets: {
                 pending: buckets.pending.map(serializeRow),
-                completed: buckets.completed.map(serializeRow),
                 expired: buckets.expired.map(serializeRow)
               },
               window: {
@@ -6919,6 +6913,7 @@ function createSchedulesSubcommand(): Command {
 
 export const __testing = {
   renderHomePage,
+  renderApprovalsListPage,
   renderApprovalPage,
   renderSessionPage,
   renderSessionTimeline,

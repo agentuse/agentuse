@@ -27,6 +27,39 @@ describe('approval web page', () => {
       .toBeUndefined();
   });
 
+  it('does not show completed approvals on the approvals list', () => {
+    const row = (status: 'pending' | 'approved' | 'errored', sessionId: string, name: string) => ({
+      projectId: 'project-1',
+      multiProject: false,
+      approval: {
+        sessionId,
+        agentId: `agents/${sessionId}`,
+        agentName: name,
+        status,
+        sessionStatus: status === 'pending' ? 'suspended' : 'completed',
+        prompt: `${name} prompt`,
+        createdAt: Date.UTC(2026, 4, 1),
+      },
+    });
+
+    const html = __testing.renderApprovalsListPage({
+      buckets: {
+        pending: [row('pending', 'pending-session', 'Pending agent')],
+        expired: [row('errored', 'errored-session', 'Errored agent')],
+      },
+      errors: [],
+      multiProject: false,
+    });
+
+    expect(html).toContain('Pending');
+    expect(html).toContain('Pending agent');
+    expect(html).toContain('Expired / Errored');
+    expect(html).toContain('Errored agent');
+    expect(html).not.toContain('Completed');
+    expect(html).not.toContain('No completed approvals yet.');
+    expect(html).not.toContain('Approved agent');
+  });
+
   it('offers a continuation form for completed approval sessions', () => {
     expect(__testing.canContinueApprovalSession({
       approval: baseApproval
