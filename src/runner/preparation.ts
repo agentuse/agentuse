@@ -253,11 +253,17 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   // Track subagent names for logging
   const subAgentNames = new Set(Object.keys(subAgentTools));
 
-  // Create cleanup function to release resources
-  const cleanup = async () => {
+  // Release only the store lock. releaseLock is idempotent, so this can run
+  // early (before the status flip) and again in cleanup.
+  const releaseStoreLock = async () => {
     if (loadedTools.store) {
       await loadedTools.store.releaseLock();
     }
+  };
+
+  // Create cleanup function to release resources
+  const cleanup = async () => {
+    await releaseStoreLock();
     if (loadedTools.sandboxInstance) {
       await loadedTools.sandboxInstance.kill();
     }
@@ -275,6 +281,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     agentId,
     doomLoopDetector,
     cleanup,
+    releaseStoreLock,
     learningsApplied
   };
 }

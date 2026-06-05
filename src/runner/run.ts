@@ -256,6 +256,10 @@ export async function runAgent(
     logger.debug(`Agent produced text output: ${result.hasTextOutput}`);
 
     if (result.suspended) {
+      // Release the store lock before the status flip so the session never
+      // appears suspended/done while still holding it. cleanup releases again
+      // (idempotent) in the finally.
+      if (preparation) await preparation.releaseStoreLock();
       if (sessionManager && prepSessionID && prepAgentId) {
         await sessionManager.setSessionSuspended(prepSessionID, prepAgentId);
       }
@@ -303,6 +307,11 @@ export async function runAgent(
         ...(toolCallCount > 0 && { toolCallCount }),
       });
     }
+
+    // Release the store lock before flipping status to completed so the next
+    // run's lock acquire can't overlap this run's release. cleanup releases
+    // again (idempotent) in the finally.
+    if (preparation) await preparation.releaseStoreLock();
 
     // Mark the session completed even when a provider omits final usage data.
     // Short continuation replies can otherwise leave the approval page polling

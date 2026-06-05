@@ -435,6 +435,35 @@ describe("Store Locking", () => {
     await store1.releaseLock();
     expect(existsSync(lockPath)).toBe(false);
   });
+
+  // Regression: the serve worker handles requests concurrently, so multiple
+  // Store instances acquire/release the same lock at the same time. The old
+  // ref-count logic drifted under these interleavings and left the lock file
+  // on disk with a live PID, permanently blocking every other process.
+  it("releases the lock file after concurrent acquire/release cycles", async () => {
+    const lockPath = join(tempDir, ".agentuse", "store", "lock-test", "lock");
+
+    const cycle = async (i: number) => {
+      const s = new Store(tempDir, "lock-test", `agent-${i}`);
+      await s.create({ data: { i } });
+      // Yield so cycles interleave across the await points in acquire/release.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await s.list();
+      await s.releaseLock();
+    };
+
+    await Promise.all(Array.from({ length: 20 }, (_, i) => cycle(i)));
+
+    // Once every concurrent holder has released, the lock file must be gone and
+    // no phantom ref count may linger.
+    expect(existsSync(lockPath)).toBe(false);
+
+    // A fresh acquire must still succeed and not see itself as locked out.
+    const after = new Store(tempDir, "lock-test", "after");
+    await expect(after.create({ data: { ok: true } })).resolves.toBeDefined();
+    await after.releaseLock();
+    expect(existsSync(lockPath)).toBe(false);
+  });
 });
 
 describe("Store Atomic Writes", () => {

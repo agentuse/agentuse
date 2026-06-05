@@ -97,6 +97,26 @@ export class Store {
   private agentName: string | undefined;
   private storeName: string;
   private static lockRefCounts: Map<string, number> = new Map();
+  // Per-lockPath promise chain that serializes acquire/release for a given
+  // lock file. The serve worker handles execute/resume requests concurrently
+  // (src/index.ts), so multiple Store instances in the same process can call
+  // acquireLock/releaseLock on the same path at once. Those methods check the
+  // lock file and the ref count across `await` points; without serialization
+  // the interleavings drift the ref count and leave the lock file on disk with
+  // a live PID, permanently blocking every other process.
+  private static lockChains: Map<string, Promise<unknown>> = new Map();
+
+  /**
+   * Run an operation inside the per-lockPath critical section so concurrent
+   * acquire/release calls for the same lock never interleave.
+   */
+  private static withLockChain<T>(lockPath: string, operation: () => Promise<T>): Promise<T> {
+    const previous = Store.lockChains.get(lockPath) ?? Promise.resolve();
+    const result = previous.then(operation, operation);
+    // Keep the chain alive regardless of this operation's outcome.
+    Store.lockChains.set(lockPath, result.then(() => {}, () => {}));
+    return result;
+  }
 
   /**
    * Create a new Store instance
@@ -122,6 +142,27 @@ export class Store {
    */
   private async acquireLock(): Promise<void> {
     if (this.locked) return;
+    await Store.withLockChain(this.lockPath, () => this.acquireLockUnsafe());
+  }
+
+  /**
+   * Core acquire logic. MUST run inside withLockChain so the check-then-act
+   * sequence below is never interleaved with a concurrent acquire/release on
+   * the same lock path.
+   */
+  private async acquireLockUnsafe(): Promise<void> {
+    if (this.locked) return;
+
+    // The ref count is the sole authority for same-process re-entrancy. If we
+    // already hold this lock in this process, just share it - never re-read the
+    // file's PID to decide re-entrancy (that path fabricated phantom holders
+    // when a leftover lock file lingered, leaking the lock permanently).
+    const existingCount = Store.lockRefCounts.get(this.lockPath) ?? 0;
+    if (existingCount > 0) {
+      Store.lockRefCounts.set(this.lockPath, existingCount + 1);
+      this.locked = true;
+      return;
+    }
 
     const storeDir = dirname(this.lockPath);
 
@@ -130,22 +171,18 @@ export class Store {
       await mkdir(storeDir, { recursive: true });
     }
 
-    // Check for existing lock
+    // No same-process holder: inspect any on-disk lock before taking it.
     if (existsSync(this.lockPath)) {
       try {
         const lockContent = await readFile(this.lockPath, 'utf-8');
         const lockData = JSON.parse(lockContent);
         const { pid, agent, timestamp } = lockData;
 
-        if (isProcessRunning(pid)) {
-          if (pid === process.pid) {
-            // Re-entrant access from same process: bump ref count and reuse lock
-            const currentCount = Store.lockRefCounts.get(this.lockPath) ?? 1;
-            Store.lockRefCounts.set(this.lockPath, currentCount + 1);
-            this.locked = true;
-            return;
-          }
-
+        if (pid === process.pid) {
+          // Our own PID but no live ref count: a leftover from a prior holder
+          // in this process. Reclaim it instead of counting a phantom holder.
+          logger.warn(`[Store] Reclaiming leftover lock from this process`);
+        } else if (isProcessRunning(pid)) {
           // Lock is held by a different running process
           const lockAge = Date.now() - new Date(timestamp).getTime();
           const lockAgeStr = lockAge > 60000
@@ -160,10 +197,10 @@ export class Store {
             `Wait for it to complete, or remove the lock file:\n` +
             `  rm "${this.lockPath}"`
           );
+        } else {
+          // Stale lock from dead process - we can steal it
+          logger.warn(`[Store] Removing stale lock from PID ${pid}`);
         }
-
-        // Stale lock from dead process - we can steal it
-        logger.warn(`[Store] Removing stale lock from PID ${pid}`);
       } catch (error) {
         if ((error as Error).message.includes('is locked by another process')) {
           throw error;
@@ -189,12 +226,24 @@ export class Store {
    */
   async releaseLock(): Promise<void> {
     if (!this.locked) return;
+    await Store.withLockChain(this.lockPath, () => this.releaseLockUnsafe());
+  }
+
+  /**
+   * Core release logic. MUST run inside withLockChain so it never interleaves
+   * with a concurrent acquire/release on the same lock path.
+   */
+  private async releaseLockUnsafe(): Promise<void> {
+    if (!this.locked) return;
+    // Mark this instance released up front so the ref count tracks the number
+    // of live holders exactly, even if the file I/O below throws.
+    this.locked = false;
 
     try {
       const currentCount = (Store.lockRefCounts.get(this.lockPath) ?? 1) - 1;
       if (currentCount > 0) {
+        // Other holders in this process remain - keep the file in place.
         Store.lockRefCounts.set(this.lockPath, currentCount);
-        this.locked = false;
         return;
       }
 
@@ -211,7 +260,6 @@ export class Store {
     } catch {
       // Ignore errors when releasing lock
     }
-    this.locked = false;
   }
 
   /**

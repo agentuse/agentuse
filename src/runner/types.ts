@@ -36,6 +36,13 @@ export interface PreparedAgentExecution {
   doomLoopDetector: DoomLoopDetector;
   /** Cleanup function to release resources (store locks, etc.) - call when agent execution completes */
   cleanup: () => Promise<void>;
+  /**
+   * Release only the store lock, early and idempotently. Call this immediately
+   * before flipping the session status (completed/suspended) so a session never
+   * appears "done" while still holding the lock - that window let the next run's
+   * acquire overlap this run's release. `cleanup` calls it again, which is safe.
+   */
+  releaseStoreLock: () => Promise<void>;
   /** Number of learnings applied to this run (0 if learning.apply is disabled) */
   learningsApplied: number;
 }
