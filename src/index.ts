@@ -1175,8 +1175,12 @@ async function runInternalWorker() {
     return Object.keys(fields).length > 0 ? fields : undefined;
   }
 
-  async function childSessionSummaries(sessionManager: InstanceType<typeof SessionManager>, sessionId: string) {
-    const children = await sessionManager.listChildSessions(sessionId);
+  async function childSessionSummaries(
+    sessionManager: InstanceType<typeof SessionManager>,
+    sessionId: string,
+    sessionPath?: string
+  ) {
+    const children = await sessionManager.listChildSessions(sessionId, sessionPath);
     return children.map(({ session }) => ({
       sessionId: session.id,
       agent: {
@@ -1219,7 +1223,7 @@ async function runInternalWorker() {
         messages.map((message) => sessionManager.getMessageParts(req.sessionId!, found.agentId, message.id))
       )).flat();
       const logs = buildApprovalLogs(parts);
-      const childSessions = await childSessionSummaries(sessionManager, req.sessionId);
+      const childSessions = await childSessionSummaries(sessionManager, req.sessionId, found.path);
       const approvalParts = parts.filter((part: any) =>
         part?.type === 'tool' &&
         part?.tool === 'await_human' &&

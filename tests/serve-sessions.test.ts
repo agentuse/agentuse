@@ -569,8 +569,22 @@ describe('reading nested subagent sessions from a fresh manager', () => {
         time: { start: Date.now(), end: Date.now() },
       } as any);
 
+      const orphanChildManager = new SessionManager();
+      const orphanChildId = await orphanChildManager.createSession({
+        ...base,
+        parentSessionID: parentId,
+        agent: { id: 'agents/orphan-child', name: 'orphan child', isSubAgent: true },
+      });
+
       // Fresh reader with no parentPath — mirrors the serve worker.
       const reader = new SessionManager();
+      const parent = await reader.findSession(parentId);
+      expect(parent?.session.id).toBe(parentId);
+      expect(reader.getFullPath()).toBe(parentManager.getFullPath());
+
+      const children = await reader.listChildSessions(parentId, parent!.path);
+      expect(children.map((entry) => entry.session.id)).toEqual([childId, orphanChildId]);
+
       const found = await reader.findSession(childId);
       expect(found?.session.id).toBe(childId);
 

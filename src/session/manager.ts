@@ -42,6 +42,7 @@ export class SessionManager {
   private agentId: string | null = null;
   private parentPath: string | null = null; // For subagents: "{mainSessionID}-{mainAgentId}/subagent"
   private fullPath: string | null = null; // Full path to this session's directory
+  private sessionPathCache: Map<string, string> = new Map();
 
   // Write queues to prevent concurrent read-modify-write races
   // Key is the file path, value is a promise chain
@@ -80,6 +81,19 @@ export class SessionManager {
     return sessionDir;
   }
 
+  private sessionPathCacheKey(sessionID: string, agentId: string): string {
+    return `${sessionID}:${sanitizeAgentName(agentId)}`;
+  }
+
+  private rememberSessionPath(sessionID: string, agentId: string, sessionPath: string): void {
+    this.sessionPathCache.set(this.sessionPathCacheKey(sessionID, agentId), sessionPath);
+  }
+
+  private knownSessionPath(sessionID: string, agentId: string): string {
+    return this.sessionPathCache.get(this.sessionPathCacheKey(sessionID, agentId))
+      ?? this.buildSessionPath(sessionID, agentId);
+  }
+
   /**
    * Resolve the actual on-disk directory for a session.
    *
@@ -91,14 +105,22 @@ export class SessionManager {
    * match by directory basename (`{sessionID}-{sanitizedAgentId}`).
    */
   private async resolveSessionDir(sessionID: string, agentId: string): Promise<string> {
+    const cached = this.sessionPathCache.get(this.sessionPathCacheKey(sessionID, agentId));
+    if (cached) return cached;
+
     const direct = this.buildSessionPath(sessionID, agentId);
-    const keys = await listKeys(direct);
-    if (keys.length > 0) return direct;
+    const directSession = await readJSON<SessionInfo>(`${direct}/session`);
+    if (directSession) {
+      this.rememberSessionPath(sessionID, agentId, direct);
+      return direct;
+    }
 
     const target = `${sessionID}-${sanitizeAgentName(agentId)}`;
     const state = await getStorageState();
     const dirs = await this.walkSessionDirs(state.dir);
-    return dirs.find((dir) => path.basename(dir) === target) ?? direct;
+    const resolved = dirs.find((dir) => path.basename(dir) === target) ?? direct;
+    this.rememberSessionPath(sessionID, agentId, resolved);
+    return resolved;
   }
 
   private async walkSessionDirs(baseDir: string, relativeDir = ''): Promise<string[]> {
@@ -115,9 +137,9 @@ export class SessionManager {
     return results;
   }
 
-  private async readSessionEntries(options: { createdAfter?: number } = {}): Promise<SessionEntry[]> {
+  private async readSessionEntries(options: { createdAfter?: number; relativeDir?: string } = {}): Promise<SessionEntry[]> {
     const state = await getStorageState();
-    const dirs = await this.walkSessionDirs(state.dir);
+    const dirs = await this.walkSessionDirs(state.dir, options.relativeDir ?? '');
     const results: SessionEntry[] = [];
 
     for (const dir of dirs) {
@@ -135,6 +157,7 @@ export class SessionManager {
       const agentId = dirName.startsWith(prefix)
         ? dirName.slice(prefix.length)
         : sanitizeAgentName(session.agent.id);
+      this.rememberSessionPath(session.id, agentId, dir);
       results.push({ session, agentId, path: dir });
     }
 
@@ -214,6 +237,7 @@ export class SessionManager {
     this.sessionID = id;
     this.agentId = sanitizeAgentName(info.agent.id);
     this.fullPath = sessionPath;
+    this.rememberSessionPath(id, info.agent.id, sessionPath);
 
     return id;
   }
@@ -293,7 +317,7 @@ export class SessionManager {
    * Uses serialized writes to prevent race conditions during concurrent updates
    */
   async updatePart(sessionID: string, agentId: string, messageID: string, partID: string, updates: Partial<Part>): Promise<void> {
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const sessionPath = this.knownSessionPath(sessionID, agentId);
     // New path structure: {messageID}/part/{partID}.json
     const key = `${sessionPath}/${messageID}/part/${partID}`;
 
@@ -311,7 +335,7 @@ export class SessionManager {
    * Uses serialized writes to prevent race conditions during concurrent updates
    */
   async updateSession(sessionID: string, agentId: string, updates: Partial<Omit<SessionInfo, 'id'>>): Promise<void> {
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const sessionPath = this.knownSessionPath(sessionID, agentId);
     const key = `${sessionPath}/session`;
 
     await this.serializedWrite(key, async () => {
@@ -334,7 +358,7 @@ export class SessionManager {
     messageID: string,
     updates: DeepPartial<Omit<Message, 'id' | 'sessionID'>>
   ): Promise<void> {
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const sessionPath = this.knownSessionPath(sessionID, agentId);
     // New path structure: {messageID}/message.json
     const key = `${sessionPath}/${messageID}/message`;
 
@@ -381,7 +405,7 @@ export class SessionManager {
    * Get session info
    */
   async getSession(sessionID: string, agentId: string): Promise<SessionInfo | null> {
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     return readJSON<SessionInfo>(`${sessionPath}/session`);
   }
 
@@ -389,7 +413,7 @@ export class SessionManager {
    * Get message
    */
   async getMessage(sessionID: string, agentId: string, messageID: string): Promise<Message | null> {
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     // New path structure: {messageID}/message.json
     return readJSON<Message>(`${sessionPath}/${messageID}/message`);
   }
@@ -398,7 +422,7 @@ export class SessionManager {
    * Get part
    */
   async getPart(sessionID: string, agentId: string, messageID: string, partID: string): Promise<Part | null> {
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     // New path structure: {messageID}/part/{partID}.json
     return readJSON<Part>(`${sessionPath}/${messageID}/part/${partID}`);
   }
@@ -409,7 +433,14 @@ export class SessionManager {
    */
   async findSession(sessionID: string): Promise<SessionEntry | null> {
     const entries = await this.readSessionEntries();
-    return entries.find((entry) => entry.session.id === sessionID) ?? null;
+    const found = entries.find((entry) => entry.session.id === sessionID) ?? null;
+    if (found) {
+      this.sessionID = found.session.id;
+      this.agentId = found.agentId;
+      this.fullPath = found.path;
+      this.rememberSessionPath(found.session.id, found.agentId, found.path);
+    }
+    return found;
   }
 
   /**
@@ -461,7 +492,7 @@ export class SessionManager {
    * large session stores make repeatedly loading messages noticeably slow.
    */
   async getLatestApprovalPart(sessionID: string, agentId: string): Promise<ToolPart | null> {
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     const keys = await listKeys(sessionPath);
     const partKeys = keys
       .filter(key => key.startsWith(`${sessionPath}/`) && key.includes('/part/'))
@@ -514,9 +545,28 @@ export class SessionManager {
     return results;
   }
 
-  async listChildSessions(parentSessionID: string): Promise<SessionEntry[]> {
-    const entries = await this.readSessionEntries();
-    return entries
+  async listChildSessions(parentSessionID: string, parentSessionPath?: string): Promise<SessionEntry[]> {
+    const entriesById = new Map<string, SessionEntry>();
+    const scopedEntries = parentSessionPath
+      ? await this.readSessionEntries({ relativeDir: `${parentSessionPath}/subagent` })
+      : [];
+    for (const entry of scopedEntries) {
+      if (entry.session.parentSessionID === parentSessionID) {
+        entriesById.set(entry.session.id, entry);
+      }
+    }
+
+    // Historical resumed runs may have child sessions linked by parentSessionID
+    // but stored outside the parent's subagent directory because the resumed
+    // SessionManager did not know the parent's full path. Keep those visible.
+    const allEntries = await this.readSessionEntries();
+    for (const entry of allEntries) {
+      if (entry.session.parentSessionID === parentSessionID) {
+        entriesById.set(entry.session.id, entry);
+      }
+    }
+
+    return Array.from(entriesById.values())
       .filter((entry) => entry.session.parentSessionID === parentSessionID)
       .sort((a, b) => a.session.time.created - b.session.time.created || a.session.id.localeCompare(b.session.id));
   }
