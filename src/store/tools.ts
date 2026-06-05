@@ -55,7 +55,15 @@ export function createStoreTools(store: Store): Record<string, Tool> {
           data,
           ...filterUndefined({ type, title, status, parentId, tags }),
         };
-        const item = await store.create(options);
+        let item;
+        try {
+          item = await store.create(options);
+        } catch (error) {
+          return {
+            success: false,
+            error: (error as Error).message,
+          };
+        }
         return {
           success: true,
           store: storeName,
@@ -115,7 +123,15 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         tags?: string[];
       }) => {
         const options: StoreUpdateOptions = filterUndefined({ type, title, status, data, parentId, tags });
-        const item = await store.update(id, options);
+        let item;
+        try {
+          item = await store.update(id, options);
+        } catch (error) {
+          return {
+            success: false,
+            error: (error as Error).message,
+          };
+        }
         if (!item) {
           return {
             success: false,

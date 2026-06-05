@@ -19,6 +19,60 @@ import type {
 } from './types';
 
 /**
+ * Check if a value is a plain object (not null, not an array).
+ * Spreading anything else into store data corrupts it:
+ *   {...["a","b"]} -> {0:"a",1:"b"}, {...null} -> {}, {..."str"} -> {0:"s",...}
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Normalize an incoming `data` payload to a plain object before it is stored.
+ *
+ * Callers (and AI models calling the store tools) sometimes pass `data` as a
+ * stringified JSON object instead of an object. Without this guard, the store
+ * spreads the raw value and silently persists corruption (numeric character
+ * keys for strings, index keys for arrays). We accept a plain object as-is,
+ * parse a JSON string that decodes to a plain object, and otherwise throw so
+ * the caller fails fast instead of corrupting the store.
+ */
+function normalizeStoreData(data: unknown): Record<string, unknown> {
+  if (isPlainObject(data)) return data;
+
+  if (typeof data === 'string') {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      throw new Error(
+        `Store data must be a plain object, received a string that is not valid JSON. ` +
+        `Pass an object, e.g. { "field": "value" }.`
+      );
+    }
+    if (isPlainObject(parsed)) return parsed;
+    throw new Error(
+      `Store data must be a plain object, received a JSON string that decoded to ${describeType(parsed)}. ` +
+      `Pass an object, e.g. { "field": "value" }.`
+    );
+  }
+
+  throw new Error(
+    `Store data must be a plain object, received ${describeType(data)}. ` +
+    `Pass an object, e.g. { "field": "value" }.`
+  );
+}
+
+/**
+ * Human-readable type description for error messages.
+ */
+function describeType(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return typeof value;
+}
+
+/**
  * Check if a process with given PID is running
  */
 function isProcessRunning(pid: number): boolean {
@@ -220,7 +274,7 @@ export class Store {
       id: ulid(),
       createdAt: now,
       updatedAt: now,
-      data: options.data,
+      data: normalizeStoreData(options.data),
       ...(options.type && { type: options.type }),
       ...(options.title && { title: options.title }),
       ...(options.status && { status: options.status }),
@@ -262,7 +316,7 @@ export class Store {
       ...(options.parentId !== undefined && { parentId: options.parentId }),
       ...(options.tags !== undefined && { tags: options.tags }),
       ...(options.data !== undefined && {
-        data: { ...existing.data, ...options.data }
+        data: { ...existing.data, ...normalizeStoreData(options.data) }
       }),
     };
 

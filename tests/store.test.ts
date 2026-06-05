@@ -66,6 +66,32 @@ describe("Store", () => {
       expect(item1.id).not.toBe(item3.id);
     });
 
+    it("parses a JSON string that decodes to an object", async () => {
+      const item = await store.create({
+        data: '{"foo":"bar","n":1}' as unknown as Record<string, unknown>,
+      });
+
+      expect(item.data).toEqual({ foo: "bar", n: 1 });
+    });
+
+    it("rejects a JSON string that decodes to an array", async () => {
+      await expect(
+        store.create({ data: '["a","b"]' as unknown as Record<string, unknown> })
+      ).rejects.toThrow(/must be a plain object/);
+    });
+
+    it("rejects a non-JSON string", async () => {
+      await expect(
+        store.create({ data: "not json" as unknown as Record<string, unknown> })
+      ).rejects.toThrow(/must be a plain object/);
+    });
+
+    it("rejects a raw array", async () => {
+      await expect(
+        store.create({ data: ["a", "b"] as unknown as Record<string, unknown> })
+      ).rejects.toThrow(/must be a plain object/);
+    });
+
     it("persists items to disk", async () => {
       await store.create({ data: { persisted: true } });
 
@@ -126,6 +152,40 @@ describe("Store", () => {
       });
 
       expect(updated?.data).toEqual({ a: 1, b: 20, c: 3 });
+    });
+
+    it("parses a JSON string data payload and merges it", async () => {
+      const created = await store.create({ data: { a: 1 } });
+
+      const updated = await store.update(created.id, {
+        data: '{"b":2}' as unknown as Record<string, unknown>,
+      });
+
+      expect(updated?.data).toEqual({ a: 1, b: 2 });
+    });
+
+    it("rejects a string data payload that is not a JSON object", async () => {
+      const created = await store.create({ data: { a: 1 } });
+
+      await expect(
+        store.update(created.id, {
+          data: "{" as unknown as Record<string, unknown>,
+        })
+      ).rejects.toThrow(/must be a plain object/);
+
+      // Store is unchanged after the rejected update
+      const after = await store.get(created.id);
+      expect(after?.data).toEqual({ a: 1 });
+    });
+
+    it("rejects an array data payload", async () => {
+      const created = await store.create({ data: { a: 1 } });
+
+      await expect(
+        store.update(created.id, {
+          data: ["x"] as unknown as Record<string, unknown>,
+        })
+      ).rejects.toThrow(/must be a plain object/);
     });
 
     it("updates updatedAt timestamp", async () => {
