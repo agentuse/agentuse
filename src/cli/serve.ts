@@ -265,7 +265,14 @@ interface ApprovalLogEntry {
   title: string;
   message?: string;
   time?: number;
+  subagentSession?: LogSubagentSession;
   details?: ApprovalLogDetails;
+}
+
+interface LogSubagentSession extends ChildSessionSummary {
+  href?: string;
+  command: string;
+  displayStatus: string;
 }
 
 interface ApprovalLogDetails {
@@ -777,6 +784,7 @@ function renderLogItems(
       ? ` data-resume-token="${escapeHtml(entry.details.resumeToken)}"`
       : '';
     const storeEventHtml = renderStoreToolEvent(entry, options?.projectId);
+    const subagentEventHtml = entry.subagentSession ? renderSubagentSessionEvent(entry.subagentSession) : '';
     const markerHtml = entry.status === 'streaming' || entry.status === 'running'
       ? '<span class="log-spinner" aria-label="streaming"></span>'
       : '⋮';
@@ -786,10 +794,11 @@ function renderLogItems(
           <span class="log-marker">${markerHtml}</span>
           <span class="log-main">
             <span class="log-title">${escapeHtml(entry.title)}</span>
+            ${subagentEventHtml ? `<span class="log-pinned-content">${subagentEventHtml}</span>` : ''}
             <span class="log-content">
               ${storeEventHtml}
               ${renderLogDetailBlock(entry)}
-              ${entry.message && !storeEventHtml ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : ''}
+              ${entry.message && !storeEventHtml && !subagentEventHtml ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : ''}
             </span>
             ${showActions ? renderInlineActions() : ''}
           </span>
@@ -808,6 +817,19 @@ function renderInlineActions(): string {
       <button data-action="comment">Comment</button>
     </div>
   </div>`;
+}
+
+function renderSubagentSessionEvent(session: LogSubagentSession): string {
+  const name = session.agent.name || session.agent.id;
+  const body = `
+    <span class="subagent-status ${escapeHtml(session.displayStatus)}">${escapeHtml(session.displayStatus)}</span>
+    <span class="subagent-name">${escapeHtml(name)}</span>
+    <code>${escapeHtml(session.sessionId)}</code>
+    <span class="subagent-command">${escapeHtml(session.command)}</span>
+  `;
+  return session.href
+    ? `<a class="subagent-event" href="${escapeHtml(session.href)}">${body}</a>`
+    : `<div class="subagent-event">${body}</div>`;
 }
 
 const COPY_ICON_SVG = `<svg class="copy-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5H3A1.5 1.5 0 0 1 1.5 9V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5"/></svg>`;
@@ -2093,6 +2115,116 @@ function renderChildSessionStatus(child: ChildSessionSummary): string {
   return child.status;
 }
 
+function normalizeSubagentName(value: string): string {
+  const fileBase = value.split('/').pop() || value;
+  return fileBase
+    .replace(/\.agentuse$/i, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '_')
+    .replace(/-/g, '_');
+}
+
+function subagentNameTokens(value: string): string[] {
+  return normalizeSubagentName(value)
+    .split('_')
+    .filter((part) => part.length > 0);
+}
+
+function childSessionLogMatchScore(child: ChildSessionSummary, entry: ApprovalLogEntry): number {
+  if (!entry.tool?.startsWith('subagent__')) return 0;
+  const toolName = normalizeSubagentName(entry.tool.slice('subagent__'.length));
+  const candidates = [
+    normalizeSubagentName(child.agent.id),
+    normalizeSubagentName(child.agent.name || ''),
+  ];
+  if (candidates.includes(toolName)) return 100;
+  if (candidates.some((candidate) => candidate.includes(toolName) || toolName.includes(candidate))) return 80;
+
+  const toolTokens = subagentNameTokens(entry.tool.slice('subagent__'.length));
+  if (toolTokens.length > 0) {
+    const candidateTokens = new Set([
+      ...subagentNameTokens(child.agent.id),
+      ...subagentNameTokens(child.agent.name || ''),
+    ]);
+    const matched = toolTokens.filter((token) => candidateTokens.has(token));
+    if (matched.length === toolTokens.length) return 70;
+    if (matched.length > 0 && matched.length / toolTokens.length >= 0.5) return 40;
+  }
+
+  const timeDelta = typeof entry.time === 'number'
+    ? Math.abs(child.createdAt - entry.time)
+    : Number.POSITIVE_INFINITY;
+  return timeDelta <= 5_000 ? 10 : 0;
+}
+
+function enrichChildSessionForLog(
+  child: ChildSessionSummary,
+  childSessionHref?: (sessionId: string) => string
+): LogSubagentSession {
+  return {
+    ...child,
+    displayStatus: renderChildSessionStatus(child),
+    command: `agentuse sessions show ${child.sessionId.substring(0, 12)} --all-search`,
+    ...(childSessionHref && { href: childSessionHref(child.sessionId) }),
+  };
+}
+
+function childSessionLogEntry(
+  child: ChildSessionSummary,
+  childSessionHref?: (sessionId: string) => string
+): ApprovalLogEntry {
+  const session = enrichChildSessionForLog(child, childSessionHref);
+  return {
+    id: `subagent-session-${child.sessionId}`,
+    type: 'subagent',
+    status: session.displayStatus,
+    title: `${child.agent.name || child.agent.id} ${session.displayStatus}`,
+    time: child.createdAt,
+    subagentSession: session,
+  };
+}
+
+function logsWithChildSessions(
+  logs: ApprovalLogEntry[] = [],
+  childSessions: ChildSessionSummary[] = [],
+  childSessionHref?: (sessionId: string) => string
+): ApprovalLogEntry[] {
+  if (childSessions.length === 0) return logs;
+
+  const matchedChildIds = new Set<string>();
+  const enrichedLogs = logs.map((entry) => {
+    if (entry.subagentSession) {
+      matchedChildIds.add(entry.subagentSession.sessionId);
+      return entry;
+    }
+    const child = childSessions
+      .filter((candidate) => !matchedChildIds.has(candidate.sessionId))
+      .map((candidate) => ({
+        child: candidate,
+        score: childSessionLogMatchScore(candidate, entry),
+        timeDelta: typeof entry.time === 'number'
+          ? Math.abs(candidate.createdAt - entry.time)
+          : Number.POSITIVE_INFINITY,
+      }))
+      .filter((candidate) => candidate.score > 0)
+      .sort((a, b) => b.score - a.score || a.timeDelta - b.timeDelta || a.child.sessionId.localeCompare(b.child.sessionId))[0]?.child;
+    if (!child) return entry;
+    matchedChildIds.add(child.sessionId);
+    return {
+      ...entry,
+      subagentSession: enrichChildSessionForLog(child, childSessionHref),
+    };
+  });
+
+  for (const child of childSessions) {
+    if (!matchedChildIds.has(child.sessionId)) {
+      enrichedLogs.push(childSessionLogEntry(child, childSessionHref));
+    }
+  }
+
+  return enrichedLogs.sort((a, b) => (a.time ?? 0) - (b.time ?? 0) || a.id.localeCompare(b.id));
+}
+
 function renderSessionRow(row: {
   projectId: string;
   multiProject: boolean;
@@ -2553,7 +2685,6 @@ function approvalSessionErrorText(approval: Pick<ApprovalPageInfo, 'sessionStatu
 interface SessionTimelineState {
   approval: ApprovalPageInfo;
   projectId?: string | undefined;
-  childSessionToken?: ((sessionId: string) => string) | undefined;
   status: string;
   eyebrow: string;
   /** Primary identity: the agent's display name (falls back to its filename). */
@@ -2602,15 +2733,6 @@ function renderSessionTimeline(view: SessionTimelineState): string {
     live,
     initialResultText,
   } = view;
-  const childSessions = approval.childSessions ?? [];
-  const childSessionHref = (sessionId: string): string => {
-    const params = new URLSearchParams();
-    const token = view.childSessionToken?.(sessionId) ?? '';
-    if (token) params.set('token', token);
-    if (projectId) params.set('project', projectId);
-    const query = params.toString();
-    return `/sessions/${encodeURIComponent(sessionId)}${query ? `?${query}` : ''}`;
-  };
   return `<main>
     <header>
       <span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span>
@@ -2626,25 +2748,6 @@ function renderSessionTimeline(view: SessionTimelineState): string {
         <div class="cell" id="expires-cell"${approval.expiresAt === undefined ? ' hidden' : ''}><span class="label">expires</span><span class="value" id="expires-value">${approval.expiresAt !== undefined ? escapeHtml(formatApprovalTime(approval.expiresAt)) : ''}</span></div>
       </div>
     </header>
-
-    ${childSessions.length > 0 ? `
-    <div class="section-title"><span>subagents</span><span class="rule"></span></div>
-    <div class="panel subagents-panel">
-      <div class="subagent-list">
-        ${childSessions.map((child) => {
-          const childStatus = renderChildSessionStatus(child);
-          const href = childSessionHref(child.sessionId);
-          return `
-          <a class="subagent-row" href="${escapeHtml(href)}">
-            <span class="subagent-status ${escapeHtml(childStatus)}">${escapeHtml(childStatus)}</span>
-            <span class="subagent-name">${escapeHtml(child.agent.name || child.agent.id)}</span>
-            <code>${escapeHtml(child.sessionId)}</code>
-            <span class="subagent-command">agentuse sessions show ${escapeHtml(child.sessionId.substring(0, 12))} --all-search</span>
-          </a>
-        `;
-        }).join('')}
-      </div>
-    </div>` : ''}
 
     ${error ? `<p class="notice error">${escapeHtml(error)}</p>` : ''}
 
@@ -2731,6 +2834,14 @@ interface SessionPageOptions {
  */
 function renderSessionPage(options: SessionPageOptions): string {
   const { approval, token, projectId, childSessionToken, resuming, continuing, error, canAct = true } = options;
+  const childSessionHref = (sessionId: string): string => {
+    const params = new URLSearchParams();
+    const childToken = childSessionToken?.(sessionId) ?? '';
+    if (childToken) params.set('token', childToken);
+    if (projectId) params.set('project', projectId);
+    const query = params.toString();
+    return `/sessions/${encodeURIComponent(sessionId)}${query ? `?${query}` : ''}`;
+  };
   const expired = approval.expiresAt !== undefined && approval.expiresAt <= Date.now();
   const busy = Boolean(resuming || continuing);
   const actionable = canAct && approval.sessionStatus === 'suspended' && !expired && !busy && !error && Boolean(approval.prompt);
@@ -2747,7 +2858,7 @@ function renderSessionPage(options: SessionPageOptions): string {
         : approval.sessionStatus;
   if (status === 'error' && approval.errorCode === 'USER_STOPPED') status = 'stopped';
   if (status === 'error' && approval.errorCode === 'TIMEOUT') status = 'timeout';
-  const initialLogs = approval.logs ?? [];
+  const initialLogs = logsWithChildSessions(approval.logs ?? [], approval.childSessions ?? [], childSessionHref);
   // Live whenever the run is actively progressing — covers tool execution and
   // the between-step thinking gaps where no individual log entry is streaming.
   // Mirrors the client isLiveStatus() (including its terminal-status short
@@ -3033,20 +3144,20 @@ function renderSessionPage(options: SessionPageOptions): string {
     .notice { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
     .notice.error { color: var(--red); }
     .notice.error::before { content: "✗ "; }
-    .subagents-panel { padding: 0; overflow: hidden; }
-    .subagent-list { display: grid; }
-    .subagent-row {
+    .subagent-event {
       display: grid;
       grid-template-columns: auto minmax(120px, 1fr) minmax(180px, auto);
       gap: 10px 14px;
       align-items: center;
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--line);
+      margin-bottom: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
       color: inherit;
       text-decoration: none;
     }
-    .subagent-row:hover { background: var(--panel-soft); }
-    .subagent-row:last-child { border-bottom: 0; }
+    a.subagent-event:hover { background: var(--panel-hover); }
     .subagent-status {
       display: inline-flex;
       align-items: center;
@@ -3060,9 +3171,9 @@ function renderSessionPage(options: SessionPageOptions): string {
     }
     .subagent-status.running, .subagent-status.suspended { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
     .subagent-status.completed { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
-    .subagent-status.error { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+    .subagent-status.error, .subagent-status.stopped, .subagent-status.timeout { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
     .subagent-name { color: var(--fg); font-weight: 500; overflow-wrap: anywhere; }
-    .subagent-row code { color: var(--muted-3); overflow-wrap: anywhere; }
+    .subagent-event code { color: var(--muted-3); overflow-wrap: anywhere; }
     .subagent-command {
       grid-column: 2 / -1;
       color: var(--muted-2);
@@ -3171,6 +3282,11 @@ function renderSessionPage(options: SessionPageOptions): string {
     }
     .log-item.expandable.expanded .log-title::after { content: "hide"; color: var(--muted); }
     .log-title { font-weight: 500; color: var(--fg); }
+    .log-pinned-content {
+      display: block;
+      margin-top: 6px;
+    }
+    .log-pinned-content .subagent-event { margin-bottom: 0; }
     .log-content {
       display: block;
       margin-top: 6px;
@@ -3647,7 +3763,7 @@ function renderSessionPage(options: SessionPageOptions): string {
     /* responsive */
     @media (max-width: 640px) {
       h1 { font-size: 26px; }
-      .subagent-row { grid-template-columns: 1fr; }
+      .subagent-event { grid-template-columns: 1fr; }
       .subagent-command { grid-column: auto; }
       .stop-panel { flex-direction: column; align-items: stretch; }
       .stop-panel button { width: 100%; }
@@ -3669,7 +3785,6 @@ function renderSessionPage(options: SessionPageOptions): string {
   ${renderSessionTimeline({
     approval,
     projectId,
-    childSessionToken,
     status,
     eyebrow,
     agentName,
@@ -3869,6 +3984,21 @@ function renderSessionPage(options: SessionPageOptions): string {
     for (const entry of initialEntries) {
       if (entry && entry.id != null) renderedLogs.set(String(entry.id), entry);
     }
+    function subagentSessionHtml(session) {
+      if (!session) return '';
+      const name = session.agent && (session.agent.name || session.agent.id) ? (session.agent.name || session.agent.id) : 'Subagent';
+      const displayStatus = session.displayStatus || session.status || '';
+      const command = session.command || ('agentuse sessions show ' + String(session.sessionId || '').substring(0, 12) + ' --all-search');
+      const body =
+        '<span class="subagent-status ' + escapeText(displayStatus) + '">' + escapeText(displayStatus) + '</span>' +
+        '<span class="subagent-name">' + escapeText(name) + '</span>' +
+        '<code>' + escapeText(session.sessionId || '') + '</code>' +
+        '<span class="subagent-command">' + escapeText(command) + '</span>';
+      if (session.href) {
+        return '<a class="subagent-event" href="' + escapeText(session.href) + '">' + body + '</a>';
+      }
+      return '<div class="subagent-event">' + body + '</div>';
+    }
     function approvalDetailsHtml(details) {
       if (!details) return '';
       const primary = details.draft
@@ -4006,6 +4136,9 @@ function renderSessionPage(options: SessionPageOptions): string {
     function detailsKey(details) {
       return details ? JSON.stringify(details) : '';
     }
+    function subagentKey(session) {
+      return session ? JSON.stringify(session) : '';
+    }
     function logActionsHtml(entry) {
       if (!pendingActionable) return '';
       if (entry.status !== 'pending' || !entry.details) return '';
@@ -4029,6 +4162,7 @@ function renderSessionPage(options: SessionPageOptions): string {
         ? ' data-resume-token="' + escapeText(entry.details.resumeToken) + '"'
         : '';
       const storeHtml = storeEventHtml(entry);
+      const subagentHtml = subagentSessionHtml(entry.subagentSession);
       const markerHtml = entry.status === 'streaming' || entry.status === 'running'
         ? '<span class="log-spinner" aria-label="streaming"></span>'
         : '⋮';
@@ -4036,10 +4170,11 @@ function renderSessionPage(options: SessionPageOptions): string {
         '<span class="log-time">' + escapeText(formatTime(entry.time)) + '</span>' +
         '<span class="log-marker">' + markerHtml + '</span>' +
         '<span class="log-main"><span class="log-title">' + escapeText(entry.title) + '</span>' +
+        (subagentHtml ? '<span class="log-pinned-content">' + subagentHtml + '</span>' : '') +
         '<span class="log-content">' +
         storeHtml +
         logDetailsHtml(entry) +
-        (entry.message && !storeHtml ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : '') +
+        (entry.message && !storeHtml && !subagentHtml ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : '') +
         '</span>' +
         logActionsHtml(entry) +
         '</span></li>';
@@ -4057,7 +4192,8 @@ function renderSessionPage(options: SessionPageOptions): string {
             || prior.status !== entry.status
             || prior.message !== entry.message
             || prior.title !== entry.title
-            || detailsKey(prior.details) !== detailsKey(entry.details)) {
+            || detailsKey(prior.details) !== detailsKey(entry.details)
+            || subagentKey(prior.subagentSession) !== subagentKey(entry.subagentSession)) {
             renderedLogs.set(key, entry);
             changed = true;
           }
@@ -6191,13 +6327,27 @@ export function createServeCommand(): Command {
               : found.info.approval.sessionStatus === 'suspended'
                 ? 'waiting'
                 : found.info.approval.sessionStatus;
+          const logs = logsWithChildSessions(
+            found.info.approval.logs ?? [],
+            found.info.approval.childSessions ?? [],
+            (childSessionId) => {
+              const params = new URLSearchParams();
+              const childToken = sessionViewToken(childSessionId, apiKey);
+              if (childToken) params.set('token', childToken);
+              params.set('project', found.project.id);
+              return `/sessions/${encodeURIComponent(childSessionId)}?${params.toString()}`;
+            }
+          );
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             success: true,
             sessionId,
             status,
-            approval: found.info.approval,
-            logs: found.info.approval.logs ?? [],
+            approval: {
+              ...found.info.approval,
+              logs,
+            },
+            logs,
             decision: found.info.approval.decision
           }));
           return;

@@ -171,10 +171,19 @@ describe('renderSessionPage canAct gating', () => {
     expect(html).toContain("location.pathname + '/stop' + (token ? '?token=' + encodeURIComponent(token) : '')");
   });
 
-  it('surfaces child subagent sessions with a direct inspect command', () => {
+  it('surfaces child subagent sessions inside the session log with a direct inspect command', () => {
     const html = __testing.renderSessionPage({
       approval: {
         ...completedApproval,
+        logs: [{
+          id: 'tool-1',
+          type: 'tool',
+          tool: 'subagent__research',
+          status: 'completed',
+          title: 'subagent__research completed',
+          details: { input: '{"task":"research"}', output: '{"output":"done"}' },
+          time: Date.UTC(2026, 4, 1),
+        }],
         childSessions: [{
           sessionId: '01KTCBC4FJHBMXPKE0ZEXX8S6V',
           agent: { id: 'agents/research', name: 'Research subagent' },
@@ -189,11 +198,55 @@ describe('renderSessionPage canAct gating', () => {
       canAct: false,
     });
 
-    expect(html).toContain('subagents');
+    expect(html).not.toContain('<div class="section-title"><span>subagents</span>');
+    expect(html).toContain('subagent__research completed');
+    expect(html).toContain('class="subagent-event"');
+    expect(html).toContain('class="log-pinned-content"');
     expect(html).toContain('Research subagent');
     expect(html).toContain('01KTCBC4FJHBMXPKE0ZEXX8S6V');
     expect(html).toContain('href="/sessions/01KTCBC4FJHBMXPKE0ZEXX8S6V?token=tok-01KTCBC4FJHBMXPKE0ZEXX8S6V&amp;project=project-1"');
     expect(html).toContain('agentuse sessions show 01KTCBC4FJHB --all-search');
+    expect(html).toContain('class="log-item completed expandable"');
+    expect(html).toContain('aria-expanded="false"');
+  });
+
+  it('attaches aliased child subagent sessions to the existing subagent tool row', () => {
+    const html = __testing.renderSessionPage({
+      approval: {
+        ...completedApproval,
+        logs: [{
+          id: 'tool-1',
+          type: 'tool',
+          tool: 'subagent__substack_reply',
+          status: 'completed',
+          title: 'subagent__substack_reply completed',
+          details: { input: '{"task":"reply"}', output: '{"output":"done"}' },
+          time: Date.UTC(2026, 4, 1),
+        }],
+        childSessions: [{
+          sessionId: '01KTCXG7RW55V2ESEB7BVXJ5QY',
+          agent: { id: 'agents/substack-engage-reply', name: 'Substack Engage Reply' },
+          status: 'completed',
+          createdAt: Date.UTC(2026, 4, 1),
+          updatedAt: Date.UTC(2026, 4, 1),
+        }],
+      },
+      token: 'sess-token',
+      projectId: 'project-1',
+      childSessionToken: (id) => `tok-${id}`,
+      canAct: false,
+    });
+
+    const renderedMain = html.slice(html.indexOf('<main>'), html.indexOf('</main>'));
+    const subagentRow = renderedMain.match(/<li class="log-item completed expandable"[\s\S]*?<\/li>/)?.[0] ?? '';
+    expect(renderedMain).toContain('subagent__substack_reply completed');
+    expect(renderedMain).not.toContain('Substack Engage Reply completed');
+    expect(renderedMain.match(/class="subagent-event"/g)?.length).toBe(1);
+    expect(subagentRow).toContain('aria-expanded="false"');
+    expect(subagentRow).toContain('class="log-pinned-content"');
+    expect(subagentRow).toContain('class="subagent-event"');
+    expect(subagentRow).toContain('class="log-content"');
+    expect(html).toContain('href="/sessions/01KTCXG7RW55V2ESEB7BVXJ5QY?token=tok-01KTCXG7RW55V2ESEB7BVXJ5QY&amp;project=project-1"');
   });
 
   it('renders a stop control for active sessions', () => {
@@ -597,6 +650,10 @@ describe('reading nested subagent sessions from a fresh manager', () => {
 
       const primary = await reader.getPrimaryMessage(childId, found!.agentId);
       expect(primary?.id).toBe(childMessageId);
+
+      await reader.setSessionCompleted(childId, found!.agentId);
+      const updated = await reader.findSession(childId);
+      expect(updated?.session.status).toBe('completed');
     } finally {
       if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = originalXdgDataHome;
