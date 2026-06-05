@@ -248,6 +248,21 @@ describe('renderSessionsListPage', () => {
     },
   ];
 
+  it('defaults session list scans to 24 hours and allows all history', () => {
+    const now = Date.UTC(2026, 4, 6);
+
+    expect(__testing.sessionListCreatedAfter(new URL('http://127.0.0.1:12233/sessions'), now))
+      .toBe(now - 24 * 60 * 60 * 1000);
+    expect(__testing.sessionListCreatedAfter(new URL('http://127.0.0.1:12233/sessions?window=6h'), now))
+      .toBe(now - 6 * 60 * 60 * 1000);
+    expect(__testing.sessionListCreatedAfter(new URL('http://127.0.0.1:12233/sessions?hours=1'), now))
+      .toBe(now - 1 * 60 * 60 * 1000);
+    expect(__testing.sessionListCreatedAfter(new URL('http://127.0.0.1:12233/sessions?days=30'), now))
+      .toBe(now - 30 * 24 * 60 * 60 * 1000);
+    expect(__testing.sessionListCreatedAfter(new URL('http://127.0.0.1:12233/sessions?window=all'), now))
+      .toBeUndefined();
+  });
+
   it('links rows to the unified session page with a token', () => {
     const html = __testing.renderSessionsListPage({
       rows,
@@ -278,11 +293,67 @@ describe('renderSessionsListPage', () => {
       multiProject: false,
       agentFilter: 'agents/review',
       triggerFilter: 'scheduled',
+      statusFilter: 'completed',
+      approvalFilter: 'completed',
+      daysFilter: 'all',
       sessionToken: () => '',
     });
     expect(html).toContain('agents/review');
+    expect(html).toContain('status <code>completed</code>');
     expect(html).toContain('trigger <code>scheduled</code>');
+    expect(html).toContain('approval <code>completed</code>');
+    expect(html).toContain('window <code>all</code>');
     expect(html).toContain('href="/sessions">clear');
+  });
+
+  it('renders session filter controls with the selected values', () => {
+    const html = __testing.renderSessionsListPage({
+      rows,
+      errors: [],
+      multiProject: false,
+      agentFilter: 'agents/review',
+      agentOptions: [
+        { id: 'agents/review', name: 'Review agent' },
+        { id: 'agents/research', name: 'Research agent' },
+      ],
+      triggerFilter: 'scheduled',
+      statusFilter: 'error',
+      approvalFilter: 'errored',
+      daysFilter: '90d',
+      sessionToken: () => '',
+    });
+
+    expect(html).toContain('<form class="filter-bar" method="get" action="/sessions">');
+    expect(html).toContain('name="agent" value="agents/review" placeholder="Any agent" autocomplete="off" role="combobox"');
+    expect(html).toContain('id="session-agent-options" class="agent-options" data-agent-options role="listbox" hidden');
+    expect(html).toContain('data-agent-name="Review agent" data-agent-id="agents/review"');
+    expect(html).toContain('data-agent-name="Research agent" data-agent-id="agents/research"');
+    expect(html).toContain('<div class="agent-option-name">Review agent</div>');
+    expect(html).not.toContain('agent-option-id');
+    expect(html).not.toContain('<button type="submit">Apply</button>');
+    expect(html).not.toContain('.filter-bar button,');
+    expect(html).toContain('function filterOptions()');
+    expect(html).toContain('function scheduleSubmit()');
+    expect(html).toContain("form.requestSubmit");
+    expect(html).toContain("event.key === 'Enter'");
+    expect(html).toContain("select.addEventListener('change', submitFilters)");
+    expect(html).toContain('<select name="window">');
+    expect(html).toContain('<option value="1h">1 hour</option>');
+    expect(html).toContain('<option value="6h">6 hours</option>');
+    expect(html).toContain('<option value="24h">24 hours</option>');
+    expect(html).toContain('<option value="error" selected>Error</option>');
+    expect(html).toContain('<option value="scheduled" selected>Scheduled</option>');
+    expect(html).toContain('<option value="errored" selected>Errored</option>');
+    expect(html).toContain('<option value="90d" selected>90 days</option>');
+  });
+
+  it('matches the agent filter against partial agent names and ids', () => {
+    const session = rows[0]!.session;
+
+    expect(__testing.sessionMatchesAgentFilter(session, 'review')).toBe(true);
+    expect(__testing.sessionMatchesAgentFilter(session, 'agents/rev')).toBe(true);
+    expect(__testing.sessionMatchesAgentFilter(session, 'VIEW AG')).toBe(true);
+    expect(__testing.sessionMatchesAgentFilter(session, 'research')).toBe(false);
   });
 
   it('shows an empty state and the sessions topbar tab', () => {
@@ -295,6 +366,7 @@ describe('renderSessionsListPage', () => {
     expect(html).toContain('No sessions yet.');
     expect(html).toContain('href="/sessions"');
     expect(html).toContain('aria-current="page"');
+    expect(html).toContain('<option value="24h" selected>24 hours</option>');
   });
 });
 

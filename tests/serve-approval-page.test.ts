@@ -49,15 +49,34 @@ describe('approval web page', () => {
       },
       errors: [],
       multiProject: false,
+      daysFilter: '30',
     });
 
     expect(html).toContain('Pending');
     expect(html).toContain('Pending agent');
-    expect(html).toContain('Expired / Errored');
-    expect(html).toContain('Errored agent');
-    expect(html).not.toContain('Completed');
+    expect(html).toContain('href="/sessions?approval=completed&amp;days=30"');
+    expect(html).toContain('href="/sessions?approval=errored&amp;days=30"');
+    expect(html).toContain('Completed approvals');
+    expect(html).toContain('Errored approvals');
+    expect(html).not.toContain('Completed approvals in Sessions');
+    expect(html).not.toContain('Errored approvals in Sessions');
+    expect(html).not.toContain('Expired / Errored');
+    expect(html).not.toContain('Errored agent');
+    expect(html).not.toContain('<span>Completed</span>');
     expect(html).not.toContain('No completed approvals yet.');
     expect(html).not.toContain('Approved agent');
+  });
+
+  it('carries the approvals list window into sessions history links', () => {
+    const html = __testing.renderApprovalsListPage({
+      buckets: { pending: [], expired: [] },
+      errors: [],
+      multiProject: false,
+      daysFilter: 'all',
+    });
+
+    expect(html).toContain('href="/sessions?approval=completed&amp;days=all"');
+    expect(html).toContain('href="/sessions?approval=errored&amp;days=all"');
   });
 
   it('offers a continuation form for completed approval sessions', () => {

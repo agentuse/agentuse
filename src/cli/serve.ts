@@ -133,7 +133,12 @@ interface WorkerSweepExpiredResult {
 }
 
 type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
+type ApprovalSessionFilter = 'pending' | 'completed' | 'errored';
+type SessionStatusFilter = 'running' | 'suspended' | 'completed' | 'error';
+type SessionWindowFilter = `${number}h` | `${number}d` | 'all';
+type SessionAgentOption = { id: string; name: string };
 const APPROVAL_LIST_DEFAULT_DAYS = 30;
+const SESSION_LIST_DEFAULT_WINDOW: SessionWindowFilter = '24h';
 
 interface ApprovalSummary {
   sessionId: string;
@@ -169,6 +174,7 @@ interface WorkerListApprovalsResult {
 
 interface SessionSummary {
   sessionId: string;
+  parentSessionId?: string;
   agent: {
     id: string;
     name: string;
@@ -508,12 +514,13 @@ class AgentWorker {
 
   listSessions(
     projectRoot: string,
-    options: { createdAfter?: number } = {}
+    options: { createdAfter?: number; includeSubagents?: boolean } = {}
   ): Promise<WorkerListSessionsResult | WorkerExecuteError> {
     return this.request({
       type: "list-sessions",
       projectRoot,
       sessionsCreatedAfter: options.createdAfter,
+      includeSubagents: options.includeSubagents,
       timeout: 30,
     }) as Promise<WorkerListSessionsResult | WorkerExecuteError>;
   }
@@ -630,15 +637,123 @@ function sendHTML(res: ServerResponse, status: number, html: string) {
 }
 
 function approvalListCreatedAfter(requestUrl: URL, now = Date.now()): number | undefined {
+  return listCreatedAfter(requestUrl, APPROVAL_LIST_DEFAULT_DAYS, now);
+}
+
+function sessionListCreatedAfter(requestUrl: URL, now = Date.now()): number | undefined {
+  const filter = sessionWindowFilterValue(requestUrl);
+  if (filter === 'all') return undefined;
+  const amount = Number(filter.slice(0, -1));
+  const unit = filter[filter.length - 1];
+  const multiplier = unit === 'h' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  return now - amount * multiplier;
+}
+
+function listCreatedAfter(requestUrl: URL, defaultDays: number, now = Date.now()): number | undefined {
   const daysParam = requestUrl.searchParams.get('days');
   if (daysParam === 'all') return undefined;
 
   const days = daysParam === null
-    ? APPROVAL_LIST_DEFAULT_DAYS
+    ? defaultDays
     : Number(daysParam);
-  if (!Number.isFinite(days) || days <= 0) return now - APPROVAL_LIST_DEFAULT_DAYS * 24 * 60 * 60 * 1000;
+  if (!Number.isFinite(days) || days <= 0) return now - defaultDays * 24 * 60 * 60 * 1000;
 
   return now - Math.floor(days) * 24 * 60 * 60 * 1000;
+}
+
+function approvalDaysFilterValue(requestUrl: URL): string {
+  return daysFilterValue(requestUrl, APPROVAL_LIST_DEFAULT_DAYS);
+}
+
+function sessionDaysFilterValue(requestUrl: URL): SessionWindowFilter {
+  return sessionWindowFilterValue(requestUrl);
+}
+
+function daysFilterValue(requestUrl: URL, defaultDays: number): string {
+  const daysParam = requestUrl.searchParams.get('days');
+  if (daysParam === 'all') return 'all';
+  const days = daysParam === null ? defaultDays : Number(daysParam);
+  if (!Number.isFinite(days) || days <= 0) return String(defaultDays);
+  return String(Math.floor(days));
+}
+
+function sessionWindowFilterValue(requestUrl: URL): SessionWindowFilter {
+  const windowParam = requestUrl.searchParams.get('window');
+  if (windowParam && isSessionWindowFilter(windowParam)) return windowParam;
+
+  const hoursParam = requestUrl.searchParams.get('hours');
+  if (hoursParam === '1' || hoursParam === '6' || hoursParam === '24') return `${hoursParam}h`;
+
+  const daysParam = requestUrl.searchParams.get('days');
+  if (daysParam === 'all') return 'all';
+  if (daysParam !== null) {
+    const days = Number(daysParam);
+    if (Number.isFinite(days) && days > 0) return `${Math.floor(days)}d`;
+  }
+
+  return SESSION_LIST_DEFAULT_WINDOW;
+}
+
+function isSessionWindowFilter(value: string): value is SessionWindowFilter {
+  if (value === 'all') return true;
+  if (value === '1h' || value === '6h' || value === '24h') return true;
+  if (value === '7d' || value === '30d' || value === '90d') return true;
+  return false;
+}
+
+function sessionWindowLabel(value: string): string {
+  if (value === 'all') return 'all';
+  if (value.endsWith('h')) return `${value.slice(0, -1)}h`;
+  if (value.endsWith('d')) return `${value.slice(0, -1)}d`;
+  return value;
+}
+
+function parseSessionStatusFilter(value: string | undefined): SessionStatusFilter | undefined {
+  return value === 'running' || value === 'suspended' || value === 'completed' || value === 'error'
+    ? value
+    : undefined;
+}
+
+function parseApprovalSessionFilter(value: string | undefined): ApprovalSessionFilter | undefined {
+  return value === 'pending' || value === 'completed' || value === 'errored'
+    ? value
+    : undefined;
+}
+
+function approvalMatchesSessionFilter(status: ApprovalSummaryStatus, filter: ApprovalSessionFilter): boolean {
+  if (filter === 'pending') return status === 'pending';
+  if (filter === 'completed') return status === 'approved' || status === 'rejected' || status === 'commented';
+  return status === 'expired' || status === 'errored';
+}
+
+function sessionsApprovalFilterHref(filter: ApprovalSessionFilter, daysFilter?: string): string {
+  const params = new URLSearchParams();
+  params.set('approval', filter);
+  if (daysFilter && daysFilter !== SESSION_LIST_DEFAULT_WINDOW) params.set('days', daysFilter);
+  return `/sessions?${params.toString()}`;
+}
+
+function sessionMatchesAgentFilter(session: SessionSummary, filter: string): boolean {
+  const normalized = filter.trim().toLowerCase();
+  if (!normalized) return true;
+  return session.agent.id.toLowerCase().includes(normalized) ||
+    session.agent.name.toLowerCase().includes(normalized);
+}
+
+function collectSessionAgentOptions(rows: Array<{ projectId: string; multiProject: boolean; session: SessionSummary }>): SessionAgentOption[] {
+  const optionsByName = new Map<string, SessionAgentOption>();
+  for (const row of rows) {
+    const fileName = row.session.agent.id.split('/').pop() || row.session.agent.id;
+    const name = row.session.agent.name || fileName;
+    const key = `${name}\n${row.session.agent.id}`.toLowerCase();
+    if (!optionsByName.has(key)) {
+      optionsByName.set(key, { id: row.session.agent.id, name });
+    }
+  }
+  return [...optionsByName.values()].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
+    a.id.localeCompare(b.id, undefined, { sensitivity: 'base' })
+  );
 }
 
 function renderLogItems(
@@ -1850,9 +1965,12 @@ function renderApprovalsListPage(options: {
   };
   errors: Array<{ projectId: string; message: string }>;
   multiProject: boolean;
+  daysFilter?: string;
 }): string {
-  const { buckets, errors } = options;
+  const { buckets, errors, daysFilter } = options;
   const totalPending = buckets.pending.length;
+  const completedSessionsHref = sessionsApprovalFilterHref('completed', daysFilter);
+  const erroredSessionsHref = sessionsApprovalFilterHref('errored', daysFilter);
 
   return `<!doctype html>
 <html lang="en">
@@ -1890,9 +2008,27 @@ function renderApprovalsListPage(options: {
       font-family: var(--sans);
       font-size: clamp(24px, 3vw, 34px);
       letter-spacing: -0.02em;
-      margin: 0 0 24px;
+      margin: 0 0 12px;
       font-weight: 500;
     }
+    .approval-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 24px;
+    }
+    .approval-nav a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 5px 10px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--muted-3);
+      font-size: 12px;
+    }
+    .approval-nav a:hover { border-color: var(--cyan-border); color: var(--fg); }
     .section-title {
       display: flex; align-items: baseline; gap: 10px;
       margin: 32px 0 12px;
@@ -1925,6 +2061,10 @@ function renderApprovalsListPage(options: {
   })}
   <main>
     <h1>Approvals</h1>
+    <nav class="approval-nav" aria-label="Approval history">
+      <a href="${escapeHtml(completedSessionsHref)}">Completed approvals</a>
+      <a href="${escapeHtml(erroredSessionsHref)}">Errored approvals</a>
+    </nav>
     ${errors.length > 0 ? `
       <div class="errors">
         Some projects failed to load:
@@ -1932,7 +2072,6 @@ function renderApprovalsListPage(options: {
       </div>
     ` : ''}
     ${renderApprovalBucket('Pending', buckets.pending, 'No approvals waiting.')}
-    ${renderApprovalBucket('Expired / Errored', buckets.expired, 'Nothing has expired or errored.')}
     <footer>auto-refreshes every 10s</footer>
   </main>
   <script>${approvalsThemeToggleScript()}</script>
@@ -1994,18 +2133,204 @@ function renderSessionRow(row: {
   return `<a class="row" href="${escapeHtml(href)}">${inner}</a>`;
 }
 
+function renderSessionsFilterForm(options: {
+  agentFilter?: string | undefined;
+  agentOptions: SessionAgentOption[];
+  triggerFilter?: SessionTrigger | undefined;
+  statusFilter?: SessionStatusFilter | undefined;
+  approvalFilter?: ApprovalSessionFilter | undefined;
+  daysFilter: SessionWindowFilter;
+}): string {
+  const { agentFilter, agentOptions, triggerFilter, statusFilter, approvalFilter, daysFilter } = options;
+  const selected = (value: string, current?: string) => value === current ? ' selected' : '';
+
+  return `
+    <form class="filter-bar" method="get" action="/sessions">
+      <label>
+        <span>Agent</span>
+        <div class="agent-combobox" data-agent-combobox>
+          <input name="agent" value="${escapeHtml(agentFilter ?? '')}" placeholder="Any agent" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="session-agent-options">
+          <div id="session-agent-options" class="agent-options" data-agent-options role="listbox" hidden>
+            ${agentOptions.map((agent) => `
+              <button type="button" class="agent-option" data-agent-option data-agent-name="${escapeHtml(agent.name)}" data-agent-id="${escapeHtml(agent.id)}" role="option">
+                <div class="agent-option-name">${escapeHtml(agent.name)}</div>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      </label>
+      <label>
+        <span>Status</span>
+        <select name="status">
+          <option value="">Any status</option>
+          <option value="running"${selected('running', statusFilter)}>Running</option>
+          <option value="suspended"${selected('suspended', statusFilter)}>Suspended</option>
+          <option value="completed"${selected('completed', statusFilter)}>Completed</option>
+          <option value="error"${selected('error', statusFilter)}>Error</option>
+        </select>
+      </label>
+      <label>
+        <span>Trigger</span>
+        <select name="trigger">
+          <option value="">Any trigger</option>
+          <option value="manual"${selected('manual', triggerFilter)}>Manual</option>
+          <option value="scheduled"${selected('scheduled', triggerFilter)}>Scheduled</option>
+          <option value="slack"${selected('slack', triggerFilter)}>Slack</option>
+          <option value="api"${selected('api', triggerFilter)}>API</option>
+        </select>
+      </label>
+      <label>
+        <span>Approval</span>
+        <select name="approval">
+          <option value="">Any approval</option>
+          <option value="pending"${selected('pending', approvalFilter)}>Pending</option>
+          <option value="completed"${selected('completed', approvalFilter)}>Completed</option>
+          <option value="errored"${selected('errored', approvalFilter)}>Errored</option>
+        </select>
+      </label>
+      <label>
+        <span>Window</span>
+        <select name="window">
+          <option value="1h"${selected('1h', daysFilter)}>1 hour</option>
+          <option value="6h"${selected('6h', daysFilter)}>6 hours</option>
+          <option value="24h"${selected('24h', daysFilter)}>24 hours</option>
+          <option value="7d"${selected('7d', daysFilter)}>7 days</option>
+          <option value="30d"${selected('30d', daysFilter)}>30 days</option>
+          <option value="90d"${selected('90d', daysFilter)}>90 days</option>
+          <option value="all"${selected('all', daysFilter)}>All</option>
+        </select>
+      </label>
+      <a class="clear-filter" href="/sessions">Clear</a>
+    </form>
+  `;
+}
+
+function sessionsAgentComboboxScript(): string {
+  return `
+    (function() {
+      var root = document.querySelector('[data-agent-combobox]');
+      if (!root) return;
+      var form = root.closest('form');
+      var input = root.querySelector('input[name="agent"]');
+      var list = root.querySelector('[data-agent-options]');
+      var options = Array.from(root.querySelectorAll('[data-agent-option]'));
+      if (!form || !input || !list || options.length === 0) return;
+      var activeIndex = -1;
+      var submitTimer;
+
+      function submitFilters() {
+        clearTimeout(submitTimer);
+        setOpen(false);
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit();
+        } else {
+          form.submit();
+        }
+      }
+
+      function scheduleSubmit() {
+        clearTimeout(submitTimer);
+        submitTimer = setTimeout(submitFilters, 450);
+      }
+
+      function optionText(option) {
+        return ((option.dataset.agentName || '') + ' ' + (option.dataset.agentId || '')).toLowerCase();
+      }
+
+      function visibleOptions() {
+        return options.filter(function(option) { return !option.hidden; });
+      }
+
+      function setOpen(open) {
+        list.hidden = !open;
+        input.setAttribute('aria-expanded', String(open));
+      }
+
+      function filterOptions() {
+        var query = input.value.trim().toLowerCase();
+        var visibleCount = 0;
+        options.forEach(function(option) {
+          var visible = !query || optionText(option).includes(query);
+          option.hidden = !visible;
+          option.classList.remove('active');
+          if (visible) visibleCount += 1;
+        });
+        activeIndex = -1;
+        setOpen(visibleCount > 0 && document.activeElement === input);
+      }
+
+      input.addEventListener('focus', filterOptions);
+      input.addEventListener('input', function() {
+        filterOptions();
+        scheduleSubmit();
+      });
+      input.addEventListener('keydown', function(event) {
+        var visible = visibleOptions();
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (visible.length === 0) return;
+          var direction = event.key === 'ArrowDown' ? 1 : -1;
+          activeIndex = (activeIndex + direction + visible.length) % visible.length;
+          visible.forEach(function(option) { option.classList.remove('active'); });
+          visible[activeIndex].classList.add('active');
+          visible[activeIndex].scrollIntoView({ block: 'nearest' });
+          setOpen(true);
+        } else if (event.key === 'Enter' && activeIndex >= 0) {
+          event.preventDefault();
+          visible[activeIndex].click();
+        } else if (event.key === 'Enter') {
+          event.preventDefault();
+          submitFilters();
+        } else if (event.key === 'Escape') {
+          setOpen(false);
+        }
+      });
+
+      list.addEventListener('mousedown', function(event) {
+        event.preventDefault();
+      });
+
+      options.forEach(function(option) {
+        option.addEventListener('click', function() {
+          input.value = option.dataset.agentName || '';
+          setOpen(false);
+          input.focus();
+          submitFilters();
+        });
+      });
+
+      Array.from(form.querySelectorAll('select')).forEach(function(select) {
+        select.addEventListener('change', submitFilters);
+      });
+
+      document.addEventListener('click', function(event) {
+        if (!root.contains(event.target)) setOpen(false);
+      });
+    })();
+  `;
+}
+
 function renderSessionsListPage(options: {
   rows: Array<{ projectId: string; multiProject: boolean; session: SessionSummary }>;
   errors: Array<{ projectId: string; message: string }>;
   multiProject: boolean;
   agentFilter?: string;
   triggerFilter?: SessionTrigger;
+  statusFilter?: SessionStatusFilter;
+  approvalFilter?: ApprovalSessionFilter;
+  daysFilter?: SessionWindowFilter;
+  agentOptions?: SessionAgentOption[];
   sessionToken: (sessionId: string) => string;
 }): string {
-  const { rows, errors, agentFilter, triggerFilter, sessionToken } = options;
+  const { rows, errors, agentFilter, triggerFilter, statusFilter, approvalFilter, sessionToken } = options;
+  const agentOptions = options.agentOptions ?? collectSessionAgentOptions(rows);
+  const daysFilter = options.daysFilter ?? SESSION_LIST_DEFAULT_WINDOW;
   const activeFilters = [
     agentFilter ? `agent <code>${escapeHtml(agentFilter)}</code>` : '',
+    statusFilter ? `status <code>${escapeHtml(statusFilter)}</code>` : '',
     triggerFilter ? `trigger <code>${escapeHtml(triggerFilter)}</code>` : '',
+    approvalFilter ? `approval <code>${escapeHtml(approvalFilter)}</code>` : '',
+    daysFilter !== SESSION_LIST_DEFAULT_WINDOW ? `window <code>${escapeHtml(sessionWindowLabel(daysFilter))}</code>` : '',
   ].filter(Boolean).join(' · ');
 
   return `<!doctype html>
@@ -2044,6 +2369,100 @@ function renderSessionsListPage(options: {
     .filters { color: var(--muted-2); font-size: 12px; margin: 0 0 24px; }
     .filters code { color: var(--muted-3); }
     .filters a { color: var(--cyan); }
+    .filter-bar {
+      display: grid;
+      grid-template-columns: minmax(180px, 1.4fr) repeat(4, minmax(126px, 1fr)) auto;
+      gap: 10px;
+      align-items: end;
+      margin: 0 0 16px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .filter-bar label { display: grid; gap: 4px; min-width: 0; }
+    .filter-bar span {
+      color: var(--muted-2);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .filter-bar input,
+    .filter-bar select {
+      width: 100%;
+      min-height: 34px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--fg);
+      font: inherit;
+      font-size: 12px;
+      padding: 6px 9px;
+    }
+    .agent-combobox { position: relative; min-width: 0; }
+    .agent-options {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      right: auto;
+      width: min(440px, calc(100vw - 48px));
+      min-width: 100%;
+      z-index: 80;
+      max-height: min(420px, 70vh);
+      overflow-y: auto;
+      padding: 6px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: var(--bg);
+      box-shadow: 0 18px 42px rgba(0,0,0,0.22);
+    }
+    .agent-options[hidden],
+    .agent-option[hidden] { display: none; }
+    .agent-option {
+      width: 100%;
+      display: grid;
+      padding: 9px 10px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--fg);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .agent-option:hover,
+    .agent-option.active { background: var(--panel-hover); }
+    .agent-option-name {
+      font-family: var(--sans);
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.25;
+      color: var(--fg);
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .filter-bar .clear-filter {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 34px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--line-strong);
+      background: var(--bg);
+      color: var(--fg);
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .filter-bar .clear-filter { color: var(--muted-3); text-decoration: none; }
+    @media (max-width: 940px) {
+      .filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 560px) {
+      .filter-bar { grid-template-columns: 1fr; }
+    }
     ${approvalsListRowStyles()}
     .errors { margin: 16px 0 0; padding: 12px 14px; border: 1px solid var(--red-border); background: var(--red-soft); border-radius: 10px; color: var(--red); font-size: 12.5px; }
     .errors ul { margin: 6px 0 0; padding-left: 20px; }
@@ -2057,6 +2476,7 @@ function renderSessionsListPage(options: {
   })}
   <main>
     <h1>Sessions</h1>
+    ${renderSessionsFilterForm({ agentFilter, agentOptions, triggerFilter, statusFilter, approvalFilter, daysFilter })}
     ${activeFilters ? `<p class="filters">${activeFilters} · <a href="/sessions">clear</a></p>` : ''}
     ${errors.length > 0 ? `
       <div class="errors">
@@ -2071,7 +2491,7 @@ function renderSessionsListPage(options: {
     </div>
     <footer>auto-refreshes every 10s</footer>
   </main>
-  <script>${approvalsThemeToggleScript()}</script>
+  <script>${approvalsThemeToggleScript()}${sessionsAgentComboboxScript()}</script>
 </body>
 </html>`;
 }
@@ -5545,20 +5965,27 @@ export function createServeCommand(): Command {
         }
 
         // GET /sessions (+ /api/sessions): operator surface listing every run.
-        // API-key gated (not a capability route). Filters: ?agent= ?trigger=
-        // ?days=<n|all> (default window mirrors the approvals list).
+        // API-key gated (not a capability route). Filters: ?agent= ?status=
+        // ?trigger= ?approval=
+        // ?window=<1h|6h|24h|7d|30d|90d|all> (default: 24h).
+        // Legacy ?days=<n|all> and ?hours=<n> still work.
         if (req.method === "GET" && routePath === '/sessions') {
           const agentFilter = requestUrl.searchParams.get('agent') ?? undefined;
+          const statusFilter = parseSessionStatusFilter(requestUrl.searchParams.get('status') ?? undefined);
           const triggerFilterRaw = requestUrl.searchParams.get('trigger') ?? undefined;
           const triggerFilter: SessionTrigger | undefined =
             triggerFilterRaw === 'scheduled' || triggerFilterRaw === 'manual' || triggerFilterRaw === 'slack' || triggerFilterRaw === 'api'
               ? triggerFilterRaw
               : undefined;
-          const createdAfter = approvalListCreatedAfter(requestUrl);
+          const approvalFilter = parseApprovalSessionFilter(requestUrl.searchParams.get('approval') ?? undefined);
+          const createdAfter = sessionListCreatedAfter(requestUrl);
+          const daysFilter = sessionDaysFilterValue(requestUrl);
 
           type SessionRow = { projectId: string; multiProject: boolean; session: SessionSummary };
           const rows: SessionRow[] = [];
+          const agentOptionRows: SessionRow[] = [];
           const errors: Array<{ projectId: string; message: string }> = [];
+          const approvalSessionIdsByProject = new Map<string, Set<string>>();
 
           const projectResults = await Promise.all(projects.map(async (project) => {
             const projectWorker = workers.get(project.id);
@@ -5567,7 +5994,10 @@ export function createServeCommand(): Command {
             }
             const result = await projectWorker.listSessions(
               project.root,
-              createdAfter === undefined ? {} : { createdAfter }
+              {
+                ...(createdAfter !== undefined && { createdAfter }),
+                ...(approvalFilter && { includeSubagents: true })
+              }
             );
             if (!result.success) {
               return { project, error: result.error.message };
@@ -5575,30 +6005,72 @@ export function createServeCommand(): Command {
             return { project, sessions: result.sessions };
           }));
 
+          if (approvalFilter) {
+            const approvalResults = await Promise.all(projects.map(async (project) => {
+              const projectWorker = workers.get(project.id);
+              if (!projectWorker) {
+                return { project, error: 'Worker unavailable' };
+              }
+              const result = await projectWorker.listApprovals(
+                project.root,
+                createdAfter === undefined ? {} : { createdAfter }
+              );
+              if (!result.success) {
+                return { project, error: result.error.message };
+              }
+              return { project, approvals: result.approvals };
+            }));
+
+            for (const result of approvalResults) {
+              if (result.error) {
+                errors.push({ projectId: result.project.id, message: result.error });
+                continue;
+              }
+              const matchingSessionIds = new Set<string>();
+              for (const approval of result.approvals ?? []) {
+                if (approvalMatchesSessionFilter(approval.status, approvalFilter)) {
+                  matchingSessionIds.add(approval.sessionId);
+                }
+              }
+              approvalSessionIdsByProject.set(result.project.id, matchingSessionIds);
+            }
+          }
+
           for (const result of projectResults) {
             if (result.error) {
               errors.push({ projectId: result.project.id, message: result.error });
               continue;
             }
             for (const session of result.sessions ?? []) {
-              if (agentFilter && session.agent.id !== agentFilter) continue;
+              if (statusFilter && session.status !== statusFilter) continue;
               if (triggerFilter && session.trigger !== triggerFilter) continue;
+              if (approvalFilter && !approvalSessionIdsByProject.get(result.project.id)?.has(session.sessionId)) continue;
+              agentOptionRows.push({ projectId: result.project.id, multiProject, session });
+              if (agentFilter && !sessionMatchesAgentFilter(session, agentFilter)) continue;
               rows.push({ projectId: result.project.id, multiProject, session });
             }
           }
 
           rows.sort((a, b) => b.session.createdAt - a.session.createdAt);
+          const agentOptions = collectSessionAgentOptions(agentOptionRows);
 
           if (isApi) {
             sendJSON(res, 200, {
               success: true,
               sessions: rows.map((row) => ({ project: row.projectId, ...row.session })),
               window: {
-                days: requestUrl.searchParams.get('days') === 'all' ? 'all' : Math.floor((Date.now() - createdAfter!) / (24 * 60 * 60 * 1000)),
+                value: daysFilter,
+                ...(daysFilter === 'all'
+                  ? { days: 'all' as const }
+                  : daysFilter.endsWith('h')
+                    ? { hours: Number(daysFilter.slice(0, -1)) }
+                    : { days: Number(daysFilter.slice(0, -1)) }),
                 ...(createdAfter !== undefined && { createdAfter })
               },
               ...(agentFilter && { agent: agentFilter }),
+              ...(statusFilter && { status: statusFilter }),
               ...(triggerFilter && { trigger: triggerFilter }),
+              ...(approvalFilter && { approval: approvalFilter }),
               errors
             });
             return;
@@ -5609,7 +6081,11 @@ export function createServeCommand(): Command {
             errors,
             multiProject,
             ...(agentFilter && { agentFilter }),
+            ...(statusFilter && { statusFilter }),
             ...(triggerFilter && { triggerFilter }),
+            ...(approvalFilter && { approvalFilter }),
+            daysFilter,
+            agentOptions,
             sessionToken: (sessionId: string) => sessionViewToken(sessionId, apiKey),
           }));
           return;
@@ -5950,7 +6426,12 @@ export function createServeCommand(): Command {
             return;
           }
 
-          sendHTML(res, 200, renderApprovalsListPage({ buckets, errors, multiProject }));
+          sendHTML(res, 200, renderApprovalsListPage({
+            buckets,
+            errors,
+            multiProject,
+            daysFilter: approvalDaysFilterValue(requestUrl)
+          }));
           return;
         }
 
@@ -6928,4 +7409,6 @@ export const __testing = {
   canContinueApprovalSession,
   isEndedSessionStatus,
   approvalListCreatedAfter,
+  sessionListCreatedAfter,
+  sessionMatchesAgentFilter,
 };

@@ -894,6 +894,7 @@ async function runInternalWorker() {
     allowHistorical?: boolean;
     approvalCreatedAfter?: number;
     sessionsCreatedAfter?: number;
+    includeSubagents?: boolean;
     // Trusted, server-set only: when the serve process has already authorized
     // the viewer (session token / api key / local), it asks for full approval
     // info regardless of the gate resumeToken. Never derived from client input.
@@ -1558,12 +1559,13 @@ async function runInternalWorker() {
         ? await sessionManager.listSessionsCreatedAfter(req.sessionsCreatedAfter)
         : await sessionManager.listAllSessions();
 
-      // Top-level runs only; subagent sessions are an implementation detail of a
-      // parent run and would clutter the operator surface.
+      // Top-level runs by default; approval-filtered session views opt into
+      // subagents so approval history links can land on the exact run.
       const summaries = sessions
-        .filter(({ session }) => !session.parentSessionID && !session.agent.isSubAgent)
+        .filter(({ session }) => req.includeSubagents || (!session.parentSessionID && !session.agent.isSubAgent))
         .map(({ session }) => ({
           sessionId: session.id,
+          ...(session.parentSessionID && { parentSessionId: session.parentSessionID }),
           agent: {
             id: session.agent.id,
             name: session.agent.name,
