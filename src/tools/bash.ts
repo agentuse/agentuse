@@ -6,10 +6,10 @@ import * as os from 'os';
 import { CommandValidator, getBuiltinPayloadCommandInvocation } from './command-validator.js';
 import type { BashConfig, ToolOutput, ToolErrorOutput } from './types.js';
 import { resolveRealPath, type PathResolverContext } from './path-validator.js';
+import { createBoundedAccumulator, getToolOutputLimits } from './tool-output-limits.js';
 import { logger } from '../utils/logger.js';
 
 const DEFAULT_TIMEOUT = 120000; // 2 minutes
-const DEFAULT_MAX_OUTPUT = 30 * 1024; // 30KB
 
 // Environment variables that should be cleared for security
 // These can be used for library injection, path hijacking, or other attacks
@@ -187,6 +187,7 @@ export function createBashTool(
   const validator = new CommandValidator(config.commands, projectRoot, allowedPaths, resolverContext);
   const timeoutConfigured = config.timeout !== undefined;
   const defaultTimeout = config.timeout ?? DEFAULT_TIMEOUT;
+  const { maxBytes: maxOutputBytes, headRatio } = getToolOutputLimits();
 
   // Build description with allowed commands and paths
   const allowedCommandsList = config.commands.map(cmd => `  - ${cmd}`).join('\n');
@@ -279,11 +280,9 @@ Commands not matching these patterns will be rejected.`;
         : (timeout ?? defaultTimeout);
 
       return new Promise((resolve) => {
-        let stdout = '';
-        let stderr = '';
+        const stdoutAcc = createBoundedAccumulator(maxOutputBytes, headRatio);
+        const stderrAcc = createBoundedAccumulator(maxOutputBytes, headRatio);
         let timedOut = false;
-        let stdoutTruncated = false;
-        let stderrTruncated = false;
 
         const payloadInvocation = getBuiltinPayloadCommandInvocation(command, config.commands);
 
@@ -311,31 +310,23 @@ Commands not matching these patterns will be rejected.`;
           }
         }, timeoutMs);
 
-        // Collect stdout
+        // Collect stdout (head+tail bounded; middle dropped if it overflows)
         child.stdout?.on('data', (data: Buffer) => {
-          if (stdout.length < DEFAULT_MAX_OUTPUT) {
-            stdout += data.toString();
-            if (stdout.length > DEFAULT_MAX_OUTPUT) {
-              stdout = stdout.slice(0, DEFAULT_MAX_OUTPUT);
-              stdoutTruncated = true;
-            }
-          }
+          stdoutAcc.append(data.toString());
         });
 
-        // Collect stderr
+        // Collect stderr (head+tail bounded; middle dropped if it overflows)
         child.stderr?.on('data', (data: Buffer) => {
-          if (stderr.length < DEFAULT_MAX_OUTPUT) {
-            stderr += data.toString();
-            if (stderr.length > DEFAULT_MAX_OUTPUT) {
-              stderr = stderr.slice(0, DEFAULT_MAX_OUTPUT);
-              stderrTruncated = true;
-            }
-          }
+          stderrAcc.append(data.toString());
         });
 
         // Handle process exit
         child.on('close', (code) => {
           clearTimeout(timeoutHandle);
+
+          const stdout = stdoutAcc.finalize();
+          const stderr = stderrAcc.finalize();
+          const truncated = stdoutAcc.truncated || stderrAcc.truncated;
 
           // Build output
           let output = '';
@@ -352,8 +343,8 @@ Commands not matching these patterns will be rejected.`;
           // Build metadata hints for LLM (OpenCode pattern)
           const resultMetadata: string[] = ['<bash_metadata>'];
 
-          if (stdoutTruncated || stderrTruncated) {
-            resultMetadata.push(`bash tool truncated output as it exceeded ${DEFAULT_MAX_OUTPUT} byte limit`);
+          if (truncated) {
+            resultMetadata.push(`bash tool truncated output as it exceeded ${maxOutputBytes} byte limit (kept head + tail)`);
           }
 
           if (timedOut) {
@@ -375,7 +366,7 @@ Commands not matching these patterns will be rejected.`;
             metadata: {
               exitCode: code,
               timedOut,
-              truncated: stdoutTruncated || stderrTruncated,
+              truncated,
             },
           });
         });

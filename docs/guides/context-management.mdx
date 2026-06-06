@@ -175,6 +175,20 @@ COMPACTION_KEEP_RECENT=2
 CONTEXT_COMPACTION=false
 ```
 
+### 4. Cap and Reduce Tool Output
+
+Every tool result is re-sent to the model on each subsequent step, so a single large output (a big diff, a verbose log, a huge file read) is one of the biggest drivers of input-token usage, often before compaction ever triggers. The most effective fix is to not generate the bloat in the first place, for example `git diff --stat` instead of a full `git diff` of high-churn files.
+
+As a safety net, AgentUse caps `bash` output (head + tail, 30KB default) and `read_file` output (2000 lines default). Tune these with the [Tool Output environment variables](/reference/environment-variables#tool-output):
+
+```bash
+# Allow larger bash output before truncation
+AGENTUSE_TOOL_MAX_OUTPUT_BYTES=61440
+
+# Return more lines per read_file call
+AGENTUSE_TOOL_MAX_LINES=5000
+```
+
 ## Technical Details
 
 ### Token Estimation

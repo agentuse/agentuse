@@ -230,6 +230,52 @@ model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
   These messages are never compacted to maintain conversation flow.
 </ParamField>
 
+## Tool Output
+
+Large tool results are re-sent to the model on every subsequent step, so a single oversized output (a big diff, a verbose log, a huge file) inflates input tokens for the rest of the run. These variables cap how much of any one tool result reaches the model. Defaults match historical behavior, so you only need to set them to tune.
+
+<ParamField path="AGENTUSE_TOOL_MAX_OUTPUT_BYTES" type="number">
+  Maximum size (in characters) of a single `bash` tool result. Output over this limit is truncated to a head + tail slice, dropping the middle, with a marker noting how much was omitted.
+  Default: 30720 (30KB)
+
+  ```bash
+  export AGENTUSE_TOOL_MAX_OUTPUT_BYTES="61440"  # 60KB
+  ```
+</ParamField>
+
+<ParamField path="AGENTUSE_TOOL_OUTPUT_HEAD_RATIO" type="number">
+  Fraction of `AGENTUSE_TOOL_MAX_OUTPUT_BYTES` kept as the head when truncating; the remainder is kept as the tail. Errors and context often appear early, while the most recent output appears at the end, so both ends are preserved.
+  Default: 0.4 (40% head / 60% tail)
+
+  ```bash
+  export AGENTUSE_TOOL_OUTPUT_HEAD_RATIO="0.5"  # even split
+  ```
+
+  Must be a decimal between 0 and 1.
+</ParamField>
+
+<ParamField path="AGENTUSE_TOOL_MAX_LINES" type="number">
+  Default number of lines `read_file` returns when no explicit `limit` is given (and the truncation cap for file reads).
+  Default: 2000
+
+  ```bash
+  export AGENTUSE_TOOL_MAX_LINES="5000"
+  ```
+</ParamField>
+
+<ParamField path="AGENTUSE_TOOL_MAX_LINE_LENGTH" type="number">
+  Per-line character cap for `read_file` output. Longer lines are truncated with a `... (truncated)` suffix.
+  Default: 2000
+
+  ```bash
+  export AGENTUSE_TOOL_MAX_LINE_LENGTH="4000"
+  ```
+</ParamField>
+
+<Note>
+  Prefer not generating bloat in the first place over raising these caps. For example, use `git diff --stat` instead of a full `git diff` of high-churn files. Truncation is a safety net, not a substitute for asking the tool for less.
+</Note>
+
 ## Logging and Debug
 
 <ParamField path="LOG_LEVEL" type="string">

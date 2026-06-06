@@ -77,6 +77,10 @@ filesystem:
     permissions: [read]
 ```
 
+### Read Limits
+
+`read_file` returns up to **2000 lines** per call by default (`AGENTUSE_TOOL_MAX_LINES`); pass an explicit `limit` to read more, or an `offset` to page through a larger file. Individual lines longer than **2000 characters** (`AGENTUSE_TOOL_MAX_LINE_LENGTH`) are truncated with a `... (truncated)` suffix. See [Tool Output environment variables](/reference/environment-variables#tool-output) to tune these.
+
 ## Bash Tool
 
 Controls which shell commands can be executed and in which directories.
@@ -158,6 +162,12 @@ bash:
     - ~/projects/shared-lib
     - /opt/tools
 ```
+
+### Output Limits
+
+Command output is capped at **30KB** (`AGENTUSE_TOOL_MAX_OUTPUT_BYTES`) before it reaches the model. When output exceeds the cap, AgentUse keeps a **head + tail** slice (40% head / 60% tail by default) and drops the middle, inserting a marker such as `... [N chars truncated of M total] ...`. The head preserves errors and context that often appear early; the tail preserves the most recent output. The result's metadata flags `truncated: true`.
+
+Because every tool result is re-sent to the model on each subsequent step, a single large output inflates input-token usage for the rest of the run. Prefer commands that emit only what you need, for example `git diff --stat` instead of a full `git diff` over high-churn files. See [Tool Output environment variables](/reference/environment-variables#tool-output) to tune the caps.
 
 ## Sandbox Tool
 

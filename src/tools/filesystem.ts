@@ -6,14 +6,12 @@ import * as os from 'os';
 import { PathValidator, type PathResolverContext } from './path-validator.js';
 import { fuzzyReplace } from './edit-replacers.js';
 import type { FilesystemPathConfig, ToolOutput, ToolErrorOutput } from './types.js';
-
-const DEFAULT_MAX_LINES = 2000;
-const DEFAULT_MAX_LINE_LENGTH = 2000;
+import { getToolOutputLimits } from './tool-output-limits.js';
 
 /**
  * Format file content with line numbers (cat -n style)
  */
-function formatWithLineNumbers(content: string, offset: number = 1): string {
+function formatWithLineNumbers(content: string, offset: number = 1, maxLineLength: number): string {
   const lines = content.split('\n');
   const maxLineNumWidth = String(offset + lines.length - 1).length;
 
@@ -21,8 +19,8 @@ function formatWithLineNumbers(content: string, offset: number = 1): string {
     .map((line, i) => {
       const lineNum = String(offset + i).padStart(maxLineNumWidth, ' ');
       // Truncate long lines
-      const truncatedLine = line.length > DEFAULT_MAX_LINE_LENGTH
-        ? line.slice(0, DEFAULT_MAX_LINE_LENGTH) + '... (truncated)'
+      const truncatedLine = line.length > maxLineLength
+        ? line.slice(0, maxLineLength) + '... (truncated)'
         : line;
       return `${lineNum}\t${truncatedLine}`;
     })
@@ -130,12 +128,13 @@ Use absolute paths within these directories. Other paths will be rejected.`;
         const totalLines = lines.length;
 
         // Apply offset and limit
+        const { maxLines: defaultMaxLines, maxLineLength } = getToolOutputLimits();
         const startLine = Math.max(1, offset || 1);
-        const maxLines = limit || DEFAULT_MAX_LINES;
+        const maxLines = limit || defaultMaxLines;
         const endLine = Math.min(startLine + maxLines - 1, totalLines);
 
         const selectedLines = lines.slice(startLine - 1, endLine);
-        const formattedContent = formatWithLineNumbers(selectedLines.join('\n'), startLine);
+        const formattedContent = formatWithLineNumbers(selectedLines.join('\n'), startLine, maxLineLength);
 
         // Add metadata header
         const header = endLine < totalLines
