@@ -117,6 +117,11 @@ interface WorkerApprovalInfoResult {
   approval: ApprovalPageInfo;
 }
 
+interface WorkerSessionStatusResult {
+  success: true;
+  session: SessionStatusInfo;
+}
+
 interface ExpiredApproval {
   sessionId: string;
   agentId: string;
@@ -185,6 +190,21 @@ interface SessionSummary {
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+interface SessionStatusInfo {
+  sessionId: string;
+  sessionStatus: string;
+  createdAt?: number;
+  updatedAt?: number;
+  agent: {
+    id: string;
+    name: string;
+    description?: string;
+    filePath?: string;
+  };
   errorCode?: string;
   errorMessage?: string;
 }
@@ -313,7 +333,7 @@ class AgentWorker {
   private process: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
   private pendingRequests: Map<string, {
-    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerStopSessionResult) => void;
+    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerStopSessionResult) => void;
     timeoutId?: NodeJS.Timeout;
   }> = new Map();
   private requestCounter = 0;
@@ -506,6 +526,18 @@ class AgentWorker {
     }) as Promise<WorkerApprovalInfoResult | WorkerExecuteError>;
   }
 
+  getSessionStatusInfo(options: {
+    projectRoot: string;
+    sessionId: string;
+  }): Promise<WorkerSessionStatusResult | WorkerExecuteError> {
+    return this.request({
+      type: "session-status",
+      projectRoot: options.projectRoot,
+      sessionId: options.sessionId,
+      timeout: 30,
+    }) as Promise<WorkerSessionStatusResult | WorkerExecuteError>;
+  }
+
   sweepExpired(projectRoot: string): Promise<WorkerSweepExpiredResult | WorkerExecuteError> {
     return this.request({
       type: "sweep-expired",
@@ -539,7 +571,7 @@ class AgentWorker {
     }) as Promise<WorkerListSessionsResult | WorkerExecuteError>;
   }
 
-  private request(options: Record<string, unknown> & { timeout?: number | undefined }): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerStopSessionResult> {
+  private request(options: Record<string, unknown> & { timeout?: number | undefined }): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerStopSessionResult> {
     return new Promise((resolve) => {
       if (!this.process || !this.ready) {
         resolve({
@@ -4371,6 +4403,12 @@ function renderSessionPage(options: SessionPageOptions): string {
       }
     }
     let refreshTimer = null;
+    let lastFullLogRefresh = 0;
+    const liveStatusPollMs = 1500;
+    const waitingStatusPollMs = 3000;
+    const idleStatusPollMs = 10000;
+    const liveLogRefreshMs = 5000;
+    const idleLogRefreshMs = 15000;
     function scheduleRefresh(delay) {
       if (refreshTimer) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(refreshStatus, delay);
@@ -4417,7 +4455,7 @@ function renderSessionPage(options: SessionPageOptions): string {
       }
     }
     async function refreshStatus() {
-      let nextDelay = 1500;
+      let nextDelay = idleStatusPollMs;
       try {
         // LEGACY ROUTES: this page fetches its sibling action endpoints by relative
         // path (/approvals/:id/{status,decision,continue}). Canonical paths are
@@ -4427,9 +4465,17 @@ function renderSessionPage(options: SessionPageOptions): string {
         const url = new URL(location.pathname + '/status', location.origin);
         url.searchParams.set('token', token);
         if (project) url.searchParams.set('project', project);
+        const now = Date.now();
+        const currentStatus = statusEl ? statusEl.textContent : '';
+        const knownLogs = [...renderedLogs.values()];
+        const currentlyLive = isLiveStatus(currentStatus, knownLogs);
+        const logRefreshMs = currentlyLive ? liveLogRefreshMs : idleLogRefreshMs;
+        const includeLogs = lastFullLogRefresh === 0 || now - lastFullLogRefresh >= logRefreshMs;
+        if (includeLogs) url.searchParams.set('logs', '1');
         const response = await fetch(url);
         const payload = await response.json();
         if (!response.ok || !payload.success) return;
+        if (includeLogs) lastFullLogRefresh = now;
         const rawStatus = payload.status || payload.approval?.sessionStatus || 'unknown';
         const status = displaySessionStatus(rawStatus, payload.approval);
         statusEl.textContent = status;
@@ -4445,8 +4491,9 @@ function renderSessionPage(options: SessionPageOptions): string {
         } else {
           pendingActionable = Boolean(nextToken && approvalWaiting);
         }
-        const logs = payload.logs || payload.approval?.logs || [];
-        renderLogs(logs, forceLogRender);
+        const hasLogs = Array.isArray(payload.logs) || Array.isArray(payload.approval?.logs);
+        const logs = hasLogs ? (payload.logs || payload.approval?.logs || []) : knownLogs;
+        if (hasLogs) renderLogs(logs, forceLogRender);
         updateTokenUsage(payload.approval);
         updateContinuationSurface(status, payload.approval, logs);
         const resultEl = document.getElementById('result');
@@ -4459,7 +4506,15 @@ function renderSessionPage(options: SessionPageOptions): string {
           resultEl.textContent = '✓ session completed.';
           resultEl.className = 'notice';
         }
-        nextDelay = isLiveStatus(status, logs) ? 500 : 1500;
+        nextDelay = isLiveStatus(status, logs)
+          ? liveStatusPollMs
+          : status === 'waiting'
+            ? waitingStatusPollMs
+            : idleStatusPollMs;
+        if (!hasLogs && currentlyLive && (status === 'waiting' || isEndedStatus(payload.approval?.sessionStatus || status))) {
+          lastFullLogRefresh = 0;
+          nextDelay = 0;
+        }
       } catch {}
       scheduleRefresh(nextDelay);
     }
@@ -5350,6 +5405,51 @@ export function createServeCommand(): Command {
           });
           if (info.success) {
             return { success: true, project, info };
+          }
+          if (info.error.code !== 'SESSION_NOT_FOUND') {
+            nonSessionErrors.push({ status: 500, code: info.error.code, message: info.error.message });
+          }
+        }
+
+        if (nonSessionErrors.length > 0) {
+          return { success: false, ...nonSessionErrors[0] };
+        }
+        return { success: false, status: 404, code: "SESSION_NOT_FOUND", message: `Session not found: ${sessionId}` };
+      };
+
+      const findSessionStatusInfo = async (
+        sessionId: string,
+        projectId?: string
+      ): Promise<
+        | { success: true; project: Project; session: SessionStatusInfo }
+        | { success: false; status: number; code: string; message: string }
+      > => {
+        const selectedProjects = projectId
+          ? projects.filter((project) => project.id === projectId)
+          : (effectiveDefault ? [projectsById.get(effectiveDefault)!] : projects);
+
+        if (selectedProjects.length === 0) {
+          return {
+            success: false,
+            status: 404,
+            code: "PROJECT_NOT_FOUND",
+            message: projectId ? `Project not found: ${projectId}` : "Project not found for session request",
+          };
+        }
+
+        const nonSessionErrors: Array<{ status: number; code: string; message: string }> = [];
+        for (const project of selectedProjects) {
+          const projectWorker = workers.get(project.id);
+          if (!projectWorker) {
+            nonSessionErrors.push({ status: 500, code: "WORKER_UNAVAILABLE", message: `No worker for project ${project.id}` });
+            continue;
+          }
+          const info = await projectWorker.getSessionStatusInfo({
+            projectRoot: project.root,
+            sessionId,
+          });
+          if (info.success) {
+            return { success: true, project, session: info.session };
           }
           if (info.error.code !== 'SESSION_NOT_FOUND') {
             nonSessionErrors.push({ status: 500, code: info.error.code, message: info.error.message });
@@ -6344,10 +6444,36 @@ export function createServeCommand(): Command {
           const sessionId = decodeURIComponent(sessionStatusMatch[1]);
           const token = requestUrl.searchParams.get('token') ?? undefined;
           const projectId = requestUrl.searchParams.get('project') ?? undefined;
+          const includeLogs = requestUrl.searchParams.get('logs') === '1';
           if (!sessionAuthorized(sessionId, token)) {
             sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
             return;
           }
+          if (!includeLogs) {
+            const found = await findSessionStatusInfo(sessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+            const activeKey = `${found.project.id}:${sessionId}`;
+            const status = activeApprovalResumes.has(activeKey)
+              ? 'resuming'
+              : activeSessionContinuations.has(activeKey)
+                ? 'continuing'
+                : found.session.sessionStatus === 'suspended'
+                  ? 'waiting'
+                  : found.session.sessionStatus;
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              success: true,
+              sessionId,
+              status,
+              project: found.project.id,
+              approval: found.session
+            }));
+            return;
+          }
+
           const found = await findSessionInfo(sessionId, projectId);
           if (!found.success) {
             sendError(res, found.status, found.code, found.message);

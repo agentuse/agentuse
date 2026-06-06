@@ -298,6 +298,31 @@ describe('renderSessionPage canAct gating', () => {
     expect(html).toContain('id="stop-submit"');
   });
 
+  it('polls session status cheaply and refreshes full logs on a slower cadence', () => {
+    const html = __testing.renderSessionPage({
+      approval: {
+        ...completedApproval,
+        sessionId: 'session-running',
+        sessionStatus: 'running',
+        logs: [{
+          id: 'tool-1',
+          type: 'tool',
+          tool: 'sandbox__exec',
+          status: 'running',
+          title: 'sandbox__exec running',
+        }],
+      },
+      token: 'sess-token',
+      projectId: 'project-1',
+      canAct: true,
+    });
+
+    expect(html).toContain('const liveStatusPollMs = 1500;');
+    expect(html).toContain('const liveLogRefreshMs = 5000;');
+    expect(html).toContain("if (includeLogs) url.searchParams.set('logs', '1');");
+    expect(html).toContain('if (hasLogs) renderLogs(logs, forceLogRender);');
+  });
+
   it('labels stopped sessions as stopped instead of a generic error', () => {
     const html = __testing.renderSessionPage({
       approval: {

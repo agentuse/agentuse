@@ -128,13 +128,38 @@ export class SessionManager {
     const entries = await fs.readdir(absoluteDir, { withFileTypes: true }).catch(() => []);
     const sessionJson = entries.find((entry) => entry.isFile() && entry.name === 'session.json');
     const results: string[] = sessionJson ? [relativeDir] : [];
+    const childDirs = sessionJson
+      ? entries.filter((entry) => entry.isDirectory() && entry.name === 'subagent')
+      : entries.filter((entry) => entry.isDirectory());
 
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+    for (const entry of childDirs) {
       results.push(...await this.walkSessionDirs(baseDir, path.join(relativeDir, entry.name)));
     }
 
     return results;
+  }
+
+  private async findSessionDirById(baseDir: string, sessionID: string, relativeDir = ''): Promise<string | null> {
+    const absoluteDir = path.join(baseDir, relativeDir);
+    const entries = await fs.readdir(absoluteDir, { withFileTypes: true }).catch(() => []);
+    const hasSessionJson = entries.some((entry) => entry.isFile() && entry.name === 'session.json');
+    const dirName = path.basename(relativeDir);
+
+    if (hasSessionJson && dirName.startsWith(`${sessionID}-`)) {
+      const session = await readJSON<SessionInfo>(`${relativeDir}/session`);
+      if (session?.id === sessionID) return relativeDir;
+    }
+
+    const childDirs = hasSessionJson
+      ? entries.filter((entry) => entry.isDirectory() && entry.name === 'subagent')
+      : entries.filter((entry) => entry.isDirectory());
+
+    for (const entry of childDirs) {
+      const found = await this.findSessionDirById(baseDir, sessionID, path.join(relativeDir, entry.name));
+      if (found) return found;
+    }
+
+    return null;
   }
 
   private async readSessionEntries(options: { createdAfter?: number; relativeDir?: string } = {}): Promise<SessionEntry[]> {
@@ -440,15 +465,25 @@ export class SessionManager {
    * sanitized agent id. Resume endpoints only have the session id in the URL.
    */
   async findSession(sessionID: string): Promise<SessionEntry | null> {
-    const entries = await this.readSessionEntries();
-    const found = entries.find((entry) => entry.session.id === sessionID) ?? null;
-    if (found) {
-      this.sessionID = found.session.id;
-      this.agentId = found.agentId;
-      this.fullPath = found.path;
-      this.rememberSessionPath(found.session.id, found.agentId, found.path);
-    }
-    return found;
+    const state = await getStorageState();
+    const sessionPath = await this.findSessionDirById(state.dir, sessionID);
+    if (!sessionPath) return null;
+
+    const session = await readJSON<SessionInfo>(`${sessionPath}/session`);
+    if (!session) return null;
+
+    const dirName = path.basename(sessionPath);
+    const prefix = `${session.id}-`;
+    const agentId = dirName.startsWith(prefix)
+      ? dirName.slice(prefix.length)
+      : sanitizeAgentName(session.agent.id);
+
+    this.sessionID = session.id;
+    this.agentId = agentId;
+    this.fullPath = sessionPath;
+    this.rememberSessionPath(session.id, agentId, sessionPath);
+
+    return { session, agentId, path: sessionPath };
   }
 
   /**
@@ -576,7 +611,11 @@ export class SessionManager {
 
     return Array.from(entriesById.values())
       .filter((entry) => entry.session.parentSessionID === parentSessionID)
-      .sort((a, b) => a.session.time.created - b.session.time.created || a.session.id.localeCompare(b.session.id));
+      .sort((a, b) =>
+        a.session.time.created - b.session.time.created ||
+        a.session.agent.id.localeCompare(b.session.agent.id) ||
+        a.session.id.localeCompare(b.session.id)
+      );
   }
 
   async stopSessionTree(

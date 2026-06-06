@@ -880,7 +880,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'sweep-expired' | 'list-approvals' | 'list-sessions' | 'stop-session';
+    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'sweep-expired' | 'list-approvals' | 'list-sessions' | 'stop-session';
     agentPath?: string;
     projectRoot: string;
     prompt?: string;
@@ -1376,6 +1376,53 @@ async function runInternalWorker() {
           ...(tokenUsage && { tokenUsage }),
           logs
         },
+      };
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: (err as Error).message },
+      };
+    }
+  }
+
+  async function getSessionStatusInfo(req: ExecuteRequest) {
+    try {
+      if (!req.sessionId) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_REQUIRED', message: 'Missing sessionId for status request' },
+        };
+      }
+
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const found = await sessionManager.findSession(req.sessionId);
+      if (!found) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${req.sessionId}` },
+        };
+      }
+
+      return {
+        id: req.id,
+        success: true,
+        session: {
+          sessionId: found.session.id,
+          sessionStatus: found.session.status,
+          ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
+          ...(typeof found.session.time?.updated === 'number' && { updatedAt: found.session.time.updated }),
+          ...sessionErrorFields(found.session),
+          agent: {
+            id: found.session.agent.id,
+            name: found.session.agent.name,
+            ...(found.session.agent.filePath && { filePath: found.session.agent.filePath }),
+            ...(found.session.agent.description && { description: found.session.agent.description })
+          }
+        }
       };
     } catch (err) {
       return {
@@ -1993,6 +2040,10 @@ async function runInternalWorker() {
       const request = JSON.parse(line) as ExecuteRequest;
       if (request.type === 'approval-info') {
         getApprovalInfo(request).then((response) => {
+          console.log(JSON.stringify(response));
+        });
+      } else if (request.type === 'session-status') {
+        getSessionStatusInfo(request).then((response) => {
           console.log(JSON.stringify(response));
         });
       } else if (request.type === 'sweep-expired') {
