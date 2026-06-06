@@ -331,6 +331,7 @@ model: openai:gpt-5.5
 openai:
   reasoningEffort: high  # Options: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'
   textVerbosity: low     # Options: 'low', 'medium', 'high'
+  promptCacheRetention: 24h  # Optional: extended prompt caching on supported models
 ---
 ```
 
@@ -347,10 +348,12 @@ openai:
   - `low`: Concise, minimal prose
   - `medium`: Balanced detail (default)  
   - `high`: Verbose, detailed explanations
+
+  **prompt caching**: AgentUse automatically sends a stable OpenAI `promptCacheKey` per agent so repeated runs with the same prompt prefix are easier for OpenAI to route to cache. You usually do not need to configure this. Set `promptCacheRetention: 24h` only when you want extended retention and the selected OpenAI model supports it.
 </Info>
 
 <Note>
-  If you omit `reasoningEffort` or `textVerbosity`, AgentUse leaves the field unset and uses the OpenAI/AI SDK defaults. Reasoning effort is typically `medium` on reasoning models. `none` and `xhigh` are model-specific OpenAI options; if a model does not support a selected effort level, OpenAI will reject the request.
+  If you omit `reasoningEffort`, `textVerbosity`, or `promptCacheRetention`, AgentUse leaves those fields unset and uses the OpenAI/AI SDK defaults. Reasoning effort is typically `medium` on reasoning models. `none`, `xhigh`, and `24h` retention are model-specific OpenAI options; if a model does not support a selected option, OpenAI will reject the request.
 </Note>
 
 These options help you optimize for:

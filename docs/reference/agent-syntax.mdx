@@ -155,12 +155,15 @@ Additional instructions or context.
   **Supported Options:**
   - `reasoningEffort`: Controls thinking effort for reasoning models (`'none'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`)
   - `textVerbosity`: Controls response length and detail (`'low'`, `'medium'`, `'high'`)
-  - Defaults: when omitted, AgentUse does not set these fields and uses the OpenAI/AI SDK defaults. For reasoning effort, that is typically `medium` on reasoning models.
+  - `promptCacheKey`: Optional OpenAI prompt-cache routing key. AgentUse sets a stable default per agent when omitted.
+  - `promptCacheRetention`: Optional OpenAI prompt-cache retention policy (`'in_memory'` or `'24h'`)
+  - Defaults: when `reasoningEffort`, `textVerbosity`, or `promptCacheRetention` are omitted, AgentUse leaves them unset and uses the OpenAI/AI SDK defaults. When `promptCacheKey` is omitted, AgentUse generates a stable key per agent.
 
   ```yaml
   openai:
     reasoningEffort: high  # More thorough reasoning
     textVerbosity: low     # Concise responses
+    promptCacheRetention: 24h  # Optional extended prompt caching on supported models
   ```
 
   <Note>
@@ -659,6 +662,8 @@ Assist the user with their request using all available capabilities.
    - `openai` field is only valid for OpenAI models
    - `reasoningEffort` must be one of: `'none'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`
    - `textVerbosity` must be one of: `'low'`, `'medium'`, `'high'`
+   - `promptCacheKey` must be a non-empty string of 64 characters or fewer
+   - `promptCacheRetention` must be one of: `'in_memory'`, `'24h'`
    - No other options are allowed under `openai`
 
 ## Next Steps

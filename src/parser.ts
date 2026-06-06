@@ -148,7 +148,9 @@ const AgentSchema = z.object({
   maxSteps: z.number().positive().int().optional(),
   openai: z.object({
     reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
-    textVerbosity: z.enum(['low', 'medium', 'high']).optional()
+    textVerbosity: z.enum(['low', 'medium', 'high']).optional(),
+    promptCacheKey: z.string().min(1).max(64).optional(),
+    promptCacheRetention: z.enum(['in_memory', '24h']).optional()
   }).strict().optional(),
   mcp_servers: z.record(MCPServerSchema).optional(),  // Deprecated: use mcpServers
   mcpServers: z.record(MCPServerSchema).optional(),   // Preferred: camelCase

@@ -1,4 +1,5 @@
 import { streamText, stepCountIs, type ModelMessage, type ToolSet } from 'ai';
+import { createHash } from 'crypto';
 import type { ParsedAgent } from '../parser';
 import { createModel, AuthenticationError } from '../models';
 import { CodexAuth } from '../auth/codex';
@@ -11,9 +12,30 @@ import { isSuspendSignal } from './suspend';
 // Constants
 const MAX_RETRIES = 3;
 const ANTHROPIC_CACHE_CONTROL = { type: 'ephemeral' as const };
+const OPENAI_CACHE_KEY_PREFIX = 'agentuse';
 
 function isAnthropicModel(model: string): boolean {
   return model.split(':')[0] === 'anthropic';
+}
+
+function defaultOpenAIPromptCacheKey(agent: ParsedAgent): string {
+  const source = `${agent.config.model}:${agent.name}`;
+  const hash = createHash('sha256').update(source).digest('hex').slice(0, 16);
+  const slug = agent.name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32);
+
+  return [OPENAI_CACHE_KEY_PREFIX, slug || 'agent', hash].join('-');
+}
+
+function openAIOptionsWithCacheDefaults(agent: ParsedAgent): Record<string, unknown> {
+  const configured = agent.config.openai ?? {};
+  return {
+    promptCacheKey: configured.promptCacheKey ?? defaultOpenAIPromptCacheKey(agent),
+    ...configured,
+  };
 }
 
 function withAnthropicCacheControl(providerOptions: any): any {
@@ -185,6 +207,7 @@ export async function* executeAgentCore(
     // Only include provider options if they exist and match the model provider
     let providerOptions: any = undefined;
     if (provider === 'openai') {
+      const openaiOptions = openAIOptionsWithCacheDefaults(agent);
       // Check if using Codex OAuth (Responses API) vs regular API key (Chat Completions API)
       const codexAccess = await CodexAuth.access();
       if (codexAccess) {
@@ -198,12 +221,11 @@ export async function* executeAgentCore(
           openai: {
             instructions,
             store: false,
-            ...agent.config.openai
+            ...openaiOptions
           }
         };
-      } else if (agent.config.openai) {
-        // Regular OpenAI API key - only pass custom config if provided
-        providerOptions = { openai: agent.config.openai };
+      } else {
+        providerOptions = { openai: openaiOptions };
       }
     }
     // Future: Add other providers here

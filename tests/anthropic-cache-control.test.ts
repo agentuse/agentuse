@@ -16,8 +16,10 @@ const streamTextMock = mock(() => ({
 
 const stepCountIsMock = mock((steps: number) => ({ steps }));
 const createModelMock = mock(async () => ({ modelId: 'mock-model' }));
+const generateTextMock = mock(async () => ({ text: 'compacted' }));
 
 mock.module('ai', () => ({
+  generateText: generateTextMock,
   streamText: streamTextMock,
   stepCountIs: stepCountIsMock,
 }));
@@ -37,6 +39,7 @@ beforeEach(() => {
   streamTextMock.mockClear();
   stepCountIsMock.mockClear();
   createModelMock.mockClear();
+  generateTextMock.mockClear();
 });
 
 describe('executeAgentCore Anthropic cache control', () => {
@@ -152,7 +155,7 @@ describe('executeAgentCore Anthropic cache control', () => {
     expect(stepMessages[1].content[1].providerOptions).toBeUndefined();
   });
 
-  it('does not add Anthropic cache control to non-Anthropic models', async () => {
+  it('adds OpenAI prompt cache routing without Anthropic cache control', async () => {
     for await (const _ of executeAgentCore(
       {
         name: 'cache-test',
@@ -177,8 +180,42 @@ describe('executeAgentCore Anthropic cache control', () => {
     }
 
     const streamConfig = streamTextMock.mock.calls[0][0] as any;
+    expect(streamConfig.providerOptions.openai.promptCacheKey).toMatch(/^agentuse-cache-test-[a-f0-9]{16}$/);
     expect(streamConfig.messages[0].providerOptions).toBeUndefined();
     expect(streamConfig.tools.bash.providerOptions).toBeUndefined();
     expect(streamConfig.prepareStep).toBeUndefined();
+  });
+
+  it('preserves explicit OpenAI prompt cache options', async () => {
+    for await (const _ of executeAgentCore(
+      {
+        name: 'cache-test',
+        config: {
+          model: 'openai:gpt-5',
+          openai: {
+            promptCacheKey: 'support-batch-cache',
+            promptCacheRetention: '24h',
+            textVerbosity: 'low',
+          },
+        },
+      } as any,
+      {},
+      {
+        userMessage: 'Check cache usage',
+        systemMessages: [
+          { role: 'system', content: 'static instructions' },
+        ],
+        maxSteps: 3,
+      }
+    )) {
+      // Consume the stream.
+    }
+
+    const streamConfig = streamTextMock.mock.calls[0][0] as any;
+    expect(streamConfig.providerOptions.openai).toMatchObject({
+      promptCacheKey: 'support-batch-cache',
+      promptCacheRetention: '24h',
+      textVerbosity: 'low',
+    });
   });
 });

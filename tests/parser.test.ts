@@ -384,6 +384,36 @@ Test OpenAI thinking effort.`;
       expect(() => parseAgentContent(content, 'test')).toThrow('Invalid agent configuration');
     });
 
+    it('accepts OpenAI prompt cache options', () => {
+      const content = `---
+model: openai:gpt-5
+openai:
+  promptCacheKey: support-batch-cache
+  promptCacheRetention: 24h
+---
+
+Test OpenAI prompt cache settings.`;
+
+      const agent = parseAgentContent(content, 'test');
+
+      expect(agent.config.openai).toMatchObject({
+        promptCacheKey: 'support-batch-cache',
+        promptCacheRetention: '24h'
+      });
+    });
+
+    it('rejects overlong OpenAI prompt cache keys', () => {
+      const content = `---
+model: openai:gpt-5
+openai:
+  promptCacheKey: ${'x'.repeat(65)}
+---
+
+Test OpenAI prompt cache settings.`;
+
+      expect(() => parseAgentContent(content, 'test')).toThrow('Invalid agent configuration');
+    });
+
     it('defaults learning.apply to false when omitted', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0
@@ -410,6 +440,8 @@ maxSteps: 150
 openai:
   reasoningEffort: high
   textVerbosity: medium
+  promptCacheKey: test-agent-cache
+  promptCacheRetention: in_memory
 mcpServers:
   filesystem:
     command: npx
@@ -432,7 +464,9 @@ This is a test agent.`;
       expect(agent.config.maxSteps).toBe(150);
       expect(agent.config.openai).toMatchObject({
         reasoningEffort: 'high',
-        textVerbosity: 'medium'
+        textVerbosity: 'medium',
+        promptCacheKey: 'test-agent-cache',
+        promptCacheRetention: 'in_memory'
       });
       expect(agent.config.mcpServers).toBeDefined();
       expect(agent.config.subagents).toHaveLength(1);
