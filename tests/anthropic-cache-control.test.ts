@@ -104,6 +104,54 @@ describe('executeAgentCore Anthropic cache control', () => {
     });
   });
 
+  it('keeps dynamic user input after the cacheable instruction prefix', async () => {
+    for await (const _ of executeAgentCore(
+      {
+        name: 'cache-test',
+        config: {
+          model: 'anthropic:claude-haiku-4-5',
+        },
+      } as any,
+      {},
+      {
+        userMessage: 'Stable agent instructions\n\nChanged run request',
+        cacheableUserMessage: 'Stable agent instructions',
+        systemMessages: [
+          { role: 'system', content: 'static system instructions' },
+        ],
+        maxSteps: 3,
+      }
+    )) {
+      // Consume the stream.
+    }
+
+    const streamConfig = streamTextMock.mock.calls[0][0] as any;
+    const userMessage = streamConfig.messages[1];
+    expect(userMessage.providerOptions).toBeUndefined();
+    expect(userMessage.content).toEqual([
+      {
+        type: 'text',
+        text: 'Stable agent instructions',
+        providerOptions: {
+          anthropic: {
+            cacheControl: { type: 'ephemeral' },
+          },
+        },
+      },
+      {
+        type: 'text',
+        text: '\n\nChanged run request',
+      },
+    ]);
+
+    const stepMessages = streamConfig.prepareStep({
+      messages: streamConfig.messages,
+    }).messages;
+
+    expect(stepMessages[1].providerOptions).toBeUndefined();
+    expect(stepMessages[1].content[1].providerOptions).toBeUndefined();
+  });
+
   it('does not add Anthropic cache control to non-Anthropic models', async () => {
     for await (const _ of executeAgentCore(
       {

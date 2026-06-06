@@ -26,6 +26,43 @@ function withAnthropicCacheControl(providerOptions: any): any {
   };
 }
 
+function hasAnthropicCacheControl(providerOptions: any): boolean {
+  return Boolean(
+    providerOptions?.anthropic?.cacheControl ??
+    providerOptions?.anthropic?.cache_control
+  );
+}
+
+function messageHasCacheableContentPart(message: any): boolean {
+  return Array.isArray(message?.content) &&
+    message.content.some((part: any) => hasAnthropicCacheControl(part?.providerOptions));
+}
+
+function buildUserMessage(userMessage: string, cacheableUserMessage: string | undefined): any {
+  if (
+    !cacheableUserMessage ||
+    !userMessage.startsWith(cacheableUserMessage) ||
+    userMessage.length === cacheableUserMessage.length
+  ) {
+    return { role: 'user', content: userMessage };
+  }
+
+  return {
+    role: 'user',
+    content: [
+      {
+        type: 'text',
+        text: cacheableUserMessage,
+        providerOptions: withAnthropicCacheControl(undefined),
+      },
+      {
+        type: 'text',
+        text: userMessage.slice(cacheableUserMessage.length),
+      },
+    ],
+  };
+}
+
 function applyAnthropicCacheControlToMessages(messages: any[]): any[] {
   let lastSystemIndex = -1;
   for (let index = messages.length - 1; index >= 0; index--) {
@@ -49,7 +86,9 @@ function applyAnthropicCacheControlToLastMessage(messages: any[]): any[] {
   const lastMessageIndex = messages.length - 1;
   return messages.map((message, index) =>
     index === lastMessageIndex
-      ? { ...message, providerOptions: withAnthropicCacheControl(message.providerOptions) }
+      ? messageHasCacheableContentPart(message)
+        ? message
+        : { ...message, providerOptions: withAnthropicCacheControl(message.providerOptions) }
       : message
   );
 }
@@ -81,6 +120,7 @@ export async function* executeAgentCore(
   tools: ToolSet,
   options: {
     userMessage: string;
+    cacheableUserMessage?: string | undefined;
     systemMessages: Array<{role: string, content: string}>;
     messages?: ModelMessage[];
     maxSteps: number;
@@ -101,11 +141,13 @@ export async function* executeAgentCore(
 
   // Initialize context manager if enabled
   let contextManager: ContextManager | null = null;
+  const usesAnthropicCacheControl = isAnthropicModel(agent.config.model);
   const initialMessages: any[] = options.messages ?? [
     ...options.systemMessages,
-    { role: 'user', content: options.userMessage }
+    usesAnthropicCacheControl
+      ? buildUserMessage(options.userMessage, options.cacheableUserMessage)
+      : { role: 'user', content: options.userMessage }
   ];
-  const usesAnthropicCacheControl = isAnthropicModel(agent.config.model);
   let messages = usesAnthropicCacheControl
     ? applyAnthropicCacheControlToMessages(initialMessages)
     : initialMessages;

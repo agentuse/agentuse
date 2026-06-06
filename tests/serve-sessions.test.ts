@@ -159,6 +159,38 @@ describe('renderSessionPage canAct gating', () => {
     expect(html).toContain('let continueActionable = false;');
   });
 
+  it('shows token usage at the top after a session completes', () => {
+    const html = __testing.renderSessionPage({
+      approval: {
+        ...completedApproval,
+        tokenUsage: { input: 12345, cachedInput: 6789, output: 4321 },
+      },
+      token: 'sess-token',
+      projectId: 'project-1',
+      canAct: false,
+    });
+
+    expect(html).toContain('<span class="label">input token</span><span class="value" id="input-token-value">12,345</span>');
+    expect(html).toContain('<span class="label">cached input token</span><span class="value" id="cached-input-token-value">6,789</span>');
+    expect(html).toContain('<span class="label">output token</span><span class="value" id="output-token-value">4,321</span>');
+  });
+
+  it('keeps token usage hidden until the session is completed', () => {
+    const html = __testing.renderSessionPage({
+      approval: {
+        ...suspendedApproval,
+        tokenUsage: { input: 12345, cachedInput: 6789, output: 4321 },
+      },
+      token: 'sess-token',
+      projectId: 'project-1',
+      canAct: false,
+    });
+
+    expect(html).toContain('<div class="cell token-cell" hidden><span class="label">input token</span>');
+    expect(html).toContain('<div class="cell token-cell" hidden><span class="label">cached input token</span>');
+    expect(html).toContain('<div class="cell token-cell" hidden><span class="label">output token</span>');
+  });
+
   it('sends the session token on decision/continue fetches', () => {
     const html = __testing.renderSessionPage({
       approval: suspendedApproval,

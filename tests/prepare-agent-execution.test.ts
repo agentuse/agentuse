@@ -148,6 +148,7 @@ describe('prepareAgentExecution', () => {
       });
 
       expect(result.userMessage).toBe('Base task instructions\n\nAdditional user input');
+      expect(result.cacheableUserMessage).toBe('Base task instructions');
     });
 
     it('should handle empty instructions with user prompt', async () => {

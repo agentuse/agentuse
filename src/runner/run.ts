@@ -170,6 +170,7 @@ export async function runAgent(
       tools,
       systemMessages,
       userMessage,
+      cacheableUserMessage,
       messages,
       maxSteps,
       subAgentNames,
@@ -228,6 +229,7 @@ export async function runAgent(
     // Execute using the core generator
     const coreOptions = {
       userMessage,
+      ...(cacheableUserMessage !== undefined && { cacheableUserMessage }),
       systemMessages,
       ...(messages && { messages }),
       maxSteps,

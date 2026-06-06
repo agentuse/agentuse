@@ -914,6 +914,12 @@ async function runInternalWorker() {
     channelMessage?: { type?: string; channel?: string; ts?: string; actionTs?: string; url?: string };
   }
 
+  interface SessionTokenUsage {
+    input: number;
+    cachedInput: number;
+    output: number;
+  }
+
   const activeExecutionControllers = new Map<string, AbortController>();
   const activeStoppedSessions = new Set<string>();
 
@@ -982,6 +988,18 @@ async function runInternalWorker() {
       ...(typeof session.error.code === 'string' && session.error.code ? { errorCode: session.error.code } : {}),
       ...(typeof session.error.message === 'string' && session.error.message ? { errorMessage: session.error.message } : {})
     };
+  }
+
+  function aggregateSessionTokenUsage(messages: Array<{ assistant?: { tokens?: { input?: number; output?: number; cache?: { read?: number } } } }>): SessionTokenUsage | undefined {
+    if (messages.length === 0) return undefined;
+    return messages.reduce<SessionTokenUsage>((total, message) => {
+      const tokens = message.assistant?.tokens;
+      return {
+        input: total.input + (typeof tokens?.input === 'number' ? tokens.input : 0),
+        cachedInput: total.cachedInput + (typeof tokens?.cache?.read === 'number' ? tokens.cache.read : 0),
+        output: total.output + (typeof tokens?.output === 'number' ? tokens.output : 0),
+      };
+    }, { input: 0, cachedInput: 0, output: 0 });
   }
 
   function isRejectDecision(toolResult: unknown): boolean {
@@ -1219,6 +1237,7 @@ async function runInternalWorker() {
       }
 
       const messages = await sessionManager.getSessionMessages(req.sessionId, found.agentId);
+      const tokenUsage = aggregateSessionTokenUsage(messages);
       const parts = (await Promise.all(
         messages.map((message) => sessionManager.getMessageParts(req.sessionId!, found.agentId, message.id))
       )).flat();
@@ -1256,6 +1275,7 @@ async function runInternalWorker() {
               ...(found.session.agent.description && { description: found.session.agent.description })
             },
             ...(childSessions.length > 0 && { childSessions }),
+            ...(tokenUsage && { tokenUsage }),
             logs
           },
         };
@@ -1312,6 +1332,7 @@ async function runInternalWorker() {
               ...(found.session.agent.description && { description: found.session.agent.description })
             },
             ...(childSessions.length > 0 && { childSessions }),
+            ...(tokenUsage && { tokenUsage }),
             logs
           },
         };
@@ -1352,6 +1373,7 @@ async function runInternalWorker() {
           ...(Object.keys(channelMessage).length > 0 && { channelMessage }),
           ...(state.status === 'completed' && { decision: state.output }),
           ...(childSessions.length > 0 && { childSessions }),
+          ...(tokenUsage && { tokenUsage }),
           logs
         },
       };

@@ -254,7 +254,14 @@ interface ApprovalPageInfo {
   errorCode?: string;
   errorMessage?: string;
   childSessions?: ChildSessionSummary[];
+  tokenUsage?: SessionTokenUsage;
   logs?: ApprovalLogEntry[];
+}
+
+interface SessionTokenUsage {
+  input: number;
+  cachedInput: number;
+  output: number;
 }
 
 interface ApprovalLogEntry {
@@ -2682,6 +2689,10 @@ function approvalSessionErrorText(approval: Pick<ApprovalPageInfo, 'sessionStatu
   ].filter(Boolean).join(': ')}`;
 }
 
+function formatTokenCount(value: number): string {
+  return Number.isFinite(value) ? new Intl.NumberFormat('en-US').format(value) : '0';
+}
+
 interface SessionTimelineState {
   approval: ApprovalPageInfo;
   projectId?: string | undefined;
@@ -2733,6 +2744,7 @@ function renderSessionTimeline(view: SessionTimelineState): string {
     live,
     initialResultText,
   } = view;
+  const showTokenUsage = approval.sessionStatus === 'completed' && approval.tokenUsage !== undefined;
   return `<main>
     <header>
       <span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span>
@@ -2745,6 +2757,9 @@ function renderSessionTimeline(view: SessionTimelineState): string {
         <div class="cell"><span class="label">project</span><code>${escapeHtml(projectId ?? 'default')}</code></div>
         ${renderCopyCell('file', agentFile)}
         <div class="cell"><span class="label">started</span><span class="value">${approval.createdAt !== undefined ? escapeHtml(formatApprovalTime(approval.createdAt)) : '—'}</span></div>
+        <div class="cell token-cell"${showTokenUsage ? '' : ' hidden'}><span class="label">input token</span><span class="value" id="input-token-value">${formatTokenCount(approval.tokenUsage?.input ?? 0)}</span></div>
+        <div class="cell token-cell"${showTokenUsage ? '' : ' hidden'}><span class="label">cached input token</span><span class="value" id="cached-input-token-value">${formatTokenCount(approval.tokenUsage?.cachedInput ?? 0)}</span></div>
+        <div class="cell token-cell"${showTokenUsage ? '' : ' hidden'}><span class="label">output token</span><span class="value" id="output-token-value">${formatTokenCount(approval.tokenUsage?.output ?? 0)}</span></div>
         <div class="cell" id="expires-cell"${approval.expiresAt === undefined ? ' hidden' : ''}><span class="label">expires</span><span class="value" id="expires-value">${approval.expiresAt !== undefined ? escapeHtml(formatApprovalTime(approval.expiresAt)) : ''}</span></div>
       </div>
     </header>
@@ -4232,6 +4247,24 @@ function renderSessionPage(options: SessionPageOptions): string {
       if (typeof value !== 'number') return '';
       try { return new Date(value).toLocaleString(); } catch { return String(value); }
     }
+    function formatTokenCount(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return '0';
+      try { return new Intl.NumberFormat('en-US').format(value); } catch { return String(value); }
+    }
+    function updateTokenUsage(approval) {
+      const usage = approval && approval.sessionStatus === 'completed' ? approval.tokenUsage : null;
+      for (const cell of document.querySelectorAll('.token-cell')) {
+        if (usage) cell.removeAttribute('hidden');
+        else cell.setAttribute('hidden', '');
+      }
+      if (!usage) return;
+      const input = document.getElementById('input-token-value');
+      const cachedInput = document.getElementById('cached-input-token-value');
+      const output = document.getElementById('output-token-value');
+      if (input) input.textContent = formatTokenCount(usage.input);
+      if (cachedInput) cachedInput.textContent = formatTokenCount(usage.cachedInput);
+      if (output) output.textContent = formatTokenCount(usage.output);
+    }
     // Swap the active gate's panels (prompt, summary/context/risk, expires) and
     // re-enable the action buttons. Called when a fresh await_human gate opens
     // mid-session — the page stays put so the session log keeps full history,
@@ -4414,6 +4447,7 @@ function renderSessionPage(options: SessionPageOptions): string {
         }
         const logs = payload.logs || payload.approval?.logs || [];
         renderLogs(logs, forceLogRender);
+        updateTokenUsage(payload.approval);
         updateContinuationSurface(status, payload.approval, logs);
         const resultEl = document.getElementById('result');
         const transitionResult = /submitting decision|decision recorded|resuming the session|continuing session|follow-up recorded/.test(resultEl?.textContent || '');

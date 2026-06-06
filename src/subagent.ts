@@ -173,14 +173,17 @@ export async function createSubAgentTool(
 
           // Build user message: agent instructions + optional parent task
           let userMessage = agent.instructions;
+          let cacheableUserMessage: string | undefined;
 
           // Only append task if it's meaningful (not empty or generic)
           if (task && task.trim() && !task.match(/^(run|execute|perform|do)$/i)) {
             userMessage = context
               ? `${agent.instructions}\n\nAdditional task: ${task}\n\nContext: ${JSON.stringify(context)}`
               : `${agent.instructions}\n\nAdditional task: ${task}`;
+            cacheableUserMessage = agent.instructions;
           } else if (context) {
             userMessage = `${agent.instructions}\n\nContext: ${JSON.stringify(context)}`;
+            cacheableUserMessage = agent.instructions;
           }
 
           // Create session for this subagent if SessionManager is provided
@@ -258,6 +261,7 @@ export async function createSubAgentTool(
           const result = await processAgentStream(
             executeAgentCore(agent, tools, {
               userMessage,
+              ...(cacheableUserMessage !== undefined && { cacheableUserMessage }),
               systemMessages,
               maxSteps,
               ...(abortSignal && { abortSignal }),  // Pass parent's abort signal

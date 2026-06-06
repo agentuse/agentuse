@@ -26,6 +26,7 @@ export interface PreparedAgentExecution {
   tools: ToolSet;
   systemMessages: Array<{ role: string; content: string }>;
   userMessage: string;
+  cacheableUserMessage?: string | undefined;
   messages?: ModelMessage[] | undefined;
   maxSteps: number;
   subAgentNames: Set<string>;

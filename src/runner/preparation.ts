@@ -105,6 +105,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   let systemMessages: Array<{ role: string; content: string }>;
   let resumedMessages = prebuiltMessages;
   let userMessage: string;
+  let cacheableUserMessage: string | undefined;
 
   logger.debug(`Session manager available: ${!!sessionManager}, Project context available: ${!!projectContext}`);
 
@@ -151,6 +152,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     userMessage = userPrompt
       ? `${resolvedInstructions}\n\n${userPrompt}`
       : resolvedInstructions;
+    cacheableUserMessage = userPrompt ? resolvedInstructions : undefined;
   }
 
   if (!existingSessionId && sessionManager && projectContext) {
@@ -273,6 +275,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     tools,
     systemMessages,
     userMessage,
+    ...(cacheableUserMessage !== undefined && { cacheableUserMessage }),
     ...(resumedMessages && { messages: resumedMessages }),
     maxSteps,
     subAgentNames,
