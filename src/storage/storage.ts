@@ -12,13 +12,16 @@ let storageState: Promise<StorageState> | null = null;
  * Initialize storage for a project
  */
 export async function initStorage(projectRoot: string): Promise<StorageState> {
+  const dir = await getSessionStorageDir(projectRoot);
+
   if (storageState) {
-    return storageState;
+    const current = await storageState;
+    if (current.dir === dir) {
+      return current;
+    }
   }
 
   storageState = (async () => {
-    const dir = await getSessionStorageDir(projectRoot);
-
     // Ensure base directory exists
     await fs.mkdir(dir, { recursive: true });
 

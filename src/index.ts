@@ -1267,6 +1267,7 @@ async function runInternalWorker() {
             sessionId: req.sessionId,
             sessionStatus: found.session.status,
             ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
+            model: found.session.model,
             ...sessionErrorFields(found.session),
             agent: {
               id: found.session.agent.id,
@@ -1324,6 +1325,7 @@ async function runInternalWorker() {
             sessionId: req.sessionId,
             sessionStatus: found.session.status,
             ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
+            model: found.session.model,
             ...sessionErrorFields(found.session),
             agent: {
               id: found.session.agent.id,
@@ -1351,6 +1353,7 @@ async function runInternalWorker() {
           sessionId: req.sessionId,
           sessionStatus: found.session.status,
           ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
+          model: found.session.model,
           ...sessionErrorFields(found.session),
           agent: {
             id: found.session.agent.id,
@@ -1415,6 +1418,7 @@ async function runInternalWorker() {
           sessionStatus: found.session.status,
           ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
           ...(typeof found.session.time?.updated === 'number' && { updatedAt: found.session.time.updated }),
+          model: found.session.model,
           ...sessionErrorFields(found.session),
           agent: {
             id: found.session.agent.id,

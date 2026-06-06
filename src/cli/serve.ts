@@ -199,6 +199,7 @@ interface SessionStatusInfo {
   sessionStatus: string;
   createdAt?: number;
   updatedAt?: number;
+  model?: string;
   agent: {
     id: string;
     name: string;
@@ -245,6 +246,7 @@ interface ApprovalPageInfo {
   sessionId: string;
   sessionStatus: string;
   createdAt?: number;
+  model?: string;
   agent: {
     id: string;
     name: string;
@@ -2789,6 +2791,7 @@ function renderSessionTimeline(view: SessionTimelineState): string {
         <div class="cell"><span class="label">project</span><code>${escapeHtml(projectId ?? 'default')}</code></div>
         ${renderCopyCell('file', agentFile)}
         <div class="cell"><span class="label">started</span><span class="value">${approval.createdAt !== undefined ? escapeHtml(formatApprovalTime(approval.createdAt)) : '—'}</span></div>
+        <div class="cell"><span class="label">model</span><span class="value">${escapeHtml(approval.model ?? 'unknown')}</span></div>
         <div class="cell token-cell"${showTokenUsage ? '' : ' hidden'}><span class="label">input token</span><span class="value" id="input-token-value">${formatTokenCount(approval.tokenUsage?.input ?? 0)}</span></div>
         <div class="cell token-cell"${showTokenUsage ? '' : ' hidden'}><span class="label">cached input token</span><span class="value" id="cached-input-token-value">${formatTokenCount(approval.tokenUsage?.cachedInput ?? 0)}</span></div>
         <div class="cell token-cell"${showTokenUsage ? '' : ' hidden'}><span class="label">output token</span><span class="value" id="output-token-value">${formatTokenCount(approval.tokenUsage?.output ?? 0)}</span></div>
@@ -3126,6 +3129,9 @@ function renderSessionPage(options: SessionPageOptions): string {
     .meta .cell {
       background: var(--bg);
       padding: 14px 16px;
+    }
+    .meta .token-cell:nth-of-type(6) {
+      grid-column-start: 1;
     }
     .meta .label {
       display: block;
@@ -4284,7 +4290,10 @@ function renderSessionPage(options: SessionPageOptions): string {
       try { return new Intl.NumberFormat('en-US').format(value); } catch { return String(value); }
     }
     function updateTokenUsage(approval) {
-      const usage = approval && approval.sessionStatus === 'completed' ? approval.tokenUsage : null;
+      if (!approval) return;
+      const isCompleted = approval.sessionStatus === 'completed';
+      const usage = isCompleted ? approval.tokenUsage : null;
+      if (isCompleted && !usage) return;
       for (const cell of document.querySelectorAll('.token-cell')) {
         if (usage) cell.removeAttribute('hidden');
         else cell.setAttribute('hidden', '');

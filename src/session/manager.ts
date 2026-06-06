@@ -55,16 +55,12 @@ export class SessionManager {
   private async serializedWrite<T>(key: string, operation: () => Promise<T>): Promise<T> {
     const currentQueue = this.writeQueues.get(key) ?? Promise.resolve();
 
-    let result: T;
-    const newQueue = currentQueue.then(async () => {
-      result = await operation();
-    }).catch(() => {
-      // Don't let previous errors block the queue
-    });
+    const operationQueue = currentQueue.catch(() => {
+      // Don't let previous errors block the next write.
+    }).then(operation);
 
-    this.writeQueues.set(key, newQueue);
-    await newQueue;
-    return result!;
+    this.writeQueues.set(key, operationQueue.then(() => undefined, () => undefined));
+    return await operationQueue;
   }
 
   /**

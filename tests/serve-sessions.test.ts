@@ -4,12 +4,14 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { __testing } from '../src/cli/serve';
 import { sessionViewToken, validateSessionToken } from '../src/utils/session-token';
-import { initStorage } from '../src/storage';
+import { getStorageState, initStorage } from '../src/storage';
+import { getSessionStorageDir } from '../src/storage/paths';
 import { SessionManager } from '../src/session';
 
 const suspendedApproval = {
   sessionId: 'session-1',
   sessionStatus: 'suspended',
+  model: 'anthropic:claude-sonnet-4-0',
   agent: {
     id: 'agents/review',
     name: 'Review agent',
@@ -31,6 +33,7 @@ const suspendedApproval = {
 const completedApproval = {
   sessionId: 'session-2',
   sessionStatus: 'completed',
+  model: 'anthropic:claude-sonnet-4-0',
   agent: {
     id: 'agents/review',
     name: 'Review agent',
@@ -170,6 +173,7 @@ describe('renderSessionPage canAct gating', () => {
       canAct: false,
     });
 
+    expect(html).toContain('<span class="label">model</span><span class="value">anthropic:claude-sonnet-4-0</span>');
     expect(html).toContain('<span class="label">input token</span><span class="value" id="input-token-value">12,345</span>');
     expect(html).toContain('<span class="label">cached input token</span><span class="value" id="cached-input-token-value">6,789</span>');
     expect(html).toContain('<span class="label">output token</span><span class="value" id="output-token-value">4,321</span>');
@@ -189,6 +193,21 @@ describe('renderSessionPage canAct gating', () => {
     expect(html).toContain('<div class="cell token-cell" hidden><span class="label">input token</span>');
     expect(html).toContain('<div class="cell token-cell" hidden><span class="label">cached input token</span>');
     expect(html).toContain('<div class="cell token-cell" hidden><span class="label">output token</span>');
+  });
+
+  it('does not clear completed token usage when a cheap status poll omits usage totals', () => {
+    const html = __testing.renderSessionPage({
+      approval: {
+        ...completedApproval,
+        tokenUsage: { input: 12345, cachedInput: 6789, output: 4321 },
+      },
+      token: 'sess-token',
+      projectId: 'project-1',
+      canAct: false,
+    });
+
+    expect(html).toContain("const isCompleted = approval.sessionStatus === 'completed';");
+    expect(html).toContain('if (isCompleted && !usage) return;');
   });
 
   it('sends the session token on decision/continue fetches', () => {
@@ -512,6 +531,51 @@ describe('session trigger persistence', () => {
 });
 
 describe('session tree stopping', () => {
+  it('uses the latest initialized project when stopping sessions', async () => {
+    const originalXdgDataHome = process.env.XDG_DATA_HOME;
+    const dataHome = await mkdtemp(join(tmpdir(), 'agentuse-stop-switch-'));
+    const projectA = join(dataHome, 'project-a');
+    const projectB = join(dataHome, 'project-b');
+    process.env.XDG_DATA_HOME = dataHome;
+
+    try {
+      await initStorage(projectA);
+      await initStorage(projectB);
+      expect((await getStorageState()).dir).toBe(await getSessionStorageDir(projectB));
+
+      const targetManager = new SessionManager();
+      const sessionId = await targetManager.createSession({
+        agent: { id: 'agents/target', name: 'target', isSubAgent: false },
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: {
+          root: projectB,
+          cwd: projectB,
+        },
+      });
+
+      await initStorage(projectA);
+      expect((await getStorageState()).dir).toBe(await getSessionStorageDir(projectA));
+      await initStorage(projectB);
+      expect((await getStorageState()).dir).toBe(await getSessionStorageDir(projectB));
+
+      const stoppingManager = new SessionManager();
+      const stopped = await stoppingManager.stopSessionTree(sessionId);
+
+      expect(stopped.map((entry) => entry.sessionId)).toEqual([sessionId]);
+      expect(stopped[0]?.stopped).toBe(true);
+
+      const found = await stoppingManager.findSession(sessionId);
+      expect(found?.session.status).toBe('error');
+      expect(found?.session.error?.code).toBe('USER_STOPPED');
+    } finally {
+      if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdgDataHome;
+      await rm(dataHome, { recursive: true, force: true });
+    }
+  });
+
   it('recursively marks running parent and subagent sessions as stopped', async () => {
     const originalXdgDataHome = process.env.XDG_DATA_HOME;
     const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-stop-tree-'));
