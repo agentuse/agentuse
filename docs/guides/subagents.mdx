@@ -319,7 +319,7 @@ Classify support tickets into categories:
 model: anthropic:claude-sonnet-4-6  # Smart coordinator
 subagents:
   - path: ./simple-task.agentuse  # Can use claude-3-5-haiku-latest
-  - path: ./complex-task.agentuse  # Can use anthropic:claude-opus-4-7
+  - path: ./complex-task.agentuse  # Can use anthropic:claude-opus-4-8
 ---
 ```
 
@@ -328,7 +328,7 @@ subagents:
 When you use `--model`, it overrides the model for both the parent and ALL sub-agents:
 
 ```bash
-agentuse run orchestrator.agentuse --model openai:gpt-5-mini
+agentuse run orchestrator.agentuse --model openai:gpt-5.4-mini
 ```
 
 <Info>

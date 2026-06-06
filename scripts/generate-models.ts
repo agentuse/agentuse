@@ -17,59 +17,112 @@ import { join, relative } from 'path';
 
 const MODELS_DEV_API = 'https://models.dev/api.json';
 
+/** Strip a trailing release-date suffix in either "-YYYYMMDD" or "-YYYY-MM-DD" form,
+ *  so a dashed date never gets misread as a version number (e.g. gpt-4o-2024-11-20). */
+function stripDate(id: string): string {
+  return id.replace(/-\d{8}$/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '');
+}
+
 /** Parse version from model ID as a comparable integer (major * 1000 + minor).
- *  Handles both hyphen format ("claude-sonnet-4-6") and dot format ("gpt-5.2"). */
+ *  Handles hyphen ("claude-sonnet-4-6"), dot ("gpt-5.2"), and letter-glued schemes
+ *  ("deepseek-v4-pro", "kimi-k2.6", "minimax-m3", "glm-5v-turbo", "qwen3.7-max").
+ *  NOTE: the loose fallback below assumes the caller has already excluded size/variant junk
+ *  (e.g. qwen3-235b-a22b) via a family filter — it is only meant to run on curated IDs. */
 function parseModelVersion(id: string): number {
+  const base = stripDate(id);
   // Hyphen format: "claude-sonnet-4-6" -> 4006
-  const base = id.replace(/-\d{8}$/, '');
   const hyphenMatch = base.match(/^.+?-(\d+)-(\d+)$/);
   if (hyphenMatch) return parseInt(hyphenMatch[1], 10) * 1000 + parseInt(hyphenMatch[2], 10);
   // Dot format: "gpt-5.2" -> 5002
-  const dotMatch = id.match(/(\d+)\.(\d+)/);
+  const dotMatch = base.match(/(\d+)\.(\d+)/);
   if (dotMatch) return parseInt(dotMatch[1], 10) * 1000 + parseInt(dotMatch[2], 10);
   // Single version: "gpt-5" -> 5000
-  const singleMatch = id.match(/-(\d+)(?:-|$)/);
+  const singleMatch = base.match(/-(\d+)(?:-|$)/);
   if (singleMatch) return parseInt(singleMatch[1], 10) * 1000;
+  // Loose fallback for letter-glued majors ("v4", "m3", "k2", "glm-5v", "qwen3"): last number run.
+  const nums = base.match(/\d+(?:\.\d+)?/g);
+  if (nums?.length) {
+    const [maj, min] = nums[nums.length - 1].split('.');
+    return parseInt(maj, 10) * 1000 + (min ? parseInt(min, 10) : 0);
+  }
   return 0;
 }
 
-// Provider mappings: models.dev provider ID -> our provider name + filters
-const PROVIDER_MAPPINGS: Record<string, {
+// Series definitions: one curated model line per entry.
+//
+// `filter` selects a model *line* by family name only (stable across releases) — it must NOT pin a
+// version number, and it must be tight enough to exclude size/distill/modality junk
+// (e.g. qwen3-235b-a22b, gemma, *-image, *-distill). The version floor is computed at runtime:
+// for each `series` we find the highest major version present in the live models.dev API and keep
+// only the current major (plus `keepMajors - 1` previous majors). This way a new major
+// (GLM 5, GPT-6, MiniMax M3, DeepSeek V5, ...) is picked up automatically on the next
+// `pnpm generate:models` and the prior major ages out — no code edits needed.
+//
+// Trade-off: during a *staggered* rollout (e.g. Claude ships opus-5 before sonnet/haiku catch up)
+// the lagging models drop out until they reach the new major; just re-run the generator once the
+// lineup fills in. Bump `keepMajors` if you want a wider window.
+//
+// To add a vendor: add one entry with a tight `filter`, then run `pnpm generate:models` and check
+// the generated openrouter list to confirm the filter selects only the intended flagship line(s).
+interface SeriesDef {
+  /** models.dev provider ID to read from. */
+  source: string;
+  /** Provider bucket in our generated registry. */
   ourProvider: 'anthropic' | 'openai' | 'openrouter';
+  /** Floor bucket — models in the same series share one rolling major-version window. */
+  series: string;
+  /** Family/line match only — never version-pinned. */
   filter: (id: string) => boolean;
-  transform: (id: string) => string;
-}> = {
-  // Anthropic models
-  'anthropic': {
-    ourProvider: 'anthropic',
-    filter: (id: string) => id.includes('claude') && parseModelVersion(id) >= 4005 && parseModelVersion(id) < 5000,
-    transform: (id: string) => id,
+  /** Major versions to retain (1 = current major only). */
+  keepMajors?: number;
+  /** Rewrite the models.dev ID into our provider's ID form (default: identity). */
+  transform?: (id: string) => string;
+}
+
+const SERIES: SeriesDef[] = [
+  // Anthropic — claude-*
+  { source: 'anthropic', ourProvider: 'anthropic', series: 'claude', filter: id => id.includes('claude') },
+  // OpenAI — gpt-N* (excludes non-versioned families like gpt-image / gpt-realtime).
+  { source: 'openai', ourProvider: 'openai', series: 'gpt', filter: id => /^gpt-\d/.test(id) },
+
+  // --- OpenRouter (open-weight + hosted models, by vendor) ---
+  // GLM (z-ai): dotted minors + lettered variants (glm-5, glm-5.1, glm-5v-turbo),
+  // but NOT size-suffixed base builds like glm-4-32b / glm-4-9b (the `-\d+-` shape).
+  {
+    source: 'openrouter', ourProvider: 'openrouter', series: 'glm',
+    filter: id => id.startsWith('z-ai/glm-') && !/^z-ai\/glm-\d+-/.test(id),
   },
-  // OpenAI models
-  'openai': {
-    ourProvider: 'openai',
-    filter: (id: string) => id.startsWith('gpt-5'),
-    transform: (id: string) => id,
+  // MiniMax (m-series flagship): minimax-m2.1, minimax-m3, ...
+  {
+    source: 'openrouter', ourProvider: 'openrouter', series: 'minimax',
+    filter: id => /^minimax\/minimax-m\d/.test(id),
   },
-  // MiniMax models via Nvidia -> OpenRouter (only latest m2.1)
-  'nvidia': {
-    ourProvider: 'openrouter',
-    filter: (id: string) => id.includes('minimax-m2.1'),
-    transform: (id: string) => {
-      if (id.includes('/')) {
-        const parts = id.split('/');
-        return `minimax/${parts[1]}`;
-      }
-      return `minimax/${id}`;
-    },
+  // DeepSeek (V-series flagship, pro/flash): deepseek-v4-pro, deepseek-v4-flash, ...
+  {
+    source: 'openrouter', ourProvider: 'openrouter', series: 'deepseek',
+    filter: id => /^deepseek\/deepseek-v\d+(-pro|-flash)?$/.test(id),
   },
-  // OpenRouter direct (models already in openrouter format with correct pricing)
-  'openrouter': {
-    ourProvider: 'openrouter',
-    filter: (id: string) => id === 'minimax/minimax-m2.1' || id.startsWith('z-ai/glm-4'),
-    transform: (id: string) => id,
+  // Qwen (hosted max/plus lines only — excludes open-weight size builds, vl, coder, distills).
+  {
+    source: 'openrouter', ourProvider: 'openrouter', series: 'qwen',
+    filter: id => /^qwen\/qwen\d+(\.\d+)?-(max|plus)$/.test(id),
   },
-};
+  // Moonshot Kimi (K-series flagship): kimi-k2.5, kimi-k2.6, ... (excludes :free / dated / -thinking).
+  {
+    source: 'openrouter', ourProvider: 'openrouter', series: 'moonshotai',
+    filter: id => /^moonshotai\/kimi-k\d+(\.\d+)?$/.test(id),
+  },
+  // Google Gemini (flash/pro lines — excludes lite, image, gemma, lyria, customtools).
+  {
+    source: 'openrouter', ourProvider: 'openrouter', series: 'gemini',
+    filter: id => /^google\/gemini-\d+(\.\d+)?-(flash|pro)(-preview)?$/.test(id),
+  },
+  // xAI Grok (numbered flagship): grok-4.3, grok-4.20, ... (excludes grok-build, -multi-agent).
+  {
+    source: 'openrouter', ourProvider: 'openrouter', series: 'grok',
+    filter: id => /^x-ai\/grok-\d+(\.\d+)?$/.test(id),
+  },
+];
 
 interface ModelData {
   id: string;
@@ -108,49 +161,74 @@ function buildRegistry(apiData: Record<string, { models: Record<string, ModelDat
     openrouter: {},
   };
 
-  // Extract models from each provider
-  for (const [providerId, mapping] of Object.entries(PROVIDER_MAPPINGS)) {
-    const provider = apiData[providerId];
+  // 1. Collect filter-matched candidates, tagged with their series + retention window.
+  interface Candidate {
+    ourProvider: 'anthropic' | 'openai' | 'openrouter';
+    series: string;
+    keepMajors: number;
+    major: number;
+    model: ModelData;
+  }
+  const candidates: Candidate[] = [];
+  for (const def of SERIES) {
+    const provider = apiData[def.source];
     if (!provider?.models) continue;
 
     for (const [modelId, model] of Object.entries(provider.models)) {
-      if (mapping.filter(modelId)) {
-        const transformedId = mapping.transform(modelId);
-        registry[mapping.ourProvider][transformedId] = {
-          ...model,
-          id: transformedId,
-        };
-      }
+      if (!def.filter(modelId)) continue;
+      const transformedId = def.transform ? def.transform(modelId) : modelId;
+      candidates.push({
+        ourProvider: def.ourProvider,
+        series: def.series,
+        keepMajors: def.keepMajors ?? 1,
+        major: Math.floor(parseModelVersion(transformedId) / 1000),
+        model: { ...model, id: transformedId },
+      });
     }
   }
 
-  // Deduplicate: keep only the latest version per model family
-  // e.g., if claude-sonnet-4-6 exists, remove claude-sonnet-4-5 (and its dated variant)
+  // 2. Compute the current (highest) major version per series from the live data — this is the
+  //    auto-tracking floor that replaces hardcoded version cutoffs.
+  const seriesMaxMajor: Record<string, number> = {};
+  for (const c of candidates) {
+    seriesMaxMajor[c.series] = Math.max(seriesMaxMajor[c.series] ?? 0, c.major);
+  }
+
+  // 3. Keep only models within the rolling major window for their series.
+  for (const c of candidates) {
+    if (c.major <= seriesMaxMajor[c.series] - c.keepMajors) continue;
+    registry[c.ourProvider][c.model.id] = c.model;
+  }
+
+  // Deduplicate: within each product *line*, keep only the latest release.
+  // A "line" is the model ID with its version numbers and date suffix blanked out, so all
+  // versions of one product collapse together while distinct tiers stay separate, e.g.:
+  //   gpt-5 / gpt-5.1 / gpt-5.5      -> "gpt-#"            (keep gpt-5.5)
+  //   gpt-5.4-mini                  -> "gpt-#-mini"       (distinct tier, kept)
+  //   kimi-k2 / kimi-k2.5 / k2.6    -> "moonshotai/kimi-k#" (keep kimi-k2.6)
+  //   claude-haiku-4-5 + its -dated -> "claude-haiku-#-#" (keep one)
+  // "Latest" is decided by models.dev release_date (so e.g. grok-4.3 beats grok-4.20 despite the
+  // smaller minor number), falling back to the parsed version number when dates are missing/equal.
+  // Blank out the whole version run (dot- OR hyphen-separated) so "claude-opus-4-8" and the older
+  // "claude-opus-4" both become "claude-opus-#" and collapse, while "gpt-5.4-mini" stays a distinct
+  // line from "gpt-5.4" (the trailing "-mini" is a word, not a version component).
+  const modelLine = (id: string): string => stripDate(id).replace(/\d+(?:[.-]\d+)*/g, '#');
   for (const providerModels of Object.values(registry)) {
-    const ids = Object.keys(providerModels);
-    // Extract family name (e.g., "claude-sonnet" from "claude-sonnet-4-6")
-    const familyVersions: Record<string, { id: string; version: number; dated: boolean }[]> = {};
-    for (const id of ids) {
-      const dated = /\d{8}$/.test(id);
-      // Strip date suffix for family matching
-      const base = id.replace(/-\d{8}$/, '');
-      // Extract family and version: "claude-sonnet-4-6" -> family "claude-sonnet", version 4006
-      const match = base.match(/^(.+?)-(\d+)-(\d+)$/);
-      if (match) {
-        const family = match[1];
-        const version = parseInt(match[2], 10) * 1000 + parseInt(match[3], 10);
-        if (!familyVersions[family]) familyVersions[family] = [];
-        familyVersions[family].push({ id, version, dated });
-      }
+    const lines: Record<string, string[]> = {};
+    for (const id of Object.keys(providerModels)) {
+      (lines[modelLine(id)] ??= []).push(id);
     }
-    for (const entries of Object.values(familyVersions)) {
-      const maxVersion = Math.max(...entries.map(e => e.version));
-      for (const entry of entries) {
-        // Remove older versions (both base and dated)
-        if (entry.version < maxVersion) {
-          delete providerModels[entry.id];
-        }
-      }
+    for (const ids of Object.values(lines)) {
+      const isDated = (id: string) => (/-\d{8}$/.test(id) || /-\d{4}-\d{2}-\d{2}$/.test(id) ? 1 : 0);
+      ids.sort((a, b) => {
+        const ra = providerModels[a].release_date ?? '';
+        const rb = providerModels[b].release_date ?? '';
+        if (ra !== rb) return rb.localeCompare(ra); // newest release first
+        const dv = parseModelVersion(b) - parseModelVersion(a);
+        if (dv !== 0) return dv;
+        return isDated(a) - isDated(b); // prefer the clean (non-dated) alias on a tie
+      });
+      for (const id of ids.slice(1)) delete providerModels[id];
     }
   }
 
@@ -395,7 +473,7 @@ agentuse provider add lmstudio --url http://localhost:1234/v1
 Then use any model available on those endpoints:
 
 \`\`\`bash
-agentuse run agent.agentuse -m ollama:glm-4.7-flash:q4_K_M
+agentuse run agent.agentuse -m ollama:glm-5-flash:q4_K_M
 agentuse run agent.agentuse -m ollama:qwen3.5:0.8b
 agentuse run agent.agentuse -m lmstudio:qwen/qwen3.5-9b
 \`\`\`
@@ -416,7 +494,7 @@ Or override via CLI:
 
 \`\`\`bash
 agentuse run agent.agentuse -m openai:${defaultOpenai}
-agentuse run agent.agentuse -m ollama:glm-4.7-flash:q4_K_M
+agentuse run agent.agentuse -m ollama:glm-5-flash:q4_K_M
 \`\`\`
 `;
 }
@@ -429,27 +507,36 @@ function updateFileReferences(projectRoot: string, registry: Registry): void {
     openrouter: Object.keys(registry.openrouter).filter(id => !/\d{8}$/.test(id)),
   };
 
-  // Find best matching model using fuzzy search
+  // True only when `term` appears as a whole token (split on non-letters), so "mini" matches
+  // "gpt-5-mini" but NOT "gemini" — the substring match that used to send MiniMax refs to Gemini.
+  const hasToken = (id: string, term: string): boolean =>
+    id.toLowerCase().split(/[^a-z]+/).includes(term);
+
+  // Find the best replacement for a now-stale model reference.
   const findBestMatch = (provider: string, oldModel: string): string | null => {
     const models = currentModels[provider];
     if (!models || models.length === 0) return null;
 
-    // Extract key terms from old model (e.g., "sonnet", "haiku", "mini", "nano")
-    const keyTerms = ['sonnet', 'opus', 'haiku', 'mini', 'nano', 'pro'];
-    const oldTerms = keyTerms.filter(term => oldModel.toLowerCase().includes(term));
+    // Tier/line keywords that distinguish products within a vendor or provider.
+    const lineTerms = ['sonnet', 'opus', 'haiku', 'codex', 'mini', 'nano', 'pro', 'max', 'plus',
+      'flash', 'air', 'turbo', 'lite', 'chat'];
+    const oldLine = lineTerms.filter(t => hasToken(oldModel, t));
+    const sameLine = (candidates: string[]): string =>
+      candidates.find(m => oldLine.length > 0 && oldLine.every(t => hasToken(m, t))) ??
+      candidates.find(m => oldLine.length === 0 || oldLine.some(t => hasToken(m, t))) ??
+      candidates[0];
 
-    // Find models that match the same terms
-    const matchingModels = models.filter(m =>
-      oldTerms.length === 0 || oldTerms.some(term => m.toLowerCase().includes(term))
-    );
-
-    if (matchingModels.length > 0) {
-      // Return first match (already sorted by latest version)
-      return matchingModels[0];
+    // OpenRouter "vendor/model" IDs: stay within the same vendor (z-ai, minimax, qwen, ...) so a
+    // MiniMax example never becomes Gemini. Pick the same product line within that vendor.
+    if (oldModel.includes('/')) {
+      const vendor = oldModel.split('/')[0];
+      const sameVendor = models.filter(m => m.split('/')[0] === vendor);
+      if (sameVendor.length > 0) return sameLine(sameVendor);
+      return models[0];
     }
 
-    // Fallback to first model
-    return models[0];
+    // Flat provider IDs (anthropic/openai): match by product line (models are sorted latest-first).
+    return sameLine(models);
   };
 
   // Pattern to match any provider:model reference

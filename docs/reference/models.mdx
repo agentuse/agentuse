@@ -16,7 +16,7 @@ This page lists recommended models for AgentUse, organized by provider.
 **Default models:**
 - **Anthropic**: `anthropic:claude-sonnet-4-6` (balanced performance)
 - **OpenAI**: `openai:gpt-5.5` (latest GPT)
-- **OpenRouter**: `openrouter:z-ai/glm-4.7` (open source)
+- **OpenRouter**: `openrouter:z-ai/glm-5.1` (open source)
 - **Amazon Bedrock**: `bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0`
 
 ## Recommended Models
@@ -26,10 +26,9 @@ This page lists recommended models for AgentUse, organized by provider.
 
 | Model ID | Name | Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
-| `anthropic:claude-opus-4-7` | Claude Opus 4.7 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
+| `anthropic:claude-opus-4-8` | Claude Opus 4.8 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-sonnet-4-6` | Claude Sonnet 4.6 | 1,000,000 | 64,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-haiku-4-5` | Claude Haiku 4.5 (latest) | 200,000 | 64,000 | Reasoning, Vision, Tools |
-| `anthropic:claude-haiku-4-5-20251001` | Claude Haiku 4.5 | 200,000 | 64,000 | Reasoning, Vision, Tools |
 
 ### OpenAI
 
@@ -37,42 +36,30 @@ This page lists recommended models for AgentUse, organized by provider.
 |----------|------|---------|--------|--------------|
 | `openai:gpt-5.5` | GPT-5.5 | 1,050,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.5-pro` | GPT-5.5 Pro | 1,050,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.4` | GPT-5.4 | 1,050,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.4-pro` | GPT-5.4 Pro | 1,050,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.4-mini` | GPT-5.4 mini | 400,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.4-nano` | GPT-5.4 nano | 400,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.4-mini` | GPT-5.4 mini | 400,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.3-codex` | GPT-5.3 Codex | 400,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.3-chat-latest` | GPT-5.3 Chat (latest) | 128,000 | 16,384 | Vision, Tools |
 | `openai:gpt-5.3-codex-spark` | GPT-5.3 Codex Spark | 128,000 | 32,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.2` | GPT-5.2 | 400,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.2-pro` | GPT-5.2 Pro | 400,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.2-codex` | GPT-5.2 Codex | 400,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.2-chat-latest` | GPT-5.2 Chat | 128,000 | 16,384 | Reasoning, Vision, Tools |
-| `openai:gpt-5.1` | GPT-5.1 | 400,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.1-codex` | GPT-5.1 Codex | 400,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.1-codex-max` | GPT-5.1 Codex Max | 400,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.1-codex-mini` | GPT-5.1 Codex mini | 400,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.1-chat-latest` | GPT-5.1 Chat | 128,000 | 16,384 | Reasoning, Vision, Tools |
-| `openai:gpt-5` | GPT-5 | 400,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5-pro` | GPT-5 Pro | 400,000 | 272,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5-mini` | GPT-5 Mini | 400,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5-nano` | GPT-5 Nano | 400,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5-codex` | GPT-5-Codex | 400,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5-chat-latest` | GPT-5 Chat (latest) | 400,000 | 128,000 | Reasoning, Vision |
 
 ### OpenRouter
 
 | Model ID | Name | Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
-| `openrouter:z-ai/glm-4.7` | GLM-4.7 | 204,800 | 131,072 | Reasoning, Tools |
-| `openrouter:z-ai/glm-4.7-flash` | GLM-4.7-Flash | 200,000 | 65,535 | Reasoning, Tools |
-| `openrouter:z-ai/glm-4.6` | GLM 4.6 | 200,000 | 128,000 | Reasoning, Tools |
-| `openrouter:z-ai/glm-4.6:exacto` | GLM 4.6 (exacto) | 200,000 | 128,000 | Reasoning, Tools |
-| `openrouter:z-ai/glm-4.5` | GLM 4.5 | 128,000 | 96,000 | Reasoning, Tools |
-| `openrouter:z-ai/glm-4.5v` | GLM 4.5V | 64,000 | 16,384 | Reasoning, Vision, Tools |
-| `openrouter:z-ai/glm-4.5-air` | GLM 4.5 Air | 128,000 | 96,000 | Reasoning, Tools |
-| `openrouter:z-ai/glm-4.5-air:free` | GLM 4.5 Air (free) | 128,000 | 96,000 | Reasoning |
-| `openrouter:minimax/minimax-m2.1` | MiniMax M2.1 | 204,800 | 131,072 | Reasoning, Tools |
+| `openrouter:z-ai/glm-5.1` | GLM-5.1 | 202,752 | 131,072 | Reasoning, Tools |
+| `openrouter:z-ai/glm-5v-turbo` | GLM-5V-Turbo | 202,752 | 131,072 | Reasoning, Vision, Tools |
+| `openrouter:x-ai/grok-4.3` | Grok 4.3 | 1,000,000 | 1,000,000 | Reasoning, Vision, Tools |
+| `openrouter:deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1,048,576 | 384,000 | Reasoning, Tools |
+| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,576 | 131,072 | Reasoning, Tools |
+| `openrouter:qwen/qwen3.7-max` | Qwen3.7 Max | 1,000,000 | 65,536 | Reasoning, Tools |
+| `openrouter:qwen/qwen3.7-plus` | Qwen3.7 Plus | 1,000,000 | 65,536 | Reasoning, Vision, Tools |
+| `openrouter:google/gemini-3.5-flash` | Gemini 3.5 Flash | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
+| `openrouter:google/gemini-3.1-pro-preview` | Gemini 3.1 Pro Preview | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
+| `openrouter:minimax/minimax-m3` | MiniMax-M3 | 524,288 | 512,000 | Reasoning, Vision, Tools |
+| `openrouter:google/gemini-3-flash-preview` | Gemini 3 Flash Preview | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
+| `openrouter:moonshotai/kimi-k2.6` | Kimi K2.6 | 262,144 | 262,144 | Reasoning, Vision, Tools |
 
 ### Amazon Bedrock
 
@@ -106,7 +93,7 @@ agentuse provider add lmstudio --url http://localhost:1234/v1
 Then use any model available on those endpoints:
 
 ```bash
-agentuse run agent.agentuse -m ollama:glm-4.7-flash:q4_K_M
+agentuse run agent.agentuse -m ollama:glm-5-flash:q4_K_M
 agentuse run agent.agentuse -m ollama:qwen3.5:0.8b
 agentuse run agent.agentuse -m lmstudio:qwen/qwen3.5-9b
 ```
@@ -127,5 +114,5 @@ Or override via CLI:
 
 ```bash
 agentuse run agent.agentuse -m openai:gpt-5.5
-agentuse run agent.agentuse -m ollama:glm-4.7-flash:q4_K_M
+agentuse run agent.agentuse -m ollama:glm-5-flash:q4_K_M
 ```

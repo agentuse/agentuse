@@ -81,7 +81,7 @@ export OPENAI_API_KEY_PERSONAL=sk-proj-personal-key
 
 # Then specify in model string
 agentuse run agent.md --model anthropic:claude-sonnet-4-6:dev
-agentuse run agent.md --model openai:gpt-5.2:OPENAI_API_KEY_PERSONAL
+agentuse run agent.md --model openai:gpt-5.5:OPENAI_API_KEY_PERSONAL
 ```
 
 <Warning>
@@ -158,7 +158,7 @@ In your agent file:
 
 ```yaml
 ---
-model: ollama:glm-4.7-flash:q4_K_M
+model: ollama:glm-5-flash:q4_K_M
 ---
 ```
 
@@ -171,7 +171,7 @@ model: lmstudio:qwen/qwen3.5-9b
 Or override at runtime:
 
 ```bash
-agentuse run agent.agentuse -m ollama:glm-4.7-flash:q4_K_M
+agentuse run agent.agentuse -m ollama:glm-5-flash:q4_K_M
 agentuse run agent.agentuse -m lmstudio:qwen/qwen3.5-9b
 ```
 
@@ -220,10 +220,10 @@ Output:
 
 Stored credentials:
   🔑 anthropic (oauth) → Use as: anthropic:claude-sonnet-4-6
-  🎫 openai (api) → Use as: openai:gpt-5.2
+  🎫 openai (api) → Use as: openai:gpt-5.5
 
 Environment variables:
-  🌍 openrouter (OPENROUTER_API_KEY) → Use as: openrouter:z-ai/glm-4.7
+  🌍 openrouter (OPENROUTER_API_KEY) → Use as: openrouter:z-ai/glm-5.1
 
 Custom Providers:
   🔌 ollama → http://localhost:11434/v1
@@ -275,7 +275,7 @@ Override the model at runtime using the `--model` flag:
 
 ```bash
 agentuse run agent.agentuse --model anthropic:claude-haiku-4-5
-agentuse run agent.agentuse -m openai:gpt-5-mini
+agentuse run agent.agentuse -m openai:gpt-5.4-mini
 ```
 
 <Card title="CLI Commands - Model Override" icon="terminal" href="/reference/cli-commands#model-override">
@@ -296,7 +296,7 @@ model: anthropic:claude-haiku-4-5  # Uses Anthropic
 ```markdown
 ---
 name: powerful-agent
-model: openai:gpt-5  # Uses OpenAI GPT-5
+model: openai:gpt-5.5  # Uses OpenAI GPT-5
 openai:
   reasoningEffort: high    # More thorough reasoning
   textVerbosity: medium    # Balanced response length
@@ -306,14 +306,14 @@ openai:
 ```markdown
 ---
 name: specialized-agent
-model: openrouter:z-ai/glm-4.7  # Uses OpenRouter
+model: openrouter:z-ai/glm-5.1  # Uses OpenRouter
 ---
 ```
 
 ```markdown
 ---
 name: local-agent
-model: ollama:glm-4.7-flash:q4_K_M  # Uses local Ollama
+model: ollama:glm-5-flash:q4_K_M  # Uses local Ollama
 ---
 ```
 
@@ -327,7 +327,7 @@ For OpenAI models (especially GPT-5), you can control thinking effort and verbos
 
 ```yaml
 ---
-model: openai:gpt-5
+model: openai:gpt-5.5
 openai:
   reasoningEffort: high  # Options: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'
   textVerbosity: low     # Options: 'low', 'medium', 'high'

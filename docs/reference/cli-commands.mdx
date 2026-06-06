@@ -100,20 +100,20 @@ provider:model[:env]
 
 Where:
 - `provider`: A built-in provider (`anthropic`, `openai`, `openrouter`, `bedrock`) or a custom provider name
-- `model`: The specific model name (e.g., `claude-sonnet-4-6`, `gpt-5.2`, `glm-4.7-flash:q4_K_M`)
+- `model`: The specific model name (e.g., `claude-sonnet-4-6`, `gpt-5.5`, `glm-5-flash:q4_K_M`)
 - `env`: Optional environment suffix for API keys (e.g., `dev`, `prod`, or full env var name) — built-in providers only
 
 #### Examples
 
 ```bash
 # Override with OpenAI GPT-5
-agentuse run agent.agentuse --model openai:gpt-5
+agentuse run agent.agentuse --model openai:gpt-5.5
 
 # Use Anthropic Claude Haiku for quick testing
 agentuse run agent.agentuse -m anthropic:claude-haiku-4-5
 
 # Use different API key via environment suffix
-agentuse run agent.agentuse --model openai:gpt-5.2:dev
+agentuse run agent.agentuse --model openai:gpt-5.5:dev
 # This will use OPENAI_API_KEY_DEV instead of OPENAI_API_KEY
 
 # Use specific environment variable
@@ -200,16 +200,16 @@ agentuse run agent.agentuse --quiet
 agentuse run agent.agentuse --no-tty
 
 # Override model at runtime
-agentuse run agent.agentuse --model openai:gpt-5-mini
+agentuse run agent.agentuse --model openai:gpt-5.4-mini
 
 # Override model and add prompt
 agentuse run agent.agentuse "be concise" --model anthropic:claude-haiku-4-5
 
 # Use development API key with model override
-agentuse run agent.agentuse -m openai:gpt-5.2:dev
+agentuse run agent.agentuse -m openai:gpt-5.5:dev
 
 # Override model for agent with sub-agents (all will use the same model)
-agentuse run orchestrator.agentuse --model openai:gpt-5-mini
+agentuse run orchestrator.agentuse --model openai:gpt-5.4-mini
 ```
 
 ## agentuse sessions
@@ -640,7 +640,7 @@ curl -X POST http://127.0.0.1:12233/api/run \
 # Override model
 curl -X POST http://127.0.0.1:12233/api/run \
   -H "Content-Type: application/json" \
-  -d '{"agent": "agents/helper.agentuse", "model": "openai:gpt-5-mini"}'
+  -d '{"agent": "agents/helper.agentuse", "model": "openai:gpt-5.4-mini"}'
 
 # Streaming response
 curl -N -X POST http://127.0.0.1:12233/api/run \
@@ -753,7 +753,7 @@ agentuse provider add lmstudio --url http://localhost:1234/v1
 agentuse provider add myserver --url https://gpu.example.com/v1 --key sk-mykey
 ```
 
-Then use: `agentuse run agent.agentuse -m ollama:glm-4.7-flash:q4_K_M`
+Then use: `agentuse run agent.agentuse -m ollama:glm-5-flash:q4_K_M`
 
 <Info>
   Colons in model names are supported — `ollama:qwen3.5:0.8b` parses as provider `ollama`, model `qwen3.5:0.8b`.
