@@ -195,6 +195,27 @@ export interface CreateSandboxOptions {
   filesystemMounts?: ResolvedMount[] | undefined;
 }
 
+class SandboxExecTimeoutError extends Error {
+  constructor(cmd: string, timeoutMs: number) {
+    super(`[Sandbox] Command timed out after ${Math.ceil(timeoutMs / 1000)}s: ${cmd}`);
+    this.name = 'SandboxExecTimeoutError';
+  }
+}
+
+async function stopAndRemoveContainer(container: Container): Promise<void> {
+  try {
+    await container.stop({ t: 2 });
+  } catch {
+    // Container may already be stopped or removed.
+  }
+
+  try {
+    await container.remove({ force: true });
+  } catch {
+    // Container may already be removed.
+  }
+}
+
 export async function createSandbox(options: CreateSandboxOptions): Promise<SandboxInstance> {
   const { config, projectRoot, sessionId, filesystemMounts } = options;
   const Docker = (await import('dockerode')).default;
@@ -319,40 +340,47 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
   await container.start();
   logger.debug(`[Sandbox] Container started: ${container.id}`);
 
-  // Run setup commands if configured
-  if (config.setup) {
-    const cmds = Array.isArray(config.setup) ? config.setup : [config.setup];
-    for (const cmd of cmds) {
-      logger.info(`[Sandbox] Running setup: ${cmd}`);
-      const result = await execInContainer(container, cmd);
-      if (result.exitCode !== 0) {
-        const stderr = result.stderr || result.stdout;
-        throw new Error(`Sandbox setup command failed (exit ${result.exitCode}): ${stderr.trim()}`);
-      }
-    }
-    logger.debug(`[Sandbox] Setup complete (${cmds.length} command(s))`);
-  }
-
-  // Auto-kill timer
+  // Start the lifetime timer immediately so image setup is bounded too. The
+  // previous behavior only started this after setup, so a hanging setup command
+  // could leave the session running forever before the first model call.
   const timer = setTimeout(async () => {
     logger.warn(`[Sandbox] Container ${container.id} timed out after ${timeout}s, killing`);
-    try {
-      await container.stop({ t: 2 });
-      await container.remove({ force: true });
-    } catch {
-      // container may already be gone
-    }
+    await stopAndRemoveContainer(container);
   }, timeout * 1000);
 
   // Signal handlers for graceful cleanup on SIGINT/SIGTERM
   const signalHandler = () => {
-    container.stop({ t: 2 })
-      .then(() => container.remove({ force: true }))
+    stopAndRemoveContainer(container)
       .catch(() => {})
       .finally(() => process.exit(1));
   };
   process.on('SIGINT', signalHandler);
   process.on('SIGTERM', signalHandler);
+
+  // Run setup commands if configured
+  try {
+    if (config.setup) {
+      const cmds = Array.isArray(config.setup) ? config.setup : [config.setup];
+      for (const cmd of cmds) {
+        logger.info(`[Sandbox] Running setup: ${cmd}`);
+        const result = await execInContainer(container, cmd, {
+          timeoutMs: timeout * 1000,
+          onTimeout: () => stopAndRemoveContainer(container),
+        });
+        if (result.exitCode !== 0) {
+          const stderr = result.stderr || result.stdout;
+          throw new Error(`Sandbox setup command failed (exit ${result.exitCode}): ${stderr.trim()}`);
+        }
+      }
+      logger.debug(`[Sandbox] Setup complete (${cmds.length} command(s))`);
+    }
+  } catch (error) {
+    clearTimeout(timer);
+    process.removeListener('SIGINT', signalHandler);
+    process.removeListener('SIGTERM', signalHandler);
+    await stopAndRemoveContainer(container);
+    throw error;
+  }
 
   return {
     container,
@@ -361,8 +389,7 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
       process.removeListener('SIGINT', signalHandler);
       process.removeListener('SIGTERM', signalHandler);
       try {
-        await container.stop({ t: 2 });
-        await container.remove({ force: true });
+        await stopAndRemoveContainer(container);
         logger.debug(`[Sandbox] Container removed: ${container.id}`);
       } catch (error) {
         logger.warn(`[Sandbox] Failed to remove container: ${(error as Error).message}`);
@@ -391,7 +418,7 @@ interface ExecResult {
 async function execInContainer(
   container: Container,
   cmd: string,
-  options?: { cwd?: string },
+  options?: { cwd?: string; timeoutMs?: number; onTimeout?: () => Promise<void> },
 ): Promise<ExecResult> {
   const exec = await container.exec({
     Cmd: ['sh', '-c', cmd],
@@ -415,8 +442,38 @@ async function execInContainer(
 
   container.modem.demuxStream(stream, stdoutStream, stderrStream);
 
-  await new Promise<void>((resolve) => {
-    stream.on('end', resolve);
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    let timeoutError: Error | undefined;
+
+    const settle = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      stream.removeListener('end', onEnd);
+      stream.removeListener('close', onClose);
+      stream.removeListener('error', onError);
+      if (error) reject(error);
+      else resolve();
+    };
+
+    const onEnd = () => settle(timeoutError);
+    const onClose = () => settle(timeoutError);
+    const onError = (error: Error) => settle(error);
+
+    stream.once('end', onEnd);
+    stream.once('close', onClose);
+    stream.once('error', onError);
+
+    if (options?.timeoutMs) {
+      timeoutHandle = setTimeout(() => {
+        timeoutError = new SandboxExecTimeoutError(cmd, options.timeoutMs!);
+        void Promise.resolve(options.onTimeout?.())
+          .catch(() => {})
+          .finally(() => settle(timeoutError));
+      }, options.timeoutMs);
+    }
   });
 
   const { ExitCode } = await exec.inspect();
@@ -430,24 +487,43 @@ async function execInContainer(
 
 // ── Tools ───────────────────────────────────────────────────────────
 
-export function createSandboxTools(container: Container, projectRoot: string): Record<string, Tool> {
+export function createSandboxTools(
+  container: Container,
+  projectRoot: string,
+  commandTimeoutSeconds: number = 300,
+): Record<string, Tool> {
   return {
     sandbox__exec: {
       description:
         'Execute a shell command in the Docker sandbox. Returns stdout, stderr, and exit code. ' +
         `Working directory defaults to ${projectRoot}. Filesystem paths inside the container mirror the host. ` +
+        `Commands time out after ${commandTimeoutSeconds}s by default. ` +
         'Use the filesystem tool for reading/writing project files on the host.',
       inputSchema: z.object({
         command: z.string().describe('The shell command to execute'),
         cwd: z.string().optional().describe(`Working directory (default: ${projectRoot})`),
+        timeout: z.number().positive().optional().describe(`Optional command timeout in seconds (default: ${commandTimeoutSeconds})`),
       }),
-      execute: async ({ command, cwd }: { command: string; cwd?: string }) => {
-        const result = await execInContainer(container, command, cwd ? { cwd } : undefined);
-        return {
-          stdout: result.stdout,
-          stderr: result.stderr,
-          exitCode: result.exitCode,
-        };
+      execute: async ({ command, cwd, timeout }: { command: string; cwd?: string; timeout?: number }) => {
+        try {
+          const timeoutSeconds = timeout ?? commandTimeoutSeconds;
+          const result = await execInContainer(container, command, {
+            ...(cwd && { cwd }),
+            timeoutMs: timeoutSeconds * 1000,
+            onTimeout: () => stopAndRemoveContainer(container),
+          });
+          return {
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+          };
+        } catch (error) {
+          return {
+            stdout: '',
+            stderr: error instanceof Error ? error.message : String(error),
+            exitCode: 124,
+          };
+        }
       },
     },
   };

@@ -162,7 +162,11 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
         sessionId,
         filesystemMounts,
       });
-      sandboxTools = createSandboxTools(sandboxInstance.container, projectContext.projectRoot);
+      sandboxTools = createSandboxTools(
+        sandboxInstance.container,
+        projectContext.projectRoot,
+        agent.config.sandbox.timeout ?? 300
+      );
       const mountSummary = filesystemMounts?.map(m => `${m.hostPath}(${m.writable ? 'rw' : 'ro'})`).join(', ') ?? 'default(ro)';
       logger.debug(`${logPrefix}Loaded sandbox tool (mounts: ${mountSummary})`);
     } catch (error) {
