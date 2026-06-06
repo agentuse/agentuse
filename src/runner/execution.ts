@@ -10,6 +10,68 @@ import { isSuspendSignal } from './suspend';
 
 // Constants
 const MAX_RETRIES = 3;
+const ANTHROPIC_CACHE_CONTROL = { type: 'ephemeral' as const };
+
+function isAnthropicModel(model: string): boolean {
+  return model.split(':')[0] === 'anthropic';
+}
+
+function withAnthropicCacheControl(providerOptions: any): any {
+  return {
+    ...providerOptions,
+    anthropic: {
+      ...(providerOptions?.anthropic ?? {}),
+      cacheControl: ANTHROPIC_CACHE_CONTROL,
+    },
+  };
+}
+
+function applyAnthropicCacheControlToMessages(messages: any[]): any[] {
+  let lastSystemIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]?.role === 'system') {
+      lastSystemIndex = index;
+      break;
+    }
+  }
+  if (lastSystemIndex === -1) return messages;
+
+  return messages.map((message, index) =>
+    index === lastSystemIndex
+      ? { ...message, providerOptions: withAnthropicCacheControl(message.providerOptions) }
+      : message
+  );
+}
+
+function applyAnthropicCacheControlToLastMessage(messages: any[]): any[] {
+  if (messages.length === 0) return messages;
+
+  const lastMessageIndex = messages.length - 1;
+  return messages.map((message, index) =>
+    index === lastMessageIndex
+      ? { ...message, providerOptions: withAnthropicCacheControl(message.providerOptions) }
+      : message
+  );
+}
+
+function applyAnthropicCacheControlToStepMessages(messages: any[]): any[] {
+  return applyAnthropicCacheControlToLastMessage(
+    applyAnthropicCacheControlToMessages(messages)
+  );
+}
+
+function applyAnthropicCacheControlToTools(tools: ToolSet): ToolSet {
+  const entries = Object.entries(tools);
+  if (entries.length === 0) return tools;
+
+  const lastToolName = entries[entries.length - 1][0];
+  return Object.fromEntries(entries.map(([name, tool]) => [
+    name,
+    name === lastToolName
+      ? { ...tool, providerOptions: withAnthropicCacheControl((tool as any).providerOptions) }
+      : tool
+  ])) as ToolSet;
+}
 
 /**
  * Core agent execution as an async generator
@@ -43,7 +105,13 @@ export async function* executeAgentCore(
     ...options.systemMessages,
     { role: 'user', content: options.userMessage }
   ];
-  let messages = initialMessages;
+  const usesAnthropicCacheControl = isAnthropicModel(agent.config.model);
+  let messages = usesAnthropicCacheControl
+    ? applyAnthropicCacheControlToMessages(initialMessages)
+    : initialMessages;
+  const streamTools = usesAnthropicCacheControl
+    ? applyAnthropicCacheControlToTools(tools)
+    : tools;
 
   if (ContextManager.isEnabled()) {
     contextManager = new ContextManager(
@@ -63,6 +131,9 @@ export async function* executeAgentCore(
     // Check if we need to compact before creating stream
     if (contextManager?.shouldCompact()) {
       messages = await contextManager.compact();
+      if (usesAnthropicCacheControl) {
+        messages = applyAnthropicCacheControlToMessages(messages);
+      }
     }
 
     // Extract provider options based on model provider
@@ -106,14 +177,19 @@ export async function* executeAgentCore(
       stopWhen: stepCountIs(options.maxSteps),
       ...(options.abortSignal && { abortSignal: options.abortSignal }),
       ...(providerOptions && { providerOptions }),
+      ...(usesAnthropicCacheControl && {
+        prepareStep: ({ messages: stepMessages }: { messages: ModelMessage[] }) => ({
+          messages: applyAnthropicCacheControlToStepMessages(stepMessages as any[])
+        })
+      }),
       // Custom/local providers need explicit maxOutputTokens (local reasoning
       // models generate unlimited thinking tokens without it)
       ...(isCustomProvider && { maxOutputTokens: 16384 }),
     };
 
     // Only add tools if there are any
-    if (Object.keys(tools).length > 0) {
-      streamConfig.tools = tools;
+    if (Object.keys(streamTools).length > 0) {
+      streamConfig.tools = streamTools;
     }
 
     return streamText(streamConfig);

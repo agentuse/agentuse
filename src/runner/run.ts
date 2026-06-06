@@ -5,6 +5,7 @@ import type { AgentCompleteEvent, PluginManager } from '../plugin';
 import { AuthenticationError } from '../models';
 import { logger } from '../utils/logger';
 import { extractLearnings } from '../learning/index.js';
+import { usageToAssistantTokens } from '../session/usage';
 import {
   sendRunChannelMessages,
   startRunChannels,
@@ -322,10 +323,7 @@ export async function runAgent(
           time: { completed: Date.now() },
           ...(result.usage && {
             assistant: {
-              tokens: {
-                input: result.usage.inputTokens || 0,
-                output: result.usage.outputTokens || 0
-              }
+              tokens: usageToAssistantTokens(result.usage)
             }
           })
         });

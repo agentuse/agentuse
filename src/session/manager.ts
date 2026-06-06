@@ -373,7 +373,15 @@ export class SessionManager {
           const assistantUpdates = updates.assistant;
           // Deep merge tokens if provided
           if (assistantUpdates.tokens) {
-            message.assistant.tokens = { ...message.assistant.tokens, ...assistantUpdates.tokens } as Message['assistant']['tokens'];
+            const tokenUpdates = assistantUpdates.tokens;
+            message.assistant.tokens = {
+              ...message.assistant.tokens,
+              ...tokenUpdates,
+              cache: {
+                ...message.assistant.tokens.cache,
+                ...(tokenUpdates.cache ?? {}),
+              },
+            } as Message['assistant']['tokens'];
           }
           // Merge other assistant fields (excluding tokens which we handled above)
           const { tokens: _, ...otherAssistantUpdates } = assistantUpdates;

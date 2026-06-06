@@ -12,6 +12,7 @@ import { loadAgentTools } from './runner/tools-loader';
 import { buildSystemMessages } from './runner/system-messages';
 import { createSessionAndMessage } from './runner/session-helper';
 import { isApprovalEnabled } from './runner/approval';
+import { usageToAssistantTokens } from './session/usage';
 
 // Constants
 const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
@@ -291,10 +292,7 @@ export async function createSubAgentTool(
               await subagentSessionManager.updateMessage(subagentSessionID, agentId, subagentMsgID, {
                 time: { completed: Date.now() },
                 assistant: {
-                  tokens: {
-                    input: result.usage.inputTokens || 0,
-                    output: result.usage.outputTokens || 0
-                  }
+                  tokens: usageToAssistantTokens(result.usage)
                 }
               });
               await subagentSessionManager.setSessionCompleted(subagentSessionID, agentId);
