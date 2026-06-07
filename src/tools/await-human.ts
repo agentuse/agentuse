@@ -71,13 +71,14 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
   return {
     description: 'Suspend the current run while waiting for a reviewer decision or comment. The run resumes when a decision is submitted from the approval page or Approval API.',
     inputSchema: z.object({
-      prompt: z.string().describe('Review prompt shown to the human'),
-      summary: z.string().optional().describe('Short summary of what was prepared and what the reviewer is approving'),
-      draft: z.string().optional().describe('Draft content to review'),
-      draft_url: z.string().url().optional().describe('URL to a draft artifact'),
-      artifact_url: z.string().url().optional().describe('URL to the primary review artifact, such as a PR, document, preview, or generated artifact'),
-      context: z.string().optional().describe('Relevant background, constraints, or work completed so far'),
-      risk: z.string().optional().describe('Known risks, unresolved questions, or special reviewer attention areas')
+      prompt: z.string().describe('One short line: a direct yes/no question for the reviewer. Do not put the content, headings, or lists here; use draft for that.'),
+      summary: z.string().optional().describe('A few sentences on what changed and what is being approved. Rendered as Markdown under "Why this request".'),
+      draft: z.string().optional().describe('The full reviewable work itself, written in Markdown (headings, bullet lists, tables, fenced code). This is the primary artifact the reviewer reads, so make it complete, not a one-line summary.'),
+      draft_url: z.string().url().optional().describe('URL to a non-primary draft artifact'),
+      artifact_url: z.string().url().optional().describe('External URL to the primary review artifact, such as a PR, hosted preview, or document'),
+      artifact_path: z.string().optional().describe('Path, relative to the project root, to a local file artifact you created (e.g. .agentuse/artifacts/report.html). The reviewer can open it in a popup viewer. Prefer this over inlining long or HTML content into draft.'),
+      context: z.string().optional().describe('Real background, constraints, inputs used, and work completed so far. Rendered as Markdown.'),
+      risk: z.string().optional().describe('Concrete risks, unresolved questions, or areas needing reviewer attention. Rendered as Markdown.')
     }),
     execute: async ({ prompt }: {
       prompt: string;
@@ -85,6 +86,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       draft?: string;
       draft_url?: string;
       artifact_url?: string;
+      artifact_path?: string;
       context?: string;
       risk?: string;
     }) => {

@@ -3,8 +3,8 @@ import { createServer, IncomingMessage, ServerResponse } from "http";
 import { WebClient } from "@slack/web-api";
 import { timingSafeEqual } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
-import { join, resolve, basename, relative } from "path";
-import { existsSync } from "fs";
+import { join, resolve, basename, relative, extname } from "path";
+import { existsSync, readFileSync, statSync } from "fs";
 import { glob } from "glob";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
 import chalk from "chalk";
@@ -39,6 +39,7 @@ import {
   formatLogTime,
   renderInlineMarkdown,
   renderLogContentValue,
+  renderMarkdownBlock,
   valueAsRecord,
   normalizeApiPath
 } from "./serve/ui";
@@ -315,6 +316,8 @@ interface ApprovalLogDetails {
   draft?: string;
   draftUrl?: string;
   artifactUrl?: string;
+  /** Project-root-relative path to a local file artifact, viewable via /sessions/:id/artifacts/*. */
+  artifactPath?: string;
   decisionStatus?: string;
   decisionComment?: string;
   decisionReviewer?: string;
@@ -806,7 +809,7 @@ function collectSessionAgentOptions(rows: Array<{ projectId: string; multiProjec
 
 function renderLogItems(
   logs?: ApprovalLogEntry[],
-  options?: { actionable?: boolean; currentResumeToken?: string | undefined; projectId?: string | undefined }
+  options?: { actionable?: boolean; currentResumeToken?: string | undefined; projectId?: string | undefined; sessionId?: string | undefined; token?: string | undefined }
 ): string {
   if (!logs || logs.length === 0) {
     return '<li class="log-empty">No session events yet.</li>';
@@ -838,7 +841,7 @@ function renderLogItems(
             ${subagentEventHtml ? `<span class="log-pinned-content">${subagentEventHtml}</span>` : ''}
             <span class="log-content">
               ${storeEventHtml}
-              ${renderLogDetailBlock(entry)}
+              ${renderLogDetailBlock(entry, options?.sessionId ? { sessionId: options.sessionId, token: options.token } : undefined)}
               ${entry.message && !storeEventHtml && !subagentEventHtml ? renderLogContentValue(entry.message, { forceMarkdown: entry.type === 'text' }) : ''}
             </span>
             ${showActions ? renderInlineActions() : ''}
@@ -885,7 +888,131 @@ function renderCopyCell(label: string, value: string): string {
   return `<div class="cell"><span class="label">${escapeHtml(label)}</span><span class="copyable"><code>${escapeHtml(value)}</code><button class="copy-btn" type="button" data-copy="${escapeHtml(value)}" aria-label="Copy ${escapeHtml(label)}" title="Copy ${escapeHtml(label)}">${COPY_ICON_SVG}${CHECK_ICON_SVG}</button></span></div>`;
 }
 
-function renderApprovalDetailBlock(details: ApprovalLogDetails): string {
+/**
+ * Build the relative URL the artifact popup loads. Slashes are preserved so the
+ * path reads naturally; only the path segments are percent-encoded. The session
+ * `token` (when present) is carried so the iframe request authorizes the same
+ * way the page's own status/decision fetches do.
+ */
+function artifactHref(sessionId: string, artifactPath: string, token?: string): string {
+  const encoded = artifactPath.split('/').map(encodeURIComponent).join('/');
+  const base = `/sessions/${encodeURIComponent(sessionId)}/artifacts/${encoded}`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
+const ARTIFACT_ICON_SVG = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5H4A1.5 1.5 0 0 0 2.5 3v10A1.5 1.5 0 0 0 4 14.5h8A1.5 1.5 0 0 0 13.5 13V6Z"/><path d="M9 1.5V6h4.5"/></svg>`;
+
+/**
+ * The clickable artifact tile shown in the approval card. It is a plain button
+ * carrying the artifact URL + title in data-attributes; the page's delegated
+ * click handler opens it in the popup viewer (so the same markup works for the
+ * server-rendered card and the client-hydrated one).
+ */
+function renderArtifactOpenButton(href: string, label: string): string {
+  return `<button type="button" class="artifact-open" data-artifact-url="${escapeHtml(href)}" data-artifact-title="${escapeHtml(label)}">${ARTIFACT_ICON_SVG}<span class="artifact-open-name">${escapeHtml(label)}</span><span class="artifact-open-hint">open</span></button>`;
+}
+
+const ARTIFACT_RAW_MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml'
+};
+
+/**
+ * Wrap rendered artifact body (markdown/text/json) in a standalone themed HTML
+ * document so it looks right inside the popup iframe. The iframe has its own
+ * document and cannot read the page's localStorage theme, so colors follow
+ * prefers-color-scheme instead.
+ */
+function renderArtifactDocument(title: string, bodyHtml: string): string {
+  return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>
+${approvalListThemeStyles()}
+html[data-theme] { background: var(--bg); color: var(--fg); }
+body { margin: 0; padding: 20px; font-family: var(--sans); color: var(--fg); background: var(--bg); }
+.content-markdown { padding: 0; color: var(--fg); font-size: 15px; line-height: 1.6; }
+.content-markdown h1, .content-markdown h2, .content-markdown h3, .content-markdown h4 { color: var(--fg); }
+.content-markdown code { font-family: var(--mono); background: var(--panel-hover); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; }
+.content-markdown pre.content-code { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow: auto; }
+.content-markdown pre.content-code code { background: transparent; border: 0; padding: 0; }
+pre.artifact-raw { font-family: var(--mono); font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); }
+img { max-width: 100%; height: auto; }
+</style>
+<script>(function(){try{var m=window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches;document.documentElement.setAttribute('data-theme',m?'light':'dark');}catch(e){}})();</script>
+</head><body>${bodyHtml}</body></html>`;
+}
+
+/**
+ * Resolve, authorize, and serve a local file artifact referenced by an
+ * `await_human` gate. The path is interpreted relative to the project root and
+ * must resolve inside it (no traversal), and a small denylist keeps secrets and
+ * internal session state out of reach even if a prompt coaxed the agent into
+ * pointing the gate at them. Text/markdown render to a themed doc; html/images/
+ * pdf are streamed raw for the iframe to display; everything else downloads.
+ */
+function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath: string): void {
+  const decoded = (() => { try { return decodeURIComponent(rawPath); } catch { return rawPath; } })();
+  const resolved = resolve(projectRoot, decoded);
+  if (!isPathInside(projectRoot, resolved)) {
+    sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This artifact path is outside the project.</p>');
+    return;
+  }
+  const rel = relative(projectRoot, resolved);
+  const segments = rel.split(/[\\/]+/);
+  const blockedRoots = new Set(['.git', 'node_modules']);
+  const isBlocked = segments.some((seg) => seg.startsWith('.env'))
+    || blockedRoots.has(segments[0])
+    || (segments[0] === '.agentuse' && (segments[1] === 'store' || segments[1] === 'sessions' || segments[1] === 'env'));
+  if (isBlocked) {
+    sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This artifact path is not viewable.</p>');
+    return;
+  }
+  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+    sendHTML(res, 404, '<!doctype html><title>Artifact</title><p>Artifact not found.</p>');
+    return;
+  }
+  const stat = statSync(resolved);
+  const MAX_BYTES = 10 * 1024 * 1024;
+  if (stat.size > MAX_BYTES) {
+    sendHTML(res, 413, '<!doctype html><title>Artifact</title><p>Artifact is too large to preview (over 10 MB).</p>');
+    return;
+  }
+
+  const ext = extname(resolved).toLowerCase();
+  const title = basename(resolved);
+  const rawMime = ARTIFACT_RAW_MIME[ext];
+  if (rawMime) {
+    res.writeHead(200, { 'Content-Type': rawMime, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    res.end(readFileSync(resolved));
+    return;
+  }
+  if (ext === '.md' || ext === '.markdown') {
+    sendHTML(res, 200, renderArtifactDocument(title, renderMarkdownBlock(readFileSync(resolved, 'utf8'))));
+    return;
+  }
+  const textExts = new Set(['.txt', '.log', '.json', '.csv', '.yaml', '.yml', '.xml', '.ts', '.js', '.py', '.sh', '']);
+  if (textExts.has(ext)) {
+    const body = `<pre class="artifact-raw">${escapeHtml(readFileSync(resolved, 'utf8'))}</pre>`;
+    sendHTML(res, 200, renderArtifactDocument(title, body));
+    return;
+  }
+  // Unknown binary type: hand it to the browser as a download rather than guess.
+  res.writeHead(200, {
+    'Content-Type': 'application/octet-stream',
+    'Cache-Control': 'no-store',
+    'Content-Disposition': `attachment; filename="${title.replace(/["\\]/g, '')}"`
+  });
+  res.end(readFileSync(resolved));
+}
+
+function renderApprovalDetailBlock(details: ApprovalLogDetails, ctx?: { sessionId: string; token?: string | undefined }): string {
   const decisionLabel = details.decisionStatus
     ? `${details.decisionStatus}${details.decisionReviewer ? ` by ${details.decisionReviewer}` : ''}`
     : '';
@@ -899,17 +1026,21 @@ function renderApprovalDetailBlock(details: ApprovalLogDetails): string {
           ? { title: 'Review', html: renderLogContentValue(details.summary, { forceMarkdown: true }) }
           : undefined;
   const showSummary = details.summary && primary?.title !== 'Review';
+  const artifactSection = details.artifactPath && ctx
+    ? `<section class="approval-section approval-artifact"><div class="approval-section-title">Artifact</div><div class="approval-section-body">${renderArtifactOpenButton(artifactHref(ctx.sessionId, details.artifactPath, ctx.token), basename(details.artifactPath))}</div></section>`
+    : '';
   const linkRows = [
     details.draftUrl ? `<a class="approval-link" href="${escapeHtml(details.draftUrl)}" target="_blank" rel="noopener noreferrer">Open draft</a>` : '',
     details.artifactUrl ? `<a class="approval-link" href="${escapeHtml(details.artifactUrl)}" target="_blank" rel="noopener noreferrer">Open artifact</a>` : ''
   ].filter(Boolean).join('');
-  const hasContent = details.prompt || primary || details.risk || showSummary || details.context || linkRows || decisionLabel || details.decisionComment || details.errorMessage;
+  const hasContent = details.prompt || primary || artifactSection || details.risk || showSummary || details.context || linkRows || decisionLabel || details.decisionComment || details.errorMessage;
   if (!hasContent) return '';
 
   return `<div class="approval-card">
     ${details.prompt ? `<div class="approval-question">${renderInlineMarkdown(details.prompt)}</div>` : ''}
     ${details.context ? `<section class="approval-section approval-context"><div class="approval-section-title">Source context</div><div class="approval-section-body">${renderLogContentValue(details.context, { forceMarkdown: true })}</div></section>` : ''}
     ${primary ? `<section class="approval-section approval-primary"><div class="approval-section-title">${escapeHtml(primary.title)}</div><div class="approval-section-body">${primary.html}</div></section>` : ''}
+    ${artifactSection}
     ${linkRows ? `<section class="approval-section approval-links"><div class="approval-section-title">Links</div><div class="approval-link-row">${linkRows}</div></section>` : ''}
     ${showSummary ? `<section class="approval-section approval-secondary"><div class="approval-section-title">Why this request</div><div class="approval-section-body">${renderLogContentValue(details.summary!, { forceMarkdown: true })}</div></section>` : ''}
     ${details.risk ? `<section class="approval-section approval-risk"><div class="approval-section-title">Risk / consequence</div><div class="approval-section-body">${renderLogContentValue(details.risk, { forceMarkdown: true })}</div></section>` : ''}
@@ -935,10 +1066,10 @@ function renderToolDetailBlock(details: ApprovalLogDetails): string {
   `).join('')}</div>`;
 }
 
-function renderLogDetailBlock(entry: ApprovalLogEntry): string {
+function renderLogDetailBlock(entry: ApprovalLogEntry, ctx?: { sessionId: string; token?: string | undefined }): string {
   if (!entry.details) return '';
   return entry.details.resumeToken
-    ? renderApprovalDetailBlock(entry.details)
+    ? renderApprovalDetailBlock(entry.details, ctx)
     : renderToolDetailBlock(entry.details);
 }
 
@@ -2730,6 +2861,8 @@ function formatTokenCount(value: number): string {
 interface SessionTimelineState {
   approval: ApprovalPageInfo;
   projectId?: string | undefined;
+  /** Session view token, carried into artifact URLs so the popup viewer authorizes. */
+  token?: string | undefined;
   status: string;
   eyebrow: string;
   /** Primary identity: the agent's display name (falls back to its filename). */
@@ -2809,7 +2942,7 @@ function renderSessionTimeline(view: SessionTimelineState): string {
 
     <div class="section-title"><span>session log</span><span class="rule"></span></div>
     <div class="panel">
-      <ul id="logs" class="logs">${renderLogItems(initialLogs, { actionable, currentResumeToken: approval.currentResumeToken, projectId })}</ul>
+      <ul id="logs" class="logs">${renderLogItems(initialLogs, { actionable, currentResumeToken: approval.currentResumeToken, projectId, sessionId: approval.sessionId, token: view.token })}</ul>
     </div>
 
     <div id="working-indicator" class="working-indicator"${live ? '' : ' hidden'}>
@@ -2855,7 +2988,19 @@ function renderSessionTimeline(view: SessionTimelineState): string {
         </span>
       </div>
     </form>
-  </dialog>` : ''}`;
+  </dialog>` : ''}
+
+  <div id="artifact-modal" class="artifact-modal" hidden role="dialog" aria-modal="true" aria-label="Artifact preview">
+    <div class="artifact-modal-backdrop" data-artifact-close></div>
+    <div class="artifact-modal-panel">
+      <div class="artifact-modal-head">
+        <span class="artifact-modal-title" id="artifact-modal-title">Artifact</span>
+        <a class="artifact-modal-open" id="artifact-modal-open" href="#" target="_blank" rel="noopener noreferrer">open in tab ↗</a>
+        <button type="button" class="artifact-modal-close" data-artifact-close aria-label="Close preview">×</button>
+      </div>
+      <iframe id="artifact-modal-frame" class="artifact-modal-frame" title="Artifact preview" sandbox referrerpolicy="no-referrer"></iframe>
+    </div>
+  </div>`;
 }
 
 interface SessionPageOptions {
@@ -3616,6 +3761,109 @@ function renderSessionPage(options: SessionPageOptions): string {
     }
     .approval-link:hover { border-bottom-style: solid; }
 
+    /* artifact tile + popup viewer */
+    .artifact-open {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 0;
+      max-width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      background: var(--panel);
+      color: var(--fg);
+      font-family: var(--sans);
+      font-size: 13px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .artifact-open:hover { background: var(--panel-hover); border-color: var(--cyan-border); }
+    .artifact-open svg { width: 15px; height: 15px; flex: none; color: var(--cyan); }
+    .artifact-open-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .artifact-open-hint {
+      margin-left: auto;
+      padding-left: 8px;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted-2);
+    }
+    .artifact-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .artifact-modal[hidden] { display: none; }
+    .artifact-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(2px);
+    }
+    .artifact-modal-panel {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      width: min(960px, 100%);
+      height: min(85vh, 100%);
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      background: var(--bg);
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+    .artifact-modal-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    .artifact-modal-title {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--fg);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .artifact-modal-open {
+      margin-left: auto;
+      font-size: 12px;
+      color: var(--cyan);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .artifact-modal-open:hover { text-decoration: underline; }
+    .artifact-modal-close {
+      min-height: 0;
+      padding: 2px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--muted-3);
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .artifact-modal-close:hover { color: var(--fg); border-color: var(--line-strong); }
+    .artifact-modal-frame {
+      flex: 1;
+      width: 100%;
+      border: 0;
+      background: var(--bg);
+    }
+    @media (max-width: 640px) {
+      .artifact-modal { padding: 0; }
+      .artifact-modal-panel { width: 100%; height: 100%; border: 0; border-radius: 0; }
+    }
+
     /* inline approval actions (rendered inside the active pending log entry) */
     .log-actions {
       margin-top: 12px;
@@ -3838,6 +4086,7 @@ function renderSessionPage(options: SessionPageOptions): string {
   ${renderSessionTimeline({
     approval,
     projectId,
+    token,
     status,
     eyebrow,
     agentName,
@@ -3858,6 +4107,7 @@ function renderSessionPage(options: SessionPageOptions): string {
   <script>
     const token = ${JSON.stringify(token)};
     const project = ${JSON.stringify(projectId)};
+    const ARTIFACT_ICON_SVG = ${JSON.stringify(ARTIFACT_ICON_SVG)};
     // The active gate's resumeToken at page render. Each await_human gate mints
     // a fresh token; if the page was opened on gate N's URL but the agent has
     // moved on to gate N+1, this rotates and refreshStatus redirects to the new
@@ -4072,6 +4322,13 @@ function renderSessionPage(options: SessionPageOptions): string {
       if (details.prompt) sections.push('<div class="approval-question">' + renderInlineMarkdown(details.prompt) + '</div>');
       if (details.context) sections.push('<section class="approval-section approval-context"><div class="approval-section-title">Source context</div><div class="approval-section-body">' + renderLogContentValue(details.context, { forceMarkdown: true }) + '</div></section>');
       if (primary) sections.push('<section class="approval-section approval-primary"><div class="approval-section-title">' + escapeText(primary.title) + '</div><div class="approval-section-body">' + primary.html + '</div></section>');
+      if (details.artifactPath) {
+        const encoded = String(details.artifactPath).split('/').map(encodeURIComponent).join('/');
+        const href = location.pathname.replace(/\\/$/, '') + '/artifacts/' + encoded + (token ? '?token=' + encodeURIComponent(token) : '');
+        const label = String(details.artifactPath).split('/').filter(Boolean).pop() || 'artifact';
+        const btn = '<button type="button" class="artifact-open" data-artifact-url="' + escapeText(href) + '" data-artifact-title="' + escapeText(label) + '">' + ARTIFACT_ICON_SVG + '<span class="artifact-open-name">' + escapeText(label) + '</span><span class="artifact-open-hint">open</span></button>';
+        sections.push('<section class="approval-section approval-artifact"><div class="approval-section-title">Artifact</div><div class="approval-section-body">' + btn + '</div></section>');
+      }
       if (links) sections.push('<section class="approval-section approval-links"><div class="approval-section-title">Links</div><div class="approval-link-row">' + links + '</div></section>');
       if (showSummary) sections.push('<section class="approval-section approval-secondary"><div class="approval-section-title">Why this request</div><div class="approval-section-body">' + renderLogContentValue(details.summary, { forceMarkdown: true }) + '</div></section>');
       if (details.risk) sections.push('<section class="approval-section approval-risk"><div class="approval-section-title">Risk / consequence</div><div class="approval-section-body">' + renderLogContentValue(details.risk, { forceMarkdown: true }) + '</div></section>');
@@ -4696,6 +4953,13 @@ function renderSessionPage(options: SessionPageOptions): string {
     //   cmd/ctrl+Enter → approve, Esc → reject, c → comment
     document.addEventListener('keydown', (e) => {
       if (commentDialog?.open) return;
+      // While the artifact preview is open, Escape closes it instead of falling
+      // through to the reject shortcut.
+      const artifactModalEl = document.getElementById('artifact-modal');
+      if (artifactModalEl && !artifactModalEl.hidden) {
+        if (e.key === 'Escape') { e.preventDefault(); closeArtifactModal(); }
+        return;
+      }
       const target = e.target;
       const inField = target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT');
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -4730,6 +4994,38 @@ function renderSessionPage(options: SessionPageOptions): string {
         try { document.execCommand('copy'); flash(); } catch (err) {}
         document.body.removeChild(ta);
       }
+    });
+
+    // artifact popup viewer: open a local file artifact in a sandboxed iframe.
+    function closeArtifactModal() {
+      const modal = document.getElementById('artifact-modal');
+      const frame = document.getElementById('artifact-modal-frame');
+      if (!modal) return;
+      modal.hidden = true;
+      if (frame) frame.removeAttribute('src');
+      document.body.style.overflow = '';
+    }
+    function openArtifactModal(url, title) {
+      const modal = document.getElementById('artifact-modal');
+      const frame = document.getElementById('artifact-modal-frame');
+      const titleEl = document.getElementById('artifact-modal-title');
+      const openEl = document.getElementById('artifact-modal-open');
+      if (!modal || !frame) return;
+      if (titleEl) titleEl.textContent = title || 'Artifact';
+      if (openEl) openEl.setAttribute('href', url);
+      frame.setAttribute('src', url);
+      modal.hidden = false;
+      document.body.style.overflow = 'hidden';
+    }
+    document.addEventListener('click', (e) => {
+      const opener = e.target && e.target.closest ? e.target.closest('.artifact-open') : null;
+      if (opener) {
+        e.preventDefault();
+        openArtifactModal(opener.getAttribute('data-artifact-url') || '', opener.getAttribute('data-artifact-title') || '');
+        return;
+      }
+      const closer = e.target && e.target.closest ? e.target.closest('[data-artifact-close]') : null;
+      if (closer) { e.preventDefault(); closeArtifactModal(); }
     });
   </script>
 </body>
@@ -6522,6 +6818,28 @@ export function createServeCommand(): Command {
           return;
         }
 
+        // GET /sessions/:id/artifacts/*: serve a local file artifact referenced
+        // by an await_human gate, for the in-page popup viewer. Same session auth
+        // as the page; the file is resolved against the project root with a
+        // traversal + secrets guard.
+        const sessionArtifactMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/artifacts\/(.+)$/) : null;
+        if (sessionArtifactMatch) {
+          const sessionId = decodeURIComponent(sessionArtifactMatch[1]);
+          const token = requestUrl.searchParams.get('token') ?? undefined;
+          const projectId = requestUrl.searchParams.get('project') ?? undefined;
+          if (!sessionAuthorized(sessionId, token)) {
+            sendHTML(res, 401, '<!doctype html><title>Artifact</title><p>Not authorized for this session.</p>');
+            return;
+          }
+          const found = await findSessionInfo(sessionId, projectId);
+          if (!found.success) {
+            sendHTML(res, found.status, `<!doctype html><title>Artifact</title><p>${escapeHtml(found.message)}</p>`);
+            return;
+          }
+          serveSessionArtifact(res, found.project.root, sessionArtifactMatch[2]);
+          return;
+        }
+
         // POST /sessions/:id/decision: approve / reject / comment on the current
         // pending gate. Authorized via session token / api key / local; the gate
         // resumeToken is resolved server-side from session state.
@@ -7712,6 +8030,7 @@ function createSchedulesSubcommand(): Command {
 }
 
 export const __testing = {
+  serveSessionArtifact,
   renderHomePage,
   renderApprovalsListPage,
   renderApprovalPage,
