@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.14.0] - 2026-06-03
+## [0.14.0] - 2026-06-06
 
 This release refines the human-in-the-loop and `serve` surfaces introduced in 0.13.0 and hardens skills, sandboxing, and auth. Approval gates, the session/approval web UI, the JSON API, and channels/Slack remain **experimental**: the core workflow is ready to try, but route shapes, UI details, and API response formats may still evolve based on production feedback.
 
@@ -14,6 +14,11 @@ This release refines the human-in-the-loop and `serve` surfaces introduced in 0.
 - **Skill trust config**: `skills: trusted` keeps auto skill discovery but trusts loaded skills to use the tools already configured on the agent (without enabling new tools or new bash commands), aimed at sandboxed/yolo-style agents.
 - **Portable skill directory placeholders**: skill content can reference `${skillDir}`, `${SKILL_DIR}`, or `${CLAUDE_SKILL_DIR}`, each substituted with the skill's absolute directory so bundled scripts and assets resolve regardless of install location. Literal `$SKILL_DIR` (no braces) is left untouched for runtime shell expansion.
 - **AgentUse assistant skill**: `npx skills add agentuse/agentuse` installs a discovery stub that redirects to `agentuse skills get core`, keeping AI coding assistants aligned with the installed CLI version.
+- **OpenAI prompt cache options**: the `openai` model config accepts `promptCacheKey` (a routing key, max 64 chars) and `promptCacheRetention` (`'in_memory'` or `'24h'`). AgentUse already sends a stable default `promptCacheKey` per agent so repeated runs with the same prompt prefix route to cache more easily; set `promptCacheRetention: 24h` only for extended retention on models that support it.
+- **Configurable tool-output limits**: new `AGENTUSE_TOOL_*` environment variables centralize the byte, line, and line-length caps applied to tool output, shared by the bash and filesystem tools (defaults match prior behavior).
+- **Session stop controls**: a running session (including delegated subagents) can now be stopped from the `serve` web UI and the `agentuse sessions` CLI; stopping a session also clears its pending approvals.
+- **Session filters and approval history links**: the `serve` sessions list gains filtering, and approval history entries link back to their sessions.
+- **More OpenRouter model series**: the model registry now includes OpenRouter `deepseek`, `qwen`, `kimi` (moonshotai), `gemini` (google), and `grok` (x-ai) series, with per-line dedup that keeps only the latest release of each product line.
 
 ### Changed
 
@@ -24,6 +29,12 @@ This release refines the human-in-the-loop and `serve` surfaces introduced in 0.
 - **Autonomous agent prompts are stricter about silent execution**, reducing intermediate narration, tool-call announcements, and repeated summaries before the final terminal-friendly result.
 - `GET /approvals/:id` now redirects to `sessions/:id`; the legacy `approvals/:id/*` action routes remain as transition aliases.
 - `learning.apply` now defaults to `false` when omitted, so learnings are extracted but only injected after manual review unless auto-apply is explicitly enabled.
+- **Bash tool output uses head + tail truncation**: large output is now truncated to keep both the start and the end (40/60 split) with an omitted-bytes marker in the middle, instead of head-only. This preserves errors and recent output at the tail of big diffs and command runs.
+- **Sandbox exec lifetime is bounded**: Docker sandbox commands (and image setup) now run under a timeout that kills and removes the container on expiry, so a runaway sandboxed command can no longer hang a run indefinitely.
+- **Cached token usage is tracked and persisted**: prompt-cache read/write token counts are accounted across runs (including subagents), persisted with session usage, and surfaced in the `serve` session views and usage totals.
+- **Model registry generation auto-tracks major versions** from models.dev rather than hardcoded version floors, so new majors are picked up automatically and stale builds age out; the doc reference updater is now vendor- and token-aware (fixing the MiniMax-routed-to-Gemini mismatch).
+- **Live session view refinements**: session status handling and the session-view polling in `serve` were improved for more accurate, lower-overhead status updates.
+- **Approvals page tidy-up**: completed approvals are hidden from the approvals page, approval history labels are shortened, and pending approvals are cleared when their session stops.
 
 ### Fixed
 
@@ -36,12 +47,18 @@ This release refines the human-in-the-loop and `serve` surfaces introduced in 0.
 - **Slack Socket Mode log storms reduced**, cutting repetitive connection logging.
 - Agents always receive a default skills config from the parser, so skill loading behaves consistently when `skills` is omitted.
 - **Approval gates in delegated subagents fail loud**: a `type: manager` agent delegating to a subagent with `approval: true` previously completed the run silently while leaving an orphaned, un-resumable pending approval (the subagent never propagated the `await_human` suspension to the parent session). Approval in a delegated subagent is now rejected at load time with a clear error; gates are supported only on the top-level/manager agent. See #107 for the design discussion.
+- **Subagent session logs render in the `serve` view**: subagent sessions stored nested under their parent (`{parent}/subagent/{sub}`) are now resolved by basename when the computed path is empty, so a running or resumed subagent no longer shows "No session events yet."; resumed-subagent session lookup is also fixed.
+- **Store lock no longer leaks across concurrent runs**: the `serve` worker handles execute/resume requests concurrently, and overlapping `Store` instances previously drifted the lock ref count so the lock file was never deleted, permanently blocking every other process. Acquire/release is now serialized per lock path with an async mutex, the ref count is the sole authority for same-process re-entrancy, same-PID leftover lock files are reclaimed, and the store lock is released before a session flips to completed/suspended.
+- **Store guards data payloads against non-object corruption**: `Store.update`/`create` previously spread a raw string payload into numeric character keys, producing stored data that wiped the store on next load via schema validation. Payloads are now normalized at the persistence boundary (plain object passes, JSON-string-of-object is parsed, anything else throws a clear error) with tool wrappers returning a soft `{success:false, error}`.
 
 ### Documentation
 
 - Documented `agentuse doctor`, the skill directory placeholders, the `skills: trusted` config, the sandbox `$HOME` guard, and the implicit `learning.apply: false` default.
 - Reworked the serve docs around the unified session page and session token: rewrote the approval-gates API section to the `sessions` routes (noting the `approvals` redirect and legacy aliases), documented `GET /api/sessions` and `GET /api/sessions/:id`, added browser-based session browsing to the session-logs guide, and moved the documented JSON endpoints under the `/api` prefix.
 - Fixed the self-hosting Docker health check to ping the `/api` server-info endpoint instead of the POST-only run endpoint, and added agent-authoring gotchas.
+- Documented the `AGENTUSE_TOOL_*` env vars and head+tail truncation behavior in the environment-variables and builtin-tools references, and added a tool-output best practice to the context-management guide.
+- Documented the OpenAI `promptCacheKey` / `promptCacheRetention` options in the agent-syntax reference and model-configuration guide.
+- Updated the README for the `/api/*` JSON prefix, the session-page review flow, `agentuse doctor`, and added a Commercial Support section.
 
 ## [0.13.0] - 2026-05-12
 

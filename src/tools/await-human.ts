@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { SuspendSignal } from '../runner/suspend';
 import { findServerForProject } from '../utils/server-registry';
 import { sessionViewToken } from '../utils/session-token';
+import { loadGlobalConfig } from '../utils/global-config';
 
 function parseTimeout(value?: string): number | undefined {
   if (!value) return undefined;
@@ -21,10 +22,26 @@ function parseTimeout(value?: string): number | undefined {
   return amount * multipliers[unit];
 }
 
+function getConfigPublicUrl(): string | undefined {
+  // Best-effort: a malformed config.json should not crash an in-flight run at
+  // approval time, so fall through to the next source instead of throwing.
+  try {
+    return loadGlobalConfig()?.serve?.publicUrl;
+  } catch {
+    return undefined;
+  }
+}
+
 function getApprovalBaseUrl(projectRoot?: string): string {
+  // Precedence: explicit env override > running serve daemon's registered URL >
+  // serve.publicUrl from global config.json (so standalone `agentuse run`
+  // honors it without a daemon) > local host:port fallback.
   const explicit = process.env.AGENTUSE_RESUME_PUBLIC_URL ?? process.env.AGENTUSE_SERVE_URL;
   const server = findServerForProject(projectRoot);
-  return explicit ?? server?.publicUrl ?? `http://${server?.host ?? '127.0.0.1'}:${server?.port ?? 12233}`;
+  return explicit
+    ?? server?.publicUrl
+    ?? getConfigPublicUrl()
+    ?? `http://${server?.host ?? '127.0.0.1'}:${server?.port ?? 12233}`;
 }
 
 /**

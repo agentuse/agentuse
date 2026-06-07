@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { createAwaitHumanTool, getApprovalUrl } from '../src/tools/await-human';
 import { isSuspendSignal } from '../src/runner/suspend';
 import { registerServer, unregisterServer } from '../src/utils/server-registry';
@@ -8,6 +11,16 @@ describe('await_human approval URL', () => {
   const originalPublicUrl = process.env.AGENTUSE_RESUME_PUBLIC_URL;
   const originalServeUrl = process.env.AGENTUSE_SERVE_URL;
   const originalApiKey = process.env.AGENTUSE_API_KEY;
+  const originalConfig = process.env.AGENTUSE_CONFIG;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'agentuse-await-human-'));
+    // Point config at a non-existent path so the developer's real
+    // ~/.agentuse/config.json never leaks into these tests. Tests that exercise
+    // the config fallback override this with their own fixture.
+    process.env.AGENTUSE_CONFIG = join(tmpDir, 'missing-config.json');
+  });
 
   afterEach(() => {
     if (originalPublicUrl === undefined) delete process.env.AGENTUSE_RESUME_PUBLIC_URL;
@@ -16,7 +29,10 @@ describe('await_human approval URL', () => {
     else process.env.AGENTUSE_SERVE_URL = originalServeUrl;
     if (originalApiKey === undefined) delete process.env.AGENTUSE_API_KEY;
     else process.env.AGENTUSE_API_KEY = originalApiKey;
+    if (originalConfig === undefined) delete process.env.AGENTUSE_CONFIG;
+    else process.env.AGENTUSE_CONFIG = originalConfig;
     unregisterServer();
+    if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('points the reviewer link at the unified session page (no token when local/no api key)', () => {
@@ -41,13 +57,29 @@ describe('await_human approval URL', () => {
     );
   });
 
-  it('falls back to the local serve URL', () => {
+  it('falls back to the local serve URL when nothing else is configured', () => {
     delete process.env.AGENTUSE_RESUME_PUBLIC_URL;
     delete process.env.AGENTUSE_SERVE_URL;
     delete process.env.AGENTUSE_API_KEY;
 
-    expect(getApprovalUrl('session-1', 'resume-token')).toBe(
+    // Query a project root no daemon serves so the registry lookup misses; with
+    // config isolated to a missing file, only the hard-coded fallback remains.
+    expect(getApprovalUrl('session-1', 'resume-token', undefined, join(tmpDir, 'unserved-project'))).toBe(
       'http://127.0.0.1:12233/sessions/session-1'
+    );
+  });
+
+  it('falls back to serve.publicUrl from global config when no env URL or daemon is set', () => {
+    delete process.env.AGENTUSE_RESUME_PUBLIC_URL;
+    delete process.env.AGENTUSE_SERVE_URL;
+    delete process.env.AGENTUSE_API_KEY;
+    const configPath = join(tmpDir, 'config.json');
+    writeFileSync(configPath, JSON.stringify({ serve: { publicUrl: 'https://config.example.com' } }));
+    process.env.AGENTUSE_CONFIG = configPath;
+
+    // Unserved project root => no daemon match, so the config value is used.
+    expect(getApprovalUrl('session-1', 'resume-token', undefined, join(tmpDir, 'unserved-project'))).toBe(
+      'https://config.example.com/sessions/session-1'
     );
   });
 
