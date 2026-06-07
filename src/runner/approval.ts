@@ -57,7 +57,7 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
     'Fill the fields so a reviewer can decide without asking you follow-up questions. Put the substance in the body fields, NOT in `prompt`:',
     '- prompt: ONE short line, a direct yes/no question (e.g. "Approve this newsletter draft for send?"). Do not put the content, headings, or bullet lists here.',
     '- draft: the full reviewable work itself, written in Markdown. Use headings, bullet lists, tables, and fenced code blocks. This is the primary artifact the reviewer reads, so make it complete, not a one-line summary. Include the actual text/copy/code/plan being approved.',
-    '- artifact_path: when the reviewable work is a file you created (an HTML page, a long report, a rendered document), pass its path relative to the project root (e.g. `.agentuse/artifacts/report.html`). The reviewer can open it in a popup viewer. Prefer this over inlining very long or HTML content into `draft`.',
+    '- artifact_path: when the reviewable work is a file you created (an HTML page, a long report, a rendered document), pass its path relative to the project root (e.g. `.agentuse/artifacts/report.html`). The reviewer can open it in a popup viewer. Prefer this over inlining very long or HTML content into `draft`. For more than one file, use artifact_paths (an array of project-relative paths) instead.',
     '- artifact_url: external link to review instead (PR, hosted preview, Google Doc). Use draft_url for a non-primary draft link.',
     '- summary: a few sentences on what changed and what is being approved (renders under "Why this request").',
     '- context: real background, constraints, inputs used, and work completed so far. Give specifics, not a placeholder.',

@@ -936,7 +936,7 @@ async function runInternalWorker() {
     draft?: string;
     draftUrl?: string;
     artifactUrl?: string;
-    artifactPath?: string;
+    artifactPaths?: string[];
     decisionStatus?: string;
     decisionComment?: string;
     decisionReviewer?: string;
@@ -1157,7 +1157,15 @@ async function runInternalWorker() {
     if (typeof input.draft === 'string' && input.draft) fields.draft = input.draft;
     if (typeof input.draft_url === 'string' && input.draft_url) fields.draftUrl = input.draft_url;
     if (typeof input.artifact_url === 'string' && input.artifact_url) fields.artifactUrl = input.artifact_url;
-    if (typeof input.artifact_path === 'string' && input.artifact_path.trim()) fields.artifactPath = input.artifact_path.trim();
+    const artifactPaths: string[] = [];
+    if (typeof input.artifact_path === 'string' && input.artifact_path.trim()) artifactPaths.push(input.artifact_path.trim());
+    if (Array.isArray(input.artifact_paths)) {
+      for (const p of input.artifact_paths) {
+        if (typeof p === 'string' && p.trim()) artifactPaths.push(p.trim());
+      }
+    }
+    const uniqueArtifactPaths = [...new Set(artifactPaths)];
+    if (uniqueArtifactPaths.length > 0) fields.artifactPaths = uniqueArtifactPaths;
 
     if (state?.status === 'completed') {
       const decisionStatus = typeof output.status === 'string' ? output.status : undefined;

@@ -25,7 +25,19 @@ const suspendedApprovalWithArtifact = {
     details: {
       resumeToken: 'gate-token-1',
       prompt: 'Approve the draft?',
-      artifactPath: '.agentuse/artifacts/report.html',
+      artifactPaths: ['.agentuse/artifacts/report.html'],
+    },
+  }],
+};
+
+const multiArtifactApproval = {
+  ...suspendedApprovalWithArtifact,
+  logs: [{
+    ...suspendedApprovalWithArtifact.logs[0],
+    details: {
+      resumeToken: 'gate-token-1',
+      prompt: 'Approve the draft?',
+      artifactPaths: ['.agentuse/artifacts/a.html', '.agentuse/artifacts/b.md'],
     },
   }],
 };
@@ -55,6 +67,20 @@ describe('artifact popup rendering', () => {
       canAct: true,
     });
     expect(html).toContain('data-artifact-url="/sessions/session-1/artifacts/.agentuse/artifacts/report.html"');
+  });
+
+  it('renders a tile per artifact when multiple are provided', () => {
+    const html = __testing.renderSessionPage({
+      approval: multiArtifactApproval as never,
+      token: 'sess-token',
+      projectId: 'project-1',
+      canAct: true,
+    });
+    expect(html).toContain('>Artifacts<');
+    expect(html).toContain('data-artifact-title="a.html"');
+    expect(html).toContain('data-artifact-title="b.md"');
+    expect(html).toContain('data-artifact-url="/sessions/session-1/artifacts/.agentuse/artifacts/a.html?token=sess-token"');
+    expect(html).toContain('data-artifact-url="/sessions/session-1/artifacts/.agentuse/artifacts/b.md?token=sess-token"');
   });
 });
 

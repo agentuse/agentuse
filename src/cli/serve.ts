@@ -316,8 +316,8 @@ interface ApprovalLogDetails {
   draft?: string;
   draftUrl?: string;
   artifactUrl?: string;
-  /** Project-root-relative path to a local file artifact, viewable via /sessions/:id/artifacts/*. */
-  artifactPath?: string;
+  /** Project-root-relative paths to local file artifacts, viewable via /sessions/:id/artifacts/*. */
+  artifactPaths?: string[];
   decisionStatus?: string;
   decisionComment?: string;
   decisionReviewer?: string;
@@ -1026,8 +1026,9 @@ function renderApprovalDetailBlock(details: ApprovalLogDetails, ctx?: { sessionI
           ? { title: 'Review', html: renderLogContentValue(details.summary, { forceMarkdown: true }) }
           : undefined;
   const showSummary = details.summary && primary?.title !== 'Review';
-  const artifactSection = details.artifactPath && ctx
-    ? `<section class="approval-section approval-artifact"><div class="approval-section-title">Artifact</div><div class="approval-section-body">${renderArtifactOpenButton(artifactHref(ctx.sessionId, details.artifactPath, ctx.token), basename(details.artifactPath))}</div></section>`
+  const artifactPaths = ctx ? (details.artifactPaths ?? []) : [];
+  const artifactSection = artifactPaths.length > 0 && ctx
+    ? `<section class="approval-section approval-artifact"><div class="approval-section-title">${artifactPaths.length > 1 ? 'Artifacts' : 'Artifact'}</div><div class="approval-section-body"><div class="artifact-tiles">${artifactPaths.map((p) => renderArtifactOpenButton(artifactHref(ctx.sessionId, p, ctx.token), basename(p))).join('')}</div></div></section>`
     : '';
   const linkRows = [
     details.draftUrl ? `<a class="approval-link" href="${escapeHtml(details.draftUrl)}" target="_blank" rel="noopener noreferrer">Open draft</a>` : '',
@@ -3430,6 +3431,19 @@ function renderSessionPage(options: SessionPageOptions): string {
     }
     .log-item:last-child { border-bottom: 0; }
     .log-time { color: var(--muted-2); font-size: 12px; padding-top: 1px; }
+    /* On narrow screens the fixed time/marker columns waste the left gutter, so
+       stack: time + marker on their own row, then the log content full-width. */
+    @media (max-width: 600px) {
+      .log-item {
+        grid-template-columns: auto 1fr;
+        grid-template-areas: "time marker" "main main";
+        column-gap: 8px;
+        row-gap: 4px;
+      }
+      .log-time { grid-area: time; }
+      .log-marker { grid-area: marker; justify-content: flex-start; }
+      .log-main { grid-area: main; }
+    }
     .log-marker {
       display: inline-flex;
       justify-content: center;
@@ -3762,6 +3776,12 @@ function renderSessionPage(options: SessionPageOptions): string {
     .approval-link:hover { border-bottom-style: solid; }
 
     /* artifact tile + popup viewer */
+    .artifact-tiles {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: flex-start;
+    }
     .artifact-open {
       display: inline-flex;
       align-items: center;
@@ -3862,6 +3882,8 @@ function renderSessionPage(options: SessionPageOptions): string {
     @media (max-width: 640px) {
       .artifact-modal { padding: 0; }
       .artifact-modal-panel { width: 100%; height: 100%; border: 0; border-radius: 0; }
+      .artifact-tiles { align-items: stretch; }
+      .artifact-open { width: 100%; }
     }
 
     /* inline approval actions (rendered inside the active pending log entry) */
@@ -4322,12 +4344,16 @@ function renderSessionPage(options: SessionPageOptions): string {
       if (details.prompt) sections.push('<div class="approval-question">' + renderInlineMarkdown(details.prompt) + '</div>');
       if (details.context) sections.push('<section class="approval-section approval-context"><div class="approval-section-title">Source context</div><div class="approval-section-body">' + renderLogContentValue(details.context, { forceMarkdown: true }) + '</div></section>');
       if (primary) sections.push('<section class="approval-section approval-primary"><div class="approval-section-title">' + escapeText(primary.title) + '</div><div class="approval-section-body">' + primary.html + '</div></section>');
-      if (details.artifactPath) {
-        const encoded = String(details.artifactPath).split('/').map(encodeURIComponent).join('/');
-        const href = location.pathname.replace(/\\/$/, '') + '/artifacts/' + encoded + (token ? '?token=' + encodeURIComponent(token) : '');
-        const label = String(details.artifactPath).split('/').filter(Boolean).pop() || 'artifact';
-        const btn = '<button type="button" class="artifact-open" data-artifact-url="' + escapeText(href) + '" data-artifact-title="' + escapeText(label) + '">' + ARTIFACT_ICON_SVG + '<span class="artifact-open-name">' + escapeText(label) + '</span><span class="artifact-open-hint">open</span></button>';
-        sections.push('<section class="approval-section approval-artifact"><div class="approval-section-title">Artifact</div><div class="approval-section-body">' + btn + '</div></section>');
+      const artifactPaths = Array.isArray(details.artifactPaths) ? details.artifactPaths.filter(Boolean) : [];
+      if (artifactPaths.length) {
+        const tiles = artifactPaths.map((p) => {
+          const encoded = String(p).split('/').map(encodeURIComponent).join('/');
+          const href = location.pathname.replace(/\\/$/, '') + '/artifacts/' + encoded + (token ? '?token=' + encodeURIComponent(token) : '');
+          const label = String(p).split('/').filter(Boolean).pop() || 'artifact';
+          return '<button type="button" class="artifact-open" data-artifact-url="' + escapeText(href) + '" data-artifact-title="' + escapeText(label) + '">' + ARTIFACT_ICON_SVG + '<span class="artifact-open-name">' + escapeText(label) + '</span><span class="artifact-open-hint">open</span></button>';
+        }).join('');
+        const heading = artifactPaths.length > 1 ? 'Artifacts' : 'Artifact';
+        sections.push('<section class="approval-section approval-artifact"><div class="approval-section-title">' + heading + '</div><div class="approval-section-body"><div class="artifact-tiles">' + tiles + '</div></div></section>');
       }
       if (links) sections.push('<section class="approval-section approval-links"><div class="approval-section-title">Links</div><div class="approval-link-row">' + links + '</div></section>');
       if (showSummary) sections.push('<section class="approval-section approval-secondary"><div class="approval-section-title">Why this request</div><div class="approval-section-body">' + renderLogContentValue(details.summary, { forceMarkdown: true }) + '</div></section>');

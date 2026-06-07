@@ -76,7 +76,8 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       draft: z.string().optional().describe('The full reviewable work itself, written in Markdown (headings, bullet lists, tables, fenced code). This is the primary artifact the reviewer reads, so make it complete, not a one-line summary.'),
       draft_url: z.string().url().optional().describe('URL to a non-primary draft artifact'),
       artifact_url: z.string().url().optional().describe('External URL to the primary review artifact, such as a PR, hosted preview, or document'),
-      artifact_path: z.string().optional().describe('Path, relative to the project root, to a local file artifact you created (e.g. .agentuse/artifacts/report.html). The reviewer can open it in a popup viewer. Prefer this over inlining long or HTML content into draft.'),
+      artifact_path: z.string().optional().describe('Path, relative to the project root, to a local file artifact you created (e.g. .agentuse/artifacts/report.html). The reviewer can open it in a popup viewer. Prefer this over inlining long or HTML content into draft. For more than one file, use artifact_paths.'),
+      artifact_paths: z.array(z.string()).optional().describe('Multiple local file artifacts to review, each a path relative to the project root. Each renders as its own openable tile in the popup viewer.'),
       context: z.string().optional().describe('Real background, constraints, inputs used, and work completed so far. Rendered as Markdown.'),
       risk: z.string().optional().describe('Concrete risks, unresolved questions, or areas needing reviewer attention. Rendered as Markdown.')
     }),
@@ -87,6 +88,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       draft_url?: string;
       artifact_url?: string;
       artifact_path?: string;
+      artifact_paths?: string[];
       context?: string;
       risk?: string;
     }) => {
