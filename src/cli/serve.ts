@@ -3264,7 +3264,7 @@ function renderSessionPage(options: SessionPageOptions): string {
     /* meta grid */
     .meta {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      grid-template-columns: repeat(4, 1fr);
       gap: 1px;
       margin: 28px 0 0;
       background: var(--line);
@@ -3272,12 +3272,12 @@ function renderSessionPage(options: SessionPageOptions): string {
       border-radius: 10px;
       overflow: hidden;
     }
+    @media (max-width: 640px) {
+      .meta { grid-template-columns: repeat(2, 1fr); }
+    }
     .meta .cell {
       background: var(--bg);
       padding: 14px 16px;
-    }
-    .meta .token-cell:nth-of-type(6) {
-      grid-column-start: 1;
     }
     .meta .label {
       display: block;
