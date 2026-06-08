@@ -2970,7 +2970,11 @@ function renderSessionTimeline(view: SessionTimelineState): string {
     <p id="result" class="notice${initialResultText ? ' error' : ''}">${initialResultText ? escapeHtml(initialResultText) : ''}</p>
   </main>
 
-  ${actionable ? `
+  <!-- Always rendered (inert until showModal). The comment *button* stays gated
+       by \`actionable\`, but the dialog must exist in the DOM up front so its
+       handlers wire at load: a gate that opens live (via polling) injects the
+       comment button without re-rendering this dialog, so a deferred render
+       would leave the button pointing at a missing element until a full reload. -->
   <dialog id="comment-dialog" aria-labelledby="comment-dialog-title">
     <form method="dialog">
       <div class="dialog-head">
@@ -2989,7 +2993,7 @@ function renderSessionTimeline(view: SessionTimelineState): string {
         </span>
       </div>
     </form>
-  </dialog>` : ''}
+  </dialog>
 
   <div id="artifact-modal" class="artifact-modal" hidden role="dialog" aria-modal="true" aria-label="Artifact preview">
     <div class="artifact-modal-backdrop" data-artifact-close></div>
@@ -4096,6 +4100,12 @@ function renderSessionPage(options: SessionPageOptions): string {
       .log-actions-buttons button { flex: 1; }
       .continue-actions { flex-direction: column; align-items: stretch; }
       .continue-actions button { width: 100%; }
+      .dialog-foot { flex-direction: column; align-items: stretch; gap: 8px; }
+      .dialog-foot .hint { display: none; }
+      .dialog-foot .actions { display: flex; }
+      .dialog-foot .actions button { flex: 1; }
+      /* iOS Safari auto-zooms when focusing inputs with font-size < 16px */
+      textarea { font-size: 16px; }
     }
   </style>
 </head>
