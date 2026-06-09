@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { createAwaitHumanTool, getApprovalUrl } from '../src/tools/await-human';
+import { createAwaitHumanTool, getSessionUrl } from '../src/tools/await-human';
 import { isSuspendSignal } from '../src/runner/suspend';
 import { registerServer, unregisterServer } from '../src/utils/server-registry';
 import { sessionViewToken } from '../src/utils/session-token';
@@ -40,7 +40,7 @@ describe('await_human approval URL', () => {
     delete process.env.AGENTUSE_SERVE_URL;
     delete process.env.AGENTUSE_API_KEY;
 
-    expect(getApprovalUrl('session-1', 'resume-token', 'project-1')).toBe(
+    expect(getSessionUrl('session-1')).toBe(
       'https://agentuse.example.com/sessions/session-1'
     );
   });
@@ -52,7 +52,7 @@ describe('await_human approval URL', () => {
 
     const token = sessionViewToken('session-1', 'super-secret-key');
     expect(token.length).toBeGreaterThan(0);
-    expect(getApprovalUrl('session-1', 'resume-token', 'project-1')).toBe(
+    expect(getSessionUrl('session-1')).toBe(
       `https://agentuse.example.com/sessions/session-1?token=${token}`
     );
   });
@@ -64,7 +64,7 @@ describe('await_human approval URL', () => {
 
     // Query a project root no daemon serves so the registry lookup misses; with
     // config isolated to a missing file, only the hard-coded fallback remains.
-    expect(getApprovalUrl('session-1', 'resume-token', undefined, join(tmpDir, 'unserved-project'))).toBe(
+    expect(getSessionUrl('session-1', join(tmpDir, 'unserved-project'))).toBe(
       'http://127.0.0.1:12233/sessions/session-1'
     );
   });
@@ -78,7 +78,7 @@ describe('await_human approval URL', () => {
     process.env.AGENTUSE_CONFIG = configPath;
 
     // Unserved project root => no daemon match, so the config value is used.
-    expect(getApprovalUrl('session-1', 'resume-token', undefined, join(tmpDir, 'unserved-project'))).toBe(
+    expect(getSessionUrl('session-1', join(tmpDir, 'unserved-project'))).toBe(
       'https://config.example.com/sessions/session-1'
     );
   });
@@ -99,7 +99,7 @@ describe('await_human approval URL', () => {
       projects: [{ id: 'project-a', root: '/tmp/project-a', agentCount: 1, scheduleCount: 0 }]
     });
 
-    expect(getApprovalUrl('session-1', 'resume-token', 'project-a', '/tmp/project-a')).toBe(
+    expect(getSessionUrl('session-1', '/tmp/project-a')).toBe(
       'http://127.0.0.1:12234/sessions/session-1'
     );
   });
@@ -123,7 +123,7 @@ describe('await_human approval URL', () => {
       ]
     });
 
-    expect(getApprovalUrl('session-1', 'resume-token', undefined, '/tmp/consulting-ops')).toBe(
+    expect(getSessionUrl('session-1', '/tmp/consulting-ops')).toBe(
       'http://127.0.0.1:12235/sessions/session-1'
     );
   });

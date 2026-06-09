@@ -2,6 +2,7 @@ import { WebClient } from '@slack/web-api';
 import type { ParsedAgent } from '../parser';
 import type { RunAgentResult } from '../runner/types';
 import { logger } from '../utils/logger';
+import { getSessionUrl } from '../tools/await-human';
 import {
   bestEffortClearSlackThreadStatus,
   bestEffortSlackThreadStatus,
@@ -130,8 +131,13 @@ function runPreview(options: RunChannelOptions): string {
   return options.error !== undefined ? errorMessage(options.error) : 'Agent run failed.';
 }
 
-function approvalUrl(options: RunChannelDisplayOptions): string | undefined {
-  return options.result?.approvalUrl;
+/**
+ * Link to the session page. Every run has a session page, so the card always
+ * links to it — using the approval URL when present (it already carries the
+ * token) and otherwise building the session URL from the id.
+ */
+function sessionUrl(options: RunChannelDisplayOptions): string | undefined {
+  return options.result?.approvalUrl ?? getSessionUrl(options.sessionId);
 }
 
 function buildRunRootBlocks(options: RunChannelDisplayOptions): any[] {
@@ -150,7 +156,7 @@ function buildRunRootBlocks(options: RunChannelDisplayOptions): any[] {
     }] : []),
   ];
 
-  const url = approvalUrl(options);
+  const url = sessionUrl(options);
   return [
     {
       type: 'header',
@@ -163,8 +169,8 @@ function buildRunRootBlocks(options: RunChannelDisplayOptions): any[] {
       type: 'section',
       fields
     }] : []),
-    // Permanent link to the session page rather than a button: it survives
-    // status updates and stays a jump-off point after the run ends.
+    // Permanent link to the session page (every run has one), as a context
+    // link rather than a button so it survives status updates.
     ...(url ? [{
       type: 'context',
       elements: [{

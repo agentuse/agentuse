@@ -45,14 +45,14 @@ function getApprovalBaseUrl(projectRoot?: string): string {
 }
 
 /**
- * Build the clickable link for an await_human gate. Points at the unified
- * session page `/sessions/<id>` and carries the SESSION token
- * (HMAC(AGENTUSE_API_KEY, sessionId)), not the gate resumeToken: one token that
- * grants both view and approve for the whole session. When no api key is set
- * (local bind) there is no token to mint, so the link omits it and the page is
- * fully open. The worker inherits AGENTUSE_API_KEY from the serve process env.
+ * Build the clickable link to a session's unified page `/sessions/<id>`. Carries
+ * the SESSION token (HMAC(AGENTUSE_API_KEY, sessionId)): one token that grants
+ * both view and approve for the whole session. When no api key is set (local
+ * bind) there is no token to mint, so the link omits it and the page is fully
+ * open. The worker inherits AGENTUSE_API_KEY from the serve process env. Used
+ * for both approval gates and run cards — every session has this page.
  */
-export function getApprovalUrl(sessionId: string | undefined, _resumeToken: string, _projectId?: string, projectRoot?: string): string | undefined {
+export function getSessionUrl(sessionId: string | undefined, projectRoot?: string): string | undefined {
   if (!sessionId) return undefined;
   const baseUrl = getApprovalBaseUrl(projectRoot);
   const url = new URL(`${baseUrl.replace(/\/$/, '')}/sessions/${encodeURIComponent(sessionId)}`);
@@ -95,7 +95,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       const timeoutMs = parseTimeout(defaults?.timeout);
       const expiresAt = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
       const resumeToken = randomBytes(24).toString('base64url');
-      const approvalUrl = getApprovalUrl(sessionId, resumeToken, undefined, defaults?.projectRoot);
+      const approvalUrl = getSessionUrl(sessionId, defaults?.projectRoot);
 
       let channelRequest: { type: 'slack-message'; channel: string } | undefined;
       if (defaults?.slack) {
