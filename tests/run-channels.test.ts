@@ -202,7 +202,9 @@ describe('run channels', () => {
     expect(runningText).toContain('running');
     expect(suspendedText).toContain('AgentUse run waiting for approval');
     expect(suspendedText).toContain('suspended');
-    expect(suspendedText).toContain('Review approval');
+    // Permanent web UI link instead of a Review approval button.
+    expect(suspended.some((block: any) => block.type === 'actions')).toBe(false);
+    expect(suspendedText).toContain('Open in AgentUse web UI');
   });
 
   it('renders completion thread messages with full answer and run details', () => {

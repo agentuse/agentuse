@@ -183,6 +183,7 @@ function encodeActionValue(options: {
   sessionId?: string;
   projectId?: string;
   agentName?: string;
+  approvalUrl?: string;
   rootChannelId?: string;
   rootMessageTs?: string;
   prompt?: string;
@@ -193,6 +194,7 @@ function encodeActionValue(options: {
     ...(options.sessionId && { sessionId: options.sessionId }),
     ...(options.projectId && { projectId: options.projectId }),
     ...(options.agentName && { agentName: truncate(options.agentName, 120) }),
+    ...(options.approvalUrl && { approvalUrl: options.approvalUrl }),
     ...(options.rootChannelId && { rootChannelId: options.rootChannelId }),
     ...(options.rootMessageTs && { rootMessageTs: options.rootMessageTs }),
     ...(options.prompt && { prompt: truncate(options.prompt, 500) }),
@@ -205,6 +207,7 @@ function parseActionValue(value: unknown): {
   sessionId: string;
   projectId?: string;
   agentName?: string;
+  approvalUrl?: string;
   rootChannelId?: string;
   rootMessageTs?: string;
   prompt?: string;
@@ -218,6 +221,7 @@ function parseActionValue(value: unknown): {
     sessionId?: unknown;
     projectId?: unknown;
     agentName?: unknown;
+    approvalUrl?: unknown;
     rootChannelId?: unknown;
     rootMessageTs?: unknown;
     prompt?: unknown;
@@ -237,6 +241,7 @@ function parseActionValue(value: unknown): {
     sessionId: parsed.sessionId,
     ...(typeof parsed.projectId === 'string' && parsed.projectId.length > 0 && { projectId: parsed.projectId }),
     ...(typeof parsed.agentName === 'string' && parsed.agentName.length > 0 && { agentName: parsed.agentName }),
+    ...(typeof parsed.approvalUrl === 'string' && parsed.approvalUrl.length > 0 && { approvalUrl: parsed.approvalUrl }),
     ...(typeof parsed.rootChannelId === 'string' && parsed.rootChannelId.length > 0 && { rootChannelId: parsed.rootChannelId }),
     ...(typeof parsed.rootMessageTs === 'string' && parsed.rootMessageTs.length > 0 && { rootMessageTs: parsed.rootMessageTs }),
     ...(typeof parsed.prompt === 'string' && parsed.prompt.length > 0 && { prompt: parsed.prompt }),
@@ -259,6 +264,7 @@ function buildStatusBlocks(options: {
   prompt: string;
   sessionId?: string;
   agentName?: string;
+  approvalUrl?: string;
   decision?: string;
   reviewer?: SlackApprovalDecision['toolResult']['reviewer'];
   durationMs?: number;
@@ -330,6 +336,10 @@ function buildStatusBlocks(options: {
         text: `*Error*\n\`\`\`${truncate(message, 2500)}\`\`\``
       }
     });
+  }
+
+  if (options.approvalUrl) {
+    blocks.push(webUiLinkBlock(options.approvalUrl));
   }
 
   return blocks;
@@ -482,6 +492,7 @@ function buildActionBlocks(request: SlackApprovalRequest & { rootChannelId?: str
         ...(request.sessionId && { sessionId: request.sessionId }),
         ...(request.projectId && { projectId: request.projectId }),
         ...(request.agentName && { agentName: request.agentName }),
+        ...(request.approvalUrl && { approvalUrl: request.approvalUrl }),
         ...(request.rootChannelId && { rootChannelId: request.rootChannelId }),
         ...(request.rootMessageTs && { rootMessageTs: request.rootMessageTs }),
         prompt: request.prompt,
@@ -538,19 +549,23 @@ function buildReviewLinkBlocks(request: SlackApprovalRequest): any[] {
       type: 'section',
       fields
     },
-    ...(request.approvalUrl ? [{
-      type: 'actions',
-      elements: [{
-        type: 'button',
-        text: {
-          type: 'plain_text',
-          text: 'Review approval'
-        },
-        url: request.approvalUrl,
-        style: 'primary'
-      }]
-    }] : [])
+    ...(request.approvalUrl ? [webUiLinkBlock(request.approvalUrl)] : [])
   ];
+}
+
+/**
+ * Permanent link to the session page on the root card. A link (unlike the old
+ * waiting-only button) survives every status update, so the card stays a
+ * jump-off point to the session after the decision is made.
+ */
+function webUiLinkBlock(approvalUrl: string): any {
+  return {
+    type: 'context',
+    elements: [{
+      type: 'mrkdwn',
+      text: `<${approvalUrl}|Open in AgentUse web UI>`
+    }]
+  };
 }
 
 function buildApprovalThreadMessages(
@@ -623,18 +638,7 @@ function buildReviewStatusBlocks(options: {
         text: `*Error*\n\`\`\`${truncate(String(error), 2500)}\`\`\``
       }
     }] : []),
-    ...(options.approvalUrl && options.status === 'waiting' ? [{
-      type: 'actions',
-      elements: [{
-        type: 'button',
-        text: {
-          type: 'plain_text',
-          text: 'Review approval'
-        },
-        url: options.approvalUrl,
-        style: 'primary'
-      }]
-    }] : [])
+    ...(options.approvalUrl ? [webUiLinkBlock(options.approvalUrl)] : [])
   ];
 }
 
@@ -1320,7 +1324,7 @@ export class SlackApprovalSocket {
     });
   }
 
-  private rootTarget(body: any, value: ReturnType<typeof parseActionValue>): { channel: string; ts: string; prompt: string; sessionId: string; agentName?: string } | null {
+  private rootTarget(body: any, value: ReturnType<typeof parseActionValue>): { channel: string; ts: string; prompt: string; sessionId: string; agentName?: string; approvalUrl?: string } | null {
     const channel = value.rootChannelId
       ?? (typeof body?.channel?.id === 'string' ? body.channel.id : undefined);
     const ts = value.rootMessageTs
@@ -1332,12 +1336,13 @@ export class SlackApprovalSocket {
       ts,
       prompt: value.prompt ?? 'Approval request',
       sessionId: value.sessionId,
-      ...(value.agentName && { agentName: value.agentName })
+      ...(value.agentName && { agentName: value.agentName }),
+      ...(value.approvalUrl && { approvalUrl: value.approvalUrl })
     };
   }
 
   private async updateRootMessage(
-    target: { channel: string; ts: string; prompt: string; sessionId: string; agentName?: string },
+    target: { channel: string; ts: string; prompt: string; sessionId: string; agentName?: string; approvalUrl?: string },
     options: {
       phase: 'resuming' | 'completed' | 'failed';
       decision: string;
@@ -1358,6 +1363,7 @@ export class SlackApprovalSocket {
         prompt: target.prompt,
         sessionId: target.sessionId,
         ...(target.agentName && { agentName: target.agentName }),
+        ...(target.approvalUrl && { approvalUrl: target.approvalUrl }),
         decision: options.decision,
         ...(options.reviewer && { reviewer: options.reviewer }),
         ...(options.durationMs !== undefined && { durationMs: options.durationMs }),

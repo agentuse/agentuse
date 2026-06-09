@@ -61,16 +61,13 @@ describe('Slack approval blocks', () => {
 
     const blocks = __testing.buildReviewLinkBlocks(request);
     const text = JSON.stringify(blocks);
-    const actionsBlock = blocks.find((block: any) => block.type === 'actions') as any;
 
     expect(text).toContain('Approve this deployment?');
     expect(text).toContain('project-1');
     expect(text).not.toContain('Release candidate v1.2.3');
-    expect(actionsBlock.elements).toHaveLength(1);
-    expect(actionsBlock.elements[0]).toMatchObject({
-      type: 'button',
-      url: request.approvalUrl
-    });
+    // No action button — a permanent link to the web UI instead.
+    expect(blocks.some((block: any) => block.type === 'actions')).toBe(false);
+    expect(text).toContain(`<${request.approvalUrl}|Open in AgentUse web UI>`);
   });
 
   it('omits expiration from compact Slack messages when approval is unlimited', () => {
@@ -184,6 +181,9 @@ describe('Slack approval blocks', () => {
     expect(text).toContain('AgentUse approval completed');
     expect(text).toContain('approve');
     expect(text).not.toContain('Review approval');
+    // Permanent web UI link survives past the waiting state (no action button).
+    expect(blocks.some((block: any) => block.type === 'actions')).toBe(false);
+    expect(text).toContain('Open in AgentUse web UI');
   });
 
   it('leads the card title with the agent name when available', () => {

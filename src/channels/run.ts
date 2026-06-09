@@ -146,6 +146,7 @@ function buildRunRootBlocks(options: RunChannelDisplayOptions): any[] {
     }] : []),
   ];
 
+  const url = approvalUrl(options);
   return [
     {
       type: 'header',
@@ -158,16 +159,13 @@ function buildRunRootBlocks(options: RunChannelDisplayOptions): any[] {
       type: 'section',
       fields
     },
-    ...(approvalUrl(options) ? [{
-      type: 'actions',
+    // Permanent link to the session page rather than a button: it survives
+    // status updates and stays a jump-off point after the run ends.
+    ...(url ? [{
+      type: 'context',
       elements: [{
-        type: 'button',
-        text: {
-          type: 'plain_text',
-          text: 'Review approval'
-        },
-        url: approvalUrl(options),
-        style: 'primary'
+        type: 'mrkdwn',
+        text: `<${url}|Open in AgentUse web UI>`
       }]
     }] : [])
   ];
