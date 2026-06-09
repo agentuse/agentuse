@@ -1,3 +1,4 @@
+import matter from 'gray-matter';
 import { WORDMARK_SVG } from "./brand";
 
 /**
@@ -153,6 +154,61 @@ export function renderMarkdownBlock(value: string): string {
   const rest = value.slice(cursor);
   if (rest.trim()) html.push(renderMarkdownTextBlock(rest));
   return `<div class="content-markdown">${html.join('')}</div>`;
+}
+
+/** Render a single (non-array) frontmatter value: links stay clickable, dates
+ *  normalize to ISO, nested objects fall back to compact JSON. */
+function formatFrontmatterScalar(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '<span class="fm-empty">(empty)</span>';
+  }
+  if (value instanceof Date) return escapeHtml(value.toISOString());
+  if (typeof value === 'object') {
+    return `<code>${escapeHtml(JSON.stringify(value))}</code>`;
+  }
+  const text = String(value);
+  if (/^https?:\/\/\S+$/.test(text)) {
+    return `<a href="${escapeHtml(text)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`;
+  }
+  return escapeHtml(text);
+}
+
+function formatFrontmatterValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '<span class="fm-empty">(empty)</span>';
+    return value.map(item => `<span class="fm-chip">${formatFrontmatterScalar(item)}</span>`).join(' ');
+  }
+  return formatFrontmatterScalar(value);
+}
+
+/** Render parsed YAML frontmatter as a compact metadata table. Returns an empty
+ *  string when there is nothing to show so callers can omit it cleanly. */
+export function renderFrontmatterTable(data: Record<string, unknown>): string {
+  const entries = Object.entries(data ?? {});
+  if (entries.length === 0) return '';
+  const rows = entries
+    .map(([key, value]) => `<tr><th>${escapeHtml(key)}</th><td>${formatFrontmatterValue(value)}</td></tr>`)
+    .join('');
+  return `<table class="content-frontmatter"><tbody>${rows}</tbody></table>`;
+}
+
+/**
+ * Render a markdown document for artifact preview: split off any YAML
+ * frontmatter into a metadata table, then render the remaining body. Malformed
+ * frontmatter falls back to rendering the raw source so nothing is dropped.
+ */
+export function renderMarkdownArtifact(raw: string): string {
+  let data: Record<string, unknown> = {};
+  let content = raw;
+  try {
+    const parsed = matter(raw);
+    data = (parsed.data ?? {}) as Record<string, unknown>;
+    content = parsed.content;
+  } catch {
+    data = {};
+    content = raw;
+  }
+  return `${renderFrontmatterTable(data)}${renderMarkdownBlock(content)}`;
 }
 
 function isReadableJsonString(value: string): boolean {

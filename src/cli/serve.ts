@@ -39,7 +39,7 @@ import {
   formatLogTime,
   renderInlineMarkdown,
   renderLogContentValue,
-  renderMarkdownBlock,
+  renderMarkdownArtifact,
   valueAsRecord,
   normalizeApiPath
 } from "./serve/ui";
@@ -926,12 +926,19 @@ const ARTIFACT_RAW_MIME: Record<string, string> = {
 
 /**
  * Wrap rendered artifact body (markdown/text/json) in a standalone themed HTML
- * document so it looks right inside the popup iframe. The iframe has its own
- * document and cannot read the page's localStorage theme, so colors follow
- * prefers-color-scheme instead.
+ * document so it looks right inside the popup iframe. The iframe is sandboxed
+ * with scripts disabled, so it cannot detect the theme client-side: the parent
+ * page passes its resolved theme via `?theme=`, which we bake into `data-theme`
+ * here. When no theme is supplied (e.g. opened directly), default to dark and
+ * let the progressive-enhancement script follow prefers-color-scheme in a real
+ * (non-sandboxed) tab.
  */
-function renderArtifactDocument(title: string, bodyHtml: string): string {
-  return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+function renderArtifactDocument(title: string, bodyHtml: string, theme?: string): string {
+  const resolved = theme === 'light' || theme === 'dark' ? theme : null;
+  const themeScript = resolved
+    ? ''
+    : `<script>(function(){try{var m=window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches;document.documentElement.setAttribute('data-theme',m?'light':'dark');}catch(e){}})();</script>`;
+  return `<!doctype html><html data-theme="${resolved ?? 'dark'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <style>
 ${approvalListThemeStyles()}
@@ -942,10 +949,17 @@ body { margin: 0; padding: 20px; font-family: var(--sans); color: var(--fg); bac
 .content-markdown code { font-family: var(--mono); background: var(--panel-hover); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; }
 .content-markdown pre.content-code { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow: auto; }
 .content-markdown pre.content-code code { background: transparent; border: 0; padding: 0; }
+.content-frontmatter { border-collapse: collapse; margin: 0 0 24px; width: 100%; font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.content-frontmatter th { text-align: left; vertical-align: top; padding: 7px 12px; color: var(--muted); font-weight: 600; white-space: nowrap; width: 1%; }
+.content-frontmatter td { padding: 7px 12px; color: var(--fg); overflow-wrap: anywhere; }
+.content-frontmatter tr + tr th, .content-frontmatter tr + tr td { border-top: 1px solid var(--line); }
+.content-frontmatter td code { font-family: var(--mono); }
+.fm-chip { display: inline-block; background: var(--panel-hover); border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; margin: 1px 2px; font-size: 12px; }
+.fm-empty { color: var(--muted); }
 pre.artifact-raw { font-family: var(--mono); font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); }
 img { max-width: 100%; height: auto; }
 </style>
-<script>(function(){try{var m=window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches;document.documentElement.setAttribute('data-theme',m?'light':'dark');}catch(e){}})();</script>
+${themeScript}
 </head><body>${bodyHtml}</body></html>`;
 }
 
@@ -957,7 +971,7 @@ img { max-width: 100%; height: auto; }
  * pointing the gate at them. Text/markdown render to a themed doc; html/images/
  * pdf are streamed raw for the iframe to display; everything else downloads.
  */
-function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath: string): void {
+function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath: string, theme?: string): void {
   const decoded = (() => { try { return decodeURIComponent(rawPath); } catch { return rawPath; } })();
   const resolved = resolve(projectRoot, decoded);
   if (!isPathInside(projectRoot, resolved)) {
@@ -994,13 +1008,13 @@ function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath:
     return;
   }
   if (ext === '.md' || ext === '.markdown') {
-    sendHTML(res, 200, renderArtifactDocument(title, renderMarkdownBlock(readFileSync(resolved, 'utf8'))));
+    sendHTML(res, 200, renderArtifactDocument(title, renderMarkdownArtifact(readFileSync(resolved, 'utf8')), theme));
     return;
   }
   const textExts = new Set(['.txt', '.log', '.json', '.csv', '.yaml', '.yml', '.xml', '.ts', '.js', '.py', '.sh', '']);
   if (textExts.has(ext)) {
     const body = `<pre class="artifact-raw">${escapeHtml(readFileSync(resolved, 'utf8'))}</pre>`;
-    sendHTML(res, 200, renderArtifactDocument(title, body));
+    sendHTML(res, 200, renderArtifactDocument(title, body, theme));
     return;
   }
   // Unknown binary type: hand it to the browser as a download rather than guess.
@@ -5041,15 +5055,24 @@ function renderSessionPage(options: SessionPageOptions): string {
       if (frame) frame.removeAttribute('src');
       document.body.style.overflow = '';
     }
+    // The artifact iframe is script-sandboxed and can't read this page's theme,
+    // so stamp the resolved theme onto the URL for the server to honor.
+    function withArtifactTheme(url) {
+      const theme = document.documentElement.getAttribute('data-theme');
+      if (theme !== 'light' && theme !== 'dark') return url;
+      const sep = url.indexOf('?') === -1 ? '?' : '&';
+      return url + sep + 'theme=' + theme;
+    }
     function openArtifactModal(url, title) {
       const modal = document.getElementById('artifact-modal');
       const frame = document.getElementById('artifact-modal-frame');
       const titleEl = document.getElementById('artifact-modal-title');
       const openEl = document.getElementById('artifact-modal-open');
       if (!modal || !frame) return;
+      const themedUrl = withArtifactTheme(url);
       if (titleEl) titleEl.textContent = title || 'Artifact';
-      if (openEl) openEl.setAttribute('href', url);
-      frame.setAttribute('src', url);
+      if (openEl) openEl.setAttribute('href', themedUrl);
+      frame.setAttribute('src', themedUrl);
       modal.hidden = false;
       document.body.style.overflow = 'hidden';
     }
@@ -6872,7 +6895,7 @@ export function createServeCommand(): Command {
             sendHTML(res, found.status, `<!doctype html><title>Artifact</title><p>${escapeHtml(found.message)}</p>`);
             return;
           }
-          serveSessionArtifact(res, found.project.root, sessionArtifactMatch[2]);
+          serveSessionArtifact(res, found.project.root, sessionArtifactMatch[2], requestUrl.searchParams.get('theme') ?? undefined);
           return;
         }
 

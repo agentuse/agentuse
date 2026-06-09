@@ -123,6 +123,68 @@ describe('serveSessionArtifact', () => {
     }
   });
 
+  it('renders YAML frontmatter as a metadata table above the body', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
+    try {
+      mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
+      writeFileSync(
+        join(root, '.agentuse/artifacts/report.md'),
+        '---\ntitle: Weekly Report\ntags:\n  - ops\n  - finance\n---\n\n# Body\n\nHello world.\n',
+      );
+      const { res, captured } = fakeResponse();
+      __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/report.md');
+      expect(captured.status).toBe(200);
+      // Frontmatter becomes a table, not raw `---` paragraphs.
+      expect(captured.body).toContain('class="content-frontmatter"');
+      expect(captured.body).toContain('<th>title</th>');
+      expect(captured.body).toContain('Weekly Report');
+      expect(captured.body).toContain('class="fm-chip"');
+      expect(captured.body).toContain('ops');
+      // The body still renders normally and the delimiters are gone from prose.
+      expect(captured.body).toContain('<h2>Body</h2>');
+      expect(captured.body).not.toContain('<p>---</p>');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('renders markdown without frontmatter unchanged', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
+    try {
+      mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
+      writeFileSync(join(root, '.agentuse/artifacts/plain.md'), '# Hello\n\nNo frontmatter here.\n');
+      const { res, captured } = fakeResponse();
+      __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/plain.md');
+      expect(captured.status).toBe(200);
+      // The CSS class is defined in <style>, but no table element is emitted.
+      expect(captured.body).not.toContain('<table class="content-frontmatter">');
+      expect(captured.body).toContain('<h2>Hello</h2>');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('bakes the passed theme into data-theme and drops the detection script', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
+    try {
+      mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
+      writeFileSync(join(root, '.agentuse/artifacts/report.md'), '# Hi\n');
+
+      const light = fakeResponse();
+      __testing.serveSessionArtifact(light.res, root, '.agentuse/artifacts/report.md', 'light');
+      expect(light.captured.body).toContain('<html data-theme="light">');
+      expect(light.captured.body).not.toContain('prefers-color-scheme');
+
+      // No/invalid theme falls back to dark with the progressive-enhancement script.
+      const none = fakeResponse();
+      __testing.serveSessionArtifact(none.res, root, '.agentuse/artifacts/report.md');
+      expect(none.captured.body).toContain('<html data-theme="dark">');
+      expect(none.captured.body).toContain('prefers-color-scheme');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('serves an html artifact raw for the iframe', () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {
