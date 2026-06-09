@@ -925,6 +925,29 @@ const ARTIFACT_RAW_MIME: Record<string, string> = {
 };
 
 /**
+ * CSP for script-capable artifacts shown in the (allow-scripts, opaque-origin)
+ * preview iframe. Inline script/style is permitted so self-contained dashboards
+ * and charts render, but `connect-src 'none'` cuts every network egress path
+ * (fetch/XHR/WebSocket/beacon), so a malicious artifact cannot exfiltrate data
+ * or pull in remote code. No external script/style hosts: artifacts must inline
+ * their own libraries. `base-uri`/`form-action 'none'` block relative-URL and
+ * form-submission hijacks.
+ */
+const ARTIFACT_HTML_CSP =
+  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+  "img-src 'self' data:; font-src 'self' data:; media-src 'self' data:; " +
+  "connect-src 'none'; base-uri 'none'; form-action 'none'";
+
+/**
+ * CSP for SVG artifacts. SVG can carry inline <script>, and the preview iframe
+ * now allows scripts, so block script execution entirely here (default-src
+ * 'none' with no script-src) while still letting static SVG with inline styles
+ * and embedded data: images render.
+ */
+const ARTIFACT_SVG_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'none'";
+
+/**
  * Wrap rendered artifact body (markdown/text/json) in a standalone themed HTML
  * document so it looks right inside the popup iframe. The iframe is sandboxed
  * with scripts disabled, so it cannot detect the theme client-side: the parent
@@ -939,6 +962,7 @@ function renderArtifactDocument(title: string, bodyHtml: string, theme?: string)
     ? ''
     : `<script>(function(){try{var m=window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches;document.documentElement.setAttribute('data-theme',m?'light':'dark');}catch(e){}})();</script>`;
   return `<!doctype html><html data-theme="${resolved ?? 'dark'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_HTML_CSP}">
 <title>${escapeHtml(title)}</title>
 <style>
 ${approvalListThemeStyles()}
@@ -1003,7 +1027,14 @@ function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath:
   const title = basename(resolved);
   const rawMime = ARTIFACT_RAW_MIME[ext];
   if (rawMime) {
-    res.writeHead(200, { 'Content-Type': rawMime, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    const headers: Record<string, string> = {
+      'Content-Type': rawMime,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    };
+    if (rawMime.startsWith('text/html')) headers['Content-Security-Policy'] = ARTIFACT_HTML_CSP;
+    else if (rawMime === 'image/svg+xml') headers['Content-Security-Policy'] = ARTIFACT_SVG_CSP;
+    res.writeHead(200, headers);
     res.end(readFileSync(resolved));
     return;
   }
@@ -3017,7 +3048,7 @@ function renderSessionTimeline(view: SessionTimelineState): string {
         <a class="artifact-modal-open" id="artifact-modal-open" href="#" target="_blank" rel="noopener noreferrer">open in tab ↗</a>
         <button type="button" class="artifact-modal-close" data-artifact-close aria-label="Close preview">×</button>
       </div>
-      <iframe id="artifact-modal-frame" class="artifact-modal-frame" title="Artifact preview" sandbox referrerpolicy="no-referrer"></iframe>
+      <iframe id="artifact-modal-frame" class="artifact-modal-frame" title="Artifact preview" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
     </div>
   </div>`;
 }
