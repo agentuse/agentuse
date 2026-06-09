@@ -370,6 +370,9 @@ function buildDetailThreadMessages(request: SlackApprovalRequest): Array<{ text:
 }
 
 function buildActionThreadMessage(request: SlackApprovalRequest & { rootChannelId: string; rootMessageTs: string }): { text: string; blocks: any[] } {
+  const webHint = request.approvalUrl
+    ? ` You can also review and decide on the <${request.approvalUrl}|web UI>.`
+    : '';
   return {
     text: `Approval decision: ${request.prompt}`,
     blocks: [
@@ -377,7 +380,7 @@ function buildActionThreadMessage(request: SlackApprovalRequest & { rootChannelI
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: '*Decision*\nApprove or reject below, or reply in this thread to send a comment.'
+          text: `*Decision*\nApprove or reject below, or reply in this thread to send a comment.${webHint}`
         }
       },
       ...buildActionBlocks(request)

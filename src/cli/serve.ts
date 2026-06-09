@@ -6108,8 +6108,7 @@ export function createServeCommand(): Command {
 
       const postSlackApprovalThreadNote = (
         approval: ApprovalSummary,
-        message: string,
-        approvalUrl?: string
+        message: string
       ): void => {
         if (
           !slackBotToken ||
@@ -6130,23 +6129,9 @@ export function createServeCommand(): Command {
               type: 'section',
               text: {
                 type: 'mrkdwn',
-                text: approvalUrl
-                  ? `*AgentUse processed your comment.*\nThe agent updated the work and requested another approval.`
-                  : `*AgentUse processed your comment.*\nThe agent continued after receiving the feedback.`
+                text: `*AgentUse processed your comment.*\nThe agent continued after receiving the feedback.`
               }
-            },
-            ...(approvalUrl ? [{
-              type: 'actions',
-              elements: [{
-                type: 'button',
-                text: {
-                  type: 'plain_text',
-                  text: 'Review latest approval'
-                },
-                url: approvalUrl,
-                style: 'primary'
-              }]
-            }] : [])
+            }
           ] as any[]
         }).catch((err) => logger.warn(`Slack approval thread note failed: ${(err as Error).message}`));
       };
@@ -6310,13 +6295,16 @@ export function createServeCommand(): Command {
                   : undefined;
                 const nextApprovalUrl = nextApproval?.channelMessage?.url ?? resumeResult.result.approvalUrl;
                 updateSlackThreadApprovalStatus(project, approval, 'completed', 'comment');
-                postSlackApprovalThreadNote(
-                  approval,
-                  nextApprovalUrl
-                    ? 'AgentUse processed your comment and requested another approval.'
-                    : 'AgentUse processed your comment and continued the session.',
-                  nextApprovalUrl
-                );
+                // When another approval was requested, its Decision message has
+                // already been posted to this thread and should stay the last,
+                // actionable item — don't bury it under a status note. Only
+                // note the outcome when the agent continued without a new gate.
+                if (!nextApprovalUrl) {
+                  postSlackApprovalThreadNote(
+                    approval,
+                    'AgentUse processed your comment and continued the session.'
+                  );
+                }
                 return;
               }
 
