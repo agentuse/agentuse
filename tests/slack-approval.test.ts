@@ -1,6 +1,49 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import { __testing } from '../src/slack/approval';
 
+describe('markdownToMrkdwn', () => {
+  const convert = (s: string) => __testing.markdownToMrkdwn(s);
+
+  it('converts bold, italic, and strikethrough to mrkdwn forms', () => {
+    expect(convert('a **bold** word')).toBe('a *bold* word');
+    expect(convert('a __bold__ word')).toBe('a *bold* word');
+    expect(convert('an *italic* word')).toBe('an _italic_ word');
+    expect(convert('***both***')).toBe('*_both_*');
+    expect(convert('~~gone~~')).toBe('~gone~');
+  });
+
+  it('converts links and images to mrkdwn links', () => {
+    expect(convert('[site](https://example.com)')).toBe('<https://example.com|site>');
+    expect(convert('![alt](https://example.com/i.png)')).toBe('<https://example.com/i.png|alt>');
+  });
+
+  it('converts headings to bold lines without re-italicizing them', () => {
+    expect(convert('## Section title')).toBe('*Section title*');
+  });
+
+  it('converts bullet markers and leaves numbered lists alone', () => {
+    expect(convert('- one\n* two\n  - nested\n1. first')).toBe('• one\n• two\n  • nested\n1. first');
+  });
+
+  it('leaves code spans and fenced blocks untouched', () => {
+    expect(convert('use `**not bold**` here')).toBe('use `**not bold**` here');
+    expect(convert('```\n**raw** [x](https://example.com)\n```')).toBe('```\n**raw** [x](https://example.com)\n```');
+  });
+
+  it('handles bold containing inline code', () => {
+    expect(convert('**run `cmd` now**')).toBe('*run `cmd` now*');
+  });
+
+  it('wraps markdown tables in code fences for alignment', () => {
+    const table = '| a | b |\n| - | - |\n| 1 | 2 |\n';
+    expect(convert(table)).toBe('```\n| a | b |\n| - | - |\n| 1 | 2 |\n```\n');
+  });
+
+  it('does not corrupt text containing bare numbers', () => {
+    expect(convert('**bold** with 0 and 1 numbers')).toBe('*bold* with 0 and 1 numbers');
+  });
+});
+
 describe('Slack approval blocks', () => {
   it('renders the default Slack message as a compact review link', () => {
     const request = {

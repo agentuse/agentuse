@@ -398,12 +398,58 @@ function isActionThreadMessage(message: { blocks?: any[] }): boolean {
   ) ?? false;
 }
 
+/**
+ * Convert agent-authored Markdown to Slack mrkdwn, which uses a different
+ * syntax: *bold* (single asterisks), _italic_, ~strike~, <url|text> links, no
+ * headings, no table rendering. Without this, drafts show literal ** and []().
+ */
+function markdownToMrkdwn(input: string): string {
+  // Stash segments that must not be rewritten (code) or re-matched by later
+  // passes (already-converted emphasis). Restored in reverse order so outer
+  // segments resolve before the inner segments they contain.
+  const stash: string[] = [];
+  const protect = (segment: string): string => `\u0000${stash.push(segment) - 1}\u0000`;
+
+  let text = input
+    .replace(/```[\s\S]*?```/g, protect)
+    .replace(/`[^`\n]+`/g, protect);
+
+  // Links and images: [text](url) -> <url|text>
+  text = text.replace(/!?\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, (_, label: string, url: string) =>
+    protect(label ? `<${url}|${label}>` : `<${url}>`));
+
+  // Headings -> bold lines (protected so the italic pass can't re-match them)
+  text = text.replace(/^#{1,6}\s+(.+)$/gm, (_, heading: string) => protect(`*${heading.trim()}*`));
+
+  // Bullet lists -> • (before emphasis, so a line-start "* " is not italics)
+  text = text.replace(/^(\s*)[-*+]\s+/gm, '$1• ');
+
+  // Emphasis. Bold first (protected), then the remaining single-* italics.
+  text = text.replace(/\*\*\*([^*]+)\*\*\*/g, (_, s: string) => protect(`*_${s}_*`));
+  text = text.replace(/\*\*([^*]+)\*\*/g, (_, s: string) => protect(`*${s}*`));
+  text = text.replace(/__([^_]+)__/g, (_, s: string) => protect(`*${s}*`));
+  text = text.replace(/(^|[^\w*])\*([^*\n]+)\*(?![\w*])/g, (_, pre: string, s: string) => `${pre}${protect(`_${s}_`)}`);
+
+  // Strikethrough
+  text = text.replace(/~~([^~]+)~~/g, '~$1~');
+
+  // Markdown tables have no Slack rendering; show them monospaced so the
+  // column alignment survives. Matches 2+ consecutive |-prefixed lines.
+  text = text.replace(/(^\|.+\|[ \t]*\n(?:^\|.+\|[ \t]*\n?)+)/gm, (table: string) =>
+    `\`\`\`\n${table.trimEnd()}\n\`\`\`\n`);
+
+  for (let i = stash.length - 1; i >= 0; i--) {
+    text = text.replace(`\u0000${i}\u0000`, () => stash[i]);
+  }
+  return text;
+}
+
 function sectionBlock(title: string, value: string, maxLength: number): any {
   return {
     type: 'section',
     text: {
       type: 'mrkdwn',
-      text: `*${title}*\n${truncate(value, maxLength)}`
+      text: `*${title}*\n${truncate(markdownToMrkdwn(value), maxLength)}`
     }
   };
 }
@@ -585,6 +631,7 @@ function buildReviewStatusBlocks(options: {
 export const __testing = {
   buildActionBlocks,
   buildActionThreadMessage,
+  markdownToMrkdwn,
   buildApprovalThreadMessages,
   buildDetailThreadMessages,
   buildReviewLinkBlocks,
