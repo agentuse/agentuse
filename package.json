@@ -46,6 +46,7 @@
     "build:js": "bun build ./src/index.ts --outdir ./dist --target node --format esm --splitting --sourcemap --packages external",
     "build": "bun run clean && bun run build:js && chmod +x bin/cli.js",
     "watch": "bun build ./src/index.ts --outdir ./dist --target node --format esm --splitting --sourcemap --packages external --watch",
+    "dev:serve": "bun --watch src/index.ts serve",
     "link": "npm link",
     "unlink": "npm unlink",
     "test": "bun test tests/plugin-manager.test.ts && bun test $(ls tests/*.test.ts | grep -v plugin-manager)",
