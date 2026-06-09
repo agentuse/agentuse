@@ -24,6 +24,17 @@ export function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Serialize a value as a JSON literal safe to embed inside an inline <script>.
+ * JSON.stringify does not escape the closing-script sequence or comment opener,
+ * so a string carrying either would terminate the script element early (breaking
+ * the page) or inject markup (stored XSS). Escaping every '<' to its backslash-u
+ * form keeps the JSON valid while making those sequences inert to the HTML parser.
+ */
+export function jsonForScript(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
 export function formatApprovalTime(value?: number): string {
   return value ? new Date(value).toLocaleString() : 'Unknown';
 }

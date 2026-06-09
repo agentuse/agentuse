@@ -35,6 +35,7 @@ import {
   approvalsTopbarMarkup,
   approvalsTopbarStyles,
   escapeHtml,
+  jsonForScript,
   formatApprovalTime,
   formatLogTime,
   renderInlineMarkdown,
@@ -2086,7 +2087,7 @@ function renderStoreItemsPage(options: {
   <script>
     ${approvalsThemeToggleScript()}
     ${sortableStoreTableScript()}
-    const highlight = ${JSON.stringify(options.highlight ?? null)};
+    const highlight = ${jsonForScript(options.highlight ?? null)};
     if (highlight && window.CSS && CSS.escape) {
       const row = document.querySelector('[data-store-item-id="' + CSS.escape(highlight) + '"]');
       if (row) requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
@@ -4182,18 +4183,18 @@ function renderSessionPage(options: SessionPageOptions): string {
   })}
 
   <script>
-    const token = ${JSON.stringify(token)};
-    const project = ${JSON.stringify(projectId)};
-    const ARTIFACT_ICON_SVG = ${JSON.stringify(ARTIFACT_ICON_SVG)};
+    const token = ${jsonForScript(token)};
+    const project = ${jsonForScript(projectId)};
+    const ARTIFACT_ICON_SVG = ${jsonForScript(ARTIFACT_ICON_SVG)};
     // The active gate's resumeToken at page render. Each await_human gate mints
     // a fresh token; if the page was opened on gate N's URL but the agent has
     // moved on to gate N+1, this rotates and refreshStatus redirects to the new
     // approval URL. /decision is sent with the current token, not the URL token,
     // so it stays valid across gates within the same session.
-    let currentResumeToken = ${JSON.stringify(approval.currentResumeToken ?? token)};
-    let pendingActionable = ${JSON.stringify(actionable)};
-    let continueActionable = ${JSON.stringify(continueActionable)};
-    let stopActionable = ${JSON.stringify(stopActionable)};
+    let currentResumeToken = ${jsonForScript(approval.currentResumeToken ?? token)};
+    let pendingActionable = ${jsonForScript(actionable)};
+    let continueActionable = ${jsonForScript(continueActionable)};
+    let stopActionable = ${jsonForScript(stopActionable)};
     const statusEl = document.querySelector('.status');
     const logsEl = document.getElementById('logs');
     const reviewerCommentEl = document.getElementById('reviewer-comment');
@@ -4360,7 +4361,7 @@ function renderSessionPage(options: SessionPageOptions): string {
     // so we merge by id instead of overwriting.
     const renderedLogs = new Map();
     const expandedLogIds = new Set();
-    const initialEntries = ${JSON.stringify(initialLogs)};
+    const initialEntries = ${jsonForScript(initialLogs)};
     for (const entry of initialEntries) {
       if (entry && entry.id != null) renderedLogs.set(String(entry.id), entry);
     }
