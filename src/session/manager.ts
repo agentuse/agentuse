@@ -164,6 +164,25 @@ export class SessionManager {
     const results: SessionEntry[] = [];
 
     for (const dir of dirs) {
+      const dirName = path.basename(dir);
+
+      // Fast path for date-windowed scans: the directory is named
+      // `${sessionID}-${agentId}` and sessionID is a (hyphen-free, 26-char) ULID,
+      // so decode its creation time straight from the name and skip the
+      // `session.json` read entirely for sessions older than the window. With
+      // thousands of accumulated sessions this avoids reading every file on each
+      // dashboard load. Behavior-preserving: when the name's ULID decodes below
+      // the cutoff, `session.id` (the same string) decodes identically, so the
+      // file-based check below would skip it too. Malformed names throw in
+      // decodeTime and fall through to the original read-and-check path.
+      if (options.createdAfter !== undefined) {
+        try {
+          if (decodeTime(dirName.split('-')[0]) < options.createdAfter) continue;
+        } catch {
+          // Not a decodable ULID prefix; fall through and read the file.
+        }
+      }
+
       const session = await readJSON<SessionInfo>(`${dir}/session`);
       if (!session) continue;
       if (options.createdAfter !== undefined) {
@@ -173,7 +192,6 @@ export class SessionManager {
           if (session.time.created < options.createdAfter) continue;
         }
       }
-      const dirName = path.basename(dir);
       const prefix = `${session.id}-`;
       const agentId = dirName.startsWith(prefix)
         ? dirName.slice(prefix.length)
