@@ -169,7 +169,8 @@ describe('run channels', () => {
     });
     const text = JSON.stringify(blocks);
 
-    expect(text).toContain('AgentUse run completed');
+    expect(text).toContain('channel-test');
+    expect(text).toContain('run completed');
     expect(text).toContain('session-1');
     expect(text).not.toContain('The launch announcement is ready.');
     expect(text).not.toContain('Tool calls');
@@ -198,10 +199,11 @@ describe('run channels', () => {
     const runningText = JSON.stringify(running);
     const suspendedText = JSON.stringify(suspended);
 
-    expect(runningText).toContain('AgentUse run started');
-    expect(runningText).toContain('running');
-    expect(suspendedText).toContain('AgentUse run waiting for approval');
-    expect(suspendedText).toContain('suspended');
+    // Agent name leads the title; status lives in the title, not a field.
+    expect(runningText).toContain('channel-test');
+    expect(runningText).toContain('run started');
+    expect(suspendedText).toContain('channel-test');
+    expect(suspendedText).toContain('run waiting for approval');
     // Permanent web UI link instead of a Review approval button.
     expect(suspended.some((block: any) => block.type === 'actions')).toBe(false);
     expect(suspendedText).toContain('Open in AgentUse web UI');
@@ -244,7 +246,8 @@ describe('run channels', () => {
     });
     const text = JSON.stringify(blocks);
 
-    expect(text).toContain('AgentUse run failed');
+    expect(text).toContain('channel-test');
+    expect(text).toContain('run failed');
     expect(text).toContain('session-1');
     expect(text).not.toContain('Publish failed');
     expect(text).not.toContain('*Error*');

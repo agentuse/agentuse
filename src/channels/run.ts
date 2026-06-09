@@ -100,17 +100,27 @@ function runStatus(options: RunChannelDisplayOptions): RunLifecycleStatus {
   return options.event === 'completion' ? 'completed' : 'failed';
 }
 
-function runTitle(status: RunLifecycleStatus): string {
+function runTitleBase(status: RunLifecycleStatus): string {
   switch (status) {
     case 'running':
-      return 'AgentUse run started';
+      return 'run started';
     case 'suspended':
-      return 'AgentUse run waiting for approval';
+      return 'run waiting for approval';
     case 'completed':
-      return 'AgentUse run completed';
+      return 'run completed';
     case 'failed':
-      return 'AgentUse run failed';
+      return 'run failed';
   }
+}
+
+/**
+ * Header line for run cards, matching the approval card shape: lead with the
+ * agent name so a channel of cards is scannable, fall back to the generic
+ * product-prefixed title when no name is available.
+ */
+function runTitle(agentName: string | undefined, status: RunLifecycleStatus): string {
+  const base = runTitleBase(status);
+  return (agentName ? `${agentName} · ${base}` : `AgentUse ${base}`).slice(0, 150);
 }
 
 function runPreview(options: RunChannelOptions): string {
@@ -127,22 +137,16 @@ function approvalUrl(options: RunChannelDisplayOptions): string | undefined {
 function buildRunRootBlocks(options: RunChannelDisplayOptions): any[] {
   const durationMs = runDurationMs(options);
   const status = runStatus(options);
+  // Agent name and status live in the title; only the per-run facts go in the
+  // field grid, mirroring the approval card layout.
   const fields = [
-    {
-      type: 'mrkdwn',
-      text: `*Agent*\n${truncate(options.agent.name, 200)}`
-    },
-    ...(options.sessionId ? [{
-      type: 'mrkdwn',
-      text: `*Session*\n\`${options.sessionId}\``
-    }] : []),
-    {
-      type: 'mrkdwn',
-      text: `*Status*\n${status}`
-    },
     ...(durationMs !== undefined ? [{
       type: 'mrkdwn',
       text: `*Duration*\n${formatDuration(durationMs)}`
+    }] : []),
+    ...(options.sessionId ? [{
+      type: 'mrkdwn',
+      text: `*Session*\n\`${options.sessionId}\``
     }] : []),
   ];
 
@@ -152,13 +156,13 @@ function buildRunRootBlocks(options: RunChannelDisplayOptions): any[] {
       type: 'header',
       text: {
         type: 'plain_text',
-        text: runTitle(status)
+        text: runTitle(options.agent.name, status)
       }
     },
-    {
+    ...(fields.length > 0 ? [{
       type: 'section',
       fields
-    },
+    }] : []),
     // Permanent link to the session page rather than a button: it survives
     // status updates and stays a jump-off point after the run ends.
     ...(url ? [{
