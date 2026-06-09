@@ -70,6 +70,17 @@ export interface SlackRunThreadCommentResult {
 
 const ACTION_ID_PREFIX = 'agentuse_approval_action';
 const SLACK_SOCKET_ERROR_DEDUPE_MS = 60_000;
+// Detect a silent/zombie connection before Slack's 30s default so a degraded
+// socket reconnects sooner. Slack pings roughly every 10s, so this must
+// tolerate one late/missed ping — 10s caused constant reconnect churn.
+const SLACK_SERVER_PING_TIMEOUT_MS = 20_000;
+// Health watchdog: the SDK auto-reconnects internally; these thresholds are a
+// backstop for when that gets stuck (a documented failure mode). Only act on a
+// genuinely stuck connection, never on normal sub-second reconnect blips. The
+// watchdog only ever recreates the socket in-process — it never exits, so it
+// stays independent of how the daemon is run (pm2/systemd/bare/Docker).
+const SLACK_HEALTH_CHECK_MS = 20_000;
+const SLACK_STALE_RECONNECT_MS = 60_000;   // down this long -> recreate the socket
 // No Comment button: opening the comment modal requires consuming the click's
 // trigger_id within ~3s, and Socket Mode delivery is best-effort, so the modal
 // intermittently failed with expired_trigger_id. Commenting is done by replying
@@ -714,6 +725,7 @@ function reviewerFromBody(body: any): SlackApprovalReviewer {
   };
 }
 
+
 function statusLabel(status: string): string {
   switch (status) {
     case 'approve':
@@ -779,12 +791,17 @@ function resumeFailedBlocks(options: {
 }
 
 export class SlackApprovalSocket {
-  private readonly socket: SocketModeClient;
+  private socket: SocketModeClient;
   private readonly web: WebClient;
   private readonly seenThreadComments = new Set<string>();
   private lastSocketErrorMessage: string | null = null;
   private lastSocketErrorAt = 0;
   private suppressedSocketErrorCount = 0;
+  private connected = false;
+  private lastHealthyAt = Date.now();
+  private restarting = false;
+  private stopped = false;
+  private healthTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly options: {
     appToken: string;
@@ -794,32 +811,111 @@ export class SlackApprovalSocket {
     onRunThreadComment?: (comment: SlackApprovalThreadComment) => Promise<SlackRunThreadCommentResult>;
     debug?: boolean;
   }) {
-    this.socket = new SocketModeClient({
-      appToken: options.appToken,
-      logger: new SlackSocketSdkLogger(options.debug === true)
-    });
     this.web = new WebClient(options.botToken);
-    this.socket.on('interactive', (event: any) => {
+    this.socket = this.buildSocket();
+  }
+
+  /**
+   * Create a fresh SocketModeClient and wire all listeners. Used by the
+   * constructor and by the watchdog's `restart()` self-heal, so connection
+   * recreation always re-registers handlers identically.
+   */
+  private buildSocket(): SocketModeClient {
+    const socket = new SocketModeClient({
+      appToken: this.options.appToken,
+      serverPingTimeout: SLACK_SERVER_PING_TIMEOUT_MS,
+      logger: new SlackSocketSdkLogger(this.options.debug === true),
+    });
+    socket.on('interactive', (event: any) => {
       void this.handleInteractive(event);
     });
-    this.socket.on('message', (event: any) => {
+    socket.on('message', (event: any) => {
       void this.handleMessageEvent(event);
     });
-    this.socket.on('error', (error: Error) => {
+    socket.on('error', (error: Error) => {
       this.handleSocketError(error);
     });
+    for (const ev of ['connecting', 'connected', 'reconnecting', 'disconnecting', 'disconnected', 'authenticated']) {
+      socket.on(ev, () => this.handleLifecycle(ev));
+    }
+    return socket;
+  }
+
+  /**
+   * Track connection state so the watchdog can detect a stuck socket.
+   * Routine reconnect churn is normal for Socket Mode (Slack recycles
+   * connections; the tightened serverPingTimeout reconnects eagerly), so
+   * lifecycle transitions log at debug — the watchdog warns when the
+   * connection is actually stuck.
+   */
+  private handleLifecycle(ev: string): void {
+    if (ev === 'connected') {
+      this.connected = true;
+      this.lastHealthyAt = Date.now();
+    } else {
+      this.connected = false;
+    }
+    logger.debug(`Slack socket lifecycle: ${ev}`);
   }
 
   async start(): Promise<void> {
     await this.socket.start();
+    this.startWatchdog();
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
+    if (this.healthTimer) {
+      clearInterval(this.healthTimer);
+      this.healthTimer = null;
+    }
     this.flushSuppressedSocketErrors();
     try {
       await this.socket.disconnect();
     } finally {
       this.flushSuppressedSocketErrors();
+    }
+  }
+
+  private startWatchdog(): void {
+    if (this.healthTimer) return;
+    this.healthTimer = setInterval(() => {
+      void this.checkHealth();
+    }, SLACK_HEALTH_CHECK_MS);
+    this.healthTimer.unref?.();
+  }
+
+  /**
+   * Backstop for when the SDK's internal auto-reconnect gets stuck: if the
+   * socket has been down beyond the stale threshold, recreate it. This keeps
+   * retrying on every tick while down (never exits the process), so it recovers
+   * on its own whenever connectivity returns, regardless of how serve is run.
+   */
+  private async checkHealth(): Promise<void> {
+    if (this.stopped || this.connected || this.restarting) return;
+    const downMs = Date.now() - this.lastHealthyAt;
+    if (downMs < SLACK_STALE_RECONNECT_MS) return;
+
+    logger.warn(`Slack socket down ${Math.round(downMs / 1000)}s; recreating connection`);
+    await this.restart();
+  }
+
+  /** Tear down the current socket and start a fresh one (self-heal). */
+  private async restart(): Promise<void> {
+    if (this.restarting || this.stopped) return;
+    this.restarting = true;
+    try {
+      try {
+        await this.socket.disconnect();
+      } catch {
+        // best-effort teardown of the wedged socket
+      }
+      this.socket = this.buildSocket();
+      await this.socket.start();
+    } catch (err) {
+      logger.warn(`Slack approval socket recreate failed: ${(err as Error).message}`);
+    } finally {
+      this.restarting = false;
     }
   }
 
