@@ -81,14 +81,13 @@ describe('Slack approval blocks', () => {
     const values = actionsBlock.elements.map((element: any) => JSON.parse(element.value));
 
     expect(message.text).toContain('Approval decision');
-    expect(actionIds).toHaveLength(3);
+    expect(actionIds).toHaveLength(2);
     expect(new Set(actionIds).size).toBe(actionIds.length);
     expect(actionIds.every((id: string) => id.startsWith('agentuse_approval_action_'))).toBe(true);
-    expect(actionsBlock.elements.map((element: any) => element.text.text)).toEqual(['Approve', 'Reject', 'Comment']);
+    expect(actionsBlock.elements.map((element: any) => element.text.text)).toEqual(['Approve', 'Reject']);
     expect(values).toEqual([
       expect.objectContaining({ action: 'approve', rootChannelId: 'C123', rootMessageTs: '111.222' }),
-      expect.objectContaining({ action: 'reject', rootChannelId: 'C123', rootMessageTs: '111.222' }),
-      expect.objectContaining({ action: 'comment', rootChannelId: 'C123', rootMessageTs: '111.222' })
+      expect.objectContaining({ action: 'reject', rootChannelId: 'C123', rootMessageTs: '111.222' })
     ]);
   });
 
@@ -124,7 +123,7 @@ describe('Slack approval blocks', () => {
 
     expect(messages).toHaveLength(1);
     const threadActions = messages[0].blocks.find((block: any) => block.type === 'actions') as any;
-    expect(threadActions.elements.map((element: any) => element.text.text)).toEqual(['Approve', 'Reject', 'Comment']);
+    expect(threadActions.elements.map((element: any) => element.text.text)).toEqual(['Approve', 'Reject']);
   });
 
   it('renders compact Slack status updates without review details', () => {

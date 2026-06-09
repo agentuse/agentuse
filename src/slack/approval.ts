@@ -69,14 +69,14 @@ export interface SlackRunThreadCommentResult {
 }
 
 const ACTION_ID_PREFIX = 'agentuse_approval_action';
-const COMMENT_CALLBACK_ID = 'agentuse_approval_comment';
-const COMMENT_BLOCK_ID = 'comment';
-const COMMENT_INPUT_ID = 'value';
 const SLACK_SOCKET_ERROR_DEDUPE_MS = 60_000;
+// No Comment button: opening the comment modal requires consuming the click's
+// trigger_id within ~3s, and Socket Mode delivery is best-effort, so the modal
+// intermittently failed with expired_trigger_id. Commenting is done by replying
+// in the approval thread instead (onThreadComment), which has no expiry.
 const SLACK_APPROVAL_ACTIONS: Array<{ id: string; label: string; style?: 'primary' | 'danger' }> = [
   { id: 'approve', label: 'Approve', style: 'primary' },
-  { id: 'reject', label: 'Reject', style: 'danger' },
-  { id: 'comment', label: 'Comment' }
+  { id: 'reject', label: 'Reject', style: 'danger' }
 ];
 
 const SLACK_LOG_SEVERITY: Record<SlackSocketLogLevel, number> = {
@@ -366,7 +366,7 @@ function buildActionThreadMessage(request: SlackApprovalRequest & { rootChannelI
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: '*Decision*\nApprove, reject, or comment from this thread.'
+          text: '*Decision*\nApprove or reject below, or reply in this thread to send a comment.'
         }
       },
       ...buildActionBlocks(request)
@@ -714,20 +714,6 @@ function reviewerFromBody(body: any): SlackApprovalReviewer {
   };
 }
 
-function findCommentValue(values: any): string {
-  const direct = values?.[COMMENT_BLOCK_ID]?.[COMMENT_INPUT_ID]?.value;
-  if (typeof direct === 'string') return direct;
-
-  for (const block of Object.values(values ?? {})) {
-    if (!block || typeof block !== 'object') continue;
-    for (const action of Object.values(block as Record<string, any>)) {
-      if (typeof action?.value === 'string') return action.value;
-    }
-  }
-
-  return '';
-}
-
 function statusLabel(status: string): string {
   switch (status) {
     case 'approve':
@@ -870,25 +856,21 @@ export class SlackApprovalSocket {
   private async handleInteractive(event: any): Promise<void> {
     const ack = typeof event?.ack === 'function' ? event.ack : async () => undefined;
     const body = event?.body;
-
-    try {
-      await ack();
-
-      if (body?.type === 'block_actions') {
-        void this.handleBlockAction(body).catch((err) => {
-          logger.warn(`Slack approval block action failed: ${(err as Error).message}`);
-        });
-        return;
+    const ackSafely = async () => {
+      try {
+        await ack();
+      } catch (err) {
+        logger.warn(`Slack approval ack failed: ${(err as Error).message}`);
       }
+    };
 
-      if (body?.type === 'view_submission') {
-        void this.handleViewSubmission(body).catch((err) => {
-          logger.warn(`Slack approval view submission failed: ${(err as Error).message}`);
-        });
-      }
-    } catch (err) {
-      logger.warn(`Slack approval interaction failed: ${(err as Error).message}`);
+    if (body?.type === 'block_actions') {
+      void this.handleBlockAction(body).catch((err) => {
+        logger.warn(`Slack approval block action failed: ${(err as Error).message}`);
+      });
     }
+
+    await ackSafely();
   }
 
   private async handleMessageEvent(envelope: any): Promise<void> {
@@ -915,6 +897,11 @@ export class SlackApprovalSocket {
     const commentKey = `${channel}:${messageTs}`;
     if (this.seenThreadComments.has(commentKey)) return;
     this.rememberThreadComment(commentKey);
+
+    // If this line never appears when someone replies in an approval thread,
+    // the Slack app is missing the message.channels (or message.groups) event
+    // subscription — see docs/guides/channels.mdx.
+    logger.debug(`Slack thread reply received (channel ${channel}, thread ${threadTs})`);
 
     const comment: SlackApprovalThreadComment = {
       channel,
@@ -1089,7 +1076,13 @@ export class SlackApprovalSocket {
 
     const value = parseActionValue(action.value);
     if (value.action === 'comment') {
-      await this.openCommentModal(body, value);
+      // Legacy Comment buttons (approval messages posted before the button was
+      // removed). The old modal needed the click's trigger_id within ~3s, which
+      // Socket Mode delivery can't guarantee, so point the reviewer at the
+      // trigger-free path instead: replying in the approval thread.
+      await this.postCommentHint(body, value).catch((err) => {
+        logger.warn(`Slack comment hint failed: ${(err as Error).message}`);
+      });
       return;
     }
 
@@ -1145,114 +1138,28 @@ export class SlackApprovalSocket {
     void actionUpdate;
   }
 
-  private async openCommentModal(body: any, value: ReturnType<typeof parseActionValue>): Promise<void> {
-    const channel = typeof body?.channel?.id === 'string' ? body.channel.id : undefined;
-    const messageTs = typeof body?.message?.ts === 'string' ? body.message.ts : undefined;
-    const privateMetadata = JSON.stringify({
-      ...value,
-      ...(channel && { channel }),
-      ...(messageTs && { messageTs })
+  /**
+   * Response to a legacy Comment button click: tell the reviewer to reply in
+   * the approval thread (handled by onThreadComment, no trigger_id involved).
+   */
+  private async postCommentHint(body: any, value: ReturnType<typeof parseActionValue>): Promise<void> {
+    const target = this.rootTarget(body, value);
+    if (!target) return;
+
+    const userId = typeof body?.user?.id === 'string' ? body.user.id : undefined;
+    const mention = userId ? `<@${userId}> ` : '';
+    await this.web.chat.postMessage({
+      channel: target.channel,
+      thread_ts: target.ts,
+      text: 'Reply in this thread with your comment.',
+      blocks: [{
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `${mention}*Reply in this thread* with your comment and it will be applied to this approval.`
+        }
+      }]
     });
-
-    await this.web.views.open({
-      trigger_id: body.trigger_id,
-      view: {
-        type: 'modal',
-        callback_id: COMMENT_CALLBACK_ID,
-        private_metadata: privateMetadata,
-        title: {
-          type: 'plain_text',
-          text: 'AgentUse approval'
-        },
-        submit: {
-          type: 'plain_text',
-          text: 'Send'
-        },
-        close: {
-          type: 'plain_text',
-          text: 'Cancel'
-        },
-        blocks: [
-          {
-            type: 'input',
-            block_id: COMMENT_BLOCK_ID,
-            label: {
-              type: 'plain_text',
-              text: 'Comment'
-            },
-            element: {
-              type: 'plain_text_input',
-              action_id: COMMENT_INPUT_ID,
-              multiline: true
-            }
-          }
-        ]
-      }
-    });
-  }
-
-  private async handleViewSubmission(body: any): Promise<void> {
-    if (body?.view?.callback_id !== COMMENT_CALLBACK_ID) return;
-
-    const value = parseActionValue(body.view.private_metadata);
-    const comment = findCommentValue(body.view.state?.values);
-    const reviewer = reviewerFromBody(body);
-
-    const metadata = JSON.parse(body.view.private_metadata) as { channel?: unknown; messageTs?: unknown };
-    let actionUpdate: Promise<void> = Promise.resolve();
-    if (typeof metadata.channel === 'string' && typeof metadata.messageTs === 'string') {
-      actionUpdate = this.updateMessage(metadata.channel, metadata.messageTs, 'AgentUse approval comment received', resolvedBlocks('comment', reviewer, comment)).catch((err) => {
-        logger.warn(`Slack approval action message update failed: ${(err as Error).message}`);
-      });
-    }
-
-    const target = this.rootTarget(undefined, value);
-    const rootUpdate = target
-      ? this.updateRootMessage(target, {
-        phase: 'resuming',
-        decision: 'comment',
-        reviewer
-      }).catch((err) => {
-        logger.warn(`Slack approval status update failed: ${(err as Error).message}`);
-      })
-      : Promise.resolve();
-
-    const start = Date.now();
-    void this.options.onDecision({
-      sessionId: value.sessionId,
-      ...(value.projectId && { projectId: value.projectId }),
-      resumeToken: value.resumeToken,
-      toolResult: {
-        status: 'comment',
-        comment,
-        ...(Object.keys(reviewer).length > 0 && { reviewer })
-      }
-    }).then(async () => {
-      await rootUpdate;
-      if (target) {
-        void bestEffortClearSlackThreadStatus(this.web, target.channel, target.ts);
-        await this.updateRootMessage(target, {
-          phase: 'completed',
-          decision: 'comment',
-          reviewer,
-          durationMs: Date.now() - start
-        });
-      }
-    }).catch(async (err) => {
-      await rootUpdate;
-      if (target) {
-        void bestEffortClearSlackThreadStatus(this.web, target.channel, target.ts);
-        await this.updateRootMessage(target, {
-          phase: 'failed',
-          decision: 'comment',
-          reviewer,
-          durationMs: Date.now() - start,
-          error: err
-        });
-      }
-      logger.warn(`Slack approval resume failed: ${(err as Error).message}`);
-    });
-    void actionUpdate;
   }
 
   private rootTarget(body: any, value: ReturnType<typeof parseActionValue>): { channel: string; ts: string; prompt: string; sessionId: string } | null {

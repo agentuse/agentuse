@@ -6331,6 +6331,7 @@ export function createServeCommand(): Command {
           return { handled: true, done };
         }
 
+        logger.debug(`Slack thread comment matched no pending approval (reply in ${comment.channel}/${comment.threadTs})`);
         return { handled: false };
       };
 
