@@ -245,6 +245,7 @@ export async function runAgent(
         sessionID: prepSessionID,
         messageID: assistantMsgID,
         agentId: prepAgentId,
+        agentName: agent.name,
         doomLoopDetector,
         slackRunChannelHandles: runChannelHandles,
         quiet

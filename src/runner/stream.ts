@@ -54,6 +54,7 @@ async function announceApprovalRequested(options: {
 
 async function sendPersistedSlackApproval(options: {
   sessionId?: string;
+  agentName?: string;
   resumeToken?: string;
   approvalUrl?: string;
   prompt?: string;
@@ -83,6 +84,7 @@ async function sendPersistedSlackApproval(options: {
       channelId,
       sessionId: options.sessionId,
       ...(process.env.AGENTUSE_PROJECT_ID && { projectId: process.env.AGENTUSE_PROJECT_ID }),
+      ...(options.agentName && { agentName: options.agentName }),
       prompt: options.prompt,
       ...(typeof input.summary === 'string' && { summary: input.summary }),
       ...(typeof input.draft === 'string' && { draft: input.draft }),
@@ -127,6 +129,8 @@ export async function processAgentStream(
     sessionID?: string;
     messageID?: string;
     agentId?: string;
+    /** Display name for Slack approval cards. */
+    agentName?: string;
     doomLoopDetector?: DoomLoopDetector;
     slackRunChannelHandles?: SlackRunChannelHandle[];
     /** Suppress console output (for serve mode) */
@@ -602,6 +606,7 @@ export async function processAgentStream(
               if (payload.kind === 'await_human') {
                 const sentChannelMessage = await sendPersistedSlackApproval({
                   sessionId: options.sessionID,
+                  ...(options.agentName && { agentName: options.agentName }),
                   ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
                   ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
                   ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),

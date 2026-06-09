@@ -186,6 +186,19 @@ describe('Slack approval blocks', () => {
     expect(text).not.toContain('Review approval');
   });
 
+  it('leads the card title with the agent name when available', () => {
+    const blocks = __testing.buildReviewStatusBlocks({
+      prompt: 'Approve this deployment?',
+      sessionId: 'session-1',
+      agentName: 'Quote Publisher',
+      status: 'completed',
+      decision: 'approve'
+    });
+    const header = blocks.find((block: any) => block.type === 'header') as any;
+
+    expect(header.text.text).toBe('Quote Publisher · approval completed');
+  });
+
   it('renders resume failures into the channel status card', () => {
     const blocks = __testing.buildStatusBlocks({
       phase: 'failed',
@@ -265,8 +278,8 @@ describe('Slack approval blocks', () => {
       ts: '111.222',
       text: 'AgentUse approval resuming'
     });
-    expect(JSON.stringify(updates[0].blocks)).toContain('Status');
-    expect(JSON.stringify(updates[0].blocks)).toContain('resuming');
+    expect(JSON.stringify(updates[0].blocks)).toContain('approval approved');
+    expect(JSON.stringify(updates[0].blocks)).toContain('Decision');
     expect(statuses[0]).toMatchObject({
       method: 'assistant.threads.setStatus',
       payload: {

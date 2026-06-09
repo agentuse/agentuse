@@ -14,6 +14,7 @@ export interface SlackApprovalRequest {
   channelId: string;
   sessionId?: string;
   projectId?: string;
+  agentName?: string;
   prompt: string;
   summary?: string;
   draft?: string;
@@ -181,6 +182,7 @@ function actionIdFor(action: { id: string }, index: number): string {
 function encodeActionValue(options: {
   sessionId?: string;
   projectId?: string;
+  agentName?: string;
   rootChannelId?: string;
   rootMessageTs?: string;
   prompt?: string;
@@ -190,6 +192,7 @@ function encodeActionValue(options: {
   return JSON.stringify({
     ...(options.sessionId && { sessionId: options.sessionId }),
     ...(options.projectId && { projectId: options.projectId }),
+    ...(options.agentName && { agentName: truncate(options.agentName, 120) }),
     ...(options.rootChannelId && { rootChannelId: options.rootChannelId }),
     ...(options.rootMessageTs && { rootMessageTs: options.rootMessageTs }),
     ...(options.prompt && { prompt: truncate(options.prompt, 500) }),
@@ -201,6 +204,7 @@ function encodeActionValue(options: {
 function parseActionValue(value: unknown): {
   sessionId: string;
   projectId?: string;
+  agentName?: string;
   rootChannelId?: string;
   rootMessageTs?: string;
   prompt?: string;
@@ -213,6 +217,7 @@ function parseActionValue(value: unknown): {
   const parsed = JSON.parse(value) as {
     sessionId?: unknown;
     projectId?: unknown;
+    agentName?: unknown;
     rootChannelId?: unknown;
     rootMessageTs?: unknown;
     prompt?: unknown;
@@ -231,6 +236,7 @@ function parseActionValue(value: unknown): {
   return {
     sessionId: parsed.sessionId,
     ...(typeof parsed.projectId === 'string' && parsed.projectId.length > 0 && { projectId: parsed.projectId }),
+    ...(typeof parsed.agentName === 'string' && parsed.agentName.length > 0 && { agentName: parsed.agentName }),
     ...(typeof parsed.rootChannelId === 'string' && parsed.rootChannelId.length > 0 && { rootChannelId: parsed.rootChannelId }),
     ...(typeof parsed.rootMessageTs === 'string' && parsed.rootMessageTs.length > 0 && { rootMessageTs: parsed.rootMessageTs }),
     ...(typeof parsed.prompt === 'string' && parsed.prompt.length > 0 && { prompt: parsed.prompt }),
@@ -239,54 +245,55 @@ function parseActionValue(value: unknown): {
   };
 }
 
+/**
+ * Header line for approval cards: lead with the agent's name so a channel of
+ * cards is scannable by which agent wants what; fall back to the generic
+ * product-prefixed title when the name is unavailable (e.g. legacy buttons).
+ */
+function approvalCardTitle(agentName: string | undefined, base: string): string {
+  return (agentName ? `${agentName} · ${base}` : `AgentUse ${base}`).slice(0, 150);
+}
+
 function buildStatusBlocks(options: {
   phase: 'waiting' | 'resuming' | 'completed' | 'failed';
   prompt: string;
   sessionId?: string;
+  agentName?: string;
   decision?: string;
   reviewer?: SlackApprovalDecision['toolResult']['reviewer'];
   durationMs?: number;
   error?: unknown;
   expiresAt?: string;
 }): any[] {
-  const title = options.phase === 'waiting'
-    ? 'AgentUse approval requested'
+  const base = options.phase === 'waiting'
+    ? 'approval requested'
     : options.phase === 'resuming'
-      ? `AgentUse approval ${statusLabel(options.decision ?? 'submitted')}`
+      ? `approval ${statusLabel(options.decision ?? 'submitted')}`
       : options.phase === 'completed'
-        ? 'AgentUse approval completed'
-        : 'AgentUse approval failed';
+        ? 'approval completed'
+        : 'approval failed';
   const reviewer = options.reviewer?.id
     ? `<@${options.reviewer.id}>`
     : options.reviewer?.username;
-  const status = options.phase === 'waiting'
-    ? 'waiting for approval'
-    : options.phase;
+  // The title carries the status, so there is no separate Status field; the
+  // prompt gets a full-width section instead of being squeezed into the grid.
   const fields = [
-    {
-      type: 'mrkdwn',
-      text: `*Prompt*\n${truncate(options.prompt, 600)}`
-    },
-    {
-      type: 'mrkdwn',
-      text: `*Session*\n\`${options.sessionId ?? 'unknown'}\``
-    },
     ...(options.decision ? [{
       type: 'mrkdwn',
-      text: `*Decision*\n\`${options.decision}\``
+      text: `*Decision*\n${options.decision}`
     }] : []),
     ...(reviewer ? [{
       type: 'mrkdwn',
       text: `*Reviewer*\n${reviewer}`
     }] : []),
-    {
-      type: 'mrkdwn',
-      text: `*Status*\n${status}`
-    },
     ...(options.durationMs !== undefined ? [{
       type: 'mrkdwn',
       text: `*Duration*\n${formatDuration(options.durationMs)}`
     }] : []),
+    {
+      type: 'mrkdwn',
+      text: `*Session*\n\`${options.sessionId ?? 'unknown'}\``
+    },
     ...(options.expiresAt ? [{
       type: 'mrkdwn',
       text: `*Expires*\n${options.expiresAt}`
@@ -298,7 +305,14 @@ function buildStatusBlocks(options: {
       type: 'header',
       text: {
         type: 'plain_text',
-        text: title.slice(0, 150)
+        text: approvalCardTitle(options.agentName, base)
+      }
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: truncate(options.prompt, 600)
       }
     },
     {
@@ -467,6 +481,7 @@ function buildActionBlocks(request: SlackApprovalRequest & { rootChannelId?: str
       value: encodeActionValue({
         ...(request.sessionId && { sessionId: request.sessionId }),
         ...(request.projectId && { projectId: request.projectId }),
+        ...(request.agentName && { agentName: request.agentName }),
         ...(request.rootChannelId && { rootChannelId: request.rootChannelId }),
         ...(request.rootMessageTs && { rootMessageTs: request.rootMessageTs }),
         prompt: request.prompt,
@@ -498,10 +513,6 @@ function buildReviewLinkBlocks(request: SlackApprovalRequest): any[] {
       type: 'mrkdwn',
       text: `*Project*\n\`${request.projectId}\``
     }] : []),
-    {
-      type: 'mrkdwn',
-      text: `*Status*\nwaiting for approval`
-    },
     ...(request.expiresAt ? [{
       type: 'mrkdwn',
       text: `*Expires*\n${request.expiresAt}`
@@ -513,14 +524,14 @@ function buildReviewLinkBlocks(request: SlackApprovalRequest): any[] {
       type: 'header',
       text: {
         type: 'plain_text',
-        text: 'AgentUse approval requested'
+        text: approvalCardTitle(request.agentName, 'approval requested')
       }
     },
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*Prompt*\n${truncate(request.prompt, 800)}`
+        text: truncate(request.prompt, 800)
       }
     },
     {
@@ -555,13 +566,19 @@ function buildReviewStatusBlocks(options: {
   prompt: string;
   sessionId?: string;
   projectId?: string;
+  agentName?: string;
   status: 'waiting' | 'resuming' | 'completed' | 'failed';
   decision?: string;
   error?: unknown;
   approvalUrl?: string;
   expiresAt?: string;
 }): any[] {
+  // The title carries the status, so there is no separate Status field.
   const fields = [
+    ...(options.decision ? [{
+      type: 'mrkdwn',
+      text: `*Decision*\n${options.decision}`
+    }] : []),
     {
       type: 'mrkdwn',
       text: `*Session*\n\`${options.sessionId ?? 'unknown'}\``
@@ -570,14 +587,6 @@ function buildReviewStatusBlocks(options: {
       type: 'mrkdwn',
       text: `*Project*\n\`${options.projectId}\``
     }] : []),
-    ...(options.decision ? [{
-      type: 'mrkdwn',
-      text: `*Decision*\n\`${options.decision}\``
-    }] : []),
-    {
-      type: 'mrkdwn',
-      text: `*Status*\n${options.status}`
-    },
     ...(options.expiresAt ? [{
       type: 'mrkdwn',
       text: `*Expires*\n${options.expiresAt}`
@@ -590,16 +599,17 @@ function buildReviewStatusBlocks(options: {
       type: 'header',
       text: {
         type: 'plain_text',
-        text: options.status === 'waiting'
-          ? 'AgentUse approval requested'
-          : `AgentUse approval ${options.status}`
+        text: approvalCardTitle(
+          options.agentName,
+          options.status === 'waiting' ? 'approval requested' : `approval ${options.status}`
+        )
       }
     },
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*Prompt*\n${truncate(options.prompt, 800)}`
+        text: truncate(options.prompt, 800)
       }
     },
     {
@@ -705,6 +715,7 @@ export async function updateSlackApprovalRequestStatus(options: {
   prompt: string;
   sessionId?: string;
   projectId?: string;
+  agentName?: string;
   approvalUrl?: string;
   actionTs?: string;
   expiresAt?: string;
@@ -721,6 +732,7 @@ export async function updateSlackApprovalRequestStatus(options: {
       prompt: options.prompt,
       ...(options.sessionId && { sessionId: options.sessionId }),
       ...(options.projectId && { projectId: options.projectId }),
+      ...(options.agentName && { agentName: options.agentName }),
       ...(options.approvalUrl && { approvalUrl: options.approvalUrl }),
       ...(options.expiresAt && { expiresAt: options.expiresAt }),
       status: options.status,
@@ -1308,7 +1320,7 @@ export class SlackApprovalSocket {
     });
   }
 
-  private rootTarget(body: any, value: ReturnType<typeof parseActionValue>): { channel: string; ts: string; prompt: string; sessionId: string } | null {
+  private rootTarget(body: any, value: ReturnType<typeof parseActionValue>): { channel: string; ts: string; prompt: string; sessionId: string; agentName?: string } | null {
     const channel = value.rootChannelId
       ?? (typeof body?.channel?.id === 'string' ? body.channel.id : undefined);
     const ts = value.rootMessageTs
@@ -1319,12 +1331,13 @@ export class SlackApprovalSocket {
       channel,
       ts,
       prompt: value.prompt ?? 'Approval request',
-      sessionId: value.sessionId
+      sessionId: value.sessionId,
+      ...(value.agentName && { agentName: value.agentName })
     };
   }
 
   private async updateRootMessage(
-    target: { channel: string; ts: string; prompt: string; sessionId: string },
+    target: { channel: string; ts: string; prompt: string; sessionId: string; agentName?: string },
     options: {
       phase: 'resuming' | 'completed' | 'failed';
       decision: string;
@@ -1344,6 +1357,7 @@ export class SlackApprovalSocket {
         phase: options.phase,
         prompt: target.prompt,
         sessionId: target.sessionId,
+        ...(target.agentName && { agentName: target.agentName }),
         decision: options.decision,
         ...(options.reviewer && { reviewer: options.reviewer }),
         ...(options.durationMs !== undefined && { durationMs: options.durationMs }),
