@@ -5690,12 +5690,6 @@ export function createServeCommand(): Command {
         };
       };
 
-      const resolveResumeProject = (projectId?: string): Project | undefined => {
-        return projectId
-          ? projectsById.get(projectId)
-          : (effectiveDefault ? projectsById.get(effectiveDefault) : projects[0]);
-      };
-
       const findApprovalInfo = async (options: {
         projectId?: string;
         sessionId: string;
@@ -5705,9 +5699,14 @@ export function createServeCommand(): Command {
         | { success: true; project: Project; info: WorkerApprovalInfoResult }
         | { success: false; status: number; code: string; message: string }
       > => {
+        // A session lives in exactly one project, so locate it by searching
+        // every served project (session ids are globally-unique ULIDs). Do not
+        // collapse to `effectiveDefault` here: that preference is for routing
+        // *new* runs, and applying it to an existing-session lookup makes
+        // approvals for non-default projects fail with SESSION_NOT_FOUND.
         const selectedProjects = options.projectId
           ? projects.filter((project) => project.id === options.projectId)
-          : (effectiveDefault ? [projectsById.get(effectiveDefault)!] : projects);
+          : projects;
 
         if (selectedProjects.length === 0) {
           return {
@@ -5776,7 +5775,7 @@ export function createServeCommand(): Command {
       > => {
         const selectedProjects = projectId
           ? projects.filter((project) => project.id === projectId)
-          : (effectiveDefault ? [projectsById.get(effectiveDefault)!] : projects);
+          : projects;
 
         if (selectedProjects.length === 0) {
           return {
@@ -5822,7 +5821,7 @@ export function createServeCommand(): Command {
       > => {
         const selectedProjects = projectId
           ? projects.filter((project) => project.id === projectId)
-          : (effectiveDefault ? [projectsById.get(effectiveDefault)!] : projects);
+          : projects;
 
         if (selectedProjects.length === 0) {
           return {
@@ -6011,14 +6010,29 @@ export function createServeCommand(): Command {
           : decision.toolResult.reviewer?.username;
         approvalLog.received('slack', decision.toolResult.status, decision.sessionId, reviewer);
 
-        const project = resolveResumeProject(decision.projectId);
-        if (!project) {
-          throw new Error(`Project not found for Slack approval resume: ${decision.projectId ?? 'default'}`);
+        // A Slack approval posted by a standalone `agentuse run` carries no
+        // projectId (only serve workers set AGENTUSE_PROJECT_ID). Locate the
+        // project that actually owns the session by searching every served
+        // project, instead of falling back to the default project and resuming
+        // against the wrong storage (which fails with SESSION_NOT_FOUND).
+        const located = await findApprovalInfo({
+          ...(decision.projectId && { projectId: decision.projectId }),
+          sessionId: decision.sessionId,
+          resumeToken: decision.resumeToken,
+          allowHistorical: true,
+        });
+        if (!located.success) {
+          throw new Error(located.message);
         }
-
+        const { project, info } = located;
         const projectWorker = workers.get(project.id);
         if (!projectWorker) {
           throw new Error(`No worker for project ${project.id}`);
+        }
+
+        if (info.success && info.approval.sessionStatus === 'completed') {
+          approvalLog.resumeCompleted(decision.sessionId, 0);
+          return;
         }
 
         const activeKey = `${project.id}:${decision.sessionId}`;
@@ -6029,17 +6043,6 @@ export function createServeCommand(): Command {
         }
 
         const resumePromise = Promise.resolve().then(async () => {
-          const info = await projectWorker.getApprovalInfo({
-            projectRoot: project.root,
-            sessionId: decision.sessionId,
-            resumeToken: decision.resumeToken,
-            allowHistorical: true
-          });
-          if (info.success && info.approval.sessionStatus === 'completed') {
-            approvalLog.resumeCompleted(decision.sessionId, 0);
-            return;
-          }
-
           const resumeStart = Date.now();
           approvalLog.resumeStarted(decision.sessionId);
           const result = await projectWorker.execute({
@@ -7411,13 +7414,14 @@ export function createServeCommand(): Command {
             const body = await parseJSONBody(req);
             const sessionId = decodeURIComponent(resumeMatch[1]);
             const projectId = typeof body.project === 'string' ? body.project : undefined;
-            const project = resolveResumeProject(projectId);
+            const located = await findSessionStatusInfo(sessionId, projectId);
 
-            if (!project) {
-              sendError(res, 404, "PROJECT_NOT_FOUND", "Project not found for resume request");
+            if (!located.success) {
+              sendError(res, located.status, located.code, located.message);
               return;
             }
 
+            const project = located.project;
             const projectWorker = workers.get(project.id);
             if (!projectWorker) {
               sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
