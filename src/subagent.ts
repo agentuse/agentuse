@@ -99,8 +99,10 @@ export async function createSubAgentTool(
   // Fail loud: approval gates are not supported in delegated sub-agents.
   // The suspend/resume machinery only suspends/resumes the top-level session,
   // so an await_human gate here would silently no-op and orphan a pending
-  // approval. Reject at load time before any execution happens.
-  if (isApprovalEnabled(agent.config)) {
+  // approval. Reject at load time before any execution happens. Cover both the
+  // `approval:` frontmatter path and an explicit `tools: { await_human: true }`,
+  // which wires the gate tool directly and would otherwise slip past the guard.
+  if (isApprovalEnabled(agent.config) || agent.config.tools?.await_human === true) {
     throw new SubAgentApprovalUnsupportedError(agent.name, resolvedPath);
   }
 

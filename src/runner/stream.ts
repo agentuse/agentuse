@@ -5,6 +5,7 @@ import type { SessionManager } from '../session';
 import type { AgentPart } from '../types/parts';
 import type { ToolStateCompleted, ToolStateError } from '../session/types';
 import { logger } from '../utils/logger';
+import { safeHttpUrl } from '../utils/url';
 import { formatToolResultForDisplay } from '../utils/format-tool-result';
 import { sendSlackApprovalRequest, sendSlackApprovalRequestToThread } from '../slack/approval';
 import type { AgentChunk } from './types';
@@ -78,6 +79,8 @@ async function sendPersistedSlackApproval(options: {
   const input = options.input && typeof options.input === 'object'
     ? options.input as Record<string, unknown>
     : {};
+  const draftUrl = safeHttpUrl(input.draft_url);
+  const artifactUrl = safeHttpUrl(input.artifact_url);
   try {
     const approvalRequest = {
       botToken,
@@ -88,8 +91,8 @@ async function sendPersistedSlackApproval(options: {
       prompt: options.prompt,
       ...(typeof input.summary === 'string' && { summary: input.summary }),
       ...(typeof input.draft === 'string' && { draft: input.draft }),
-      ...(typeof input.draft_url === 'string' && { draftUrl: input.draft_url }),
-      ...(typeof input.artifact_url === 'string' && { artifactUrl: input.artifact_url }),
+      ...(draftUrl && { draftUrl }),
+      ...(artifactUrl && { artifactUrl }),
       ...(typeof input.context === 'string' && { context: input.context }),
       ...(typeof input.risk === 'string' && { risk: input.risk }),
       resumeToken: options.resumeToken,

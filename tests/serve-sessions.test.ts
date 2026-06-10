@@ -128,11 +128,11 @@ describe('renderSessionPage canAct gating', () => {
       canAct: true,
     });
     expect(html).toContain('human approval requested');
-    // pendingActionable is the server-injected flag the page initializes from;
-    // the rendered comment dialog (id="comment-dialog", distinct from the JS's
-    // getElementById('comment-dialog')) only exists when actionable.
+    // pendingActionable is the server-injected flag the page initializes from.
+    // (The comment dialog and the client-side action-button template are always
+    // present in the page source regardless of gating, so they are not reliable
+    // signals; the eyebrow and this flag are the server-gated ones.)
     expect(html).toContain('let pendingActionable = true;');
-    expect(html).toContain('id="comment-dialog"');
   });
 
   it('renders a suspended session as log-only when canAct is false', () => {
@@ -143,8 +143,9 @@ describe('renderSessionPage canAct gating', () => {
       canAct: false,
     });
     expect(html).toContain('let pendingActionable = false;');
-    expect(html).not.toContain('id="comment-dialog"');
-    // no approval affordance; the page falls back to the view-only eyebrow
+    // no approval affordance; the page falls back to the view-only eyebrow.
+    // (The comment dialog stays in the DOM inert regardless, so its presence is
+    // not asserted here; the server-gated signal is the missing eyebrow.)
     expect(html).not.toContain('human approval requested');
     expect(html).toContain('id="continue-panel" class="continue-panel" hidden');
     expect(html).toContain('session log');
@@ -239,6 +240,7 @@ describe('renderSessionPage canAct gating', () => {
           sessionId: '01KTCBC4FJHBMXPKE0ZEXX8S6V',
           agent: { id: 'agents/research', name: 'Research subagent' },
           status: 'running',
+          trigger: 'manual' as const,
           createdAt: Date.UTC(2026, 4, 1),
           updatedAt: Date.UTC(2026, 4, 1),
         }],
@@ -278,6 +280,7 @@ describe('renderSessionPage canAct gating', () => {
           sessionId: '01KTCXG7RW55V2ESEB7BVXJ5QY',
           agent: { id: 'agents/substack-engage-reply', name: 'Substack Engage Reply' },
           status: 'completed',
+          trigger: 'manual' as const,
           createdAt: Date.UTC(2026, 4, 1),
           updatedAt: Date.UTC(2026, 4, 1),
         }],

@@ -1032,8 +1032,16 @@ function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath:
       'Content-Type': rawMime,
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
+      // Block cross-origin framing of the token-bearing artifact URL.
+      'X-Frame-Options': 'SAMEORIGIN',
     };
-    if (rawMime.startsWith('text/html')) headers['Content-Security-Policy'] = ARTIFACT_HTML_CSP;
+    // The in-page preview iframe sandboxes the artifact (allow-scripts, no
+    // same-origin), but the "open in tab" link loads this same URL as a
+    // top-level document where the iframe sandbox no longer applies. Deliver the
+    // `sandbox` directive as an HTTP-header CSP (it is ignored via <meta>) so a
+    // directly-opened HTML artifact still gets an opaque origin and cannot reach
+    // the serve app's same-origin cookies/storage.
+    if (rawMime.startsWith('text/html')) headers['Content-Security-Policy'] = `${ARTIFACT_HTML_CSP}; sandbox allow-scripts`;
     else if (rawMime === 'image/svg+xml') headers['Content-Security-Policy'] = ARTIFACT_SVG_CSP;
     res.writeHead(200, headers);
     res.end(readFileSync(resolved));
@@ -2855,9 +2863,11 @@ function isEndedSessionStatus(status: string | undefined): boolean {
  * Whether a request bypasses the global `Authorization: Bearer` header gate.
  *
  * Exempt: any `/approvals/*` route (legacy, token-authenticated) and, only on
- * the non-API surface, the unified session page `/sessions/:id` plus its action
- * subroutes `/sessions/:id/{decision,continue,status,stop}`. These carry their own
- * capability auth (session token / api key / local).
+ * the non-API surface, the unified session page `/sessions/:id`, its action
+ * subroutes `/sessions/:id/{decision,continue,status,stop}`, and the artifact
+ * viewer subpath `/sessions/:id/artifacts/*`. These carry their own capability
+ * auth (session token / api key / local); the artifact handler validates the
+ * `?token=` session token via `sessionAuthorized` before serving any file.
  *
  * NOT exempt (stays header-gated): `/sessions` (the list page), and every
  * `/api/*` route including `/api/sessions` and `/api/sessions/:id`. The `isApi`
@@ -2867,7 +2877,7 @@ function isEndedSessionStatus(status: string | undefined): boolean {
 function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
   if (routePath.startsWith('/approvals/')) return true;
   if (isApi) return false;
-  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop))?$/.test(routePath);
+  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|artifacts\/.+))?$/.test(routePath);
 }
 
 function canContinueApprovalSession(options: {

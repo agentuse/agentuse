@@ -138,6 +138,9 @@ export class FileWatcher {
     const current = new Set(files);
 
     for (const relativePath of files) {
+      // close() may land during the awaited onAgentAdded below; stop firing
+      // callbacks once the watcher is closed.
+      if (this.closed) return;
       if (this.watchedAgentPaths.has(relativePath)) continue;
       this.watchedAgentPaths.add(relativePath);
       this.agentWatcher?.add(resolve(watchRoot, relativePath));
@@ -152,6 +155,7 @@ export class FileWatcher {
     }
 
     for (const relativePath of [...this.watchedAgentPaths]) {
+      if (this.closed) return;
       if (current.has(relativePath)) continue;
       this.watchedAgentPaths.delete(relativePath);
       this.agentWatcher?.unwatch(resolve(watchRoot, relativePath));

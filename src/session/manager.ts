@@ -319,7 +319,10 @@ export class SessionManager {
       ...data
     };
 
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    // Honor the cached path resolved by createSession/findSession so a resumed
+    // subagent (fresh manager, parentPath unset) writes into its nested dir
+    // rather than a top-level path. Falls back to buildSessionPath when cold.
+    const sessionPath = this.knownSessionPath(sessionID, agentId);
     // New path structure: {messageID}/message.json
     await writeJSON(`${sessionPath}/${id}/message`, message);
     return id;
@@ -336,7 +339,8 @@ export class SessionManager {
     partData: Omit<Part, 'id' | 'sessionID' | 'messageID'>
   ): Promise<string> {
     const id = ulid();
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    // Use the cached (possibly nested) path for the same reason as addMessage.
+    const sessionPath = this.knownSessionPath(sessionID, agentId);
 
     // Add base fields to create complete Part
     const completePart: Part = {

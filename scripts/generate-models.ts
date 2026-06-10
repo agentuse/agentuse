@@ -223,7 +223,12 @@ function buildRegistry(apiData: Record<string, { models: Record<string, ModelDat
       ids.sort((a, b) => {
         const ra = providerModels[a].release_date ?? '';
         const rb = providerModels[b].release_date ?? '';
-        if (ra !== rb) return rb.localeCompare(ra); // newest release first
+        // Only let the date decide when BOTH sides have one: a missing date is ''
+        // and would otherwise sort last under the descending compare, dropping a
+        // newer-but-undated model (e.g. a freshly listed gpt-5.5 with no date yet)
+        // in favor of an older dated sibling. When a date is missing, fall through
+        // to the version-number and clean-alias tie-breaks below.
+        if (ra && rb && ra !== rb) return rb.localeCompare(ra); // newest release first
         const dv = parseModelVersion(b) - parseModelVersion(a);
         if (dv !== 0) return dv;
         return isDated(a) - isDated(b); // prefer the clean (non-dated) alias on a tie

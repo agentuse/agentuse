@@ -1,5 +1,8 @@
 import matter from 'gray-matter';
 import { WORDMARK_SVG } from "./brand";
+import { safeHttpUrl } from "../../utils/url";
+
+export { safeHttpUrl };
 
 /**
  * Split an incoming request pathname into the `/api/*` data surface vs the

@@ -82,6 +82,7 @@ const SLACK_SERVER_PING_TIMEOUT_MS = 20_000;
 // stays independent of how the daemon is run (pm2/systemd/bare/Docker).
 const SLACK_HEALTH_CHECK_MS = 20_000;
 const SLACK_STALE_RECONNECT_MS = 60_000;   // down this long -> recreate the socket
+const SLACK_RESTART_DISCONNECT_MS = 5_000; // cap on tearing down a wedged socket before recreate
 // No Comment button: opening the comment modal requires consuming the click's
 // trigger_id within ~3s, and Socket Mode delivery is best-effort, so the modal
 // intermittently failed with expired_trigger_id. Commenting is done by replying
@@ -970,9 +971,19 @@ export class SlackApprovalSocket {
   private async restart(): Promise<void> {
     if (this.restarting || this.stopped) return;
     this.restarting = true;
+    // Give the freshly built socket a full health window to emit `connected`
+    // before the watchdog can consider it stale again; otherwise checkHealth
+    // re-fires restart on every tick until the new socket finishes connecting.
+    this.lastHealthyAt = Date.now();
     try {
       try {
-        await this.socket.disconnect();
+        // A wedged/zombie socket's disconnect() waits on the peer's close frame
+        // and can block ~30s (the ws library's internal close timeout); cap it so
+        // a dead connection can't stall the recreate.
+        await Promise.race([
+          this.socket.disconnect(),
+          new Promise<void>((resolve) => setTimeout(resolve, SLACK_RESTART_DISCONNECT_MS)),
+        ]);
       } catch {
         // best-effort teardown of the wedged socket
       }

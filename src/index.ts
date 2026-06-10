@@ -15,6 +15,7 @@ import { createAgentsCommand } from './cli/agents';
 import { createAddCommand } from './cli/add';
 import { createDoctorCommand } from './cli/doctor';
 import { logger, LogLevel } from './utils/logger';
+import { safeHttpUrl } from './utils/url';
 import { basename, resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import * as readline from 'readline';
@@ -1155,8 +1156,10 @@ async function runInternalWorker() {
     if (typeof input.context === 'string' && input.context) fields.context = input.context;
     if (typeof input.risk === 'string' && input.risk) fields.risk = input.risk;
     if (typeof input.draft === 'string' && input.draft) fields.draft = input.draft;
-    if (typeof input.draft_url === 'string' && input.draft_url) fields.draftUrl = input.draft_url;
-    if (typeof input.artifact_url === 'string' && input.artifact_url) fields.artifactUrl = input.artifact_url;
+    const safeDraftUrl = safeHttpUrl(input.draft_url);
+    if (safeDraftUrl) fields.draftUrl = safeDraftUrl;
+    const safeArtifactUrl = safeHttpUrl(input.artifact_url);
+    if (safeArtifactUrl) fields.artifactUrl = safeArtifactUrl;
     const artifactPaths: string[] = [];
     if (typeof input.artifact_path === 'string' && input.artifact_path.trim()) artifactPaths.push(input.artifact_path.trim());
     if (Array.isArray(input.artifact_paths)) {
@@ -1356,6 +1359,8 @@ async function runInternalWorker() {
         : typeof channelMessage.url === 'string'
           ? channelMessage.url
           : undefined;
+      const detailDraftUrl = safeHttpUrl(input.draft_url);
+      const detailArtifactUrl = safeHttpUrl(input.artifact_url);
       return {
         id: req.id,
         success: true,
@@ -1374,8 +1379,8 @@ async function runInternalWorker() {
           ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
           ...(typeof input.summary === 'string' && { summary: input.summary }),
           ...(typeof input.draft === 'string' && { draft: input.draft }),
-          ...(typeof input.draft_url === 'string' && { draftUrl: input.draft_url }),
-          ...(typeof input.artifact_url === 'string' && { artifactUrl: input.artifact_url }),
+          ...(detailDraftUrl && { draftUrl: detailDraftUrl }),
+          ...(detailArtifactUrl && { artifactUrl: detailArtifactUrl }),
           ...(typeof input.context === 'string' && { context: input.context }),
           ...(typeof input.risk === 'string' && { risk: input.risk }),
           ...(typeof resumePayload.surface === 'string' && { surface: resumePayload.surface }),
@@ -1689,6 +1694,17 @@ async function runInternalWorker() {
     let continuationSession: { sessionId: string; agentId: string } | undefined;
     let activeSessionId: string | undefined;
 
+    const abortController = new AbortController();
+    // Register the abort handle under the known session id up front, before the
+    // run's async setup (env load, storage init, MCP connect, prepareAgentExecution).
+    // Otherwise a stop request arriving during that window finds no controller,
+    // is silently dropped, and the run finishes and overwrites the stopped
+    // status with success. Fresh runs have no pre-known sessionId and cannot be
+    // raced before their id exists, so they only register once it is known.
+    if (req.sessionId) {
+      activeExecutionControllers.set(req.sessionId, abortController);
+    }
+
     const restoreResumeAndReturn = async <T>(response: T): Promise<T> => {
       if (sessionManager && resumeRollback) {
         await restoreResumeToolResult({ sessionManager, rollback: resumeRollback }).catch((restoreErr) => {
@@ -1853,7 +1869,6 @@ async function runInternalWorker() {
       mcp = await connectMCP(agent.config.mcpServers, req.debug ?? false, mcpBasePath);
 
       const timeoutSeconds = req.timeout ?? agent.config.timeout ?? 300;
-      const abortController = new AbortController();
       const timeoutId = setTimeout(() => abortController.abort(), timeoutSeconds * 1000);
       const projectContext = { projectRoot: req.projectRoot, stateRoot: req.projectRoot, cwd: runCwd };
       let pluginManager: PluginManager | null = null;
@@ -1945,9 +1960,18 @@ async function runInternalWorker() {
           resumeRollback = undefined;
         }
         if (abortController.signal.aborted) {
-          const stoppedByUser = activeSessionId ? activeStoppedSessions.has(activeSessionId) : false;
-          if (stoppedByUser && activeSessionId && sessionManager) {
-            await sessionManager.stopSessionTree(activeSessionId, {
+          // The stop marker is keyed by the session id stopSession saw, which
+          // for resume/continue is req.sessionId; fall back to it when the abort
+          // landed before activeSessionId was resolved so an early user-stop is
+          // not misreported as a timeout.
+          const stoppedSessionId = (activeSessionId && activeStoppedSessions.has(activeSessionId))
+            ? activeSessionId
+            : (req.sessionId && activeStoppedSessions.has(req.sessionId))
+              ? req.sessionId
+              : undefined;
+          const stoppedByUser = stoppedSessionId !== undefined;
+          if (stoppedByUser && sessionManager) {
+            await sessionManager.stopSessionTree(stoppedSessionId, {
               code: 'USER_STOPPED',
               message: 'Session stopped by user'
             }).catch(() => {});
@@ -1978,12 +2002,14 @@ async function runInternalWorker() {
         error: { code: 'INTERNAL_ERROR', message: (err as Error).message },
       };
     } finally {
-      if (activeSessionId) {
-        const controller = activeExecutionControllers.get(activeSessionId);
-        if (controller) {
-          activeExecutionControllers.delete(activeSessionId);
-        }
-        activeStoppedSessions.delete(activeSessionId);
+      // Clear both the up-front (req.sessionId) and resolved (activeSessionId)
+      // registrations; they usually coincide for resume/continue but may differ
+      // defensively, and a stale entry would wrongly abort a later run reusing
+      // the same id.
+      for (const id of new Set([activeSessionId, req.sessionId])) {
+        if (!id) continue;
+        activeExecutionControllers.delete(id);
+        activeStoppedSessions.delete(id);
       }
       for (const conn of mcp) {
         try {

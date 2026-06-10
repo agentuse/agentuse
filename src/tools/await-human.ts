@@ -5,6 +5,7 @@ import { SuspendSignal } from '../runner/suspend';
 import { findServerForProject } from '../utils/server-registry';
 import { sessionViewToken } from '../utils/session-token';
 import { loadGlobalConfig } from '../utils/global-config';
+import { isHttpUrl } from '../utils/url';
 
 function parseTimeout(value?: string): number | undefined {
   if (!value) return undefined;
@@ -74,8 +75,8 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       prompt: z.string().describe('One short line: a direct yes/no question for the reviewer. Do not put the content, headings, or lists here; use draft for that.'),
       summary: z.string().optional().describe('A few sentences on what changed and what is being approved. Rendered as Markdown under "Why this request".'),
       draft: z.string().optional().describe('The full reviewable work itself, written in Markdown (headings, bullet lists, tables, fenced code). This is the primary artifact the reviewer reads, so make it complete, not a one-line summary.'),
-      draft_url: z.string().url().optional().describe('URL to a non-primary draft artifact'),
-      artifact_url: z.string().url().optional().describe('External URL to the primary review artifact, such as a PR, hosted preview, or document'),
+      draft_url: z.string().url().refine(isHttpUrl, 'must be an http(s) URL').optional().describe('URL to a non-primary draft artifact'),
+      artifact_url: z.string().url().refine(isHttpUrl, 'must be an http(s) URL').optional().describe('External URL to the primary review artifact, such as a PR, hosted preview, or document'),
       artifact_path: z.string().optional().describe('Path, relative to the project root, to a local file artifact you created (e.g. .agentuse/artifacts/report.html). The reviewer can open it in a popup viewer. Prefer this over inlining long or HTML content into draft. For more than one file, use artifact_paths.'),
       artifact_paths: z.array(z.string()).optional().describe('Multiple local file artifacts to review, each a path relative to the project root. Each renders as its own openable tile in the popup viewer.'),
       context: z.string().optional().describe('Real background, constraints, inputs used, and work completed so far. Rendered as Markdown.'),

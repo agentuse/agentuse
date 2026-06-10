@@ -460,7 +460,11 @@ async function execInContainer(
 
     const onEnd = () => settle(timeoutError);
     const onClose = () => settle(timeoutError);
-    const onError = (error: Error) => settle(error);
+    // After a timeout fires, onTimeout tears the container down, which can make
+    // the stream emit its own 'error' before the timeout's settle runs. Prefer
+    // the timeout error so the caller reports "timed out" rather than a stray
+    // Docker teardown error.
+    const onError = (error: Error) => settle(timeoutError ?? error);
 
     stream.once('end', onEnd);
     stream.once('close', onClose);
