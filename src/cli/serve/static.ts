@@ -138,7 +138,7 @@ export class WebAssets {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <title>AgentUse</title>
-  <link rel="icon" href="data:,">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <script>${approvalThemeBootScript()}</script>
   ${cssLinks}
   <link rel="modulepreload" href="/assets/${escapeHtml(manifest.entry)}">

@@ -93,6 +93,7 @@ describe('WebAssets static serving', () => {
     expect(shell).toContain('<link rel="stylesheet" href="/assets/main-def456.css">');
     expect(shell).toContain('modulepreload');
     expect(shell).toContain('agentuse-theme');
+    expect(shell).toContain('<link rel="icon" type="image/svg+xml" href="/favicon.svg">');
   });
 
   it('re-reads the manifest when it changes on disk', async () => {
