@@ -43,7 +43,7 @@ const multiArtifactApproval = {
 };
 
 describe('artifact popup rendering', () => {
-  it('renders an artifact tile and the popup modal on the session page', () => {
+  it('renders an artifact tile and the popup modal on the session page', async () => {
     const html = __testing.renderSessionPage({
       approval: suspendedApprovalWithArtifact as never,
       token: 'sess-token',
@@ -63,7 +63,7 @@ describe('artifact popup rendering', () => {
     expect(html).not.toContain('allow-same-origin');
   });
 
-  it('omits the token from the artifact URL on local (no token)', () => {
+  it('omits the token from the artifact URL on local (no token)', async () => {
     const html = __testing.renderSessionPage({
       approval: suspendedApprovalWithArtifact as never,
       token: '',
@@ -73,7 +73,7 @@ describe('artifact popup rendering', () => {
     expect(html).toContain('data-artifact-url="/sessions/session-1/artifacts/.agentuse/artifacts/report.html"');
   });
 
-  it('renders a tile per artifact when multiple are provided', () => {
+  it('renders a tile per artifact when multiple are provided', async () => {
     const html = __testing.renderSessionPage({
       approval: multiArtifactApproval as never,
       token: 'sess-token',
@@ -110,13 +110,13 @@ function fakeResponse(): { res: never; captured: CapturedResponse } {
 }
 
 describe('serveSessionArtifact', () => {
-  it('renders a markdown artifact as a themed HTML document', () => {
+  it('renders a markdown artifact as a themed HTML document', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {
       mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
       writeFileSync(join(root, '.agentuse/artifacts/report.md'), '# Hello\n\n- one\n- two\n');
       const { res, captured } = fakeResponse();
-      __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/report.md');
+      await __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/report.md');
       expect(captured.status).toBe(200);
       expect(captured.headers['Content-Type']).toContain('text/html');
       expect(captured.body).toContain('content-markdown');
@@ -127,7 +127,7 @@ describe('serveSessionArtifact', () => {
     }
   });
 
-  it('renders YAML frontmatter as a metadata table above the body', () => {
+  it('renders YAML frontmatter as a metadata table above the body', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {
       mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
@@ -136,7 +136,7 @@ describe('serveSessionArtifact', () => {
         '---\ntitle: Weekly Report\ntags:\n  - ops\n  - finance\n---\n\n# Body\n\nHello world.\n',
       );
       const { res, captured } = fakeResponse();
-      __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/report.md');
+      await __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/report.md');
       expect(captured.status).toBe(200);
       // Frontmatter becomes a table, not raw `---` paragraphs.
       expect(captured.body).toContain('class="content-frontmatter"');
@@ -152,13 +152,13 @@ describe('serveSessionArtifact', () => {
     }
   });
 
-  it('renders markdown without frontmatter unchanged', () => {
+  it('renders markdown without frontmatter unchanged', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {
       mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
       writeFileSync(join(root, '.agentuse/artifacts/plain.md'), '# Hello\n\nNo frontmatter here.\n');
       const { res, captured } = fakeResponse();
-      __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/plain.md');
+      await __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/plain.md');
       expect(captured.status).toBe(200);
       // The CSS class is defined in <style>, but no table element is emitted.
       expect(captured.body).not.toContain('<table class="content-frontmatter">');
@@ -168,20 +168,20 @@ describe('serveSessionArtifact', () => {
     }
   });
 
-  it('bakes the passed theme into data-theme and drops the detection script', () => {
+  it('bakes the passed theme into data-theme and drops the detection script', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {
       mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
       writeFileSync(join(root, '.agentuse/artifacts/report.md'), '# Hi\n');
 
       const light = fakeResponse();
-      __testing.serveSessionArtifact(light.res, root, '.agentuse/artifacts/report.md', 'light');
+      await __testing.serveSessionArtifact(light.res, root, '.agentuse/artifacts/report.md', 'light');
       expect(light.captured.body).toContain('<html data-theme="light">');
       expect(light.captured.body).not.toContain('prefers-color-scheme');
 
       // No/invalid theme falls back to dark with the progressive-enhancement script.
       const none = fakeResponse();
-      __testing.serveSessionArtifact(none.res, root, '.agentuse/artifacts/report.md');
+      await __testing.serveSessionArtifact(none.res, root, '.agentuse/artifacts/report.md');
       expect(none.captured.body).toContain('<html data-theme="dark">');
       expect(none.captured.body).toContain('prefers-color-scheme');
     } finally {
@@ -189,13 +189,13 @@ describe('serveSessionArtifact', () => {
     }
   });
 
-  it('serves an html artifact raw for the iframe', () => {
+  it('serves an html artifact raw for the iframe', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {
       mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
       writeFileSync(join(root, '.agentuse/artifacts/page.html'), '<!doctype html><h1>Hi</h1>');
       const { res, captured } = fakeResponse();
-      __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/page.html');
+      await __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/page.html');
       expect(captured.status).toBe(200);
       expect(captured.headers['Content-Type']).toContain('text/html');
       expect(captured.headers['X-Content-Type-Options']).toBe('nosniff');
@@ -205,7 +205,7 @@ describe('serveSessionArtifact', () => {
     }
   });
 
-  it('sends a network-blocking CSP with html artifacts and a CSP meta in rendered docs', () => {
+  it('sends a network-blocking CSP with html artifacts and a CSP meta in rendered docs', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {
       mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
@@ -213,14 +213,14 @@ describe('serveSessionArtifact', () => {
       writeFileSync(join(root, '.agentuse/artifacts/doc.md'), '# Hi\n');
 
       const html = fakeResponse();
-      __testing.serveSessionArtifact(html.res, root, '.agentuse/artifacts/page.html');
+      await __testing.serveSessionArtifact(html.res, root, '.agentuse/artifacts/page.html');
       // Inline scripts run, but no network egress and no remote code.
       expect(html.captured.headers['Content-Security-Policy']).toContain("connect-src 'none'");
       expect(html.captured.headers['Content-Security-Policy']).toContain("script-src 'unsafe-inline'");
 
       // Generated markdown docs carry the same policy via a meta tag.
       const md = fakeResponse();
-      __testing.serveSessionArtifact(md.res, root, '.agentuse/artifacts/doc.md');
+      await __testing.serveSessionArtifact(md.res, root, '.agentuse/artifacts/doc.md');
       expect(md.captured.body).toContain('http-equiv="Content-Security-Policy"');
       expect(md.captured.body).toContain("connect-src 'none'");
     } finally {
@@ -228,7 +228,7 @@ describe('serveSessionArtifact', () => {
     }
   });
 
-  it('blocks script execution in svg artifacts via CSP', () => {
+  it('blocks script execution in svg artifacts via CSP', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {
       mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
@@ -237,7 +237,7 @@ describe('serveSessionArtifact', () => {
         '<svg xmlns="http://www.w3.org/2000/svg"><script>fetch("https://evil")</script></svg>',
       );
       const { res, captured } = fakeResponse();
-      __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/chart.svg');
+      await __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/chart.svg');
       expect(captured.headers['Content-Type']).toContain('image/svg+xml');
       // default-src 'none' with no script-src => scripts in the SVG never run.
       expect(captured.headers['Content-Security-Policy']).toContain("default-src 'none'");
@@ -247,18 +247,18 @@ describe('serveSessionArtifact', () => {
     }
   });
 
-  it('refuses path traversal outside the project root', () => {
+  it('refuses path traversal outside the project root', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {
       const { res, captured } = fakeResponse();
-      __testing.serveSessionArtifact(res, root, '../../../../etc/passwd');
+      await __testing.serveSessionArtifact(res, root, '../../../../etc/passwd');
       expect(captured.status).toBe(403);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('refuses to serve dotenv and internal session state', () => {
+  it('refuses to serve dotenv and internal session state', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {
       writeFileSync(join(root, '.env'), 'SECRET=shh');
@@ -266,22 +266,22 @@ describe('serveSessionArtifact', () => {
       writeFileSync(join(root, '.agentuse/store/data.json'), '{"k":"v"}');
 
       const env = fakeResponse();
-      __testing.serveSessionArtifact(env.res, root, '.env');
+      await __testing.serveSessionArtifact(env.res, root, '.env');
       expect(env.captured.status).toBe(403);
 
       const store = fakeResponse();
-      __testing.serveSessionArtifact(store.res, root, '.agentuse/store/data.json');
+      await __testing.serveSessionArtifact(store.res, root, '.agentuse/store/data.json');
       expect(store.captured.status).toBe(403);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('404s when the artifact file is missing', () => {
+  it('404s when the artifact file is missing', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {
       const { res, captured } = fakeResponse();
-      __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/nope.md');
+      await __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/nope.md');
       expect(captured.status).toBe(404);
     } finally {
       rmSync(root, { recursive: true, force: true });

@@ -109,27 +109,10 @@ function isCI(): boolean {
   );
 }
 
-// Log channels for future use
-// enum LogChannel {
-//   RESPONSE = 'response',
-//   ERROR = 'error',
-//   WARNING = 'warning',
-//   DEBUG = 'debug',
-//   INFO = 'info',
-//   SYSTEM = 'system',
-// }
-
 /**
  * Truncation budget for tool argument formatting
  */
 const TRUNCATION_BUDGET = {
-  // Never truncate these types
-  neverTruncate: {
-    filePath: true,
-    url: true,
-    id: true,
-  },
-
   // Only truncate these
   truncate: {
     string: 100,       // Regular strings

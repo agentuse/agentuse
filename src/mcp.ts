@@ -256,7 +256,9 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       }
       
       logger.error(errorMessage);
-      throw new Error(errorMessage);
+      const wrapped = new Error(errorMessage) as Error & { serverName?: string };
+      wrapped.serverName = name;
+      throw wrapped;
     }
   });
   
@@ -277,11 +279,7 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
         throw result.reason;
       }
       
-      // Extract server name from error message
-      const errorMessage = result.reason?.message || '';
-      const serverMatch = errorMessage.match(/Failed to connect to MCP server: (.+)/);
-      const serverName = serverMatch ? serverMatch[1] : 'unknown';
-      failedServers.push(serverName);
+      failedServers.push(result.reason?.serverName ?? 'unknown');
     }
   }
   

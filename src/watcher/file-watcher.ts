@@ -191,20 +191,22 @@ export class FileWatcher {
     this.envWatcher
       .on("add", (path) => {
         if (this.closed) return;
-        this.reloadEnv(path, envFile, onEnvReloaded);
+        this.reloadEnv(path, onEnvReloaded);
       })
       .on("change", (path) => {
         if (this.closed) return;
-        this.reloadEnv(path, envFile, onEnvReloaded);
+        this.reloadEnv(path, onEnvReloaded);
       })
       .on("error", (error: unknown) => {
         logger.warn(`Hot reload: Env watcher error: ${(error as Error).message}`);
       });
   }
 
-  private reloadEnv(changedFile: string, envFile: string, callback: () => void): void {
-    // Reload environment variables with override to update existing vars
-    dotenv.config({ path: envFile, override: true });
+  private reloadEnv(changedFile: string, callback: () => void): void {
+    // Reload from the file that actually changed; watching .env, .env.local and a
+    // custom envFile means the changed path is the source of truth, not the
+    // configured default.
+    dotenv.config({ path: changedFile, override: true });
 
     const fileName = changedFile.split("/").pop() || changedFile;
     console.log(`  Hot reload: Environment reloaded from ${fileName}`);

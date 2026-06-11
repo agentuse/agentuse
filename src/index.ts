@@ -529,11 +529,6 @@ program
       } catch (pluginError) {
         logger.warn(`Failed to initialize plugins: ${(pluginError as Error).message}`);
       }
-      
-      // TODO: Future - emit agent:start event here
-      // if (pluginManager) {
-      //   await pluginManager.emitAgentStart({ ... });
-      // }
 
       /**
        * Prepare execution context BEFORE running the agent.

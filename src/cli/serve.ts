@@ -4,7 +4,8 @@ import { WebClient } from "@slack/web-api";
 import { timingSafeEqual } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
 import { join, resolve, basename, relative, extname } from "path";
-import { existsSync, readFileSync, statSync } from "fs";
+import { existsSync, realpathSync } from "fs";
+import { readFile, stat } from "fs/promises";
 import { glob } from "glob";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
 import chalk from "chalk";
@@ -996,10 +997,16 @@ ${themeScript}
  * pointing the gate at them. Text/markdown render to a themed doc; html/images/
  * pdf are streamed raw for the iframe to display; everything else downloads.
  */
-function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath: string, theme?: string): void {
+async function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath: string, theme?: string): Promise<void> {
   const decoded = (() => { try { return decodeURIComponent(rawPath); } catch { return rawPath; } })();
   const resolved = resolve(projectRoot, decoded);
-  if (!isPathInside(projectRoot, resolved)) {
+  // Lexical containment first. Then, when the target exists, resolve symlinks on
+  // both sides and re-check so a link inside the project cannot point the served
+  // file at a target outside it. A non-existent path has no realpath to resolve
+  // and falls through to the 404 below.
+  const realRoot = (() => { try { return realpathSync(projectRoot); } catch { return projectRoot; } })();
+  const realResolved = (() => { try { return realpathSync(resolved); } catch { return null; } })();
+  if (!isPathInside(projectRoot, resolved) || (realResolved && !isPathInside(realRoot, realResolved))) {
     sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This artifact path is outside the project.</p>');
     return;
   }
@@ -1013,13 +1020,18 @@ function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath:
     sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This artifact path is not viewable.</p>');
     return;
   }
-  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+  let fileStat;
+  try {
+    fileStat = await stat(resolved);
+  } catch {
+    fileStat = null;
+  }
+  if (!fileStat || !fileStat.isFile()) {
     sendHTML(res, 404, '<!doctype html><title>Artifact</title><p>Artifact not found.</p>');
     return;
   }
-  const stat = statSync(resolved);
   const MAX_BYTES = 10 * 1024 * 1024;
-  if (stat.size > MAX_BYTES) {
+  if (fileStat.size > MAX_BYTES) {
     sendHTML(res, 413, '<!doctype html><title>Artifact</title><p>Artifact is too large to preview (over 10 MB).</p>');
     return;
   }
@@ -1044,16 +1056,16 @@ function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath:
     if (rawMime.startsWith('text/html')) headers['Content-Security-Policy'] = `${ARTIFACT_HTML_CSP}; sandbox allow-scripts`;
     else if (rawMime === 'image/svg+xml') headers['Content-Security-Policy'] = ARTIFACT_SVG_CSP;
     res.writeHead(200, headers);
-    res.end(readFileSync(resolved));
+    res.end(await readFile(resolved));
     return;
   }
   if (ext === '.md' || ext === '.markdown') {
-    sendHTML(res, 200, renderArtifactDocument(title, renderMarkdownArtifact(readFileSync(resolved, 'utf8')), theme));
+    sendHTML(res, 200, renderArtifactDocument(title, renderMarkdownArtifact(await readFile(resolved, 'utf8')), theme));
     return;
   }
   const textExts = new Set(['.txt', '.log', '.json', '.csv', '.yaml', '.yml', '.xml', '.ts', '.js', '.py', '.sh', '']);
   if (textExts.has(ext)) {
-    const body = `<pre class="artifact-raw">${escapeHtml(readFileSync(resolved, 'utf8'))}</pre>`;
+    const body = `<pre class="artifact-raw">${escapeHtml(await readFile(resolved, 'utf8'))}</pre>`;
     sendHTML(res, 200, renderArtifactDocument(title, body, theme));
     return;
   }
@@ -1063,7 +1075,7 @@ function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath:
     'Cache-Control': 'no-store',
     'Content-Disposition': `attachment; filename="${title.replace(/["\\]/g, '')}"`
   });
-  res.end(readFileSync(resolved));
+  res.end(await readFile(resolved));
 }
 
 function renderApprovalDetailBlock(details: ApprovalLogDetails, ctx?: { sessionId: string; token?: string | undefined }): string {
@@ -6934,7 +6946,7 @@ export function createServeCommand(): Command {
             sendHTML(res, found.status, `<!doctype html><title>Artifact</title><p>${escapeHtml(found.message)}</p>`);
             return;
           }
-          serveSessionArtifact(res, found.project.root, sessionArtifactMatch[2], requestUrl.searchParams.get('theme') ?? undefined);
+          await serveSessionArtifact(res, found.project.root, sessionArtifactMatch[2], requestUrl.searchParams.get('theme') ?? undefined);
           return;
         }
 

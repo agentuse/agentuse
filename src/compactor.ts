@@ -58,21 +58,9 @@ export async function compactMessages(
       content: `[Context Summary]\n${text}\n[End Summary]`
     };
   } catch (error) {
+    // A failed compaction must surface, not be papered over with a fabricated
+    // summary: returning fake context silently corrupts the agent's state.
     logger.error('Failed to compact messages', error as Error);
-    
-    // Fallback: create a simple summary
-    const toolCalls = messages.filter(m => 
-      m.role === 'assistant' && 
-      typeof m.content !== 'string' &&
-      Array.isArray(m.content) &&
-      m.content.some((c: any) => 'toolName' in c)
-    ).length;
-
-    const fallbackSummary = `Previous context: ${messages.length} messages exchanged, ${toolCalls} tool calls made. Key information may have been lost due to compaction error.`;
-    
-    return {
-      role: 'system',
-      content: `[Context Summary - Fallback]\n${fallbackSummary}\n[End Summary]`
-    };
+    throw error;
   }
 }

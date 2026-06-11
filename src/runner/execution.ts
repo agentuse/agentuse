@@ -1,7 +1,7 @@
 import { streamText, stepCountIs, type ModelMessage, type ToolSet } from 'ai';
 import { createHash } from 'crypto';
 import type { ParsedAgent } from '../parser';
-import { createModel, AuthenticationError } from '../models';
+import { createModel } from '../models';
 import { CodexAuth } from '../auth/codex';
 import { logger } from '../utils/logger';
 import { ContextManager } from '../context-manager';
@@ -150,16 +150,7 @@ export async function* executeAgentCore(
     subAgentNames?: Set<string>;  // Track which tools are subagents
   }
 ): AsyncGenerator<AgentChunk> {
-  let model;
-  try {
-    model = await createModel(agent.config.model);
-  } catch (error) {
-    if (error instanceof AuthenticationError) {
-      // Re-throw with better message for the CLI to catch
-      throw error;
-    }
-    throw error;
-  }
+  const model = await createModel(agent.config.model);
 
   // Initialize context manager if enabled
   let contextManager: ContextManager | null = null;
@@ -228,10 +219,6 @@ export async function* executeAgentCore(
         providerOptions = { openai: openaiOptions };
       }
     }
-    // Future: Add other providers here
-    // if (provider === 'anthropic' && agent.config.anthropic) {
-    //   providerOptions = { anthropic: agent.config.anthropic };
-    // }
 
     const streamConfig: any = {
       model,

@@ -357,25 +357,21 @@ describe('Compactor', () => {
     expect(summary.content).toContain('[End Summary]');
   });
 
-  it('should handle compaction errors with fallback', async () => {
+  it('should propagate compaction errors instead of fabricating a summary', async () => {
     // Mock generateText to throw error
     const { generateText } = await import('ai');
     (generateText as any).mockImplementationOnce(() => {
       throw new Error('Model API error');
     });
-    
+
     const messages = [
       { role: 'user', content: 'Message' },
       { role: 'assistant', content: [{ toolName: 'bash' }] }
     ];
-    
-    const summary = await compactMessages(messages, 'test:model');
-    
-    // Should return fallback summary
-    expect(summary.role).toBe('system');
-    expect(summary.content).toContain('[Context Summary - Fallback]');
-    expect(summary.content).toContain('2 messages exchanged');
-    expect(summary.content).toContain('1 tool calls made');
+
+    // A failed compaction must surface as an error, not a fabricated fallback
+    // summary that would silently corrupt the agent's context.
+    await expect(compactMessages(messages, 'test:model')).rejects.toThrow('Model API error');
   });
 
   it('should handle empty messages gracefully', async () => {

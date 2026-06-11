@@ -7,6 +7,9 @@
  * Opt-out: Set AGENTUSE_TELEMETRY_DISABLED=true
  */
 
+import { existsSync, readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { PostHog } from 'posthog-node';
 import { getOrCreateAnonymousId, isFirstRun, markFirstRunComplete } from './id';
 import type { ExecutionResult, ToolCallMetrics, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult } from './types';
@@ -48,11 +51,10 @@ function isCI(): boolean {
  */
 function isDocker(): boolean {
   try {
-    const fs = require('fs');
     // Check for .dockerenv file or cgroup
-    return fs.existsSync('/.dockerenv') ||
-      (fs.existsSync('/proc/1/cgroup') &&
-        fs.readFileSync('/proc/1/cgroup', 'utf8').includes('docker'));
+    return existsSync('/.dockerenv') ||
+      (existsSync('/proc/1/cgroup') &&
+        readFileSync('/proc/1/cgroup', 'utf8').includes('docker'));
   } catch {
     return false;
   }
@@ -84,10 +86,8 @@ function isNpx(): boolean {
  */
 function isLocalDev(): boolean {
   try {
-    const fs = require('fs');
-    const path = require('path');
-    const packageRoot = path.join(__dirname, '..');
-    return fs.existsSync(path.join(packageRoot, '.git'));
+    const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+    return existsSync(join(packageRoot, '.git'));
   } catch {
     return false;
   }

@@ -115,6 +115,7 @@ export class Scheduler {
   private schedules: Map<string, Schedule> = new Map();
   private jobs: Map<string, Cron> = new Map();
   private pendingRunTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private runningSchedules: Set<string> = new Set();
   private onExecute: SchedulerOptions["onExecute"];
   private readonly scheduleJitterMs: number;
 
@@ -198,6 +199,15 @@ export class Scheduler {
     const schedule = this.schedules.get(scheduleId);
     if (!schedule || !schedule.enabled) return;
 
+    // Prevent overlapping executions of the same schedule: a cron tick (or manual
+    // trigger) that fires while a previous run is still in flight is skipped
+    // rather than running the agent concurrently and racing on lastRun/lastResult.
+    if (this.runningSchedules.has(scheduleId)) {
+      logger.debug(`Scheduler: ${schedule.agentPath} is still running; skipping overlapping run`);
+      return;
+    }
+    this.runningSchedules.add(scheduleId);
+
     executionLog.start(schedule.agentPath);
 
     const startTime = Date.now();
@@ -232,6 +242,8 @@ export class Scheduler {
 
       executionLog.failed(schedule.agentPath, duration, (error as Error).message);
       logger.debug(`Schedule ${scheduleId} failed: ${(error as Error).message}`);
+    } finally {
+      this.runningSchedules.delete(scheduleId);
     }
   }
 

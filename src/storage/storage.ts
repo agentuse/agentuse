@@ -78,8 +78,14 @@ export async function readJSON<T>(key: string): Promise<T | null> {
   try {
     const content = await fs.readFile(target, 'utf-8');
     return JSON.parse(content) as T;
-  } catch {
-    return null;
+  } catch (error) {
+    // A missing file is an expected "not found" and maps to null. Anything else
+    // (corrupt JSON, permission denied, disk error) is a real failure that must
+    // surface rather than masquerade as an absent session.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null;
+    }
+    throw error;
   }
 }
 

@@ -59,7 +59,15 @@ export class SessionManager {
       // Don't let previous errors block the next write.
     }).then(operation);
 
-    this.writeQueues.set(key, operationQueue.then(() => undefined, () => undefined));
+    const tail = operationQueue.then(() => undefined, () => undefined);
+    this.writeQueues.set(key, tail);
+    // Evict the key once this write settles and nothing newer has queued behind
+    // it, so the map does not grow unbounded over a long-lived process lifetime.
+    void tail.then(() => {
+      if (this.writeQueues.get(key) === tail) {
+        this.writeQueues.delete(key);
+      }
+    });
     return await operationQueue;
   }
 
@@ -720,12 +728,12 @@ export class SessionManager {
   }
 
   async writeToolsSnapshot(sessionID: string, agentId: string, snapshot: ToolsSnapshot): Promise<void> {
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     await writeJSON(`${sessionPath}/tools`, snapshot);
   }
 
   async readToolsSnapshot(sessionID: string, agentId: string): Promise<ToolsSnapshot | null> {
-    const sessionPath = this.buildSessionPath(sessionID, agentId);
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     return readJSON<ToolsSnapshot>(`${sessionPath}/tools`);
   }
 

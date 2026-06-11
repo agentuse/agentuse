@@ -348,6 +348,13 @@ export async function createSubAgentTool(
           }
         }
 
+        // An abort is the parent's cancellation/timeout, not a recoverable
+        // sub-agent failure. Swallowing it into a text result would let the
+        // parent keep running past its own timeout, so re-throw to propagate.
+        if (error instanceof Error && error.name === 'AbortError') {
+          throw error;
+        }
+
         return {
           output: `Sub-agent ${agent.name} failed: ${errorMsg}`
         };
