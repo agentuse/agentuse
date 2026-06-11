@@ -266,14 +266,6 @@ export default function SessionDetail() {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [commentOpen, actionable, submittingDecision, submitDecision]);
 
-  if (!token) {
-    return (
-      <div class="page-approval-detail">
-        <Topbar currentPage="sessions" />
-        <main><p class="notice error">Missing session token.</p></main>
-      </div>
-    );
-  }
   if (authError) {
     return (
       <div class="page-approval-detail">

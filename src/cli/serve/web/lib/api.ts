@@ -107,7 +107,7 @@ function withToken(path: string, token?: string): string {
   return token ? `${path}?token=${encodeURIComponent(token)}` : path;
 }
 
-export function fetchSessionStatus(sessionId: string, token: string, project?: string): Promise<ApprovalStatusPayload> {
+export function fetchSessionStatus(sessionId: string, token: string | undefined, project?: string): Promise<ApprovalStatusPayload> {
   return getJson(`/sessions/${encodeURIComponent(sessionId)}/status`, { token, project, logs: '1' });
 }
 

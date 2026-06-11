@@ -34,8 +34,9 @@ export function useApprovalStream(options: {
   const { sessionId, token, project } = options;
 
   useEffect(() => {
-    if (!token) return;
-
+    // No token is valid on a local (no-api-key) daemon, where the session
+    // routes are open. Only an exposed daemon needs ?token=; there the
+    // token-less fetches 401 and surface via onAuthError below.
     let closed = false;
     let source: EventSource | null = null;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -44,7 +45,7 @@ export function useApprovalStream(options: {
     let errorTimes: number[] = [];
 
     const url = new URL(`/sessions/${encodeURIComponent(sessionId)}/events`, location.origin);
-    url.searchParams.set('token', token);
+    if (token) url.searchParams.set('token', token);
     if (project) url.searchParams.set('project', project);
 
     const poll = async () => {
