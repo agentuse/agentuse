@@ -1,0 +1,108 @@
+import { useLocation } from 'preact-iso';
+import type { ApprovalRow } from '../lib/api';
+import { fetchApprovals } from '../lib/api';
+import { useFetch } from '../hooks/use-fetch';
+import { useTitle } from '../hooks/use-title';
+import { Topbar } from '../components/topbar';
+import { formatApprovalTime } from '../lib/format';
+
+function ApprovalRowView(props: { row: ApprovalRow; multiProject: boolean }) {
+  const { row, multiProject } = props;
+  const linkable = row.resumeToken !== undefined;
+  const params = new URLSearchParams();
+  if (row.resumeToken) params.set('token', row.resumeToken);
+  if (multiProject) params.set('project', row.project);
+  const href = linkable ? `/sessions/${encodeURIComponent(row.sessionId)}?${params.toString()}` : null;
+
+  const titleText = row.agentDescription || row.prompt || row.agentName || '(untitled approval)';
+  const truncated = titleText.length > 220 ? `${titleText.slice(0, 220)}…` : titleText;
+
+  const timeLabel = row.status === 'pending'
+    ? (row.expiresAt
+      ? `expires ${formatApprovalTime(row.expiresAt)}`
+      : `suspended ${formatApprovalTime(row.suspendedAt)}`)
+    : row.status === 'expired'
+      ? `expired ${formatApprovalTime(row.decisionAt ?? row.expiresAt)}`
+      : `decided ${formatApprovalTime(row.decisionAt)}`;
+
+  const decisionLabel = row.errorMessage || row.decisionComment || '';
+
+  const inner = (
+    <>
+      <div class="row-head">
+        <span class={`chip status ${row.status}`}>{row.status}</span>
+        {multiProject && <span class="chip project">{row.project}</span>}
+        <span class="chip agent">{row.agentName}</span>
+        <span class="row-time">{timeLabel}</span>
+      </div>
+      <div class="row-title">{truncated}</div>
+      {decisionLabel && <div class="row-decision">{decisionLabel}</div>}
+      <div class="row-meta"><code>{row.sessionId}</code></div>
+    </>
+  );
+
+  return href
+    ? <a class="row" href={href}>{inner}</a>
+    : <div class="row row-static">{inner}</div>;
+}
+
+function Bucket(props: { title: string; rows: ApprovalRow[]; emptyText: string; multiProject: boolean }) {
+  return (
+    <section class="bucket">
+      <h2 class="section-title"><span>{props.title}</span><span class="count">{props.rows.length}</span><span class="rule"></span></h2>
+      {props.rows.length === 0
+        ? <p class="empty">{props.emptyText}</p>
+        : (
+          <div class="rows">
+            {props.rows.map((row) => (
+              <ApprovalRowView key={`${row.project}:${row.sessionId}:${row.status}`} row={row} multiProject={props.multiProject} />
+            ))}
+          </div>
+        )}
+    </section>
+  );
+}
+
+export default function ApprovalsList() {
+  const location = useLocation();
+  const days = location.query.days || undefined;
+  const project = location.query.project || undefined;
+
+  useTitle('AgentUse / Approvals');
+
+  const { data, error, loading } = useFetch(
+    `approvals:${days ?? ''}:${project ?? ''}`,
+    () => fetchApprovals({ days, project }),
+    { refreshMs: 10_000 }
+  );
+
+  const totalPending = data?.buckets.pending.length ?? 0;
+  const multiProject = data?.multiProject ?? false;
+
+  return (
+    <div class="page-approvals">
+      <Topbar currentPage="approvals" right={<span class="pending-count">{totalPending} pending</span>} />
+      <main>
+        <h1>Approvals</h1>
+        {error && (
+          <div class="errors">Failed to load approvals: {error.message}</div>
+        )}
+        {data && data.errors.length > 0 && (
+          <div class="errors">
+            Some projects failed to load:
+            <ul>{data.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul>
+          </div>
+        )}
+        {loading && !data && <p class="empty">Loading approvals…</p>}
+        {data && (
+          <>
+            <Bucket title="Pending" rows={data.buckets.pending} emptyText="No approvals waiting." multiProject={multiProject} />
+            <Bucket title="Completed" rows={data.buckets.completed} emptyText="No completed approvals yet." multiProject={multiProject} />
+            <Bucket title="Expired / Errored" rows={data.buckets.expired} emptyText="Nothing has expired or errored." multiProject={multiProject} />
+            <footer>auto-refreshes every 10s</footer>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}

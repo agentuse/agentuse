@@ -1,0 +1,239 @@
+import type { IncomingMessage, ServerResponse } from "http";
+import { logger } from "../../utils/logger";
+import type { ApprovalLogEntry, ApprovalPageInfo } from "./types";
+
+/** A single computed view of a session: the same shape `/sessions/:id/status?logs=1` returns. */
+export interface SessionSnapshot {
+  status: string;
+  approval: Omit<ApprovalPageInfo, 'logs'>;
+  logs: ApprovalLogEntry[];
+}
+
+/**
+ * Produces the current snapshot for one session. serve.ts injects a closure
+ * that reuses the exact `/status?logs=1` logic (findSessionInfo + status
+ * computation + logsWithChildSessions), so the SSE stream and the polling
+ * fallback are byte-for-byte equivalent.
+ */
+export type SessionPoll = () => Promise<
+  | { ok: true; snapshot: SessionSnapshot }
+  | { ok: false; error: { code: string; message: string } }
+>;
+
+export interface SessionStatusEvent {
+  sessionId: string;
+  status: string;
+  approval: Omit<ApprovalPageInfo, 'logs'>;
+}
+
+interface SessionLoop {
+  key: string;
+  sessionId: string;
+  poll: SessionPoll;
+  subscribers: Set<ServerResponse>;
+  timer: NodeJS.Timeout | null;
+  ticking: boolean;
+  stopped: boolean;
+  lastStatusJson: string | null;
+  logSignatures: Map<string, string>;
+}
+
+export interface ApprovalEventHubOptions {
+  liveIntervalMs?: number;
+  idleIntervalMs?: number;
+  heartbeatIntervalMs?: number;
+  maxSubscribersPerSession?: number;
+}
+
+function logSignature(entry: ApprovalLogEntry): string {
+  return JSON.stringify([entry.status ?? null, entry.message ?? null, entry.title, entry.details ?? null, entry.subagentSession ?? null]);
+}
+
+/**
+ * Pushes session/approval state to SSE subscribers.
+ *
+ * The worker IPC is request/response only, so the hub polls the injected
+ * snapshot closure on a timer and diffs snapshots: one poll loop per session
+ * regardless of how many tabs are subscribed, and subscribers only receive
+ * deltas (status changes and new/changed log entries). The cadence mirrors the
+ * in-page polling: fast while the session is actively resuming or running,
+ * slow while idle.
+ */
+export class ApprovalEventHub {
+  private loops = new Map<string, SessionLoop>();
+  private readonly liveIntervalMs: number;
+  private readonly idleIntervalMs: number;
+  private readonly heartbeatIntervalMs: number;
+  private readonly maxSubscribersPerSession: number;
+
+  constructor(options: ApprovalEventHubOptions = {}) {
+    this.liveIntervalMs = options.liveIntervalMs ?? 500;
+    this.idleIntervalMs = options.idleIntervalMs ?? 1500;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 25_000;
+    this.maxSubscribersPerSession = options.maxSubscribersPerSession ?? 20;
+  }
+
+  /**
+   * Attaches an SSE subscriber. The caller must have already authorized the
+   * session (sessionAuthorized); the hub trusts its inputs.
+   * Returns false when the per-session subscriber cap is reached.
+   */
+  subscribe(options: {
+    key: string;
+    sessionId: string;
+    poll: SessionPoll;
+    req: IncomingMessage;
+    res: ServerResponse;
+  }): boolean {
+    const { key } = options;
+    let loop = this.loops.get(key);
+    if (loop && loop.subscribers.size >= this.maxSubscribersPerSession) {
+      return false;
+    }
+    if (!loop) {
+      loop = {
+        key,
+        sessionId: options.sessionId,
+        poll: options.poll,
+        subscribers: new Set(),
+        timer: null,
+        ticking: false,
+        stopped: false,
+        lastStatusJson: null,
+        logSignatures: new Map(),
+      };
+      this.loops.set(key, loop);
+    }
+
+    const { res } = options;
+    loop.subscribers.add(res);
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-store",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(`retry: 3000\n\n`);
+
+    // Replay current status to the new subscriber, then reset the loop's log
+    // signatures so the next tick re-emits every log entry (idempotent for
+    // existing clients, which key by entry id).
+    if (loop.lastStatusJson !== null) {
+      res.write(`event: status\ndata: ${loop.lastStatusJson}\n\n`);
+      loop.logSignatures.clear();
+    }
+
+    const heartbeat = setInterval(() => {
+      if (res.destroyed) return;
+      res.write(`: hb\n\n`);
+    }, this.heartbeatIntervalMs);
+
+    // Both: Node fires 'close' on the response when the client disconnects,
+    // but Bun's node:http shim only fires it on the request.
+    const onClose = () => {
+      clearInterval(heartbeat);
+      this.unsubscribe(key, res);
+    };
+    res.on("close", onClose);
+    options.req.on("close", onClose);
+
+    if (!loop.timer && !loop.ticking) {
+      void this.tick(loop);
+    }
+    return true;
+  }
+
+  private unsubscribe(key: string, res: ServerResponse): void {
+    const loop = this.loops.get(key);
+    if (!loop) return;
+    loop.subscribers.delete(res);
+    if (loop.subscribers.size === 0) {
+      this.stopLoop(loop);
+    }
+  }
+
+  private stopLoop(loop: SessionLoop): void {
+    loop.stopped = true;
+    if (loop.timer) {
+      clearTimeout(loop.timer);
+      loop.timer = null;
+    }
+    this.loops.delete(loop.key);
+  }
+
+  /** Number of active poll loops (exposed for tests and diagnostics). */
+  activeLoopCount(): number {
+    return this.loops.size;
+  }
+
+  shutdown(): void {
+    for (const loop of [...this.loops.values()]) {
+      for (const res of loop.subscribers) {
+        res.end();
+      }
+      this.stopLoop(loop);
+    }
+  }
+
+  private broadcast(loop: SessionLoop, payload: string): void {
+    for (const res of [...loop.subscribers]) {
+      if (res.destroyed) {
+        this.unsubscribe(loop.key, res);
+        continue;
+      }
+      res.write(payload);
+    }
+  }
+
+  private async tick(loop: SessionLoop): Promise<void> {
+    if (loop.stopped || loop.ticking) return;
+    loop.ticking = true;
+    let interval = this.idleIntervalMs;
+    try {
+      const result = await loop.poll();
+      if (loop.stopped) return;
+
+      if (result.ok) {
+        const { status, approval, logs } = result.snapshot;
+
+        const statusEvent: SessionStatusEvent = { sessionId: loop.sessionId, status, approval };
+        const statusJson = JSON.stringify(statusEvent);
+        if (statusJson !== loop.lastStatusJson) {
+          loop.lastStatusJson = statusJson;
+          this.broadcast(loop, `event: status\ndata: ${statusJson}\n\n`);
+        }
+
+        const seen = new Set<string>();
+        for (const entry of logs) {
+          seen.add(entry.id);
+          const signature = logSignature(entry);
+          if (loop.logSignatures.get(entry.id) !== signature) {
+            loop.logSignatures.set(entry.id, signature);
+            this.broadcast(loop, `event: log\ndata: ${JSON.stringify(entry)}\n\n`);
+          }
+        }
+        for (const id of [...loop.logSignatures.keys()]) {
+          if (!seen.has(id)) loop.logSignatures.delete(id);
+        }
+
+        const live = status === 'resuming' || status === 'continuing' || status === 'running' || status === 'run';
+        interval = live ? this.liveIntervalMs : this.idleIntervalMs;
+      } else {
+        // Transient failures should not kill streams; surface the error and
+        // keep polling at the idle cadence.
+        this.broadcast(loop, `event: stream-error\ndata: ${JSON.stringify(result.error)}\n\n`);
+      }
+    } catch (err) {
+      logger.debug(`Session SSE tick failed for ${loop.key}: ${(err as Error).message}`);
+    } finally {
+      loop.ticking = false;
+      if (!loop.stopped) {
+        loop.timer = setTimeout(() => {
+          loop.timer = null;
+          void this.tick(loop);
+        }, interval);
+      }
+    }
+  }
+}
