@@ -31,3 +31,4 @@ __pycache__/
 
 # User local config and data
 .agentuse/
+.claude/
