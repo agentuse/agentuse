@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { validateModel, getSuggestions, warnIfModelNotInRegistry, loadCustomProviderNames } from "../src/utils/model-utils";
+import { getProviderModels } from "../src/generated/models";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
@@ -27,7 +28,11 @@ describe("validateModel", () => {
   });
 
   it("returns valid for openai models in registry", () => {
-    const result = validateModel("openai:gpt-5.4");
+    // Derive a real id from the registry so this test tracks model.dev churn
+    // (the registry auto-regenerates and hardcoded versions age out).
+    const openaiModels = getProviderModels("openai");
+    expect(openaiModels.length).toBeGreaterThan(0);
+    const result = validateModel(`openai:${openaiModels[0].id}`);
     expect(result.valid).toBe(true);
   });
 
