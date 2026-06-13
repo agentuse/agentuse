@@ -20,13 +20,13 @@ export interface ExtractLearningsOptions {
 
 /**
  * Extract learnings from a completed agent execution
- * Called after agent completion when learning.evaluate is enabled
+ * Called after agent completion when learning.capture is enabled
  */
 export async function extractLearnings(options: ExtractLearningsOptions): Promise<void> {
   const { event, agentInstructions, agentModel, agentFilePath, config } = options;
 
-  // Skip if evaluate is not enabled (shouldn't happen, but safety check)
-  if (!config.evaluate) return;
+  // Skip if capture is not enabled (shouldn't happen, but safety check)
+  if (!config.capture) return;
 
   const spinner = ora({
     text: 'Extracting learnings...',
@@ -46,7 +46,7 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
       event,
       agentInstructions,
       agentModel,
-      config.evaluate,
+      config.criteria,
       existingLearnings,
     );
 
@@ -64,5 +64,6 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
 }
 
 export { LearningStore, resolveLearningFilePath } from './store';
+export { maybePromoteApprovalComment, promoteApprovalComment } from './from-approval';
 export type { Learning, LearningConfig } from './types';
 export { LearningConfigSchema } from './types';

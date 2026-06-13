@@ -35,13 +35,13 @@ export async function evaluateExecution(
   event: AgentCompleteEvent,
   agentInstructions: string,
   agentModel: string,
-  evaluateCriteria: true | string,
+  criteria: string | undefined,
   existingLearnings: Learning[] = [],
 ): Promise<Learning[]> {
   const model = await createModel(agentModel);
 
-  const customCriteria = typeof evaluateCriteria === 'string'
-    ? `\n\nAdditional evaluation criteria:\n${evaluateCriteria}`
+  const customCriteria = criteria
+    ? `\n\nAdditional evaluation criteria:\n${criteria}`
     : '';
 
   // Truncate console output to avoid context bloat
@@ -159,5 +159,6 @@ If no learnings are applicable, respond with an empty array: []`;
     id: Math.random().toString(36).slice(2, 10),
     appliedCount: 0,
     extractedAt: now,
+    source: 'auto' as const,
   }));
 }

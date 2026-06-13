@@ -60,7 +60,7 @@ describe("evaluateExecution", () => {
     }));
     createModelMock.mockImplementation(async () => "anthropic-sonnet");
 
-    const result = await evaluateExecution(baseEvent, "Agent instructions", "anthropic-sonnet", true, []);
+    const result = await evaluateExecution(baseEvent, "Agent instructions", "anthropic-sonnet", undefined, []);
 
     expect(result).toHaveLength(1);
     const [learning] = result;
@@ -75,7 +75,7 @@ describe("evaluateExecution", () => {
       text: "```json\n[{\"category\":\"pattern\",\"title\":\"Fallbacks\",\"instruction\":\"Use fallback prompts when tools fail.\",\"confidence\":0.82}]\n```",
     }));
 
-    const result = await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", true, []);
+    const result = await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, []);
 
     expect(result).toHaveLength(1);
     expect(result[0].category).toBe("pattern");
@@ -85,7 +85,7 @@ describe("evaluateExecution", () => {
   it("returns empty array when response is not valid JSON", async () => {
     generateTextMock.mockImplementation(async () => ({ text: "not json" }));
 
-    const result = await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", true, []);
+    const result = await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, []);
     expect(result).toEqual([]);
   });
 });

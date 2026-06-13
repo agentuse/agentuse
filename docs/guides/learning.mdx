@@ -10,23 +10,16 @@ tag: Experimental
 
 ## What is Learning?
 
-Learning extracts insights from agent executions and stores them in a readable markdown file. You can then review these learnings and incorporate the best ones back into your agent instructions - creating a human-in-the-loop improvement cycle.
+Learning lets an agent **capture** insights from its executions into a readable markdown file and **apply** them in future runs. Capture has two sources: self-evaluation of each run, and promotion of a human reviewer's approval-gate comment (see [Learning from approval comments](#learning-from-approval-comments)).
 
-## Recommended Workflow
+## Quick Start
 
-The default workflow keeps you in control:
-
-1. **Enable extraction** - Set `evaluate: true` to capture learnings
-2. **Run your agent** - Learnings accumulate in `{agent-name}.learnings.md`
-3. **Review periodically** - Check the learnings file for valuable insights
-4. **Update instructions** - Copy the best learnings into your agent file
+A single switch turns on both capture and apply:
 
 ```yaml
 ---
 model: anthropic:claude-sonnet-4-6
-learning:
-  evaluate: true   # Extract learnings after execution
-  apply: false     # Review manually (default)
+learning: true   # capture insights AND apply them next run
 ---
 
 # Blog Writer
@@ -38,34 +31,33 @@ Write short productivity blog posts.
 - Include 3 actionable tips
 ```
 
-After several runs, check `blog-writer.learnings.md`. If you see a valuable pattern like "use specific time estimates for each tip", add it to your Guidelines section permanently.
+`learning: true` is sugar for `{ capture: true, apply: true }`. Learnings accumulate in `{agent-name}.learnings.md` next to your agent file and are injected into instructions on the next run.
 
-## Auto-Apply (Optional)
+## Capture-Only (Review Before Trust)
 
-If you want hands-off improvement, enable `apply: true`:
+For a human-in-the-loop workflow, capture insights but do not auto-apply them. Review the file, then copy the best ones into your instructions yourself:
 
 ```yaml
 learning:
-  evaluate: true
-  apply: true      # Automatically inject learnings
+  capture: true
+  apply: false   # accumulate for manual review, never auto-inject
 ```
 
-With auto-apply:
-- Up to 10 learnings are appended to your agent instructions each run
-- The agent adapts without manual intervention
-- Less control, but more autonomous
-
-<Note>
-  Start with manual review (`apply: false`) until you trust the quality of extracted learnings. Then consider enabling auto-apply for mature agents.
-</Note>
+This is the safer default for agents that touch untrusted input (web pages, emails, tickets), where an auto-applied learning could persist a bad or injected instruction. See [Best Practices](#best-practices).
 
 ## Configuration Options
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `evaluate` | `true` or `string` | Extract learnings after execution. Use `true` or a custom evaluation prompt. |
-| `apply` | `boolean` | Optional. Auto-inject stored learnings in future runs. Defaults to `false` when omitted. |
+| `learning: true` | `boolean` | Shorthand for `{ capture: true, apply: true }`. |
+| `capture` | `boolean` | Write learnings after execution (self-evaluation + approval comments). Defaults to `true`. |
+| `apply` | `boolean` | Inject stored learnings into instructions before each run. Defaults to `true`. |
+| `criteria` | `string` | Optional guidance for the capture evaluator (domain-specific extraction). |
 | `file` | `string` | Custom file path for storing learnings (relative to agent file). |
+
+<Note>
+  **Deprecated:** the older `evaluate: true` / `evaluate: "<prompt>"` field still works but maps to `capture: true` (and `criteria` for the string form). It is removed in a future release; migrate to `capture` / `criteria`.
+</Note>
 
 ## Storage
 
@@ -81,18 +73,35 @@ Custom path:
 
 ```yaml
 learning:
-  evaluate: true
+  capture: true
   file: "./learnings/shared.md"
 ```
 
 ## How Extraction Works
 
-After execution (when `evaluate: true`):
+After execution (when `capture` is enabled):
 
 1. LLM evaluates the execution result
 2. Extracts 0-3 high-confidence learnings (≥0.8 threshold)
 3. Deduplicates against existing learnings (60% word overlap)
 4. Stores in markdown format
+
+## Learning from approval comments
+
+When [Approval Gates](/guides/approval-gates) are enabled and `capture` is on, approving a gate **with a comment** can promote that comment into a durable learning. This is the highest-signal feedback an agent receives, so it is captured separately from self-evaluation.
+
+```yaml
+---
+model: anthropic:claude-sonnet-4-6
+approval: true
+learning: true
+---
+
+# Blog Writer
+...
+```
+
+When you approve and leave a note like "Going forward, always cite a source before publishing", a generalizability filter decides whether the comment is a **durable agent-wide rule** or a **one-off edit** to this run. Only durable rules are captured (as `src:approval`, confidence `0.95`); one-off edits are ignored. Approval-sourced learnings rank ahead of auto-extracted ones when injected, so your corrections survive the per-run cap.
 
 ## How Application Works
 
@@ -122,23 +131,26 @@ Learnings are stored as readable markdown:
 # Learnings for blog-writer
 
 ### [tip] Use specific examples over generic advice
-<!-- id:a1b2c3d4 | confidence:0.92 | applied:3 | 2026-01-27 -->
+<!-- id:a1b2c3d4 | confidence:0.92 | applied:3 | src:auto | 2026-01-27 -->
 When writing productivity tips, include concrete scenarios
 like "checking emails before coffee" rather than abstract advice.
 
 ### [pattern] Structure with time estimates
-<!-- id:e5f6g7h8 | confidence:0.88 | applied:1 | 2026-01-27 -->
+<!-- id:e5f6g7h8 | confidence:0.88 | applied:1 | src:approval | 2026-01-27 -->
 Each actionable tip should include a specific time estimate
 (e.g., "5-minute brain dump") to make it feel achievable.
 ```
 
-## Custom Evaluation Prompts
+The `src:` field records provenance: `auto` (self-evaluation) or `approval` (promoted from a reviewer comment). Older files without `src:` load as `auto`.
 
-Pass a string to `evaluate` for domain-specific extraction:
+## Custom Evaluation Criteria
+
+Pass a string to `criteria` for domain-specific extraction:
 
 ```yaml
 learning:
-  evaluate: |
+  capture: true
+  criteria: |
     Evaluate the blog post against these criteria:
     1. Hook quality - Is the opening engaging?
     2. Actionability - Can readers implement immediately?
@@ -151,7 +163,8 @@ learning:
 ---
 model: anthropic:claude-sonnet-4-6
 learning:
-  evaluate: true
+  capture: true
+  apply: false
 ---
 
 # Blog Writer

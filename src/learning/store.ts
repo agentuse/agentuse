@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname, resolve, basename } from 'path';
-import type { Learning, LearningCategory } from './types';
+import type { Learning, LearningCategory, LearningSource } from './types';
 
 /**
  * Resolve learning file path
@@ -90,21 +90,44 @@ export class LearningStore {
 
   private parseMarkdown(content: string): Learning[] {
     const learnings: Learning[] = [];
-    const regex = /### \[(\w+(?:-\w+)?)\] (.+)\n<!-- id:(\w+) \| confidence:([\d.]+) \| applied:(\d+) \| ([\d-]+) -->\n([\s\S]+?)(?=\n\n###|\n*$)/g;
+    // Capture the metadata comment as a single token blob so fields can be
+    // parsed positionally-or-by-key. This keeps old files (no `src:`) readable.
+    const regex = /### \[([\w-]+)\] (.+)\n<!-- (.+?) -->\n([\s\S]+?)(?=\n\n###|\n*$)/g;
 
     let match;
     while ((match = regex.exec(content)) !== null) {
+      const meta = this.parseMeta(match[3]);
       learnings.push({
         category: match[1] as LearningCategory,
         title: match[2],
-        id: match[3],
-        confidence: parseFloat(match[4]),
-        appliedCount: parseInt(match[5]),
-        extractedAt: match[6],
-        instruction: match[7].trim(),
+        id: meta.id ?? '',
+        confidence: meta.confidence ?? 0,
+        appliedCount: meta.applied ?? 0,
+        extractedAt: meta.date ?? '',
+        source: meta.source ?? 'auto',
+        instruction: match[4].trim(),
       });
     }
     return learnings;
+  }
+
+  /**
+   * Parse the metadata comment body, e.g.
+   * `id:AB12 | confidence:0.92 | applied:0 | src:approval | 2024-01-15`.
+   * `src:` is optional so learnings files written before provenance still load.
+   */
+  private parseMeta(meta: string): {
+    id?: string; confidence?: number; applied?: number; source?: LearningSource; date?: string;
+  } {
+    const out: { id?: string; confidence?: number; applied?: number; source?: LearningSource; date?: string } = {};
+    for (const token of meta.split('|').map(t => t.trim())) {
+      if (token.startsWith('id:')) out.id = token.slice(3);
+      else if (token.startsWith('confidence:')) out.confidence = parseFloat(token.slice(11));
+      else if (token.startsWith('applied:')) out.applied = parseInt(token.slice(8));
+      else if (token.startsWith('src:')) out.source = token.slice(4) === 'approval' ? 'approval' : 'auto';
+      else if (/^\d{4}-\d{2}-\d{2}$/.test(token)) out.date = token;
+    }
+    return out;
   }
 
   private serializeMarkdown(learnings: Learning[]): string {
@@ -113,7 +136,7 @@ export class LearningStore {
 
     for (const l of learnings) {
       md += `### [${l.category}] ${l.title}\n`;
-      md += `<!-- id:${l.id} | confidence:${l.confidence.toFixed(2)} | applied:${l.appliedCount} | ${l.extractedAt.slice(0, 10)} -->\n`;
+      md += `<!-- id:${l.id} | confidence:${l.confidence.toFixed(2)} | applied:${l.appliedCount} | src:${l.source} | ${l.extractedAt.slice(0, 10)} -->\n`;
       md += `${l.instruction}\n\n`;
     }
     return md.trim() + '\n';

@@ -87,7 +87,7 @@ describe("extractLearnings", () => {
       agentInstructions: "Do things",
       agentModel: "gpt-4",
       agentFilePath,
-      config: { evaluate: true, apply: false },
+      config: { capture: true, apply: false },
     });
 
     const defaultPath = join(tempDir, "agents", "demo.learnings.md");
@@ -107,7 +107,7 @@ describe("extractLearnings", () => {
       agentInstructions: "Do things",
       agentModel: "gpt-4",
       agentFilePath,
-      config: { evaluate: true, apply: false },
+      config: { capture: true, apply: false },
     });
 
     expect(existsSync(join(tempDir, "agents", "demo.learnings.md"))).toBe(false);
@@ -124,7 +124,7 @@ describe("extractLearnings", () => {
       agentInstructions: "Do things",
       agentModel: "gpt-4",
       agentFilePath,
-      config: { evaluate: true, apply: false },
+      config: { capture: true, apply: false },
     });
 
     expect(failMock).toHaveBeenCalledWith("Failed to extract learnings");

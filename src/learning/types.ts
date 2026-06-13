@@ -1,13 +1,39 @@
 import { z } from 'zod';
+// DEPRECATED-COMPAT(learning.evaluate) — delete this import with src/learning/legacy.ts
+import { LegacyLearningSchema, migrateLegacyLearning } from './legacy';
 
 /**
- * Config schema for learning feature in agent config
+ * Canonical learning config. `capture` writes lessons to the store (from
+ * self-evaluation and from approval-gate comments); `apply` injects stored
+ * lessons into the system prompt before each run.
  */
-export const LearningConfigSchema = z.object({
-  evaluate: z.union([z.literal(true), z.string()]),
-  apply: z.boolean().default(false),
-  file: z.string().optional(),  // Custom file path (relative to agent file)
-});
+export interface CanonicalLearningConfig {
+  capture: boolean;
+  apply: boolean;
+  criteria?: string; // optional guidance for the capture evaluator
+  file?: string;     // custom store path, relative to the agent file
+}
+
+const CanonicalLearningSchema = z
+  .object({
+    capture: z.boolean().default(true),
+    apply: z.boolean().default(true),
+    criteria: z.string().optional(),
+    file: z.string().optional(),
+  })
+  .strict();
+
+/**
+ * Config schema for the learning feature in agent config.
+ * Accepts `learning: true` (sugar for capture + apply), the canonical object,
+ * or the deprecated `{ evaluate, ... }` shape (migrated in ./legacy).
+ */
+export const LearningConfigSchema = z.union([
+  z.literal(true).transform((): CanonicalLearningConfig => ({ capture: true, apply: true })),
+  CanonicalLearningSchema,
+  // DEPRECATED-COMPAT(learning.evaluate) — delete this branch with src/learning/legacy.ts
+  LegacyLearningSchema.transform(migrateLegacyLearning),
+]);
 
 export type LearningConfig = z.infer<typeof LearningConfigSchema>;
 
@@ -15,6 +41,13 @@ export type LearningConfig = z.infer<typeof LearningConfigSchema>;
  * Learning category types
  */
 export type LearningCategory = 'tip' | 'warning' | 'pattern' | 'tool-usage' | 'error-fix';
+
+/**
+ * How a learning entered the store.
+ * - auto: extracted by self-evaluation of an execution
+ * - approval: promoted from a human reviewer's approval-gate comment
+ */
+export type LearningSource = 'auto' | 'approval';
 
 /**
  * Learning item stored in markdown
@@ -27,4 +60,5 @@ export interface Learning {
   confidence: number;   // 0-1
   appliedCount: number; // Times injected
   extractedAt: string;  // ISO date
+  source: LearningSource; // Provenance (defaults to 'auto' for legacy files)
 }

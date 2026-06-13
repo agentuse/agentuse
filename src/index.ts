@@ -2,6 +2,7 @@
 import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
 import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, type PreparedAgentExecution } from './runner';
+import { maybePromoteApprovalComment } from './learning';
 import { isApprovalEnabled } from './runner/approval';
 import { Command } from 'commander';
 import { createProviderCommand, createAuthCommand } from './cli/auth';
@@ -1927,6 +1928,16 @@ async function runInternalWorker() {
         clearTimeout(timeoutId);
         resumeRollback = undefined;
         const duration = Date.now() - startTime;
+
+        // Promote an approve+comment approval decision into a durable learning
+        // when the agent has capture enabled. Best-effort, never fails the run.
+        if (req.type === 'resume') {
+          await maybePromoteApprovalComment({
+            agent,
+            agentFilePath: agentPath,
+            toolResult: req.toolResult,
+          });
+        }
 
         return {
           id: req.id,

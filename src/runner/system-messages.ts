@@ -211,7 +211,13 @@ export async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: str
     }
 
     const maxLearnings = 10; // Prevent context bloat
-    const toInject = learnings.slice(0, maxLearnings);
+    // Human-sourced (approval) learnings outrank auto-extracted ones, then by
+    // confidence, so the highest-signal rules survive the cap.
+    const ranked = [...learnings].sort((a, b) => {
+      if (a.source !== b.source) return a.source === 'approval' ? -1 : 1;
+      return b.confidence - a.confidence;
+    });
+    const toInject = ranked.slice(0, maxLearnings);
 
     const prompt = `## Learned Guidelines
 

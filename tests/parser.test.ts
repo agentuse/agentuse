@@ -414,20 +414,37 @@ Test OpenAI prompt cache settings.`;
       expect(() => parseAgentContent(content, 'test')).toThrow('Invalid agent configuration');
     });
 
-    it('defaults learning.apply to false when omitted', () => {
+    it('expands learning: true to capture + apply', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0
-learning:
-  evaluate: true
+learning: true
 ---
 
-Capture useful execution learnings for manual review.`;
+Capture and apply execution learnings.`;
 
       const agent = parseAgentContent(content, 'test');
 
       expect(agent.config.learning).toEqual({
-        evaluate: true,
-        apply: false
+        capture: true,
+        apply: true
+      });
+    });
+
+    it('defaults capture and apply to true for the object form', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+learning:
+  criteria: focus on tone
+---
+
+Capture and apply execution learnings.`;
+
+      const agent = parseAgentContent(content, 'test');
+
+      expect(agent.config.learning).toEqual({
+        capture: true,
+        apply: true,
+        criteria: 'focus on tone'
       });
     });
 

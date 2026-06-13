@@ -470,7 +470,7 @@ export async function runPostLifecycle(options: {
     }
   }
 
-  if (agent.config.learning?.evaluate && agentFilePath) {
+  if (agent.config.learning?.capture && agentFilePath) {
     try {
       await extractLearnings({
         event,

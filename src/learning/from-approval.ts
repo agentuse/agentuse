@@ -1,0 +1,161 @@
+/**
+ * Promote a human reviewer's approval-gate comment into a durable learning.
+ *
+ * When a reviewer approves an `await_human` gate AND leaves a comment, that
+ * comment is the highest-signal feedback the agent gets. If the comment is a
+ * durable, agent-wide rule (not a one-off edit to this run), capture it so
+ * future runs apply it. Run-specific edits are filtered out.
+ *
+ * @experimental
+ */
+import { generateText } from 'ai';
+import { createModel } from '../models';
+import type { ParsedAgent } from '../parser';
+import type { Learning, LearningCategory } from './types';
+import { LearningStore } from './store';
+import { logger } from '../utils/logger';
+import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic';
+
+interface ApprovalDecision {
+  status?: string;
+  comment?: string;
+}
+
+/**
+ * Narrow an opaque resume tool result to an approval decision.
+ */
+function readApprovalDecision(toolResult: unknown): ApprovalDecision | undefined {
+  if (!toolResult || typeof toolResult !== 'object') return undefined;
+  const r = toolResult as Record<string, unknown>;
+  const status = typeof r.status === 'string' ? r.status : undefined;
+  const comment = typeof r.comment === 'string' && r.comment.trim().length > 0
+    ? r.comment.trim()
+    : undefined;
+  return { ...(status && { status }), ...(comment && { comment }) };
+}
+
+/**
+ * Guarded entry point for the resume chokepoints. Promotes an approval comment
+ * only when the agent has capture enabled and the reviewer approved WITH a
+ * comment. Never throws: capturing a learning must not fail a run.
+ */
+export async function maybePromoteApprovalComment(options: {
+  agent: ParsedAgent;
+  agentFilePath: string | undefined;
+  toolResult: unknown;
+}): Promise<void> {
+  const { agent, agentFilePath } = options;
+  if (!agentFilePath || !agent.config.learning?.capture) return;
+
+  const decision = readApprovalDecision(options.toolResult);
+  if (decision?.status !== 'approve' || !decision.comment) return;
+
+  try {
+    await promoteApprovalComment({
+      comment: decision.comment,
+      agentInstructions: agent.instructions,
+      agentModel: agent.config.model,
+      agentFilePath,
+      learningFile: agent.config.learning.file,
+    });
+  } catch (error) {
+    logger.debug(`[Learning] Approval-comment capture failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+interface RawPromotion {
+  applies: boolean;
+  category?: LearningCategory;
+  title?: string;
+  instruction?: string;
+}
+
+/**
+ * Run the generalizability filter on a single approval comment and, when it is
+ * a durable agent-wide rule, add it to the learning store as an approval-sourced
+ * learning. No-op when the comment is judged run-specific.
+ */
+export async function promoteApprovalComment(options: {
+  comment: string;
+  agentInstructions: string;
+  agentModel: string;
+  agentFilePath: string;
+  learningFile?: string | undefined;
+}): Promise<Learning | undefined> {
+  const { comment, agentInstructions, agentModel, agentFilePath, learningFile } = options;
+
+  const truncatedInstructions = agentInstructions.length > 3000
+    ? agentInstructions.slice(0, 3000) + '\n...(truncated)'
+    : agentInstructions;
+
+  const prompt = `A human reviewer approved this agent's work at an approval gate and left a comment. Your job: decide whether the comment is a DURABLE, AGENT-WIDE rule worth applying to every future run, or a ONE-OFF correction specific to this run.
+
+## Agent Instructions
+${truncatedInstructions}
+
+## Reviewer's Approval Comment
+${comment}
+
+## Decision Criteria
+- APPLIES (durable): a general guideline, preference, or constraint that should shape every future run. Examples: "always cite a source before publishing", "keep the subject line under 50 chars", "never include pricing without the disclaimer".
+- DOES NOT APPLY (one-off): a correction tied to this specific run's content, data, or context. Examples: "fix the typo in paragraph 2", "change the date to Tuesday", "this number is wrong".
+
+Be conservative: only mark applies=true when the comment clearly generalizes. When in doubt, applies=false.
+
+If it applies, write the learning as a clear, specific instruction for the agent (not a restatement of the comment), and pick the best category:
+- tip: positive guidance ("Do X for better results")
+- warning: things to avoid ("Don't do Y because...")
+- pattern: reusable approach ("When X happens, do Y")
+- tool-usage: tool-specific guidance
+- error-fix: error recovery patterns
+
+Respond with ONLY a JSON object, no other text:
+{"applies": true, "category": "tip", "title": "Short title", "instruction": "Detailed instruction"}
+or
+{"applies": false}`;
+
+  const model = await createModel(agentModel);
+  const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
+  if (isAnthropicModel(agentModel)) {
+    messages.push({ role: 'system', content: ANTHROPIC_IDENTITY_PROMPT });
+  }
+  messages.push({ role: 'user', content: prompt });
+
+  const result = await generateText({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    model: model as any,
+    messages,
+    temperature: 0.2,
+  });
+
+  let parsed: RawPromotion;
+  try {
+    const text = result.text.trim();
+    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || [null, text];
+    parsed = JSON.parse(jsonMatch[1] || text);
+  } catch {
+    logger.debug(`[Learning] Failed to parse approval promotion response: ${result.text.slice(0, 200)}`);
+    return undefined;
+  }
+
+  if (!parsed?.applies || !parsed.category || !parsed.title || !parsed.instruction) {
+    logger.debug('[Learning] Approval comment judged run-specific; not captured');
+    return undefined;
+  }
+
+  const learning: Learning = {
+    id: Math.random().toString(36).slice(2, 10),
+    category: parsed.category,
+    title: parsed.title,
+    instruction: parsed.instruction,
+    confidence: 0.95, // human-sourced, high trust
+    appliedCount: 0,
+    extractedAt: new Date().toISOString(),
+    source: 'approval',
+  };
+
+  const store = LearningStore.fromAgentFile(agentFilePath, learningFile);
+  await store.add([learning]);
+  logger.info(`[Learning] Captured approval comment → ${store.filePath}`);
+  return learning;
+}

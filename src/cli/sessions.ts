@@ -12,6 +12,7 @@ import { logger, LogLevel } from "../utils/logger";
 import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
 import { applyResumeToolResult, restoreResumeToolResult, runAgent } from "../runner";
+import { maybePromoteApprovalComment } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
 
 interface SessionSummary {
@@ -1273,6 +1274,10 @@ async function resumeSession(
         true,
         summary.id
       );
+
+      // Promote an approve+comment decision into a durable learning when the
+      // agent has capture enabled. Best-effort, never fails the resume.
+      await maybePromoteApprovalComment({ agent, agentFilePath: agentPath, toolResult });
 
       process.stdout.write(JSON.stringify({
         success: true,
