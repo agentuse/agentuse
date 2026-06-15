@@ -5,6 +5,7 @@
 import fuzzysort from 'fuzzysort';
 import { getAllModelIds, getModelFromRegistry, type ModelInfo } from '../generated/models';
 import { logger } from './logger';
+import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
 
 export interface ValidationResult {
   valid: boolean;
@@ -78,8 +79,8 @@ export function warnIfModelNotInRegistry(modelString: string): string {
     return modelString;
   }
 
-  // Skip validation for Bedrock - model IDs are AWS-specific and not in our registry
-  if (parts.length >= 2 && parts[0] === 'bedrock') {
+  // Skip validation for providers whose model lists are external to the static registry.
+  if (parts.length >= 2 && (parts[0] === 'bedrock' || parts[0] === OPENCODE_GO_PROVIDER_ID)) {
     return modelString;
   }
 

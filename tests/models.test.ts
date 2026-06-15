@@ -2,6 +2,10 @@ import { describe, it, expect } from 'bun:test';
 import { createModel, AuthenticationError } from '../src/models';
 import { AnthropicAuth } from '../src/auth/anthropic';
 import { CodexAuth } from '../src/auth/codex';
+import { AuthStorage } from '../src/auth/storage';
+import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
 
 async function withEnv(env: Record<string, string | undefined>, callback: () => Promise<void>) {
   const snapshot = new Map<string, string | undefined>();
@@ -212,6 +216,122 @@ describe('createModel Amazon Bedrock', () => {
       await expect(
         createModel('bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0')
       ).rejects.toBeInstanceOf(AuthenticationError);
+    });
+  });
+});
+
+describe('createModel OpenCode Go', () => {
+  const opencodeGoEnvKeys = {
+    OPENCODE_GO_API_KEY: undefined as string | undefined,
+    OPENCODE_GO_API_KEY_DEV: undefined as string | undefined,
+    OPENCODE_GO_API_KEY_TEAM: undefined as string | undefined,
+    OPENCODE_GO_BASE_URL: undefined as string | undefined,
+    OPENCODE_GO_BASE_URL_DEV: undefined as string | undefined,
+    OPENCODE_GO_API_KEY_TEAM_BASE_URL: undefined as string | undefined,
+  };
+
+  async function withTempAuthStorage(callback: () => Promise<void>) {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-opencode-go-auth-test-'));
+    const originalAuthFile = (AuthStorage as any).AUTH_FILE;
+    (AuthStorage as any).AUTH_FILE = path.join(tempDir, 'auth.json');
+
+    try {
+      await callback();
+    } finally {
+      (AuthStorage as any).AUTH_FILE = originalAuthFile;
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  }
+
+  it('throws AuthenticationError when no API key is configured', async () => {
+    await withTempAuthStorage(async () => {
+      await withEnv(opencodeGoEnvKeys, async () => {
+        await expect(createModel('opencode-go:kimi-k2.7-code')).rejects.toMatchObject({
+          provider: 'opencode-go',
+          envVar: 'OPENCODE_GO_API_KEY',
+        });
+      });
+    });
+  });
+
+  it('creates an OpenAI-compatible model with OPENCODE_GO_API_KEY', async () => {
+    await withTempAuthStorage(async () => {
+      await withEnv({
+        ...opencodeGoEnvKeys,
+        OPENCODE_GO_API_KEY: 'go-key',
+      }, async () => {
+        const model = await createModel('opencode-go:kimi-k2.7-code');
+        expect(model).toBeDefined();
+        expect(model.modelId).toBe('kimi-k2.7-code');
+        expect(String(model.provider)).toContain('opencode-go');
+      });
+    });
+  });
+
+  it('uses stored OpenCode Go API key fallback', async () => {
+    await withTempAuthStorage(async () => {
+      await AuthStorage.setApiKey('opencode-go', { type: 'api', key: 'stored-go-key' });
+      await withEnv(opencodeGoEnvKeys, async () => {
+        const model = await createModel('opencode-go:glm-5.1');
+        expect(model).toBeDefined();
+        expect(model.modelId).toBe('glm-5.1');
+      });
+    });
+  });
+
+  it('supports suffix-based API key and base URL', async () => {
+    await withTempAuthStorage(async () => {
+      await withEnv({
+        ...opencodeGoEnvKeys,
+        OPENCODE_GO_API_KEY_DEV: 'dev-go-key',
+        OPENCODE_GO_BASE_URL_DEV: 'https://dev.opencode.local/v1',
+      }, async () => {
+        const model = await createModel('opencode-go:kimi-k2.7-code:dev');
+        expect(model).toBeDefined();
+        expect(model.modelId).toBe('kimi-k2.7-code');
+      });
+    });
+  });
+
+  it('supports explicit API key environment variable', async () => {
+    await withTempAuthStorage(async () => {
+      await withEnv({
+        ...opencodeGoEnvKeys,
+        OPENCODE_GO_API_KEY_TEAM: 'team-go-key',
+        OPENCODE_GO_API_KEY_TEAM_BASE_URL: 'https://team.opencode.local/v1',
+      }, async () => {
+        const model = await createModel('opencode-go:deepseek-v4-flash:OPENCODE_GO_API_KEY_TEAM');
+        expect(model).toBeDefined();
+        expect(model.modelId).toBe('deepseek-v4-flash');
+      });
+    });
+  });
+
+  it('routes MiniMax models through the Anthropic-compatible endpoint', async () => {
+    await withTempAuthStorage(async () => {
+      await withEnv({
+        ...opencodeGoEnvKeys,
+        OPENCODE_GO_API_KEY: 'go-key',
+      }, async () => {
+        const model = await createModel('opencode-go:minimax-m3');
+        expect(model).toBeDefined();
+        expect(model.modelId).toBe('minimax-m3');
+        expect(model.config.baseURL).toBe('https://opencode.ai/zen/go/v1');
+      });
+    });
+  });
+
+  it('routes Qwen models through the Anthropic-compatible endpoint', async () => {
+    await withTempAuthStorage(async () => {
+      await withEnv({
+        ...opencodeGoEnvKeys,
+        OPENCODE_GO_API_KEY: 'go-key',
+      }, async () => {
+        const model = await createModel('opencode-go:qwen3.7-plus');
+        expect(model).toBeDefined();
+        expect(model.modelId).toBe('qwen3.7-plus');
+        expect(model.config.baseURL).toBe('https://opencode.ai/zen/go/v1');
+      });
     });
   });
 });

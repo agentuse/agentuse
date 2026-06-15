@@ -123,4 +123,10 @@ describe("warnIfModelNotInRegistry (custom provider skip)", () => {
     );
     expect(result).toBe("bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0");
   });
+
+  it("skips validation for opencode-go models (live model endpoint)", async () => {
+    await loadCustomProviderNames();
+    const result = warnIfModelNotInRegistry("opencode-go:kimi-k2.7-code");
+    expect(result).toBe("opencode-go:kimi-k2.7-code");
+  });
 });

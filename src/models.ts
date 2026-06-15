@@ -9,6 +9,13 @@ import { AuthStorage } from './auth/storage';
 import { logger } from './utils/logger';
 import { warnIfModelNotInRegistry, loadCustomProviderNames } from './utils/model-utils';
 import { createDemoModel } from './providers/demo';
+import {
+  getOpenCodeGoProtocol,
+  OPENCODE_GO_API_KEY_ENV,
+  OPENCODE_GO_DISPLAY_NAME,
+  OPENCODE_GO_PROVIDER_ID,
+  resolveOpenCodeGoBaseURL,
+} from './providers/opencode-go';
 
 /**
  * Check if DevTools is enabled via environment variable
@@ -121,7 +128,7 @@ export function parseModelConfig(modelString: string): ModelConfig {
   }
 
   // Built-in providers support the env suffix syntax: provider:model:env
-  const builtinProviders = ['anthropic', 'openai', 'openrouter', 'demo'];
+  const builtinProviders = ['anthropic', 'openai', 'openrouter', OPENCODE_GO_PROVIDER_ID, 'demo'];
   if (builtinProviders.includes(provider)) {
     const secondColon = rest.indexOf(':');
     if (secondColon === -1) {
@@ -414,6 +421,73 @@ export async function createModel(modelString: string) {
       baseURL: 'https://openrouter.ai/api/v1',
     });
     return await maybeWrapWithDevTools(openrouter.chat(config.modelName));
+
+  } else if (config.provider === OPENCODE_GO_PROVIDER_ID) {
+    let apiKey: string | undefined;
+
+    if (config.envVar) {
+      apiKey = process.env[config.envVar];
+      if (!apiKey) {
+        throw new AuthenticationError(
+          OPENCODE_GO_PROVIDER_ID,
+          config.envVar,
+          `No authentication found for ${OPENCODE_GO_DISPLAY_NAME} (missing ${config.envVar})`
+        );
+      }
+      logger.debug(`Using ${config.envVar} for ${OPENCODE_GO_DISPLAY_NAME} authentication`);
+    } else if (config.envSuffix) {
+      const envVar = `${OPENCODE_GO_API_KEY_ENV}_${config.envSuffix}`;
+      apiKey = process.env[envVar];
+      if (!apiKey) {
+        throw new AuthenticationError(
+          OPENCODE_GO_PROVIDER_ID,
+          envVar,
+          `No authentication found for ${OPENCODE_GO_DISPLAY_NAME} (missing ${envVar})`
+        );
+      }
+      logger.debug(`Using ${envVar} for ${OPENCODE_GO_DISPLAY_NAME} authentication`);
+    } else {
+      apiKey = process.env[OPENCODE_GO_API_KEY_ENV];
+      if (apiKey) {
+        logger.debug(`Using ${OPENCODE_GO_API_KEY_ENV} for ${OPENCODE_GO_DISPLAY_NAME} authentication`);
+      }
+
+      if (!apiKey) {
+        const storedApiKey = await AuthStorage.getApiKey(OPENCODE_GO_PROVIDER_ID);
+        if (storedApiKey) {
+          apiKey = storedApiKey.key;
+          logger.debug(`Using stored API key for ${OPENCODE_GO_DISPLAY_NAME} authentication`);
+        }
+      }
+
+      if (!apiKey) {
+        throw new AuthenticationError(
+          OPENCODE_GO_PROVIDER_ID,
+          OPENCODE_GO_API_KEY_ENV,
+          `No authentication found for ${OPENCODE_GO_DISPLAY_NAME}. Run \`agentuse provider login ${OPENCODE_GO_PROVIDER_ID}\` or set ${OPENCODE_GO_API_KEY_ENV}`
+        );
+      }
+    }
+
+    if (!apiKey) {
+      throw new Error(`Failed to obtain API key for ${OPENCODE_GO_DISPLAY_NAME}`);
+    }
+
+    const baseURL = resolveOpenCodeGoBaseURL(config);
+    const protocol = getOpenCodeGoProtocol(config.modelName);
+    logger.debug(`Using ${OPENCODE_GO_DISPLAY_NAME} ${protocol} endpoint at ${baseURL}`);
+
+    if (protocol === 'anthropic') {
+      const anthropic = createAnthropic({ apiKey, baseURL });
+      return await maybeWrapWithDevTools(anthropic.chat(config.modelName));
+    }
+
+    const provider = createOpenAICompatible({
+      name: OPENCODE_GO_PROVIDER_ID,
+      baseURL,
+      apiKey,
+    });
+    return await maybeWrapWithDevTools(provider(config.modelName));
 
   } else if (config.provider === 'demo') {
     // Demo provider - no authentication required

@@ -35,6 +35,12 @@ describe("parseModelConfig", () => {
       expect(result.modelName).toBe("hello");
     });
 
+    it("parses opencode-go:model format", () => {
+      const result = parseModelConfig("opencode-go:kimi-k2.7-code");
+      expect(result.provider).toBe("opencode-go");
+      expect(result.modelName).toBe("kimi-k2.7-code");
+    });
+
     it("parses env suffix (provider:model:suffix)", () => {
       const result = parseModelConfig("openai:gpt-5.2:dev");
       expect(result.provider).toBe("openai");
@@ -59,6 +65,22 @@ describe("parseModelConfig", () => {
     it("detects full env var by _KEY presence", () => {
       const result = parseModelConfig("anthropic:claude-sonnet-4-6:ANTHROPIC_API_KEY_CUSTOM");
       expect(result.envVar).toBe("ANTHROPIC_API_KEY_CUSTOM");
+    });
+
+    it("parses opencode-go env suffix", () => {
+      const result = parseModelConfig("opencode-go:kimi-k2.7-code:dev");
+      expect(result.provider).toBe("opencode-go");
+      expect(result.modelName).toBe("kimi-k2.7-code");
+      expect(result.envSuffix).toBe("DEV");
+      expect(result.envVar).toBeUndefined();
+    });
+
+    it("parses opencode-go explicit env var", () => {
+      const result = parseModelConfig("opencode-go:kimi-k2.7-code:OPENCODE_GO_API_KEY_TEAM");
+      expect(result.provider).toBe("opencode-go");
+      expect(result.modelName).toBe("kimi-k2.7-code");
+      expect(result.envVar).toBe("OPENCODE_GO_API_KEY_TEAM");
+      expect(result.envSuffix).toBeUndefined();
     });
   });
 

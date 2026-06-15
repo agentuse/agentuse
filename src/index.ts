@@ -15,6 +15,7 @@ import { createBenchmarkCommand } from './cli/benchmark';
 import { createAgentsCommand } from './cli/agents';
 import { createAddCommand } from './cli/add';
 import { createDoctorCommand } from './cli/doctor';
+import { OPENCODE_GO_PROVIDER_ID } from './providers/opencode-go';
 import { logger, LogLevel } from './utils/logger';
 import { safeHttpUrl } from './utils/url';
 import { basename, resolve, dirname, join } from 'path';
@@ -405,7 +406,7 @@ program
         }
 
         const [provider] = modelParts;
-        const builtinProviders = ['anthropic', 'openai', 'openrouter', 'demo', 'bedrock'];
+        const builtinProviders = ['anthropic', 'openai', 'openrouter', OPENCODE_GO_PROVIDER_ID, 'demo', 'bedrock'];
         if (!builtinProviders.includes(provider)) {
           // Check if it's a custom provider
           const customProvider = await AuthStorage.getCustomProvider(provider);

@@ -52,6 +52,22 @@ These environment variables are required for authenticating with AI providers.
   ```
 </ParamField>
 
+<ParamField path="OPENCODE_GO_API_KEY" type="string">
+  API key for OpenCode Go open coding models.
+
+  ```bash
+  export OPENCODE_GO_API_KEY="..."
+  ```
+</ParamField>
+
+<ParamField path="OPENCODE_GO_BASE_URL" type="string">
+  Optional base URL override for OpenCode Go. Defaults to `https://opencode.ai/zen/go/v1`.
+
+  ```bash
+  export OPENCODE_GO_BASE_URL="https://opencode.ai/zen/go/v1"
+  ```
+</ParamField>
+
 <ParamField path="AWS_ACCESS_KEY_ID" type="string">
   AWS access key ID for Amazon Bedrock authentication (SigV4). Used together with `AWS_SECRET_ACCESS_KEY` and `AWS_REGION`.
 
@@ -525,6 +541,7 @@ AgentUse automatically loads `.env` files if present in your project directory:
 ANTHROPIC_API_KEY=sk-ant-api03-...
 OPENAI_API_KEY=sk-proj-...
 OPENROUTER_API_KEY=sk-or-v1-...
+OPENCODE_GO_API_KEY=...
 GITHUB_TOKEN=ghp_...
 DATABASE_URL=postgresql://user:pass@localhost/db
 

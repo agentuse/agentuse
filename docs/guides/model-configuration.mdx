@@ -22,6 +22,10 @@ AgentUse supports multiple AI providers. You need to authenticate with at least 
     Access to 100+ models via unified API
     API key authentication
   </Card>
+  <Card title="OpenCode Go">
+    Low-cost open coding models curated by OpenCode
+    API key authentication
+  </Card>
   <Card title="Amazon Bedrock">
     Claude, Llama, Mistral, Nova and more via AWS
     AWS SigV4 or Bearer token
@@ -45,6 +49,7 @@ agentuse provider login
 agentuse provider login anthropic
 agentuse provider login openai
 agentuse provider login openrouter
+agentuse provider login opencode-go
 ```
 
 ### 2. Environment Variables
@@ -56,6 +61,7 @@ Set API keys as environment variables:
 export ANTHROPIC_API_KEY="sk-ant-api03-..."
 export OPENAI_API_KEY="sk-proj-..."
 export OPENROUTER_API_KEY="sk-or-v1-..."
+export OPENCODE_GO_API_KEY="..."
 ```
 
 ### 3. Configuration File
@@ -67,6 +73,7 @@ Create a `.env` file in your project:
 ANTHROPIC_API_KEY=sk-ant-api03-...
 OPENAI_API_KEY=sk-proj-...
 OPENROUTER_API_KEY=sk-or-v1-...
+OPENCODE_GO_API_KEY=...
 ```
 
 ### Advanced Environment Variable Configuration
@@ -78,10 +85,12 @@ AgentUse supports flexible environment variable patterns for multiple API keys:
 export ANTHROPIC_API_KEY_DEV=sk-ant-api03-dev-key
 export ANTHROPIC_API_KEY_PROD=sk-ant-api03-prod-key
 export OPENAI_API_KEY_PERSONAL=sk-proj-personal-key
+export OPENCODE_GO_API_KEY_TEAM=opencode-go-team-key
 
 # Then specify in model string
 agentuse run agent.md --model anthropic:claude-sonnet-4-6:dev
 agentuse run agent.md --model openai:gpt-5.5:OPENAI_API_KEY_PERSONAL
+agentuse run agent.md --model opencode-go:kimi-k2.7-code:OPENCODE_GO_API_KEY_TEAM
 ```
 
 <Warning>
@@ -92,6 +101,27 @@ agentuse run agent.md --model openai:gpt-5.5:OPENAI_API_KEY_PERSONAL
   .env.*.local
   ```
 </Warning>
+
+## OpenCode Go
+
+OpenCode Go provides curated open coding models through a low-cost OpenCode subscription. AgentUse treats it as a built-in provider and automatically routes each model to the correct OpenCode Go API shape.
+
+```bash
+agentuse provider login opencode-go
+agentuse run agent.agentuse -m opencode-go:kimi-k2.7-code
+agentuse run agent.agentuse -m opencode-go:minimax-m3
+agentuse run agent.agentuse -m opencode-go:qwen3.7-plus
+```
+
+Or configure it with an environment variable:
+
+```bash
+export OPENCODE_GO_API_KEY="..."
+```
+
+<Note>
+  OpenCode Go publishes its live model list at `https://opencode.ai/zen/go/v1/models`, so `opencode-go:` model IDs are passed through rather than validated against AgentUse's static model registry.
+</Note>
 
 ## Amazon Bedrock
 
@@ -255,6 +285,7 @@ Get API keys from provider consoles:
 - **Anthropic**: [console.anthropic.com](https://console.anthropic.com) → API Keys → Create Key (starts with `sk-ant-api03-`)
 - **OpenAI**: [platform.openai.com](https://platform.openai.com) → API Keys → Create new secret key (starts with `sk-proj-`)
 - **OpenRouter**: [openrouter.ai](https://openrouter.ai) → Keys → Create Key (starts with `sk-or-v1-`)
+- **OpenCode Go**: [opencode.ai/auth](https://opencode.ai/auth) → Subscribe to Go → Copy API key
 
 <Warning>
   Keys are shown only once. Store them securely and never commit to version control.
@@ -266,7 +297,7 @@ AgentUse checks authentication sources in this order:
 
 1. **OAuth tokens** - Checked first and refreshed automatically
 2. **Stored API keys** (via `agentuse provider login`) - Stored in `~/.local/share/agentuse/auth.json`
-3. **Environment variables** - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`
+3. **Environment variables** - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_GO_API_KEY`
 4. **Custom environment variables** - Using suffix patterns (e.g., `ANTHROPIC_API_KEY_DEV`) or full variable names
 
 ## Runtime Model Override
@@ -276,6 +307,7 @@ Override the model at runtime using the `--model` flag:
 ```bash
 agentuse run agent.agentuse --model anthropic:claude-haiku-4-5
 agentuse run agent.agentuse -m openai:gpt-5.4-mini
+agentuse run agent.agentuse -m opencode-go:kimi-k2.7-code
 ```
 
 <Card title="CLI Commands - Model Override" icon="terminal" href="/reference/cli-commands#model-override">
@@ -307,6 +339,13 @@ openai:
 ---
 name: specialized-agent
 model: openrouter:z-ai/glm-5.1  # Uses OpenRouter
+---
+```
+
+```markdown
+---
+name: open-coding-agent
+model: opencode-go:kimi-k2.7-code  # Uses OpenCode Go
 ---
 ```
 
@@ -398,6 +437,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENCODE_GO_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
 ```
 
 ### Docker
@@ -408,6 +448,7 @@ RUN npm install -g pnpm && pnpm install -g agentuse
 ENV ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 ENV OPENAI_API_KEY=${OPENAI_API_KEY}
 ENV OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+ENV OPENCODE_GO_API_KEY=${OPENCODE_GO_API_KEY}
 CMD ["agentuse", "run", "agent.agentuse"]
 ```
 

@@ -146,7 +146,7 @@ Open the dashboard at `http://127.0.0.1:12233/` and review a run on its session 
 ## Features
 
 ### 🤖 Multi-Provider Support
-Works with Anthropic (Claude), OpenAI (GPT), OpenRouter (open source models like GLM and Minimax), and Amazon Bedrock. Switch models with a single line change.
+Works with Anthropic (Claude), OpenAI (GPT), OpenRouter, OpenCode Go open coding models, and Amazon Bedrock. Switch models with a single line change.
 
 ### 🌐 Webhooks & HTTP API
 Trigger agents via HTTP webhooks. Integrate with Zapier, Make, GitHub Actions, or any system that can POST. Supports streaming responses for real-time output.

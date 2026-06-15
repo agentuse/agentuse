@@ -2,6 +2,11 @@ import { Command } from "commander";
 import { AnthropicAuth, AuthStorage, CodexAuth } from "../auth/index.js";
 import readline from "readline";
 import { logger } from "../utils/logger";
+import {
+  OPENCODE_GO_API_KEY_ENV,
+  OPENCODE_GO_DISPLAY_NAME,
+  OPENCODE_GO_PROVIDER_ID,
+} from "../providers/opencode-go";
 
 function createReadlineInterface() {
   return readline.createInterface({
@@ -47,6 +52,7 @@ export function createProviderCommand(): Command {
       process.stdout.write("   • ANTHROPIC_API_KEY     - For Anthropic Claude models\n");
       process.stdout.write("   • OPENAI_API_KEY        - For OpenAI GPT models\n");
       process.stdout.write("   • OPENROUTER_API_KEY    - For OpenRouter (multiple models)\n");
+      process.stdout.write(`   • ${OPENCODE_GO_API_KEY_ENV}   - For ${OPENCODE_GO_DISPLAY_NAME} open coding models\n`);
       process.stdout.write("   • AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_REGION\n");
       process.stdout.write("                           - For Amazon Bedrock (or AWS_BEARER_TOKEN_BEDROCK)\n\n");
       
@@ -55,22 +61,26 @@ export function createProviderCommand(): Command {
       process.stdout.write("Bash/Zsh (~/.bashrc or ~/.zshrc):\n");
       process.stdout.write("  export ANTHROPIC_API_KEY=\"your-api-key\"\n");
       process.stdout.write("  export OPENAI_API_KEY=\"your-api-key\"\n");
-      process.stdout.write("  export OPENROUTER_API_KEY=\"your-api-key\"\n\n");
+      process.stdout.write("  export OPENROUTER_API_KEY=\"your-api-key\"\n");
+      process.stdout.write(`  export ${OPENCODE_GO_API_KEY_ENV}="your-api-key"\n\n`);
       
       process.stdout.write("Fish (~/.config/fish/config.fish):\n");
       process.stdout.write("  set -x ANTHROPIC_API_KEY \"your-api-key\"\n");
       process.stdout.write("  set -x OPENAI_API_KEY \"your-api-key\"\n");
-      process.stdout.write("  set -x OPENROUTER_API_KEY \"your-api-key\"\n\n");
+      process.stdout.write("  set -x OPENROUTER_API_KEY \"your-api-key\"\n");
+      process.stdout.write(`  set -x ${OPENCODE_GO_API_KEY_ENV} "your-api-key"\n\n`);
       
       process.stdout.write("Windows (PowerShell):\n");
       process.stdout.write("  $env:ANTHROPIC_API_KEY=\"your-api-key\"\n");
       process.stdout.write("  $env:OPENAI_API_KEY=\"your-api-key\"\n");
-      process.stdout.write("  $env:OPENROUTER_API_KEY=\"your-api-key\"\n\n");
+      process.stdout.write("  $env:OPENROUTER_API_KEY=\"your-api-key\"\n");
+      process.stdout.write(`  $env:${OPENCODE_GO_API_KEY_ENV}="your-api-key"\n\n`);
       
       process.stdout.write("Windows (Command Prompt):\n");
       process.stdout.write("  set ANTHROPIC_API_KEY=your-api-key\n");
       process.stdout.write("  set OPENAI_API_KEY=your-api-key\n");
-      process.stdout.write("  set OPENROUTER_API_KEY=your-api-key\n\n");
+      process.stdout.write("  set OPENROUTER_API_KEY=your-api-key\n");
+      process.stdout.write(`  set ${OPENCODE_GO_API_KEY_ENV}=your-api-key\n\n`);
       
       process.stdout.write("PRIORITY ORDER:\n");
       process.stdout.write("─".repeat(40) + "\n");
@@ -92,6 +102,7 @@ export function createProviderCommand(): Command {
       process.stdout.write("• Anthropic:   https://console.anthropic.com/account/keys\n");
       process.stdout.write("• OpenAI:      https://platform.openai.com/api-keys\n");
       process.stdout.write("• OpenRouter:  https://openrouter.ai/keys\n");
+      process.stdout.write("• OpenCode Go: https://opencode.ai/auth\n");
       process.stdout.write("• AWS Bedrock: https://console.aws.amazon.com/iam (create access key with AmazonBedrockFullAccess)\n");
     });
 
@@ -102,7 +113,7 @@ export function createProviderCommand(): Command {
     .option("--key <key>", "Optional API key for the endpoint")
     .action(async (name: string, options: { url: string; key?: string }) => {
       // Validate name doesn't conflict with built-in providers
-      const reserved = ["anthropic", "openai", "openrouter", "demo", "bedrock"];
+      const reserved = ["anthropic", "openai", "openrouter", OPENCODE_GO_PROVIDER_ID, "demo", "bedrock"];
       if (reserved.includes(name.toLowerCase())) {
         logger.error(`Cannot use reserved provider name '${name}'. Reserved: ${reserved.join(", ")}`);
         process.exit(1);
@@ -148,9 +159,10 @@ export function createProviderCommand(): Command {
           process.stdout.write("  1. anthropic    - Anthropic Claude (supports OAuth for Claude Max)\n");
           process.stdout.write("  2. openai       - OpenAI GPT models\n");
           process.stdout.write("  3. openrouter   - OpenRouter (access to multiple models)\n");
+          process.stdout.write(`  4. ${OPENCODE_GO_PROVIDER_ID}  - ${OPENCODE_GO_DISPLAY_NAME} open coding models\n`);
           process.stdout.write("\n");
           
-          const selection = await promptInput("Select provider (1-3 or name): ");
+          const selection = await promptInput("Select provider (1-4 or name): ");
           
           // Handle numbered selection
           switch (selection) {
@@ -162,6 +174,9 @@ export function createProviderCommand(): Command {
               break;
             case "3":
               provider = "openrouter";
+              break;
+            case "4":
+              provider = OPENCODE_GO_PROVIDER_ID;
               break;
             default:
               provider = selection;
@@ -177,6 +192,9 @@ export function createProviderCommand(): Command {
             break;
           case "openrouter":
             await handleGenericLogin("openrouter", "OpenRouter API Key");
+            break;
+          case OPENCODE_GO_PROVIDER_ID:
+            await handleGenericLogin(OPENCODE_GO_PROVIDER_ID, `${OPENCODE_GO_DISPLAY_NAME} API Key`);
             break;
           default:
             logger.warn(`Unknown provider: ${provider}`);
@@ -196,7 +214,7 @@ export function createProviderCommand(): Command {
     .option("--oauth", "Remove only OAuth credentials")
     .option("--api", "Remove only API key credentials")
     .action(async (provider?: string, options?: { oauth?: boolean; api?: boolean }) => {
-      const knownProviders = ["anthropic", "openai", "openrouter"];
+      const knownProviders = ["anthropic", "openai", "openrouter", OPENCODE_GO_PROVIDER_ID];
 
       // Build list of stored credentials
       const storedList: { provider: string; type: string; key: string; isCustom?: boolean }[] = [];
@@ -366,6 +384,11 @@ export function createProviderCommand(): Command {
           name: "openrouter",
           display: "OpenRouter",
           envVars: ["OPENROUTER_API_KEY"],
+        },
+        {
+          name: OPENCODE_GO_PROVIDER_ID,
+          display: OPENCODE_GO_DISPLAY_NAME,
+          envVars: [OPENCODE_GO_API_KEY_ENV],
         },
       ];
 
@@ -769,4 +792,3 @@ async function handleGenericLogin(provider: string, keyName: string) {
     logger.error("Failed to store API key", error as Error);
   }
 }
-

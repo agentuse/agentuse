@@ -2,27 +2,34 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { MODELS, type Provider, type ModelInfo } from '../generated/models';
 import { AuthStorage } from '../auth/storage';
+import {
+  OPENCODE_GO_DISPLAY_NAME,
+  OPENCODE_GO_MODELS,
+  OPENCODE_GO_PROVIDER_ID,
+} from '../providers/opencode-go';
 
 export function createModelsCommand(): Command {
   const modelsCommand = new Command('models')
     .description('List recommended AI models')
-    .argument('[provider]', 'Filter by provider (anthropic, openai, openrouter, or custom)')
+    .argument('[provider]', 'Filter by provider (anthropic, openai, openrouter, opencode-go, or custom)')
     .option('-v, --verbose', 'Show detailed model information')
     .action(async (provider: string | undefined, options: { verbose?: boolean }) => {
       const builtinProviders: Provider[] = ['anthropic', 'openai', 'openrouter'];
+      const specialProviders = [OPENCODE_GO_PROVIDER_ID];
       const customProviders = await AuthStorage.getCustomProviders();
       const customNames = Object.keys(customProviders);
       const isCustomFilter = provider && customNames.includes(provider);
+      const isOpenCodeGoFilter = provider === OPENCODE_GO_PROVIDER_ID;
 
       // If filtering by custom provider, don't show builtin models
-      const providers: Provider[] = isCustomFilter
+      const providers: Provider[] = isCustomFilter || isOpenCodeGoFilter
         ? []
         : (!provider ? builtinProviders : [provider as Provider]);
 
       // Validate provider
-      if (provider && !builtinProviders.includes(provider as Provider) && !isCustomFilter) {
+      if (provider && !builtinProviders.includes(provider as Provider) && !specialProviders.includes(provider) && !isCustomFilter) {
         console.error(chalk.red(`Unknown provider: ${provider}`));
-        const allProviders = [...builtinProviders, ...customNames];
+        const allProviders = [...builtinProviders, ...specialProviders, ...customNames];
         console.log(chalk.gray(`Available providers: ${allProviders.join(', ')}`));
         process.exit(1);
       }
@@ -49,6 +56,32 @@ export function createModelsCommand(): Command {
         console.log();
       }
 
+      if (!provider || isOpenCodeGoFilter) {
+        console.log(chalk.cyan.bold(OPENCODE_GO_DISPLAY_NAME));
+
+        for (const model of OPENCODE_GO_MODELS) {
+          const fullId = `${OPENCODE_GO_PROVIDER_ID}:${model.id}`;
+          const modelInfo: ModelInfo = {
+            id: model.id,
+            name: model.name,
+            reasoning: true,
+            toolCall: true,
+            modalities: { input: ['text'], output: ['text'] },
+            limit: { context: 0, output: 0 },
+            cost: { input: 0, output: 0 },
+          };
+
+          if (options.verbose) {
+            printVerboseModel(fullId, modelInfo);
+          } else {
+            printCompactModel(fullId, modelInfo);
+          }
+        }
+
+        console.log(chalk.gray(`  Live list: https://opencode.ai/zen/go/v1/models`));
+        console.log();
+      }
+
       // Show custom providers
       const displayCustom = isCustomFilter
         ? Object.entries(customProviders).filter(([name]) => name === provider)
@@ -67,7 +100,7 @@ export function createModelsCommand(): Command {
 
       // Show usage hint
       console.log(chalk.gray('Usage: agentuse run agent.agentuse -m <model>'));
-      console.log(chalk.gray('Example: agentuse run agent.agentuse -m anthropic:claude-sonnet-4-5\n'));
+      console.log(chalk.gray(`Example: agentuse run agent.agentuse -m ${OPENCODE_GO_PROVIDER_ID}:kimi-k2.7-code\n`));
     });
 
   return modelsCommand;
@@ -87,8 +120,12 @@ function printCompactModel(fullId: string, model: ModelInfo): void {
 function printVerboseModel(fullId: string, model: ModelInfo): void {
   console.log(`  ${chalk.white(fullId)}`);
   console.log(chalk.gray(`    Name: ${model.name}`));
-  console.log(chalk.gray(`    Context: ${model.limit.context.toLocaleString()} tokens`));
-  console.log(chalk.gray(`    Output: ${model.limit.output.toLocaleString()} tokens`));
+  if (model.limit.context > 0) {
+    console.log(chalk.gray(`    Context: ${model.limit.context.toLocaleString()} tokens`));
+  }
+  if (model.limit.output > 0) {
+    console.log(chalk.gray(`    Output: ${model.limit.output.toLocaleString()} tokens`));
+  }
 
   const caps: string[] = [];
   if (model.reasoning) caps.push('Reasoning');
