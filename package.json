@@ -58,8 +58,8 @@
     "release": "np",
     "release:preview": "np --preview",
     "release:dry": "np --preview --any-branch",
-    "docs:dev": "cd docs && mintlify dev",
-    "docs:preview": "cd docs && mintlify preview",
+    "docs:dev": "cd docs && mintlify dev --port 4747",
+    "docs:preview": "cd docs && mintlify preview --port 4747",
     "generate:models": "npx tsx scripts/generate-models.ts"
   },
   "dependencies": {
