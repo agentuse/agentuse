@@ -129,8 +129,6 @@ export default function ApprovalsList() {
         {data && (
           <>
             <Bucket title="Pending" rows={data.buckets.pending} emptyText="No approvals waiting." multiProject={multiProject} />
-            <Bucket title="Completed" rows={data.buckets.completed} emptyText="No completed approvals yet." multiProject={multiProject} />
-            <Bucket title="Expired / Errored" rows={data.buckets.expired} emptyText="Nothing has expired or errored." multiProject={multiProject} />
             <footer>{streamFallback ? 'auto-refreshes every 10s' : 'live updates'}</footer>
           </>
         )}

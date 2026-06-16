@@ -2494,7 +2494,7 @@ export function createServeCommand(): Command {
         });
         const pending = rows
           .filter((r) => r.approval.status === 'pending')
-          .sort((a, b) => (a.approval.expiresAt ?? Number.MAX_SAFE_INTEGER) - (b.approval.expiresAt ?? Number.MAX_SAFE_INTEGER))
+          .sort((a, b) => (b.approval.suspendedAt ?? b.approval.createdAt ?? 0) - (a.approval.suspendedAt ?? a.approval.createdAt ?? 0))
           .map(serializeRow);
         const completed = rows
           .filter((r) => r.approval.status === 'approved' || r.approval.status === 'rejected' || r.approval.status === 'commented')
