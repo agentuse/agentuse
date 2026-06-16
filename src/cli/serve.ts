@@ -1815,7 +1815,11 @@ export function createServeCommand(): Command {
             return { success: true, project, info };
           }
           if (info.error.code !== 'SESSION_NOT_FOUND') {
-            nonSessionErrors.push({ status: 500, code: info.error.code, message: info.error.message });
+            // Corruption is a terminal, non-retryable condition for this
+            // session: 422 so the client stops polling and shows the error,
+            // versus 500 which the live view treats as a transient blip.
+            const status = info.error.code === 'SESSION_CORRUPTED' ? 422 : 500;
+            nonSessionErrors.push({ status, code: info.error.code, message: info.error.message });
           }
         }
 
@@ -1860,7 +1864,8 @@ export function createServeCommand(): Command {
             return { success: true, project, session: info.session };
           }
           if (info.error.code !== 'SESSION_NOT_FOUND') {
-            nonSessionErrors.push({ status: 500, code: info.error.code, message: info.error.message });
+            const status = info.error.code === 'SESSION_CORRUPTED' ? 422 : 500;
+            nonSessionErrors.push({ status, code: info.error.code, message: info.error.message });
           }
         }
 

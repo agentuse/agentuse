@@ -1,7 +1,8 @@
 import { decodeTime, ulid } from 'ulid';
 import fs from 'fs/promises';
 import path from 'path';
-import { writeJSON, readJSON, listKeys, getStorageState, sanitizeAgentName } from '../storage';
+import { writeJSON, readJSON, listKeys, getStorageState, sanitizeAgentName, CorruptStorageError } from '../storage';
+import { logger } from '../utils/logger';
 import type {
   SessionInfo,
   SessionTrigger,
@@ -191,7 +192,21 @@ export class SessionManager {
         }
       }
 
-      const session = await readJSON<SessionInfo>(`${dir}/session`);
+      // Cross-session scan: one corrupt session.json must not take down the
+      // whole walk (which powers the dashboard, child-session lookups, and
+      // stop-tree). Skip the bad file with a warning and keep going; a read of
+      // the *requested* session goes through findSession/resolveSessionDir,
+      // which still surfaces corruption as an error.
+      let session: SessionInfo | null;
+      try {
+        session = await readJSON<SessionInfo>(`${dir}/session`);
+      } catch (err) {
+        if (err instanceof CorruptStorageError) {
+          logger.warn(`Skipping unreadable session at ${dir}/session.json: ${err.message}`);
+          continue;
+        }
+        throw err;
+      }
       if (!session) continue;
       if (options.createdAfter !== undefined) {
         try {

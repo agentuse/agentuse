@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { getSessionStorageDir } from './paths';
 
 export interface StorageState {
@@ -7,6 +8,20 @@ export interface StorageState {
 }
 
 let storageState: Promise<StorageState> | null = null;
+
+/**
+ * Raised when a stored JSON file exists but cannot be parsed (truncated,
+ * concatenated, or otherwise malformed on disk). Distinct from a missing file
+ * (which readJSON maps to null) so callers can decide per-context: a single-
+ * session read surfaces it as an error, while bulk cross-session scans skip the
+ * one bad file and keep going.
+ */
+export class CorruptStorageError extends Error {
+  constructor(public readonly storageKey: string, parseError: unknown) {
+    super(`Corrupt storage file at ${storageKey}: ${(parseError as Error)?.message ?? String(parseError)}`);
+    this.name = 'CorruptStorageError';
+  }
+}
 
 /**
  * Initialize storage for a project
@@ -51,8 +66,15 @@ export async function writeJSON<T>(key: string, content: T): Promise<void> {
   // Ensure directory exists
   await fs.mkdir(path.dirname(target), { recursive: true });
 
-  // Atomic write: temp file + rename
-  const tmp = target + '.' + Date.now() + '.tmp';
+  // Atomic write: temp file + rename. The temp name must be unique per *writer*,
+  // not just per millisecond: the serve daemon and the runner are separate
+  // processes that both write the same session keys (e.g. session.json), and
+  // serializedWrite only orders writes within a single SessionManager instance.
+  // A Date.now()-only suffix collides when two processes write the same key in
+  // the same ms, so their writes interleave into one temp file and a shorter
+  // write fails to truncate a longer one, leaving valid JSON + trailing garbage.
+  // pid + randomUUID makes the temp path collision-free across processes.
+  const tmp = `${target}.${process.pid}.${randomUUID()}.tmp`;
 
   try {
     await fs.writeFile(tmp, JSON.stringify(content, null, 2), 'utf-8');
@@ -75,17 +97,25 @@ export async function readJSON<T>(key: string): Promise<T | null> {
   const state = await getStorageState();
   const target = path.join(state.dir, key + '.json');
 
+  let content: string;
   try {
-    const content = await fs.readFile(target, 'utf-8');
-    return JSON.parse(content) as T;
+    content = await fs.readFile(target, 'utf-8');
   } catch (error) {
-    // A missing file is an expected "not found" and maps to null. Anything else
-    // (corrupt JSON, permission denied, disk error) is a real failure that must
-    // surface rather than masquerade as an absent session.
+    // A missing file is an expected "not found" and maps to null. Other read
+    // failures (permission denied, disk error) are real and must surface.
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return null;
     }
     throw error;
+  }
+
+  try {
+    return JSON.parse(content) as T;
+  } catch (error) {
+    // The file is present but unparseable. Wrap in a typed error carrying the
+    // key so callers can distinguish corruption from absence and handle it per
+    // context (surface vs. skip) rather than masquerading as an absent session.
+    throw new CorruptStorageError(key, error);
   }
 }
 

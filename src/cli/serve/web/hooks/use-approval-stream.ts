@@ -7,8 +7,17 @@ export interface ApprovalStreamHandlers {
   onStatus: (status: string, approval: Omit<ApprovalPageInfo, 'logs'>) => void;
   onLog: (entry: ApprovalLogEntry) => void;
   onLogs: (entries: ApprovalLogEntry[]) => void;
-  onAuthError: (code: string, message: string) => void;
+  /**
+   * Terminal load failures that the view should render as an error instead of
+   * retrying: unauthorized (401), not found (404), and corrupted session data
+   * (422 / SESSION_CORRUPTED).
+   */
+  onFatalError: (code: string, message: string) => void;
 }
+
+/** Codes/statuses that mean "stop trying, show the error" rather than retry. */
+const TERMINAL_STATUSES = new Set([401, 404, 422]);
+const TERMINAL_CODES = new Set(['SESSION_CORRUPTED']);
 
 const SSE_FAILURE_WINDOW_MS = 10_000;
 const SSE_FAILURES_BEFORE_FALLBACK = 2;
@@ -60,8 +69,9 @@ export function useApprovalStream(options: {
         delay = isLiveStatus(payload.status, payload.logs ?? []) ? 500 : 1500;
       } catch (err) {
         const status = (err as { status?: number }).status;
-        if (status === 401 || status === 404) {
-          handlersRef.current.onAuthError((err as { code?: string }).code ?? 'REQUEST_FAILED', (err as Error).message);
+        const code = (err as { code?: string }).code;
+        if ((status !== undefined && TERMINAL_STATUSES.has(status)) || (code !== undefined && TERMINAL_CODES.has(code))) {
+          handlersRef.current.onFatalError(code ?? 'REQUEST_FAILED', (err as Error).message);
           return;
         }
       }
@@ -96,6 +106,20 @@ export function useApprovalStream(options: {
       source.addEventListener('log', (event) => {
         const entry = JSON.parse((event as MessageEvent).data) as ApprovalLogEntry;
         handlersRef.current.onLog(entry);
+      });
+      source.addEventListener('stream-error', (event) => {
+        // The hub keeps the stream open on transient snapshot failures, but a
+        // terminal one (corrupt session data) will never recover: surface it
+        // and stop. Non-terminal errors are left to the hub's own retry.
+        const payload = JSON.parse((event as MessageEvent).data) as { code?: string; message?: string };
+        if (payload.code !== undefined && TERMINAL_CODES.has(payload.code)) {
+          closed = true;
+          source?.close();
+          source = null;
+          if (pollTimer) clearTimeout(pollTimer);
+          if (sseRetryTimer) clearTimeout(sseRetryTimer);
+          handlersRef.current.onFatalError(payload.code, payload.message ?? 'Session data is corrupted.');
+        }
       });
       source.addEventListener('error', () => {
         // A CLOSED source means the browser will not retry (e.g. the endpoint

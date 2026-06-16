@@ -869,7 +869,7 @@ if (process.argv[2] === '--internal-worker') {
 async function runInternalWorker() {
   const { createInterface } = await import('readline');
   const { SessionManager } = await import('./session/index.js');
-  const { initStorage } = await import('./storage/index.js');
+  const { initStorage, CorruptStorageError } = await import('./storage/index.js');
 
   // Configure logger to be quiet
   logger.configure({ level: LogLevel.ERROR, quiet: true, disableTUI: true });
@@ -1392,6 +1392,18 @@ async function runInternalWorker() {
         },
       };
     } catch (err) {
+      // Corruption in the *requested* session's own files (session.json,
+      // message, or part) can't be silently skipped like an unrelated session
+      // in a list scan: it's the thing being viewed. Surface a distinct code so
+      // the session page renders a clear "this session's data is corrupted"
+      // error instead of spinning on a generic 500.
+      if (err instanceof CorruptStorageError) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_CORRUPTED', message: `This session's stored data is corrupted and cannot be displayed (${err.message}).` },
+        };
+      }
       return {
         id: req.id,
         success: false,
@@ -1440,6 +1452,13 @@ async function runInternalWorker() {
         }
       };
     } catch (err) {
+      if (err instanceof CorruptStorageError) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_CORRUPTED', message: `This session's stored data is corrupted and cannot be displayed (${err.message}).` },
+        };
+      }
       return {
         id: req.id,
         success: false,

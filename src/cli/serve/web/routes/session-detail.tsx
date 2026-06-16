@@ -64,7 +64,9 @@ export default function SessionDetail() {
   const [submittingContinue, setSubmittingContinue] = useState(false);
   const [submittingStop, setSubmittingStop] = useState(false);
   const [result, setResult] = useState<{ text: string; error: boolean }>({ text: '', error: false });
-  const [authError, setAuthError] = useState<string | null>(null);
+  // Terminal load failures (unauthorized, not found, corrupted session data):
+  // the page can't recover, so we render this instead of the live view.
+  const [fatalError, setFatalError] = useState<string | null>(null);
   const [commentOpen, setCommentOpen] = useState(false);
   const [nudge, setNudge] = useState(0);
 
@@ -139,7 +141,7 @@ export default function SessionDetail() {
         }
         if (changed) commitLogs();
       },
-      onAuthError: (_code, message) => setAuthError(message),
+      onFatalError: (_code, message) => setFatalError(message),
     },
   });
 
@@ -170,8 +172,8 @@ export default function SessionDetail() {
   const expired = approval?.expiresAt !== undefined && approval.expiresAt <= Date.now();
   const displayStatus = status === 'waiting' && expired ? 'expired' : displaySessionStatus(status, approval);
   const actionable = pendingActionable && !expired;
-  const continueActionable = ended && !live && Boolean(approval?.agent.filePath) && !authError;
-  const stopActionable = approval !== null && !ended && !expired && !submittingStop && !authError;
+  const continueActionable = ended && !live && Boolean(approval?.agent.filePath) && !fatalError;
+  const stopActionable = approval !== null && !ended && !expired && !submittingStop && !fatalError;
 
   useEffect(() => {
     if (continueActionable) setSubmittingContinue(false);
@@ -266,11 +268,11 @@ export default function SessionDetail() {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [commentOpen, actionable, submittingDecision, submitDecision]);
 
-  if (authError) {
+  if (fatalError) {
     return (
       <div class="page-approval-detail">
         <Topbar currentPage="sessions" />
-        <main><p class="notice error">{authError}</p></main>
+        <main><p class="notice error">{fatalError}</p></main>
       </div>
     );
   }
