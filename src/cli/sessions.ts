@@ -1275,8 +1275,9 @@ async function resumeSession(
         summary.id
       );
 
-      // Promote an approve+comment decision into a durable learning when the
-      // agent has capture enabled. Best-effort, never fails the resume.
+      // Promote a reviewer comment (revise feedback or an approval note) into a
+      // durable learning when the agent has capture enabled. Best-effort, never
+      // fails the resume.
       await maybePromoteApprovalComment({ agent, agentFilePath: agentPath, toolResult });
 
       process.stdout.write(JSON.stringify({

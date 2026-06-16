@@ -88,7 +88,7 @@ After execution (when `capture` is enabled):
 
 ## Learning from approval comments
 
-When [Approval Gates](/guides/approval-gates) are enabled and `capture` is on, approving a gate **with a comment** can promote that comment into a durable learning. This is the highest-signal feedback an agent receives, so it is captured separately from self-evaluation.
+When [Approval Gates](/guides/approval-gates) are enabled and `capture` is on, **any comment you leave at a gate** can be promoted into a durable learning. In practice your feedback arrives through the revise loop (leaving a comment sends the work back to be reworked and re-presents the same gate), while the final approve is usually a bare click with no comment, so comments are captured wherever they appear, not only on the approving decision. This is the highest-signal feedback an agent receives, so it is captured separately from self-evaluation.
 
 ```yaml
 ---
@@ -101,7 +101,7 @@ learning: true
 ...
 ```
 
-When you approve and leave a note like "Going forward, always cite a source before publishing", a generalizability filter decides whether the comment is a **durable agent-wide rule** or a **one-off edit** to this run. Only durable rules are captured (as `src:approval`, confidence `0.95`); one-off edits are ignored. Approval-sourced learnings rank ahead of auto-extracted ones when injected, so your corrections survive the per-run cap.
+When you leave a note like "Going forward, always cite a source before publishing", a generalizability filter decides whether the comment is a **durable agent-wide rule** or a **one-off edit** to this run. Only durable rules are captured (as `src:approval`, confidence `0.95`); one-off edits (like "fix the typo in paragraph two" or "give me the source link") are ignored. Approval-sourced learnings rank ahead of auto-extracted ones when injected, so your corrections survive the per-run cap.
 
 ## How Application Works
 

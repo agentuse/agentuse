@@ -1948,8 +1948,9 @@ async function runInternalWorker() {
         resumeRollback = undefined;
         const duration = Date.now() - startTime;
 
-        // Promote an approve+comment approval decision into a durable learning
-        // when the agent has capture enabled. Best-effort, never fails the run.
+        // Promote a reviewer comment (revise feedback or an approval note) into
+        // a durable learning when the agent has capture enabled. Best-effort,
+        // never fails the run.
         if (req.type === 'resume') {
           await maybePromoteApprovalComment({
             agent,

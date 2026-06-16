@@ -1,10 +1,13 @@
 /**
  * Promote a human reviewer's approval-gate comment into a durable learning.
  *
- * When a reviewer approves an `await_human` gate AND leaves a comment, that
- * comment is the highest-signal feedback the agent gets. If the comment is a
- * durable, agent-wide rule (not a one-off edit to this run), capture it so
- * future runs apply it. Run-specific edits are filtered out.
+ * Whenever a reviewer leaves a comment at an `await_human` gate, that comment is
+ * the highest-signal feedback the agent gets. In practice the comment arrives
+ * through the revise loop (a `comment` decision that re-presents the same gate),
+ * not bundled into the final bare `approve`, so we capture on any commented
+ * decision. If the comment is a durable, agent-wide rule (not a one-off edit to
+ * this run), capture it so future runs apply it. Run-specific edits are filtered
+ * out.
  *
  * @experimental
  */
@@ -35,9 +38,10 @@ function readApprovalDecision(toolResult: unknown): ApprovalDecision | undefined
 }
 
 /**
- * Guarded entry point for the resume chokepoints. Promotes an approval comment
- * only when the agent has capture enabled and the reviewer approved WITH a
- * comment. Never throws: capturing a learning must not fail a run.
+ * Guarded entry point for the resume chokepoints. Promotes a reviewer comment
+ * only when the agent has capture enabled and the decision carries a comment
+ * (revise feedback or an approval note, whatever the status). Never throws:
+ * capturing a learning must not fail a run.
  */
 export async function maybePromoteApprovalComment(options: {
   agent: ParsedAgent;
@@ -48,7 +52,7 @@ export async function maybePromoteApprovalComment(options: {
   if (!agentFilePath || !agent.config.learning?.capture) return;
 
   const decision = readApprovalDecision(options.toolResult);
-  if (decision?.status !== 'approve' || !decision.comment) return;
+  if (!decision?.comment) return;
 
   try {
     await promoteApprovalComment({
@@ -88,7 +92,7 @@ export async function promoteApprovalComment(options: {
     ? agentInstructions.slice(0, 3000) + '\n...(truncated)'
     : agentInstructions;
 
-  const prompt = `A human reviewer approved this agent's work at an approval gate and left a comment. Your job: decide whether the comment is a DURABLE, AGENT-WIDE rule worth applying to every future run, or a ONE-OFF correction specific to this run.
+  const prompt = `A human reviewer left a comment on this agent's work at an approval gate. Your job: decide whether the comment is a DURABLE, AGENT-WIDE rule worth applying to every future run, or a ONE-OFF correction specific to this run.
 
 ## Agent Instructions
 ${truncatedInstructions}
