@@ -730,6 +730,10 @@ export class SessionManager {
     return this.scanSessions(undefined, { createdAfter });
   }
 
+  async listSessionsUpdatedAfter(updatedAfter: number): Promise<Array<{ session: SessionInfo; agentId: string }>> {
+    return this.scanSessions((session) => session.time.updated >= updatedAfter);
+  }
+
   async findPendingTool(sessionID: string, agentId: string): Promise<{ message: Message; part: ToolPart } | null> {
     const message = await this.getPrimaryMessage(sessionID, agentId);
     if (!message) return null;

@@ -36,7 +36,7 @@ import {
 } from "./serve/ui";
 import { FAVICON_SVG } from "./serve/brand";
 import { WebAssets, renderWebAssetsMissingPage } from "./serve/static";
-import { ApprovalEventHub } from "./serve/sse";
+import { ApprovalEventHub, ApprovalListEventHub } from "./serve/sse";
 import {
   findStoreItem,
   isSafeStoreName,
@@ -165,6 +165,21 @@ interface ApprovalSummary {
 interface WorkerListApprovalsResult {
   success: true;
   approvals: ApprovalSummary[];
+}
+
+type ApprovalRow = ApprovalSummary & { project: string };
+
+interface ApprovalListPayload {
+  success: true;
+  multiProject: boolean;
+  approvals: ApprovalRow[];
+  buckets: {
+    pending: ApprovalRow[];
+    completed: ApprovalRow[];
+    expired: ApprovalRow[];
+  };
+  window: { days: number | 'all'; createdAfter?: number };
+  errors: Array<{ projectId: string; message: string }>;
 }
 
 interface SessionSummary {
@@ -1104,7 +1119,8 @@ function isEndedSessionStatus(status: string | undefined): boolean {
  * session endpoints authenticated on an exposed host.
  */
 function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
-  if (routePath.startsWith('/approvals/')) return true;
+  const legacyApprovalRoute = routePath.match(/^\/approvals\/([^/?#]+)(?:\/(requested|status|decision|continue))?$/);
+  if (legacyApprovalRoute && legacyApprovalRoute[1] !== 'events') return true;
   if (isApi) return false;
   return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|events|artifacts\/.+))?$/.test(routePath);
 }
@@ -2421,6 +2437,92 @@ export function createServeCommand(): Command {
       // Push session/approval state to the SPA over SSE (one worker poll per
       // session, fanned to all subscribed tabs), replacing in-page polling.
       const approvalHub = new ApprovalEventHub();
+      const approvalListHub = new ApprovalListEventHub<ApprovalListPayload>();
+
+      const buildApprovalListPayload = async (
+        requestUrl: URL
+      ): Promise<
+        | { success: true; payload: ApprovalListPayload }
+        | { success: false; status: number; code: string; message: string }
+      > => {
+        type ProjectRow = { projectId: string; approval: ApprovalSummary };
+        const rows: ProjectRow[] = [];
+        const errors: Array<{ projectId: string; message: string }> = [];
+        const createdAfter = approvalListCreatedAfter(requestUrl);
+        const requestedProject = requestUrl.searchParams.get('project') ?? undefined;
+        const selectedProjects = requestedProject
+          ? projects.filter((project) => project.id === requestedProject)
+          : projects;
+
+        if (requestedProject && selectedProjects.length === 0) {
+          return {
+            success: false,
+            status: 404,
+            code: "PROJECT_NOT_FOUND",
+            message: `Project not found: ${requestedProject}`,
+          };
+        }
+
+        const projectResults = await Promise.all(selectedProjects.map(async (project) => {
+          const projectWorker = workers.get(project.id);
+          if (!projectWorker) {
+            return { project, error: 'Worker unavailable' };
+          }
+          const result = await projectWorker.listApprovals(
+            project.root,
+            createdAfter === undefined ? {} : { createdAfter }
+          );
+          if (!result.success) {
+            return { project, error: result.error.message };
+          }
+          return { project, approvals: result.approvals };
+        }));
+
+        for (const result of projectResults) {
+          if (result.error) {
+            errors.push({ projectId: result.project.id, message: result.error });
+            continue;
+          }
+          for (const approval of result.approvals ?? []) {
+            rows.push({ projectId: result.project.id, approval });
+          }
+        }
+
+        const serializeRow = (row: ProjectRow): ApprovalRow => ({
+          project: row.projectId,
+          ...row.approval
+        });
+        const pending = rows
+          .filter((r) => r.approval.status === 'pending')
+          .sort((a, b) => (a.approval.expiresAt ?? Number.MAX_SAFE_INTEGER) - (b.approval.expiresAt ?? Number.MAX_SAFE_INTEGER))
+          .map(serializeRow);
+        const completed = rows
+          .filter((r) => r.approval.status === 'approved' || r.approval.status === 'rejected' || r.approval.status === 'commented')
+          .sort((a, b) => (b.approval.decisionAt ?? b.approval.suspendedAt ?? b.approval.createdAt ?? 0) - (a.approval.decisionAt ?? a.approval.suspendedAt ?? a.approval.createdAt ?? 0))
+          .map(serializeRow);
+        const expired = rows
+          .filter((r) => r.approval.status === 'expired' || r.approval.status === 'errored')
+          .sort((a, b) => (b.approval.decisionAt ?? b.approval.expiresAt ?? 0) - (a.approval.decisionAt ?? a.approval.expiresAt ?? 0))
+          .map(serializeRow);
+        const days = requestUrl.searchParams.get('days') === 'all'
+          ? 'all' as const
+          : Math.floor((Date.now() - createdAfter!) / (24 * 60 * 60 * 1000));
+
+        return {
+          success: true,
+          payload: {
+            success: true,
+            multiProject: selectedProjects.length > 1,
+            approvals: rows.map(serializeRow),
+            buckets: { pending, completed, expired },
+            window: {
+              days,
+              ...(createdAfter !== undefined && { createdAfter })
+            },
+            errors
+          }
+        };
+      };
 
       const server = createServer(async (req, res) => {
         const requestUrl = new URL(req.url || '/', serverUrl);
@@ -3133,65 +3235,34 @@ export function createServeCommand(): Command {
         }
 
         if (req.method === "GET" && routePath === '/approvals') {
-          type ProjectRow = { projectId: string; multiProject: boolean; approval: ApprovalSummary };
-          const rows: ProjectRow[] = [];
-          const errors: Array<{ projectId: string; message: string }> = [];
-          const createdAfter = approvalListCreatedAfter(requestUrl);
-
-          const projectResults = await Promise.all(projects.map(async (project) => {
-            const projectWorker = workers.get(project.id);
-            if (!projectWorker) {
-              return { project, error: 'Worker unavailable' };
-            }
-            const result = await projectWorker.listApprovals(
-              project.root,
-              createdAfter === undefined ? {} : { createdAfter }
-            );
-            if (!result.success) {
-              return { project, error: result.error.message };
-            }
-            return { project, approvals: result.approvals };
-          }));
-
-          for (const result of projectResults) {
-            if (result.error) {
-              errors.push({ projectId: result.project.id, message: result.error });
-              continue;
-            }
-            for (const approval of result.approvals ?? []) {
-              rows.push({ projectId: result.project.id, multiProject, approval });
-            }
-          }
-
-          const buckets = {
-            pending: rows
-              .filter((r) => r.approval.status === 'pending')
-              .sort((a, b) => (a.approval.expiresAt ?? Number.MAX_SAFE_INTEGER) - (b.approval.expiresAt ?? Number.MAX_SAFE_INTEGER)),
-            expired: rows
-              .filter((r) => r.approval.status === 'expired' || r.approval.status === 'errored')
-              .sort((a, b) => (b.approval.decisionAt ?? b.approval.expiresAt ?? 0) - (a.approval.decisionAt ?? a.approval.expiresAt ?? 0))
-          };
-
           if (isApi) {
-            const serializeRow = (row: ProjectRow) => ({
-              project: row.projectId,
-              ...row.approval
-            });
-            sendJSON(res, 200, {
-              success: true,
-              approvals: rows.map(serializeRow),
-              buckets: {
-                pending: buckets.pending.map(serializeRow),
-                expired: buckets.expired.map(serializeRow)
-              },
-              window: {
-                days: requestUrl.searchParams.get('days') === 'all' ? 'all' : Math.floor((Date.now() - createdAfter!) / (24 * 60 * 60 * 1000)),
-                ...(createdAfter !== undefined && { createdAfter })
-              },
-              errors
-            });
+            const result = await buildApprovalListPayload(requestUrl);
+            if (!result.success) {
+              sendError(res, result.status, result.code, result.message);
+              return;
+            }
+            sendJSON(res, 200, result.payload);
             return;
           }
+        }
+
+        const approvalListEventsMatch = req.method === "GET" ? routePath.match(/^\/approvals\/events$/) : null;
+        if (approvalListEventsMatch) {
+          const streamKey = [
+            'approvals',
+            requestUrl.searchParams.get('days') ?? '',
+            requestUrl.searchParams.get('project') ?? ''
+          ].join(':');
+          const poll: import("./serve/sse").ApprovalListPoll<ApprovalListPayload> = async () => {
+            const result = await buildApprovalListPayload(requestUrl);
+            return result.success
+              ? { ok: true, snapshot: result.payload }
+              : { ok: false, error: { code: result.code, message: result.message } };
+          };
+          if (!approvalListHub.subscribe({ key: streamKey, poll, req, res })) {
+            sendError(res, 503, "TOO_MANY_SUBSCRIBERS", "Too many live approval-list connections");
+          }
+          return;
         }
 
         // The single-approval view is an HTML page (embedded in Slack); it has no
@@ -3699,6 +3770,7 @@ export function createServeCommand(): Command {
 
         scheduler.shutdown();
         approvalHub.shutdown();
+        approvalListHub.shutdown();
         if (approvalSweepTimer) {
           clearInterval(approvalSweepTimer);
           approvalSweepTimer = null;

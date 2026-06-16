@@ -26,6 +26,11 @@ export interface SessionStatusEvent {
   approval: Omit<ApprovalPageInfo, 'logs'>;
 }
 
+export type ApprovalListPoll<TSnapshot> = () => Promise<
+  | { ok: true; snapshot: TSnapshot }
+  | { ok: false; error: { code: string; message: string } }
+>;
+
 interface SessionLoop {
   key: string;
   sessionId: string;
@@ -38,6 +43,16 @@ interface SessionLoop {
   logSignatures: Map<string, string>;
 }
 
+interface ApprovalListLoop<TSnapshot> {
+  key: string;
+  poll: ApprovalListPoll<TSnapshot>;
+  subscribers: Set<ServerResponse>;
+  timer: NodeJS.Timeout | null;
+  ticking: boolean;
+  stopped: boolean;
+  lastSnapshotJson: string | null;
+}
+
 export interface ApprovalEventHubOptions {
   liveIntervalMs?: number;
   idleIntervalMs?: number;
@@ -45,8 +60,24 @@ export interface ApprovalEventHubOptions {
   maxSubscribersPerSession?: number;
 }
 
+export interface ApprovalListEventHubOptions {
+  intervalMs?: number;
+  heartbeatIntervalMs?: number;
+  maxSubscribersPerList?: number;
+}
+
 function logSignature(entry: ApprovalLogEntry): string {
   return JSON.stringify([entry.status ?? null, entry.message ?? null, entry.title, entry.details ?? null, entry.subagentSession ?? null]);
+}
+
+function writeSseHeaders(res: ServerResponse): void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-store",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.write(`retry: 3000\n\n`);
 }
 
 /**
@@ -108,13 +139,7 @@ export class ApprovalEventHub {
     const { res } = options;
     loop.subscribers.add(res);
 
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-store",
-      "Connection": "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
-    res.write(`retry: 3000\n\n`);
+    writeSseHeaders(res);
 
     // Replay current status to the new subscriber, then reset the loop's log
     // signatures so the next tick re-emits every log entry (idempotent for
@@ -233,6 +258,148 @@ export class ApprovalEventHub {
           loop.timer = null;
           void this.tick(loop);
         }, interval);
+      }
+    }
+  }
+}
+
+/**
+ * Streams approval-list snapshots to dashboard subscribers.
+ *
+ * Like the session hub, this still polls the request/response worker under the
+ * hood. The improvement is where the polling happens: one server-side loop per
+ * approvals filter, fanned out to all tabs, and clients receive a snapshot as
+ * soon as the server observes a change instead of waiting for each tab's own
+ * 10s fetch interval.
+ */
+export class ApprovalListEventHub<TSnapshot> {
+  private loops = new Map<string, ApprovalListLoop<TSnapshot>>();
+  private readonly intervalMs: number;
+  private readonly heartbeatIntervalMs: number;
+  private readonly maxSubscribersPerList: number;
+
+  constructor(options: ApprovalListEventHubOptions = {}) {
+    this.intervalMs = options.intervalMs ?? 1000;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 25_000;
+    this.maxSubscribersPerList = options.maxSubscribersPerList ?? 50;
+  }
+
+  subscribe(options: {
+    key: string;
+    poll: ApprovalListPoll<TSnapshot>;
+    req: IncomingMessage;
+    res: ServerResponse;
+  }): boolean {
+    const { key } = options;
+    let loop = this.loops.get(key);
+    if (loop && loop.subscribers.size >= this.maxSubscribersPerList) {
+      return false;
+    }
+    if (!loop) {
+      loop = {
+        key,
+        poll: options.poll,
+        subscribers: new Set(),
+        timer: null,
+        ticking: false,
+        stopped: false,
+        lastSnapshotJson: null,
+      };
+      this.loops.set(key, loop);
+    }
+
+    const { res } = options;
+    loop.subscribers.add(res);
+    writeSseHeaders(res);
+
+    if (loop.lastSnapshotJson !== null) {
+      res.write(`event: approvals\ndata: ${loop.lastSnapshotJson}\n\n`);
+    }
+
+    const heartbeat = setInterval(() => {
+      if (res.destroyed) return;
+      res.write(`: hb\n\n`);
+    }, this.heartbeatIntervalMs);
+
+    const onClose = () => {
+      clearInterval(heartbeat);
+      this.unsubscribe(key, res);
+    };
+    res.on("close", onClose);
+    options.req.on("close", onClose);
+
+    if (!loop.timer && !loop.ticking) {
+      void this.tick(loop);
+    }
+    return true;
+  }
+
+  private unsubscribe(key: string, res: ServerResponse): void {
+    const loop = this.loops.get(key);
+    if (!loop) return;
+    loop.subscribers.delete(res);
+    if (loop.subscribers.size === 0) {
+      this.stopLoop(loop);
+    }
+  }
+
+  private stopLoop(loop: ApprovalListLoop<TSnapshot>): void {
+    loop.stopped = true;
+    if (loop.timer) {
+      clearTimeout(loop.timer);
+      loop.timer = null;
+    }
+    this.loops.delete(loop.key);
+  }
+
+  activeLoopCount(): number {
+    return this.loops.size;
+  }
+
+  shutdown(): void {
+    for (const loop of [...this.loops.values()]) {
+      for (const res of loop.subscribers) {
+        res.end();
+      }
+      this.stopLoop(loop);
+    }
+  }
+
+  private broadcast(loop: ApprovalListLoop<TSnapshot>, payload: string): void {
+    for (const res of [...loop.subscribers]) {
+      if (res.destroyed) {
+        this.unsubscribe(loop.key, res);
+        continue;
+      }
+      res.write(payload);
+    }
+  }
+
+  private async tick(loop: ApprovalListLoop<TSnapshot>): Promise<void> {
+    if (loop.stopped || loop.ticking) return;
+    loop.ticking = true;
+    try {
+      const result = await loop.poll();
+      if (loop.stopped) return;
+
+      if (result.ok) {
+        const snapshotJson = JSON.stringify(result.snapshot);
+        if (snapshotJson !== loop.lastSnapshotJson) {
+          loop.lastSnapshotJson = snapshotJson;
+          this.broadcast(loop, `event: approvals\ndata: ${snapshotJson}\n\n`);
+        }
+      } else {
+        this.broadcast(loop, `event: stream-error\ndata: ${JSON.stringify(result.error)}\n\n`);
+      }
+    } catch (err) {
+      logger.debug(`Approval list SSE tick failed for ${loop.key}: ${(err as Error).message}`);
+    } finally {
+      loop.ticking = false;
+      if (!loop.stopped) {
+        loop.timer = setTimeout(() => {
+          loop.timer = null;
+          void this.tick(loop);
+        }, this.intervalMs);
       }
     }
   }

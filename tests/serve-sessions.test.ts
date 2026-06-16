@@ -72,6 +72,11 @@ describe('header-gate exemption (capability routes)', () => {
     expect(__testing.isHeaderGateExemptRoute('/approvals/abc/decision', true)).toBe(true);
   });
 
+  it('does not exempt the approval list event stream', () => {
+    expect(__testing.isHeaderGateExemptRoute('/approvals/events', false)).toBe(false);
+    expect(__testing.isHeaderGateExemptRoute('/approvals/events', true)).toBe(false);
+  });
+
   it('does not exempt unrelated routes', () => {
     expect(__testing.isHeaderGateExemptRoute('/agents', false)).toBe(false);
     expect(__testing.isHeaderGateExemptRoute('/sessionsfoo', false)).toBe(false);

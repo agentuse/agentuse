@@ -68,6 +68,13 @@ export function fetchApprovals(options: { days?: string | undefined; project?: s
   return getJson('/api/approvals', { days: options.days, project: options.project });
 }
 
+export function approvalsEventUrl(options: { days?: string | undefined; project?: string | undefined } = {}): string {
+  const url = new URL('/api/approvals/events', location.origin);
+  if (options.days !== undefined) url.searchParams.set('days', options.days);
+  if (options.project !== undefined) url.searchParams.set('project', options.project);
+  return url.toString();
+}
+
 export interface ApprovalStatusPayload {
   success: true;
   sessionId: string;

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { createServer, type Server } from 'http';
-import { ApprovalEventHub, type SessionPoll, type SessionSnapshot } from '../src/cli/serve/sse';
+import { ApprovalEventHub, ApprovalListEventHub, type ApprovalListPoll, type SessionPoll, type SessionSnapshot } from '../src/cli/serve/sse';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 
 function listen(server: Server): Promise<number> {
@@ -92,6 +92,64 @@ describe('ApprovalEventHub', () => {
     expect(hub.activeLoopCount()).toBe(1);
     controller.abort();
     // Give the server a moment to fire the close handler.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(hub.activeLoopCount()).toBe(0);
+  });
+});
+
+describe('ApprovalListEventHub', () => {
+  let hub: ApprovalListEventHub<{ pending: number; label: string }>;
+  let server: Server;
+  let port: number;
+  let snapshot: { pending: number; label: string };
+  let failNext: { code: string; message: string } | null;
+
+  beforeEach(async () => {
+    hub = new ApprovalListEventHub({ intervalMs: 30, heartbeatIntervalMs: 10_000 });
+    snapshot = { pending: 1, label: 'first approval' };
+    failNext = null;
+    const poll: ApprovalListPoll<typeof snapshot> = async () =>
+      failNext ? { ok: false, error: failNext } : { ok: true, snapshot };
+    server = createServer((req, res) => {
+      hub.subscribe({ key: 'approvals::', poll, req, res });
+    });
+    port = await listen(server);
+  });
+
+  afterEach(() => {
+    hub.shutdown();
+    server.close();
+  });
+
+  it('streams approval list snapshots to subscribers', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/approvals/events`);
+    const buf = await readUntil(res, (b) => b.includes('event: approvals'));
+    expect(buf).toContain('event: approvals');
+    expect(buf).toContain('first approval');
+  });
+
+  it('emits a new snapshot when the approval list changes', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/approvals/events`);
+    setTimeout(() => { snapshot = { pending: 2, label: 'second approval' }; }, 80);
+    const buf = await readUntil(res, (b) => b.includes('second approval'));
+    expect(buf).toContain('"pending":2');
+    expect(buf).toContain('second approval');
+  });
+
+  it('surfaces stream errors without closing the list stream', async () => {
+    failNext = { code: 'LIST_APPROVALS_ERROR', message: 'temporary failure' };
+    const res = await fetch(`http://127.0.0.1:${port}/api/approvals/events`);
+    const buf = await readUntil(res, (b) => b.includes('event: stream-error'));
+    expect(buf).toContain('stream-error');
+    expect(buf).toContain('LIST_APPROVALS_ERROR');
+  });
+
+  it('stops the list poll loop when the last subscriber disconnects', async () => {
+    const controller = new AbortController();
+    const res = await fetch(`http://127.0.0.1:${port}/api/approvals/events`, { signal: controller.signal });
+    await readUntil(res, (b) => b.includes('event: approvals'));
+    expect(hub.activeLoopCount()).toBe(1);
+    controller.abort();
     await new Promise((r) => setTimeout(r, 150));
     expect(hub.activeLoopCount()).toBe(0);
   });

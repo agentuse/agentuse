@@ -1543,12 +1543,19 @@ async function runInternalWorker() {
     }
   }
 
+  function approvalPartCreatedAt(state: any, session: SessionInfo): number {
+    const suspendedAt = typeof state?.suspendedAt === 'number' ? state.suspendedAt : undefined;
+    const startedAt = typeof state?.time?.start === 'number' ? state.time.start : undefined;
+    const endedAt = typeof state?.time?.end === 'number' ? state.time.end : undefined;
+    return suspendedAt ?? startedAt ?? endedAt ?? session.time.created;
+  }
+
   async function listAllApprovals(req: ExecuteRequest) {
     try {
       await initStorage(req.projectRoot);
       const sessionManager = new SessionManager();
       const sessions = typeof req.approvalCreatedAfter === 'number'
-        ? await sessionManager.listSessionsCreatedAfter(req.approvalCreatedAfter)
+        ? await sessionManager.listSessionsUpdatedAfter(req.approvalCreatedAfter)
         : await sessionManager.listAllSessions();
       const approvals: ApprovalSummary[] = [];
       const sessionBatchSize = 16;
@@ -1560,6 +1567,10 @@ async function runInternalWorker() {
         if (!approvalPart) return null;
 
         const state = approvalPart.state ?? {};
+        const approvalCreatedAt = approvalPartCreatedAt(state, session);
+        if (typeof req.approvalCreatedAfter === 'number' && approvalCreatedAt < req.approvalCreatedAfter) {
+          return null;
+        }
         const input = valueAsRecord(state.input);
         const metadata = valueAsRecord(state.metadata);
         const resumePayload = state.status === 'pending'

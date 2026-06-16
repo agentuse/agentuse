@@ -1,7 +1,9 @@
 import { useLocation } from 'preact-iso';
-import type { ApprovalRow } from '../lib/api';
+import { useEffect, useState } from 'preact/hooks';
+import type { ApprovalRow, ApprovalsListPayload } from '../lib/api';
 import { fetchApprovals } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
+import { useApprovalsStream } from '../hooks/use-approvals-stream';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { formatApprovalTime } from '../lib/format';
@@ -70,12 +72,42 @@ export default function ApprovalsList() {
 
   useTitle('AgentUse / Approvals');
 
-  const { data, error, loading } = useFetch(
-    `approvals:${days ?? ''}:${project ?? ''}`,
+  const key = `approvals:${days ?? ''}:${project ?? ''}`;
+  const [streamData, setStreamData] = useState<ApprovalsListPayload | null>(null);
+  const [streamError, setStreamError] = useState<Error | null>(null);
+  const [streamFallback, setStreamFallback] = useState(false);
+
+  useEffect(() => {
+    setStreamData(null);
+    setStreamError(null);
+    setStreamFallback(false);
+  }, [key]);
+
+  const fetched = useFetch(
+    key,
     () => fetchApprovals({ days, project }),
-    { refreshMs: 10_000 }
+    streamFallback ? { refreshMs: 10_000 } : {}
   );
 
+  useEffect(() => {
+    if (streamFallback) fetched.refetch();
+  }, [streamFallback, fetched.refetch]);
+
+  useApprovalsStream({
+    days,
+    project,
+    enabled: !streamFallback,
+    onData: (payload) => {
+      setStreamData(payload);
+      setStreamError(null);
+    },
+    onError: setStreamError,
+    onFallback: () => setStreamFallback(true),
+  });
+
+  const data = streamFallback ? (fetched.data ?? streamData) : (streamData ?? fetched.data);
+  const error = fetched.error ?? (!data ? streamError : null);
+  const loading = fetched.loading && !data;
   const totalPending = data?.buckets.pending.length ?? 0;
   const multiProject = data?.multiProject ?? false;
 
@@ -99,7 +131,7 @@ export default function ApprovalsList() {
             <Bucket title="Pending" rows={data.buckets.pending} emptyText="No approvals waiting." multiProject={multiProject} />
             <Bucket title="Completed" rows={data.buckets.completed} emptyText="No completed approvals yet." multiProject={multiProject} />
             <Bucket title="Expired / Errored" rows={data.buckets.expired} emptyText="Nothing has expired or errored." multiProject={multiProject} />
-            <footer>auto-refreshes every 10s</footer>
+            <footer>{streamFallback ? 'auto-refreshes every 10s' : 'live updates'}</footer>
           </>
         )}
       </main>
