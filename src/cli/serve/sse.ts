@@ -45,6 +45,7 @@ interface SessionLoop {
 
 interface ApprovalListLoop<TSnapshot> {
   key: string;
+  eventName: string;
   poll: ApprovalListPoll<TSnapshot>;
   subscribers: Set<ServerResponse>;
   timer: NodeJS.Timeout | null;
@@ -61,6 +62,7 @@ export interface ApprovalEventHubOptions {
 }
 
 export interface ApprovalListEventHubOptions {
+  eventName?: string;
   intervalMs?: number;
   heartbeatIntervalMs?: number;
   maxSubscribersPerList?: number;
@@ -274,11 +276,13 @@ export class ApprovalEventHub {
  */
 export class ApprovalListEventHub<TSnapshot> {
   private loops = new Map<string, ApprovalListLoop<TSnapshot>>();
+  private readonly eventName: string;
   private readonly intervalMs: number;
   private readonly heartbeatIntervalMs: number;
   private readonly maxSubscribersPerList: number;
 
   constructor(options: ApprovalListEventHubOptions = {}) {
+    this.eventName = options.eventName ?? 'approvals';
     this.intervalMs = options.intervalMs ?? 1000;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 25_000;
     this.maxSubscribersPerList = options.maxSubscribersPerList ?? 50;
@@ -298,6 +302,7 @@ export class ApprovalListEventHub<TSnapshot> {
     if (!loop) {
       loop = {
         key,
+        eventName: this.eventName,
         poll: options.poll,
         subscribers: new Set(),
         timer: null,
@@ -313,7 +318,7 @@ export class ApprovalListEventHub<TSnapshot> {
     writeSseHeaders(res);
 
     if (loop.lastSnapshotJson !== null) {
-      res.write(`event: approvals\ndata: ${loop.lastSnapshotJson}\n\n`);
+      res.write(`event: ${loop.eventName}\ndata: ${loop.lastSnapshotJson}\n\n`);
     }
 
     const heartbeat = setInterval(() => {
@@ -386,7 +391,7 @@ export class ApprovalListEventHub<TSnapshot> {
         const snapshotJson = JSON.stringify(result.snapshot);
         if (snapshotJson !== loop.lastSnapshotJson) {
           loop.lastSnapshotJson = snapshotJson;
-          this.broadcast(loop, `event: approvals\ndata: ${snapshotJson}\n\n`);
+          this.broadcast(loop, `event: ${loop.eventName}\ndata: ${snapshotJson}\n\n`);
         }
       } else {
         this.broadcast(loop, `event: stream-error\ndata: ${JSON.stringify(result.error)}\n\n`);

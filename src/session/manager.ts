@@ -27,6 +27,12 @@ export interface StoppedSession {
   stopped: boolean;
 }
 
+interface ReadSessionEntriesOptions {
+  createdAfter?: number;
+  relativeDir?: string;
+  includeSubagents?: boolean;
+}
+
 function getPartOrder(part: Part): number {
   if (part.type === 'text') return part.time?.start ?? Number.MAX_SAFE_INTEGER;
   if (part.type === 'reasoning') return part.time.start;
@@ -128,17 +134,33 @@ export class SessionManager {
     return resolved;
   }
 
-  private async walkSessionDirs(baseDir: string, relativeDir = ''): Promise<string[]> {
+  private async walkSessionDirs(
+    baseDir: string,
+    relativeDir = '',
+    options: Pick<ReadSessionEntriesOptions, 'createdAfter' | 'includeSubagents'> = {}
+  ): Promise<string[]> {
     const absoluteDir = path.join(baseDir, relativeDir);
     const entries = await fs.readdir(absoluteDir, { withFileTypes: true }).catch(() => []);
     const sessionJson = entries.find((entry) => entry.isFile() && entry.name === 'session.json');
     const results: string[] = sessionJson ? [relativeDir] : [];
     const childDirs = sessionJson
-      ? entries.filter((entry) => entry.isDirectory() && entry.name === 'subagent')
-      : entries.filter((entry) => entry.isDirectory());
+      ? (options.includeSubagents === false
+          ? []
+          : entries.filter((entry) => entry.isDirectory() && entry.name === 'subagent'))
+      : entries.filter((entry) => {
+          if (!entry.isDirectory()) return false;
+          if (relativeDir === '' && options.includeSubagents === false && options.createdAfter !== undefined) {
+            try {
+              if (decodeTime(entry.name.split('-')[0]) < options.createdAfter) return false;
+            } catch {
+              // Non-ULID directory names fall through to the slower compatibility path.
+            }
+          }
+          return true;
+        });
 
     for (const entry of childDirs) {
-      results.push(...await this.walkSessionDirs(baseDir, path.join(relativeDir, entry.name)));
+      results.push(...await this.walkSessionDirs(baseDir, path.join(relativeDir, entry.name), options));
     }
 
     return results;
@@ -167,9 +189,9 @@ export class SessionManager {
     return null;
   }
 
-  private async readSessionEntries(options: { createdAfter?: number; relativeDir?: string } = {}): Promise<SessionEntry[]> {
+  private async readSessionEntries(options: ReadSessionEntriesOptions = {}): Promise<SessionEntry[]> {
     const state = await getStorageState();
-    const dirs = await this.walkSessionDirs(state.dir, options.relativeDir ?? '');
+    const dirs = await this.walkSessionDirs(state.dir, options.relativeDir ?? '', options);
     const results: SessionEntry[] = [];
 
     for (const dir of dirs) {
@@ -616,7 +638,7 @@ export class SessionManager {
 
   private async scanSessions(
     predicate?: (session: SessionInfo) => boolean,
-    options: { createdAfter?: number } = {}
+    options: Pick<ReadSessionEntriesOptions, 'createdAfter' | 'includeSubagents'> = {}
   ): Promise<Array<{ session: SessionInfo; agentId: string }>> {
     const entries = await this.readSessionEntries(options);
     const results: Array<{ session: SessionInfo; agentId: string }> = [];
@@ -726,8 +748,14 @@ export class SessionManager {
     return this.scanSessions();
   }
 
-  async listSessionsCreatedAfter(createdAfter: number): Promise<Array<{ session: SessionInfo; agentId: string }>> {
-    return this.scanSessions(undefined, { createdAfter });
+  async listSessionsCreatedAfter(
+    createdAfter: number,
+    options: Pick<ReadSessionEntriesOptions, 'includeSubagents'> = {}
+  ): Promise<Array<{ session: SessionInfo; agentId: string }>> {
+    return this.scanSessions(undefined, {
+      createdAfter,
+      ...(options.includeSubagents !== undefined && { includeSubagents: options.includeSubagents }),
+    });
   }
 
   async listSessionsUpdatedAfter(updatedAfter: number): Promise<Array<{ session: SessionInfo; agentId: string }>> {

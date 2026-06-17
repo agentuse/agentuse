@@ -199,6 +199,19 @@ interface SessionSummary {
   errorMessage?: string;
 }
 
+type SessionRow = SessionSummary & { project: string };
+
+interface SessionsPayload {
+  success: true;
+  sessions: SessionRow[];
+  window: { value: string; days?: number | 'all'; hours?: number; createdAfter?: number };
+  agent?: string;
+  status?: string;
+  trigger?: SessionTrigger;
+  approval?: string;
+  errors: Array<{ projectId: string; message: string }>;
+}
+
 interface SessionStatusInfo {
   sessionId: string;
   sessionStatus: string;
@@ -1122,6 +1135,7 @@ function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
   const legacyApprovalRoute = routePath.match(/^\/approvals\/([^/?#]+)(?:\/(requested|status|decision|continue))?$/);
   if (legacyApprovalRoute && legacyApprovalRoute[1] !== 'events') return true;
   if (isApi) return false;
+  if (routePath === '/sessions/events') return false;
   return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|events|artifacts\/.+))?$/.test(routePath);
 }
 
@@ -2438,6 +2452,117 @@ export function createServeCommand(): Command {
       // session, fanned to all subscribed tabs), replacing in-page polling.
       const approvalHub = new ApprovalEventHub();
       const approvalListHub = new ApprovalListEventHub<ApprovalListPayload>();
+      const sessionListHub = new ApprovalListEventHub<SessionsPayload>({ eventName: 'sessions' });
+
+      const buildSessionsPayload = async (
+        requestUrl: URL
+      ): Promise<
+        | { success: true; payload: SessionsPayload }
+        | { success: false; status: number; code: string; message: string }
+      > => {
+        const agentFilter = requestUrl.searchParams.get('agent') ?? undefined;
+        const statusFilter = parseSessionStatusFilter(requestUrl.searchParams.get('status') ?? undefined);
+        const triggerFilterRaw = requestUrl.searchParams.get('trigger') ?? undefined;
+        const triggerFilter: SessionTrigger | undefined =
+          triggerFilterRaw === 'scheduled' || triggerFilterRaw === 'manual' || triggerFilterRaw === 'slack' || triggerFilterRaw === 'api'
+            ? triggerFilterRaw
+            : undefined;
+        const approvalFilter = parseApprovalSessionFilter(requestUrl.searchParams.get('approval') ?? undefined);
+        const createdAfter = sessionListCreatedAfter(requestUrl);
+        const daysFilter = sessionDaysFilterValue(requestUrl);
+
+        type ProjectSessionRow = { projectId: string; session: SessionSummary };
+        const rows: ProjectSessionRow[] = [];
+        const errors: Array<{ projectId: string; message: string }> = [];
+        const approvalSessionIdsByProject = new Map<string, Set<string>>();
+
+        const projectResults = await Promise.all(projects.map(async (project) => {
+          const projectWorker = workers.get(project.id);
+          if (!projectWorker) {
+            return { project, error: 'Worker unavailable' };
+          }
+          const result = await projectWorker.listSessions(
+            project.root,
+            {
+              ...(createdAfter !== undefined && { createdAfter }),
+              ...(approvalFilter && { includeSubagents: true })
+            }
+          );
+          if (!result.success) {
+            return { project, error: result.error.message };
+          }
+          return { project, sessions: result.sessions };
+        }));
+
+        if (approvalFilter) {
+          const approvalResults = await Promise.all(projects.map(async (project) => {
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) {
+              return { project, error: 'Worker unavailable' };
+            }
+            const result = await projectWorker.listApprovals(
+              project.root,
+              createdAfter === undefined ? {} : { createdAfter }
+            );
+            if (!result.success) {
+              return { project, error: result.error.message };
+            }
+            return { project, approvals: result.approvals };
+          }));
+
+          for (const result of approvalResults) {
+            if (result.error) {
+              errors.push({ projectId: result.project.id, message: result.error });
+              continue;
+            }
+            const matchingSessionIds = new Set<string>();
+            for (const approval of result.approvals ?? []) {
+              if (approvalMatchesSessionFilter(approval.status, approvalFilter)) {
+                matchingSessionIds.add(approval.sessionId);
+              }
+            }
+            approvalSessionIdsByProject.set(result.project.id, matchingSessionIds);
+          }
+        }
+
+        for (const result of projectResults) {
+          if (result.error) {
+            errors.push({ projectId: result.project.id, message: result.error });
+            continue;
+          }
+          for (const session of result.sessions ?? []) {
+            if (statusFilter && session.status !== statusFilter) continue;
+            if (triggerFilter && session.trigger !== triggerFilter) continue;
+            if (approvalFilter && !approvalSessionIdsByProject.get(result.project.id)?.has(session.sessionId)) continue;
+            if (agentFilter && !sessionMatchesAgentFilter(session, agentFilter)) continue;
+            rows.push({ projectId: result.project.id, session });
+          }
+        }
+
+        rows.sort((a, b) => b.session.createdAt - a.session.createdAt);
+
+        return {
+          success: true,
+          payload: {
+            success: true,
+            sessions: rows.map((row) => ({ project: row.projectId, ...row.session })),
+            window: {
+              value: daysFilter,
+              ...(daysFilter === 'all'
+                ? { days: 'all' as const }
+                : daysFilter.endsWith('h')
+                  ? { hours: Number(daysFilter.slice(0, -1)) }
+                  : { days: Number(daysFilter.slice(0, -1)) }),
+              ...(createdAfter !== undefined && { createdAfter })
+            },
+            ...(agentFilter && { agent: agentFilter }),
+            ...(statusFilter && { status: statusFilter }),
+            ...(triggerFilter && { trigger: triggerFilter }),
+            ...(approvalFilter && { approval: approvalFilter }),
+            errors
+          }
+        };
+      };
 
       const buildApprovalListPayload = async (
         requestUrl: URL
@@ -2748,108 +2873,39 @@ export function createServeCommand(): Command {
         // ?window=<1h|6h|24h|7d|30d|90d|all> (default: 24h).
         // Legacy ?days=<n|all> and ?hours=<n> still work.
         if (req.method === "GET" && routePath === '/sessions') {
-          const agentFilter = requestUrl.searchParams.get('agent') ?? undefined;
-          const statusFilter = parseSessionStatusFilter(requestUrl.searchParams.get('status') ?? undefined);
-          const triggerFilterRaw = requestUrl.searchParams.get('trigger') ?? undefined;
-          const triggerFilter: SessionTrigger | undefined =
-            triggerFilterRaw === 'scheduled' || triggerFilterRaw === 'manual' || triggerFilterRaw === 'slack' || triggerFilterRaw === 'api'
-              ? triggerFilterRaw
-              : undefined;
-          const approvalFilter = parseApprovalSessionFilter(requestUrl.searchParams.get('approval') ?? undefined);
-          const createdAfter = sessionListCreatedAfter(requestUrl);
-          const daysFilter = sessionDaysFilterValue(requestUrl);
-
-          type SessionRow = { projectId: string; multiProject: boolean; session: SessionSummary };
-          const rows: SessionRow[] = [];
-          const errors: Array<{ projectId: string; message: string }> = [];
-          const approvalSessionIdsByProject = new Map<string, Set<string>>();
-
-          const projectResults = await Promise.all(projects.map(async (project) => {
-            const projectWorker = workers.get(project.id);
-            if (!projectWorker) {
-              return { project, error: 'Worker unavailable' };
-            }
-            const result = await projectWorker.listSessions(
-              project.root,
-              {
-                ...(createdAfter !== undefined && { createdAfter }),
-                ...(approvalFilter && { includeSubagents: true })
-              }
-            );
-            if (!result.success) {
-              return { project, error: result.error.message };
-            }
-            return { project, sessions: result.sessions };
-          }));
-
-          if (approvalFilter) {
-            const approvalResults = await Promise.all(projects.map(async (project) => {
-              const projectWorker = workers.get(project.id);
-              if (!projectWorker) {
-                return { project, error: 'Worker unavailable' };
-              }
-              const result = await projectWorker.listApprovals(
-                project.root,
-                createdAfter === undefined ? {} : { createdAfter }
-              );
-              if (!result.success) {
-                return { project, error: result.error.message };
-              }
-              return { project, approvals: result.approvals };
-            }));
-
-            for (const result of approvalResults) {
-              if (result.error) {
-                errors.push({ projectId: result.project.id, message: result.error });
-                continue;
-              }
-              const matchingSessionIds = new Set<string>();
-              for (const approval of result.approvals ?? []) {
-                if (approvalMatchesSessionFilter(approval.status, approvalFilter)) {
-                  matchingSessionIds.add(approval.sessionId);
-                }
-              }
-              approvalSessionIdsByProject.set(result.project.id, matchingSessionIds);
-            }
-          }
-
-          for (const result of projectResults) {
-            if (result.error) {
-              errors.push({ projectId: result.project.id, message: result.error });
-              continue;
-            }
-            for (const session of result.sessions ?? []) {
-              if (statusFilter && session.status !== statusFilter) continue;
-              if (triggerFilter && session.trigger !== triggerFilter) continue;
-              if (approvalFilter && !approvalSessionIdsByProject.get(result.project.id)?.has(session.sessionId)) continue;
-              if (agentFilter && !sessionMatchesAgentFilter(session, agentFilter)) continue;
-              rows.push({ projectId: result.project.id, multiProject, session });
-            }
-          }
-
-          rows.sort((a, b) => b.session.createdAt - a.session.createdAt);
-
           if (isApi) {
-            sendJSON(res, 200, {
-              success: true,
-              sessions: rows.map((row) => ({ project: row.projectId, ...row.session })),
-              window: {
-                value: daysFilter,
-                ...(daysFilter === 'all'
-                  ? { days: 'all' as const }
-                  : daysFilter.endsWith('h')
-                    ? { hours: Number(daysFilter.slice(0, -1)) }
-                    : { days: Number(daysFilter.slice(0, -1)) }),
-                ...(createdAfter !== undefined && { createdAfter })
-              },
-              ...(agentFilter && { agent: agentFilter }),
-              ...(statusFilter && { status: statusFilter }),
-              ...(triggerFilter && { trigger: triggerFilter }),
-              ...(approvalFilter && { approval: approvalFilter }),
-              errors
-            });
+            const result = await buildSessionsPayload(requestUrl);
+            if (!result.success) {
+              sendError(res, result.status, result.code, result.message);
+              return;
+            }
+            sendJSON(res, 200, result.payload);
             return;
           }
+        }
+
+        const sessionListEventsMatch = req.method === "GET" ? routePath.match(/^\/sessions\/events$/) : null;
+        if (sessionListEventsMatch) {
+          const streamKey = [
+            'sessions',
+            requestUrl.searchParams.get('window') ?? '',
+            requestUrl.searchParams.get('days') ?? '',
+            requestUrl.searchParams.get('hours') ?? '',
+            requestUrl.searchParams.get('status') ?? '',
+            requestUrl.searchParams.get('trigger') ?? '',
+            requestUrl.searchParams.get('agent') ?? '',
+            requestUrl.searchParams.get('approval') ?? ''
+          ].join(':');
+          const poll: import("./serve/sse").ApprovalListPoll<SessionsPayload> = async () => {
+            const result = await buildSessionsPayload(requestUrl);
+            return result.success
+              ? { ok: true, snapshot: result.payload }
+              : { ok: false, error: { code: result.code, message: result.message } };
+          };
+          if (!sessionListHub.subscribe({ key: streamKey, poll, req, res })) {
+            sendError(res, 503, "TOO_MANY_SUBSCRIBERS", "Too many live session-list connections");
+          }
+          return;
         }
 
         // GET /api/sessions/:id: JSON twin of the session page. Header-gated
@@ -3771,6 +3827,7 @@ export function createServeCommand(): Command {
         scheduler.shutdown();
         approvalHub.shutdown();
         approvalListHub.shutdown();
+        sessionListHub.shutdown();
         if (approvalSweepTimer) {
           clearInterval(approvalSweepTimer);
           approvalSweepTimer = null;

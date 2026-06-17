@@ -1,7 +1,9 @@
 import { useLocation } from 'preact-iso';
-import type { SessionRow } from '../lib/api';
+import { useEffect, useState } from 'preact/hooks';
+import type { SessionRow, SessionsPayload } from '../lib/api';
 import { fetchSessions } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
+import { useSessionsStream } from '../hooks/use-sessions-stream';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { formatApprovalTime } from '../lib/format';
@@ -46,8 +48,19 @@ export default function SessionsList() {
 
   useTitle('AgentUse / Sessions');
 
-  const { data, error, loading } = useFetch(
-    `sessions:${win}:${statusFilter}:${triggerFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}`,
+  const key = `sessions:${win}:${statusFilter}:${triggerFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}`;
+  const [streamData, setStreamData] = useState<SessionsPayload | null>(null);
+  const [streamError, setStreamError] = useState<Error | null>(null);
+  const [streamFallback, setStreamFallback] = useState(false);
+
+  useEffect(() => {
+    setStreamData(null);
+    setStreamError(null);
+    setStreamFallback(false);
+  }, [key]);
+
+  const fetched = useFetch(
+    key,
     () => fetchSessions({
       window: win,
       status: statusFilter || undefined,
@@ -55,10 +68,32 @@ export default function SessionsList() {
       agent: agentFilter,
       approval: approvalFilter,
     }),
-    { refreshMs: 10_000 }
+    streamFallback ? { refreshMs: 10_000 } : {}
   );
 
-  const rows = data?.sessions ?? [];
+  useEffect(() => {
+    if (streamFallback) fetched.refetch();
+  }, [streamFallback, fetched.refetch]);
+
+  useSessionsStream({
+    window: win,
+    status: statusFilter || undefined,
+    trigger: triggerFilter || undefined,
+    agent: agentFilter,
+    approval: approvalFilter,
+    enabled: !streamFallback,
+    onData: (payload) => {
+      setStreamData(payload);
+      setStreamError(null);
+    },
+    onError: setStreamError,
+    onFallback: () => setStreamFallback(true),
+  });
+
+  const resolvedData = streamFallback ? (fetched.data ?? streamData) : (streamData ?? fetched.data);
+  const resolvedError = fetched.error ?? (!resolvedData ? streamError : null);
+  const resolvedLoading = fetched.loading && !resolvedData;
+  const rows = resolvedData?.sessions ?? [];
   const multiProject = new Set(rows.map((r) => r.project)).size > 1;
 
   // Build a URL that preserves the other active filters when one changes.
@@ -104,15 +139,15 @@ export default function SessionsList() {
           {approvalFilter && <a class="filter-clear" href={withParam('approval', '')}>approval: {approvalFilter} ✕</a>}
         </div>
 
-        {error && <div class="errors">Failed to load sessions: {error.message}</div>}
-        {data && data.errors.length > 0 && (
-          <div class="errors">Some projects failed: <ul>{data.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul></div>
+        {resolvedError && <div class="errors">Failed to load sessions: {resolvedError.message}</div>}
+        {resolvedData && resolvedData.errors.length > 0 && (
+          <div class="errors">Some projects failed: <ul>{resolvedData.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul></div>
         )}
-        {loading && !data && <p class="empty">Loading sessions…</p>}
-        {data && (rows.length === 0
+        {resolvedLoading && !resolvedData && <p class="empty">Loading sessions…</p>}
+        {resolvedData && (rows.length === 0
           ? <p class="empty">No sessions in this window.</p>
           : <div class="rows">{rows.map((row) => <SessionRowView key={`${row.project}:${row.sessionId}`} row={row} multiProject={multiProject} />)}</div>)}
-        <footer>auto-refreshes every 10s</footer>
+        <footer>{streamFallback ? 'auto-refreshes every 10s' : 'live updates'}</footer>
       </main>
     </div>
   );

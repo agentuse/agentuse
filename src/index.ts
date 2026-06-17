@@ -1675,7 +1675,9 @@ async function runInternalWorker() {
       await initStorage(req.projectRoot);
       const sessionManager = new SessionManager();
       const sessions = typeof req.sessionsCreatedAfter === 'number'
-        ? await sessionManager.listSessionsCreatedAfter(req.sessionsCreatedAfter)
+        ? await sessionManager.listSessionsCreatedAfter(req.sessionsCreatedAfter, {
+            includeSubagents: req.includeSubagents ?? false
+          })
         : await sessionManager.listAllSessions();
 
       // Top-level runs by default; approval-filtered session views opt into
