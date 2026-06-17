@@ -24,6 +24,7 @@ describe("FileWatcher", () => {
     const watcher = new FileWatcher({
       projectRoot: tmpDir,
       envFile: path.join(tmpDir, ".env"),
+      agentScanIntervalMs: 200,
       onAgentAdded: async (relativePath) => {
         events.push(`add:${relativePath}`);
       },
@@ -51,6 +52,43 @@ describe("FileWatcher", () => {
 
       fs.unlinkSync(agentPath);
       await waitForEvent(events, "unlink:nested/hot.agentuse");
+    } finally {
+      await watcher.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not overlap periodic agent scans when a scan is slow", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentuse-watcher-overlap-"));
+    let activeScans = 0;
+    let maxActiveScans = 0;
+    let scanCount = 0;
+
+    const watcher = new FileWatcher({
+      projectRoot: tmpDir,
+      envFile: path.join(tmpDir, ".env"),
+      agentScanIntervalMs: 50,
+      onAgentAdded: async () => {},
+      onAgentChanged: async () => {},
+      onAgentRemoved: () => {},
+      onEnvReloaded: () => {},
+    });
+
+    (watcher as unknown as { listAgentFiles: (watchRoot: string) => Promise<string[]> }).listAgentFiles = async () => {
+      activeScans++;
+      scanCount++;
+      maxActiveScans = Math.max(maxActiveScans, activeScans);
+      await delay(150);
+      activeScans--;
+      return [];
+    };
+
+    try {
+      watcher.start();
+      await delay(500);
+
+      expect(scanCount).toBeGreaterThan(1);
+      expect(maxActiveScans).toBe(1);
     } finally {
       await watcher.close();
       fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -44,7 +44,7 @@ import { resolveTimeout } from './utils/config';
 import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
 import { telemetry, categorizeError, aggregateToolCalls, countSteps, parseModel } from './telemetry';
-import type { SessionInfo, SessionManager as SessionManagerType, SessionTrigger } from './session';
+import type { SessionInfo, SessionManager as SessionManagerType, SessionTrigger, ToolPart } from './session';
 import { findServerForProject } from './utils/server-registry';
 
 const program = new Command();
@@ -1206,9 +1206,12 @@ async function runInternalWorker() {
   async function childSessionSummaries(
     sessionManager: InstanceType<typeof SessionManager>,
     sessionId: string,
-    sessionPath?: string
+    sessionPath?: string,
+    sessionCreatedAt?: number
   ) {
-    const children = await sessionManager.listChildSessions(sessionId, sessionPath);
+    const children = await sessionManager.listChildSessions(sessionId, sessionPath, {
+      ...(typeof sessionCreatedAt === 'number' && { fallbackCreatedAfter: sessionCreatedAt - 60_000 })
+    });
     return children.map(({ session }) => ({
       sessionId: session.id,
       agent: {
@@ -1226,6 +1229,10 @@ async function runInternalWorker() {
   }
 
   async function getApprovalInfo(req: ExecuteRequest) {
+    return withApprovalInfoCache(approvalInfoCacheKey(req), req.id, async () => getApprovalInfoUncached(req));
+  }
+
+  async function getApprovalInfoUncached(req: ExecuteRequest) {
     try {
       if (!req.sessionId) {
         return {
@@ -1252,7 +1259,12 @@ async function runInternalWorker() {
         messages.map((message) => sessionManager.getMessageParts(req.sessionId!, found.agentId, message.id))
       )).flat();
       const logs = buildApprovalLogs(parts);
-      const childSessions = await childSessionSummaries(sessionManager, req.sessionId, found.path);
+      const childSessions = await childSessionSummaries(
+        sessionManager,
+        req.sessionId,
+        found.path,
+        found.session.time.created
+      );
       const approvalParts = parts.filter((part: any) =>
         part?.type === 'tool' &&
         part?.tool === 'await_human' &&
@@ -1472,14 +1484,17 @@ async function runInternalWorker() {
     try {
       await initStorage(req.projectRoot);
       const sessionManager = new SessionManager();
-      const suspended = await sessionManager.getSuspendedSessions();
       const now = Date.now();
+      const sweepCreatedAfter = now - 30 * 24 * 60 * 60 * 1000;
+      const suspended = (await sessionManager.listSessionsCreatedAfter(sweepCreatedAfter, {
+        includeSubagents: true
+      })).filter(({ session }) => session.status === 'suspended');
       const expired: ExpiredApproval[] = [];
 
       for (const { session, agentId } of suspended) {
-        const pending = await sessionManager.findPendingTool(session.id, agentId);
-        if (!pending) continue;
-        const state = pending.part.state;
+        const pendingPart = await sessionManager.getLatestApprovalPart(session.id, agentId);
+        if (!pendingPart) continue;
+        const state = pendingPart.state;
         if (state.status !== 'pending') continue;
         const resumePayload = state.resumePayload;
         const expiresAt = typeof resumePayload?.expiresAt === 'number' ? resumePayload.expiresAt : undefined;
@@ -1489,8 +1504,8 @@ async function runInternalWorker() {
         await sessionManager.updatePart(
           session.id,
           agentId,
-          pending.message.id,
-          pending.part.id,
+          pendingPart.messageID,
+          pendingPart.id,
           {
             state: {
               status: 'error',
@@ -1529,6 +1544,8 @@ async function runInternalWorker() {
         });
       }
 
+      if (expired.length > 0) invalidateListCaches(req.projectRoot);
+
       return {
         id: req.id,
         success: true as const,
@@ -1550,12 +1567,154 @@ async function runInternalWorker() {
     return suspendedAt ?? startedAt ?? endedAt ?? session.time.created;
   }
 
+  const approvalPartCache = new Map<string, {
+    updatedAt: number;
+    part: ToolPart | null;
+  }>();
+  const APPROVAL_INFO_CACHE_TTL_MS = 10_000;
+  const LIST_CACHE_TTL_MS = 5 * 60 * 1000;
+  type ApprovalInfoResponse = Awaited<ReturnType<typeof getApprovalInfoUncached>>;
+  type ApprovalInfoCacheEntry = {
+    expiresAt: number;
+    response?: Omit<ApprovalInfoResponse, 'id'>;
+    promise?: Promise<ApprovalInfoResponse>;
+  };
+  type ListResponse = { id: string; success: boolean; [key: string]: unknown };
+  type ListCacheEntry<T extends ListResponse> = {
+    expiresAt: number;
+    response?: Omit<T, 'id'>;
+    promise?: Promise<T>;
+  };
+  const approvalInfoResponseCache = new Map<string, ApprovalInfoCacheEntry>();
+  const listResponseCache = new Map<string, ListCacheEntry<ListResponse>>();
+
+  function approvalPartCacheKey(projectRoot: string, session: SessionInfo, agentId: string): string {
+    return `${projectRoot}\0${session.id}\0${agentId}`;
+  }
+
+  function approvalInfoCacheKey(req: ExecuteRequest): string {
+    return [
+      'approval-info',
+      req.projectRoot,
+      req.sessionId ?? '',
+      req.resumeToken ?? '',
+      req.allowHistorical ? 'historical' : 'latest',
+      req.skipTokenCheck ? 'trusted' : 'token'
+    ].join('\0');
+  }
+
+  function listCacheKey(req: ExecuteRequest, kind: 'approvals' | 'sessions'): string {
+    return [
+      kind,
+      req.projectRoot,
+      req.approvalCreatedAfter ?? '',
+      req.sessionsCreatedAfter ?? '',
+      req.includeSubagents ? 'subagents' : 'top'
+    ].join('\0');
+  }
+
+  function invalidateListCaches(projectRoot?: string): void {
+    approvalPartCache.clear();
+    if (!projectRoot) {
+      approvalInfoResponseCache.clear();
+      listResponseCache.clear();
+      return;
+    }
+    for (const key of [...approvalInfoResponseCache.keys()]) {
+      if (key.includes(`\0${projectRoot}\0`)) approvalInfoResponseCache.delete(key);
+    }
+    for (const key of [...listResponseCache.keys()]) {
+      if (key.includes(`\0${projectRoot}\0`)) listResponseCache.delete(key);
+    }
+  }
+
+  function shouldCacheApprovalInfoResponse(
+    response: ApprovalInfoResponse
+  ): response is ApprovalInfoResponse & { success: true; approval: { sessionStatus: string } } {
+    if (!response.success || !response.approval) return false;
+    const status = response.approval.sessionStatus;
+    return status !== 'running';
+  }
+
+  async function withApprovalInfoCache(
+    key: string,
+    requestId: string,
+    loader: () => Promise<ApprovalInfoResponse>
+  ): Promise<ApprovalInfoResponse> {
+    const now = Date.now();
+    const cached = approvalInfoResponseCache.get(key);
+    if (cached?.response && cached.expiresAt > now) {
+      return { ...cached.response, id: requestId } as ApprovalInfoResponse;
+    }
+    if (cached?.promise) {
+      const response = await cached.promise;
+      return { ...response, id: requestId } as ApprovalInfoResponse;
+    }
+
+    const promise = loader();
+    approvalInfoResponseCache.set(key, { expiresAt: now + APPROVAL_INFO_CACHE_TTL_MS, promise });
+    try {
+      const response = await promise;
+      if (shouldCacheApprovalInfoResponse(response)) {
+        const { id: _id, ...rest } = response;
+        approvalInfoResponseCache.set(key, {
+          expiresAt: Date.now() + APPROVAL_INFO_CACHE_TTL_MS,
+          response: rest as Omit<ApprovalInfoResponse, 'id'>
+        });
+      } else {
+        approvalInfoResponseCache.delete(key);
+      }
+      return response;
+    } catch (error) {
+      approvalInfoResponseCache.delete(key);
+      throw error;
+    }
+  }
+
+  async function withListCache<T extends ListResponse>(
+    key: string,
+    requestId: string,
+    loader: () => Promise<T>
+  ): Promise<T> {
+    const now = Date.now();
+    const cached = listResponseCache.get(key) as ListCacheEntry<T> | undefined;
+    if (cached?.response && cached.expiresAt > now) {
+      return { ...cached.response, id: requestId } as T;
+    }
+    if (cached?.promise) {
+      const response = await cached.promise;
+      return { ...response, id: requestId };
+    }
+
+    const promise = loader();
+    listResponseCache.set(key, { expiresAt: now + LIST_CACHE_TTL_MS, promise } as ListCacheEntry<ListResponse>);
+    try {
+      const response = await promise;
+      if (response.success) {
+        const { id: _id, ...rest } = response;
+        listResponseCache.set(key, {
+          expiresAt: Date.now() + LIST_CACHE_TTL_MS,
+          response: rest as Omit<T, 'id'>
+        } as ListCacheEntry<ListResponse>);
+      } else {
+        listResponseCache.delete(key);
+      }
+      return response;
+    } catch (error) {
+      listResponseCache.delete(key);
+      throw error;
+    }
+  }
+
   async function listAllApprovals(req: ExecuteRequest) {
+    return withListCache(listCacheKey(req, 'approvals'), req.id, async () => {
     try {
       await initStorage(req.projectRoot);
       const sessionManager = new SessionManager();
       const sessions = typeof req.approvalCreatedAfter === 'number'
-        ? await sessionManager.listSessionsUpdatedAfter(req.approvalCreatedAfter)
+        ? await sessionManager.listSessionsCreatedAfter(req.approvalCreatedAfter, {
+            includeSubagents: true
+          })
         : await sessionManager.listAllSessions();
       const approvals: ApprovalSummary[] = [];
       const sessionBatchSize = 16;
@@ -1563,22 +1722,33 @@ async function runInternalWorker() {
       const summarizeApproval = async (
         { session, agentId }: { session: SessionInfo; agentId: string }
       ): Promise<ApprovalSummary | null> => {
-        const approvalPart = await sessionManager.getLatestApprovalPart(session.id, agentId) as any;
+        const cacheKey = approvalPartCacheKey(req.projectRoot, session, agentId);
+        const updatedAt = session.time.updated;
+        const cached = approvalPartCache.get(cacheKey);
+        const approvalPart = cached && cached.updatedAt === updatedAt
+          ? cached.part
+          : await sessionManager.getLatestApprovalPart(session.id, agentId);
+        if (!cached || cached.updatedAt !== updatedAt) {
+          approvalPartCache.set(cacheKey, { updatedAt, part: approvalPart });
+        }
         if (!approvalPart) return null;
 
-        const state = approvalPart.state ?? {};
+        const state = approvalPart.state;
         const approvalCreatedAt = approvalPartCreatedAt(state, session);
         if (typeof req.approvalCreatedAfter === 'number' && approvalCreatedAt < req.approvalCreatedAfter) {
           return null;
         }
         const input = valueAsRecord(state.input);
-        const metadata = valueAsRecord(state.metadata);
+        const metadata = 'metadata' in state ? valueAsRecord(state.metadata) : {};
         const resumePayload = state.status === 'pending'
           ? valueAsRecord(state.resumePayload)
           : valueAsRecord(metadata.resumePayload);
         const channelMessage = valueAsRecord(resumePayload.channelMessage);
-        const output = valueAsRecord(state.output);
+        const output = state.status === 'completed' ? valueAsRecord(state.output) : {};
         const reviewer = valueAsRecord(output.reviewer);
+        const suspendedAt = state.status === 'pending' && typeof state.suspendedAt === 'number'
+          ? state.suspendedAt
+          : undefined;
 
         let status: ApprovalSummaryStatus;
         let errorMessage: string | undefined;
@@ -1627,7 +1797,7 @@ async function runInternalWorker() {
           ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
           ...(typeof input.summary === 'string' && { summary: input.summary }),
           ...(typeof input.risk === 'string' && { risk: input.risk }),
-          ...(typeof state.suspendedAt === 'number' && { suspendedAt: state.suspendedAt }),
+          ...(suspendedAt !== undefined && { suspendedAt }),
           ...(typeof resumePayload.expiresAt === 'number' && { expiresAt: resumePayload.expiresAt }),
           ...(typeof session.time?.created === 'number' && { createdAt: session.time.created }),
           ...(decisionAt !== undefined && { decisionAt }),
@@ -1668,9 +1838,11 @@ async function runInternalWorker() {
         error: { code: 'LIST_APPROVALS_ERROR', message: (err as Error).message }
       };
     }
+    });
   }
 
   async function listSessions(req: ExecuteRequest) {
+    return withListCache(listCacheKey(req, 'sessions'), req.id, async () => {
     try {
       await initStorage(req.projectRoot);
       const sessionManager = new SessionManager();
@@ -1713,6 +1885,7 @@ async function runInternalWorker() {
         error: { code: 'LIST_SESSIONS_ERROR', message: (err as Error).message }
       };
     }
+    });
   }
 
   async function executeAgent(req: ExecuteRequest) {
@@ -1745,6 +1918,7 @@ async function runInternalWorker() {
     };
 
     try {
+      invalidateListCaches(req.projectRoot);
       let agentPath = req.agentPath ? resolve(req.projectRoot, req.agentPath) : '';
       if (req.type === 'execute' && (!req.agentPath || !existsSync(agentPath))) {
         return {
@@ -2058,6 +2232,7 @@ async function runInternalWorker() {
           // Ignore cleanup errors
         }
       }
+      invalidateListCaches(req.projectRoot);
     }
   }
 
@@ -2078,6 +2253,7 @@ async function runInternalWorker() {
       }
 
       await initStorage(req.projectRoot);
+      invalidateListCaches(req.projectRoot);
       const sessionManager = new SessionManager();
       const stopped = await sessionManager.stopSessionTree(req.sessionId, {
         code: 'USER_STOPPED',
@@ -2101,6 +2277,8 @@ async function runInternalWorker() {
         success: false,
         error: { code: 'STOP_SESSION_ERROR', message: (err as Error).message },
       };
+    } finally {
+      invalidateListCaches(req.projectRoot);
     }
   }
 

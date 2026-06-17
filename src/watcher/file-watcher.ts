@@ -8,11 +8,14 @@ export interface FileWatcherOptions {
   projectRoot: string;
   agentRoot?: string;
   envFile: string;
+  agentScanIntervalMs?: number;
   onAgentAdded: (relativePath: string) => Promise<void>;
   onAgentChanged: (relativePath: string) => Promise<void>;
   onAgentRemoved: (relativePath: string) => void;
   onEnvReloaded: () => void;
 }
+
+const DEFAULT_AGENT_SCAN_INTERVAL_MS = 15_000;
 
 /**
  * FileWatcher monitors .agentuse files and environment files for changes,
@@ -24,6 +27,7 @@ export class FileWatcher {
   private options: FileWatcherOptions;
   private closed = false;
   private agentScanTimer: NodeJS.Timeout | null = null;
+  private agentScanRunning = false;
   private changeDebounceTimers = new Map<string, NodeJS.Timeout>();
   private watchedAgentPaths = new Set<string>();
 
@@ -60,7 +64,9 @@ export class FileWatcher {
 
     // Chokidar v5 does not support glob paths, and watching the entire served
     // tree can exceed file descriptor limits. Watch discovered agent files
-    // directly, then reconcile add/remove events with a lightweight scan.
+    // directly, then reconcile add/remove events with a periodic scan. The scan
+    // is intentionally self-scheduled instead of setInterval-based so a slow
+    // filesystem walk cannot pile up overlapping glob work.
     this.agentWatcher = chokidar.watch([], {
       persistent: true,
       ignoreInitial: true,
@@ -107,19 +113,57 @@ export class FileWatcher {
         logger.warn(`Hot reload: Watcher error: ${(error as Error).message}`);
       });
 
-    void this.reconcileAgentFiles(true);
-    this.agentScanTimer = setInterval(() => {
-      void this.reconcileAgentFiles(false);
-    }, 2_000);
+    void this.runAgentScan(true);
   }
 
   private async listAgentFiles(watchRoot: string): Promise<string[]> {
     const files = await glob("**/*.agentuse", {
       cwd: watchRoot,
-      ignore: ["node_modules/**", "tmp/**", ".git/**"],
+      ignore: [
+        "node_modules/**",
+        "tmp/**",
+        ".git/**",
+        ".agentuse/**",
+        "dist/**",
+        "build/**",
+        "coverage/**",
+        ".next/**",
+        ".cache/**",
+        ".venv/**",
+        "venv/**",
+        "__pycache__/**",
+      ],
       nodir: true,
     });
     return files.filter((file) => !this.shouldIgnore(file)).sort();
+  }
+
+  private agentScanIntervalMs(): number {
+    return this.options.agentScanIntervalMs ?? DEFAULT_AGENT_SCAN_INTERVAL_MS;
+  }
+
+  private scheduleAgentScan(): void {
+    if (this.closed || this.agentScanTimer) return;
+    this.agentScanTimer = setTimeout(() => {
+      this.agentScanTimer = null;
+      void this.runAgentScan(false);
+    }, this.agentScanIntervalMs());
+  }
+
+  private async runAgentScan(initial: boolean): Promise<void> {
+    if (this.closed) return;
+    if (this.agentScanRunning) {
+      this.scheduleAgentScan();
+      return;
+    }
+
+    this.agentScanRunning = true;
+    try {
+      await this.reconcileAgentFiles(initial);
+    } finally {
+      this.agentScanRunning = false;
+      if (!this.closed) this.scheduleAgentScan();
+    }
   }
 
   private async reconcileAgentFiles(initial: boolean): Promise<void> {

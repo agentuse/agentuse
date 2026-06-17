@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { __testing } from '../src/cli/serve';
+import { SESSION_SSE_IDLE_INTERVAL_MS, SESSION_SSE_LIVE_INTERVAL_MS } from '../src/cli/serve/sse';
 import { sessionViewToken, validateSessionToken } from '../src/utils/session-token';
 import { getStorageState, initStorage } from '../src/storage';
 import { getSessionStorageDir } from '../src/storage/paths';
@@ -123,6 +124,15 @@ describe('session list helpers', () => {
     expect(__testing.sessionMatchesAgentFilter(session, 'agents/rev')).toBe(true);
     expect(__testing.sessionMatchesAgentFilter(session, 'VIEW AG')).toBe(true);
     expect(__testing.sessionMatchesAgentFilter(session, 'research')).toBe(false);
+  });
+
+  it('keeps the sessions SSE list refresh at the old page polling cadence', () => {
+    expect(__testing.SESSION_LIST_SSE_INTERVAL_MS).toBe(10_000);
+  });
+
+  it('keeps individual session SSE fast only while live', () => {
+    expect(SESSION_SSE_LIVE_INTERVAL_MS).toBe(500);
+    expect(SESSION_SSE_IDLE_INTERVAL_MS).toBe(10_000);
   });
 });
 

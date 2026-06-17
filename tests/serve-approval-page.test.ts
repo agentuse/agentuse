@@ -27,6 +27,10 @@ describe('approval web page', () => {
       .toBeUndefined();
   });
 
+  it('keeps the approvals SSE list refresh at the dashboard polling cadence', () => {
+    expect(__testing.APPROVAL_LIST_SSE_INTERVAL_MS).toBe(10_000);
+  });
+
   it('offers a continuation form for completed approval sessions', () => {
     expect(__testing.canContinueApprovalSession({
       approval: baseApproval

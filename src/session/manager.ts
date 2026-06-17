@@ -45,6 +45,8 @@ function getPartOrder(part: Part): number {
 }
 
 export class SessionManager {
+  private static foundSessionPathCache: Map<string, string> = new Map();
+
   private sessionID: string | null = null;
   private agentId: string | null = null;
   private parentPath: string | null = null; // For subagents: "{mainSessionID}-{mainAgentId}/subagent"
@@ -98,6 +100,7 @@ export class SessionManager {
 
   private rememberSessionPath(sessionID: string, agentId: string, sessionPath: string): void {
     this.sessionPathCache.set(this.sessionPathCacheKey(sessionID, agentId), sessionPath);
+    SessionManager.foundSessionPathCache.set(sessionID, sessionPath);
   }
 
   private knownSessionPath(sessionID: string, agentId: string): string {
@@ -187,6 +190,17 @@ export class SessionManager {
     }
 
     return null;
+  }
+
+  private async findTopLevelSessionDirById(baseDir: string, sessionID: string): Promise<string | null> {
+    const entries = await fs.readdir(baseDir, { withFileTypes: true }).catch(() => []);
+    const prefix = `${sessionID}-`;
+    const match = entries.find((entry) => entry.isDirectory() && entry.name.startsWith(prefix));
+    if (!match) return null;
+
+    const sessionPath = match.name;
+    const session = await readJSON<SessionInfo>(`${sessionPath}/session`);
+    return session?.id === sessionID ? sessionPath : null;
   }
 
   private async readSessionEntries(options: ReadSessionEntriesOptions = {}): Promise<SessionEntry[]> {
@@ -529,7 +543,14 @@ export class SessionManager {
    */
   async findSession(sessionID: string): Promise<SessionEntry | null> {
     const state = await getStorageState();
-    const sessionPath = await this.findSessionDirById(state.dir, sessionID);
+    const cachedPath = SessionManager.foundSessionPathCache.get(sessionID);
+    const cachedSession = cachedPath
+      ? await readJSON<SessionInfo>(`${cachedPath}/session`)
+      : null;
+    const sessionPath = cachedSession?.id === sessionID
+      ? cachedPath!
+      : await this.findTopLevelSessionDirById(state.dir, sessionID)
+        ?? await this.findSessionDirById(state.dir, sessionID);
     if (!sessionPath) return null;
 
     const session = await readJSON<SessionInfo>(`${sessionPath}/session`);
@@ -592,6 +613,69 @@ export class SessionManager {
       .sort((a, b) => getPartOrder(a) - getPartOrder(b) || a.id.localeCompare(b.id));
   }
 
+  private async readApprovalToolPart(key: string): Promise<ToolPart | null> {
+    const state = await getStorageState();
+    const target = path.join(state.dir, `${key}.json`);
+
+    let content: string;
+    try {
+      content = await fs.readFile(target, 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+
+    // Approval list scans touch many large non-approval tool outputs. A cheap
+    // textual gate avoids paying JSON.parse for files that cannot be approvals.
+    if (!/"tool"\s*:\s*"await_human"/.test(content)) return null;
+
+    let part: Part;
+    try {
+      part = JSON.parse(content) as Part;
+    } catch (error) {
+      throw new CorruptStorageError(key, error);
+    }
+
+    return part.type === 'tool' && part.tool === 'await_human'
+      ? part
+      : null;
+  }
+
+  private async listPartKeysShallow(sessionPath: string): Promise<string[]> {
+    const state = await getStorageState();
+    const sessionDir = path.join(state.dir, sessionPath);
+
+    let messageDirs: string[];
+    try {
+      const entries = await fs.readdir(sessionDir, { withFileTypes: true });
+      messageDirs = entries
+        .filter((entry) => entry.isDirectory() && entry.name !== 'subagent')
+        .map((entry) => entry.name)
+        .sort()
+        .reverse();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+
+    const keysByMessage = await Promise.all(messageDirs.map(async (messageId) => {
+      const partDir = path.join(sessionDir, messageId, 'part');
+      try {
+        const entries = await fs.readdir(partDir, { withFileTypes: true });
+        return entries
+          .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+          .map((entry) => `${sessionPath}/${messageId}/part/${entry.name.replace(/\.json$/, '')}`)
+          .sort()
+          .reverse();
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+        throw error;
+      }
+    }));
+
+    return keysByMessage.flat();
+  }
+
   /**
    * Return the latest await_human part in a session without reading message
    * records. Approval list pages only need the approval tool payload, and
@@ -599,23 +683,14 @@ export class SessionManager {
    */
   async getLatestApprovalPart(sessionID: string, agentId: string): Promise<ToolPart | null> {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
-    const keys = await listKeys(sessionPath);
-    const partKeys = keys
-      .filter(key => key.startsWith(`${sessionPath}/`) && key.includes('/part/'))
-      .sort();
+    const partKeys = await this.listPartKeysShallow(sessionPath);
 
-    const parts = await Promise.all(
-      partKeys.map(async (key) => {
-        const part = await readJSON<Part>(key);
-        return part?.type === 'tool' && part.tool === 'await_human'
-          ? part
-          : null;
-      })
-    );
+    for (const key of partKeys) {
+      const part = await this.readApprovalToolPart(key);
+      if (part) return part;
+    }
 
-    return parts
-      .filter((part): part is ToolPart => part !== null)
-      .sort((a, b) => getPartOrder(b) - getPartOrder(a) || b.id.localeCompare(a.id))[0] ?? null;
+    return null;
   }
 
   /**
@@ -651,7 +726,11 @@ export class SessionManager {
     return results;
   }
 
-  async listChildSessions(parentSessionID: string, parentSessionPath?: string): Promise<SessionEntry[]> {
+  async listChildSessions(
+    parentSessionID: string,
+    parentSessionPath?: string,
+    options: { fallbackCreatedAfter?: number } = {}
+  ): Promise<SessionEntry[]> {
     const entriesById = new Map<string, SessionEntry>();
     const scopedEntries = parentSessionPath
       ? await this.readSessionEntries({ relativeDir: `${parentSessionPath}/subagent` })
@@ -664,8 +743,15 @@ export class SessionManager {
 
     // Historical resumed runs may have child sessions linked by parentSessionID
     // but stored outside the parent's subagent directory because the resumed
-    // SessionManager did not know the parent's full path. Keep those visible.
-    const allEntries = await this.readSessionEntries();
+    // SessionManager did not know the parent's full path. Keep those visible,
+    // but restrict the compatibility scan to top-level sessions created after
+    // the parent when the caller can provide that bound.
+    const allEntries = parentSessionPath
+      ? await this.readSessionEntries({
+          includeSubagents: false,
+          ...(typeof options.fallbackCreatedAfter === 'number' && { createdAfter: options.fallbackCreatedAfter })
+        })
+      : await this.readSessionEntries();
     for (const entry of allEntries) {
       if (entry.session.parentSessionID === parentSessionID) {
         entriesById.set(entry.session.id, entry);

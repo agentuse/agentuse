@@ -53,7 +53,7 @@ describe('approval list worker', () => {
     worker = undefined;
   });
 
-  it('includes a fresh approval created inside an older session window', async () => {
+  it('bounds approval list scans by the session directory creation window', async () => {
     const originalXdgDataHome = process.env.XDG_DATA_HOME;
     const originalNow = Date.now;
     const dataHome = await mkdtemp(join(tmpdir(), 'agentuse-approvals-window-'));
@@ -68,14 +68,14 @@ describe('approval list worker', () => {
       const sessionManager = new SessionManager();
 
       Date.now = () => oldSessionTime;
-      const sessionId = await sessionManager.createSession({
+      const oldSessionId = await sessionManager.createSession({
         agent: { id: 'agents/review', name: 'Review', isSubAgent: false },
         model: 'demo:test',
         version: 'test',
         config: {},
         project: { root: projectRoot, cwd: projectRoot },
       });
-      const messageId = await sessionManager.createMessage(sessionId, 'agents/review', {
+      const oldMessageId = await sessionManager.createMessage(oldSessionId, 'agents/review', {
         user: { prompt: { task: 'review this' } },
         assistant: {
           system: [],
@@ -89,7 +89,7 @@ describe('approval list worker', () => {
       });
 
       Date.now = () => freshApprovalTime;
-      await sessionManager.addPart(sessionId, 'agents/review', messageId, {
+      await sessionManager.addPart(oldSessionId, 'agents/review', oldMessageId, {
         type: 'tool',
         callID: 'call-1',
         tool: 'await_human',
@@ -100,7 +100,39 @@ describe('approval list worker', () => {
           resumePayload: { kind: 'await_human', resumeToken: 'fresh-token' },
         },
       });
-      await sessionManager.setSessionSuspended(sessionId, 'agents/review');
+      await sessionManager.setSessionSuspended(oldSessionId, 'agents/review');
+
+      const freshSessionId = await sessionManager.createSession({
+        agent: { id: 'agents/fresh-review', name: 'Fresh Review', isSubAgent: false },
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      const freshMessageId = await sessionManager.createMessage(freshSessionId, 'agents/fresh-review', {
+        user: { prompt: { task: 'review fresh' } },
+        assistant: {
+          system: [],
+          modelID: 'demo:test',
+          providerID: 'demo',
+          mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+      await sessionManager.addPart(freshSessionId, 'agents/fresh-review', freshMessageId, {
+        type: 'tool',
+        callID: 'call-2',
+        tool: 'await_human',
+        state: {
+          status: 'pending',
+          input: { prompt: 'Approve fresh session?' },
+          suspendedAt: freshApprovalTime,
+          resumePayload: { kind: 'await_human', resumeToken: 'fresh-session-token' },
+        },
+      });
+      await sessionManager.setSessionSuspended(freshSessionId, 'agents/fresh-review');
 
       worker = await startWorker();
       worker.child.stdin.write(`${JSON.stringify({
@@ -114,10 +146,10 @@ describe('approval list worker', () => {
       expect(response.success).toBe(true);
       expect(response.approvals).toHaveLength(1);
       expect(response.approvals[0]).toMatchObject({
-        sessionId,
+        sessionId: freshSessionId,
         status: 'pending',
-        prompt: 'Approve fresh item?',
-        resumeToken: 'fresh-token',
+        prompt: 'Approve fresh session?',
+        resumeToken: 'fresh-session-token',
       });
     } finally {
       Date.now = originalNow;

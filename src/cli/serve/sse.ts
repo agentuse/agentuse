@@ -68,6 +68,9 @@ export interface ApprovalListEventHubOptions {
   maxSubscribersPerList?: number;
 }
 
+export const SESSION_SSE_LIVE_INTERVAL_MS = 500;
+export const SESSION_SSE_IDLE_INTERVAL_MS = 10_000;
+
 function logSignature(entry: ApprovalLogEntry): string {
   return JSON.stringify([entry.status ?? null, entry.message ?? null, entry.title, entry.details ?? null, entry.subagentSession ?? null]);
 }
@@ -100,8 +103,8 @@ export class ApprovalEventHub {
   private readonly maxSubscribersPerSession: number;
 
   constructor(options: ApprovalEventHubOptions = {}) {
-    this.liveIntervalMs = options.liveIntervalMs ?? 500;
-    this.idleIntervalMs = options.idleIntervalMs ?? 1500;
+    this.liveIntervalMs = options.liveIntervalMs ?? SESSION_SSE_LIVE_INTERVAL_MS;
+    this.idleIntervalMs = options.idleIntervalMs ?? SESSION_SSE_IDLE_INTERVAL_MS;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 25_000;
     this.maxSubscribersPerSession = options.maxSubscribersPerSession ?? 20;
   }

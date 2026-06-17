@@ -46,6 +46,9 @@ import {
   type StoreBrowserSummary
 } from "./serve/stores";
 
+const APPROVAL_LIST_SSE_INTERVAL_MS = 10_000;
+const SESSION_LIST_SSE_INTERVAL_MS = 10_000;
+
 interface RunRequest {
   agent: string;
   project?: string;
@@ -2394,7 +2397,7 @@ export function createServeCommand(): Command {
         logger.debug(`No server-level env file found at ${getGlobalEnvPath()}`);
       }
 
-      const APPROVAL_SWEEP_INTERVAL_MS = 60_000;
+      const APPROVAL_SWEEP_INTERVAL_MS = 5 * 60_000;
       let approvalSweepTimer: NodeJS.Timeout | null = null;
       let approvalSweepRunning = false;
 
@@ -2451,8 +2454,13 @@ export function createServeCommand(): Command {
       // Push session/approval state to the SPA over SSE (one worker poll per
       // session, fanned to all subscribed tabs), replacing in-page polling.
       const approvalHub = new ApprovalEventHub();
-      const approvalListHub = new ApprovalListEventHub<ApprovalListPayload>();
-      const sessionListHub = new ApprovalListEventHub<SessionsPayload>({ eventName: 'sessions' });
+      const approvalListHub = new ApprovalListEventHub<ApprovalListPayload>({
+        intervalMs: APPROVAL_LIST_SSE_INTERVAL_MS,
+      });
+      const sessionListHub = new ApprovalListEventHub<SessionsPayload>({
+        eventName: 'sessions',
+        intervalMs: SESSION_LIST_SSE_INTERVAL_MS,
+      });
 
       const buildSessionsPayload = async (
         requestUrl: URL
@@ -3870,8 +3878,8 @@ export function createServeCommand(): Command {
         throw err;
       });
 
-      // Kick off approval expiration sweep: once at startup, then on a fixed interval.
-      void runApprovalSweep();
+      // Approval expiration is a housekeeping task; keep it off the startup and
+      // dashboard refresh hot path.
       approvalSweepTimer = setInterval(() => {
         void runApprovalSweep();
       }, APPROVAL_SWEEP_INTERVAL_MS);
@@ -4292,6 +4300,8 @@ export const __testing = {
   canContinueApprovalSession,
   isEndedSessionStatus,
   approvalListCreatedAfter,
+  APPROVAL_LIST_SSE_INTERVAL_MS,
   sessionListCreatedAfter,
+  SESSION_LIST_SSE_INTERVAL_MS,
   sessionMatchesAgentFilter,
 };
