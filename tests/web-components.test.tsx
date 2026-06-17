@@ -87,6 +87,20 @@ describe('LogEntry component', () => {
     expect(html).not.toContain('<script>alert(1)</script>');
     expect(html).not.toContain('<img src=x');
   });
+
+  it('wraps assistant content in block containers', () => {
+    const html = renderEntry({
+      id: 'log-4',
+      type: 'text',
+      title: 'Assistant response',
+      status: 'completed',
+      message: '# Summary\n\nDone.',
+    });
+    expect(html).toContain('<div class="log-main">');
+    expect(html).toContain('<div class="log-content">');
+    expect(html).toContain('<div class="content-render">');
+    expect(html).toContain('<div class="content-markdown">');
+  });
 });
 
 describe('StoreTable component', () => {
@@ -142,6 +156,43 @@ describe('content-html', () => {
     expect(html).toContain('<ul><li>one</li><li>two</li></ul>');
     expect(html).toContain('data-language="js"');
     expect(html).toContain('code()');
+  });
+
+  it('renders common assistant markdown beyond flat lists', () => {
+    const html = renderMarkdownBlock([
+      'Result',
+      '------',
+      '',
+      '| Area | Status |',
+      '| --- | --- |',
+      '| UI | **fixed** |',
+      '',
+      '---',
+      '',
+      'Tail',
+    ].join('\n'));
+    expect(html).toContain('<h3>Result</h3>');
+    expect(html).toContain('<table>');
+    expect(html).toContain('<th>Area</th>');
+    expect(html).toContain('<td><strong>fixed</strong></td>');
+    expect(html).toContain('<hr>');
+  });
+
+  it('renders single-asterisk emphasis without touching inline code', () => {
+    const html = renderMarkdownBlock([
+      ':money_with_wings: *LifeHack Paid New Customers, last 7 days*: 1 new paid customer',
+      '',
+      '*Window:* 2026-06-10T16:08:27Z to 2026-06-17T16:08:27Z',
+      '*Confidence:* high 1, medium 0, low 0',
+      '',
+      '- **Stripe unavailable:** `STRIPE_SECRET_KEY` not found in any skill `.env` file',
+    ].join('\n'));
+    expect(html).toContain('<em>LifeHack Paid New Customers, last 7 days</em>');
+    expect(html).toContain('<em>Window:</em>');
+    expect(html).toContain('<em>Confidence:</em>');
+    expect(html).toContain('<strong>Stripe unavailable:</strong>');
+    expect(html).toContain('<code>STRIPE_SECRET_KEY</code>');
+    expect(html).toContain('<code>.env</code>');
   });
 
   it('renders smart JSON blocks for readable strings', () => {

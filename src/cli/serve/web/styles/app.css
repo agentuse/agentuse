@@ -549,8 +549,8 @@ body {
 }
 .log-content > .content-markdown,
 .log-content > .content-code,
-.log-content > span > .content-markdown,
-.log-content > span > .content-code {
+.log-content > .content-render > .content-markdown,
+.log-content > .content-render > .content-code {
   margin-top: 4px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -579,6 +579,30 @@ body {
   padding-left: 12px;
   border-left: 2px solid var(--cyan-border);
   color: var(--muted);
+}
+.content-markdown hr {
+  height: 1px;
+  margin: 14px 0;
+  border: 0;
+  background: var(--line);
+}
+.content-markdown table {
+  width: 100%;
+  margin: 10px 0;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.content-markdown th,
+.content-markdown td {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.content-markdown th {
+  color: var(--fg);
+  font-weight: 600;
+  background: var(--panel-hover);
 }
 .content-markdown code {
   font-family: var(--mono);

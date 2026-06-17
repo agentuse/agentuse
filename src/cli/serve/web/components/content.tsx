@@ -8,7 +8,7 @@ import { renderInlineMarkdown, renderLogContentValue } from '../lib/content-html
 export function LogContent(props: { value: string; forceMarkdown?: boolean }) {
   const html = renderLogContentValue(props.value, props.forceMarkdown ? { forceMarkdown: true } : undefined);
   // eslint-disable-next-line react/no-danger
-  return <span dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div class="content-render" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 export function InlineMarkdown(props: { value: string; class?: string }) {

@@ -264,16 +264,16 @@ function LogEntryImpl(props: LogEntryProps) {
     >
       <span class="log-time">{formatLogTime(entry.time)}</span>
       <span class="log-marker">{spinning ? <span class="log-spinner" aria-label="streaming" /> : '⋮'}</span>
-      <span class="log-main">
+      <div class="log-main">
         <span class="log-title">{entry.title}</span>
-        <span class="log-content">
+        <div class="log-content">
           {entry.subagentSession && <SubagentCard session={entry.subagentSession} />}
           {storeEvent && <StoreEventBlock event={storeEvent} />}
           {entry.details && (entry.details.resumeToken
             ? <ApprovalDetailCard details={entry.details} sessionId={props.sessionId} token={props.token} />
             : <ToolDetails details={entry.details} />)}
           {entry.message && !storeEvent && !entry.subagentSession && <LogContent value={entry.message} forceMarkdown={entry.type === 'text'} />}
-        </span>
+        </div>
         {props.showActions && (
           <div class="log-actions" data-actions-row>
             <div class="log-actions-hint">
@@ -286,7 +286,7 @@ function LogEntryImpl(props: LogEntryProps) {
             </div>
           </div>
         )}
-      </span>
+      </div>
     </li>
   );
 }

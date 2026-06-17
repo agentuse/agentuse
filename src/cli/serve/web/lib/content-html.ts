@@ -19,11 +19,18 @@ export function escapeHtml(value: unknown): string {
 }
 
 export function renderInlineMarkdown(value: string): string {
-  return escapeHtml(value)
+  const codeSpans: string[] = [];
+  const codePlaceholder = (index: number) => `\u0000CODE${index}\u0000`;
+  const escaped = escapeHtml(value).replace(/`([^`]+)`/g, (_, code) => {
+    const index = codeSpans.push(`<code>${code}</code>`) - 1;
+    return codePlaceholder(index);
+  });
+  return escaped
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/(^|[\s([{>])\*([^*\n]+?)\*(?=[\s.,;:!?)}\]]|$)/g, '$1<em>$2</em>')
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>')
+    .replace(/\u0000CODE(\d+)\u0000/g, (_, index) => codeSpans[Number(index)] ?? '');
 }
 
 function renderMarkdownTextBlock(value: string): string {
@@ -54,10 +61,46 @@ function renderMarkdownTextBlock(value: string): string {
     flushQuote();
   };
 
-  for (const line of lines) {
+  const isRule = (line: string) => /^([-*_])(?:\s*\1){2,}$/.test(line.trim());
+  const isTableSeparator = (line: string) => {
+    const cells = markdownTableCells(line);
+    return cells.length > 0 && cells.every(cell => /^:?-{3,}:?$/.test(cell.trim()));
+  };
+  const renderTable = (startIndex: number): number => {
+    const header = markdownTableCells(lines[startIndex]);
+    const rows: string[][] = [];
+    let cursor = startIndex + 2;
+    while (cursor < lines.length && lines[cursor].includes('|') && lines[cursor].trim()) {
+      rows.push(markdownTableCells(lines[cursor]));
+      cursor += 1;
+    }
+    const tableRows = rows.map(row => `<tr>${header.map((_, index) => `<td>${renderInlineMarkdown(row[index] ?? '')}</td>`).join('')}</tr>`).join('');
+    html.push(`<table><thead><tr>${header.map(cell => `<th>${renderInlineMarkdown(cell)}</th>`).join('')}</tr></thead>${tableRows ? `<tbody>${tableRows}</tbody>` : ''}</table>`);
+    return cursor;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const trimmed = line.trim();
     if (!trimmed) {
       flushAll();
+      continue;
+    }
+    if (index + 1 < lines.length && trimmed.includes('|') && isTableSeparator(lines[index + 1])) {
+      flushAll();
+      index = renderTable(index) - 1;
+      continue;
+    }
+    if (isRule(trimmed)) {
+      flushAll();
+      html.push('<hr>');
+      continue;
+    }
+    if (index + 1 < lines.length && /^(=+|-+)$/.test(lines[index + 1].trim()) && !trimmed.startsWith('|')) {
+      flushAll();
+      const level = lines[index + 1].trim().startsWith('=') ? 2 : 3;
+      html.push(`<h${level}>${renderInlineMarkdown(trimmed)}</h${level}>`);
+      index += 1;
       continue;
     }
     const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
@@ -102,6 +145,12 @@ function renderMarkdownTextBlock(value: string): string {
   }
   flushAll();
   return html.join('');
+}
+
+function markdownTableCells(line: string): string[] {
+  const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  if (!trimmed.includes('|')) return [];
+  return trimmed.split('|').map(cell => cell.trim());
 }
 
 export function renderMarkdownBlock(value: string): string {
