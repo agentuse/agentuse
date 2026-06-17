@@ -357,6 +357,7 @@ interface ApprovalLogDetails {
 class AgentWorker {
   private process: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
+  private forceKillTimer: NodeJS.Timeout | null = null;
   private pendingRequests: Map<string, {
     resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerStopSessionResult) => void;
     timeoutId?: NodeJS.Timeout;
@@ -460,6 +461,10 @@ class AgentWorker {
   }
 
   private handleWorkerDeath() {
+    if (this.forceKillTimer) {
+      clearTimeout(this.forceKillTimer);
+      this.forceKillTimer = null;
+    }
     this.ready = false;
     this.process = null;
     this.readline = null;
@@ -637,9 +642,15 @@ class AgentWorker {
    * Shutdown the worker process.
    */
   shutdown() {
-    if (this.process) {
-      this.process.kill("SIGTERM");
-      this.process = null;
+    const child = this.process;
+    if (child) {
+      child.stdin?.end();
+      child.kill("SIGTERM");
+      if (this.forceKillTimer) clearTimeout(this.forceKillTimer);
+      this.forceKillTimer = setTimeout(() => {
+        if (this.process === child) child.kill("SIGKILL");
+      }, 2_000);
+      this.forceKillTimer.unref?.();
     }
     if (this.readline) {
       this.readline.close();

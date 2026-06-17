@@ -2288,6 +2288,28 @@ async function runInternalWorker() {
     terminal: false,
   });
 
+  const parentPid = process.ppid;
+  let workerExiting = false;
+  let parentWatchTimer: NodeJS.Timeout | undefined;
+  const exitWorker = (code = 0) => {
+    if (workerExiting) return;
+    workerExiting = true;
+    if (parentWatchTimer) clearInterval(parentWatchTimer);
+    rl.close();
+    process.exit(code);
+  };
+
+  parentWatchTimer = setInterval(() => {
+    if (parentPid === 1 || process.ppid !== parentPid || process.ppid === 1) {
+      exitWorker(0);
+    }
+  }, 1_000);
+  parentWatchTimer.unref?.();
+  process.stdin.once('end', () => exitWorker(0));
+  process.stdin.once('close', () => exitWorker(0));
+  process.once('SIGTERM', () => exitWorker(0));
+  process.once('SIGINT', () => exitWorker(130));
+
   // Signal ready
   console.log(JSON.stringify({ type: 'ready' }));
 
@@ -2341,4 +2363,6 @@ async function runInternalWorker() {
       }));
     }
   }
+
+  exitWorker(0);
 }
