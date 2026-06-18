@@ -3,6 +3,7 @@ import { renderToString } from 'preact-render-to-string';
 import { LogEntry } from '../src/cli/serve/web/components/log-entry';
 import { StoreTable, type StoreTableColumn } from '../src/cli/serve/web/components/store-table';
 import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
+import { DecisionDialog } from '../src/cli/serve/web/components/comment-dialog';
 import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/cli/serve/web/lib/content-html';
 import { latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
@@ -140,6 +141,23 @@ describe('ContinuePanel component', () => {
     expect(html).not.toContain('hidden');
     expect(html).toContain('continue session');
     expect(html).toContain('Continue session');
+  });
+});
+
+describe('DecisionDialog component', () => {
+  it('renders comment mode as a required feedback action', () => {
+    const html = renderToString(<DecisionDialog open mode="comment" onSubmit={noop} onClose={noop} />);
+    expect(html).toContain('leave a comment');
+    expect(html).toContain('explain your decision');
+    expect(html).toContain('Send comment');
+  });
+
+  it('renders reject mode with optional reason copy', () => {
+    const html = renderToString(<DecisionDialog open mode="reject" onSubmit={noop} onClose={noop} />);
+    expect(html).toContain('reject this request?');
+    expect(html).toContain('configured rejected-state updates');
+    expect(html).toContain('optional: tell the agent why this should be rejected');
+    expect(html).toContain('>Reject</button>');
   });
 });
 

@@ -1001,32 +1001,6 @@ async function runInternalWorker() {
     }, { input: 0, cachedInput: 0, output: 0 });
   }
 
-  function isRejectDecision(toolResult: unknown): boolean {
-    const result = valueAsRecord(toolResult);
-    const status = typeof result.status === 'string' ? result.status.toLowerCase() : '';
-    return status === 'reject' || status === 'rejected';
-  }
-
-  function approvalRejectionText(toolResult: unknown): string {
-    const result = valueAsRecord(toolResult);
-    const reviewer = valueAsRecord(result.reviewer);
-    const reviewerName = typeof reviewer.username === 'string'
-      ? reviewer.username
-      : typeof reviewer.name === 'string'
-        ? reviewer.name
-        : typeof reviewer.id === 'string'
-          ? reviewer.id
-          : undefined;
-    const comment = typeof result.comment === 'string' && result.comment.trim()
-      ? result.comment.trim()
-      : undefined;
-
-    return [
-      `❌ **Rejected**${reviewerName ? ` by ${reviewerName}` : ''}`,
-      comment ? `\n${comment}` : undefined
-    ].filter(Boolean).join('\n');
-  }
-
   async function lastAssistantText(sessionManager: InstanceType<typeof SessionManager>, sessionId: string, agentId: string): Promise<string | undefined> {
     const messages = await sessionManager.getSessionMessages(sessionId, agentId);
     for (const message of [...messages].reverse()) {
@@ -1969,35 +1943,6 @@ async function runInternalWorker() {
             success: false,
             error: { code: 'AGENT_NOT_FOUND', message: `Session ${req.sessionId} does not record an agent file path` },
           });
-        }
-        if (isRejectDecision(req.toolResult)) {
-          resumeRollback = undefined;
-          const message = await sessionManager.getPrimaryMessage(req.sessionId, resumed.agentId);
-          const text = approvalRejectionText(req.toolResult);
-          if (message) {
-            const now = Date.now();
-            await sessionManager.addPart(req.sessionId, resumed.agentId, message.id, {
-              type: 'text',
-              synthetic: true,
-              text,
-              time: { start: now, end: now }
-            } as any);
-            await sessionManager.updateMessage(req.sessionId, resumed.agentId, message.id, {
-              time: { completed: now }
-            });
-          }
-          await sessionManager.setSessionCompleted(req.sessionId, resumed.agentId);
-          return {
-            id: req.id,
-            success: true,
-            result: {
-              text,
-              finishReason: 'rejected',
-              duration: Date.now() - startTime,
-              toolCalls: 0,
-              sessionId: req.sessionId
-            }
-          };
         }
         agentPath = resumed.agentFilePath;
         existingSessionId = req.sessionId;

@@ -159,6 +159,12 @@ Reviewer actions are fixed:
 - `Reject`: resumes the agent with `status: "reject"`
 - `Comment`: resumes the agent with `status: "comment"` and the reviewer comment
 
+On reject, AgentUse passes the decision back to the agent instead of applying a
+universal workflow state change. If the agent tracks drafts, queue items, or
+tasks in a store, describe the rejected-state transition in the agent
+instructions, such as "when rejected, mark the current draft item `rejected`"
+or "when rejected with feedback, mark it `needs_revision`."
+
 When Slack Socket Mode is configured, the approval details thread can also accept Approve, Reject, Comment, and normal thread replies. Without Socket Mode, reviewers open the session page link to decide.
 
 When the agent receives a comment, it decides whether to revise, ask for approval again, or stop with a clear explanation.

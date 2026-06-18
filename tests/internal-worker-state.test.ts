@@ -14,6 +14,20 @@ describe('internal worker session state ordering', () => {
     expect(executeAgent).toContain('return restoreResumeAndReturn({\n          id: req.id,\n          success: false,\n          error: { code: \'ENV_MISSING\'');
   });
 
+  it('does not short-circuit rejected approval decisions before agent resume', async () => {
+    const source = await readFile(join(import.meta.dir, '..', 'src', 'index.ts'), 'utf-8');
+    const resumeBranch = source.indexOf("if (req.type === 'resume')");
+    const continueBranch = source.indexOf("} else if (req.type === 'continue-session')", resumeBranch);
+    expect(resumeBranch).toBeGreaterThanOrEqual(0);
+    expect(continueBranch).toBeGreaterThan(resumeBranch);
+
+    const resumeSource = source.slice(resumeBranch, continueBranch);
+    expect(resumeSource).toContain('const resumed = await applyResumeToolResult');
+    expect(resumeSource).not.toContain('isRejectDecision');
+    expect(resumeSource).not.toContain("finishReason: 'rejected'");
+    expect(resumeSource).toContain('agentPath = resumed.agentFilePath;');
+  });
+
   it('marks continuation sessions running only after parse/env/MCP preflight', async () => {
     const source = await readFile(join(import.meta.dir, '..', 'src', 'index.ts'), 'utf-8');
     const continueBranch = source.indexOf("} else if (req.type === 'continue-session')");

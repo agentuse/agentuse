@@ -4,7 +4,7 @@ import type { ApprovalLogEntry, ApprovalPageInfo } from '../../types';
 import { Topbar } from '../components/topbar';
 import { LogEntry } from '../components/log-entry';
 import { LogContent } from '../components/content';
-import { CommentDialog } from '../components/comment-dialog';
+import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
 import { ContinuePanel } from '../components/continue-panel';
 import { postSessionDecision, postSessionContinue, postSessionStop } from '../lib/api';
 import { useApprovalStream } from '../hooks/use-approval-stream';
@@ -67,7 +67,7 @@ export default function SessionDetail() {
   // Terminal load failures (unauthorized, not found, corrupted session data):
   // the page can't recover, so we render this instead of the live view.
   const [fatalError, setFatalError] = useState<string | null>(null);
-  const [commentOpen, setCommentOpen] = useState(false);
+  const [decisionDialog, setDecisionDialog] = useState<DecisionDialogMode | null>(null);
   const [nudge, setNudge] = useState(0);
 
   // Logs accumulate monotonically across the session; the status payload can
@@ -237,17 +237,17 @@ export default function SessionDetail() {
   }, [sessionId, token, projectId, submittingStop]);
 
   const onAction = useCallback((action: 'approve' | 'reject' | 'comment') => {
-    if (action === 'comment') {
-      setCommentOpen(true);
+    if (action === 'comment' || action === 'reject') {
+      setDecisionDialog(action);
       return;
     }
     void submitDecision(action);
   }, [submitDecision]);
 
-  // Keyboard shortcuts: cmd/ctrl+Enter approve, Esc reject, C comment.
+  // Keyboard shortcuts: cmd/ctrl+Enter approve, Esc opens reject, C comment.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (commentOpen) return;
+      if (decisionDialog) return;
       const target = event.target as HTMLElement | null;
       const inField = target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT');
       const canAct = actionable && !submittingDecision;
@@ -257,16 +257,16 @@ export default function SessionDetail() {
         void submitDecision('approve');
       } else if (event.key === 'Escape' && !inField) {
         if (!canAct) return;
-        void submitDecision('reject');
+        setDecisionDialog('reject');
       } else if ((event.key === 'c' || event.key === 'C') && !inField && !event.metaKey && !event.ctrlKey && !event.altKey) {
         if (!canAct) return;
         event.preventDefault();
-        setCommentOpen(true);
+        setDecisionDialog('comment');
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [commentOpen, actionable, submittingDecision, submitDecision]);
+  }, [decisionDialog, actionable, submittingDecision, submitDecision]);
 
   if (fatalError) {
     return (
@@ -395,12 +395,14 @@ export default function SessionDetail() {
         <p class={`notice${result.error ? ' error' : ''}`}>{result.text}</p>
       </main>
 
-      <CommentDialog
-        open={commentOpen}
-        onClose={() => setCommentOpen(false)}
+      <DecisionDialog
+        open={decisionDialog !== null}
+        mode={decisionDialog ?? 'comment'}
+        onClose={() => setDecisionDialog(null)}
         onSubmit={(comment) => {
-          setCommentOpen(false);
-          void submitDecision('comment', comment);
+          const action = decisionDialog;
+          setDecisionDialog(null);
+          if (action) void submitDecision(action, comment);
         }}
       />
     </div>

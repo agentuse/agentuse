@@ -281,6 +281,8 @@ describe('prepareAgentExecution', () => {
       expect(result.userMessage).toContain('## Approval Gate');
       expect(result.userMessage).toContain('call the `await_human` tool');
       expect(result.userMessage).toContain('expires after 24h');
+      expect(result.userMessage).toContain('workflow-specific cleanup/status updates');
+      expect(result.userMessage).toContain('updating relevant store items');
       expect(result.userMessage).toContain('comment: treat the reviewer comment as feedback, not approval');
       expect(result.userMessage).toContain('call `await_human` again');
     });

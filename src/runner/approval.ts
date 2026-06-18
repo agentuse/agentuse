@@ -80,7 +80,7 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
     '',
     'After the approval result:',
     '- approve: finalize the work and complete normally.',
-    '- reject: stop cleanly and summarize the rejection.',
+    '- reject: do not finalize, publish, ship, or perform the approved action. First perform any workflow-specific cleanup/status updates required by your instructions (for example, updating relevant store items), then stop cleanly and summarize the rejection.',
     '- comment: treat the reviewer comment as feedback, not approval. Revise or clarify the work, then call `await_human` again with the updated review request. Only stop instead of requesting approval again when the reviewer explicitly asks you to cancel, abandon, or stop the work.',
     '',
     'If the `await_human` tool fails, do not finalize, publish, ship, or return the prepared work as complete. Stop and report that the approval request failed with the tool error.',

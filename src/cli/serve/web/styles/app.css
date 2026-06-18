@@ -764,8 +764,8 @@ body {
 .page-approval-detail .theme-toggle button { min-height: 0; padding: 4px 8px; border: 0; border-radius: 999px; }
 .page-approval-detail .theme-toggle button[aria-pressed="true"] { border: 1px solid var(--line); }
 
-/* comment dialog */
-dialog#comment-dialog {
+/* decision dialog */
+dialog#decision-dialog {
   width: min(560px, calc(100vw - 32px));
   max-width: 100%;
   padding: 0;
@@ -775,15 +775,15 @@ dialog#comment-dialog {
   color: var(--fg);
   box-shadow: 0 20px 60px rgba(0,0,0,0.45);
 }
-dialog#comment-dialog::backdrop {
+dialog#decision-dialog::backdrop {
   background: rgba(0,0,0,0.55);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
 }
-:root[data-theme="light"] dialog#comment-dialog::backdrop {
+:root[data-theme="light"] dialog#decision-dialog::backdrop {
   background: rgba(0,0,0,0.30);
 }
-dialog#comment-dialog form { margin: 0; padding: 0; }
+dialog#decision-dialog form { margin: 0; padding: 0; }
 .dialog-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 18px;
@@ -793,6 +793,7 @@ dialog#comment-dialog form { margin: 0; padding: 0; }
   color: var(--muted-2);
 }
 .dialog-head .title::before { content: "⋮ "; color: var(--cyan); }
+.dialog-head .title.reject::before { color: var(--red); }
 .page-approval-detail .dialog-close {
   min-height: 0; padding: 4px 8px;
   background: transparent; border: 0;
@@ -800,6 +801,13 @@ dialog#comment-dialog form { margin: 0; padding: 0; }
   cursor: pointer; border-radius: 6px;
 }
 .page-approval-detail .dialog-close:hover { background: var(--panel-hover); color: var(--fg); border: 0; }
+.dialog-description {
+  margin: 0;
+  padding: 14px 18px 0;
+  color: var(--muted-3);
+  font-size: 13px;
+  line-height: 1.55;
+}
 .dialog-body {
   padding: 16px 18px;
   display: grid;
