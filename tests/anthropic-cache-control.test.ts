@@ -88,12 +88,12 @@ describe('executeAgentCore Anthropic cache control', () => {
       },
     });
 
-    const stepMessages = streamConfig.prepareStep({
+    const stepMessages = (await streamConfig.prepareStep({
       messages: [
         { role: 'system', content: 'static instructions' },
         { role: 'tool', content: [{ type: 'tool-result', output: 'large result' }] },
       ],
-    }).messages;
+    })).messages;
 
     expect(stepMessages[0].providerOptions).toEqual({
       anthropic: {
@@ -147,9 +147,9 @@ describe('executeAgentCore Anthropic cache control', () => {
       },
     ]);
 
-    const stepMessages = streamConfig.prepareStep({
+    const stepMessages = (await streamConfig.prepareStep({
       messages: streamConfig.messages,
-    }).messages;
+    })).messages;
 
     expect(stepMessages[1].providerOptions).toBeUndefined();
     expect(stepMessages[1].content[1].providerOptions).toBeUndefined();
@@ -183,7 +183,11 @@ describe('executeAgentCore Anthropic cache control', () => {
     expect(streamConfig.providerOptions.openai.promptCacheKey).toMatch(/^agentuse-cache-test-[a-f0-9]{16}$/);
     expect(streamConfig.messages[0].providerOptions).toBeUndefined();
     expect(streamConfig.tools.bash.providerOptions).toBeUndefined();
-    expect(streamConfig.prepareStep).toBeUndefined();
+    expect(streamConfig.prepareStep).toBeFunction();
+    const stepMessages = (await streamConfig.prepareStep({
+      messages: streamConfig.messages,
+    })).messages;
+    expect(stepMessages[0].providerOptions).toBeUndefined();
   });
 
   it('preserves explicit OpenAI prompt cache options', async () => {

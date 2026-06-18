@@ -1,6 +1,17 @@
 import type { ModelMessage } from 'ai';
 import type { SessionManager } from './manager';
-import type { ToolPart } from './types';
+import type { Part, ToolPart } from './types';
+
+function getPartOrder(part: Part): number {
+  if (part.type === 'text') return part.time?.start ?? Number.MAX_SAFE_INTEGER;
+  if (part.type === 'reasoning') return part.time.start;
+  if (part.type === 'tool') {
+    const state = part.state;
+    if (state.status === 'pending') return state.suspendedAt ?? Number.MAX_SAFE_INTEGER;
+    return state.time.start;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
 
 function toToolResultOutput(value: unknown): { type: 'text'; value: string } | { type: 'json'; value: unknown } {
   if (typeof value === 'string') {
@@ -28,6 +39,16 @@ export async function rehydrateMessages(
     throw new Error(`Session message not found: ${sessionID}`);
   }
 
+  const snapshot = await sessionManager.readContextSnapshot(sessionID, agentId);
+  if (snapshot?.version === 1 && Array.isArray(snapshot.messages)) {
+    const messages = snapshot.messages as ModelMessage[];
+    const parts = await sessionManager.getMessageParts(sessionID, agentId, message.id);
+    for (const part of parts.filter((part) => getPartOrder(part) > snapshot.updatedAt)) {
+      appendPartMessages(messages, part);
+    }
+    return messages;
+  }
+
   const messages: ModelMessage[] = [];
   for (const content of message.assistant.system) {
     messages.push({ role: 'system', content } as ModelMessage);
@@ -41,24 +62,28 @@ export async function rehydrateMessages(
   const parts = await sessionManager.getMessageParts(sessionID, agentId, message.id);
 
   for (const part of parts) {
-    switch (part.type) {
-      case 'text':
-        if (part.text) {
-          messages.push({
-            role: part.role === 'user' ? 'user' : 'assistant',
-            content: part.text
-          } as ModelMessage);
-        }
-        break;
-      case 'tool':
-        appendToolMessages(messages, part);
-        break;
-      default:
-        break;
-    }
+    appendPartMessages(messages, part);
   }
 
   return messages;
+}
+
+function appendPartMessages(messages: ModelMessage[], part: Part): void {
+  switch (part.type) {
+    case 'text':
+      if (part.text) {
+        messages.push({
+          role: part.role === 'user' ? 'user' : 'assistant',
+          content: part.text
+        } as ModelMessage);
+      }
+      break;
+    case 'tool':
+      appendToolMessages(messages, part);
+      break;
+    default:
+      break;
+  }
 }
 
 function appendToolMessages(messages: ModelMessage[], part: ToolPart): void {

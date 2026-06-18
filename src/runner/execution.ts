@@ -8,6 +8,8 @@ import { ContextManager } from '../context-manager';
 import { compactMessages } from '../compactor';
 import type { AgentChunk } from './types';
 import { isSuspendSignal } from './suspend';
+import type { SessionManager } from '../session';
+import { clampToolResultForModel } from '../tools/tool-output-limits.js';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -134,6 +136,38 @@ function applyAnthropicCacheControlToTools(tools: ToolSet): ToolSet {
   ])) as ToolSet;
 }
 
+function limitModelFacingToolOutputs(tools: ToolSet): ToolSet {
+  return Object.fromEntries(Object.entries(tools).map(([name, tool]) => {
+    const originalExecute = (tool as any).execute;
+    if (typeof originalExecute !== 'function') return [name, tool];
+
+    return [name, {
+      ...tool,
+      execute: async (...args: unknown[]) => {
+        const result = await originalExecute(...args);
+        const clamped = clampToolResultForModel(result);
+        if (clamped.truncated) {
+          logger.debug(`[ToolOutput] Truncated model-facing result for ${name}`);
+        }
+        return clamped.value;
+      }
+    }];
+  })) as ToolSet;
+}
+
+function isContextLimitError(error: unknown): boolean {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorLower = errorMessage.toLowerCase();
+  return (
+    errorLower.includes('context_length_exceeded') ||
+    errorLower.includes('context length') ||
+    errorLower.includes('maximum context') ||
+    errorLower.includes('token limit') ||
+    errorLower.includes('context window') ||
+    errorLower.includes('too many tokens')
+  );
+}
+
 /**
  * Core agent execution as an async generator
  */
@@ -148,6 +182,10 @@ export async function* executeAgentCore(
     maxSteps: number;
     abortSignal?: AbortSignal;
     subAgentNames?: Set<string>;  // Track which tools are subagents
+    sessionManager?: SessionManager;
+    sessionID?: string;
+    agentId?: string;
+    messageID?: string;
   }
 ): AsyncGenerator<AgentChunk> {
   const model = await createModel(agent.config.model);
@@ -167,6 +205,7 @@ export async function* executeAgentCore(
   const streamTools = usesAnthropicCacheControl
     ? applyAnthropicCacheControlToTools(tools)
     : tools;
+  const modelFacingTools = limitModelFacingToolOutputs(streamTools);
 
   if (ContextManager.isEnabled()) {
     contextManager = new ContextManager(
@@ -175,20 +214,50 @@ export async function* executeAgentCore(
     );
     await contextManager.initialize();
 
-    // Track initial messages
-    for (const msg of messages) {
-      contextManager.addMessage(msg);
-    }
+    contextManager.setMessages(messages);
   }
+
+  const persistContextSnapshot = async () => {
+    if (
+      !contextManager?.hasCompacted() ||
+      !options.sessionManager ||
+      !options.sessionID ||
+      !options.agentId
+    ) {
+      return;
+    }
+
+    try {
+      const stats = contextManager.getStats();
+      await options.sessionManager.writeContextSnapshot(options.sessionID, options.agentId, {
+        version: 1,
+        updatedAt: stats.updatedAt,
+        ...(options.messageID && { messageID: options.messageID }),
+        messages: contextManager.getMessages(),
+        usage: stats,
+      });
+    } catch (error) {
+      logger.debug(`Failed to persist compacted context: ${(error as Error).message}`);
+    }
+  };
+
+  const compactActiveContext = async (): Promise<ModelMessage[]> => {
+    if (!contextManager) return messages;
+    const compacted = await contextManager.compact();
+    messages = usesAnthropicCacheControl
+      ? applyAnthropicCacheControlToMessages(compacted as any[])
+      : compacted;
+    contextManager.setMessages(messages);
+    await persistContextSnapshot();
+    return messages;
+  };
 
   // Function to create stream with current messages
   const createStream = async () => {
     // Check if we need to compact before creating stream
+    contextManager?.setMessages(messages);
     if (contextManager?.shouldCompact()) {
-      messages = await contextManager.compact();
-      if (usesAnthropicCacheControl) {
-        messages = applyAnthropicCacheControlToMessages(messages);
-      }
+      messages = await compactActiveContext();
     }
 
     // Extract provider options based on model provider
@@ -228,10 +297,25 @@ export async function* executeAgentCore(
       stopWhen: stepCountIs(options.maxSteps),
       ...(options.abortSignal && { abortSignal: options.abortSignal }),
       ...(providerOptions && { providerOptions }),
-      ...(usesAnthropicCacheControl && {
-        prepareStep: ({ messages: stepMessages }: { messages: ModelMessage[] }) => ({
-          messages: applyAnthropicCacheControlToStepMessages(stepMessages as any[])
-        })
+      ...((usesAnthropicCacheControl || contextManager) && {
+        prepareStep: async ({ messages: stepMessages }: { messages: ModelMessage[] }) => {
+          let nextMessages = stepMessages as any[];
+          if (contextManager) {
+            contextManager.setMessages(nextMessages);
+            messages = nextMessages;
+            if (contextManager.shouldCompact()) {
+              nextMessages = await compactActiveContext() as any[];
+            } else {
+              await persistContextSnapshot();
+            }
+          }
+
+          return {
+            messages: usesAnthropicCacheControl
+              ? applyAnthropicCacheControlToStepMessages(nextMessages)
+              : nextMessages
+          };
+        }
       }),
       // Custom/local providers need explicit maxOutputTokens (local reasoning
       // models generate unlimited thinking tokens without it)
@@ -239,11 +323,29 @@ export async function* executeAgentCore(
     };
 
     // Only add tools if there are any
-    if (Object.keys(streamTools).length > 0) {
-      streamConfig.tools = streamTools;
+    if (Object.keys(modelFacingTools).length > 0) {
+      streamConfig.tools = modelFacingTools;
     }
 
     return streamText(streamConfig);
+  };
+
+  const createStreamWithCompactionRetry = async () => {
+    try {
+      return await createStream();
+    } catch (error) {
+      if (!isContextLimitError(error) || !contextManager) {
+        throw error;
+      }
+
+      const before = contextManager.getMessages();
+      const compacted = await compactActiveContext();
+      if (compacted.length === before.length) {
+        throw error;
+      }
+      logger.warn('Context limit hit while creating stream; compacted context and retrying once.');
+      return await createStream();
+    }
   };
 
   // Declare timing variables before use
@@ -261,21 +363,13 @@ export async function* executeAgentCore(
     llmGenerationStartTime = Date.now();
     yield { type: 'llm-start', llmModel: currentLlmModel, llmStartTime: llmGenerationStartTime };
 
-    stream = await createStream();
+    stream = await createStreamWithCompactionRetry();
   } catch (error: any) {
     // Handle initial stream creation errors
     const errorMessage = error?.message || String(error);
-    const errorLower = errorMessage.toLowerCase();
 
     // Check for token limit errors
-    if (
-      errorLower.includes('context_length_exceeded') ||
-      errorLower.includes('context length') ||
-      errorLower.includes('maximum context') ||
-      errorLower.includes('token limit') ||
-      errorLower.includes('context window') ||
-      errorLower.includes('too many tokens')
-    ) {
+    if (isContextLimitError(error)) {
       // Check if this is initial failure (no tool calls yet) vs mid-conversation
       const isInitialFailure = stepCount === 0;
 
@@ -497,6 +591,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
               type: 'finish',
               finishReason: chunk.finishReason,
               usage,
+              ...(contextManager && { contextUsage: contextManager.getStats() }),
               toolStartTime: llmGenerationStartTime,
               toolDuration: llmDuration
             };
@@ -506,7 +601,8 @@ Current step: ${stepCount}/${options.maxSteps}`);
             yield {
               type: 'finish',
               finishReason: chunk.finishReason,
-              usage
+              usage,
+              ...(contextManager && { contextUsage: contextManager.getStats() })
             };
           }
 

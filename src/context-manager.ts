@@ -16,6 +16,15 @@ interface TrackedMessage {
   actualTokens?: number;
 }
 
+export interface ContextUsageStats {
+  activeTokens: number;
+  contextLimit?: number;
+  usagePercentage: number;
+  compacted: boolean;
+  compactions: number;
+  updatedAt: number;
+}
+
 export class ContextManager {
   private modelInfo: ModelInfo | null = null;
   private messages: TrackedMessage[] = [];
@@ -23,6 +32,8 @@ export class ContextManager {
   private compactionThreshold: number;
   private keepRecentMessages: number;
   private isCompacting = false;
+  private compactions = 0;
+  private compacted = false;
 
   constructor(
     private modelString: string,
@@ -88,9 +99,17 @@ export class ContextManager {
    * Update token count with actual usage from AI SDK
    */
   updateUsage(usage: LanguageModelUsage): void {
-    if (usage.totalTokens) {
+    const totalTokens = usage.totalTokens
+      ?? (
+        (usage.inputTokens ?? 0) +
+        (usage.outputTokens ?? 0) +
+        (usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens ?? 0) +
+        (usage.inputTokenDetails?.cacheWriteTokens ?? 0)
+      );
+
+    if (totalTokens) {
       // Update our total with actual tokens
-      this.totalTokensUsed = usage.totalTokens;
+      this.totalTokensUsed = totalTokens;
       
       // Update the last message's actual tokens if available
       if (this.messages.length > 0 && usage.outputTokens) {
@@ -152,6 +171,8 @@ export class ContextManager {
 
       // Recalculate total tokens
       this.totalTokensUsed = this.messages.reduce((sum, m) => sum + m.estimatedTokens, 0);
+      this.compactions++;
+      this.compacted = true;
       
       logger.info('Context compacted successfully. Continuing...');
       
@@ -166,6 +187,34 @@ export class ContextManager {
    */
   getMessages(): ModelMessage[] {
     return this.messages.map(m => m.message);
+  }
+
+  /**
+   * Replace the tracked active context with messages supplied by the AI SDK for
+   * the next model step. This keeps compaction decisions aligned with the real
+   * model-facing transcript, including tool-call/tool-result ordering.
+   */
+  setMessages(messages: ModelMessage[]): void {
+    this.messages = [];
+    this.totalTokensUsed = 0;
+    for (const message of messages) {
+      this.addMessage(message);
+    }
+  }
+
+  hasCompacted(): boolean {
+    return this.compacted;
+  }
+
+  getStats(): ContextUsageStats {
+    return {
+      activeTokens: this.totalTokensUsed,
+      ...(this.modelInfo?.contextLimit !== undefined && { contextLimit: this.modelInfo.contextLimit }),
+      usagePercentage: this.getUsagePercentage(),
+      compacted: this.compacted,
+      compactions: this.compactions,
+      updatedAt: Date.now(),
+    };
   }
 
   /**

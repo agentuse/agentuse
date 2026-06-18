@@ -10,7 +10,8 @@ import type {
   Message,
   DeepPartial,
   ToolsSnapshot,
-  ToolPart
+  ToolPart,
+  ContextSnapshot
 } from './types';
 
 export interface SessionEntry {
@@ -868,6 +869,16 @@ export class SessionManager {
   async readToolsSnapshot(sessionID: string, agentId: string): Promise<ToolsSnapshot | null> {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     return readJSON<ToolsSnapshot>(`${sessionPath}/tools`);
+  }
+
+  async writeContextSnapshot(sessionID: string, agentId: string, snapshot: ContextSnapshot): Promise<void> {
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
+    await writeJSON(`${sessionPath}/context`, snapshot);
+  }
+
+  async readContextSnapshot(sessionID: string, agentId: string): Promise<ContextSnapshot | null> {
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
+    return readJSON<ContextSnapshot>(`${sessionPath}/context`);
   }
 
   async getSessionDirectory(sessionID: string, agentId: string): Promise<string> {

@@ -82,6 +82,23 @@ export interface SessionInfo {
   };
 }
 
+export interface ActiveContextUsage {
+  activeTokens: number;
+  contextLimit?: number;
+  usagePercentage: number;
+  compacted: boolean;
+  compactions: number;
+  updatedAt: number;
+}
+
+export interface ContextSnapshot {
+  version: 1;
+  updatedAt: number;
+  messageID?: string;
+  messages: unknown[];
+  usage: ActiveContextUsage;
+}
+
 // Message Schema (contains both user input and assistant response in one exchange)
 export interface Message {
   id: string;                        // Message exchange ID
@@ -124,6 +141,7 @@ export interface Message {
       type?: string;
       stack?: string;
     };
+    context?: ActiveContextUsage;
     summary?: boolean;
   };
 }
@@ -165,6 +183,14 @@ export const MessageSchema = z.object({
       message: z.string(),
       type: z.string().optional(),
       stack: z.string().optional(),
+    }).optional(),
+    context: z.object({
+      activeTokens: z.number(),
+      contextLimit: z.number().optional(),
+      usagePercentage: z.number(),
+      compacted: z.boolean(),
+      compactions: z.number(),
+      updatedAt: z.number(),
     }).optional(),
     summary: z.boolean().optional(),
   }),

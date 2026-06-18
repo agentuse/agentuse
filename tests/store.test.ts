@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { Store, createStore } from "../src/store/store";
+import { createStoreTools } from "../src/store/tools";
 import { mkdtempSync, rmSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -123,6 +124,41 @@ describe("Store", () => {
       const retrieved = await store.get("nonexistent-id");
 
       expect(retrieved).toBeNull();
+    });
+  });
+
+  describe("tools", () => {
+    it("store_list defaults to summary projection without full data payloads", async () => {
+      await store.create({
+        type: "draft",
+        title: "Large Draft",
+        status: "pending",
+        data: { body: "x".repeat(1000), score: 7 },
+      });
+
+      const tools = createStoreTools(store);
+      const result = await (tools.store_list as any).execute({});
+
+      expect(result.success).toBe(true);
+      expect(result.projection).toBe("summary");
+      expect(result.summary.byType.draft).toBe(1);
+      expect(result.items[0].data).toBeUndefined();
+      expect(result.items[0].dataKeys).toEqual(["body", "score"]);
+    });
+
+    it("store_list can include selected data fields", async () => {
+      await store.create({
+        type: "draft",
+        title: "Scored Draft",
+        data: { body: "x".repeat(1000), score: 7 },
+      });
+
+      const tools = createStoreTools(store);
+      const result = await (tools.store_list as any).execute({ dataFields: ["score"] });
+
+      expect(result.projection).toBe("dataFields");
+      expect(result.items[0].data).toEqual({ score: 7 });
+      expect(result.items[0].dataKeys).toEqual(["body", "score"]);
     });
   });
 

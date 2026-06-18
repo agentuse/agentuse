@@ -185,6 +185,20 @@ describe('ContextManager', () => {
       
       // Usage should decrease after compaction
       expect(usageAfterCompaction).toBeLessThan(usageBeforeCompaction);
+      expect(manager.getStats().compacted).toBe(true);
+      expect(manager.getStats().compactions).toBe(1);
+    });
+
+    it('should replace tracked messages for active context accounting', async () => {
+      const manager = new ContextManager('test:model');
+      await manager.initialize();
+
+      manager.addMessage({ role: 'user', content: 'x'.repeat(4000) });
+      const before = manager.getStats().activeTokens;
+      manager.setMessages([{ role: 'user', content: 'short' }]);
+
+      expect(manager.getMessages()).toHaveLength(1);
+      expect(manager.getStats().activeTokens).toBeLessThan(before);
     });
 
     it('should handle custom keep recent count', async () => {

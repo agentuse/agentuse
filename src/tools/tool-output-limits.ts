@@ -141,3 +141,74 @@ export function createBoundedAccumulator(
     },
   };
 }
+
+export interface ClampedToolResult {
+  value: unknown;
+  truncated: boolean;
+}
+
+function stableJson(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Clamp an arbitrary tool result before it is handed back to the model. Builtin
+ * tools already try to stay concise, but MCP/custom/store tools can return very
+ * large objects. When an object cannot be safely preserved within the byte
+ * budget, return a small structured envelope with a truncated preview instead
+ * of resending the entire payload on every later turn.
+ */
+export function clampToolResultForModel(
+  value: unknown,
+  options: Partial<Pick<ToolOutputLimits, 'maxBytes' | 'headRatio'>> = {},
+): ClampedToolResult {
+  const limits = getToolOutputLimits();
+  const maxBytes = options.maxBytes ?? limits.maxBytes;
+  const headRatio = options.headRatio ?? limits.headRatio;
+
+  if (typeof value === 'string') {
+    const text = truncateHeadTail(value, maxBytes, headRatio);
+    return { value: text, truncated: text !== value };
+  }
+
+  if (value && typeof value === 'object') {
+    const objectValue = value as Record<string, unknown>;
+    if (typeof objectValue.output === 'string') {
+      const output = truncateHeadTail(objectValue.output, maxBytes, headRatio);
+      return {
+        value: output === objectValue.output
+          ? value
+          : {
+              ...objectValue,
+              output,
+              metadata: {
+                ...(typeof objectValue.metadata === 'object' && objectValue.metadata !== null
+                  ? objectValue.metadata as Record<string, unknown>
+                  : {}),
+                truncated: true,
+                originalChars: objectValue.output.length,
+              },
+            },
+        truncated: output !== objectValue.output,
+      };
+    }
+  }
+
+  const json = stableJson(value);
+  if (json === undefined || json.length <= maxBytes) {
+    return { value, truncated: false };
+  }
+
+  return {
+    truncated: true,
+    value: {
+      truncated: true,
+      message: `Tool result exceeded ${maxBytes} byte model-context limit. Use a narrower query or fetch a specific item by ID.`,
+      preview: truncateHeadTail(json, maxBytes, headRatio),
+    },
+  };
+}

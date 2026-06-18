@@ -267,7 +267,11 @@ export async function createSubAgentTool(
               systemMessages,
               maxSteps,
               ...(abortSignal && { abortSignal }),  // Pass parent's abort signal
-              subAgentNames: new Set(Object.keys(nestedSubAgentTools))  // Track nested sub-agent names for logging
+              subAgentNames: new Set(Object.keys(nestedSubAgentTools)),  // Track nested sub-agent names for logging
+              ...(subagentSessionManager && { sessionManager: subagentSessionManager }),
+              ...(subagentSessionID && { sessionID: subagentSessionID }),
+              agentId,
+              ...(subagentMsgID && { messageID: subagentMsgID })
             }),
             subagentSessionID && subagentMsgID && subagentSessionManager ? {
               sessionManager: subagentSessionManager,  // Use NEW instance
@@ -298,7 +302,8 @@ export async function createSubAgentTool(
               await subagentSessionManager.updateMessage(subagentSessionID, agentId, subagentMsgID, {
                 time: { completed: Date.now() },
                 assistant: {
-                  tokens: usageToAssistantTokens(result.usage)
+                  tokens: usageToAssistantTokens(result.usage),
+                  ...(result.contextUsage && { context: result.contextUsage })
                 }
               });
               await subagentSessionManager.setSessionCompleted(subagentSessionID, agentId);

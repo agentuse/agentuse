@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'bun:test';
 import {
   createBoundedAccumulator,
+  clampToolResultForModel,
   truncateHeadTail,
   getToolOutputLimits,
   DEFAULT_MAX_OUTPUT_BYTES,
@@ -134,5 +135,34 @@ describe('getToolOutputLimits', () => {
     expect(limits.maxBytes).toBe(DEFAULT_MAX_OUTPUT_BYTES);
     expect(limits.maxLines).toBe(DEFAULT_MAX_LINES);
     expect(limits.headRatio).toBe(DEFAULT_HEAD_RATIO);
+  });
+});
+
+describe('clampToolResultForModel', () => {
+  it('truncates plain string results', () => {
+    const result = clampToolResultForModel('a'.repeat(200), { maxBytes: 50, headRatio: 0.5 });
+    expect(result.truncated).toBe(true);
+    expect(result.value).toContain('chars truncated');
+  });
+
+  it('preserves object shape when an output string is truncated', () => {
+    const result = clampToolResultForModel(
+      { output: 'x'.repeat(200), metadata: { exitCode: 0 } },
+      { maxBytes: 60, headRatio: 0.5 }
+    );
+    expect(result.truncated).toBe(true);
+    expect((result.value as any).output).toContain('chars truncated');
+    expect((result.value as any).metadata.exitCode).toBe(0);
+    expect((result.value as any).metadata.truncated).toBe(true);
+  });
+
+  it('replaces oversized structured results with a bounded preview envelope', () => {
+    const result = clampToolResultForModel(
+      { items: Array.from({ length: 20 }, (_, i) => ({ i, text: 'z'.repeat(50) })) },
+      { maxBytes: 120, headRatio: 0.5 }
+    );
+    expect(result.truncated).toBe(true);
+    expect((result.value as any).truncated).toBe(true);
+    expect((result.value as any).preview.length).toBeLessThan(260);
   });
 });

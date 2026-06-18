@@ -5,7 +5,9 @@
 import type { Tool } from 'ai';
 import { z } from 'zod';
 import type { Store } from './store';
-import type { StoreCreateOptions, StoreUpdateOptions, StoreListOptions } from './types';
+import type { StoreCreateOptions, StoreUpdateOptions, StoreListOptions, StoreItem } from './types';
+
+type StoreListProjection = 'summary' | 'full';
 
 /**
  * Helper to filter out undefined values from an object
@@ -19,6 +21,53 @@ function filterUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> 
     }
   }
   return result;
+}
+
+function projectStoreItem(
+  item: StoreItem,
+  projection: StoreListProjection,
+  dataFields?: string[],
+): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    id: item.id,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    ...(item.type !== undefined && { type: item.type }),
+    ...(item.title !== undefined && { title: item.title }),
+    ...(item.status !== undefined && { status: item.status }),
+    ...(item.parentId !== undefined && { parentId: item.parentId }),
+    ...(item.tags !== undefined && { tags: item.tags }),
+  };
+
+  if (dataFields && dataFields.length > 0) {
+    base.data = Object.fromEntries(
+      dataFields
+        .filter((field) => Object.prototype.hasOwnProperty.call(item.data, field))
+        .map((field) => [field, item.data[field]])
+    );
+    base.dataKeys = Object.keys(item.data);
+    return base;
+  }
+
+  if (projection === 'full') {
+    base.data = item.data;
+  } else {
+    base.dataKeys = Object.keys(item.data);
+  }
+
+  return base;
+}
+
+function summarizeStoreItems(items: StoreItem[]): Record<string, unknown> {
+  const byType: Record<string, number> = {};
+  const byStatus: Record<string, number> = {};
+
+  for (const item of items) {
+    byType[item.type ?? '(none)'] = (byType[item.type ?? '(none)'] ?? 0) + 1;
+    byStatus[item.status ?? '(none)'] = (byStatus[item.status ?? '(none)'] ?? 0) + 1;
+  }
+
+  return { byType, byStatus };
 }
 
 /**
@@ -177,7 +226,7 @@ export function createStoreTools(store: Store): Record<string, Tool> {
      * List items with optional filtering
      */
     store_list: {
-      description: `List items from the "${storeName}" store with optional filtering. Returns items sorted by creation date (newest first).`,
+      description: `List items from the "${storeName}" store with optional filtering. Returns items sorted by creation date (newest first). Defaults to summary projection without full data payloads; use store_get for one item or projection="full"/dataFields for targeted details.`,
       inputSchema: z.object({
         type: z.string().optional().describe('Filter by item type'),
         status: z.string().optional().describe('Filter by status'),
@@ -185,22 +234,29 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         tag: z.string().optional().describe('Filter by tag'),
         limit: z.number().positive().optional().describe('Maximum number of items to return'),
         offset: z.number().nonnegative().optional().describe('Number of items to skip'),
+        projection: z.enum(['summary', 'full']).optional().describe('summary omits full data payloads (default); full includes data'),
+        dataFields: z.array(z.string()).optional().describe('Specific data keys to include without returning the full data payload'),
       }),
-      execute: async ({ type, status, parentId, tag, limit, offset }: {
+      execute: async ({ type, status, parentId, tag, limit, offset, projection, dataFields }: {
         type?: string;
         status?: string;
         parentId?: string;
         tag?: string;
         limit?: number;
         offset?: number;
+        projection?: StoreListProjection;
+        dataFields?: string[];
       }) => {
         const options: StoreListOptions = filterUndefined({ type, status, parentId, tag, limit, offset });
         const items = await store.list(options);
+        const projectedItems = items.map((item) => projectStoreItem(item, projection ?? 'summary', dataFields));
         return {
           success: true,
           store: storeName,
           count: items.length,
-          items,
+          projection: dataFields && dataFields.length > 0 ? 'dataFields' : projection ?? 'summary',
+          summary: summarizeStoreItems(items),
+          items: projectedItems,
         };
       },
     },

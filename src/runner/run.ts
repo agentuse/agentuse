@@ -234,7 +234,11 @@ export async function runAgent(
       ...(messages && { messages }),
       maxSteps,
       subAgentNames,
-      ...(abortSignal && { abortSignal })
+      ...(abortSignal && { abortSignal }),
+      ...(sessionManager && { sessionManager }),
+      ...(prepSessionID && { sessionID: prepSessionID }),
+      ...(prepAgentId && { agentId: prepAgentId }),
+      ...(assistantMsgID && { messageID: assistantMsgID })
     };
 
     const result = await processAgentStream(
@@ -282,7 +286,8 @@ export async function runAgent(
         finishReasons: [...(result.finishReasons ?? []), 'suspended'],
         hasTextOutput: result.hasTextOutput,
         ...(prepSessionID && { sessionId: prepSessionID }),
-        ...(result.approvalUrl && { approvalUrl: result.approvalUrl })
+        ...(result.approvalUrl && { approvalUrl: result.approvalUrl }),
+        ...(result.contextUsage && { contextUsage: result.contextUsage })
       };
       await suspendRunChannels({
         agent,
@@ -326,7 +331,13 @@ export async function runAgent(
           time: { completed: Date.now() },
           ...(result.usage && {
             assistant: {
-              tokens: usageToAssistantTokens(result.usage)
+              tokens: usageToAssistantTokens(result.usage),
+              ...(result.contextUsage && { context: result.contextUsage })
+            }
+          }),
+          ...(!result.usage && result.contextUsage && {
+            assistant: {
+              context: result.contextUsage
             }
           })
         });
@@ -345,7 +356,8 @@ export async function runAgent(
       ...(result.finishReason && { finishReason: result.finishReason }),
       ...(result.finishReasons && { finishReasons: result.finishReasons }),
       hasTextOutput: result.hasTextOutput,
-      ...(prepSessionID && { sessionId: prepSessionID })
+      ...(prepSessionID && { sessionId: prepSessionID }),
+      ...(result.contextUsage && { contextUsage: result.contextUsage })
     };
 
     const consoleOutput = captureActive ? logger.stopCapture() : '';

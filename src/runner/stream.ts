@@ -4,6 +4,7 @@ import type { DoomLoopDetector } from '../tools/index.js';
 import type { SessionManager } from '../session';
 import type { AgentPart } from '../types/parts';
 import type { ToolStateCompleted, ToolStateError } from '../session/types';
+import type { ActiveContextUsage } from '../session/types';
 import { logger } from '../utils/logger';
 import { safeHttpUrl } from '../utils/url';
 import { formatToolResultForDisplay } from '../utils/format-tool-result';
@@ -150,6 +151,7 @@ export async function processAgentStream(
   hasTextOutput: boolean;
   suspended?: boolean;
   approvalUrl?: string;
+  contextUsage?: ActiveContextUsage;
   parts: AgentPart[];
 }> {
   let finalText = '';
@@ -163,6 +165,7 @@ export async function processAgentStream(
   let hasTextOutput = false;
   const finishReasons: string[] = [];
   const parts: AgentPart[] = [];
+  let contextUsage: ActiveContextUsage | undefined;
   let suspended = false;
   let suspendApprovalUrl: string | undefined;
   let hasTextSinceLastToolCall = false;
@@ -645,6 +648,9 @@ export async function processAgentStream(
         if (chunk.usage) {
           usage = chunk.usage;
         }
+        if (chunk.contextUsage) {
+          contextUsage = chunk.contextUsage;
+        }
 
         finishReasons.push(chunk.finishReason ?? 'unknown');
 
@@ -700,6 +706,7 @@ export async function processAgentStream(
     hasTextOutput,
     ...(suspended && { suspended }),
     ...(suspendApprovalUrl && { approvalUrl: suspendApprovalUrl }),
+    ...(contextUsage && { contextUsage }),
     parts
   };
 }

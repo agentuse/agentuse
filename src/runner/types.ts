@@ -4,7 +4,7 @@ import type { MCPConnection } from '../mcp';
 import type { ToolCallTrace } from '../plugin/types';
 import type { DoomLoopDetector } from '../tools/index.js';
 import type { SessionManager } from '../session';
-import type { SessionTrigger } from '../session/types';
+import type { ActiveContextUsage, SessionTrigger } from '../session/types';
 
 export interface PrepareAgentOptions {
   agent: ParsedAgent;
@@ -59,6 +59,7 @@ export interface AgentChunk {
   error?: unknown;
   finishReason?: string;
   usage?: LanguageModelUsage;
+  contextUsage?: ActiveContextUsage;
   toolStartTime?: number;  // Track when tool started
   toolDuration?: number;    // Duration in ms
   isSubAgent?: boolean;     // Track if this tool is a subagent
@@ -83,4 +84,5 @@ export interface RunAgentResult {
   hasTextOutput: boolean;
   sessionId?: string;
   approvalUrl?: string;
+  contextUsage?: ActiveContextUsage;
 }

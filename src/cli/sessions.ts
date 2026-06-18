@@ -886,6 +886,14 @@ async function showSession(
         statsLine += `  Duration: ${durationSec}s`;
       }
       process.stdout.write(statsLine + "\n");
+      if (message.assistant.context) {
+        const context = message.assistant.context;
+        const limit = context.contextLimit ? ` / ${context.contextLimit}` : '';
+        const compacted = context.compacted ? `, compacted ${context.compactions}x` : '';
+        process.stdout.write(
+          `Active context: ${context.activeTokens}${limit} (${context.usagePercentage.toFixed(1)}%${compacted})\n`
+        );
+      }
 
       // Show error if session failed
       if (message.assistant.error) {
