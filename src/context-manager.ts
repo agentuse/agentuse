@@ -7,7 +7,13 @@ const DEFAULT_COMPACTION_THRESHOLD = 0.7; // 70% of context limit
 const DEFAULT_KEEP_RECENT_MESSAGES = 3;   // Keep last 3 messages
 const DEFAULT_CHARS_PER_TOKEN = 4;         // Conservative estimate (research shows 3-4 chars/token)
 const DEFAULT_BOUNDARY_COMPACTION_MIN_TOKENS = 64_000;
-const DEFAULT_STEP_COMPACTION_MIN_TOKENS = 64_000;
+// Step-boundary compaction is OFF by default. An absolute token floor here fires
+// at a tiny fraction of a large window (64k is ~8% of an 800k window), and
+// because step compaction runs inside `prepareStep` it cannot persist, so a
+// non-zero default re-summarizes on every step. The window-relative
+// `shouldCompact()` threshold is the real trigger; this floor is opt-in via
+// STEP_COMPACTION_MIN_TOKENS for callers that explicitly want it.
+const DEFAULT_STEP_COMPACTION_MIN_TOKENS = 0;
 
 // Use any for message type to avoid complex type issues
 type ModelMessage = any;
