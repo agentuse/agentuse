@@ -4,7 +4,9 @@ import type { MCPConnection } from '../mcp';
 import type { ToolCallTrace } from '../plugin/types';
 import type { DoomLoopDetector } from '../tools/index.js';
 import type { SessionManager } from '../session';
-import type { ActiveContextUsage, SessionTrigger } from '../session/types';
+import type { ActiveContextUsage, ContextSnapshot, SessionTrigger } from '../session/types';
+
+export type UsageKind = 'cumulative' | 'step';
 
 export interface PrepareAgentOptions {
   agent: ParsedAgent;
@@ -49,7 +51,7 @@ export interface PreparedAgentExecution {
 }
 
 export interface AgentChunk {
-  type: 'text' | 'tool-call' | 'tool-result' | 'tool-error' | 'finish' | 'error' | 'suspended' | 'llm-start' | 'llm-first-token';
+  type: 'text' | 'tool-call' | 'tool-result' | 'tool-error' | 'finish' | 'usage' | 'error' | 'suspended' | 'llm-start' | 'llm-first-token';
   text?: string;
   toolName?: string;
   toolCallId?: string;      // Tool call ID from AI SDK
@@ -59,7 +61,9 @@ export interface AgentChunk {
   error?: unknown;
   finishReason?: string;
   usage?: LanguageModelUsage;
+  usageKind?: UsageKind;
   contextUsage?: ActiveContextUsage;
+  contextSnapshot?: ContextSnapshot;
   toolStartTime?: number;  // Track when tool started
   toolDuration?: number;    // Duration in ms
   isSubAgent?: boolean;     // Track if this tool is a subagent
@@ -77,6 +81,7 @@ export interface RunAgentResult {
   status?: 'completed' | 'suspended';
   text: string;
   usage?: LanguageModelUsage;
+  usageKind?: UsageKind;
   toolCallCount: number;
   toolCallTraces?: ToolCallTrace[];
   finishReason?: string;

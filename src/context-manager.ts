@@ -6,9 +6,19 @@ import { logger } from './utils/logger';
 const DEFAULT_COMPACTION_THRESHOLD = 0.7; // 70% of context limit
 const DEFAULT_KEEP_RECENT_MESSAGES = 3;   // Keep last 3 messages
 const DEFAULT_CHARS_PER_TOKEN = 4;         // Conservative estimate (research shows 3-4 chars/token)
+const DEFAULT_BOUNDARY_COMPACTION_MIN_TOKENS = 64_000;
+const DEFAULT_STEP_COMPACTION_MIN_TOKENS = 64_000;
 
 // Use any for message type to avoid complex type issues
 type ModelMessage = any;
+type CompactionBoundary = 'approval' | 'step';
+
+function nonNegativeIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
 
 interface TrackedMessage {
   message: ModelMessage;
@@ -31,6 +41,8 @@ export class ContextManager {
   private totalTokensUsed = 0;
   private compactionThreshold: number;
   private keepRecentMessages: number;
+  private approvalCompactionMinTokens: number;
+  private stepCompactionMinTokens: number;
   private isCompacting = false;
   private compactions = 0;
   private compacted = false;
@@ -42,6 +54,14 @@ export class ContextManager {
     // Read from environment variables
     this.compactionThreshold = parseFloat(process.env.COMPACTION_THRESHOLD || String(DEFAULT_COMPACTION_THRESHOLD));
     this.keepRecentMessages = parseInt(process.env.COMPACTION_KEEP_RECENT || String(DEFAULT_KEEP_RECENT_MESSAGES));
+    this.approvalCompactionMinTokens = nonNegativeIntEnv(
+      'APPROVAL_COMPACTION_MIN_TOKENS',
+      DEFAULT_BOUNDARY_COMPACTION_MIN_TOKENS
+    );
+    this.stepCompactionMinTokens = nonNegativeIntEnv(
+      'STEP_COMPACTION_MIN_TOKENS',
+      DEFAULT_STEP_COMPACTION_MIN_TOKENS
+    );
   }
 
   /**
@@ -71,7 +91,6 @@ export class ContextManager {
       return message.content
         .map((part: any) => {
           if ('text' in part) return part.text;
-          if ('toolName' in part) return `Tool: ${part.toolName}`;
           return JSON.stringify(part);
         })
         .join(' ');
@@ -96,25 +115,18 @@ export class ContextManager {
   }
 
   /**
-   * Update token count with actual usage from AI SDK
+   * Record provider usage details without replacing active-context accounting.
+   *
+   * AI SDK `usage`/`totalUsage` is billing/provider usage for a generation
+   * step or whole run. It is not the same thing as the model-facing active
+   * transcript we use for compaction decisions, because it may be incremental,
+   * cumulative, cached, or provider-specific. Keep `totalTokensUsed` tied to
+   * tracked messages so active context does not collapse to the most recent
+   * provider step total.
    */
-  updateUsage(usage: LanguageModelUsage): void {
-    const totalTokens = usage.totalTokens
-      ?? (
-        (usage.inputTokens ?? 0) +
-        (usage.outputTokens ?? 0) +
-        (usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens ?? 0) +
-        (usage.inputTokenDetails?.cacheWriteTokens ?? 0)
-      );
-
-    if (totalTokens) {
-      // Update our total with actual tokens
-      this.totalTokensUsed = totalTokens;
-      
-      // Update the last message's actual tokens if available
-      if (this.messages.length > 0 && usage.outputTokens) {
-        this.messages[this.messages.length - 1].actualTokens = usage.outputTokens;
-      }
+  updateUsage(usage: LanguageModelUsage, _kind: 'cumulative' | 'step' = 'step'): void {
+    if (this.messages.length > 0 && usage.outputTokens) {
+      this.messages[this.messages.length - 1].actualTokens = usage.outputTokens;
     }
   }
 
@@ -129,6 +141,22 @@ export class ContextManager {
   }
 
   /**
+   * Check whether a natural pause point, such as an approval gate, is worth
+   * compacting even when the model window is not close to full. This targets
+   * cumulative spend: a 70k-token active context may be safe for a 1M window
+   * but expensive if it is resent after a human review.
+   */
+  shouldCompactAtBoundary(boundary: CompactionBoundary = 'approval'): boolean {
+    if (!this.modelInfo || this.isCompacting) return false;
+    if (this.messages.length <= this.keepRecentMessages) return false;
+    if (this.shouldCompact()) return true;
+    const minTokens = boundary === 'step'
+      ? this.stepCompactionMinTokens
+      : this.approvalCompactionMinTokens;
+    return minTokens > 0 && this.totalTokensUsed >= minTokens;
+  }
+
+  /**
    * Get current usage percentage
    */
   getUsagePercentage(): number {
@@ -140,7 +168,11 @@ export class ContextManager {
    * Compact messages, keeping recent ones intact
    */
   async compact(): Promise<ModelMessage[]> {
-    if (!this.onCompact || this.messages.length <= this.keepRecentMessages) {
+    if (
+      !this.onCompact ||
+      this.messages.length <= this.keepRecentMessages ||
+      (this.compacted && this.messages.length <= this.keepRecentMessages + 1)
+    ) {
       return this.messages.map(m => m.message);
     }
 

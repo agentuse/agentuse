@@ -49,6 +49,12 @@ COMPACTION_THRESHOLD=0.8
 # Number of recent messages to preserve (default: 3)
 COMPACTION_KEEP_RECENT=5
 
+# Compact at approval gates once active context reaches this size (default: 64000)
+APPROVAL_COMPACTION_MIN_TOKENS=64000
+
+# Compact between LLM steps after tool calls once active context reaches this size (default: 64000)
+STEP_COMPACTION_MIN_TOKENS=64000
+
 # Maximum agent steps before stopping (default: 1000)
 MAX_STEPS=2000
 ```
@@ -168,18 +174,46 @@ COMPACTION_KEEP_RECENT=5
 COMPACTION_KEEP_RECENT=2
 ```
 
-### 3. Disable if Not Needed
+### 3. Tune Approval-Boundary Compaction
+
+```bash
+# Compact earlier at human approval pauses to reduce repeated input spend
+APPROVAL_COMPACTION_MIN_TOKENS=32000
+
+# Disable approval-boundary compaction but keep model-limit compaction
+APPROVAL_COMPACTION_MIN_TOKENS=0
+```
+
+Approval-boundary compaction is useful for long runs with human review gates.
+It can compact before the model window is close to full because the goal is to
+avoid resending a large active context after the session resumes.
+
+### 4. Tune Step-Boundary Compaction
+
+```bash
+# Compact less often during autonomous tool loops
+STEP_COMPACTION_MIN_TOKENS=128000
+
+# Disable split-turn step compaction but keep approval and model-limit compaction
+STEP_COMPACTION_MIN_TOKENS=0
+```
+
+Step-boundary compaction runs after the agent has already made at least one
+tool call. It preserves the initial prompt, then summarizes older context before
+later model calls in long single-turn runs.
+
+### 5. Disable if Not Needed
 
 ```bash
 # Disable for short conversations
 CONTEXT_COMPACTION=false
 ```
 
-### 4. Cap and Reduce Tool Output
+### 6. Cap and Reduce Tool Output
 
 Every tool result is re-sent to the model on each subsequent step, so a single large output (a big diff, a verbose log, a huge file read) is one of the biggest drivers of input-token usage, often before compaction ever triggers. The most effective fix is to not generate the bloat in the first place, for example `git diff --stat` instead of a full `git diff` of high-churn files.
 
-As a safety net, AgentUse caps `bash` output (head + tail, 30KB default) and `read_file` output (2000 lines default). Tune these with the [Tool Output environment variables](/reference/environment-variables#tool-output):
+As a safety net, AgentUse caps `bash` output (head + tail, 30KB default) and `read_file` output (2000 lines default). When session storage is available and `bash` output is truncated, AgentUse keeps the full stdout/stderr stream as a session-local tool output artifact and adds a reference to the preview. Runner-level tool results that are still oversized after a tool returns are reduced the same way. Tune these with the [Tool Output environment variables](/reference/environment-variables#tool-output):
 
 ```bash
 # Allow larger bash output before truncation

@@ -6,6 +6,7 @@ import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
 import { DecisionDialog } from '../src/cli/serve/web/components/comment-dialog';
 import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/cli/serve/web/lib/content-html';
 import { latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
+import { headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 
 const noop = () => {};
@@ -18,6 +19,8 @@ function renderEntry(entry: ApprovalLogEntry, overrides: Partial<Parameters<type
       showActions={false}
       actionsDisabled={false}
       projectId={undefined}
+      sessionId="session-1"
+      token={undefined}
       onToggle={noop}
       onAction={noop}
       {...overrides}
@@ -41,6 +44,29 @@ describe('LogEntry component', () => {
     expect(html).toContain('Output');
     expect(html).toContain('expandable');
     expect(html).not.toContain(' expanded');
+  });
+
+  it('renders full tool output artifact links', () => {
+    const html = renderEntry({
+      id: 'log-1',
+      type: 'tool',
+      tool: 'tools__bash',
+      title: 'tools__bash completed',
+      status: 'completed',
+      time: Date.now(),
+      details: {
+        output: 'truncated output',
+        toolOutputArtifact: {
+          path: 'session-1-agents-review/message-1/artifact/tool-output-tools__bash.txt',
+          bytes: 2048,
+        },
+      },
+    }, {
+      token: 'tok-1',
+    });
+    expect(html).toContain('Full output');
+    expect(html).toContain('/sessions/session-1/tool-artifacts/session-1-agents-review/message-1/artifact/tool-output-tools__bash.txt?token=tok-1');
+    expect(html).toContain('2 KB');
   });
 
   it('auto-expands running tool entries', () => {
@@ -158,6 +184,76 @@ describe('DecisionDialog component', () => {
     expect(html).toContain('configured rejected-state updates');
     expect(html).toContain('optional: tell the agent why this should be rejected');
     expect(html).toContain('>Reject</button>');
+  });
+});
+
+describe('SessionDetail header', () => {
+  it('shows token usage before a session completes', () => {
+    const tokenUsage = { input: 1200, cachedInput: 900, output: 80 };
+    expect(headerTokenUsage({
+      sessionStatus: 'suspended',
+      tokenUsage,
+    })).toBe(tokenUsage);
+  });
+
+  it('separates active context from cumulative cached and uncached input', () => {
+    const items = tokenUsageMetaItems({
+      input: 3_115_688,
+      cachedInput: 2_629_120,
+      output: 5_996,
+      context: {
+        activeTokens: 75_992,
+        contextLimit: 922_000,
+        usagePercentage: 8.241,
+        compacted: false,
+        compactions: 0,
+        updatedAt: 1,
+      },
+    });
+
+    expect(items).toEqual([
+      { label: 'ctx estimate', value: '75,992 / 922,000 (8.2%)' },
+      { label: 'provider input', value: '3,115,688' },
+      { label: 'cached input', value: '2,629,120' },
+      { label: 'uncached input', value: '486,568' },
+      { label: 'output', value: '5,996' },
+    ]);
+  });
+
+  it('shows zero cached input explicitly when provider usage exists', () => {
+    const items = tokenUsageMetaItems({
+      input: 143_366,
+      cachedInput: 0,
+      output: 211,
+    });
+
+    expect(items).toEqual([
+      { label: 'provider input', value: '143,366' },
+      { label: 'cached input', value: '0' },
+      { label: 'uncached input', value: '143,366' },
+      { label: 'output', value: '211' },
+    ]);
+  });
+
+  it('does not present absent provider usage as zero tokens', () => {
+    const items = tokenUsageMetaItems({
+      input: 0,
+      cachedInput: 0,
+      output: 0,
+      context: {
+        activeTokens: 3_596,
+        contextLimit: 922_000,
+        usagePercentage: 0.3900216919739696,
+        compacted: false,
+        compactions: 0,
+        updatedAt: 1,
+      },
+    });
+
+    expect(items).toEqual([
+      { label: 'ctx estimate', value: '3,596 / 922,000 (0.4%)' },
+      { label: 'provider usage', value: 'not reported yet' },
+    ]);
   });
 });
 

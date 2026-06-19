@@ -14,6 +14,8 @@ export interface ModelInfo {
   };
   limit: {
     context: number;
+    /** Maximum prompt/input tokens when the provider reports it separately. */
+    input?: number;
     output: number;
   };
   /** Cost per token in USD (from models.dev) */
@@ -94,6 +96,7 @@ export const MODELS: Record<Provider, Record<string, ModelInfo>> = {
       },
       limit: {
         context: 1050000,
+        input: 922000,
         output: 128000,
       },
       cost: {
@@ -112,6 +115,7 @@ export const MODELS: Record<Provider, Record<string, ModelInfo>> = {
       },
       limit: {
         context: 1050000,
+        input: 922000,
         output: 128000,
       },
       cost: {
@@ -130,6 +134,7 @@ export const MODELS: Record<Provider, Record<string, ModelInfo>> = {
       },
       limit: {
         context: 400000,
+        input: 272000,
         output: 128000,
       },
       cost: {
@@ -148,6 +153,7 @@ export const MODELS: Record<Provider, Record<string, ModelInfo>> = {
       },
       limit: {
         context: 400000,
+        input: 272000,
         output: 128000,
       },
       cost: {
@@ -166,6 +172,7 @@ export const MODELS: Record<Provider, Record<string, ModelInfo>> = {
       },
       limit: {
         context: 400000,
+        input: 272000,
         output: 128000,
       },
       cost: {
@@ -202,6 +209,7 @@ export const MODELS: Record<Provider, Record<string, ModelInfo>> = {
       },
       limit: {
         context: 128000,
+        input: 100000,
         output: 32000,
       },
       cost: {
@@ -220,6 +228,7 @@ export const MODELS: Record<Provider, Record<string, ModelInfo>> = {
       },
       limit: {
         context: 400000,
+        input: 272000,
         output: 128000,
       },
       cost: {
@@ -238,6 +247,7 @@ export const MODELS: Record<Provider, Record<string, ModelInfo>> = {
       },
       limit: {
         context: 400000,
+        input: 272000,
         output: 128000,
       },
       cost: {

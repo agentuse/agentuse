@@ -891,7 +891,7 @@ async function showSession(
         const limit = context.contextLimit ? ` / ${context.contextLimit}` : '';
         const compacted = context.compacted ? `, compacted ${context.compactions}x` : '';
         process.stdout.write(
-          `Active context: ${context.activeTokens}${limit} (${context.usagePercentage.toFixed(1)}%${compacted})\n`
+          `Context estimate: ${context.activeTokens}${limit} (${context.usagePercentage.toFixed(1)}%${compacted})\n`
         );
       }
 

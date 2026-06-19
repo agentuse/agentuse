@@ -15,7 +15,7 @@ import { type AgentChunk } from "../runner";
 import { findProjectRoot, resolveProjectContext } from "../utils/project";
 import { logger, LogLevel, executionLog, approvalLog } from "../utils/logger";
 import { printLogo } from "../utils/branding";
-import { initStorage } from "../storage/index.js";
+import { getSessionStorageDir, initStorage } from "../storage/index.js";
 import { Scheduler, type Schedule, type SerializedSchedule } from "../scheduler";
 import { FileWatcher } from "../watcher";
 import { telemetry, parseModel } from "../telemetry";
@@ -26,7 +26,7 @@ import { loadGlobalConfig, expandHome, getGlobalConfigPath, getGlobalEnvPath, lo
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
-import type { SessionTrigger } from "../session/types";
+import type { ActiveContextUsage, SessionTrigger } from "../session/types";
 import { sessionViewToken, validateSessionToken } from "../utils/session-token";
 import {
   approvalListThemeStyles,
@@ -305,6 +305,7 @@ interface SessionTokenUsage {
   input: number;
   cachedInput: number;
   output: number;
+  context?: ActiveContextUsage;
 }
 
 interface ApprovalLogEntry {
@@ -871,37 +872,7 @@ ${themeScript}
 </head><body>${bodyHtml}</body></html>`;
 }
 
-/**
- * Resolve, authorize, and serve a local file artifact referenced by an
- * `await_human` gate. The path is interpreted relative to the project root and
- * must resolve inside it (no traversal), and a small denylist keeps secrets and
- * internal session state out of reach even if a prompt coaxed the agent into
- * pointing the gate at them. Text/markdown render to a themed doc; html/images/
- * pdf are streamed raw for the iframe to display; everything else downloads.
- */
-async function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath: string, theme?: string): Promise<void> {
-  const decoded = (() => { try { return decodeURIComponent(rawPath); } catch { return rawPath; } })();
-  const resolved = resolve(projectRoot, decoded);
-  // Lexical containment first. Then, when the target exists, resolve symlinks on
-  // both sides and re-check so a link inside the project cannot point the served
-  // file at a target outside it. A non-existent path has no realpath to resolve
-  // and falls through to the 404 below.
-  const realRoot = (() => { try { return realpathSync(projectRoot); } catch { return projectRoot; } })();
-  const realResolved = (() => { try { return realpathSync(resolved); } catch { return null; } })();
-  if (!isPathInside(projectRoot, resolved) || (realResolved && !isPathInside(realRoot, realResolved))) {
-    sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This artifact path is outside the project.</p>');
-    return;
-  }
-  const rel = relative(projectRoot, resolved);
-  const segments = rel.split(/[\\/]+/);
-  const blockedRoots = new Set(['.git', 'node_modules']);
-  const isBlocked = segments.some((seg) => seg.startsWith('.env'))
-    || blockedRoots.has(segments[0])
-    || (segments[0] === '.agentuse' && (segments[1] === 'store' || segments[1] === 'sessions' || segments[1] === 'env'));
-  if (isBlocked) {
-    sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This artifact path is not viewable.</p>');
-    return;
-  }
+async function serveResolvedArtifactFile(res: ServerResponse, resolved: string, theme?: string): Promise<void> {
   let fileStat;
   try {
     fileStat = await stat(resolved);
@@ -958,6 +929,71 @@ async function serveSessionArtifact(res: ServerResponse, projectRoot: string, ra
     'Content-Disposition': `attachment; filename="${title.replace(/["\\]/g, '')}"`
   });
   res.end(await readFile(resolved));
+}
+
+/**
+ * Resolve, authorize, and serve a local file artifact referenced by an
+ * `await_human` gate. The path is interpreted relative to the project root and
+ * must resolve inside it (no traversal), and a small denylist keeps secrets and
+ * internal session state out of reach even if a prompt coaxed the agent into
+ * pointing the gate at them. Text/markdown render to a themed doc; html/images/
+ * pdf are streamed raw for the iframe to display; everything else downloads.
+ */
+async function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath: string, theme?: string): Promise<void> {
+  const decoded = (() => { try { return decodeURIComponent(rawPath); } catch { return rawPath; } })();
+  const resolved = resolve(projectRoot, decoded);
+  // Lexical containment first. Then, when the target exists, resolve symlinks on
+  // both sides and re-check so a link inside the project cannot point the served
+  // file at a target outside it. A non-existent path has no realpath to resolve
+  // and falls through to the 404 below.
+  const realRoot = (() => { try { return realpathSync(projectRoot); } catch { return projectRoot; } })();
+  const realResolved = (() => { try { return realpathSync(resolved); } catch { return null; } })();
+  if (!isPathInside(projectRoot, resolved) || (realResolved && !isPathInside(realRoot, realResolved))) {
+    sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This artifact path is outside the project.</p>');
+    return;
+  }
+  const rel = relative(projectRoot, resolved);
+  const segments = rel.split(/[\\/]+/);
+  const blockedRoots = new Set(['.git', 'node_modules']);
+  const isBlocked = segments.some((seg) => seg.startsWith('.env'))
+    || blockedRoots.has(segments[0])
+    || (segments[0] === '.agentuse' && (segments[1] === 'store' || segments[1] === 'sessions' || segments[1] === 'env'));
+  if (isBlocked) {
+    sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This artifact path is not viewable.</p>');
+    return;
+  }
+  await serveResolvedArtifactFile(res, resolved, theme);
+}
+
+async function serveSessionToolOutputArtifact(
+  res: ServerResponse,
+  projectRoot: string,
+  sessionId: string,
+  rawPath: string,
+  theme?: string
+): Promise<void> {
+  const decoded = (() => { try { return decodeURIComponent(rawPath); } catch { return rawPath; } })();
+  const storageRoot = await getSessionStorageDir(projectRoot);
+  const resolved = resolve(storageRoot, decoded);
+  const realRoot = (() => { try { return realpathSync(storageRoot); } catch { return storageRoot; } })();
+  const realResolved = (() => { try { return realpathSync(resolved); } catch { return null; } })();
+
+  if (!isPathInside(storageRoot, resolved) || (realResolved && !isPathInside(realRoot, realResolved))) {
+    sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This tool output path is outside session storage.</p>');
+    return;
+  }
+
+  const rel = relative(storageRoot, resolved);
+  const segments = rel.split(/[\\/]+/);
+  const sessionSegment = segments.find((segment) => segment.startsWith(`${sessionId}-`));
+  const artifactIndex = segments.lastIndexOf('artifact');
+  const fileName = segments[segments.length - 1] ?? '';
+  if (!sessionSegment || artifactIndex < 0 || !fileName.startsWith('tool-output-')) {
+    sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This tool output path is not viewable for this session.</p>');
+    return;
+  }
+
+  await serveResolvedArtifactFile(res, resolved, theme);
 }
 
 function compareStoreBrowserSummaries(a: StoreBrowserSummary, b: StoreBrowserSummary): number {
@@ -1135,8 +1171,8 @@ function isEndedSessionStatus(status: string | undefined): boolean {
  *
  * Exempt: any `/approvals/*` route (legacy, token-authenticated) and, only on
  * the non-API surface, the unified session page `/sessions/:id`, its action
- * subroutes `/sessions/:id/{decision,continue,status,stop}`, and the artifact
- * viewer subpath `/sessions/:id/artifacts/*`. These carry their own capability
+ * subroutes `/sessions/:id/{decision,continue,status,stop}`, and artifact
+ * viewer subpaths `/sessions/:id/{artifacts,tool-artifacts}/*`. These carry their own capability
  * auth (session token / api key / local); the artifact handler validates the
  * `?token=` session token via `sessionAuthorized` before serving any file.
  *
@@ -1150,7 +1186,7 @@ function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
   if (legacyApprovalRoute && legacyApprovalRoute[1] !== 'events') return true;
   if (isApi) return false;
   if (routePath === '/sessions/events') return false;
-  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|events|artifacts\/.+))?$/.test(routePath);
+  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|events|artifacts\/.+|tool-artifacts\/.+))?$/.test(routePath);
 }
 
 /**
@@ -3147,6 +3183,28 @@ export function createServeCommand(): Command {
           return;
         }
 
+        // GET /sessions/:id/tool-artifacts/*: serve a full tool-output artifact
+        // persisted under session storage. Same session auth as the page; the
+        // handler validates the path stays under the resolved storage root and
+        // belongs to the requested session id.
+        const sessionToolArtifactMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/tool-artifacts\/(.+)$/) : null;
+        if (sessionToolArtifactMatch) {
+          const sessionId = decodeURIComponent(sessionToolArtifactMatch[1]);
+          const token = requestUrl.searchParams.get('token') ?? undefined;
+          const projectId = requestUrl.searchParams.get('project') ?? undefined;
+          if (!sessionAuthorized(sessionId, token)) {
+            sendHTML(res, 401, '<!doctype html><title>Artifact</title><p>Not authorized for this session.</p>');
+            return;
+          }
+          const found = await findSessionInfo(sessionId, projectId);
+          if (!found.success) {
+            sendHTML(res, found.status, `<!doctype html><title>Artifact</title><p>${escapeHtml(found.message)}</p>`);
+            return;
+          }
+          await serveSessionToolOutputArtifact(res, found.project.root, sessionId, sessionToolArtifactMatch[2], requestUrl.searchParams.get('theme') ?? undefined);
+          return;
+        }
+
         // POST /sessions/:id/decision: approve / reject / comment on the current
         // pending gate. Authorized via session token / api key / local; the gate
         // resumeToken is resolved server-side from session state.
@@ -4303,6 +4361,7 @@ function createSchedulesSubcommand(): Command {
 
 export const __testing = {
   serveSessionArtifact,
+  serveSessionToolOutputArtifact,
   isHeaderGateExemptRoute,
   isSpaPageRoute,
   collectAgents,

@@ -48,6 +48,55 @@ describe('ContextManager', () => {
       expect(usage).toBeLessThan(100);
     });
 
+    it('should not treat cumulative usage as active context size', async () => {
+      const manager = new ContextManager('test:model');
+      await manager.initialize();
+
+      manager.addMessage({
+        role: 'user',
+        content: 'a'.repeat(1000)
+      });
+      const before = manager.getStats().activeTokens;
+
+      manager.updateUsage({
+        inputTokens: 3_000_000,
+        outputTokens: 1_000,
+        totalTokens: 3_001_000,
+        inputTokenDetails: {
+          noCacheTokens: 500_000,
+          cacheReadTokens: 2_500_000,
+          cacheWriteTokens: 0,
+        },
+        outputTokenDetails: {
+          textTokens: 1_000,
+          reasoningTokens: 0,
+        },
+      }, 'cumulative');
+
+      expect(manager.getStats().activeTokens).toBe(before);
+      expect(manager.getUsagePercentage()).toBeLessThan(100);
+    });
+
+    it('should not treat per-step provider usage as active context size', async () => {
+      const manager = new ContextManager('test:model');
+      await manager.initialize();
+
+      manager.addMessage({
+        role: 'user',
+        content: 'a'.repeat(20_000)
+      });
+      const before = manager.getStats().activeTokens;
+
+      manager.updateUsage({
+        inputTokens: 3_559,
+        outputTokens: 57,
+        totalTokens: 3_616,
+      }, 'step');
+
+      expect(manager.getStats().activeTokens).toBe(before);
+      expect(manager.shouldCompactAtBoundary()).toBe(false);
+    });
+
     it('should detect when compaction threshold is reached', async () => {
       const manager = new ContextManager('test:model');
       await manager.initialize();
@@ -64,6 +113,48 @@ describe('ContextManager', () => {
       
       expect(manager.shouldCompact()).toBe(true);
       expect(manager.getUsagePercentage()).toBeGreaterThanOrEqual(70);
+    });
+
+    it('should compact at approval boundaries after an absolute active-token threshold', async () => {
+      process.env.APPROVAL_COMPACTION_MIN_TOKENS = '1000';
+
+      try {
+        const manager = new ContextManager('test:model');
+        await manager.initialize();
+
+        for (let i = 0; i < 5; i++) {
+          manager.addMessage({
+            role: 'user',
+            content: 'x'.repeat(1000)
+          });
+        }
+
+        expect(manager.shouldCompact()).toBe(false);
+        expect(manager.shouldCompactAtBoundary()).toBe(true);
+      } finally {
+        delete process.env.APPROVAL_COMPACTION_MIN_TOKENS;
+      }
+    });
+
+    it('should compact at step boundaries using a separately tunable threshold', async () => {
+      process.env.STEP_COMPACTION_MIN_TOKENS = '1000';
+
+      try {
+        const manager = new ContextManager('test:model');
+        await manager.initialize();
+
+        for (let i = 0; i < 5; i++) {
+          manager.addMessage({
+            role: 'user',
+            content: 'x'.repeat(1000)
+          });
+        }
+
+        expect(manager.shouldCompact()).toBe(false);
+        expect(manager.shouldCompactAtBoundary('step')).toBe(true);
+      } finally {
+        delete process.env.STEP_COMPACTION_MIN_TOKENS;
+      }
     });
 
     it('should respect custom threshold from environment', async () => {
@@ -186,6 +277,34 @@ describe('ContextManager', () => {
       // Usage should decrease after compaction
       expect(usageAfterCompaction).toBeLessThan(usageBeforeCompaction);
       expect(manager.getStats().compacted).toBe(true);
+      expect(manager.getStats().compactions).toBe(1);
+    });
+
+    it('should not re-compact an already compacted summary plus recent tail', async () => {
+      let compactionCount = 0;
+      const manager = new ContextManager(
+        'test:model',
+        async () => {
+          compactionCount++;
+          return {
+            role: 'system',
+            content: 'Short summary'
+          };
+        }
+      );
+      await manager.initialize();
+
+      for (let i = 0; i < 5; i++) {
+        manager.addMessage({
+          role: 'user',
+          content: `message ${i}`
+        });
+      }
+
+      await manager.compact();
+      await manager.compact();
+
+      expect(compactionCount).toBe(1);
       expect(manager.getStats().compactions).toBe(1);
     });
 

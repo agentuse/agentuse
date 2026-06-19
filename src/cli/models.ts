@@ -120,8 +120,12 @@ function printCompactModel(fullId: string, model: ModelInfo): void {
 function printVerboseModel(fullId: string, model: ModelInfo): void {
   console.log(`  ${chalk.white(fullId)}`);
   console.log(chalk.gray(`    Name: ${model.name}`));
-  if (model.limit.context > 0) {
-    console.log(chalk.gray(`    Context: ${model.limit.context.toLocaleString()} tokens`));
+  const inputContext = model.limit.input ?? model.limit.context;
+  if (inputContext > 0) {
+    console.log(chalk.gray(`    Input context: ${inputContext.toLocaleString()} tokens`));
+  }
+  if (model.limit.input !== undefined && model.limit.context > 0 && model.limit.context !== model.limit.input) {
+    console.log(chalk.gray(`    Total window: ${model.limit.context.toLocaleString()} tokens`));
   }
   if (model.limit.output > 0) {
     console.log(chalk.gray(`    Output: ${model.limit.output.toLocaleString()} tokens`));

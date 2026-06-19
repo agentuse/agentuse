@@ -8,6 +8,7 @@ import type { BashConfig, ToolOutput, ToolErrorOutput } from './types.js';
 import { resolveRealPath, type PathResolverContext } from './path-validator.js';
 import { createBoundedAccumulator, getToolOutputLimits } from './tool-output-limits.js';
 import { logger } from '../utils/logger.js';
+import type { ModelToolOutputArtifactRef, ToolOutputArtifactRef, ToolOutputArtifactStream } from '../session/types.js';
 
 const DEFAULT_TIMEOUT = 120000; // 2 minutes
 
@@ -188,6 +189,16 @@ export function createBashTool(
   const timeoutConfigured = config.timeout !== undefined;
   const defaultTimeout = config.timeout ?? DEFAULT_TIMEOUT;
   const { maxBytes: maxOutputBytes, headRatio } = getToolOutputLimits();
+  const artifactSink = resolverContext.toolOutputArtifacts;
+
+  function modelToolOutputArtifactRef(artifact: ToolOutputArtifactRef): ModelToolOutputArtifactRef {
+    return {
+      kind: artifact.kind,
+      path: artifact.path,
+      bytes: artifact.bytes,
+      originalChars: artifact.originalChars,
+    };
+  }
 
   // Build description with allowed commands and paths
   const allowedCommandsList = config.commands.map(cmd => `  - ${cmd}`).join('\n');
@@ -279,6 +290,46 @@ Commands not matching these patterns will be rejected.`;
         ? defaultTimeout
         : (timeout ?? defaultTimeout);
 
+      let artifactStream: ToolOutputArtifactStream | undefined;
+      try {
+        artifactStream = await artifactSink?.createStream('tools__bash', {
+          command,
+          cwd,
+          timeoutMs,
+        });
+      } catch (error) {
+        logger.debug(`Failed to create bash full-output artifact stream: ${(error as Error).message}`);
+      }
+
+      let artifactChannel: 'stdout' | 'stderr' | undefined;
+      const writeArtifactChunk = (channel: 'stdout' | 'stderr', chunk: string): void => {
+        if (!artifactStream || chunk.length === 0) return;
+        if (artifactChannel !== channel) {
+          artifactStream.write(`\n[${channel}]\n`);
+          artifactChannel = channel;
+        }
+        artifactStream.write(chunk);
+      };
+
+      const finishArtifact = async (truncated: boolean): Promise<ToolOutputArtifactRef | undefined> => {
+        if (!artifactStream) return undefined;
+        if (!truncated) {
+          try {
+            await artifactStream.discard();
+          } catch (error) {
+            logger.debug(`Failed to discard bash full-output artifact stream: ${(error as Error).message}`);
+          }
+          return undefined;
+        }
+
+        try {
+          return await artifactStream.finalize();
+        } catch (error) {
+          logger.debug(`Failed to persist bash full-output artifact: ${(error as Error).message}`);
+          return undefined;
+        }
+      };
+
       return new Promise((resolve) => {
         const stdoutAcc = createBoundedAccumulator(maxOutputBytes, headRatio);
         const stderrAcc = createBoundedAccumulator(maxOutputBytes, headRatio);
@@ -312,21 +363,29 @@ Commands not matching these patterns will be rejected.`;
 
         // Collect stdout (head+tail bounded; middle dropped if it overflows)
         child.stdout?.on('data', (data: Buffer) => {
-          stdoutAcc.append(data.toString());
+          const chunk = data.toString();
+          stdoutAcc.append(chunk);
+          writeArtifactChunk('stdout', chunk);
         });
 
         // Collect stderr (head+tail bounded; middle dropped if it overflows)
         child.stderr?.on('data', (data: Buffer) => {
-          stderrAcc.append(data.toString());
+          const chunk = data.toString();
+          stderrAcc.append(chunk);
+          writeArtifactChunk('stderr', chunk);
         });
 
         // Handle process exit
-        child.on('close', (code) => {
+        child.on('close', async (code) => {
           clearTimeout(timeoutHandle);
 
           const stdout = stdoutAcc.finalize();
           const stderr = stderrAcc.finalize();
           const truncated = stdoutAcc.truncated || stderrAcc.truncated;
+          const fullOutputArtifact = await finishArtifact(truncated);
+          const modelFullOutputArtifact = fullOutputArtifact
+            ? modelToolOutputArtifactRef(fullOutputArtifact)
+            : undefined;
 
           // Build output
           let output = '';
@@ -345,6 +404,10 @@ Commands not matching these patterns will be rejected.`;
 
           if (truncated) {
             resultMetadata.push(`bash tool truncated output as it exceeded ${maxOutputBytes} byte limit (kept head + tail)`);
+          }
+
+          if (modelFullOutputArtifact) {
+            resultMetadata.push(`full output saved to session artifact: ${modelFullOutputArtifact.path} (${modelFullOutputArtifact.bytes} bytes)`);
           }
 
           if (timedOut) {
@@ -367,13 +430,15 @@ Commands not matching these patterns will be rejected.`;
               exitCode: code,
               timedOut,
               truncated,
+              ...(modelFullOutputArtifact && { fullOutputArtifact: modelFullOutputArtifact }),
             },
           });
         });
 
         // Handle errors
-        child.on('error', (err) => {
+        child.on('error', async (err) => {
           clearTimeout(timeoutHandle);
+          await finishArtifact(false);
           const error: ToolErrorOutput = {
             success: false,
             error: `Failed to execute command: ${err.message}`,

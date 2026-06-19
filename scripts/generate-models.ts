@@ -130,7 +130,7 @@ interface ModelData {
   reasoning?: boolean;
   tool_call?: boolean;
   modalities?: { input?: string[]; output?: string[] };
-  limit?: { context?: number; output?: number };
+  limit?: { context?: number; input?: number; output?: number };
   cost?: { input?: number; output?: number };
   release_date?: string;
 }
@@ -270,6 +270,7 @@ function generateRegistryCode(registry: Registry): string {
       },
       limit: {
         context: ${model.limit?.context ?? 32000},
+${model.limit?.input !== undefined ? `        input: ${model.limit.input},\n` : ''}
         output: ${model.limit?.output ?? 4000},
       },
       cost: {
@@ -324,6 +325,8 @@ export interface ModelInfo {
   };
   limit: {
     context: number;
+    /** Maximum prompt/input tokens when the provider reports it separately. */
+    input?: number;
     output: number;
   };
   /** Cost per token in USD (from models.dev) */
@@ -389,27 +392,28 @@ function generateDocsPage(registry: Registry): string {
     if (model.modalities?.input?.includes('image')) capabilities.push('Vision');
     if (model.tool_call) capabilities.push('Tools');
 
-    return `| \`${provider}:${modelId}\` | ${model.name} | ${model.limit?.context?.toLocaleString() ?? 'N/A'} | ${model.limit?.output?.toLocaleString() ?? 'N/A'} | ${capabilities.join(', ') || '-'} |`;
+    const inputContext = model.limit?.input ?? model.limit?.context;
+    return `| \`${provider}:${modelId}\` | ${model.name} | ${inputContext?.toLocaleString() ?? 'N/A'} | ${model.limit?.output?.toLocaleString() ?? 'N/A'} | ${capabilities.join(', ') || '-'} |`;
   };
 
   const rows: string[] = [];
 
   rows.push('\n### Anthropic\n');
-  rows.push('| Model ID | Name | Context | Output | Capabilities |');
+  rows.push('| Model ID | Name | Input Context | Output | Capabilities |');
   rows.push('|----------|------|---------|--------|--------------|');
   for (const [id, model] of Object.entries(registry.anthropic)) {
     rows.push(formatModelRow('anthropic', id, model));
   }
 
   rows.push('\n### OpenAI\n');
-  rows.push('| Model ID | Name | Context | Output | Capabilities |');
+  rows.push('| Model ID | Name | Input Context | Output | Capabilities |');
   rows.push('|----------|------|---------|--------|--------------|');
   for (const [id, model] of Object.entries(registry.openai)) {
     rows.push(formatModelRow('openai', id, model));
   }
 
   rows.push('\n### OpenRouter\n');
-  rows.push('| Model ID | Name | Context | Output | Capabilities |');
+  rows.push('| Model ID | Name | Input Context | Output | Capabilities |');
   rows.push('|----------|------|---------|--------|--------------|');
   for (const [id, model] of Object.entries(registry.openrouter)) {
     rows.push(formatModelRow('openrouter', id, model));

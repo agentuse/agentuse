@@ -246,12 +246,41 @@ model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
   These messages are never compacted to maintain conversation flow.
 </ParamField>
 
+<ParamField path="APPROVAL_COMPACTION_MIN_TOKENS" type="number">
+  Minimum active-context size that triggers opportunistic compaction at an approval gate.
+  Default: 64000
+
+  ```bash
+  export APPROVAL_COMPACTION_MIN_TOKENS="32000"
+  ```
+
+  This is separate from `COMPACTION_THRESHOLD`: a 64k-token context may be far
+  below a large model's window, but still expensive to resend after a human
+  approval pause. Set to `0` to disable approval-boundary compaction while
+  keeping normal model-limit compaction enabled.
+</ParamField>
+
+<ParamField path="STEP_COMPACTION_MIN_TOKENS" type="number">
+  Minimum active-context size that triggers opportunistic compaction between LLM
+  steps after the first tool call.
+  Default: 64000
+
+  ```bash
+  export STEP_COMPACTION_MIN_TOKENS="128000"
+  ```
+
+  This enables split-turn compaction for long autonomous runs: older context can
+  be summarized before the next model call even when the full model window is not
+  close to exhausted. Set to `0` to disable step-boundary compaction while
+  keeping approval-boundary and model-limit compaction enabled.
+</ParamField>
+
 ## Tool Output
 
-Large tool results are re-sent to the model on every subsequent step, so a single oversized output (a big diff, a verbose log, a huge file) inflates input tokens for the rest of the run. These variables cap how much of any one tool result reaches the model. Defaults match historical behavior, so you only need to set them to tune.
+Large tool results are re-sent to the model on every subsequent step, so a single oversized output (a big diff, a verbose log, a huge file) inflates input tokens for the rest of the run. These variables cap how much of any one tool result reaches the model. When session storage is available, truncated `bash` output keeps the full stdout/stderr stream as a session-local tool output artifact; runner-level truncation of other tool results also saves the full raw result and adds a reference to the bounded preview. Defaults match historical behavior, so you only need to set them to tune.
 
 <ParamField path="AGENTUSE_TOOL_MAX_OUTPUT_BYTES" type="number">
-  Maximum size (in characters) of a single `bash` tool result. Output over this limit is truncated to a head + tail slice, dropping the middle, with a marker noting how much was omitted.
+  Maximum size (in characters) of a single model-facing tool result, also used by the built-in `bash` stream cap. Output over this limit is truncated to a head + tail slice, dropping the middle, with a marker noting how much was omitted.
   Default: 30720 (30KB)
 
   ```bash
@@ -552,6 +581,8 @@ MAX_STEPS=500
 CONTEXT_COMPACTION=true
 COMPACTION_THRESHOLD=0.7
 COMPACTION_KEEP_RECENT=3
+APPROVAL_COMPACTION_MIN_TOKENS=64000
+STEP_COMPACTION_MIN_TOKENS=64000
 
 # Logging and debug
 LOG_LEVEL=INFO

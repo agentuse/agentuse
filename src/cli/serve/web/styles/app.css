@@ -1462,6 +1462,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-approval-detail .artifact-open:hover { background: var(--panel-hover); border-color: var(--cyan-border); }
 .page-approval-detail .artifact-open svg { width: 15px; height: 15px; flex: none; color: var(--cyan); }
 .page-approval-detail .artifact-open-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-approval-detail .artifact-size {
+  font-size: 11px;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
 .page-approval-detail .artifact-open-hint {
   margin-left: auto;
   padding-left: 8px;

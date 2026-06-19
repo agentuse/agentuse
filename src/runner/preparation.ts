@@ -192,6 +192,12 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
 
   // Load all agent tools (MCP, configured, skill, store, sandbox)
   // Done after session creation so sandbox output dir uses the session ID
+  const toolOutputArtifacts = sessionManager && sessionID && assistantMsgID
+    ? {
+        createStream: (toolName: string, metadata?: Record<string, unknown>) =>
+          sessionManager.createToolOutputArtifactStream(sessionID, agentId, assistantMsgID, toolName, metadata),
+      }
+    : undefined;
   const loadedTools = await loadAgentTools({
     agent,
     projectContext,
@@ -199,6 +205,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     agentFilePath,
     mcpConnections: mcpClients,
     sessionId: sessionID,
+    toolOutputArtifacts,
   });
 
   // Load sub-agent tools if configured

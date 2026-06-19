@@ -25,6 +25,51 @@ function formatTokenCount(value: number | undefined): string {
   return value === undefined ? '—' : tokenFmt.format(value);
 }
 
+function formatUsagePercent(value: number | undefined): string | undefined {
+  return typeof value === 'number' ? `${value.toFixed(1)}%` : undefined;
+}
+
+export function headerTokenUsage(
+  approval: Pick<ApprovalPageInfo, 'sessionStatus' | 'tokenUsage'> | null
+): ApprovalPageInfo['tokenUsage'] | undefined {
+  return approval?.tokenUsage;
+}
+
+export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] | undefined): Array<{ label: string; value: string }> {
+  if (!tokenUsage) return [];
+
+  const items: Array<{ label: string; value: string }> = [];
+  const context = tokenUsage.context;
+  if (context) {
+    const percent = formatUsagePercent(context.usagePercentage);
+    items.push({
+      label: 'ctx estimate',
+      value: [
+        formatTokenCount(context.activeTokens),
+        context.contextLimit !== undefined ? `/ ${formatTokenCount(context.contextLimit)}` : undefined,
+        percent ? `(${percent})` : undefined,
+      ].filter(Boolean).join(' '),
+    });
+  }
+
+  const hasProviderUsage = tokenUsage.input > 0 || tokenUsage.cachedInput > 0 || tokenUsage.output > 0;
+  if (!hasProviderUsage) {
+    items.push({ label: 'provider usage', value: 'not reported yet' });
+    return items;
+  }
+
+  items.push({ label: 'provider input', value: formatTokenCount(tokenUsage.input) });
+
+  items.push({ label: 'cached input', value: formatTokenCount(tokenUsage.cachedInput) });
+  items.push({
+    label: 'uncached input',
+    value: formatTokenCount(Math.max(0, tokenUsage.input - tokenUsage.cachedInput)),
+  });
+
+  items.push({ label: 'output', value: formatTokenCount(tokenUsage.output) });
+  return items;
+}
+
 function isNearPageEnd(): boolean {
   const page = document.documentElement;
   return window.innerHeight + window.scrollY >= page.scrollHeight - 240;
@@ -288,7 +333,7 @@ export default function SessionDetail() {
   const agentLabel = approval.agent.name || approval.agent.id;
   const agentHeadline = approval.agent.description || agentLabel;
   const busy = status === 'resuming' || status === 'continuing';
-  const tokenUsage = approval.sessionStatus === 'completed' ? approval.tokenUsage : undefined;
+  const tokenUsage = headerTokenUsage(approval);
   const eyebrow = actionable
     ? 'human approval requested'
     : continueActionable
@@ -328,13 +373,9 @@ export default function SessionDetail() {
             {approval.expiresAt !== undefined && (
               <div class="cell"><span class="label">expires</span><span class="value">{formatApprovalTime(approval.expiresAt)}</span></div>
             )}
-            {tokenUsage && (
-              <>
-                <div class="cell token-cell"><span class="label">input</span><span class="value">{formatTokenCount(tokenUsage.input)}</span></div>
-                <div class="cell token-cell"><span class="label">cached</span><span class="value">{formatTokenCount(tokenUsage.cachedInput)}</span></div>
-                <div class="cell token-cell"><span class="label">output</span><span class="value">{formatTokenCount(tokenUsage.output)}</span></div>
-              </>
-            )}
+            {tokenUsageMetaItems(tokenUsage).map((item) => (
+              <div class="cell token-cell" key={item.label}><span class="label">{item.label}</span><span class="value">{item.value}</span></div>
+            ))}
           </div>
         </header>
 

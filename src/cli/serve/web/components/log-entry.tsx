@@ -73,6 +73,12 @@ function artifactHref(sessionId: string, artifactPath: string, token: string | u
   return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 
+function toolArtifactHref(sessionId: string, artifactPath: string, token: string | undefined): string {
+  const encoded = artifactPath.split('/').map(encodeURIComponent).join('/');
+  const base = `/sessions/${encodeURIComponent(sessionId)}/tool-artifacts/${encoded}`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
 function artifactName(artifactPath: string): string {
   const parts = artifactPath.split('/');
   return parts[parts.length - 1] || artifactPath;
@@ -192,14 +198,15 @@ function SubagentCard(props: { session: LogSubagentSession }) {
     : <div class="subagent-event">{inner}</div>;
 }
 
-function ToolDetails(props: { details: ApprovalLogDetails }) {
+function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; token: string | undefined }) {
   const details = props.details;
   const rows = [
     details.input ? { label: 'Input', value: details.input } : undefined,
     details.output ? { label: 'Output', value: details.output } : undefined,
     details.errorMessage ? { label: 'Error', value: details.errorMessage } : undefined,
   ].filter((row): row is { label: string; value: string } => Boolean(row));
-  if (rows.length === 0) return null;
+  const artifact = details.toolOutputArtifact;
+  if (rows.length === 0 && !artifact) return null;
   return (
     <div class="log-details">
       {rows.map((row) => (
@@ -208,6 +215,25 @@ function ToolDetails(props: { details: ApprovalLogDetails }) {
           <div class="log-detail-value"><LogContent value={row.value} /></div>
         </div>
       ))}
+      {artifact && (
+        <div class="log-detail">
+          <div class="log-detail-label">Full output</div>
+          <div class="log-detail-value">
+            <div class="artifact-tiles">
+              <a
+                class="artifact-open"
+                href={toolArtifactHref(props.sessionId, artifact.path, props.token)}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span class="artifact-open-name">{artifactName(artifact.path)}</span>
+                {typeof artifact.bytes === 'number' && <span class="artifact-size">{Math.ceil(artifact.bytes / 1024)} KB</span>}
+                <span class="artifact-open-hint">open</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -271,7 +297,7 @@ function LogEntryImpl(props: LogEntryProps) {
           {storeEvent && <StoreEventBlock event={storeEvent} />}
           {entry.details && (entry.details.resumeToken
             ? <ApprovalDetailCard details={entry.details} sessionId={props.sessionId} token={props.token} />
-            : <ToolDetails details={entry.details} />)}
+            : <ToolDetails details={entry.details} sessionId={props.sessionId} token={props.token} />)}
           {entry.message && !storeEvent && !entry.subagentSession && <LogContent value={entry.message} forceMarkdown={entry.type === 'text'} />}
         </div>
         {props.showActions && (

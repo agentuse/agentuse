@@ -5,6 +5,7 @@ import type { SessionManager } from '../session';
 import type { AgentPart } from '../types/parts';
 import type { ToolStateCompleted, ToolStateError } from '../session/types';
 import type { ActiveContextUsage } from '../session/types';
+import { addLanguageModelUsage, usageToAssistantTokens } from '../session/usage';
 import { logger } from '../utils/logger';
 import { safeHttpUrl } from '../utils/url';
 import { formatToolResultForDisplay } from '../utils/format-tool-result';
@@ -143,6 +144,7 @@ export async function processAgentStream(
 ): Promise<{
   text: string;
   usage?: LanguageModelUsage;
+  usageKind?: 'cumulative';
   toolCalls?: Array<{ tool: string; args: unknown }>;
   subAgentTokens?: number;
   toolCallTraces?: ToolCallTrace[];
@@ -156,6 +158,7 @@ export async function processAgentStream(
 }> {
   let finalText = '';
   let usage: LanguageModelUsage | null = null;
+  let usageKind: 'cumulative' | undefined;
   const toolCalls: Array<{ tool: string; args: unknown }> = [];
   let subAgentTokens = 0;
   const toolCallTraces: ToolCallTrace[] = [];
@@ -218,6 +221,38 @@ export async function processAgentStream(
         logger.debug(`Failed to finalize text part: ${(err as Error).message}`);
       }
       currentTextPart = null;
+    }
+  };
+
+  const recordUsage = (chunk: AgentChunk) => {
+    // Normalize AI SDK usage semantics. `totalUsage` arrives here as
+    // usageKind=cumulative and replaces the running total; fallback
+    // `usage` arrives as usageKind=step and must be accumulated.
+    if (chunk.usage) {
+      usage = chunk.usageKind === 'step'
+        ? addLanguageModelUsage(usage ?? undefined, chunk.usage)
+        : chunk.usage;
+      usageKind = 'cumulative';
+    }
+    if (chunk.contextUsage) {
+      contextUsage = chunk.contextUsage;
+    }
+
+    if (usage && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
+      const updatePromise = options.sessionManager.updateMessage(options.sessionID, options.agentId, options.messageID, {
+        assistant: {
+          tokens: usageToAssistantTokens(usage),
+          ...(contextUsage && { context: contextUsage })
+        }
+      }).catch(err => logger.debug(`Failed to persist interim usage: ${err.message}`));
+      trackSessionUpdate(updatePromise);
+    } else if (contextUsage && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
+      const updatePromise = options.sessionManager.updateMessage(options.sessionID, options.agentId, options.messageID, {
+        assistant: {
+          context: contextUsage
+        }
+      }).catch(err => logger.debug(`Failed to persist interim context usage: ${err.message}`));
+      trackSessionUpdate(updatePromise);
     }
   };
 
@@ -575,6 +610,26 @@ export async function processAgentStream(
         suspended = true;
         await finalizeTextPart();
 
+        if (chunk.contextSnapshot) {
+          contextUsage = chunk.contextSnapshot.usage;
+          if (options?.sessionManager && options?.sessionID && options?.agentId) {
+            try {
+              await options.sessionManager.writeContextSnapshot(
+                options.sessionID,
+                options.agentId,
+                {
+                  ...chunk.contextSnapshot,
+                  ...(options.messageID && { messageID: options.messageID }),
+                }
+              );
+            } catch (err) {
+              logger.debug(`Failed to persist suspension context snapshot: ${(err as Error).message}`);
+            }
+          }
+        } else if (chunk.contextUsage) {
+          contextUsage = chunk.contextUsage;
+        }
+
         const suspendPayload = (chunk.toolResultRaw ?? {}) as Record<string, unknown>;
         if (typeof suspendPayload.approvalUrl === 'string') {
           suspendApprovalUrl = suspendPayload.approvalUrl;
@@ -589,7 +644,10 @@ export async function processAgentStream(
               let channelMessage = payload.channelMessage && typeof payload.channelMessage === 'object'
                 ? payload.channelMessage as any
                 : undefined;
-              const suspendedAt = Date.now();
+              const suspendedAt = Math.max(
+                Date.now(),
+                (chunk.contextSnapshot?.updatedAt ?? 0) + 1
+              );
               const buildPendingState = (activeChannelMessage?: any) => ({
                 status: 'pending',
                 input: pending.input,
@@ -644,13 +702,7 @@ export async function processAgentStream(
         // Finalize any pending text part
         await finalizeTextPart();
 
-        // Only update usage on final finish (not intermediate segments)
-        if (chunk.usage) {
-          usage = chunk.usage;
-        }
-        if (chunk.contextUsage) {
-          contextUsage = chunk.contextUsage;
-        }
+        recordUsage(chunk);
 
         finishReasons.push(chunk.finishReason ?? 'unknown');
 
@@ -680,6 +732,10 @@ export async function processAgentStream(
         }
         break;
 
+      case 'usage':
+        recordUsage(chunk);
+        break;
+
       case 'error':
         // Finalize any pending text part before throwing error
         await finalizeTextPart();
@@ -698,7 +754,8 @@ export async function processAgentStream(
 
   return {
     text: finalText,
-    ...(usage && { usage }),
+    ...(usage ? { usage } : {}),
+    ...(usageKind ? { usageKind } : {}),
     ...(options?.collectToolCalls && { toolCalls }),
     ...(subAgentTokens > 0 && { subAgentTokens }),
     ...(toolCallTraces.length > 0 && { toolCallTraces }),

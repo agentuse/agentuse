@@ -128,6 +128,20 @@ export async function createSubAgentTool(
       let subagentSessionID: string | undefined;
       let subagentMsgID: string | undefined;
       let subagentSessionManager: SessionManager | undefined;
+      const toolOutputArtifacts = {
+        createStream: (toolName: string, metadata?: Record<string, unknown>) => {
+          if (!subagentSessionManager || !subagentSessionID || !subagentMsgID) {
+            return Promise.resolve(undefined);
+          }
+          return subagentSessionManager.createToolOutputArtifactStream(
+            subagentSessionID,
+            agentId,
+            subagentMsgID,
+            toolName,
+            metadata
+          );
+        },
+      };
 
       try {
         logger.info(`[SubAgent:depth=${depth}] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
@@ -147,6 +161,7 @@ export async function createSubAgentTool(
           agentFilePath: resolvedPath,
           mcpConnections,
           logPrefix: '[SubAgent] ',
+          toolOutputArtifacts,
         });
 
         // Load nested sub-agents if within depth limit (will be populated after session creation)

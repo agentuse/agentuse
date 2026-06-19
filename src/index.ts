@@ -4,6 +4,7 @@ import { connectMCP } from './mcp';
 import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, type PreparedAgentExecution } from './runner';
 import { maybePromoteApprovalComment } from './learning';
 import { isApprovalEnabled } from './runner/approval';
+import { contextUsageFromSnapshot } from './session/usage';
 import { Command } from 'commander';
 import { createProviderCommand, createAuthCommand } from './cli/auth';
 import { AuthStorage } from './auth/storage';
@@ -44,7 +45,7 @@ import { resolveTimeout } from './utils/config';
 import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
 import { telemetry, categorizeError, aggregateToolCalls, countSteps, parseModel } from './telemetry';
-import type { SessionInfo, SessionManager as SessionManagerType, SessionTrigger, ToolPart } from './session';
+import type { ActiveContextUsage, SessionInfo, SessionManager as SessionManagerType, SessionTrigger, ToolPart } from './session';
 import { findServerForProject } from './utils/server-registry';
 
 const program = new Command();
@@ -916,6 +917,7 @@ async function runInternalWorker() {
     input: number;
     cachedInput: number;
     output: number;
+    context?: ActiveContextUsage;
   }
 
   const activeExecutionControllers = new Map<string, AbortController>();
@@ -935,6 +937,11 @@ async function runInternalWorker() {
     draftUrl?: string;
     artifactUrl?: string;
     artifactPaths?: string[];
+    toolOutputArtifact?: {
+      path: string;
+      bytes?: number;
+      originalChars?: number;
+    };
     decisionStatus?: string;
     decisionComment?: string;
     decisionReviewer?: string;
@@ -989,16 +996,28 @@ async function runInternalWorker() {
     };
   }
 
-  function aggregateSessionTokenUsage(messages: Array<{ assistant?: { tokens?: { input?: number; output?: number; cache?: { read?: number } } } }>): SessionTokenUsage | undefined {
+  function aggregateSessionTokenUsage(
+    messages: Array<{ assistant?: { tokens?: { input?: number; output?: number; cache?: { read?: number } }; context?: ActiveContextUsage } }>,
+    contextOverride?: ActiveContextUsage
+  ): SessionTokenUsage | undefined {
     if (messages.length === 0) return undefined;
-    return messages.reduce<SessionTokenUsage>((total, message) => {
+    const usage = messages.reduce<SessionTokenUsage>((total, message) => {
       const tokens = message.assistant?.tokens;
       return {
         input: total.input + (typeof tokens?.input === 'number' ? tokens.input : 0),
         cachedInput: total.cachedInput + (typeof tokens?.cache?.read === 'number' ? tokens.cache.read : 0),
         output: total.output + (typeof tokens?.output === 'number' ? tokens.output : 0),
+        ...(message.assistant?.context
+          ? { context: message.assistant.context }
+          : total.context
+            ? { context: total.context }
+            : {}),
       };
     }, { input: 0, cachedInput: 0, output: 0 });
+    if (contextOverride) {
+      usage.context = contextOverride;
+    }
+    return usage.input + usage.cachedInput + usage.output > 0 || usage.context ? usage : undefined;
   }
 
   async function lastAssistantText(sessionManager: InstanceType<typeof SessionManager>, sessionId: string, agentId: string): Promise<string | undefined> {
@@ -1161,6 +1180,47 @@ async function runInternalWorker() {
     return Object.keys(fields).length > 0 ? fields : undefined;
   }
 
+  function normalizeToolOutputArtifact(value: unknown): ApprovalLogDetails['toolOutputArtifact'] | undefined {
+    const artifact = valueAsRecord(value);
+    if (artifact.kind !== 'tool-output' || typeof artifact.path !== 'string' || !artifact.path.trim()) {
+      return undefined;
+    }
+    return {
+      path: artifact.path.trim(),
+      ...(typeof artifact.bytes === 'number' && { bytes: artifact.bytes }),
+      ...(typeof artifact.originalChars === 'number' && { originalChars: artifact.originalChars }),
+    };
+  }
+
+  function toolOutputArtifactFromText(text: string | undefined): ApprovalLogDetails['toolOutputArtifact'] | undefined {
+    if (!text) return undefined;
+    const match = text.match(/full tool output saved to session artifact:\s+([^\s)]+)(?:\s+\((\d+)\s+bytes\))?/i)
+      ?? text.match(/full output saved to session artifact:\s+([^\s)]+)(?:\s+\((\d+)\s+bytes\))?/i);
+    if (!match?.[1]) return undefined;
+    return {
+      path: match[1],
+      ...(match[2] ? { bytes: Number.parseInt(match[2], 10) } : {}),
+    };
+  }
+
+  function toolOutputArtifactFromState(state: any): ApprovalLogDetails['toolOutputArtifact'] | undefined {
+    const stateMetadata = valueAsRecord(state?.metadata);
+    const stateArtifact = normalizeToolOutputArtifact(stateMetadata.fullOutputArtifact);
+    if (stateArtifact) return stateArtifact;
+
+    const output = valueAsRecord(state?.output);
+    const outputMetadata = valueAsRecord(output.metadata);
+    const outputArtifact = normalizeToolOutputArtifact(outputMetadata.fullOutputArtifact);
+    if (outputArtifact) return outputArtifact;
+
+    const outputText = typeof state?.output === 'string'
+      ? state.output
+      : typeof output.output === 'string'
+        ? output.output
+        : undefined;
+    return toolOutputArtifactFromText(outputText);
+  }
+
   function buildToolDetails(state: any): ApprovalLogDetails | undefined {
     const fields: ApprovalLogDetails = {};
     const input = formatApprovalLogValue(state?.input);
@@ -1169,6 +1229,8 @@ async function runInternalWorker() {
     if (state?.status === 'completed') {
       const output = formatApprovalLogValue(state.output);
       if (output !== undefined) fields.output = output;
+      const artifact = toolOutputArtifactFromState(state);
+      if (artifact) fields.toolOutputArtifact = artifact;
     } else if (state?.status === 'error') {
       const error = formatApprovalLogValue(state.error);
       if (error !== undefined) fields.errorMessage = error;
@@ -1228,7 +1290,8 @@ async function runInternalWorker() {
       }
 
       const messages = await sessionManager.getSessionMessages(req.sessionId, found.agentId);
-      const tokenUsage = aggregateSessionTokenUsage(messages);
+      const contextOverride = contextUsageFromSnapshot(await sessionManager.readContextSnapshot(req.sessionId, found.agentId));
+      const tokenUsage = aggregateSessionTokenUsage(messages, contextOverride);
       const parts = (await Promise.all(
         messages.map((message) => sessionManager.getMessageParts(req.sessionId!, found.agentId, message.id))
       )).flat();

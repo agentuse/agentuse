@@ -80,6 +80,33 @@ async function persistRunChannelHandles(options: {
   }
 }
 
+export async function persistAssistantRunState(options: {
+  sessionManager?: SessionManager;
+  sessionId?: string;
+  agentId?: string;
+  messageId?: string;
+  result: Pick<RunAgentResult, 'usage' | 'contextUsage'>;
+  completedAt?: number;
+}): Promise<void> {
+  const { sessionManager, sessionId, agentId, messageId, result, completedAt } = options;
+  if (!sessionManager || !sessionId || !agentId || !messageId) return;
+
+  await sessionManager.updateMessage(sessionId, agentId, messageId, {
+    ...(completedAt !== undefined && { time: { completed: completedAt } }),
+    ...(result.usage && {
+      assistant: {
+        tokens: usageToAssistantTokens(result.usage),
+        ...(result.contextUsage && { context: result.contextUsage })
+      }
+    }),
+    ...(!result.usage && result.contextUsage && {
+      assistant: {
+        context: result.contextUsage
+      }
+    })
+  });
+}
+
 /**
  * Run an agent with AI and MCP tools
  * @param agent Parsed agent configuration
@@ -269,6 +296,19 @@ export async function runAgent(
       // (idempotent) in the finally.
       if (preparation) await preparation.releaseStoreLock();
       if (sessionManager && prepSessionID && prepAgentId) {
+        if (assistantMsgID) {
+          try {
+            await persistAssistantRunState({
+              sessionManager,
+              sessionId: prepSessionID,
+              agentId: prepAgentId,
+              messageId: assistantMsgID,
+              result
+            });
+          } catch (error) {
+            logger.debug(`Failed to persist suspended session usage: ${(error as Error).message}`);
+          }
+        }
         await sessionManager.setSessionSuspended(prepSessionID, prepAgentId);
       }
       if (captureActive) {
@@ -280,6 +320,7 @@ export async function runAgent(
         status: 'suspended',
         text: result.text,
         ...(result.usage && { usage: result.usage }),
+        ...(result.usageKind && { usageKind: result.usageKind }),
         toolCallCount: result.toolCalls?.length || 0,
         ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
         finishReason: 'suspended',
@@ -327,19 +368,13 @@ export async function runAgent(
     // a finished-looking run as still live.
     if (sessionManager && prepSessionID && assistantMsgID && prepAgentId) {
       try {
-        await sessionManager.updateMessage(prepSessionID, prepAgentId, assistantMsgID, {
-          time: { completed: Date.now() },
-          ...(result.usage && {
-            assistant: {
-              tokens: usageToAssistantTokens(result.usage),
-              ...(result.contextUsage && { context: result.contextUsage })
-            }
-          }),
-          ...(!result.usage && result.contextUsage && {
-            assistant: {
-              context: result.contextUsage
-            }
-          })
+        await persistAssistantRunState({
+          sessionManager,
+          sessionId: prepSessionID,
+          agentId: prepAgentId,
+          messageId: assistantMsgID,
+          result,
+          completedAt: Date.now()
         });
         await sessionManager.setSessionCompleted(prepSessionID, prepAgentId);
       } catch (error) {
@@ -351,6 +386,7 @@ export async function runAgent(
       status: 'completed',
       text: result.text,
       ...(result.usage && { usage: result.usage }),
+      ...(result.usageKind && { usageKind: result.usageKind }),
       toolCallCount: result.toolCalls?.length || 0,
       ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
       ...(result.finishReason && { finishReason: result.finishReason }),

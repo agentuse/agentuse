@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ToolOutputArtifactStream } from '../session/types.js';
 
 // Zod schemas for validation
 export const FilesystemPermissionSchema = z.enum(['read', 'write', 'edit']);
@@ -49,6 +50,13 @@ export interface CommandValidationResult {
 export interface ToolOutput {
   output: string;
   metadata?: Record<string, unknown>;
+}
+
+export interface ToolOutputArtifactSink {
+  createStream(
+    toolName: string,
+    metadata?: Record<string, unknown>
+  ): Promise<ToolOutputArtifactStream | undefined>;
 }
 
 // Error output format

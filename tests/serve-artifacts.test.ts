@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
-import { join } from 'path';
+import { join, relative } from 'path';
 import { tmpdir } from 'os';
 import { __testing } from '../src/cli/serve';
+import { getSessionStorageDir } from '../src/storage/paths';
 
 interface CapturedResponse {
   status: number;
@@ -200,6 +201,58 @@ describe('serveSessionArtifact', () => {
       await __testing.serveSessionArtifact(res, root, '.agentuse/artifacts/nope.md');
       expect(captured.status).toBe(404);
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('serves session-local full tool output artifacts from storage', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const dataHome = mkdtempSync(join(tmpdir(), 'agentuse-tool-artifact-data-'));
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-tool-artifact-project-'));
+    process.env.XDG_DATA_HOME = dataHome;
+    try {
+      const sessionId = '01KTOOLARTIFACTSESSION000000';
+      const storageDir = await getSessionStorageDir(root);
+      const artifactDir = join(storageDir, `${sessionId}-agents-review`, 'message-1', 'artifact');
+      mkdirSync(artifactDir, { recursive: true });
+      const artifactPath = join(artifactDir, 'tool-output-tools__bash.txt');
+      writeFileSync(artifactPath, 'full stdout\nfull stderr\n');
+
+      const { res, captured } = fakeResponse();
+      await __testing.serveSessionToolOutputArtifact(res, root, sessionId, relative(storageDir, artifactPath));
+
+      expect(captured.status).toBe(200);
+      expect(captured.headers['Content-Type']).toContain('text/html');
+      expect(captured.body).toContain('full stdout');
+      expect(captured.body).toContain('full stderr');
+    } finally {
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      rmSync(dataHome, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses tool output artifacts that do not belong to the requested session', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const dataHome = mkdtempSync(join(tmpdir(), 'agentuse-tool-artifact-data-'));
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-tool-artifact-project-'));
+    process.env.XDG_DATA_HOME = dataHome;
+    try {
+      const storageDir = await getSessionStorageDir(root);
+      const artifactDir = join(storageDir, '01KOTHERSESSION000000000000-agents-review', 'message-1', 'artifact');
+      mkdirSync(artifactDir, { recursive: true });
+      const artifactPath = join(artifactDir, 'tool-output-tools__bash.txt');
+      writeFileSync(artifactPath, 'wrong session');
+
+      const { res, captured } = fakeResponse();
+      await __testing.serveSessionToolOutputArtifact(res, root, '01KREQUESTEDSESSION000000000', relative(storageDir, artifactPath));
+
+      expect(captured.status).toBe(403);
+    } finally {
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      rmSync(dataHome, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
     }
   });

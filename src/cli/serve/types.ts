@@ -1,4 +1,4 @@
-import type { SessionTrigger } from "../../session/types";
+import type { ActiveContextUsage, SessionTrigger } from "../../session/types";
 
 export type { SessionTrigger };
 
@@ -117,6 +117,7 @@ export interface SessionTokenUsage {
   input: number;
   cachedInput: number;
   output: number;
+  context?: ActiveContextUsage;
 }
 
 export interface ApprovalPageInfo {
@@ -188,6 +189,12 @@ export interface ApprovalLogDetails {
   artifactUrl?: string;
   /** Project-root-relative paths to local file artifacts, viewable via /sessions/:id/artifacts/*. */
   artifactPaths?: string[];
+  /** Session-storage-relative full tool output artifact, viewable via /sessions/:id/tool-artifacts/*. */
+  toolOutputArtifact?: {
+    path: string;
+    bytes?: number;
+    originalChars?: number;
+  };
   decisionStatus?: string;
   decisionComment?: string;
   decisionReviewer?: string;

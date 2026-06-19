@@ -10,7 +10,10 @@ export interface ModelInfo {
   provider: string;
   modelId: string;
   name: string;
+  /** Prompt/input budget used for active-context compaction decisions. */
   contextLimit: number;
+  /** Provider-reported total window when it differs from prompt/input budget. */
+  totalContextLimit?: number;
   outputLimit: number;
 }
 
@@ -41,7 +44,10 @@ export async function getModelInfo(modelString: string): Promise<ModelInfo> {
       provider,
       modelId,
       name: registryModel.name,
-      contextLimit: registryModel.limit.context,
+      contextLimit: registryModel.limit.input ?? registryModel.limit.context,
+      ...(registryModel.limit.input !== undefined && registryModel.limit.context !== registryModel.limit.input
+        ? { totalContextLimit: registryModel.limit.context }
+        : {}),
       outputLimit: registryModel.limit.output,
     };
   }

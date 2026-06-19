@@ -2,7 +2,12 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { minimatch } from 'minimatch';
-import type { FilesystemPathConfig, FilesystemPermission, PathValidationResult } from './types.js';
+import type {
+  FilesystemPathConfig,
+  FilesystemPermission,
+  PathValidationResult,
+  ToolOutputArtifactSink
+} from './types.js';
 
 // Sensitive file patterns that are blocked by default
 const SENSITIVE_FILE_PATTERNS = [
@@ -27,6 +32,7 @@ export interface PathResolverContext {
   projectRoot: string;
   agentDir?: string | undefined;
   tmpDir?: string | undefined;
+  toolOutputArtifacts?: ToolOutputArtifactSink | undefined;
 }
 
 /**

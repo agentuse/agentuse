@@ -8,7 +8,7 @@ import { ContextManager } from '../context-manager';
 import { compactMessages } from '../compactor';
 import type { AgentChunk } from './types';
 import { isSuspendSignal } from './suspend';
-import type { SessionManager } from '../session';
+import type { ModelToolOutputArtifactRef, SessionManager, ToolOutputArtifactRef } from '../session';
 import { clampToolResultForModel } from '../tools/tool-output-limits.js';
 
 // Constants
@@ -136,7 +136,67 @@ function applyAnthropicCacheControlToTools(tools: ToolSet): ToolSet {
   ])) as ToolSet;
 }
 
-function limitModelFacingToolOutputs(tools: ToolSet): ToolSet {
+type ToolOutputArtifactWriter = (toolName: string, result: unknown) => Promise<ToolOutputArtifactRef | undefined>;
+
+function modelToolOutputArtifactRef(artifact: ToolOutputArtifactRef): ModelToolOutputArtifactRef {
+  return {
+    kind: artifact.kind,
+    path: artifact.path,
+    bytes: artifact.bytes,
+    originalChars: artifact.originalChars,
+  };
+}
+
+function attachToolOutputArtifact(value: unknown, artifact: ToolOutputArtifactRef): unknown {
+  const modelArtifact = modelToolOutputArtifactRef(artifact);
+  if (typeof value === 'string') {
+    return `${value}\n\n[Full tool output saved to session artifact: ${modelArtifact.path} (${modelArtifact.bytes} bytes).]`;
+  }
+
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const objectValue = value as Record<string, unknown>;
+    const metadata = objectValue.metadata && typeof objectValue.metadata === 'object' && !Array.isArray(objectValue.metadata)
+      ? objectValue.metadata as Record<string, unknown>
+      : {};
+    return {
+      ...objectValue,
+      metadata: {
+        ...metadata,
+        fullOutputArtifact: modelArtifact,
+      },
+    };
+  }
+
+  return {
+    value,
+    metadata: {
+      fullOutputArtifact: modelArtifact,
+    },
+  };
+}
+
+function buildToolOutputArtifactWriter(options: {
+  sessionManager?: SessionManager;
+  sessionID?: string;
+  agentId?: string;
+  messageID?: string;
+}): ToolOutputArtifactWriter | undefined {
+  if (!options.sessionManager || !options.sessionID || !options.agentId || !options.messageID) {
+    return undefined;
+  }
+
+  return async (toolName, result) => {
+    return options.sessionManager!.writeToolOutputArtifact(
+      options.sessionID!,
+      options.agentId!,
+      options.messageID!,
+      toolName,
+      result
+    );
+  };
+}
+
+function limitModelFacingToolOutputs(tools: ToolSet, writeToolOutputArtifact?: ToolOutputArtifactWriter): ToolSet {
   return Object.fromEntries(Object.entries(tools).map(([name, tool]) => {
     const originalExecute = (tool as any).execute;
     if (typeof originalExecute !== 'function') return [name, tool];
@@ -148,6 +208,16 @@ function limitModelFacingToolOutputs(tools: ToolSet): ToolSet {
         const clamped = clampToolResultForModel(result);
         if (clamped.truncated) {
           logger.debug(`[ToolOutput] Truncated model-facing result for ${name}`);
+          if (writeToolOutputArtifact) {
+            try {
+              const artifact = await writeToolOutputArtifact(name, result);
+              if (artifact) {
+                return attachToolOutputArtifact(clamped.value, artifact);
+              }
+            } catch (error) {
+              logger.debug(`[ToolOutput] Failed to persist full result for ${name}: ${(error as Error).message}`);
+            }
+          }
         }
         return clamped.value;
       }
@@ -166,6 +236,17 @@ function isContextLimitError(error: unknown): boolean {
     errorLower.includes('context window') ||
     errorLower.includes('too many tokens')
   );
+}
+
+function usageFromStreamChunk(chunk: any): { usage?: any; usageKind?: 'cumulative' | 'step' } {
+  const totalUsage = chunk.totalUsage;
+  const stepUsage = chunk.usage;
+  const usage = totalUsage ?? stepUsage;
+  const usageKind = totalUsage ? 'cumulative' : stepUsage ? 'step' : undefined;
+  return {
+    ...(usage && { usage }),
+    ...(usageKind && { usageKind }),
+  };
 }
 
 /**
@@ -205,7 +286,10 @@ export async function* executeAgentCore(
   const streamTools = usesAnthropicCacheControl
     ? applyAnthropicCacheControlToTools(tools)
     : tools;
-  const modelFacingTools = limitModelFacingToolOutputs(streamTools);
+  const modelFacingTools = limitModelFacingToolOutputs(
+    streamTools,
+    buildToolOutputArtifactWriter(options)
+  );
 
   if (ContextManager.isEnabled()) {
     contextManager = new ContextManager(
@@ -241,15 +325,27 @@ export async function* executeAgentCore(
     }
   };
 
-  const compactActiveContext = async (): Promise<ModelMessage[]> => {
+  const compactActiveContext = async (options: { persist?: boolean } = {}): Promise<ModelMessage[]> => {
     if (!contextManager) return messages;
     const compacted = await contextManager.compact();
     messages = usesAnthropicCacheControl
       ? applyAnthropicCacheControlToMessages(compacted as any[])
       : compacted;
     contextManager.setMessages(messages);
-    await persistContextSnapshot();
+    if (options.persist !== false) {
+      await persistContextSnapshot();
+    }
     return messages;
+  };
+
+  const compactAtSuspensionBoundary = async () => {
+    if (!contextManager?.shouldCompactAtBoundary()) return;
+    try {
+      await compactActiveContext({ persist: false });
+    } catch (error) {
+      logger.warn(`Approval-boundary context compaction failed; suspending with full active context.`);
+      logger.debug(`Approval-boundary compaction error: ${(error as Error).message}`);
+    }
   };
 
   // Function to create stream with current messages
@@ -303,7 +399,9 @@ export async function* executeAgentCore(
           if (contextManager) {
             contextManager.setMessages(nextMessages);
             messages = nextMessages;
-            if (contextManager.shouldCompact()) {
+            const shouldCompactForLimit = contextManager.shouldCompact();
+            const shouldCompactForLongRunStep = stepCount > 0 && contextManager.shouldCompactAtBoundary('step');
+            if (shouldCompactForLimit || shouldCompactForLongRunStep) {
               nextMessages = await compactActiveContext() as any[];
             } else {
               await persistContextSnapshot();
@@ -354,13 +452,28 @@ export async function* executeAgentCore(
   let lastToolCall: { id: string; name?: string } | null = null;
   let llmGenerationStartTime: number | undefined;
   let llmFirstTokenTime: number | undefined;
+  let currentModelStepStartedAt: number | undefined;
   const currentLlmModel = agent.config.model;
   let stepCount = 0; // Track step count to detect when we're approaching limit
+
+  const buildContextSnapshot = () => {
+    if (!contextManager) return undefined;
+    const updatedAt = currentModelStepStartedAt ?? Date.now();
+    const usage = { ...contextManager.getStats(), updatedAt };
+    return {
+      version: 1 as const,
+      updatedAt,
+      ...(options.messageID && { messageID: options.messageID }),
+      messages: contextManager.getMessages(),
+      usage,
+    };
+  };
 
   let stream;
   try {
     // Track when we start the LLM generation
     llmGenerationStartTime = Date.now();
+    currentModelStepStartedAt = llmGenerationStartTime;
     yield { type: 'llm-start', llmModel: currentLlmModel, llmStartTime: llmGenerationStartTime };
 
     stream = await createStreamWithCompactionRetry();
@@ -484,6 +597,7 @@ Error: ${errorMessage}`);
 
           // Start tracking new LLM generation segment after tool result
           llmGenerationStartTime = Date.now();
+          currentModelStepStartedAt = llmGenerationStartTime;
           llmFirstTokenTime = undefined;
           yield { type: 'llm-start', llmModel: currentLlmModel, llmStartTime: llmGenerationStartTime };
           break;
@@ -496,12 +610,18 @@ Error: ${errorMessage}`);
           const chunkError = (chunk as any).error;
 
           if (isSuspendSignal(chunkError)) {
+            await compactAtSuspensionBoundary();
+            const contextSnapshot = buildContextSnapshot();
             yield {
               type: 'suspended',
               ...(chunk.toolName && { toolName: chunk.toolName }),
               ...(toolCallId && { toolCallId }),
               ...(toolCallId && { suspend: { toolCallId } }),
-              toolResultRaw: chunkError.payload
+              toolResultRaw: chunkError.payload,
+              ...(contextSnapshot && {
+                contextUsage: contextSnapshot.usage,
+                contextSnapshot,
+              })
             };
             return;
           }
@@ -557,10 +677,12 @@ Error: ${errorMessage}`);
             accumulatedText = '';
           }
 
-          // Update usage if available
-          const usage = (chunk as any).totalUsage || (chunk as any).usage;
+          // AI SDK semantics: totalUsage is cumulative across all steps;
+          // usage is only this finish step. Preserve that distinction so
+          // session persistence can avoid double-counting fallback providers.
+          const { usage, usageKind } = usageFromStreamChunk(chunk);
           if (contextManager && usage) {
-            contextManager.updateUsage(usage);
+            contextManager.updateUsage(usage, usageKind);
           }
 
           // Log finish reason for debugging and warnings
@@ -591,6 +713,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
               type: 'finish',
               finishReason: chunk.finishReason,
               usage,
+              ...(usageKind && { usageKind }),
               ...(contextManager && { contextUsage: contextManager.getStats() }),
               toolStartTime: llmGenerationStartTime,
               toolDuration: llmDuration
@@ -602,6 +725,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
               type: 'finish',
               finishReason: chunk.finishReason,
               usage,
+              ...(usageKind && { usageKind }),
               ...(contextManager && { contextUsage: contextManager.getStats() })
             };
           }
@@ -630,7 +754,21 @@ Current step: ${stepCount}/${options.maxSteps}`);
           return;
 
         // Handle other AI SDK chunk types that we don't need to process but shouldn't warn about
-        case 'finish-step':
+        case 'finish-step': {
+          const { usage, usageKind } = usageFromStreamChunk(chunk);
+          if (contextManager && usage) {
+            contextManager.updateUsage(usage, usageKind);
+          }
+          if (usage || contextManager) {
+            yield {
+              type: 'usage',
+              ...(usage && { usage }),
+              ...(usageKind && { usageKind }),
+              ...(contextManager && { contextUsage: contextManager.getStats() }),
+            };
+          }
+          break;
+        }
         case 'start-step':
         case 'tool-input-start':
         case 'tool-input-delta':
@@ -650,12 +788,18 @@ Current step: ${stepCount}/${options.maxSteps}`);
 
   } catch (error: any) {
     if (isSuspendSignal(error)) {
+      await compactAtSuspensionBoundary();
+      const contextSnapshot = buildContextSnapshot();
       yield {
         type: 'suspended',
         ...(lastToolCall?.name && { toolName: lastToolCall.name }),
         ...(lastToolCall?.id && { toolCallId: lastToolCall.id }),
         ...(lastToolCall?.id && { suspend: { toolCallId: lastToolCall.id } }),
-        toolResultRaw: error.payload
+        toolResultRaw: error.payload,
+        ...(contextSnapshot && {
+          contextUsage: contextSnapshot.usage,
+          contextSnapshot,
+        })
       };
       return;
     }

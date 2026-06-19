@@ -54,6 +54,7 @@ describe('header-gate exemption (capability routes)', () => {
     expect(__testing.isHeaderGateExemptRoute('/sessions/abc/continue', false)).toBe(true);
     expect(__testing.isHeaderGateExemptRoute('/sessions/abc/status', false)).toBe(true);
     expect(__testing.isHeaderGateExemptRoute('/sessions/abc/stop', false)).toBe(true);
+    expect(__testing.isHeaderGateExemptRoute('/sessions/abc/tool-artifacts/session%2Fmessage%2Fartifact%2Ftool-output.txt', false)).toBe(true);
   });
 
   it('keeps the /sessions LIST page header-gated', () => {

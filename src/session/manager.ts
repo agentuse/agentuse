@@ -1,5 +1,6 @@
 import { decodeTime, ulid } from 'ulid';
 import fs from 'fs/promises';
+import { createWriteStream } from 'fs';
 import path from 'path';
 import { writeJSON, readJSON, listKeys, getStorageState, sanitizeAgentName, CorruptStorageError } from '../storage';
 import { logger } from '../utils/logger';
@@ -11,7 +12,9 @@ import type {
   DeepPartial,
   ToolsSnapshot,
   ToolPart,
-  ContextSnapshot
+  ContextSnapshot,
+  ToolOutputArtifactRef,
+  ToolOutputArtifactStream
 } from './types';
 
 export interface SessionEntry {
@@ -43,6 +46,37 @@ function getPartOrder(part: Part): number {
     return state.time.start;
   }
   return Number.MAX_SAFE_INTEGER;
+}
+
+function stringifyToolOutputArtifact(value: unknown): string {
+  const seen = new WeakSet<object>();
+  const serialized = JSON.stringify(value, (_key, nestedValue) => {
+    if (typeof nestedValue === 'bigint') return nestedValue.toString();
+    if (typeof nestedValue === 'function') return `[Function ${nestedValue.name || 'anonymous'}]`;
+    if (typeof nestedValue === 'symbol') return nestedValue.toString();
+    if (nestedValue && typeof nestedValue === 'object') {
+      if (seen.has(nestedValue)) return '[Circular]';
+      seen.add(nestedValue);
+    }
+    return nestedValue;
+  }, 2);
+  return serialized ?? String(value);
+}
+
+function measureToolOutputChars(value: unknown): number {
+  if (typeof value === 'string') return value.length;
+  const serialized = stringifyToolOutputArtifact(value);
+  return serialized.length;
+}
+
+function buildToolOutputArtifactPath(
+  sessionPath: string,
+  messageID: string,
+  toolName: string,
+  extension: 'json' | 'txt'
+): string {
+  const safeToolName = sanitizeAgentName(toolName).slice(0, 48) || 'tool';
+  return `${sessionPath}/${messageID}/artifact/tool-output-${safeToolName}-${ulid()}.${extension}`;
 }
 
 export class SessionManager {
@@ -879,6 +913,169 @@ export class SessionManager {
   async readContextSnapshot(sessionID: string, agentId: string): Promise<ContextSnapshot | null> {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     return readJSON<ContextSnapshot>(`${sessionPath}/context`);
+  }
+
+  async writeToolOutputArtifact(
+    sessionID: string,
+    agentId: string,
+    messageID: string,
+    toolName: string,
+    output: unknown
+  ): Promise<ToolOutputArtifactRef> {
+    const state = await getStorageState();
+    const sessionPath = this.knownSessionPath(sessionID, agentId);
+    const relativePath = buildToolOutputArtifactPath(sessionPath, messageID, toolName, 'json');
+    const absolutePath = path.join(state.dir, relativePath);
+    const createdAt = Date.now();
+    const artifact = {
+      kind: 'tool-output',
+      toolName,
+      createdAt,
+      sessionID,
+      agentId,
+      messageID,
+      output,
+    };
+    const serialized = stringifyToolOutputArtifact(artifact);
+
+    await this.serializedWrite(relativePath, async () => {
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      const tmp = `${absolutePath}.${process.pid}.${ulid()}.tmp`;
+      try {
+        await fs.writeFile(tmp, serialized, 'utf-8');
+        await fs.rename(tmp, absolutePath);
+      } catch (error) {
+        try {
+          await fs.unlink(tmp);
+        } catch {
+          // Ignore cleanup errors.
+        }
+        throw error;
+      }
+    });
+
+    return {
+      kind: 'tool-output',
+      path: relativePath,
+      absolutePath,
+      bytes: Buffer.byteLength(serialized, 'utf8'),
+      originalChars: measureToolOutputChars(output),
+    };
+  }
+
+  async createToolOutputArtifactStream(
+    sessionID: string,
+    agentId: string,
+    messageID: string,
+    toolName: string,
+    metadata: Record<string, unknown> = {}
+  ): Promise<ToolOutputArtifactStream> {
+    const state = await getStorageState();
+    const sessionPath = this.knownSessionPath(sessionID, agentId);
+    const relativePath = buildToolOutputArtifactPath(sessionPath, messageID, toolName, 'txt');
+    const absolutePath = path.join(state.dir, relativePath);
+    const tmp = `${absolutePath}.${process.pid}.${ulid()}.tmp`;
+    const createdAt = Date.now();
+
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+
+    const stream = createWriteStream(tmp, { encoding: 'utf8' });
+    let bytes = 0;
+    let chars = 0;
+    let streamError: Error | undefined;
+    let settled = false;
+    const pendingWrites: Promise<void>[] = [];
+
+    stream.on('error', (error) => {
+      streamError = error;
+    });
+
+    const enqueueWrite = (chunk: string): void => {
+      if (settled || chunk.length === 0) return;
+      bytes += Buffer.byteLength(chunk, 'utf8');
+      chars += chunk.length;
+      const write = new Promise<void>((resolve, reject) => {
+        stream.write(chunk, 'utf8', (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      }).catch((error) => {
+        if (!streamError) {
+          streamError = error as Error;
+        }
+      });
+      pendingWrites.push(write);
+    };
+
+    const header = [
+      '# AgentUse Tool Output Artifact',
+      `kind: tool-output`,
+      `tool: ${toolName}`,
+      `createdAt: ${new Date(createdAt).toISOString()}`,
+      `sessionID: ${sessionID}`,
+      `agentId: ${agentId}`,
+      `messageID: ${messageID}`,
+      Object.keys(metadata).length > 0
+        ? `metadata: ${stringifyToolOutputArtifact(metadata)}`
+        : undefined,
+      '',
+    ].filter((line): line is string => line !== undefined).join('\n');
+
+    enqueueWrite(`${header}\n`);
+
+    const closeStream = async (): Promise<void> => {
+      await Promise.all(pendingWrites);
+      if (streamError) throw streamError;
+      await new Promise<void>((resolve, reject) => {
+        stream.end(() => {
+          if (streamError) reject(streamError);
+          else resolve();
+        });
+      });
+    };
+
+    return {
+      write(chunk: string): void {
+        enqueueWrite(chunk);
+      },
+      async finalize(): Promise<ToolOutputArtifactRef> {
+        if (settled) {
+          throw new Error('Tool output artifact stream already settled');
+        }
+        settled = true;
+        try {
+          await closeStream();
+          await fs.rename(tmp, absolutePath);
+          return {
+            kind: 'tool-output',
+            path: relativePath,
+            absolutePath,
+            bytes,
+            originalChars: chars,
+          };
+        } catch (error) {
+          try {
+            await fs.unlink(tmp);
+          } catch {
+            // Ignore cleanup errors.
+          }
+          throw error;
+        }
+      },
+      async discard(): Promise<void> {
+        if (settled) return;
+        settled = true;
+        await Promise.all(pendingWrites).catch(() => undefined);
+        await new Promise<void>((resolve) => {
+          stream.end(() => resolve());
+        }).catch(() => undefined);
+        try {
+          await fs.unlink(tmp);
+        } catch {
+          // The stream may not have created the file yet, or it may already be gone.
+        }
+      },
+    };
   }
 
   async getSessionDirectory(sessionID: string, agentId: string): Promise<string> {

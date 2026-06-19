@@ -15,6 +15,7 @@ import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-valid
 import { logger } from '../utils/logger';
 import type { ParsedAgent } from '../parser';
 import { approvalToolDefaults, isApprovalEnabled } from './approval';
+import type { ToolOutputArtifactSink } from '../tools/types.js';
 
 /**
  * Options for loading agent tools
@@ -34,6 +35,8 @@ export interface LoadAgentToolsOptions {
   logPrefix?: string | undefined;
   /** Session ID for sandbox output directory */
   sessionId?: string | undefined;
+  /** Optional session-local artifact sink for tools that preserve full output. */
+  toolOutputArtifacts?: ToolOutputArtifactSink | undefined;
 }
 
 /**
@@ -67,6 +70,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     mcpConnections,
     logPrefix = '',
     sessionId,
+    toolOutputArtifacts,
   } = options;
 
   // Compute agentId relative to the agent's own project (stateRoot) so the
@@ -96,6 +100,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
         projectRoot: projectContext.projectRoot,
         agentDir,
         sessionId,
+        toolOutputArtifacts,
         approval: approvalToolDefaults(agent.config),
       } as PathResolverContext);
       if (Object.keys(configuredTools).length > 0) {

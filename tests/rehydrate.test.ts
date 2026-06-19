@@ -190,4 +190,102 @@ describe('rehydrateMessages', () => {
       delete process.env.XDG_DATA_HOME;
     }
   });
+
+  it('appends approval parts created after an un-compacted suspension snapshot', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-rehydrate-suspension-snapshot-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+
+    try {
+      await initStorage(projectRoot);
+      const sessionManager = new SessionManager();
+      const sessionID = await sessionManager.createSession({
+        agent: {
+          id: 'agents/review',
+          name: 'review',
+          isSubAgent: false
+        },
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: {
+          root: projectRoot,
+          cwd: projectRoot
+        }
+      });
+      const agentId = 'agents/review';
+      const messageID = await sessionManager.createMessage(sessionID, agentId, {
+        user: {
+          prompt: {
+            task: 'Long approval task'
+          }
+        },
+        assistant: {
+          system: ['system'],
+          modelID: 'test',
+          providerID: 'demo',
+          mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot },
+          cost: 0,
+          tokens: {
+            input: 0,
+            output: 0,
+            reasoning: 0,
+            cache: { read: 0, write: 0 }
+          }
+        }
+      });
+
+      await sessionManager.writeContextSnapshot(sessionID, agentId, {
+        version: 1,
+        updatedAt: 1_000,
+        messageID,
+        messages: [
+          { role: 'system', content: 'system' },
+          { role: 'user', content: 'Long approval task' },
+        ],
+        usage: {
+          activeTokens: 76_000,
+          contextLimit: 922_000,
+          usagePercentage: 8.243,
+          compacted: false,
+          compactions: 0,
+          updatedAt: 1_000,
+        }
+      });
+
+      await sessionManager.addPart(sessionID, agentId, messageID, {
+        type: 'text',
+        text: 'Ready for review.',
+        time: { start: 1_001, end: 1_001 }
+      } as any);
+      await sessionManager.addPart(sessionID, agentId, messageID, {
+        type: 'tool',
+        callID: 'call-approval',
+        tool: 'await_human',
+        state: {
+          status: 'pending',
+          input: { prompt: 'Approve?' },
+          suspendedAt: 1_002,
+          resumePayload: {
+            kind: 'await_human',
+            resumeToken: 'token-1'
+          }
+        }
+      } as any);
+
+      const messages = await rehydrateMessages(sessionManager, sessionID, agentId);
+
+      expect(messages).toHaveLength(4);
+      expect(messages[2]).toEqual({ role: 'assistant', content: 'Ready for review.' });
+      expect((messages[3] as any).content[0]).toMatchObject({
+        type: 'tool-call',
+        toolCallId: 'call-approval',
+        toolName: 'await_human',
+        input: { prompt: 'Approve?' }
+      });
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
 });

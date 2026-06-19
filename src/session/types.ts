@@ -235,6 +235,22 @@ export type ToolStateRunning = {
   };
 };
 
+export type ToolOutputArtifactRef = {
+  kind: 'tool-output';
+  path: string;
+  absolutePath: string;
+  bytes: number;
+  originalChars: number;
+};
+
+export type ModelToolOutputArtifactRef = Omit<ToolOutputArtifactRef, 'absolutePath'>;
+
+export type ToolOutputArtifactStream = {
+  write(chunk: string): void;
+  finalize(): Promise<ToolOutputArtifactRef>;
+  discard(): Promise<void>;
+};
+
 export type ToolStateCompleted = {
   status: 'completed';
   input: unknown;
