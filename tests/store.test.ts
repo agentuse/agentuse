@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import type { Tool } from "ai";
 import { Store, createStore } from "../src/store/store";
 import { createStoreTools } from "../src/store/tools";
 import { mkdtempSync, rmSync, existsSync, readFileSync } from "fs";
@@ -140,8 +141,6 @@ describe("Store", () => {
       const result = await (tools.store_list as any).execute({});
 
       expect(result.success).toBe(true);
-      expect(result.projection).toBe("summary");
-      expect(result.summary.byType.draft).toBe(1);
       expect(result.items[0].data).toBeUndefined();
       expect(result.items[0].dataKeys).toEqual(["body", "score"]);
     });
@@ -154,9 +153,8 @@ describe("Store", () => {
       });
 
       const tools = createStoreTools(store);
-      const result = await (tools.store_list as any).execute({ dataFields: ["score"] });
+      const result = await (tools.store_list as any).execute({ fields: ["score"] });
 
-      expect(result.projection).toBe("dataFields");
       expect(result.items[0].data).toEqual({ score: 7 });
       expect(result.items[0].dataKeys).toEqual(["body", "score"]);
     });
@@ -363,6 +361,62 @@ describe("Store", () => {
         expect(items[i].createdAt >= items[i + 1].createdAt).toBe(true);
       }
     });
+
+    it("filters by ids", async () => {
+      const all = await store.list();
+      const wanted = [all[0].id, all[2].id];
+      const subset = await store.list({ ids: wanted });
+
+      expect(subset).toHaveLength(2);
+      expect(subset.map((i) => i.id).sort()).toEqual([...wanted].sort());
+    });
+
+    it("filters by where on data keys", async () => {
+      const matched = await store.list({ where: { n: 2 } });
+
+      expect(matched).toHaveLength(1);
+      expect(matched[0].data.n).toBe(2);
+    });
+
+    it("where matches string form of numeric/boolean data", async () => {
+      await store.create({ type: "flag", data: { active: true, count: 5 } });
+
+      const byBool = await store.list({ where: { active: "true" } });
+      const byNum = await store.list({ where: { count: "5" } });
+
+      expect(byBool).toHaveLength(1);
+      expect(byNum).toHaveLength(1);
+    });
+
+    it("searches with q across title and data", async () => {
+      await store.create({ title: "Find the needle", data: { body: "nothing here" } });
+      await store.create({ data: { body: "a needle hides in data" } });
+
+      const hits = await store.list({ q: "needle" });
+
+      expect(hits).toHaveLength(2);
+    });
+  });
+
+  describe("query()", () => {
+    beforeEach(async () => {
+      await store.create({ type: "task", data: { n: 1 } });
+      await store.create({ type: "task", data: { n: 2 } });
+      await store.create({ type: "note", data: { n: 3 } });
+    });
+
+    it("returns total matching filters regardless of limit", async () => {
+      const result = await store.query({ type: "task", limit: 1 });
+
+      expect(result.items).toHaveLength(1);
+      expect(result.total).toBe(2);
+    });
+
+    it("total reflects all items when unfiltered", async () => {
+      const result = await store.query();
+
+      expect(result.total).toBe(3);
+    });
   });
 
   describe("getStoreName()", () => {
@@ -527,5 +581,96 @@ describe("Store Atomic Writes", () => {
     expect(tmpFiles).toHaveLength(0);
 
     await store.releaseLock();
+  });
+});
+
+describe("createStoreTools", () => {
+  let tempDir: string;
+  let store: Store;
+  let tools: ReturnType<typeof createStoreTools>;
+
+  // The tool `execute` is the AI-SDK Tool shape; invoke it directly in tests.
+  const call = (tool: Tool, args: Record<string, unknown>): Promise<Record<string, unknown>> =>
+    (tool.execute as (a: Record<string, unknown>, o?: unknown) => Promise<Record<string, unknown>>)(args, {});
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "store-tools-test-"));
+    store = new Store(tempDir, "tools-store", "agent");
+    tools = createStoreTools(store);
+    await store.create({ type: "task", title: "First", status: "open", data: { body: "alpha payload", n: 1 } });
+    await store.create({ type: "task", title: "Second", status: "done", data: { body: "beta payload", n: 2 } });
+    await store.create({ type: "note", title: "Third", data: { body: "gamma needle payload", n: 3 } });
+  });
+
+  afterEach(async () => {
+    await store.releaseLock();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("store_list returns summary rows without data by default", async () => {
+    const res = await call(tools.store_list, {});
+    const items = res.items as Array<Record<string, unknown>>;
+
+    expect(res.count).toBe(3);
+    expect(res.total).toBe(3);
+    expect(items.every((i) => !("data" in i))).toBe(true);
+    expect(items.every((i) => typeof i.id === "string")).toBe(true);
+  });
+
+  it("store_list summary rows list available data keys without values", async () => {
+    const res = await call(tools.store_list, {});
+    const first = (res.items as Array<Record<string, unknown>>)[0];
+
+    expect(first.data).toBeUndefined();
+    expect(Array.isArray(first.dataKeys)).toBe(true);
+    expect((first.dataKeys as string[]).sort()).toEqual(["body", "n"]);
+  });
+
+  it("store_list includeData returns full payloads", async () => {
+    const res = await call(tools.store_list, { includeData: true });
+    const items = res.items as Array<Record<string, unknown>>;
+
+    expect(items.every((i) => "data" in i)).toBe(true);
+  });
+
+  it("store_list fields projects only requested data keys", async () => {
+    const res = await call(tools.store_list, { fields: ["n"] });
+    const first = (res.items as Array<Record<string, unknown>>)[0];
+
+    expect(Object.keys(first.data as object)).toEqual(["n"]);
+  });
+
+  it("store_list total reflects filter while count reflects the page", async () => {
+    const res = await call(tools.store_list, { type: "task", limit: 1 });
+
+    expect(res.count).toBe(1);
+    expect(res.total).toBe(2);
+  });
+
+  it("store_list q attaches a match snippet to summary rows", async () => {
+    const res = await call(tools.store_list, { q: "needle" });
+    const items = res.items as Array<Record<string, unknown>>;
+
+    expect(items).toHaveLength(1);
+    expect(typeof items[0].match).toBe("string");
+    expect((items[0].match as string).toLowerCase()).toContain("needle");
+  });
+
+  it("store_create echoes id and metadata but not the data payload", async () => {
+    const res = await call(tools.store_create, { type: "task", data: { secret: "x".repeat(500) } });
+
+    expect(res.success).toBe(true);
+    expect(typeof res.id).toBe("string");
+    expect((res.item as Record<string, unknown>).data).toBeUndefined();
+  });
+
+  it("store_get returns full data, or only requested fields", async () => {
+    const created = await store.create({ data: { keep: 1, drop: 2 } });
+
+    const full = await call(tools.store_get, { id: created.id });
+    expect((full.item as { data: Record<string, unknown> }).data).toEqual({ keep: 1, drop: 2 });
+
+    const narrowed = await call(tools.store_get, { id: created.id, fields: ["keep"] });
+    expect((narrowed.item as { data: Record<string, unknown> }).data).toEqual({ keep: 1 });
   });
 });

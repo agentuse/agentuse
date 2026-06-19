@@ -24,9 +24,11 @@ function storeToolEvent(entry: ApprovalLogEntry, projectId?: string): StoreEvent
   const store = typeof payload.store === 'string' && payload.store ? payload.store : undefined;
   const itemId = typeof payload.itemId === 'string' && payload.itemId
     ? payload.itemId
-    : typeof item.id === 'string' && item.id
-      ? item.id
-      : undefined;
+    : typeof payload.id === 'string' && payload.id
+      ? payload.id
+      : typeof item.id === 'string' && item.id
+        ? item.id
+        : undefined;
   const params = new URLSearchParams();
   if (projectId) params.set('project', projectId);
   if (itemId) params.set('highlight', itemId);
@@ -56,7 +58,7 @@ function StoreEventBlock(props: { event: StoreEvent }) {
               {item.status && <span>{item.status}</span>}
               {event.itemId && <code>{event.itemId}</code>}
             </div>
-            <div class="store-event-preview">{storeItemPreview(item)}</div>
+            {storeItemPreview(item) && <div class="store-event-preview">{storeItemPreview(item)}</div>}
           </>
         ) : (
           <div class="store-event-title">{event.itemId ?? 'Store operation'}</div>

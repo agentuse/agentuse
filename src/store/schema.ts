@@ -52,6 +52,9 @@ export const StoreListOptionsSchema = z.object({
   status: z.string().optional(),
   parentId: z.string().optional(),
   tag: z.string().optional(),
+  ids: z.array(z.string()).optional(),
+  where: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  q: z.string().optional(),
   limit: z.number().positive().optional(),
   offset: z.number().nonnegative().optional(),
 });

@@ -7,8 +7,6 @@ import { z } from 'zod';
 import type { Store } from './store';
 import type { StoreCreateOptions, StoreUpdateOptions, StoreListOptions, StoreItem } from './types';
 
-type StoreListProjection = 'summary' | 'full';
-
 /**
  * Helper to filter out undefined values from an object
  * This ensures we don't pass undefined to methods that don't expect it
@@ -23,51 +21,50 @@ function filterUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> 
   return result;
 }
 
-function projectStoreItem(
+/** A store item with its `data` payload optionally omitted or narrowed. */
+type ProjectedItem = Omit<StoreItem, 'data'> & { data?: Record<string, unknown> };
+
+/**
+ * Project an item for a tool response to keep token usage down.
+ * - `includeData`: return the full item unchanged.
+ * - `fields`: include only those keys from `data`.
+ * - neither: drop `data` entirely (metadata-only summary row).
+ */
+function projectItem(
   item: StoreItem,
-  projection: StoreListProjection,
-  dataFields?: string[],
-): Record<string, unknown> {
-  const base: Record<string, unknown> = {
-    id: item.id,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-    ...(item.type !== undefined && { type: item.type }),
-    ...(item.title !== undefined && { title: item.title }),
-    ...(item.status !== undefined && { status: item.status }),
-    ...(item.parentId !== undefined && { parentId: item.parentId }),
-    ...(item.tags !== undefined && { tags: item.tags }),
-  };
+  opts: { includeData?: boolean; fields?: string[] } = {}
+): StoreItem | ProjectedItem {
+  if (opts.includeData) return item;
 
-  if (dataFields && dataFields.length > 0) {
-    base.data = Object.fromEntries(
-      dataFields
-        .filter((field) => Object.prototype.hasOwnProperty.call(item.data, field))
-        .map((field) => [field, item.data[field]])
-    );
-    base.dataKeys = Object.keys(item.data);
-    return base;
+  const { data, ...meta } = item;
+  if (opts.fields && opts.fields.length > 0) {
+    const picked: Record<string, unknown> = {};
+    for (const key of opts.fields) {
+      if (key in data) picked[key] = data[key];
+    }
+    return { ...meta, data: picked };
   }
-
-  if (projection === 'full') {
-    base.data = item.data;
-  } else {
-    base.dataKeys = Object.keys(item.data);
-  }
-
-  return base;
+  return meta;
 }
 
-function summarizeStoreItems(items: StoreItem[]): Record<string, unknown> {
-  const byType: Record<string, number> = {};
-  const byStatus: Record<string, number> = {};
-
-  for (const item of items) {
-    byType[item.type ?? '(none)'] = (byType[item.type ?? '(none)'] ?? 0) + 1;
-    byStatus[item.status ?? '(none)'] = (byStatus[item.status ?? '(none)'] ?? 0) + 1;
+/**
+ * Build a short snippet showing where a free-text `q` matched, so a summary
+ * row (which omits `data`) still explains why it was returned.
+ */
+function matchSnippet(item: StoreItem, q: string, window = 60): string | undefined {
+  const needle = q.toLowerCase();
+  const sources = [item.title, item.type, ...(item.tags ?? []), JSON.stringify(item.data)];
+  for (const source of sources) {
+    if (!source) continue;
+    const idx = source.toLowerCase().indexOf(needle);
+    if (idx === -1) continue;
+    const start = Math.max(0, idx - window);
+    const end = Math.min(source.length, idx + needle.length + window);
+    const prefix = start > 0 ? '…' : '';
+    const suffix = end < source.length ? '…' : '';
+    return `${prefix}${source.slice(start, end).replace(/\s+/g, ' ').trim()}${suffix}`;
   }
-
-  return { byType, byStatus };
+  return undefined;
 }
 
 /**
@@ -113,12 +110,13 @@ export function createStoreTools(store: Store): Record<string, Tool> {
             error: (error as Error).message,
           };
         }
+        // Echo only metadata (no `data`) - the caller already has the payload
+        // it sent; returning it again just burns tokens.
         return {
           success: true,
           store: storeName,
-          itemId: item.id,
-          item,
-          message: `Created item with ID: ${item.id}`,
+          id: item.id,
+          item: projectItem(item),
         };
       },
     },
@@ -127,11 +125,12 @@ export function createStoreTools(store: Store): Record<string, Tool> {
      * Get an item by ID
      */
     store_get: {
-      description: `Get an item from the "${storeName}" store by its ID.`,
+      description: `Get a single item (with its full data) from the "${storeName}" store by its ID.`,
       inputSchema: z.object({
         id: z.string().describe('The item ID to retrieve'),
+        fields: z.array(z.string()).optional().describe('If set, return only these keys from the item data instead of the full payload'),
       }),
-      execute: async ({ id }: { id: string }) => {
+      execute: async ({ id, fields }: { id: string; fields?: string[] }) => {
         const item = await store.get(id);
         if (!item) {
           return {
@@ -142,8 +141,8 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         return {
           success: true,
           store: storeName,
-          itemId: item.id,
-          item,
+          id: item.id,
+          item: fields ? projectItem(item, { fields }) : item,
         };
       },
     },
@@ -190,9 +189,8 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         return {
           success: true,
           store: storeName,
-          itemId: item.id,
-          item,
-          message: `Updated item: ${id}`,
+          id: item.id,
+          item: projectItem(item),
         };
       },
     },
@@ -216,47 +214,71 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         return {
           success: true,
           store: storeName,
-          itemId: id,
-          message: `Deleted item: ${id}`,
+          id,
+          deleted: true,
         };
       },
     },
 
     /**
-     * List items with optional filtering
+     * List/search items with optional filtering and projection
      */
     store_list: {
-      description: `List items from the "${storeName}" store with optional filtering. Returns items sorted by creation date (newest first). Defaults to summary projection without full data payloads; use store_get for one item or projection="full"/dataFields for targeted details.`,
+      description:
+        `List/search items in the "${storeName}" store, newest first. ` +
+        `Returns lightweight summary rows (no "data" payload, but a "dataKeys" list of available keys) ` +
+        `so you can scan many items cheaply, then call store_get for the full data of the one you want. ` +
+        `Narrow with filters or "q" before reading; set includeData/fields only when you truly need payloads.`,
       inputSchema: z.object({
         type: z.string().optional().describe('Filter by item type'),
         status: z.string().optional().describe('Filter by status'),
         parentId: z.string().optional().describe('Filter by parent ID'),
         tag: z.string().optional().describe('Filter by tag'),
+        ids: z.array(z.string()).optional().describe('Fetch these specific item IDs in one call'),
+        where: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
+          .describe('Exact-match filters on keys inside item data, e.g. { "stage": "review" }'),
+        q: z.string().optional().describe('Case-insensitive substring search across title, type, tags and data'),
+        includeData: z.boolean().optional().describe('Include the full data payload of each item (default false)'),
+        fields: z.array(z.string()).optional().describe('Include only these keys from each item data (ignored if includeData is true)'),
         limit: z.number().positive().optional().describe('Maximum number of items to return'),
         offset: z.number().nonnegative().optional().describe('Number of items to skip'),
-        projection: z.enum(['summary', 'full']).optional().describe('summary omits full data payloads (default); full includes data'),
-        dataFields: z.array(z.string()).optional().describe('Specific data keys to include without returning the full data payload'),
       }),
-      execute: async ({ type, status, parentId, tag, limit, offset, projection, dataFields }: {
+      execute: async ({ type, status, parentId, tag, ids, where, q, includeData, fields, limit, offset }: {
         type?: string;
         status?: string;
         parentId?: string;
         tag?: string;
+        ids?: string[];
+        where?: Record<string, string | number | boolean>;
+        q?: string;
+        includeData?: boolean;
+        fields?: string[];
         limit?: number;
         offset?: number;
-        projection?: StoreListProjection;
-        dataFields?: string[];
       }) => {
-        const options: StoreListOptions = filterUndefined({ type, status, parentId, tag, limit, offset });
-        const items = await store.list(options);
-        const projectedItems = items.map((item) => projectStoreItem(item, projection ?? 'summary', dataFields));
+        const options: StoreListOptions = filterUndefined({ type, status, parentId, tag, ids, where, q, limit, offset });
+        const { items, total } = await store.query(options);
+
+        const projection = { ...(includeData ? { includeData } : {}), ...(fields ? { fields } : {}) };
+        const rows = items.map(item => {
+          const row = projectItem(item, projection);
+          if (includeData) return row;
+          // Summary/fields rows omit some or all data: list available keys so the
+          // agent knows what it could request, and show why a `q` match hit.
+          const extra: Record<string, unknown> = { dataKeys: Object.keys(item.data) };
+          if (q) {
+            const snippet = matchSnippet(item, q);
+            if (snippet) extra.match = snippet;
+          }
+          return { ...row, ...extra };
+        });
+
         return {
           success: true,
           store: storeName,
-          count: items.length,
-          projection: dataFields && dataFields.length > 0 ? 'dataFields' : projection ?? 'summary',
-          summary: summarizeStoreItems(items),
-          items: projectedItems,
+          count: rows.length,
+          total,
+          items: rows,
         };
       },
     },

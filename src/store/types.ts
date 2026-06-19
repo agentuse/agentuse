@@ -59,15 +59,30 @@ export interface StoreUpdateOptions {
 }
 
 /**
- * Options for listing store items
+ * Options for listing/querying store items
  */
 export interface StoreListOptions {
   type?: string | undefined;
   status?: string | undefined;
   parentId?: string | undefined;
   tag?: string | undefined;
+  /** Restrict to these specific item IDs (batch fetch). */
+  ids?: string[] | undefined;
+  /** Exact-match filters against keys inside each item's `data` payload. */
+  where?: Record<string, string | number | boolean> | undefined;
+  /** Case-insensitive substring search across title, type, tags and data. */
+  q?: string | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
+}
+
+/**
+ * Result of a query: the page of items plus the total matching the filters
+ * (before limit/offset are applied) so callers know whether more remain.
+ */
+export interface StoreQueryResult {
+  items: StoreItem[];
+  total: number;
 }
 
 /**

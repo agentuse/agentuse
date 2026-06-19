@@ -74,10 +74,42 @@ When `store` is configured, your agent can:
 | Operation | Description |
 |-----------|-------------|
 | **Create** | Add new items with type, title, status, data, and tags |
-| **Get** | Retrieve a single item by ID |
+| **Get** | Retrieve a single item by ID (full data, or only selected `fields`) |
 | **Update** | Modify existing items (merges changes, doesn't replace) |
 | **Delete** | Remove items by ID |
-| **List** | Query items with filters (type, status, parent, tag) |
+| **List** | Query and search items with filters, full-text search, and projection |
+
+## Listing and searching
+
+`store_list` is built to be **token-efficient**: by default it returns lightweight summary rows (id, type, title, status, tags, parent, timestamps) **without the `data` payload**. The agent scans the summaries, then calls `store_get` for the full data of the one item it needs, instead of pulling every payload into context.
+
+It accepts these parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `type` | string | Filter by item type |
+| `status` | string | Filter by status |
+| `parentId` | string | Filter by parent item ID |
+| `tag` | string | Filter by a single tag |
+| `ids` | string[] | Fetch these specific item IDs in one call (batch get) |
+| `where` | object | Exact-match filters on keys **inside** `data`, e.g. `{ "stage": "review" }`. Numbers and booleans also match their string form (`"5"` matches `5`) |
+| `q` | string | Case-insensitive substring search across title, type, tags, and `data`. Matching summary rows include a short `match` snippet showing where it hit |
+| `includeData` | boolean | Return the full `data` payload of each item (default `false`) |
+| `fields` | string[] | Return only these keys from each item's `data` (ignored when `includeData` is true) |
+| `limit` | number | Maximum number of items to return |
+| `offset` | number | Number of items to skip (pagination) |
+
+The response is `{ count, total, items }`:
+- `count` is the number of rows returned and `total` is how many items match the filters before `limit`/`offset`, so the agent knows whether more remain.
+- Each summary row (when `data` is omitted) includes a `dataKeys` array listing the keys available in that item's `data`, so the agent knows what it could request via `fields` or `store_get` without seeing the values.
+
+To get counts by status or type, filter and read `total` (e.g. `store_list({ status: "pending" })`) rather than scanning rows.
+
+<Tip>
+  **Keep retrieval cheap.** Narrow with filters or `q` first, scan the summary rows, then `store_get` the single item you want. Only set `includeData: true` (or list `fields`) when you genuinely need payloads for several items at once. For a known set of IDs, pass `ids` to fetch them in one `store_list` call.
+</Tip>
+
+The same projection applies to `store_get`: pass `fields: ["url", "score"]` to return only those keys from a large item instead of the whole payload.
 
 ## Writing Instructions
 

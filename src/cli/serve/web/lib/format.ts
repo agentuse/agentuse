@@ -57,7 +57,8 @@ export function storeItemPreview(item: StoreItem, max = 180): string {
       return compact.length > max ? `${compact.slice(0, max)}…` : compact;
     }
   }
-  const json = JSON.stringify(item.data);
+  if (Object.keys(data).length === 0) return '';
+  const json = JSON.stringify(data);
   return json.length > max ? `${json.slice(0, max)}…` : json;
 }
 

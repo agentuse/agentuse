@@ -16,7 +16,29 @@ import type {
   StoreCreateOptions,
   StoreUpdateOptions,
   StoreListOptions,
+  StoreQueryResult,
 } from './types';
+
+/**
+ * Loose equality used by `where` filters. Models routinely pass `"5"` for a
+ * numeric field or `"true"` for a boolean, so we accept a string form that
+ * matches the stored value's string form in addition to strict equality.
+ */
+function looseEquals(stored: unknown, filter: string | number | boolean): boolean {
+  if (stored === filter) return true;
+  if (stored === null || stored === undefined) return false;
+  if (typeof stored === 'object') return false;
+  return String(stored) === String(filter);
+}
+
+/**
+ * Build the lowercased haystack a free-text `q` search scans for an item:
+ * title, type, tags and the stringified data payload.
+ */
+function searchHaystack(item: StoreItem): string {
+  const parts = [item.title, item.type, ...(item.tags ?? []), JSON.stringify(item.data)];
+  return parts.filter(Boolean).join(' ').toLowerCase();
+}
 
 /**
  * Check if a value is a plain object (not null, not an array).
@@ -390,14 +412,15 @@ export class Store {
   }
 
   /**
-   * List items with optional filtering
+   * Apply filters and newest-first sorting (no pagination).
    */
-  async list(options: StoreListOptions = {}): Promise<StoreItem[]> {
-    await this.ensureLoaded();
-
+  private filterAndSort(options: StoreListOptions): StoreItem[] {
     let results = [...this.items];
 
-    // Apply filters
+    if (options.ids) {
+      const ids = new Set(options.ids);
+      results = results.filter(item => ids.has(item.id));
+    }
     if (options.type) {
       results = results.filter(item => item.type === options.type);
     }
@@ -410,19 +433,54 @@ export class Store {
     if (options.tag) {
       results = results.filter(item => item.tags?.includes(options.tag!));
     }
+    if (options.where) {
+      const entries = Object.entries(options.where);
+      results = results.filter(item =>
+        entries.every(([key, value]) => looseEquals(item.data[key], value))
+      );
+    }
+    if (options.q) {
+      const needle = options.q.toLowerCase();
+      results = results.filter(item => searchHaystack(item).includes(needle));
+    }
 
     // Sort by createdAt descending (newest first)
     results.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-    // Apply pagination
+    return results;
+  }
+
+  /**
+   * Apply limit/offset pagination to an already-filtered list.
+   */
+  private paginate(items: StoreItem[], options: StoreListOptions): StoreItem[] {
+    let results = items;
     if (options.offset) {
       results = results.slice(options.offset);
     }
     if (options.limit) {
       results = results.slice(0, options.limit);
     }
-
     return results;
+  }
+
+  /**
+   * List items with optional filtering and pagination.
+   */
+  async list(options: StoreListOptions = {}): Promise<StoreItem[]> {
+    await this.ensureLoaded();
+    return this.paginate(this.filterAndSort(options), options);
+  }
+
+  /**
+   * Query items with optional filtering, returning the requested page plus the
+   * total number of items matching the filters (before limit/offset). Lets
+   * callers paginate without re-fetching the whole store.
+   */
+  async query(options: StoreListOptions = {}): Promise<StoreQueryResult> {
+    await this.ensureLoaded();
+    const filtered = this.filterAndSort(options);
+    return { items: this.paginate(filtered, options), total: filtered.length };
   }
 
   /**

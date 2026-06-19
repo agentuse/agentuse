@@ -52,7 +52,8 @@ export function storeItemPreview(item: StoreItem, max = 180): string {
       return compact.length > max ? `${compact.slice(0, max)}…` : compact;
     }
   }
-  const json = JSON.stringify(item.data);
+  if (Object.keys(data).length === 0) return '';
+  const json = JSON.stringify(data);
   return json.length > max ? `${json.slice(0, max)}…` : json;
 }
 
@@ -74,9 +75,11 @@ function storeToolEvent(entry: StoreLogEntry, projectId?: string): { store?: str
   const store = typeof payload.store === 'string' && payload.store ? payload.store : undefined;
   const itemId = typeof payload.itemId === 'string' && payload.itemId
     ? payload.itemId
-    : typeof item.id === 'string' && item.id
-      ? item.id
-      : undefined;
+    : typeof payload.id === 'string' && payload.id
+      ? payload.id
+      : typeof item.id === 'string' && item.id
+        ? item.id
+        : undefined;
   const params = new URLSearchParams();
   if (projectId) params.set('project', projectId);
   if (itemId) params.set('highlight', itemId);
@@ -102,7 +105,7 @@ export function renderStoreToolEvent(entry: StoreLogEntry, projectId?: string): 
         ${item.status ? `<span>${escapeHtml(item.status)}</span>` : ''}
         ${event.itemId ? `<code>${escapeHtml(event.itemId)}</code>` : ''}
        </div>
-       <div class="store-event-preview">${escapeHtml(storeItemPreview(item))}</div>`
+       ${storeItemPreview(item) ? `<div class="store-event-preview">${escapeHtml(storeItemPreview(item))}</div>` : ''}`
     : `<div class="store-event-title">${escapeHtml(event.itemId ?? 'Store operation')}</div>`;
   return `<div class="store-event">
     <div>
