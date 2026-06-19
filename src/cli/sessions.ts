@@ -880,15 +880,14 @@ async function showSession(
         process.stdout.write(`User: ${message.user.prompt.user}\n`);
       }
 
-      // Show token usage and duration. Lead with the blended spend (new,
-      // non-cached input + output) so cheap cache reads don't inflate the
-      // headline; show cached reads separately as a saved bonus.
+      // Show the full-rate spend split (non-cached input + output) so cheap,
+      // re-counted cache reads don't inflate the headline; cached reads are
+      // appended with a leading '+' to mark them as on-top, not inside, input.
       const tokens = message.assistant.tokens;
       const cached = Math.max(0, tokens.cache?.read ?? 0);
       const newInput = Math.max(0, tokens.input - cached);
-      const spent = newInput + Math.max(0, tokens.output);
-      let statsLine = `Tokens spent: ${spent} (new in: ${newInput}, out: ${tokens.output}`;
-      statsLine += cached > 0 ? `, +${cached} cached)` : ')';
+      let statsLine = `Tokens: in ${newInput}, out ${tokens.output}`;
+      statsLine += cached > 0 ? `, +${cached} cached` : '';
 
       // Add duration if completed timestamp exists
       if (message.time.completed) {

@@ -36,14 +36,15 @@ export function headerTokenUsage(
   return approval?.tokenUsage;
 }
 
-export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] | undefined): Array<{ label: string; value: string }> {
+export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] | undefined): Array<{ label: string; value: string; title?: string }> {
   if (!tokenUsage) return [];
 
-  const items: Array<{ label: string; value: string }> = [];
+  const items: Array<{ label: string; value: string; title?: string }> = [];
   const context = tokenUsage.context;
   if (context) {
     // Lead with "% context left" (like Codex): a stable 0-100 gauge of how much
-    // working room remains, rather than a raw, ever-growing token count.
+    // working room remains, rather than a raw, ever-growing token count. The
+    // absolute tokens/limit stay available on hover so the headline stays clean.
     const hasLimit = typeof context.contextLimit === 'number' && context.contextLimit > 0;
     const leftPercent = hasLimit
       ? formatUsagePercent(Math.max(0, 100 - context.usagePercentage))
@@ -54,7 +55,8 @@ export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] |
     ].filter(Boolean).join(' ');
     items.push({
       label: 'context used',
-      value: leftPercent ? `${leftPercent} left (${detail})` : detail,
+      value: leftPercent ? `${leftPercent} left` : detail,
+      ...(leftPercent ? { title: detail } : {}),
     });
   }
 
@@ -68,15 +70,14 @@ export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] |
     return items;
   }
 
-  // "tokens spent" is the blended total: new (non-cached) input + output. This is
-  // what the run actually costs at full rate. Cached reads are billed ~10x cheaper
-  // and re-counted on every step, so surfacing them as the headline made spend look
-  // far scarier than it is. We show them separately as a "saved" bonus instead.
-  items.push({ label: 'tokens spent', value: formatTokenCount(newInput + output) });
-  items.push({ label: 'input (new)', value: formatTokenCount(newInput) });
+  // Show the real full-rate spend split: non-cached input + output. Cached reads
+  // are billed ~10x cheaper and re-counted on every step, so surfacing them as a
+  // primary count made spend look far scarier than it is; we show them separately
+  // with a leading '+' to signal they sit on top of (not inside) the input count.
+  items.push({ label: 'input', value: formatTokenCount(newInput) });
   items.push({ label: 'output', value: formatTokenCount(output) });
   if (cached > 0) {
-    items.push({ label: 'cached (saved)', value: `+${formatTokenCount(cached)}` });
+    items.push({ label: 'cached', value: `+${formatTokenCount(cached)}` });
   }
   return items;
 }
@@ -407,7 +408,10 @@ export default function SessionDetail() {
               <div class="cell"><span class="label">expires</span><span class="value">{formatApprovalTime(approval.expiresAt)}</span></div>
             )}
             {tokenUsageMetaItems(tokenUsage).map((item) => (
-              <div class="cell token-cell" key={item.label}><span class="label">{item.label}</span><span class="value">{item.value}</span></div>
+              <div class="cell token-cell" key={item.label}>
+                <span class="label">{item.label}</span>
+                <span class="value" {...(item.title ? { title: item.title } : {})}>{item.value}</span>
+              </div>
             ))}
           </div>
         </header>

@@ -298,11 +298,10 @@ describe('SessionDetail header', () => {
     });
 
     expect(items).toEqual([
-      { label: 'context used', value: '91.8% left (75,992 / 922,000)' },
-      { label: 'tokens spent', value: '492,564' },
-      { label: 'input (new)', value: '486,568' },
+      { label: 'context used', value: '91.8% left', title: '75,992 / 922,000' },
+      { label: 'input', value: '486,568' },
       { label: 'output', value: '5,996' },
-      { label: 'cached (saved)', value: '+2,629,120' },
+      { label: 'cached', value: '+2,629,120' },
     ]);
   });
 
@@ -314,8 +313,7 @@ describe('SessionDetail header', () => {
     });
 
     expect(items).toEqual([
-      { label: 'tokens spent', value: '143,577' },
-      { label: 'input (new)', value: '143,366' },
+      { label: 'input', value: '143,366' },
       { label: 'output', value: '211' },
     ]);
   });
@@ -336,7 +334,7 @@ describe('SessionDetail header', () => {
     });
 
     expect(items).toEqual([
-      { label: 'context used', value: '99.6% left (3,596 / 922,000)' },
+      { label: 'context used', value: '99.6% left', title: '3,596 / 922,000' },
       { label: 'provider usage', value: 'not reported yet' },
     ]);
   });
