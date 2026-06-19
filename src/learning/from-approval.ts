@@ -137,7 +137,6 @@ or
   const responseText = await completeText(agentModel, {
     system,
     prompt,
-    temperature: 0.2,
   });
 
   let parsed: RawPromotion;

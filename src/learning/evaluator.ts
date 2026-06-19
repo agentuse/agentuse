@@ -116,7 +116,6 @@ If no learnings are applicable, respond with an empty array: []`;
   const responseText = await completeText(agentModel, {
     system,
     prompt,
-    temperature: 0.2,
   });
 
   // Parse JSON from response

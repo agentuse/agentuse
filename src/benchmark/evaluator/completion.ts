@@ -98,7 +98,6 @@ Respond ONLY with the JSON object, no other text.`;
     const responseText = await completeText(judgeModelString, {
       system,
       prompt: userPrompt,
-      temperature: 0,
       maxOutputTokens: 500,
     });
 

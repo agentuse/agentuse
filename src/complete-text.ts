@@ -7,7 +7,6 @@ export interface CompleteTextOptions {
   system: string;
   /** User prompt. */
   prompt: string;
-  temperature?: number;
   /** Output cap. Omitted on the Codex backend, which rejects `max_output_tokens`. */
   maxOutputTokens?: number;
   maxRetries?: number;
@@ -25,6 +24,12 @@ export interface CompleteTextOptions {
  * `instructions`; helper LLM calls (compaction, summaries, judges) must do the
  * same instead of reaching for `generateText()`, or they 400 the moment a
  * Codex-authed user triggers them.
+ *
+ * No `temperature` is sent: frontier models reject a custom value outright
+ * (Anthropic Opus 4.8/4.7 and Fable 5 400 with "Extra inputs are not permitted";
+ * OpenAI GPT-5 / reasoning models reject it as deprecated), and the default
+ * works everywhere. These are short helper calls where the consistency nudge of
+ * a low temperature isn't worth the cross-provider breakage.
  */
 export async function completeText(modelString: string, options: CompleteTextOptions): Promise<string> {
   const model = await createModel(modelString);
@@ -39,7 +44,6 @@ export async function completeText(modelString: string, options: CompleteTextOpt
       { role: 'user', content: options.prompt },
     ],
     maxRetries: options.maxRetries ?? 2,
-    ...(options.temperature !== undefined && { temperature: options.temperature }),
     // Codex rejects max_output_tokens; honor the cap on every other provider.
     ...(!usesCodexBackend && options.maxOutputTokens !== undefined && { maxOutputTokens: options.maxOutputTokens }),
     // Codex requires the top-level instructions field; the system message in

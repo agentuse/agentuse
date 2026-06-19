@@ -38,7 +38,6 @@ export async function compactMessages(
       system: COMPACTION_SYSTEM_PROMPT,
       prompt: `Please summarize this agent context:\n\n${contextToSummarize}`,
       maxOutputTokens: MAX_SUMMARY_TOKENS,
-      temperature: 0.3, // Lower temperature for more consistent summaries
       maxRetries: 2,
     });
 
