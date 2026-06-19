@@ -42,32 +42,42 @@ export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] |
   const items: Array<{ label: string; value: string }> = [];
   const context = tokenUsage.context;
   if (context) {
-    const percent = formatUsagePercent(context.usagePercentage);
+    // Lead with "% context left" (like Codex): a stable 0-100 gauge of how much
+    // working room remains, rather than a raw, ever-growing token count.
+    const hasLimit = typeof context.contextLimit === 'number' && context.contextLimit > 0;
+    const leftPercent = hasLimit
+      ? formatUsagePercent(Math.max(0, 100 - context.usagePercentage))
+      : undefined;
+    const detail = [
+      formatTokenCount(context.activeTokens),
+      hasLimit ? `/ ${formatTokenCount(context.contextLimit)}` : undefined,
+    ].filter(Boolean).join(' ');
     items.push({
-      label: 'ctx estimate',
-      value: [
-        formatTokenCount(context.activeTokens),
-        context.contextLimit !== undefined ? `/ ${formatTokenCount(context.contextLimit)}` : undefined,
-        percent ? `(${percent})` : undefined,
-      ].filter(Boolean).join(' '),
+      label: 'context used',
+      value: leftPercent ? `${leftPercent} left (${detail})` : detail,
     });
   }
 
-  const hasProviderUsage = tokenUsage.input > 0 || tokenUsage.cachedInput > 0 || tokenUsage.output > 0;
+  const cached = Math.max(0, tokenUsage.cachedInput);
+  const newInput = Math.max(0, tokenUsage.input - cached);
+  const output = Math.max(0, tokenUsage.output);
+
+  const hasProviderUsage = tokenUsage.input > 0 || cached > 0 || output > 0;
   if (!hasProviderUsage) {
     items.push({ label: 'provider usage', value: 'not reported yet' });
     return items;
   }
 
-  items.push({ label: 'provider input', value: formatTokenCount(tokenUsage.input) });
-
-  items.push({ label: 'cached input', value: formatTokenCount(tokenUsage.cachedInput) });
-  items.push({
-    label: 'uncached input',
-    value: formatTokenCount(Math.max(0, tokenUsage.input - tokenUsage.cachedInput)),
-  });
-
-  items.push({ label: 'output', value: formatTokenCount(tokenUsage.output) });
+  // "tokens spent" is the blended total: new (non-cached) input + output. This is
+  // what the run actually costs at full rate. Cached reads are billed ~10x cheaper
+  // and re-counted on every step, so surfacing them as the headline made spend look
+  // far scarier than it is. We show them separately as a "saved" bonus instead.
+  items.push({ label: 'tokens spent', value: formatTokenCount(newInput + output) });
+  items.push({ label: 'input (new)', value: formatTokenCount(newInput) });
+  items.push({ label: 'output', value: formatTokenCount(output) });
+  if (cached > 0) {
+    items.push({ label: 'cached (saved)', value: `+${formatTokenCount(cached)}` });
+  }
   return items;
 }
 

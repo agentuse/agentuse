@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { addLanguageModelUsage, contextUsageFromSnapshot, usageToAssistantTokens } from '../src/session/usage';
+import { addAssistantTokens, addLanguageModelUsage, contextUsageFromSnapshot, usageToAssistantTokens } from '../src/session/usage';
 
 describe('usageToAssistantTokens', () => {
   it('persists normalized cache read/write token counts', () => {
@@ -85,6 +85,28 @@ describe('usageToAssistantTokens', () => {
       outputTokenDetails: {
         reasoningTokens: 3,
       },
+    });
+  });
+});
+
+describe('addAssistantTokens', () => {
+  it('treats a missing base as zero (fresh run)', () => {
+    const delta = { input: 100, output: 20, reasoning: 3, cache: { read: 70, write: 5 } };
+    expect(addAssistantTokens(undefined, delta)).toEqual(delta);
+  });
+
+  it('folds a prior cumulative total into a resumed run so the count stays monotonic', () => {
+    // Models the bug: invocation #1 suspends at an approval gate with a large
+    // cumulative total; invocation #2 (resume) reports only its own usage. The
+    // persisted value must be the sum, never a drop back to #2's smaller number.
+    const priorFromSuspend = { input: 221_521, output: 1_341, reasoning: 0, cache: { read: 170_567, write: 0 } };
+    const resumedRun = { input: 271_074, output: 3_405, reasoning: 0, cache: { read: 214_331, write: 0 } };
+
+    expect(addAssistantTokens(priorFromSuspend, resumedRun)).toEqual({
+      input: 492_595,
+      output: 4_746,
+      reasoning: 0,
+      cache: { read: 384_898, write: 0 },
     });
   });
 });

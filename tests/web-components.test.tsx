@@ -282,7 +282,7 @@ describe('SessionDetail header', () => {
     })).toBe(tokenUsage);
   });
 
-  it('separates active context from cumulative cached and uncached input', () => {
+  it('leads with % context left and a blended spend, cached shown as a bonus', () => {
     const items = tokenUsageMetaItems({
       input: 3_115_688,
       cachedInput: 2_629_120,
@@ -298,15 +298,15 @@ describe('SessionDetail header', () => {
     });
 
     expect(items).toEqual([
-      { label: 'ctx estimate', value: '75,992 / 922,000 (8.2%)' },
-      { label: 'provider input', value: '3,115,688' },
-      { label: 'cached input', value: '2,629,120' },
-      { label: 'uncached input', value: '486,568' },
+      { label: 'context used', value: '91.8% left (75,992 / 922,000)' },
+      { label: 'tokens spent', value: '492,564' },
+      { label: 'input (new)', value: '486,568' },
       { label: 'output', value: '5,996' },
+      { label: 'cached (saved)', value: '+2,629,120' },
     ]);
   });
 
-  it('shows zero cached input explicitly when provider usage exists', () => {
+  it('omits the cached bonus when nothing was cached', () => {
     const items = tokenUsageMetaItems({
       input: 143_366,
       cachedInput: 0,
@@ -314,9 +314,8 @@ describe('SessionDetail header', () => {
     });
 
     expect(items).toEqual([
-      { label: 'provider input', value: '143,366' },
-      { label: 'cached input', value: '0' },
-      { label: 'uncached input', value: '143,366' },
+      { label: 'tokens spent', value: '143,577' },
+      { label: 'input (new)', value: '143,366' },
       { label: 'output', value: '211' },
     ]);
   });
@@ -337,7 +336,7 @@ describe('SessionDetail header', () => {
     });
 
     expect(items).toEqual([
-      { label: 'ctx estimate', value: '3,596 / 922,000 (0.4%)' },
+      { label: 'context used', value: '99.6% left (3,596 / 922,000)' },
       { label: 'provider usage', value: 'not reported yet' },
     ]);
   });

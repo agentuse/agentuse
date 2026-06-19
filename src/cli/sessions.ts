@@ -880,10 +880,15 @@ async function showSession(
         process.stdout.write(`User: ${message.user.prompt.user}\n`);
       }
 
-      // Show token usage and duration
+      // Show token usage and duration. Lead with the blended spend (new,
+      // non-cached input + output) so cheap cache reads don't inflate the
+      // headline; show cached reads separately as a saved bonus.
       const tokens = message.assistant.tokens;
-      const totalTokens = tokens.input + tokens.output;
-      let statsLine = `Tokens: ${totalTokens} (in: ${tokens.input}, out: ${tokens.output})`;
+      const cached = Math.max(0, tokens.cache?.read ?? 0);
+      const newInput = Math.max(0, tokens.input - cached);
+      const spent = newInput + Math.max(0, tokens.output);
+      let statsLine = `Tokens spent: ${spent} (new in: ${newInput}, out: ${tokens.output}`;
+      statsLine += cached > 0 ? `, +${cached} cached)` : ')';
 
       // Add duration if completed timestamp exists
       if (message.time.completed) {
@@ -894,10 +899,13 @@ async function showSession(
       process.stdout.write(statsLine + "\n");
       if (message.assistant.context) {
         const context = message.assistant.context;
-        const limit = context.contextLimit ? ` / ${context.contextLimit}` : '';
         const compacted = context.compacted ? `, compacted ${context.compactions}x` : '';
+        const left = context.contextLimit
+          ? `${Math.max(0, 100 - context.usagePercentage).toFixed(1)}% left, `
+          : '';
+        const limit = context.contextLimit ? ` / ${context.contextLimit}` : '';
         process.stdout.write(
-          `Context estimate: ${context.activeTokens}${limit} (${context.usagePercentage.toFixed(1)}%${compacted})\n`
+          `Context used: ${left}${context.activeTokens}${limit}${compacted}\n`
         );
       }
 

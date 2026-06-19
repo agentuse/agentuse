@@ -5,6 +5,7 @@ import type { ToolCallTrace } from '../plugin/types';
 import type { DoomLoopDetector } from '../tools/index.js';
 import type { SessionManager } from '../session';
 import type { ActiveContextUsage, ContextSnapshot, SessionTrigger } from '../session/types';
+import type { AssistantTokens } from '../session/usage';
 
 export type UsageKind = 'cumulative' | 'step';
 
@@ -34,6 +35,13 @@ export interface PreparedAgentExecution {
   subAgentNames: Set<string>;
   sessionID?: string | undefined;
   assistantMsgID?: string | undefined;
+  /**
+   * Cumulative token total already persisted on the primary message from prior
+   * invocations (only set when resuming an existing session). Folded into every
+   * usage write so the session token count stays cumulative across approval
+   * suspend/resume boundaries instead of resetting to the resumed run's usage.
+   */
+  priorTokens?: AssistantTokens | undefined;
   /** Agent ID (file-path-based identifier for session directory naming) */
   agentId?: string | undefined;
   doomLoopDetector: DoomLoopDetector;

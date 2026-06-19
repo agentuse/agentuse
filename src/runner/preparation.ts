@@ -16,6 +16,7 @@ import { buildSystemMessages, buildLearningPrompt } from './system-messages';
 import { createSessionAndMessage } from './session-helper';
 import { bindToolsToSnapshot, createToolsSnapshot } from './tool-snapshot';
 import { rehydrateMessages } from '../session';
+import type { AssistantTokens } from '../session/usage';
 import { appendApprovalInstructions } from './approval';
 import {
   expandSkillAllows,
@@ -101,6 +102,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   // Create session first so sandbox can use the session ID for its output directory
   let sessionID: string | undefined;
   let assistantMsgID: string | undefined;
+  let priorTokens: AssistantTokens | undefined;
   let agentId = computeAgentId(agentFilePath, projectContext?.stateRoot, agent.name);
   let systemMessages: Array<{ role: string; content: string }>;
   let resumedMessages = prebuiltMessages;
@@ -125,6 +127,9 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       throw new Error(`Session message not found: ${existingSessionId}`);
     }
     assistantMsgID = message.id;
+    // Carry the cumulative token total forward so the resumed run's usage adds
+    // to it rather than overwriting it (keeps the session count monotonic).
+    priorTokens = message.assistant.tokens;
     systemMessages = message.assistant.system.map(content => ({ role: 'system', content }));
     userMessage = message.user.prompt.user
       ? `${message.user.prompt.task}\n\n${message.user.prompt.user}`
@@ -288,6 +293,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     subAgentNames,
     sessionID,
     assistantMsgID,
+    ...(priorTokens && { priorTokens }),
     agentId,
     doomLoopDetector,
     cleanup,

@@ -6,7 +6,7 @@ import { AuthenticationError } from '../models';
 import { logger, runWithLogSink } from '../utils/logger';
 import { extractLearnings } from '../learning/index.js';
 import { recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, type SessionLogSink } from './session-helper';
-import { usageToAssistantTokens } from '../session/usage';
+import { usageToAssistantTokens, addAssistantTokens, type AssistantTokens } from '../session/usage';
 import {
   sendRunChannelMessages,
   startRunChannels,
@@ -89,15 +89,17 @@ export async function persistAssistantRunState(options: {
   messageId?: string;
   result: Pick<RunAgentResult, 'usage' | 'contextUsage'>;
   completedAt?: number;
+  /** Cumulative tokens from prior invocations (resume); folded into the write. */
+  priorTokens?: AssistantTokens;
 }): Promise<void> {
-  const { sessionManager, sessionId, agentId, messageId, result, completedAt } = options;
+  const { sessionManager, sessionId, agentId, messageId, result, completedAt, priorTokens } = options;
   if (!sessionManager || !sessionId || !agentId || !messageId) return;
 
   await sessionManager.updateMessage(sessionId, agentId, messageId, {
     ...(completedAt !== undefined && { time: { completed: completedAt } }),
     ...(result.usage && {
       assistant: {
-        tokens: usageToAssistantTokens(result.usage),
+        tokens: addAssistantTokens(priorTokens, usageToAssistantTokens(result.usage)),
         ...(result.contextUsage && { context: result.contextUsage })
       }
     }),
@@ -205,6 +207,7 @@ export async function runAgent(
       subAgentNames,
       sessionID: prepSessionID,
       assistantMsgID,
+      priorTokens,
       agentId: prepAgentId,
       doomLoopDetector
     } = preparation;
@@ -278,6 +281,7 @@ export async function runAgent(
       messageID: assistantMsgID!,
       agentId: prepAgentId!,
       agentName: agent.name,
+      ...(priorTokens && { priorTokens }),
       doomLoopDetector,
       slackRunChannelHandles: runChannelHandles,
       quiet
@@ -317,7 +321,8 @@ export async function runAgent(
               sessionId: prepSessionID,
               agentId: prepAgentId,
               messageId: assistantMsgID,
-              result
+              result,
+              ...(priorTokens && { priorTokens })
             });
           } catch (error) {
             logger.debug(`Failed to persist suspended session usage: ${(error as Error).message}`);
@@ -388,7 +393,8 @@ export async function runAgent(
           agentId: prepAgentId,
           messageId: assistantMsgID,
           result,
-          completedAt: Date.now()
+          completedAt: Date.now(),
+          ...(priorTokens && { priorTokens })
         });
         await sessionManager.setSessionCompleted(prepSessionID, prepAgentId);
       } catch (error) {

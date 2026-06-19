@@ -5,7 +5,7 @@ import type { SessionManager } from '../session';
 import type { AgentPart } from '../types/parts';
 import type { ToolStateCompleted, ToolStateError } from '../session/types';
 import type { ActiveContextUsage } from '../session/types';
-import { addLanguageModelUsage, usageToAssistantTokens } from '../session/usage';
+import { addLanguageModelUsage, usageToAssistantTokens, addAssistantTokens, type AssistantTokens } from '../session/usage';
 import { logger } from '../utils/logger';
 import { safeHttpUrl } from '../utils/url';
 import { formatToolResultForDisplay } from '../utils/format-tool-result';
@@ -138,6 +138,8 @@ export async function processAgentStream(
     agentName?: string;
     doomLoopDetector?: DoomLoopDetector;
     slackRunChannelHandles?: SlackRunChannelHandle[];
+    /** Cumulative tokens from prior invocations (resume); folded into usage writes. */
+    priorTokens?: AssistantTokens;
     /** Suppress console output (for serve mode) */
     quiet?: boolean;
   }
@@ -241,7 +243,7 @@ export async function processAgentStream(
     if (usage && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
       const updatePromise = options.sessionManager.updateMessage(options.sessionID, options.agentId, options.messageID, {
         assistant: {
-          tokens: usageToAssistantTokens(usage),
+          tokens: addAssistantTokens(options.priorTokens, usageToAssistantTokens(usage)),
           ...(contextUsage && { context: contextUsage })
         }
       }).catch(err => logger.debug(`Failed to persist interim usage: ${err.message}`));
