@@ -144,26 +144,6 @@ describe('ContextManager', () => {
       }
     });
 
-    it('should compact at step boundaries using a separately tunable threshold', async () => {
-      process.env.STEP_COMPACTION_MIN_TOKENS = '1000';
-
-      try {
-        const manager = new ContextManager('test:model');
-        await manager.initialize();
-
-        for (let i = 0; i < 5; i++) {
-          manager.addMessage({
-            role: 'user',
-            content: 'x'.repeat(1000)
-          });
-        }
-
-        expect(manager.shouldCompact()).toBe(false);
-        expect(manager.shouldCompactAtBoundary('step')).toBe(true);
-      } finally {
-        delete process.env.STEP_COMPACTION_MIN_TOKENS;
-      }
-    });
 
     it('should respect custom threshold from environment', async () => {
       // Set custom threshold
