@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.15.0] - upcoming
+
+This release centers on context-compaction reliability, accurate token accounting across approval gates, and making an agent run observable from the `serve` web UI. Approval gates, the session/approval web UI, the JSON API, and channels/Slack remain **experimental**: route shapes, UI details, and API response formats may still evolve based on production feedback.
+
+### Added
+
+- **Operational logs in the session view**: the CLI's `debug`/`info`/`warn`/`error`/`system` stream is captured during a run (via an `AsyncLocalStorage`-scoped sink) and persisted as `log` session parts, so the operational log now shows in the `serve` web session view and `agentuse sessions`, not just the launching terminal. Concurrent sub-agents route to their own session. Parts are capped per session (default 300, `AGENTUSE_SESSION_LOG_LIMIT`) with a truncation marker, and the session view renders level markers/colors behind a **debug toggle** (debug entries hidden by default).
+- **Compaction visibility**: compaction events surface as session markers (with a reason: window-pressure `limit` vs. `approval` gate) in the `serve` web view, SSE stream, and `agentuse sessions`, alongside live context-usage accounting, so a fold of the conversation is no longer silent.
+- **"Copy debug prompt" button**: the session page can copy a ready-to-paste prompt (with the `/agentuse` skill reference, session id, and replay command) that hands a coding agent everything it needs to debug, fix, or improve the run.
+- **Token-efficient store queries**: `store_list` now returns metadata-only summary rows by default (no `data` payload) so an agent can scan many items cheaply, then `store_get` the one it needs. Adds `q` (substring search across title/type/tags/data with a match snippet), `where` (exact-match on `data.*` keys with string/number/bool coercion), `ids` (batch fetch), and `includeData`/`fields` projection; responses include `total` alongside `count` for pagination. New `Store.query()` returns `{ items, total }`.
+- **Model-facing tool-output clamping with full-output offload**: large tool results are capped before they reach the model (new `AGENTUSE_TOOL_*` byte/line caps), and when session storage is available the full, untruncated output is saved as a session-local tool-output artifact and referenced from the bounded preview, so an oversized diff/log/file no longer inflates input tokens for the rest of the run.
+- **OpenCode Go provider**: built-in support and auth for the OpenCode Go (`opencode.ai/zen`) gateway via `OPENCODE_GO_API_KEY` (and optional `OPENCODE_GO_BASE_URL`), covering the GLM, Kimi, DeepSeek, MiMo, MiniMax, and Qwen model lines and auto-selecting the Anthropic vs OpenAI-compatible protocol per model.
+- **Learning provenance and human-comment capture**: learnings now carry a `source` (`auto` | `approval`); human approval comments that read as agent-wide rules are promoted into durable learnings (via a generalizability filter) and rank first when injected so they survive the per-run cap. Learning/error outcomes (`captured`/`none`/`failed`) are persisted as session markers so a silent capture failure is visible.
+- **API error detail on failures**: run failures now extract and surface the provider's API error detail instead of a generic message.
+- **Isolated `serve` sandbox script**: a dev helper to run a second `agentuse serve` alongside the live daemon without stealing its Slack socket or arming real schedules (isolated state via `XDG_DATA_HOME`, a separate port, Slack socket off, empty scratch `-C`).
+
+### Changed
+
+- **Context compaction reworked to run between `streamText` calls** (major reliability fix). Compaction previously ran inside the AI SDK `prepareStep` callback, where the messages it returned only affected a single request: the SDK rebuilt the full history from its own accumulated messages each step, so compaction never shrank the real conversation, re-fired every step past threshold, and on a smaller window (e.g. 200k) could march into a hard `context_length_exceeded`. `executeAgentCore` is now a segment loop: `prepareStep` only measures and annotates the cache, a `stopWhen` predicate ends a segment when real per-step usage crosses the window-relative threshold, and between segments the full conversation is reconstructed from `response.messages`, compacted (and **persisted**), and restarted from the compacted history. Continuation is gated on compaction actually reducing context (a no-op can't spin the loop), and the per-segment step budget is reduced by steps already used so restarts don't multiply `MAX_STEPS`.
+- **Compaction preserves the system prompt and original task verbatim**: the head (leading system messages + the original user task) is kept intact instead of being summarized away, the summary is placed as a provider-safe user message between the head and the recent tail (matching Codex, never a mid-conversation system message), and a forward-progress guarantee folds the whole body when no safe tool-pair split exists rather than no-opping into an overflow. Re-summarizing an unchanged transcript is guarded against, and the char/4 token estimate is calibrated against the provider's real per-step `inputTokens` (including tool-schema overhead) for accurate active-context decisions.
+- **Approval-gate compaction is now reason-aware**, and the absolute boundary-compaction floor is disabled by default (it was folding ~90% of context on near-empty large windows). The obsolete `step` compaction boundary and its `STEP_COMPACTION_MIN_TOKENS` no-op were removed; `shouldCompactAtBoundary` is approval-only.
+- **Token/usage accounting reframed Codex-style**: the dashboard and CLI lead with **tokens spent** (non-cached input + output, the real full-rate cost) and show cache reads as a `+N cached` bonus rather than an inflated headline; the context cell reads just `N% left` with absolute tokens/limit on hover. Cumulative usage is now accumulated across compaction segments and across resumes so totals are monotonic and cross-run correct.
+- **Approvals and sessions lists stream over SSE**: both the approvals list and the sessions list update live from a single shared worker poll instead of per-client polling (idle SSE CPU reduced). The pending approvals bucket sorts newest-first (by `suspendedAt`/`createdAt` DESC), and the Completed and Expired/Errored sections were removed from the approvals page.
+- **`store_list` no longer returns `data` unless `includeData: true`** (behavior change); `store_create`/`store_update` responses are trimmed to drop the redundant full-item echo, and `store_get` gains the same `fields` projection.
+- **Learning config collapsed to a single switch**: `learning: true` => `{ capture: true, apply: true }`; the object form exposes `capture`/`apply`/`criteria`/`file`. The legacy `evaluate` shape migrates behind a single deprecation-compat marker for easy removal.
+- **Session-view UX**: the resume composer is gated behind a collapsible "Resume session" toggle (renamed from "Continue session", auto-focus on open), the narrow-screen log stacks the timestamp/marker above full-width content instead of wasting a fixed left gutter, and session-log Markdown rendering was improved.
+
+### Fixed
+
+- **Session token totals no longer drop then climb across an approval gate**: a resumed run reused the primary message and overwrote its tokens with that invocation's own (initially small) usage instead of adding to the suspended total; the prior cumulative total is now carried forward through preparation → run → stream/persist and folded into every usage write, so the count is monotonic across one or many gates.
+- **Corrupt session data surfaces instead of a generic 500**: a new `CorruptStorageError` is raised when a stored JSON file exists but can't be parsed; a cross-session list scan skips the one corrupt session rather than failing the whole list, and the requested session itself returns a distinct `SESSION_CORRUPTED` code (422, terminal) so the web view renders a clear error instead of polling a 500 forever.
+- **Rejected approvals resume agent cleanup** instead of leaving the run hanging.
+- **Orphaned `serve` workers are prevented** so a crashed or superseded worker no longer lingers.
+- **Reviewer comments are captured from any commented decision**, not just a final bare `approve`: the comment arrives through the revise loop (a `comment` decision that re-presents the same gate), so gating capture on `status === 'approve'` missed the highest-signal feedback.
+- **`storeItemPreview` no longer crashes** on store items that have no `data`, and serve store-event parsers read the new `id` field.
+- Interim usage and active-context token accounting corrected.
+
+### Documentation
+
+- Documented the reworked compaction model and its env vars (`COMPACTION_THRESHOLD`, `COMPACTION_KEEP_RECENT`, `APPROVAL_COMPACTION_MIN_TOKENS`, `CONTEXT_COMPACTION`) plus a tool-output best practice in the context-management guide.
+- Documented the `AGENTUSE_TOOL_*` tool-output limits and the full-output artifact offload in the environment-variables reference.
+- Updated the learning guide for the single-switch config, provenance, and approval-comment capture.
+- Documented the OpenCode Go provider in the model-configuration and models references, and the new model lines it adds.
+- Updated the store guide for metadata-only `store_list`, `q`/`where`/`ids` queries, and `fields` projection.
+
 ## [0.14.0] - 2026-06-12
 
 This release refines the human-in-the-loop and `serve` surfaces introduced in 0.13.0 and hardens skills, sandboxing, and auth. Approval gates, the session/approval web UI, the JSON API, and channels/Slack remain **experimental**: the core workflow is ready to try, but route shapes, UI details, and API response formats may still evolve based on production feedback.

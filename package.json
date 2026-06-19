@@ -48,6 +48,7 @@
     "watch:web": "bun scripts/build-web.ts --watch",
     "build": "bun run clean && bun run build:js && bun run build:web && chmod +x bin/cli.js",
     "watch": "bun build ./src/index.ts --outdir ./dist --target node --format esm --splitting --sourcemap --packages external --watch",
+    "watch:all": "bun run watch & bun run watch:web & wait",
     "dev:serve": "bun --watch src/index.ts serve",
     "link": "npm link",
     "unlink": "npm unlink",
