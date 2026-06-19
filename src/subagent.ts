@@ -12,6 +12,7 @@ import { loadAgentTools } from './runner/tools-loader';
 import { buildSystemMessages } from './runner/system-messages';
 import { createSessionAndMessage } from './runner/session-helper';
 import { isApprovalEnabled } from './runner/approval';
+import { extractApiErrorDetail } from './runner/api-error';
 import { usageToAssistantTokens } from './session/usage';
 
 // Constants
@@ -361,7 +362,8 @@ export async function createSubAgentTool(
           try {
             await subagentSessionManager.setSessionError(subagentSessionID, agentId, {
               code: 'EXECUTION_ERROR',
-              message: errorMsg
+              message: errorMsg,
+              ...extractApiErrorDetail(error)
             });
           } catch {
             // Ignore session update errors

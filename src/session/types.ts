@@ -68,6 +68,11 @@ export interface SessionInfo {
     message: string;
     code: string;
     time: number;                    // Unix timestamp (ms)
+    // Provider/API call detail, when the failure came from an LLM API call.
+    // Captured so a generic message like "Bad Request" is actually diagnosable.
+    statusCode?: number;             // HTTP status from the provider (e.g. 400)
+    url?: string;                    // Endpoint that rejected the request
+    detail?: string;                 // Provider response body (truncated)
   };
 
   // Durable channel anchors. These let resume/follow-up paths update the same
@@ -295,7 +300,28 @@ export type Part =
   | StepStartPart
   | StepFinishPart
   | SnapshotPart
-  | PatchPart;
+  | PatchPart
+  | CompactionPart;
+
+/** What triggered a context compaction. */
+export type CompactionReason = 'limit' | 'approval' | 'step';
+
+/**
+ * Marker recorded when the context manager compacts the active conversation,
+ * so the event is visible in the session log instead of only the CLI logs.
+ */
+export interface CompactionPart extends PartBase {
+  type: 'compaction';
+  reason: CompactionReason;
+  tokensBefore: number;
+  tokensAfter: number;
+  messagesBefore: number;
+  messagesAfter: number;
+  usagePercentBefore?: number;
+  time: {
+    start: number;
+  };
+}
 
 export interface TextPart extends PartBase {
   type: 'text';

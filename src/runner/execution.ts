@@ -8,7 +8,7 @@ import { ContextManager } from '../context-manager';
 import { compactMessages } from '../compactor';
 import type { AgentChunk } from './types';
 import { isSuspendSignal } from './suspend';
-import type { ModelToolOutputArtifactRef, SessionManager, ToolOutputArtifactRef } from '../session';
+import type { CompactionReason, ModelToolOutputArtifactRef, SessionManager, ToolOutputArtifactRef } from '../session';
 import { clampToolResultForModel } from '../tools/tool-output-limits.js';
 
 // Constants
@@ -325,14 +325,56 @@ export async function* executeAgentCore(
     }
   };
 
-  const compactActiveContext = async (options: { persist?: boolean } = {}): Promise<ModelMessage[]> => {
+  // Record a visible session marker when a compaction actually runs, so the
+  // event shows up in `agentuse sessions` and the serve web view instead of
+  // only the CLI logs.
+  const persistCompactionPart = async (
+    before: { tokens: number; messages: number; usagePercentage: number },
+    reason: CompactionReason,
+  ) => {
+    if (
+      !contextManager ||
+      !options.sessionManager ||
+      !options.sessionID ||
+      !options.agentId ||
+      !options.messageID
+    ) {
+      return;
+    }
+    try {
+      const after = contextManager.getStats();
+      await options.sessionManager.addPart(options.sessionID, options.agentId, options.messageID, {
+        type: 'compaction',
+        reason,
+        tokensBefore: before.tokens,
+        tokensAfter: after.activeTokens,
+        messagesBefore: before.messages,
+        messagesAfter: contextManager.getMessages().length,
+        ...(Number.isFinite(before.usagePercentage) && { usagePercentBefore: before.usagePercentage }),
+        time: { start: Date.now() },
+      } as any);
+    } catch (error) {
+      logger.debug(`Failed to persist compaction marker: ${(error as Error).message}`);
+    }
+  };
+
+  const compactActiveContext = async (opts: { persist?: boolean; reason?: CompactionReason } = {}): Promise<ModelMessage[]> => {
     if (!contextManager) return messages;
+    const before = contextManager.getStats();
+    const messagesBefore = contextManager.getMessages().length;
     const compacted = await contextManager.compact();
     messages = usesAnthropicCacheControl
       ? applyAnthropicCacheControlToMessages(compacted as any[])
       : compacted;
     contextManager.setMessages(messages);
-    if (options.persist !== false) {
+    // compact() is a no-op when there is nothing to fold in; only mark a real one.
+    if (contextManager.getStats().compactions > before.compactions) {
+      await persistCompactionPart(
+        { tokens: before.activeTokens, messages: messagesBefore, usagePercentage: before.usagePercentage },
+        opts.reason ?? 'limit',
+      );
+    }
+    if (opts.persist !== false) {
       await persistContextSnapshot();
     }
     return messages;
@@ -341,7 +383,7 @@ export async function* executeAgentCore(
   const compactAtSuspensionBoundary = async () => {
     if (!contextManager?.shouldCompactAtBoundary()) return;
     try {
-      await compactActiveContext({ persist: false });
+      await compactActiveContext({ persist: false, reason: 'approval' });
     } catch (error) {
       logger.warn(`Approval-boundary context compaction failed; suspending with full active context.`);
       logger.debug(`Approval-boundary compaction error: ${(error as Error).message}`);
@@ -402,7 +444,7 @@ export async function* executeAgentCore(
             const shouldCompactForLimit = contextManager.shouldCompact();
             const shouldCompactForLongRunStep = stepCount > 0 && contextManager.shouldCompactAtBoundary('step');
             if (shouldCompactForLimit || shouldCompactForLongRunStep) {
-              nextMessages = await compactActiveContext() as any[];
+              nextMessages = await compactActiveContext({ reason: shouldCompactForLimit ? 'limit' : 'step' }) as any[];
             } else {
               await persistContextSnapshot();
             }

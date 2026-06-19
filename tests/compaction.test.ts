@@ -20,13 +20,21 @@ mock.module('../src/utils/models-api', () => ({
   }))
 }));
 
-// Mock the AI SDK's generateText
+// Mock the AI SDK. compactMessages now goes through completeText() which uses
+// streamText (generateText cannot be used on the Codex backend), so the mock
+// returns a fake stream whose fullStream yields the summary text.
+const SUMMARY_TEXT = '[Summary] Previous context with important decisions and tool results.';
+function fakeStream(text: string) {
+  return {
+    fullStream: (async function* () {
+      yield { type: 'text-delta', text };
+      yield { type: 'finish' };
+    })(),
+  };
+}
 mock.module('ai', () => ({
-  generateText: mock(async () => ({
-    text: '[Summary] Previous context with important decisions and tool results.',
-    usage: { totalTokens: 50 }
-  })),
-  streamText: mock(),
+  generateText: mock(async () => ({ text: SUMMARY_TEXT, usage: { totalTokens: 50 } })),
+  streamText: mock(() => fakeStream(SUMMARY_TEXT)),
   stepCountIs: mock()
 }));
 
@@ -353,6 +361,88 @@ describe('ContextManager', () => {
     });
   });
 
+  describe('Tool-call/tool-result boundary safety', () => {
+    const assistantToolCall = (id: string) => ({
+      role: 'assistant',
+      content: [{ type: 'tool-call', toolCallId: id, toolName: 'bash', input: { command: 'ls' } }],
+    });
+    const toolResult = (id: string) => ({
+      role: 'tool',
+      content: [{ type: 'tool-result', toolCallId: id, toolName: 'bash', output: { type: 'text', value: 'ok' } }],
+    });
+
+    // Assert no `function_call_output` survives without its `function_call`,
+    // which is exactly what the Responses/Codex API rejects.
+    const assertNoOrphanedResults = (messages: any[]) => {
+      const seenCalls = new Set<string>();
+      for (const msg of messages) {
+        if (msg?.role === 'assistant' && Array.isArray(msg.content)) {
+          for (const part of msg.content) {
+            if (part?.type === 'tool-call') seenCalls.add(part.toolCallId);
+          }
+        }
+        if (msg?.role === 'tool' && Array.isArray(msg.content)) {
+          for (const part of msg.content) {
+            if (part?.type === 'tool-result') {
+              expect(seenCalls.has(part.toolCallId)).toBe(true);
+            }
+          }
+        }
+      }
+    };
+
+    it('keeps an assistant tool-call together with its result when the split would sever them', async () => {
+      const manager = new ContextManager('test:model', async () => ({
+        role: 'system',
+        content: '[Context Summary]\nfolded\n[End Summary]',
+      }));
+      await manager.initialize();
+
+      // Default keepRecent = 3. The naive split index (length - 3) lands on the
+      // tool-result, orphaning its tool-call from the prior assistant message.
+      manager.addMessage({ role: 'user', content: 'old 0' });
+      manager.addMessage({ role: 'user', content: 'old 1' });
+      manager.addMessage({ role: 'user', content: 'old 2' });
+      manager.addMessage({ role: 'user', content: 'old 3' });
+      manager.addMessage(assistantToolCall('A'));
+      manager.addMessage(toolResult('A'));
+      manager.addMessage({ role: 'user', content: 'recent' });
+      manager.addMessage({ role: 'assistant', content: 'reply' });
+
+      const compacted = await manager.compact();
+
+      expect(compacted[0].role).toBe('system');
+      assertNoOrphanedResults(compacted);
+      // The call/result pair must have been moved into the kept tail together.
+      expect(compacted.some(m => m.role === 'assistant' && Array.isArray(m.content)
+        && m.content.some((p: any) => p.type === 'tool-call' && p.toolCallId === 'A'))).toBe(true);
+      expect(manager.getStats().compactions).toBe(1);
+    });
+
+    it('does not compact when no safe boundary exists (unbroken tool chain)', async () => {
+      let called = 0;
+      const manager = new ContextManager('test:model', async () => {
+        called++;
+        return { role: 'system', content: 'summary' };
+      });
+      await manager.initialize();
+
+      // Every candidate boundary sits inside a tool-call/result pair, so there
+      // is nothing we can safely fold into a summary.
+      manager.addMessage(assistantToolCall('A'));
+      manager.addMessage(toolResult('A'));
+      manager.addMessage(assistantToolCall('B'));
+      manager.addMessage(toolResult('B'));
+
+      const compacted = await manager.compact();
+
+      expect(called).toBe(0);
+      expect(manager.getStats().compactions).toBe(0);
+      assertNoOrphanedResults(compacted);
+      expect(compacted.length).toBe(4);
+    });
+  });
+
   describe('Edge Cases', () => {
     it('should not compact when disabled', async () => {
       process.env.CONTEXT_COMPACTION = 'false';
@@ -491,9 +581,9 @@ describe('Compactor', () => {
   });
 
   it('should propagate compaction errors instead of fabricating a summary', async () => {
-    // Mock generateText to throw error
-    const { generateText } = await import('ai');
-    (generateText as any).mockImplementationOnce(() => {
+    // Make the streaming call fail; compaction must surface the error.
+    const { streamText } = await import('ai');
+    (streamText as any).mockImplementationOnce(() => {
       throw new Error('Model API error');
     });
 

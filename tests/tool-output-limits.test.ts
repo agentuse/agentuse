@@ -3,12 +3,18 @@ import {
   createBoundedAccumulator,
   clampToolResultForModel,
   truncateHeadTail,
+  truncateEnd,
   getToolOutputLimits,
   DEFAULT_MAX_OUTPUT_BYTES,
   DEFAULT_MAX_LINES,
   DEFAULT_MAX_LINE_LENGTH,
   DEFAULT_HEAD_RATIO,
 } from '../src/tools/tool-output-limits.js';
+
+/** True if the string contains a UTF-16 surrogate without its pair. */
+function hasLoneSurrogate(s: string): boolean {
+  return /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
+}
 
 describe('truncateHeadTail', () => {
   it('returns input unchanged when within budget', () => {
@@ -85,6 +91,48 @@ describe('createBoundedAccumulator', () => {
     expect(acc.truncated).toBe(true);
     const out = acc.finalize();
     expect(out.endsWith('AILEND')).toBe(true); // last 6 chars
+  });
+});
+
+describe('surrogate safety (invalid UTF-8 → provider 400)', () => {
+  // The cut point lands at headBytes / (len - tailBytes). By varying a leading
+  // ASCII pad we shift every emoji boundary across the cut, so some offsets
+  // land mid-pair. None must produce a lone surrogate.
+  it('truncateHeadTail never leaves a lone surrogate at an emoji boundary', () => {
+    for (let pad = 0; pad < 8; pad++) {
+      const text = 'a'.repeat(pad) + '😀'.repeat(20000); // 😀 is a surrogate pair
+      const out = truncateHeadTail(text, 30720, 0.4);
+      expect(hasLoneSurrogate(out)).toBe(false);
+      // Round-trips through UTF-8 without throwing / replacement.
+      expect(() => Buffer.from(out, 'utf8')).not.toThrow();
+    }
+  });
+
+  it('createBoundedAccumulator never leaves a lone surrogate when streamed in odd chunks', () => {
+    for (let chunkSize = 1; chunkSize <= 5; chunkSize++) {
+      const text = '😀'.repeat(20000);
+      const acc = createBoundedAccumulator(30720, 0.4);
+      for (let i = 0; i < text.length; i += chunkSize) {
+        acc.append(text.slice(i, i + chunkSize)); // chunk boundary may split a pair
+      }
+      const out = acc.finalize();
+      expect(hasLoneSurrogate(out)).toBe(false);
+    }
+  });
+
+  it('truncateEnd never leaves a lone surrogate', () => {
+    for (let pad = 0; pad < 4; pad++) {
+      const out = truncateEnd('a'.repeat(pad) + '😀'.repeat(100), 50);
+      expect(hasLoneSurrogate(out)).toBe(false);
+    }
+  });
+
+  it('keeps surrogate pairs intact when within budget (no fix-up needed)', () => {
+    const text = '😀'.repeat(3);
+    expect(truncateHeadTail(text, 1000)).toBe(text);
+    const acc = createBoundedAccumulator(1000);
+    for (const ch of text) acc.append(ch);
+    expect(acc.finalize()).toBe(text);
   });
 });
 

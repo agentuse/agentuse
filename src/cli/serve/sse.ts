@@ -148,10 +148,14 @@ export class ApprovalEventHub {
 
     // Replay current status to the new subscriber, then reset the loop's log
     // signatures so the next tick re-emits every log entry (idempotent for
-    // existing clients, which key by entry id).
+    // existing clients, which key by entry id). If the loop is currently idle,
+    // pull that tick forward; otherwise a new/reloaded tab can show the approval
+    // header without its actionable log card until the next 10s idle poll.
+    let replayLogsImmediately = false;
     if (loop.lastStatusJson !== null) {
       res.write(`event: status\ndata: ${loop.lastStatusJson}\n\n`);
       loop.logSignatures.clear();
+      replayLogsImmediately = true;
     }
 
     const heartbeat = setInterval(() => {
@@ -168,6 +172,10 @@ export class ApprovalEventHub {
     res.on("close", onClose);
     options.req.on("close", onClose);
 
+    if (replayLogsImmediately && loop.timer) {
+      clearTimeout(loop.timer);
+      loop.timer = null;
+    }
     if (!loop.timer && !loop.ticking) {
       void this.tick(loop);
     }

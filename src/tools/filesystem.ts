@@ -6,7 +6,7 @@ import * as os from 'os';
 import { PathValidator, type PathResolverContext } from './path-validator.js';
 import { fuzzyReplace } from './edit-replacers.js';
 import type { FilesystemPathConfig, ToolOutput, ToolErrorOutput } from './types.js';
-import { getToolOutputLimits } from './tool-output-limits.js';
+import { getToolOutputLimits, truncateEnd } from './tool-output-limits.js';
 
 /**
  * Format file content with line numbers (cat -n style)
@@ -18,9 +18,10 @@ function formatWithLineNumbers(content: string, offset: number = 1, maxLineLengt
   return lines
     .map((line, i) => {
       const lineNum = String(offset + i).padStart(maxLineNumWidth, ' ');
-      // Truncate long lines
+      // Truncate long lines (surrogate-safe so an emoji at the cut never
+      // becomes a lone surrogate / invalid UTF-8)
       const truncatedLine = line.length > maxLineLength
-        ? line.slice(0, maxLineLength) + '... (truncated)'
+        ? truncateEnd(line, maxLineLength) + '... (truncated)'
         : line;
       return `${lineNum}\t${truncatedLine}`;
     })

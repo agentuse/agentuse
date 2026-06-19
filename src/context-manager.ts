@@ -165,6 +165,48 @@ export class ContextManager {
   }
 
   /**
+   * Whether a message carries a tool result (provider `function_call_output`).
+   * In AI SDK v6 these arrive as a dedicated `tool` role message, but some
+   * shapes inline `tool-result` parts, so we check both.
+   */
+  private isToolResultMessage(message: ModelMessage): boolean {
+    if (message?.role === 'tool') return true;
+    if (Array.isArray(message?.content)) {
+      return message.content.some((part: any) => part?.type === 'tool-result');
+    }
+    return false;
+  }
+
+  /**
+   * Whether an assistant message issues a tool call (provider `function_call`).
+   */
+  private hasToolCall(message: ModelMessage): boolean {
+    if (message?.role !== 'assistant' || !Array.isArray(message?.content)) return false;
+    return message.content.some((part: any) => part?.type === 'tool-call');
+  }
+
+  /**
+   * Pick the index where the kept tail begins (`messages.slice(index)`), never
+   * severing an assistant tool-call from its tool-result. Folding the call into
+   * the summary while keeping the result orphans the `function_call_output`, and
+   * the OpenAI/Codex Responses API rejects the request with "No tool call found
+   * for function call output with call_id ...". Walking the boundary backward
+   * keeps the call alongside its result; it never drops a still-referenced
+   * result. Returns < 1 when no safe boundary exists (nothing to fold in).
+   */
+  private safeSplitIndex(): number {
+    let split = this.messages.length - this.keepRecentMessages;
+    while (
+      split > 0 &&
+      (this.isToolResultMessage(this.messages[split].message) ||
+        this.hasToolCall(this.messages[split - 1].message))
+    ) {
+      split--;
+    }
+    return split;
+  }
+
+  /**
    * Compact messages, keeping recent ones intact
    */
   async compact(): Promise<ModelMessage[]> {
@@ -176,13 +218,22 @@ export class ContextManager {
       return this.messages.map(m => m.message);
     }
 
+    // Choose a split that does not orphan a tool result. If the safe boundary
+    // collapses to the start there is nothing we can fold into a summary
+    // without corrupting the transcript, so leave the context untouched.
+    const splitIndex = this.safeSplitIndex();
+    if (splitIndex < 1) {
+      return this.messages.map(m => m.message);
+    }
+
     this.isCompacting = true;
     logger.info(`Context approaching limit (${this.getUsagePercentage().toFixed(0)}% used). Compacting agent context...`);
 
     try {
-      // Split messages into old (to compact) and recent (to keep)
-      const toCompact = this.messages.slice(0, -this.keepRecentMessages);
-      const toKeep = this.messages.slice(-this.keepRecentMessages);
+      // Split messages into old (to compact) and recent (to keep), honoring the
+      // tool-call/tool-result boundary computed above.
+      const toCompact = this.messages.slice(0, splitIndex);
+      const toKeep = this.messages.slice(splitIndex);
 
       // Get messages to compact
       const messagesToCompact = toCompact.map(m => m.message);

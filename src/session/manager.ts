@@ -1097,7 +1097,7 @@ export class SessionManager {
   async setSessionError(
     sessionID: string,
     agentId: string,
-    error: { message: string; code: string }
+    error: { message: string; code: string; statusCode?: number; url?: string; detail?: string }
   ): Promise<void> {
     await this.updateSession(sessionID, agentId, {
       status: 'error',

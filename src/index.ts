@@ -989,7 +989,7 @@ async function runInternalWorker() {
   }
 
   function sessionErrorFields(session: { status?: string; error?: { code?: string; message?: string } }) {
-    if (session.status !== 'error' || !session.error) return {};
+    if (!session.error) return {};
     return {
       ...(typeof session.error.code === 'string' && session.error.code ? { errorCode: session.error.code } : {}),
       ...(typeof session.error.message === 'string' && session.error.message ? { errorMessage: session.error.message } : {})
@@ -1053,6 +1053,11 @@ async function runInternalWorker() {
     ].filter(Boolean).join('\n\n');
   }
 
+  function formatTokenCount(n: number): string {
+    if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+    return String(n);
+  }
+
   function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; tool?: string; status?: string; title: string; message?: string; time?: number; details?: ApprovalLogDetails }> {
     return parts.map((part: any) => {
       if (part?.type === 'text') {
@@ -1074,6 +1079,27 @@ async function runInternalWorker() {
           type: 'reasoning',
           title: 'Reasoning',
           ...(message !== undefined && { message }),
+          ...(typeof part.time?.start === 'number' && { time: part.time.start })
+        };
+      }
+      if (part?.type === 'compaction') {
+        const before = typeof part.tokensBefore === 'number' ? part.tokensBefore : 0;
+        const after = typeof part.tokensAfter === 'number' ? part.tokensAfter : 0;
+        const saved = before - after;
+        const pct = before > 0 ? Math.round((saved / before) * 100) : 0;
+        const reasonLabel = part.reason === 'approval'
+          ? 'at approval gate'
+          : part.reason === 'step'
+            ? 'at step boundary'
+            : 'near context limit';
+        const message = before > 0
+          ? `${formatTokenCount(before)} → ${formatTokenCount(after)} tokens (−${pct}%), ${reasonLabel}`
+          : `Compacted ${reasonLabel}`;
+        return {
+          id: String(part.id),
+          type: 'compaction',
+          title: 'Context compacted',
+          message,
           ...(typeof part.time?.start === 'number' && { time: part.time.start })
         };
       }
@@ -1239,6 +1265,70 @@ async function runInternalWorker() {
     return Object.keys(fields).length > 0 ? fields : undefined;
   }
 
+  function toolPartStartedAt(part: any): number | undefined {
+    const state = part?.state ?? {};
+    if (state.status === 'pending' && typeof state.suspendedAt === 'number') return state.suspendedAt;
+    if (typeof state.time?.start === 'number') return state.time.start;
+    return undefined;
+  }
+
+  function approvalWasRolledBackAfterResume(session: SessionInfo, approvalPart: any, parts: any[]): boolean {
+    const state = approvalPart?.state ?? {};
+    if (state.status !== 'pending' || !session.error) return false;
+    const boundary = typeof state.suspendedAt === 'number' ? state.suspendedAt : undefined;
+    if (boundary === undefined) return false;
+    return parts.some((part) =>
+      part?.type === 'tool' &&
+      part?.id !== approvalPart.id &&
+      (toolPartStartedAt(part) ?? 0) > boundary
+    );
+  }
+
+  function logsWithRecoveredApprovalDecision(
+    logs: ReturnType<typeof buildApprovalLogs>,
+    approvalPart: any
+  ): ReturnType<typeof buildApprovalLogs> {
+    return logs.map((entry) => {
+      if (entry.id !== String(approvalPart?.id)) return entry;
+      const { resumeToken: _resumeToken, ...detailsWithoutResume } = entry.details ?? {};
+      return {
+        ...entry,
+        status: 'completed',
+        title: 'Approved',
+        details: {
+          ...detailsWithoutResume,
+          decisionStatus: 'approved'
+        }
+      };
+    });
+  }
+
+  function logsWithSessionError(
+    logs: ReturnType<typeof buildApprovalLogs>,
+    session: SessionInfo
+  ): ReturnType<typeof buildApprovalLogs> {
+    if (!session.error) return logs;
+    const id = `session-error:${session.id}`;
+    if (logs.some((entry) => entry.id === id)) return logs;
+    const message = session.error.message || session.error.code || 'Session failed';
+    const lastLogTime = logs.reduce((max, entry) => Math.max(max, entry.time ?? 0), 0);
+    const errorTime = typeof (session.error as any).time === 'number' ? (session.error as any).time : undefined;
+    const sessionTime = typeof session.time?.updated === 'number' ? session.time.updated : undefined;
+    return [
+      ...logs,
+      {
+        id,
+        type: 'session',
+        status: 'error',
+        title: 'Session failed',
+        time: Math.max(lastLogTime, errorTime ?? 0, sessionTime ?? 0) + 1,
+        details: {
+          errorMessage: message
+        }
+      }
+    ];
+  }
+
   async function childSessionSummaries(
     sessionManager: InstanceType<typeof SessionManager>,
     sessionId: string,
@@ -1295,7 +1385,7 @@ async function runInternalWorker() {
       const parts = (await Promise.all(
         messages.map((message) => sessionManager.getMessageParts(req.sessionId!, found.agentId, message.id))
       )).flat();
-      const logs = buildApprovalLogs(parts);
+      let logs = logsWithSessionError(buildApprovalLogs(parts), found.session);
       const childSessions = await childSessionSummaries(
         sessionManager,
         req.sessionId,
@@ -1342,6 +1432,11 @@ async function runInternalWorker() {
       }
 
       const state = approvalPart.state;
+      const rolledBackAfterResume = approvalWasRolledBackAfterResume(found.session, approvalPart, parts);
+      const sessionStatus = rolledBackAfterResume ? 'error' : found.session.status;
+      if (rolledBackAfterResume) {
+        logs = logsWithRecoveredApprovalDecision(logs, approvalPart);
+      }
       const input = valueAsRecord(state.input);
       const metadata = valueAsRecord(state.metadata);
       const resumePayload = state.status === 'pending'
@@ -1382,7 +1477,7 @@ async function runInternalWorker() {
           success: true,
           approval: {
             sessionId: req.sessionId,
-            sessionStatus: found.session.status,
+            sessionStatus,
             ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
             model: found.session.model,
             ...sessionErrorFields(found.session),
@@ -1412,7 +1507,7 @@ async function runInternalWorker() {
         success: true,
         approval: {
           sessionId: req.sessionId,
-          sessionStatus: found.session.status,
+          sessionStatus,
           ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
           model: found.session.model,
           ...sessionErrorFields(found.session),
@@ -1431,7 +1526,7 @@ async function runInternalWorker() {
           ...(typeof input.risk === 'string' && { risk: input.risk }),
           ...(typeof resumePayload.surface === 'string' && { surface: resumePayload.surface }),
           ...(approvalUrl && { approvalUrl }),
-          ...(state.status === 'pending' && expectedToken && { currentResumeToken: expectedToken }),
+          ...(state.status === 'pending' && expectedToken && !rolledBackAfterResume && { currentResumeToken: expectedToken }),
           ...(typeof resumePayload.expiresAt === 'number' && { expiresAt: resumePayload.expiresAt }),
           ...(typeof state.suspendedAt === 'number' && { suspendedAt: state.suspendedAt }),
           ...(Object.keys(channelMessage).length > 0 && { channelMessage }),
@@ -1670,7 +1765,7 @@ async function runInternalWorker() {
   ): response is ApprovalInfoResponse & { success: true; approval: { sessionStatus: string } } {
     if (!response.success || !response.approval) return false;
     const status = response.approval.sessionStatus;
-    return status !== 'running';
+    return status === 'completed' || status === 'error';
   }
 
   async function withApprovalInfoCache(
@@ -2175,12 +2270,12 @@ async function runInternalWorker() {
         };
       } catch (err) {
         clearTimeout(timeoutId);
-        if (sessionManager && resumeRollback) {
-          await restoreResumeToolResult({ sessionManager, rollback: resumeRollback }).catch((restoreErr) => {
-            logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
-          });
-          resumeRollback = undefined;
-        }
+        // Once the agent run has started, keep the reviewer's decision durable.
+        // Rolling the await_human part back here makes an accepted approval look
+        // pending again after a downstream model/tool error, which is both
+        // misleading and can invite duplicate external actions. Preflight
+        // failures before runAgent still use restoreResumeAndReturn above.
+        resumeRollback = undefined;
         if (abortController.signal.aborted) {
           // The stop marker is keyed by the session id stopSession saw, which
           // for resume/continue is req.sessionId; fall back to it when the abort

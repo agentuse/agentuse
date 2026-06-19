@@ -403,6 +403,10 @@ body {
 }
 .log-item.expandable.expanded .log-title::after { content: "hide"; color: var(--muted); }
 .log-title { font-weight: 500; color: var(--fg); }
+/* Context compaction is a housekeeping event: subtle amber accent, understated. */
+.log-item[data-log-type="compaction"] .log-marker { color: var(--amber); opacity: 0.9; }
+.log-item[data-log-type="compaction"] .log-title { color: var(--amber); font-weight: 500; }
+.log-item[data-log-type="compaction"] .log-content { color: var(--muted-3); font-size: 12px; }
 .log-content {
   display: block;
   margin-top: 6px;

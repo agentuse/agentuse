@@ -65,9 +65,49 @@ function truncationMarker(omitted: number, total: number): string {
   return `\n\n... [${omitted} chars truncated of ${total} total] ...\n\n`;
 }
 
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+/**
+ * Drop a high surrogate stranded at the end of a head slice. JS strings are
+ * UTF-16, so slicing at an arbitrary index can cut an astral char (emoji,
+ * many CJK extensions) between its surrogate pair. A head ending on a high
+ * surrogate is a lone surrogate once a marker/boundary follows it — invalid
+ * UTF-8 that providers like OpenAI reject with a 400.
+ */
+export function trimTrailingHighSurrogate(text: string): string {
+  return text.length > 0 && isHighSurrogate(text.charCodeAt(text.length - 1))
+    ? text.slice(0, -1)
+    : text;
+}
+
+/** Drop a low surrogate stranded at the start of a tail slice (lone surrogate). */
+export function trimLeadingLowSurrogate(text: string): string {
+  return text.length > 0 && isLowSurrogate(text.charCodeAt(0))
+    ? text.slice(1)
+    : text;
+}
+
+/**
+ * Truncate a string to `maxBytes` from the end, never leaving a lone surrogate
+ * at the cut. Use for head-only truncation (e.g. per-line caps).
+ */
+export function truncateEnd(text: string, maxBytes: number): string {
+  if (text.length <= maxBytes) return text;
+  return trimTrailingHighSurrogate(text.slice(0, maxBytes));
+}
+
 /**
  * Truncate a string to `maxBytes`, keeping a head and tail slice with a marker
  * describing what was dropped. Returns the input unchanged when within budget.
+ *
+ * The head and tail cut points are snapped off any lone surrogate so the
+ * result is always valid UTF-16/UTF-8 even when the cut lands inside an emoji.
  */
 export function truncateHeadTail(
   text: string,
@@ -77,8 +117,8 @@ export function truncateHeadTail(
   if (text.length <= maxBytes) return text;
   const headBytes = Math.floor(maxBytes * headRatio);
   const tailBytes = maxBytes - headBytes;
-  const head = text.slice(0, headBytes);
-  const tail = text.slice(text.length - tailBytes);
+  const head = trimTrailingHighSurrogate(text.slice(0, headBytes));
+  const tail = trimLeadingLowSurrogate(text.slice(text.length - tailBytes));
   return head + truncationMarker(text.length - maxBytes, text.length) + tail;
 }
 
@@ -135,9 +175,13 @@ export function createBoundedAccumulator(
       return total > maxBytes;
     },
     finalize(): string {
-      // Within budget: head + tail is the full output, no marker, no drop.
+      // Within budget: head + tail is the full output, no marker, no drop. A
+      // surrogate pair split across the head/tail boundary is rejoined here by
+      // the direct concatenation, so no fix-up is needed.
       if (total <= maxBytes) return head + tail;
-      return head + truncationMarker(total - maxBytes, total) + tail;
+      // Truncated: a marker separates head and tail, so snap each side off any
+      // lone surrogate (the cut can land inside an emoji during streaming).
+      return trimTrailingHighSurrogate(head) + truncationMarker(total - maxBytes, total) + trimLeadingLowSurrogate(tail);
     },
   };
 }

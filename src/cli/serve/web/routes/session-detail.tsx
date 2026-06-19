@@ -91,6 +91,11 @@ function displaySessionStatus(status: string, header: ApprovalHeader | null): st
   return status;
 }
 
+export function hasActionableApproval(status: string, header: ApprovalHeader | null): boolean {
+  if (!header?.currentResumeToken) return false;
+  return status === 'waiting' || (status === 'loading' && header.sessionStatus === 'suspended');
+}
+
 export default function SessionDetail() {
   const { params } = useRoute();
   const location = useLocation();
@@ -141,7 +146,7 @@ export default function SessionDetail() {
     setApproval(header);
     setStatus(nextStatus);
     const nextToken = header.currentResumeToken;
-    const approvalWaiting = nextStatus === 'waiting' || header.sessionStatus === 'suspended';
+    const approvalWaiting = hasActionableApproval(nextStatus, header);
     if (nextToken && nextToken !== currentResumeTokenRef.current && approvalWaiting) {
       // A fresh await_human gate opened mid-session: the log keeps its
       // history, but the actionable surface resets for the new gate.

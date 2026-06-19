@@ -68,6 +68,32 @@ describe('ApprovalEventHub', () => {
     expect(statusLine).not.toContain('"logs"');
   });
 
+  it('replays logs immediately when a new subscriber joins an idle session loop', async () => {
+    const slowHub = new ApprovalEventHub({ liveIntervalMs: 30, idleIntervalMs: 1000, heartbeatIntervalMs: 10_000 });
+    const poll: SessionPoll = async () => ({ ok: true, snapshot });
+    const slowServer = createServer((req, res) => {
+      slowHub.subscribe({ key: 's1', sessionId: 's1', poll, req, res });
+    });
+    const slowPort = await listen(slowServer);
+
+    try {
+      const first = await fetch(`http://127.0.0.1:${slowPort}/sessions/s1/events`);
+      await readUntil(first, (b) => b.includes('event: log'), 500);
+
+      const second = await fetch(`http://127.0.0.1:${slowPort}/sessions/s1/events`);
+      const buf = await readUntil(second, (b) => b.includes('event: log'), 250);
+      expect(buf).toContain('event: status');
+      expect(buf).toContain('event: log');
+      expect(buf).toContain('Approve me');
+
+      await first.body?.cancel().catch(() => {});
+      await second.body?.cancel().catch(() => {});
+    } finally {
+      slowHub.shutdown();
+      slowServer.close();
+    }
+  });
+
   it('emits a log delta when an entry changes', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/sessions/s1/events`);
     // Mutate the shared snapshot shortly after subscribing; a later poll tick

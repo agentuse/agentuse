@@ -238,6 +238,21 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
   );
 }
 
+function isApprovalDetails(entry: ApprovalLogEntry): boolean {
+  if (entry.tool === 'await_human' || entry.type === 'approval') return true;
+  const details = entry.details;
+  return Boolean(details && (
+    details.resumeToken ||
+    details.prompt ||
+    details.draft ||
+    details.draftUrl ||
+    details.artifactUrl ||
+    details.artifactPaths?.length ||
+    details.decisionStatus ||
+    details.decisionComment
+  ));
+}
+
 export interface LogEntryProps {
   entry: ApprovalLogEntry;
   expanded: boolean;
@@ -252,7 +267,7 @@ export interface LogEntryProps {
 
 function LogEntryImpl(props: LogEntryProps) {
   const { entry } = props;
-  const isApprovalEntry = Boolean(entry.details?.resumeToken);
+  const isApprovalEntry = isApprovalDetails(entry);
   const expandable = entry.type === 'tool' && !isApprovalEntry;
   const expanded = !expandable || entry.status === 'running' || props.expanded;
   const storeEvent = storeToolEvent(entry, props.projectId);
@@ -289,13 +304,13 @@ function LogEntryImpl(props: LogEntryProps) {
       }}
     >
       <span class="log-time">{formatLogTime(entry.time)}</span>
-      <span class="log-marker">{spinning ? <span class="log-spinner" aria-label="streaming" /> : '⋮'}</span>
+      <span class="log-marker">{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : '⋮')}</span>
       <div class="log-main">
         <span class="log-title">{entry.title}</span>
         <div class="log-content">
           {entry.subagentSession && <SubagentCard session={entry.subagentSession} />}
           {storeEvent && <StoreEventBlock event={storeEvent} />}
-          {entry.details && (entry.details.resumeToken
+          {entry.details && (isApprovalEntry
             ? <ApprovalDetailCard details={entry.details} sessionId={props.sessionId} token={props.token} />
             : <ToolDetails details={entry.details} sessionId={props.sessionId} token={props.token} />)}
           {entry.message && !storeEvent && !entry.subagentSession && <LogContent value={entry.message} forceMarkdown={entry.type === 'text'} />}

@@ -854,6 +854,12 @@ async function showSession(
     const label = s.error.code === 'USER_INTERRUPT' ? 'INTERRUPTED' : 'ERROR';
     process.stdout.write(`${icon} ${label}: ${s.error.code}\n`);
     process.stdout.write(`  ${s.error.message}\n`);
+    if (typeof s.error.statusCode === 'number') {
+      process.stdout.write(`  HTTP ${s.error.statusCode}${s.error.url ? ` @ ${s.error.url}` : ''}\n`);
+    }
+    if (s.error.detail) {
+      process.stdout.write(`  Provider response: ${s.error.detail}\n`);
+    }
     process.stdout.write(`  Time: ${new Date(s.error.time).toLocaleString()}\n`);
   }
 
@@ -945,7 +951,7 @@ async function showSession(
       // Show interleaved output (text and tool parts in chronological order)
       // Sort parts by ULID id (which is chronologically sortable)
       const displayParts = parts
-        .filter((p) => p.type === "text" || p.type === "tool")
+        .filter((p) => p.type === "text" || p.type === "tool" || p.type === "compaction")
         .sort((a, b) => a.id.localeCompare(b.id));
 
       if (displayParts.length > 0) {
@@ -1042,6 +1048,25 @@ async function showSession(
 
             // Closing separator
             process.stdout.write(`${"─".repeat(60)}\n`);
+          } else if (part.type === "compaction") {
+            const c = part as Part & {
+              type: "compaction";
+              reason: string;
+              tokensBefore: number;
+              tokensAfter: number;
+            };
+            const before = c.tokensBefore ?? 0;
+            const after = c.tokensAfter ?? 0;
+            const pct = before > 0 ? Math.round(((before - after) / before) * 100) : 0;
+            const reasonLabel = c.reason === "approval"
+              ? "approval gate"
+              : c.reason === "step"
+                ? "step boundary"
+                : "context limit";
+            const detail = before > 0
+              ? `${formatTokenCountCli(before)} → ${formatTokenCountCli(after)} tokens (-${pct}%), ${reasonLabel}`
+              : `at ${reasonLabel}`;
+            process.stdout.write(`\n⇲ Context compacted: ${detail}\n`);
           }
         }
       }
@@ -1049,6 +1074,11 @@ async function showSession(
   }
 
   process.stdout.write(`\n`);
+}
+
+function formatTokenCountCli(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  return String(n);
 }
 
 function renderSessionMatches(matches: SessionSummary[], includeProject = false): string {

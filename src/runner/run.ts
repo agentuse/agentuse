@@ -13,6 +13,7 @@ import {
   type RunChannelHandle
 } from '../channels/run';
 import { executeAgentCore } from './execution';
+import { extractApiErrorDetail } from './api-error';
 import { prepareAgentExecution } from './preparation';
 import { processAgentStream } from './stream';
 import type { PreparedAgentExecution, RunAgentResult } from './types';
@@ -425,9 +426,11 @@ export async function runAgent(
           (error instanceof Error && error.name === 'AbortError') ? 'TIMEOUT' :
           'EXECUTION_ERROR';
         const errorMessage = error instanceof Error ? error.message : String(error);
+        const apiDetail = extractApiErrorDetail(error);
         await sessionManager.setSessionError(sessionID, agentId, {
           code: errorCode,
-          message: errorMessage
+          message: errorMessage,
+          ...apiDetail
         });
       } catch {
         // Ignore error logging failures

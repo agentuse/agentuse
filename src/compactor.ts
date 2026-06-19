@@ -1,5 +1,4 @@
-import { generateText } from 'ai';
-import { createModel } from './models';
+import { completeText } from './complete-text';
 import { logger } from './utils/logger';
 
 // Use any for message type to avoid complex type issues
@@ -32,24 +31,15 @@ export async function compactMessages(
       return `${role}: ${content}`;
     }).join('\n\n');
 
-    // Use the agent's model to create summary
-    const model = await createModel(modelString);
-
-    const { text } = await generateText({
-      model,
-      messages: [
-        {
-          role: 'system',
-          content: COMPACTION_SYSTEM_PROMPT
-        },
-        {
-          role: 'user',
-          content: `Please summarize this agent context:\n\n${contextToSummarize}`
-        }
-      ],
-      maxRetries: 2,
+    // Use the agent's model to create the summary. streamText (not
+    // generateText) so this works on the ChatGPT Codex backend, which only
+    // accepts streaming requests and requires the instructions field.
+    const text = await completeText(modelString, {
+      system: COMPACTION_SYSTEM_PROMPT,
+      prompt: `Please summarize this agent context:\n\n${contextToSummarize}`,
       maxOutputTokens: MAX_SUMMARY_TOKENS,
-      temperature: 0.3 // Lower temperature for more consistent summaries
+      temperature: 0.3, // Lower temperature for more consistent summaries
+      maxRetries: 2,
     });
 
     // Return as a system message with the summary

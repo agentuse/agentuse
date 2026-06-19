@@ -6,7 +6,7 @@ import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
 import { DecisionDialog } from '../src/cli/serve/web/components/comment-dialog';
 import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/cli/serve/web/lib/content-html';
 import { latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
+import { hasActionableApproval, headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 
 const noop = () => {};
@@ -29,6 +29,22 @@ function renderEntry(entry: ApprovalLogEntry, overrides: Partial<Parameters<type
 }
 
 describe('LogEntry component', () => {
+  it('renders a context compaction event with its summary, not expandable', () => {
+    const html = renderEntry({
+      id: 'log-c1',
+      type: 'compaction',
+      title: 'Context compacted',
+      message: '66k → 8.2k tokens (−88%), at approval gate',
+      time: Date.now(),
+    });
+    expect(html).toContain('Context compacted');
+    expect(html).toContain('66k → 8.2k tokens');
+    expect(html).toContain('data-log-type="compaction"');
+    expect(html).toContain('⇲');
+    // System event, not an expandable tool row.
+    expect(html).not.toContain('expandable');
+  });
+
   it('renders tool input/output details', () => {
     const html = renderEntry({
       id: 'log-1',
@@ -101,6 +117,30 @@ describe('LogEntry component', () => {
     expect(html).toContain('Approve');
     expect(html).toContain('Reject');
     expect(html).toContain('Comment');
+  });
+
+  it('renders resolved approval details after the resume token is removed', () => {
+    const html = renderEntry({
+      id: 'log-approved',
+      type: 'tool',
+      tool: 'await_human',
+      title: 'Approved',
+      status: 'completed',
+      details: {
+        prompt: 'Approve posting this?',
+        draft: 'The approved draft',
+        risk: 'External action',
+        decisionStatus: 'approved',
+      },
+    });
+
+    expect(html).toContain('approval-card');
+    expect(html).toContain('Approve posting this?');
+    expect(html).toContain('The approved draft');
+    expect(html).toContain('External action');
+    expect(html).toContain('Decision');
+    expect(html).toContain('approved');
+    expect(html).not.toContain('expandable');
   });
 
   it('escapes hostile log content', () => {
@@ -188,6 +228,20 @@ describe('DecisionDialog component', () => {
 });
 
 describe('SessionDetail header', () => {
+  it('does not keep approval controls actionable once a decision is resuming', () => {
+    const header = {
+      sessionId: 'session-1',
+      sessionStatus: 'suspended',
+      agent: { id: 'agent-1', name: 'Agent' },
+      currentResumeToken: 'tok-1',
+    };
+
+    expect(hasActionableApproval('waiting', header)).toBe(true);
+    expect(hasActionableApproval('resuming', header)).toBe(false);
+    expect(hasActionableApproval('continuing', header)).toBe(false);
+    expect(hasActionableApproval('completed', { ...header, sessionStatus: 'completed' })).toBe(false);
+  });
+
   it('shows token usage before a session completes', () => {
     const tokenUsage = { input: 1200, cachedInput: 900, output: 80 };
     expect(headerTokenUsage({
