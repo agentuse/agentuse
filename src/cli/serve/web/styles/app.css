@@ -1290,7 +1290,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
    tracks regardless of nesting depth or chip width. */
 .page-agents .tree {
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   column-gap: 14px;
 }
 .page-agents .tree-head, .page-agents .tree-row {
@@ -1375,15 +1375,174 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   white-space: nowrap;
 }
 .page-agents .chip.status { color: var(--cyan); border-color: var(--cyan-border); }
-/* Narrow screens: hide the Description, Model, and Schedule columns so only the
-   tree and agent name remain, readable without a horizontal scroll. */
+
+/* --- ⋯ overflow menu (holds name, model + pin toggle) --- */
+.page-agents .tree-menu { justify-content: flex-end; }
+.page-agents .agent-menu { position: relative; display: inline-flex; }
+.page-agents .menu-btn {
+  appearance: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted-2);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.page-agents .menu-btn svg { width: 16px; height: 16px; }
+.page-agents .menu-btn:hover, .page-agents .menu-btn.open {
+  color: var(--fg); border-color: var(--line-strong); background: var(--panel-hover);
+}
+.page-agents .menu-popover {
+  position: fixed;
+  z-index: 60;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 12px 14px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+}
+.page-agents .menu-name {
+  font-family: var(--sans);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.page-agents .menu-desc {
+  margin-top: 4px;
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted-2);
+  overflow-wrap: anywhere;
+}
+.page-agents .menu-meta {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 8px;
+}
+.page-agents .menu-meta-label {
+  flex: 0 0 58px;
+  font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted-2);
+}
+.page-agents .menu-sep { height: 1px; margin: 10px -14px 6px; background: var(--line); }
+.page-agents .menu-item {
+  appearance: none;
+  cursor: pointer;
+  width: calc(100% + 28px);
+  margin: 0 -14px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 13px;
+  text-align: left;
+}
+.page-agents .menu-item:hover { background: var(--panel-hover); }
+.page-agents .menu-item .pin-svg { color: var(--cyan); }
+.page-agents .menu-item.unpin .pin-svg { color: var(--muted-2); }
+.page-agents .menu-item .menu-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--cyan); }
+
+/* --- Run with Custom Instruction dialog --- */
+.page-agents .run-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+.page-agents .run-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+:root[data-theme="light"] .page-agents .run-dialog::backdrop { background: rgba(0, 0, 0, 0.30); }
+.page-agents .run-dialog form { margin: 0; padding: 0; }
+.page-agents .run-dialog .dialog-close {
+  min-height: 0; padding: 4px 8px;
+  background: transparent; border: 0;
+  color: var(--muted-2); font-size: 16px; line-height: 1;
+  cursor: pointer; border-radius: 6px;
+}
+.page-agents .run-dialog .dialog-close:hover { background: var(--panel-hover); color: var(--fg); }
+.page-agents .run-dialog .dialog-description strong { color: var(--fg); font-weight: 600; }
+.page-agents .run-dialog .dialog-error { margin: 0; padding: 0 18px 4px; color: var(--red); font-size: 12.5px; }
+.page-agents .run-dialog .dialog-foot .actions { display: inline-flex; gap: 8px; }
+.page-agents .run-dialog .dialog-foot button {
+  font-family: var(--mono); font-size: 13px; font-weight: 500; letter-spacing: 0.02em;
+  border: 1px solid var(--line-strong); background: transparent; color: var(--fg);
+  border-radius: 8px; min-height: 36px; padding: 0 16px; cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.page-agents .run-dialog .dialog-foot button:hover { background: var(--panel-hover); }
+.page-agents .run-dialog .dialog-foot button.primary { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
+.page-agents .run-dialog .dialog-foot button.primary:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
+.page-agents .run-dialog .dialog-foot button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Pin icon: stroke glyph; "filled" state reads via colour. */
+.page-agents .pin-svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.page-agents .pin-svg.filled { fill: color-mix(in srgb, var(--cyan) 22%, transparent); }
+.page-agents .tree-pin {
+  display: inline-flex; align-items: center;
+  margin-right: 4px;
+  color: var(--cyan);
+}
+.page-agents .tree-row.pinned { background: var(--cyan-soft); }
+.page-agents .tree-row.pinned:hover { background: var(--panel-hover); }
+
+/* --- Pinned section (flat, pulled out of the project trees) --- */
+.page-agents .pinned-group .group-title > span:first-child { color: var(--cyan); }
+.page-agents .pin-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  column-gap: 14px;
+}
+.page-agents .pin-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: stretch;
+  min-height: 38px;
+  border-bottom: 1px solid var(--line);
+  transition: background 120ms ease;
+}
+.page-agents .pin-row:last-child { border-bottom: 0; }
+.page-agents .pin-row:hover { background: var(--panel-hover); }
+.page-agents .pin-row > span { display: flex; align-items: center; min-width: 0; padding: 7px 0; }
+.page-agents .pin-row > span:first-child { padding-left: 14px; }
+.page-agents .pin-row > span:last-child { padding-right: 14px; }
+.page-agents .pin-main { gap: 8px; min-width: 0; }
+.page-agents .pin-main .tree-pin { margin-right: 0; }
+.page-agents .pin-name {
+  font-family: var(--mono); font-size: 13px; color: var(--fg);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.page-agents .pin-name:hover { color: var(--cyan); }
+.page-agents .pin-loc {
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Narrow screens: drop the Schedule column (still reachable in the ⋯ menu) so
+   only the Tree, Run, and ⋯ remain, readable without a horizontal scroll. */
 @media (max-width: 700px) {
   .page-agents .tree-head { display: none; }
-  .page-agents .tree { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; column-gap: 10px; }
-  .page-agents .tree-desc { display: none; }
-  /* Drop Model + Schedule, keep the Tree, Name, and Run action. */
-  .page-agents .tree-row > span:nth-child(3),
-  .page-agents .tree-row > span:nth-child(4) { display: none; }
+  .page-agents .tree { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 10px; }
+  .page-agents .tree-row > span:nth-child(2) { display: none; }
+  .page-agents .pin-list { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 10px; }
+  .page-agents .pin-row > span:nth-child(2) { display: none; }
 }
 /* Parse-error badge + popover. A <details> disclosure anchors the panel
    directly under the badge. */

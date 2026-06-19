@@ -223,9 +223,13 @@ export interface DetachedRunResponse {
 /**
  * Start an agent run in the background and resolve with its (pre-assigned)
  * session id immediately, so the caller can navigate to the live session view.
+ * An optional `prompt` is appended to the agent's instructions for this run
+ * only (powers the "Run with Custom Instruction" action).
  */
-export function runAgentDetached(agent: string, project: string): Promise<DetachedRunResponse> {
-  return postJson('/api/run', { agent, project, detach: true });
+export function runAgentDetached(agent: string, project: string, prompt?: string): Promise<DetachedRunResponse> {
+  const body: Record<string, unknown> = { agent, project, detach: true };
+  if (prompt && prompt.trim()) body.prompt = prompt.trim();
+  return postJson('/api/run', body);
 }
 
 export interface SchedulesPayload {

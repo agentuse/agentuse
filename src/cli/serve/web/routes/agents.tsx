@@ -1,11 +1,41 @@
 import type { VNode } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
 import type { AgentRow } from '../lib/api';
 import { fetchAgents, runAgentDetached } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
+import { usePins } from '../hooks/use-pins';
 import { Topbar } from '../components/topbar';
+import { RunInstructionDialog } from '../components/run-instruction-dialog';
+
+/**
+ * Starts a detached run (optionally with a one-off instruction appended to the
+ * agent's prompt) and navigates to its live session view. Shared by the inline
+ * Run button and the "Run with Custom Instruction" dialog.
+ */
+function useRunAgent(agentPath: string, projectId: string) {
+  const location = useLocation();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async (prompt?: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await runAgentDetached(agentPath, projectId, prompt);
+      const params = new URLSearchParams({ project: projectId, pending: '1' });
+      if (res.token) params.set('token', res.token);
+      location.route(`/sessions/${encodeURIComponent(res.sessionId)}?${params.toString()}`);
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return { run, busy, error };
+}
 
 /**
  * Starts the agent in the background and navigates straight to its live session
@@ -14,25 +44,12 @@ import { Topbar } from '../components/topbar';
  * token-gated daemons) and the session page streams the run as it happens.
  */
 function RunButton(props: { agentPath: string; projectId: string }) {
-  const location = useLocation();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { run, busy, error } = useRunAgent(props.agentPath, props.projectId);
 
-  const onRun = async (event: Event) => {
+  const onRun = (event: Event) => {
     event.preventDefault();
     event.stopPropagation();
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await runAgentDetached(props.agentPath, props.projectId);
-      const params = new URLSearchParams({ project: props.projectId, pending: '1' });
-      if (res.token) params.set('token', res.token);
-      location.route(`/sessions/${encodeURIComponent(res.sessionId)}?${params.toString()}`);
-    } catch (err) {
-      setError((err as Error).message);
-      setBusy(false);
-    }
+    void run();
   };
 
   return (
@@ -55,8 +72,129 @@ function RunButton(props: { agentPath: string; projectId: string }) {
   );
 }
 
+function PinIcon(props: { filled?: boolean }) {
+  // Lucide "pin", drawn with stroke; the filled state is conveyed by colour.
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class={props.filled ? 'pin-svg filled' : 'pin-svg'}>
+      <path d="M12 17v5" />
+      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+    </svg>
+  );
+}
+
+/**
+ * Per-agent overflow menu. Holds the bits pulled off the row (full name, model)
+ * plus the pin toggle. The popover is rendered with position:fixed so it is not
+ * clipped by the panel's overflow:hidden; it closes on outside click, Escape,
+ * scroll, or resize (the anchor rect is captured once at open time).
+ */
+function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () => void }) {
+  const { agent, pinned, onTogglePin } = props;
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const [runOpen, setRunOpen] = useState(false);
+  const { run, busy, error } = useRunAgent(agent.runPath, agent.projectId);
+
+  useEffect(() => {
+    if (!pos) return;
+    const close = () => setPos(null);
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (popRef.current?.contains(t) || btnRef.current?.contains(t)) return;
+      close();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [pos]);
+
+  const toggle = (e: Event) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (pos) { setPos(null); return; }
+    const r = btnRef.current!.getBoundingClientRect();
+    setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+  };
+
+  return (
+    <div class="agent-menu">
+      <button
+        type="button"
+        ref={btnRef}
+        class={pos ? 'menu-btn open' : 'menu-btn'}
+        aria-haspopup="menu"
+        aria-expanded={pos ? 'true' : 'false'}
+        aria-label="Agent details and actions"
+        onClick={toggle}
+      >
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" />
+        </svg>
+      </button>
+      {pos && (
+        <div ref={popRef} class="menu-popover" role="menu" style={{ top: `${pos.top}px`, right: `${pos.right}px` }}>
+          <div class="menu-name">{agent.name}</div>
+          {agent.description && <div class="menu-desc">{agent.description}</div>}
+          <div class="menu-meta">
+            <span class="menu-meta-label">Model</span>
+            <span class="chip">{agent.model}</span>
+          </div>
+          {agent.schedule && (
+            <div class="menu-meta">
+              <span class="menu-meta-label">Schedule</span>
+              <span class="chip status">{agent.schedule}</span>
+            </div>
+          )}
+          <div class="menu-sep" />
+          <button
+            type="button"
+            class="menu-item"
+            role="menuitem"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPos(null); setRunOpen(true); }}
+          >
+            <svg class="menu-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <path d="M5 3.5v9a.75.75 0 0 0 1.14.64l7.25-4.5a.75.75 0 0 0 0-1.28l-7.25-4.5A.75.75 0 0 0 5 3.5Z" />
+            </svg>
+            <span>Run with Custom Instruction</span>
+          </button>
+          <button
+            type="button"
+            class={pinned ? 'menu-item unpin' : 'menu-item'}
+            role="menuitem"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin(); setPos(null); }}
+          >
+            <PinIcon filled={pinned} />
+            <span>{pinned ? 'Unpin from top' : 'Pin to top'}</span>
+          </button>
+        </div>
+      )}
+      <RunInstructionDialog
+        open={runOpen}
+        agentName={agent.name}
+        busy={busy}
+        error={error}
+        onSubmit={(instruction) => { void run(instruction); }}
+        onClose={() => { if (!busy) setRunOpen(false); }}
+      />
+    </div>
+  );
+}
+
 function projectAnchor(projectId: string): string {
   return `project-${projectId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
+function agentIdFor(a: AgentRow): string {
+  return a.path.replace(/\.agentuse$/, '');
 }
 
 interface TreeNode {
@@ -98,21 +236,30 @@ function guides(levels: boolean[], last: boolean): VNode[] {
   return cells;
 }
 
-function walk(node: TreeNode, levels: boolean[], rows: VNode[]): void {
+interface PinApi {
+  isPinned: (a: AgentRow) => boolean;
+  toggle: (a: AgentRow) => void;
+}
+
+function walk(node: TreeNode, levels: boolean[], rows: VNode[], pins: PinApi): void {
   const children = sortChildren(node);
   children.forEach((child, idx) => {
     const last = idx === children.length - 1;
     const prefix = guides(levels, last);
     if (child.agent) {
       const a = child.agent;
-      const agentId = a.path.replace(/\.agentuse$/, '');
+      const agentId = agentIdFor(a);
+      const pinned = pins.isPinned(a);
       rows.push(
-        <div class="tree-row" key={a.path}>
-          <span class="tree-path">{prefix}<a class="tree-label" href={`/sessions?agent=${encodeURIComponent(agentId)}`}>{child.name}</a></span>
-          <span class="tree-name">{a.name}{a.description && <div class="tree-desc">{a.description}</div>}</span>
-          <span><span class="chip">{a.model}</span></span>
+        <div class={pinned ? 'tree-row pinned' : 'tree-row'} key={a.path}>
+          <span class="tree-path">
+            {prefix}
+            {pinned && <span class="tree-pin" title="Pinned" aria-label="Pinned"><PinIcon filled /></span>}
+            <a class="tree-label" href={`/sessions?agent=${encodeURIComponent(agentId)}`}>{child.name}</a>
+          </span>
           <span>{a.schedule ? <span class="chip status">{a.schedule}</span> : <span class="muted">—</span>}</span>
           <span class="tree-run"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>
+          <span class="tree-menu"><AgentMenu agent={a} pinned={pinned} onTogglePin={() => pins.toggle(a)} /></span>
         </div>
       );
     } else {
@@ -121,28 +268,53 @@ function walk(node: TreeNode, levels: boolean[], rows: VNode[]): void {
           <span class="tree-path">{prefix}<span class="tree-label">{child.name}/</span></span>
         </div>
       );
-      walk(child, [...levels, !last], rows);
+      walk(child, [...levels, !last], rows, pins);
     }
   });
 }
 
-function AgentTree(props: { agents: AgentRow[] }) {
+function AgentTree(props: { agents: AgentRow[]; pins: PinApi }) {
   const rows: VNode[] = [];
-  walk(buildTree(props.agents), [], rows);
+  walk(buildTree(props.agents), [], rows, props.pins);
   return <>{rows}</>;
+}
+
+function PinnedRow(props: { agent: AgentRow; pins: PinApi }) {
+  const a = props.agent;
+  const agentId = agentIdFor(a);
+  return (
+    <div class="pin-row">
+      <span class="pin-main">
+        <span class="tree-pin" aria-hidden="true"><PinIcon filled /></span>
+        <a class="pin-name" href={`/sessions?agent=${encodeURIComponent(agentId)}`}>{a.name}</a>
+        <span class="pin-loc">{a.projectId} / {agentId}</span>
+      </span>
+      <span>{a.schedule ? <span class="chip status">{a.schedule}</span> : <span class="muted">—</span>}</span>
+      <span class="tree-run"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>
+      <span class="tree-menu"><AgentMenu agent={a} pinned onTogglePin={() => props.pins.toggle(a)} /></span>
+    </div>
+  );
 }
 
 export default function Agents() {
   useTitle('AgentUse / Agents');
   const { data, error, loading } = useFetch('agents', () => fetchAgents(), { refreshMs: 30_000 });
+  const { isPinned, toggle, keys } = usePins();
+  const pins: PinApi = { isPinned, toggle };
 
+  const allAgents = data?.agents ?? [];
   const byProject = new Map<string, AgentRow[]>();
-  for (const agent of data?.agents ?? []) {
+  for (const agent of allAgents) {
     const list = byProject.get(agent.projectId);
     if (list) list.push(agent);
     else byProject.set(agent.projectId, [agent]);
   }
   const errors = data?.errors ?? [];
+
+  // Pinned agents in the order they were pinned, skipping any that no longer
+  // exist in the served set.
+  const byKey = new Map<string, AgentRow>(allAgents.map((a) => [`${a.projectId}::${a.path}`, a]));
+  const pinnedAgents = keys.map((k) => byKey.get(k)).filter((a): a is AgentRow => a !== undefined);
 
   return (
     <div class="page-agents">
@@ -165,6 +337,16 @@ export default function Agents() {
             </details>
           )}
         </header>
+        {pinnedAgents.length > 0 && (
+          <section class="group pinned-group">
+            <h2 class="group-title"><span>Pinned</span><span class="count">{pinnedAgents.length}</span><span class="rule"></span></h2>
+            <div class="panel">
+              <div class="pin-list">
+                {pinnedAgents.map((a) => <PinnedRow key={`${a.projectId}::${a.path}`} agent={a} pins={pins} />)}
+              </div>
+            </div>
+          </section>
+        )}
         {byProject.size === 0
           ? <div class="panel"><div class="empty">{loading ? 'Loading…' : 'No agents loaded by this serve daemon.'}</div></div>
           : [...byProject.entries()].map(([projectId, agents]) => (
@@ -172,8 +354,8 @@ export default function Agents() {
               <h2 class="group-title"><span>{projectId}</span><span class="count">{agents.length} agent{agents.length === 1 ? '' : 's'}</span><span class="rule"></span></h2>
               <div class="panel">
                 <div class="tree">
-                  <div class="tree-head"><span>Tree</span><span>Name</span><span>Model</span><span>Schedule</span><span>Run</span></div>
-                  <AgentTree agents={agents} />
+                  <div class="tree-head"><span>Tree</span><span>Schedule</span><span>Run</span><span></span></div>
+                  <AgentTree agents={agents} pins={pins} />
                 </div>
               </div>
             </section>
