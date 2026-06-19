@@ -1,9 +1,52 @@
 import type { VNode } from 'preact';
+import { useState } from 'preact/hooks';
+import { useLocation } from 'preact-iso';
 import type { AgentRow } from '../lib/api';
-import { fetchAgents } from '../lib/api';
+import { fetchAgents, runAgentDetached } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
+
+/**
+ * Starts the agent in the background and navigates straight to its live session
+ * view. The run endpoint pre-assigns the session id and returns it before the
+ * run produces anything, so the redirect can carry it (plus a view token on
+ * token-gated daemons) and the session page streams the run as it happens.
+ */
+function RunButton(props: { agentPath: string; projectId: string }) {
+  const location = useLocation();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onRun = async (event: Event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await runAgentDetached(props.agentPath, props.projectId);
+      const params = new URLSearchParams({ project: props.projectId, pending: '1' });
+      if (res.token) params.set('token', res.token);
+      location.route(`/sessions/${encodeURIComponent(res.sessionId)}?${params.toString()}`);
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      class="run-btn"
+      disabled={busy}
+      onClick={onRun}
+      title={error ?? 'Run this agent now and open its session'}
+    >
+      {busy ? 'Starting…' : 'Run'}
+    </button>
+  );
+}
 
 function projectAnchor(projectId: string): string {
   return `project-${projectId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
@@ -62,6 +105,7 @@ function walk(node: TreeNode, levels: boolean[], rows: VNode[]): void {
           <span class="tree-name">{a.name}{a.description && <div class="tree-desc">{a.description}</div>}</span>
           <span><span class="chip">{a.model}</span></span>
           <span>{a.schedule ? <span class="chip status">{a.schedule}</span> : <span class="muted">—</span>}</span>
+          <span class="tree-run"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>
         </div>
       );
     } else {
@@ -121,7 +165,7 @@ export default function Agents() {
               <h2 class="group-title"><span>{projectId}</span><span class="count">{agents.length} agent{agents.length === 1 ? '' : 's'}</span><span class="rule"></span></h2>
               <div class="panel">
                 <div class="tree">
-                  <div class="tree-head"><span>Tree</span><span>Name</span><span>Model</span><span>Schedule</span></div>
+                  <div class="tree-head"><span>Tree</span><span>Name</span><span>Model</span><span>Schedule</span><span>Run</span></div>
                   <AgentTree agents={agents} />
                 </div>
               </div>

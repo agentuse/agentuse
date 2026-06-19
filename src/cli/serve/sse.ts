@@ -41,6 +41,10 @@ interface SessionLoop {
   stopped: boolean;
   lastStatusJson: string | null;
   logSignatures: Map<string, string>;
+  /** When the loop was created; bounds the not-found fast-retry window. */
+  createdAt: number;
+  /** True once any poll has produced a snapshot for this session. */
+  everOk: boolean;
 }
 
 interface ApprovalListLoop<TSnapshot> {
@@ -70,6 +74,14 @@ export interface ApprovalListEventHubOptions {
 
 export const SESSION_SSE_LIVE_INTERVAL_MS = 500;
 export const SESSION_SSE_IDLE_INTERVAL_MS = 10_000;
+/**
+ * A detached run pre-assigns its session id and returns it before the worker has
+ * written the session to disk, so the first polls for it come back not-found.
+ * Until a session has ever resolved, retry at the live cadence (rather than the
+ * 10s idle one) for this bounded window so a just-started run shows up within
+ * ~1s instead of stalling on "Loading session…".
+ */
+export const SESSION_SSE_PENDING_FAST_WINDOW_MS = 30_000;
 
 function logSignature(entry: ApprovalLogEntry): string {
   return JSON.stringify([entry.status ?? null, entry.level ?? null, entry.message ?? null, entry.title, entry.details ?? null, entry.subagentSession ?? null]);
@@ -137,6 +149,8 @@ export class ApprovalEventHub {
         stopped: false,
         lastStatusJson: null,
         logSignatures: new Map(),
+        createdAt: Date.now(),
+        everOk: false,
       };
       this.loops.set(key, loop);
     }
@@ -233,6 +247,7 @@ export class ApprovalEventHub {
       if (loop.stopped) return;
 
       if (result.ok) {
+        loop.everOk = true;
         const { status, approval, logs } = result.snapshot;
 
         const statusEvent: SessionStatusEvent = { sessionId: loop.sessionId, status, approval };
@@ -259,8 +274,13 @@ export class ApprovalEventHub {
         interval = live ? this.liveIntervalMs : this.idleIntervalMs;
       } else {
         // Transient failures should not kill streams; surface the error and
-        // keep polling at the idle cadence.
+        // keep polling. A session that has never resolved yet is likely a
+        // just-started detached run still being written to disk: poll it at the
+        // live cadence (bounded) so it appears promptly instead of after 10s.
         this.broadcast(loop, `event: stream-error\ndata: ${JSON.stringify(result.error)}\n\n`);
+        if (!loop.everOk && Date.now() - loop.createdAt < SESSION_SSE_PENDING_FAST_WINDOW_MS) {
+          interval = this.liveIntervalMs;
+        }
       }
     } catch (err) {
       logger.debug(`Session SSE tick failed for ${loop.key}: ${(err as Error).message}`);

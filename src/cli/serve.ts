@@ -27,6 +27,7 @@ import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprov
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
+import { ulid } from "ulid";
 import { sessionViewToken, validateSessionToken } from "../utils/session-token";
 import {
   approvalListThemeStyles,
@@ -57,6 +58,12 @@ interface RunRequest {
   timeout?: number;
   maxSteps?: number;
   sessionId?: string;
+  /**
+   * Fire-and-forget: start the run, return its (pre-assigned) session id
+   * immediately with 202, and let the run continue in the background. Used by
+   * the web "Run" button so it can redirect straight to the live session view.
+   */
+  detach?: boolean;
 }
 
 interface RunResponse {
@@ -80,6 +87,8 @@ interface WorkerExecuteOptions {
   maxSteps?: number | undefined;
   debug?: boolean | undefined;
   sessionId?: string | undefined;
+  /** Pre-assigned id for a fresh `execute` (detached run). */
+  newSessionId?: string | undefined;
   toolResult?: unknown;
   resumeToken?: string | undefined;
   trigger?: SessionTrigger | undefined;
@@ -499,6 +508,7 @@ class AgentWorker {
       maxSteps: options.maxSteps,
       debug: options.debug,
       sessionId: options.sessionId,
+      newSessionId: options.newSessionId,
       toolResult: options.toolResult,
       resumeToken: options.resumeToken,
       trigger: options.trigger,
@@ -1006,8 +1016,10 @@ function compareStoreBrowserSummaries(a: StoreBrowserSummary, b: StoreBrowserSum
 
 interface AgentSummary {
   projectId: string;
-  /** Path relative to the project root, as accepted by POST /run. */
+  /** Path relative to the project root (tree layout + `?agent=` filter). */
   path: string;
+  /** Scope-relative path, the exact `agent` value POST /run accepts. */
+  runPath: string;
   name: string;
   description?: string;
   model: string;
@@ -1034,6 +1046,9 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
         agents.push({
           projectId: project.id,
           path: toProjectRelativeAgentPath(project, agentFile),
+          // Scope-relative: the glob ran with cwd = scopeRoot, so agentFile is
+          // exactly the `agent` value POST /run resolves against scopeRoot.
+          runPath: agentFile,
           name: parsed.name,
           ...(parsed.config.description && { description: parsed.config.description }),
           model: parsed.config.model,
@@ -3730,6 +3745,57 @@ export function createServeCommand(): Command {
           // Parse agent for telemetry (env validation happens in the worker,
           // which loads the project's .env before checking process.env)
           const agent = await parseAgent(agentPath);
+
+          // Detached mode: pre-assign the session id, kick the run off in the
+          // background, and return the id immediately so the caller (the web
+          // "Run" button) can navigate straight to the live session view.
+          // Deliberately NOT wired to req close: we 202 right away, which closes
+          // the request, and that must not abort the run.
+          if (body.detach) {
+            const detachWorker = workers.get(project.id);
+            if (!detachWorker) {
+              sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
+              return;
+            }
+            const preassignedId = ulid();
+            const detachTimeout = body.timeout ?? agent.config.timeout ?? 300;
+            void detachWorker.execute({
+              agentPath: toProjectRelativeAgentPath(project, body.agent),
+              projectRoot: project.root,
+              prompt: body.prompt,
+              model: body.model,
+              timeout: detachTimeout,
+              maxSteps: body.maxSteps,
+              debug: options.debug,
+              newSessionId: preassignedId,
+              trigger: 'api',
+            }).then((result) => {
+              totalExecutions++;
+              if (result.success) {
+                successfulExecutions++;
+                if (result.result.finishReason !== 'suspended') {
+                  executionLog.complete(body.agent, Date.now() - startTime);
+                }
+              } else {
+                failedExecutions++;
+                logger.warn(`Detached run ${preassignedId} failed: ${result.error.message}`);
+              }
+            }).catch((err) => {
+              totalExecutions++;
+              failedExecutions++;
+              logger.warn(`Detached run ${preassignedId} errored: ${(err as Error).message}`);
+            });
+
+            const sessionToken = apiKey ? sessionViewToken(preassignedId, apiKey) : undefined;
+            res.writeHead(202, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              success: true,
+              sessionId: preassignedId,
+              status: "running",
+              ...(sessionToken && { token: sessionToken }),
+            }));
+            return;
+          }
 
           // Create abort controller for timeout
           const timeoutSeconds = body.timeout ?? agent.config.timeout ?? 300;

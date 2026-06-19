@@ -115,6 +115,9 @@ export default function SessionDetail() {
   const sessionId = decodeURIComponent(params.sessionId ?? '');
   const token = location.query.token || undefined;
   const projectId = location.query.project || undefined;
+  // Arrived from a just-started detached run: tolerate a brief "not found" while
+  // the worker is still writing the session to disk.
+  const pending = location.query.pending === '1';
 
   useTitle('AgentUse / Session');
 
@@ -200,6 +203,7 @@ export default function SessionDetail() {
     token,
     project: projectId,
     nudge,
+    pending,
     handlers: {
       onStatus: handleStatus,
       onLog: (entry) => {

@@ -23,6 +23,13 @@ export interface PrepareAgentOptions {
   prebuiltMessages?: ModelMessage[] | undefined;
   /** How this run was triggered. Only the fresh-session path records it. */
   trigger?: SessionTrigger | undefined;
+  /**
+   * Pre-assign the id for a fresh session instead of generating a ULID. Used by
+   * serve's detached run so the client receives the session id up front and can
+   * navigate to the live session view before the run produces anything. Ignored
+   * when `existingSessionId` is set (resume/continue reuse the existing id).
+   */
+  newSessionId?: string | undefined;
 }
 
 export interface PreparedAgentExecution {

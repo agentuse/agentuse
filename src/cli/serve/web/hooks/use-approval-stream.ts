@@ -22,6 +22,13 @@ const TERMINAL_CODES = new Set(['SESSION_CORRUPTED']);
 const SSE_FAILURE_WINDOW_MS = 10_000;
 const SSE_FAILURES_BEFORE_FALLBACK = 2;
 const SSE_RETRY_MS = 60_000;
+/**
+ * When arriving from a just-started detached run (?pending=1), the session may
+ * not be on disk yet, so the polling fallback can 404 briefly. Tolerate that as
+ * non-fatal for this window (until the session first resolves) instead of
+ * showing "not found". Mirrors the server SSE fast-retry window.
+ */
+const PENDING_NOT_FOUND_GRACE_MS = 30_000;
 
 /**
  * Live session updates: SSE from /sessions/{id}/events with automatic fallback
@@ -35,14 +42,23 @@ export function useApprovalStream(options: {
   handlers: ApprovalStreamHandlers;
   /** Bumped to force an immediate refresh (e.g. right after posting a decision). */
   nudge: number;
+  /**
+   * Set when navigating from a just-started detached run: a brief 404 in the
+   * polling fallback is expected (the session is still being written) and must
+   * not be treated as a fatal "not found".
+   */
+  pending?: boolean;
 }): void {
   const handlersRef = useRef(options.handlers);
   handlersRef.current = options.handlers;
   const nudgeRef = useRef<() => void>(() => {});
 
-  const { sessionId, token, project } = options;
+  const { sessionId, token, project, pending } = options;
 
   useEffect(() => {
+    // Grace window for a just-started session that 404s in the polling fallback.
+    const mountedAt = Date.now();
+    let seenOk = false;
     // No token is valid on a local (no-api-key) daemon, where the session
     // routes are open. Only an exposed daemon needs ?token=; there the
     // token-less fetches 401 and surface via onAuthError below.
@@ -63,6 +79,7 @@ export function useApprovalStream(options: {
       try {
         const payload = await fetchSessionStatus(sessionId, token, project);
         if (closed) return;
+        seenOk = true;
         const { logs, ...approval } = payload.approval;
         handlersRef.current.onStatus(payload.status, approval);
         handlersRef.current.onLogs(payload.logs ?? logs ?? []);
@@ -71,8 +88,16 @@ export function useApprovalStream(options: {
         const status = (err as { status?: number }).status;
         const code = (err as { code?: string }).code;
         if ((status !== undefined && TERMINAL_STATUSES.has(status)) || (code !== undefined && TERMINAL_CODES.has(code))) {
-          handlersRef.current.onFatalError(code ?? 'REQUEST_FAILED', (err as Error).message);
-          return;
+          // A just-started detached run can 404 until its session is written;
+          // keep polling (faster) within the grace window instead of failing.
+          const pendingNotFound = status === 404 && pending && !seenOk
+            && Date.now() - mountedAt < PENDING_NOT_FOUND_GRACE_MS;
+          if (pendingNotFound) {
+            delay = 600;
+          } else {
+            handlersRef.current.onFatalError(code ?? 'REQUEST_FAILED', (err as Error).message);
+            return;
+          }
         }
       }
       if (!closed && polling) {

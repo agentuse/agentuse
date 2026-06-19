@@ -348,8 +348,11 @@ export class SessionManager {
   /**
    * Create a new session
    */
-  async createSession(info: Omit<SessionInfo, 'id' | 'time' | 'status' | 'trigger'> & { trigger?: SessionTrigger }): Promise<string> {
-    const id = ulid();
+  async createSession(info: Omit<SessionInfo, 'id' | 'time' | 'status' | 'trigger'> & { trigger?: SessionTrigger; id?: string }): Promise<string> {
+    // Callers may pre-assign the id (e.g. serve's detached run, which returns
+    // the id to the client before the run has produced anything). Default to a
+    // fresh ULID so every existing caller is unaffected.
+    const id = info.id ?? ulid();
     const now = Date.now();
 
     const session: SessionInfo = {

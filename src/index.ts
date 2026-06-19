@@ -888,6 +888,8 @@ async function runInternalWorker() {
     maxSteps?: number;
     debug?: boolean;
     sessionId?: string;
+    /** Pre-assigned id for a fresh `execute` (serve detached run). */
+    newSessionId?: string;
     toolResult?: unknown;
     resumeToken?: string;
     allowHistorical?: boolean;
@@ -2082,8 +2084,11 @@ async function runInternalWorker() {
     // is silently dropped, and the run finishes and overwrites the stopped
     // status with success. Fresh runs have no pre-known sessionId and cannot be
     // raced before their id exists, so they only register once it is known.
-    if (req.sessionId) {
-      activeExecutionControllers.set(req.sessionId, abortController);
+    // Detached runs DO pre-assign their id (req.newSessionId), so register
+    // under it too, otherwise an early stop request would be silently dropped.
+    const knownSessionId = req.sessionId ?? req.newSessionId;
+    if (knownSessionId) {
+      activeExecutionControllers.set(knownSessionId, abortController);
     }
 
     const restoreResumeAndReturn = async <T>(response: T): Promise<T> => {
@@ -2244,7 +2249,10 @@ async function runInternalWorker() {
         abortSignal: abortController.signal,
         verbose: req.debug ?? false,
         existingSessionId,
-        ...(req.trigger && { trigger: req.trigger })
+        ...(req.trigger && { trigger: req.trigger }),
+        // Detached runs only: pre-assign the fresh session's id. Ignored on the
+        // resume/continue paths, which carry existingSessionId instead.
+        ...(req.type === 'execute' && req.newSessionId && { newSessionId: req.newSessionId })
       });
 
       activeSessionId = preparedExecution.sessionID ?? existingSessionId;
@@ -2378,7 +2386,7 @@ async function runInternalWorker() {
       // registrations; they usually coincide for resume/continue but may differ
       // defensively, and a stale entry would wrongly abort a later run reusing
       // the same id.
-      for (const id of new Set([activeSessionId, req.sessionId])) {
+      for (const id of new Set([activeSessionId, req.sessionId, req.newSessionId])) {
         if (!id) continue;
         activeExecutionControllers.delete(id);
         activeStoppedSessions.delete(id);

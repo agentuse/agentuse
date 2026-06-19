@@ -212,6 +212,22 @@ export function fetchAgents(): Promise<AgentsPayload> {
   return getJson('/api/agents');
 }
 
+export interface DetachedRunResponse {
+  success: true;
+  sessionId: string;
+  status: string;
+  /** Per-session view token, present only on token-gated (api-key) daemons. */
+  token?: string;
+}
+
+/**
+ * Start an agent run in the background and resolve with its (pre-assigned)
+ * session id immediately, so the caller can navigate to the live session view.
+ */
+export function runAgentDetached(agent: string, project: string): Promise<DetachedRunResponse> {
+  return postJson('/api/run', { agent, project, detach: true });
+}
+
 export interface SchedulesPayload {
   success: true;
   schedules: SerializedSchedule[];

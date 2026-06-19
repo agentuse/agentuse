@@ -41,7 +41,8 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     verbose = false,
     existingSessionId,
     prebuiltMessages,
-    trigger
+    trigger,
+    newSessionId
   } = options;
 
   // Resolve safe variables in instructions (${root}, ${agentDir}, ${tmpDir} - NOT ${env:*})
@@ -172,6 +173,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
         projectContext,
         version: packageVersion,
         ...(trigger && { trigger }),
+        ...(newSessionId && { sessionId: newSessionId }),
         config: {
           ...(agent.config.timeout !== undefined && { timeout: agent.config.timeout }),
           maxSteps,

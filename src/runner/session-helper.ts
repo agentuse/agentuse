@@ -33,6 +33,8 @@ export interface CreateSessionParams {
   isSubAgent?: boolean;
   parentSessionID?: string;
   trigger?: SessionTrigger;
+  /** Pre-assign the session id instead of generating one (serve detached run). */
+  sessionId?: string;
 }
 
 /**
@@ -52,6 +54,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
     isSubAgent = false,
     parentSessionID,
     trigger,
+    sessionId,
   } = params;
 
   // Extract agent ID from file path (relative to stateRoot, the agent's own
@@ -59,6 +62,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
   const agentId = computeAgentId(agentFilePath, projectContext.stateRoot, agent.name);
 
   const sessionID = await sessionManager.createSession({
+    ...(sessionId ? { id: sessionId } : {}),
     ...(parentSessionID ? { parentSessionID } : {}),
     ...(trigger ? { trigger } : {}),
     agent: {

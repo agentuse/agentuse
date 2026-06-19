@@ -208,8 +208,17 @@ export interface ApprovalLogDetails {
 
 export interface AgentSummary {
   projectId: string;
-  /** Path relative to the project root, as accepted by POST /run. */
+  /**
+   * Path relative to the project root. Drives the tree layout and the
+   * `?agent=` session filter. NOTE: not necessarily what POST /run accepts when
+   * the served scope differs from the project root, use `runPath` for that.
+   */
   path: string;
+  /**
+   * Path relative to the served scope, i.e. the exact `agent` value POST /run
+   * resolves (resolve(scopeRoot, runPath)). Equals `path` when scope === root.
+   */
+  runPath: string;
   name: string;
   description?: string;
   model: string;
