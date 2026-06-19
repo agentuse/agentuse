@@ -313,6 +313,8 @@ interface ApprovalLogEntry {
   type: string;
   tool?: string;
   status?: string;
+  /** Severity for `type: 'log'` entries; carried through the worker IPC. */
+  level?: 'debug' | 'info' | 'warn' | 'error' | 'system';
   title: string;
   message?: string;
   time?: number;

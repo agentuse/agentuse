@@ -2,8 +2,9 @@ import type { Tool } from 'ai';
 import { z } from 'zod';
 import { parseAgent } from './parser';
 import { connectMCP, type MCPServersConfig } from './mcp';
-import { logger } from './utils/logger';
+import { logger, runWithLogSink } from './utils/logger';
 import { executeAgentCore, processAgentStream } from './runner';
+import { createSessionLogSink, type SessionLogSink } from './runner/session-helper';
 import { DoomLoopDetector } from './tools/index.js';
 import { resolve, dirname } from 'path';
 import { computeAgentId } from './utils/agent-id';
@@ -129,6 +130,7 @@ export async function createSubAgentTool(
       let subagentSessionID: string | undefined;
       let subagentMsgID: string | undefined;
       let subagentSessionManager: SessionManager | undefined;
+      let subagentLogSink: SessionLogSink | undefined;
       const toolOutputArtifacts = {
         createStream: (toolName: string, metadata?: Record<string, unknown>) => {
           if (!subagentSessionManager || !subagentSessionID || !subagentMsgID) {
@@ -275,42 +277,55 @@ export async function createSubAgentTool(
           // Create doom loop detector for sub-agent
           const doomLoopDetector = new DoomLoopDetector({ threshold: 3, action: 'error' });
 
-          // Process the agent stream using the NEW SessionManager instance
-          const result = await processAgentStream(
-            executeAgentCore(agent, tools, {
-              userMessage,
-              ...(cacheableUserMessage !== undefined && { cacheableUserMessage }),
-              systemMessages,
-              maxSteps,
-              ...(abortSignal && { abortSignal }),  // Pass parent's abort signal
-              subAgentNames: new Set(Object.keys(nestedSubAgentTools)),  // Track nested sub-agent names for logging
-              ...(subagentSessionManager && { sessionManager: subagentSessionManager }),
-              ...(subagentSessionID && { sessionID: subagentSessionID }),
-              agentId,
-              ...(subagentMsgID && { messageID: subagentMsgID })
-            }),
-            subagentSessionID && subagentMsgID && subagentSessionManager ? {
-              sessionManager: subagentSessionManager,  // Use NEW instance
-              sessionID: subagentSessionID,
-              agentId,
-              messageID: subagentMsgID,
-              collectToolCalls: true,
-              logPrefix: '[SubAgent] ',
-              doomLoopDetector
-            } : {
-              collectToolCalls: true,
-              logPrefix: '[SubAgent] ',
-              doomLoopDetector
+          // Mirror this sub-agent's operational logs into ITS OWN session view.
+          // Scoped via AsyncLocalStorage so they don't leak into the parent or a
+          // sibling sub-agent running concurrently. Flushed in the finally below.
+          subagentLogSink = subagentSessionManager && subagentSessionID && subagentMsgID
+            ? createSessionLogSink(subagentSessionManager, subagentSessionID, agentId, subagentMsgID)
+            : undefined;
+
+          // Process the agent stream AND emit the completion logs inside the
+          // sub-agent's sink scope. The tool runs inside the PARENT's stream
+          // (whose sink is the active one at emit time), so logging outside this
+          // scope would misattribute these lines to the parent's session.
+          const runSubagentScoped = async () => {
+            const streamResult = await processAgentStream(
+              executeAgentCore(agent, tools, {
+                userMessage,
+                ...(cacheableUserMessage !== undefined && { cacheableUserMessage }),
+                systemMessages,
+                maxSteps,
+                ...(abortSignal && { abortSignal }),  // Pass parent's abort signal
+                subAgentNames: new Set(Object.keys(nestedSubAgentTools)),  // Track nested sub-agent names for logging
+                ...(subagentSessionManager && { sessionManager: subagentSessionManager }),
+                ...(subagentSessionID && { sessionID: subagentSessionID }),
+                agentId,
+                ...(subagentMsgID && { messageID: subagentMsgID })
+              }),
+              subagentSessionID && subagentMsgID && subagentSessionManager ? {
+                sessionManager: subagentSessionManager,  // Use NEW instance
+                sessionID: subagentSessionID,
+                agentId,
+                messageID: subagentMsgID,
+                collectToolCalls: true,
+                logPrefix: '[SubAgent] ',
+                doomLoopDetector
+              } : {
+                collectToolCalls: true,
+                logPrefix: '[SubAgent] ',
+                doomLoopDetector
+              }
+            );
+            const elapsed = Date.now() - startTime;
+            logger.info(`[SubAgent:depth=${depth}] ${agent.name} completed in ${(elapsed / 1000).toFixed(2)}s`);
+            if (streamResult.usage?.totalTokens) {
+              logger.info(`[SubAgent:depth=${depth}] ${agent.name} tokens used: ${streamResult.usage.totalTokens}`);
             }
-          );
-
-          const duration = Date.now() - startTime;
-          logger.info(`[SubAgent:depth=${depth}] ${agent.name} completed in ${(duration / 1000).toFixed(2)}s`);
-
-          // Log token usage
-          if (result.usage?.totalTokens) {
-            logger.info(`[SubAgent:depth=${depth}] ${agent.name} tokens used: ${result.usage.totalTokens}`);
-          }
+            return { streamResult, elapsed };
+          };
+          const { streamResult: result, elapsed: duration } = subagentLogSink
+            ? await runWithLogSink(subagentLogSink.capture, runSubagentScoped)
+            : await runSubagentScoped();
 
           // Update session message with final token usage and mark session completed
           if (subagentSessionManager && subagentSessionID && subagentMsgID && result.usage) {
@@ -338,6 +353,9 @@ export async function createSubAgentTool(
             }
           };
         } finally {
+          // Drain any buffered operational logs into the sub-agent's session.
+          if (subagentLogSink) await subagentLogSink.flush();
+
           // Clean up store lock
           if (loadedTools.store) {
             await loadedTools.store.releaseLock();

@@ -103,6 +103,20 @@ describe('ApprovalEventHub', () => {
     expect(buf).toContain('Approved');
   });
 
+  it('re-broadcasts a log entry when only its level changes (signature includes level)', async () => {
+    // Operational log entries carry a `level`; a level-only change must still
+    // diff as changed so the client re-renders (e.g. info promoted to warn).
+    snapshot = { ...snapshot, logs: [{ id: 'L1', type: 'log', level: 'info', title: 'startup' }] };
+    const res = await fetch(`http://127.0.0.1:${port}/sessions/s1/events`);
+    setTimeout(() => { snapshot = { ...snapshot, logs: [{ id: 'L1', type: 'log', level: 'warn', title: 'startup' }] }; }, 80);
+    // One reader over the cumulative buffer: the initial info broadcast and the
+    // post-change warn broadcast both land in `buf`, proving the level change
+    // alone produced a second `event: log`.
+    const buf = await readUntil(res, (b) => b.includes('"level":"warn"'));
+    expect(buf).toContain('"level":"info"');
+    expect(buf).toContain('"level":"warn"');
+  });
+
   it('surfaces a stream-error event on poll failure without closing', async () => {
     failNext = { code: 'SESSION_NOT_FOUND', message: 'gone' };
     const res = await fetch(`http://127.0.0.1:${port}/sessions/s1/events`);

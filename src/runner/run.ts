@@ -3,8 +3,9 @@ import type { MCPConnection } from '../mcp';
 import type { SessionInfo, SessionManager, SessionTrigger } from '../session';
 import type { AgentCompleteEvent, PluginManager } from '../plugin';
 import { AuthenticationError } from '../models';
-import { logger } from '../utils/logger';
+import { logger, runWithLogSink } from '../utils/logger';
 import { extractLearnings } from '../learning/index.js';
+import { recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, type SessionLogSink } from './session-helper';
 import { usageToAssistantTokens } from '../session/usage';
 import {
   sendRunChannelMessages,
@@ -269,24 +270,36 @@ export async function runAgent(
       ...(assistantMsgID && { messageID: assistantMsgID })
     };
 
-    const result = await processAgentStream(
-      executeAgentCore(agent, tools, coreOptions),
-      sessionManager && prepSessionID && assistantMsgID && prepAgentId ? {
-        collectToolCalls: true,
-        sessionManager,
-        sessionID: prepSessionID,
-        messageID: assistantMsgID,
-        agentId: prepAgentId,
-        agentName: agent.name,
-        doomLoopDetector,
-        slackRunChannelHandles: runChannelHandles,
-        quiet
-      } : {
-        collectToolCalls: true,
-        doomLoopDetector,
-        quiet
-      }
-    );
+    const haveSessionScope = Boolean(sessionManager && prepSessionID && assistantMsgID && prepAgentId);
+    const streamOptions = haveSessionScope ? {
+      collectToolCalls: true,
+      sessionManager: sessionManager!,
+      sessionID: prepSessionID!,
+      messageID: assistantMsgID!,
+      agentId: prepAgentId!,
+      agentName: agent.name,
+      doomLoopDetector,
+      slackRunChannelHandles: runChannelHandles,
+      quiet
+    } : {
+      collectToolCalls: true,
+      doomLoopDetector,
+      quiet
+    };
+
+    // Mirror this run's operational logs (info/warn/error/debug/system) into its
+    // own session view for the duration of the stream. Best-effort and scoped via
+    // AsyncLocalStorage so concurrent sub-agent runs route to their own sessions.
+    const logSink: SessionLogSink | undefined = haveSessionScope
+      ? createSessionLogSink(sessionManager!, prepSessionID!, prepAgentId!, assistantMsgID!)
+      : undefined;
+    const runStream = () => processAgentStream(executeAgentCore(agent, tools, coreOptions), streamOptions);
+    let result: Awaited<ReturnType<typeof processAgentStream>>;
+    try {
+      result = await (logSink ? runWithLogSink(logSink.capture, runStream) : runStream());
+    } finally {
+      if (logSink) await logSink.flush();
+    }
 
     logger.debug(`Agent finish reasons: ${result.finishReasons?.join(', ') ?? 'none'}`);
     logger.debug(`Agent produced text output: ${result.hasTextOutput}`);
@@ -413,7 +426,11 @@ export async function runAgent(
       consoleOutput,
       ...(agentFilePath !== undefined && { agentFilePath }),
       ...(startTime !== undefined && { startTime }),
-      ...(pluginManager !== undefined && { pluginManager })
+      ...(pluginManager !== undefined && { pluginManager }),
+      ...(sessionManager !== undefined && { sessionManager }),
+      ...(prepSessionID !== undefined && { sessionId: prepSessionID }),
+      ...(prepAgentId !== undefined && { agentId: prepAgentId }),
+      ...(assistantMsgID !== undefined && { messageId: assistantMsgID })
     });
 
     // Return metrics for plugin system
@@ -431,6 +448,16 @@ export async function runAgent(
           code: errorCode,
           message: errorMessage,
           ...apiDetail
+        });
+        // Also drop a timeline entry so the failure — and the provider response
+        // body that says *why* — is visible in the session log itself, not just
+        // the status pill. The persisted error detail is otherwise never shown.
+        await recordErrorMarkerForLatestMessage(sessionManager, sessionID, agentId, {
+          source: 'agent',
+          code: errorCode,
+          message: errorMessage,
+          ...(apiDetail?.detail !== undefined && { detail: apiDetail.detail }),
+          ...(apiDetail?.statusCode !== undefined && { statusCode: apiDetail.statusCode }),
         });
       } catch {
         // Ignore error logging failures
@@ -489,6 +516,11 @@ export async function runPostLifecycle(options: {
   result: RunAgentResult;
   startTime?: number;
   consoleOutput: string;
+  /** Session refs used to persist a learning marker into the session log. */
+  sessionManager?: SessionManager;
+  sessionId?: string;
+  agentId?: string;
+  messageId?: string;
 }) {
   const { pluginManager, agent, agentFilePath, result, startTime, consoleOutput } = options;
   const duration = startTime ? (Date.now() - startTime) / 1000 : 0;
@@ -523,13 +555,23 @@ export async function runPostLifecycle(options: {
 
   if (agent.config.learning?.capture && agentFilePath) {
     try {
-      await extractLearnings({
+      const outcome = await extractLearnings({
         event,
         agentInstructions: agent.instructions,
         agentModel: agent.config.model,
         agentFilePath,
         config: agent.config.learning,
       });
+      // Surface the outcome (including a silent failure) in the session log.
+      if (options.sessionManager && options.sessionId && options.agentId && options.messageId) {
+        await recordLearningMarker(
+          options.sessionManager,
+          options.sessionId,
+          options.agentId,
+          options.messageId,
+          outcome,
+        );
+      }
     } catch (learningError) {
       logger.debug(`[Learning] Extraction failed: ${(learningError as Error).message}`);
     }

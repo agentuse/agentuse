@@ -11,8 +11,8 @@ import { loadGlobalEnv } from "../utils/global-config";
 import { logger, LogLevel } from "../utils/logger";
 import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
-import { applyResumeToolResult, restoreResumeToolResult, runAgent } from "../runner";
-import { maybePromoteApprovalComment } from "../learning";
+import { applyResumeToolResult, restoreResumeToolResult, runAgent, recordLearningMarkerForLatestMessage, describeErrorPart } from "../runner";
+import { maybePromoteApprovalComment, describeLearningOutcome } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
 
 interface SessionSummary {
@@ -951,7 +951,7 @@ async function showSession(
       // Show interleaved output (text and tool parts in chronological order)
       // Sort parts by ULID id (which is chronologically sortable)
       const displayParts = parts
-        .filter((p) => p.type === "text" || p.type === "tool" || p.type === "compaction")
+        .filter((p) => p.type === "text" || p.type === "tool" || p.type === "compaction" || p.type === "learning" || p.type === "error" || p.type === "log")
         .sort((a, b) => a.id.localeCompare(b.id));
 
       if (displayParts.length > 0) {
@@ -1067,6 +1067,47 @@ async function showSession(
               ? `${formatTokenCountCli(before)} → ${formatTokenCountCli(after)} tokens (-${pct}%), ${reasonLabel}`
               : `at ${reasonLabel}`;
             process.stdout.write(`\n⇲ Context compacted: ${detail}\n`);
+          } else if (part.type === "learning") {
+            const l = part as Part & {
+              type: "learning";
+              status: "captured" | "none" | "failed";
+              source: "auto" | "approval";
+              count: number;
+              titles?: string[];
+              detail?: string;
+            };
+            const { title, message } = describeLearningOutcome({
+              status: l.status,
+              source: l.source,
+              count: l.count ?? 0,
+              titles: l.titles,
+              detail: l.detail,
+            });
+            process.stdout.write(`\n✦ ${title}${message ? ` — ${message}` : ""}\n`);
+          } else if (part.type === "error") {
+            const e = part as Part & {
+              type: "error";
+              source: "agent" | "compaction";
+              code?: string;
+              message: string;
+              detail?: string;
+              statusCode?: number;
+            };
+            const { title, message } = describeErrorPart({
+              source: e.source,
+              code: e.code,
+              message: e.message,
+              detail: e.detail,
+              statusCode: e.statusCode,
+            });
+            process.stdout.write(`\n✗ ${title}: ${truncate(message, 400)}\n`);
+          } else if (part.type === "log") {
+            const l = part as Part & { type: "log"; level: string; message: string };
+            // Debug detail is reserved for the web view's "debug" toggle; keep the
+            // CLI stream readable with only info/warn/error/system lines.
+            if (l.level !== "debug") {
+              process.stdout.write(`  [${l.level.toUpperCase()}] ${truncate(l.message, 400)}\n`);
+            }
           }
         }
       }
@@ -1315,8 +1356,11 @@ async function resumeSession(
 
       // Promote a reviewer comment (revise feedback or an approval note) into a
       // durable learning when the agent has capture enabled. Best-effort, never
-      // fails the resume.
-      await maybePromoteApprovalComment({ agent, agentFilePath: agentPath, toolResult });
+      // fails the resume. Surface the outcome in the session log.
+      const learningOutcome = await maybePromoteApprovalComment({ agent, agentFilePath: agentPath, toolResult });
+      if (learningOutcome) {
+        await recordLearningMarkerForLatestMessage(sessionManager, summary.id, found.agentId, learningOutcome);
+      }
 
       process.stdout.write(JSON.stringify({
         success: true,

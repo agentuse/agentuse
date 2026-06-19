@@ -65,10 +65,16 @@ export function detailsKey(details: ApprovalLogDetails | undefined): string {
   return details ? JSON.stringify(details) : '';
 }
 
+/** A `type: 'log'` operational entry at debug severity, hidden by default in the session view. */
+export function isDebugLog(entry: ApprovalLogEntry): boolean {
+  return entry.type === 'log' && entry.level === 'debug';
+}
+
 /** Render-identity for a log entry: when unchanged, the entry needs no re-render. */
 export function logEntrySignature(entry: ApprovalLogEntry): string {
   return JSON.stringify([
     entry.status ?? null,
+    entry.level ?? null,
     entry.message ?? null,
     entry.title,
     detailsKey(entry.details),

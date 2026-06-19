@@ -238,6 +238,17 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
   );
 }
 
+/** Glyph for an operational log line, by severity. Mirrors the muted log aesthetic. */
+function logLevelMarker(level: string | undefined): string {
+  switch (level) {
+    case 'error': return '✗';
+    case 'warn': return '▲';
+    case 'debug': return '·';
+    case 'system': return '◆';
+    default: return '›'; // info
+  }
+}
+
 function isApprovalDetails(entry: ApprovalLogEntry): boolean {
   if (entry.tool === 'await_human' || entry.type === 'approval') return true;
   const details = entry.details;
@@ -276,6 +287,8 @@ function LogEntryImpl(props: LogEntryProps) {
   const classes = [
     'log-item',
     entry.status ?? '',
+    entry.type === 'log' ? `log-level-${entry.level ?? 'info'}` : '',
+    props.showActions ? 'is-actionable' : '',
     expandable ? 'expandable' : '',
     expanded ? 'expanded' : '',
   ].filter(Boolean).join(' ');
@@ -304,7 +317,10 @@ function LogEntryImpl(props: LogEntryProps) {
       }}
     >
       <span class="log-time">{formatLogTime(entry.time)}</span>
-      <span class="log-marker">{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : '⋮')}</span>
+      <span
+        class="log-marker"
+        {...(entry.type === 'log' && !spinning ? { 'aria-label': `${entry.level ?? 'info'} log`, title: entry.level ?? 'info', role: 'img' } : {})}
+      >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'error' ? '✗' : entry.type === 'log' ? logLevelMarker(entry.level) : '⋮')}</span>
       <div class="log-main">
         <span class="log-title">{entry.title}</span>
         <div class="log-content">

@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
-import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, type PreparedAgentExecution } from './runner';
-import { maybePromoteApprovalComment } from './learning';
+import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, recordLearningMarkerForLatestMessage, describeErrorPart, describeLogPart, type PreparedAgentExecution } from './runner';
+import { maybePromoteApprovalComment, describeLearningOutcome } from './learning';
 import { isApprovalEnabled } from './runner/approval';
 import { contextUsageFromSnapshot } from './session/usage';
 import { Command } from 'commander';
@@ -45,7 +45,7 @@ import { resolveTimeout } from './utils/config';
 import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
 import { telemetry, categorizeError, aggregateToolCalls, countSteps, parseModel } from './telemetry';
-import type { ActiveContextUsage, SessionInfo, SessionManager as SessionManagerType, SessionTrigger, ToolPart } from './session';
+import type { ActiveContextUsage, LogPartLevel, SessionInfo, SessionManager as SessionManagerType, SessionTrigger, ToolPart } from './session';
 import { findServerForProject } from './utils/server-registry';
 
 const program = new Command();
@@ -1058,8 +1058,19 @@ async function runInternalWorker() {
     return String(n);
   }
 
-  function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; tool?: string; status?: string; title: string; message?: string; time?: number; details?: ApprovalLogDetails }> {
+  function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; tool?: string; status?: string; level?: LogPartLevel; title: string; message?: string; time?: number; details?: ApprovalLogDetails }> {
     return parts.map((part: any) => {
+      if (part?.type === 'log') {
+        const view = describeLogPart(part);
+        return {
+          id: String(part.id),
+          type: 'log',
+          level: view.level,
+          title: view.title,
+          ...(view.message !== undefined && { message: view.message }),
+          ...(typeof part.time?.start === 'number' && { time: part.time.start })
+        };
+      }
       if (part?.type === 'text') {
         const message = formatApprovalLogValue(part.text);
         const isUser = part.role === 'user';
@@ -1099,6 +1110,42 @@ async function runInternalWorker() {
           id: String(part.id),
           type: 'compaction',
           title: 'Context compacted',
+          message,
+          ...(typeof part.time?.start === 'number' && { time: part.time.start })
+        };
+      }
+      if (part?.type === 'learning') {
+        const { title, message } = describeLearningOutcome({
+          status: part.status,
+          source: part.source,
+          count: typeof part.count === 'number' ? part.count : 0,
+          titles: Array.isArray(part.titles) ? part.titles : undefined,
+          detail: typeof part.detail === 'string' ? part.detail : undefined,
+        });
+        return {
+          id: String(part.id),
+          type: 'learning',
+          // 'error' drives the warning styling for a failed capture; both other
+          // outcomes are terminal/non-live.
+          status: part.status === 'failed' ? 'error' : 'completed',
+          title,
+          message,
+          ...(typeof part.time?.start === 'number' && { time: part.time.start })
+        };
+      }
+      if (part?.type === 'error') {
+        const { title, message } = describeErrorPart({
+          source: part.source === 'compaction' ? 'compaction' : 'agent',
+          code: typeof part.code === 'string' ? part.code : undefined,
+          message: typeof part.message === 'string' ? part.message : 'Error',
+          detail: typeof part.detail === 'string' ? part.detail : undefined,
+          statusCode: typeof part.statusCode === 'number' ? part.statusCode : undefined,
+        });
+        return {
+          id: String(part.id),
+          type: 'error',
+          status: 'error',
+          title,
           message,
           ...(typeof part.time?.start === 'number' && { time: part.time.start })
         };
@@ -2241,13 +2288,21 @@ async function runInternalWorker() {
 
         // Promote a reviewer comment (revise feedback or an approval note) into
         // a durable learning when the agent has capture enabled. Best-effort,
-        // never fails the run.
+        // never fails the run. Surface the outcome in the session log.
         if (req.type === 'resume') {
-          await maybePromoteApprovalComment({
+          const learningOutcome = await maybePromoteApprovalComment({
             agent,
             agentFilePath: agentPath,
             toolResult: req.toolResult,
           });
+          if (learningOutcome && continuationSession && sessionManager) {
+            await recordLearningMarkerForLatestMessage(
+              sessionManager,
+              continuationSession.sessionId,
+              continuationSession.agentId,
+              learningOutcome,
+            );
+          }
         }
 
         return {

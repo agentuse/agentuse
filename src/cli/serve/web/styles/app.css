@@ -387,6 +387,10 @@ body {
 .log-item.resuming .log-marker { color: var(--amber); }
 .log-item.expandable { cursor: pointer; }
 .log-item.expandable:hover .log-title { color: var(--cyan); }
+.log-item.expandable:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: -2px; border-radius: 6px; }
+.log-item.expandable:focus-visible .log-title { color: var(--cyan); }
+/* Pending approval gate: the row the user must act on stands out from log noise. */
+.log-item.is-actionable { background: var(--cyan-soft); box-shadow: inset 2px 0 0 var(--cyan); border-radius: 0 6px 6px 0; }
 .log-item.expandable .log-title::after {
   content: "show";
   display: inline-flex;
@@ -407,6 +411,73 @@ body {
 .log-item[data-log-type="compaction"] .log-marker { color: var(--amber); opacity: 0.9; }
 .log-item[data-log-type="compaction"] .log-title { color: var(--amber); font-weight: 500; }
 .log-item[data-log-type="compaction"] .log-content { color: var(--muted-3); font-size: 12px; }
+/* Learning capture is a housekeeping event too: subtle cyan accent. A failed
+   capture (status="error") reads as a warning so silent breakage is visible. */
+.log-item[data-log-type="learning"] .log-marker { color: var(--cyan); opacity: 0.9; }
+.log-item[data-log-type="learning"] .log-title { color: var(--cyan); font-weight: 500; }
+.log-item[data-log-type="learning"] .log-content { color: var(--muted-3); font-size: 12px; }
+.log-item.error[data-log-type="learning"] .log-marker,
+.log-item.error[data-log-type="learning"] .log-title { color: var(--red); }
+/* Model/AI-SDK errors: red accent, with the provider response body shown so a
+   failure is diagnosable inline instead of being a bare "Bad Request" pill. */
+.log-item[data-log-type="error"] .log-marker { color: var(--red); opacity: 0.95; }
+.log-item[data-log-type="error"] .log-title { color: var(--red); font-weight: 600; }
+.log-item[data-log-type="error"] .log-content { color: var(--muted-3); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Operational logs mirrored from the CLI (logger.debug/info/warn/error/system).
+   Rendered as compact, monospaced diagnostic lines so they read as a log stream
+   distinct from agent output. Severity drives the marker + title color. */
+.log-item[data-log-type="log"] .log-title {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted-3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.log-item[data-log-type="log"] .log-content {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted-3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.log-item[data-log-type="log"] .log-marker { opacity: 0.85; }
+.log-item.log-level-debug .log-marker { color: var(--muted); opacity: 0.6; }
+.log-item.log-level-debug .log-title { color: var(--muted); }
+.log-item.log-level-info .log-marker { color: var(--cyan); }
+.log-item.log-level-system .log-marker { color: var(--muted); }
+.log-item.log-level-warn .log-marker { color: var(--amber); }
+.log-item.log-level-warn .log-title { color: var(--amber); }
+.log-item.log-level-error .log-marker { color: var(--red); opacity: 0.95; }
+.log-item.log-level-error .log-title { color: var(--red); }
+
+/* "debug" toggle in the session-log header. */
+.log-debug-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--muted-3);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  user-select: none;
+  padding: 4px 6px;
+  min-height: 24px;
+  border-radius: 6px;
+}
+.log-debug-toggle input { accent-color: var(--cyan); cursor: pointer; margin: 0; }
+.log-debug-toggle:hover { color: var(--fg); }
+.log-debug-toggle:focus-within { outline: 2px solid var(--cyan-border); outline-offset: 1px; }
+.log-debug-count {
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted-3);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
 .log-content {
   display: block;
   margin-top: 6px;

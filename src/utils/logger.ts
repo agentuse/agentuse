@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import chalk from 'chalk';
 import ora, { type Ora } from 'ora';
 import { formatToolResultForDisplay } from './format-tool-result';
@@ -18,6 +19,57 @@ export enum LogLevel {
   INFO = 1,
   WARN = 2,
   ERROR = 3,
+}
+
+/** String severity for structured log records routed to a session log sink. */
+export type LogLevelName = 'debug' | 'info' | 'warn' | 'error' | 'system';
+
+/** A single structured log line delivered to an attached session log sink. */
+export interface LogRecord {
+  level: LogLevelName;
+  message: string;
+  /** Epoch millis the line was emitted. */
+  time: number;
+}
+
+/** Receives every structured log record emitted within its async scope. */
+export type LogSink = (record: LogRecord) => void;
+
+const logSinkStore = new AsyncLocalStorage<LogSink>();
+
+/** Discards records; used to detach capture while a sink persists its own output. */
+const NOOP_LOG_SINK: LogSink = () => {};
+
+/**
+ * Run `fn` with `sink` receiving every structured log record (debug/info/warn/
+ * error/system) the global logger emits from within this async context,
+ * regardless of the terminal log level. The runner uses this to mirror a run's
+ * operational logs into its session view. Nested scopes (e.g. a concurrent
+ * sub-agent) transparently route to the innermost sink, so each run's logs land
+ * in its own session even when several run at once in one process.
+ */
+export function runWithLogSink<T>(sink: LogSink, fn: () => T): T {
+  return logSinkStore.run(sink, fn);
+}
+
+/**
+ * Run `fn` with no active sink. A sink that itself logs while persisting (e.g.
+ * a best-effort write that fails and calls logger.debug) would otherwise feed
+ * its own output back into capture; persisting under this guard breaks the loop.
+ */
+export function withoutLogSink<T>(fn: () => T): T {
+  return logSinkStore.run(NOOP_LOG_SINK, fn);
+}
+
+/** Deliver a structured record to the active sink, if any. Never throws. */
+function emitLogRecord(level: LogLevelName, message: string): void {
+  const sink = logSinkStore.getStore();
+  if (!sink || sink === NOOP_LOG_SINK) return;
+  try {
+    sink({ level, message, time: Date.now() });
+  } catch {
+    // A misbehaving sink must never break logging.
+  }
 }
 
 export interface ExecutionSummary {
@@ -572,12 +624,15 @@ class Logger {
   }
 
   error(message: string, error?: Error) {
+    const errorMessage = error ? `${message}: ${error.message}` : message;
+    // Mirror to the session log sink (if any) regardless of terminal level.
+    emitLogRecord('error', errorMessage);
+
     // Stop spinner before writing to avoid cursor conflicts
     this.stopSpinner(true);
 
     const prefix = this.getAgentPrefix();
     const badge = this.tui.useTUI ? chalk.bgRed.white.bold(' ERROR ') : '[ERROR]';
-    const errorMessage = error ? `${message}: ${error.message}` : message;
     const formattedMessage = this.tui.useTUI
       ? `${prefix}  ${badge} ${errorMessage}`
       : `${badge} ${errorMessage}`;
@@ -589,6 +644,7 @@ class Logger {
   }
 
   warn(message: string) {
+    emitLogRecord('warn', message);
     if (this.level <= LogLevel.WARN) {
       // Stop spinner before writing to avoid cursor conflicts
       this.stopSpinner(true);
@@ -604,6 +660,7 @@ class Logger {
   }
 
   info(message: string) {
+    emitLogRecord('info', message);
     if (this.isInfoEnabled()) {
       // Stop spinner before writing to avoid cursor conflicts
       this.stopSpinner(true);
@@ -619,6 +676,10 @@ class Logger {
   }
 
   debug(message: string) {
+    // Capture debug into the session sink unconditionally so the web view's
+    // "show debug" toggle has content on any run, even when the terminal isn't
+    // in debug mode. Terminal printing still respects the debug gate below.
+    emitLogRecord('debug', message);
     if (this.isDebugEnabled() && this.level <= LogLevel.DEBUG) {
       this.writeToStderr(chalk.gray(`[DEBUG] ${message}`));
     }
@@ -693,6 +754,7 @@ class Logger {
   }
 
   system(message: string) {
+    emitLogRecord('system', message);
     this.writeToStderr(chalk.magenta(`[SYSTEM] ${message}`));
   }
 

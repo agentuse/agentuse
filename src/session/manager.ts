@@ -45,6 +45,7 @@ function getPartOrder(part: Part): number {
     if (state.status === 'pending') return state.suspendedAt ?? Number.MAX_SAFE_INTEGER;
     return state.time.start;
   }
+  if (part.type === 'compaction' || part.type === 'learning' || part.type === 'error' || part.type === 'log') return part.time.start;
   return Number.MAX_SAFE_INTEGER;
 }
 

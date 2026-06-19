@@ -11,6 +11,7 @@ import { useApprovalStream } from '../hooks/use-approval-stream';
 import { useTitle } from '../hooks/use-title';
 import {
   formatApprovalTime,
+  isDebugLog,
   isEndedStatus,
   isLiveStatus,
   latestReviewerComment,
@@ -119,6 +120,11 @@ export default function SessionDetail() {
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [decisionDialog, setDecisionDialog] = useState<DecisionDialogMode | null>(null);
   const [nudge, setNudge] = useState(0);
+  // Debug-level operational logs are hidden by default to keep the log readable;
+  // the preference persists across sessions.
+  const [showDebug, setShowDebug] = useState<boolean>(() => {
+    try { return localStorage.getItem('agentuse:session:showDebug') === '1'; } catch { return false; }
+  });
 
   // Logs accumulate monotonically across the session; the status payload can
   // briefly return fewer entries during approval handoffs, so merge by id.
@@ -199,7 +205,19 @@ export default function SessionDetail() {
     () => [...logsRef.current.values()].sort((a, b) => (a.time ?? 0) - (b.time ?? 0)),
     [logsVersion]
   );
+  const debugCount = useMemo(
+    () => orderedLogs.reduce((n, e) => n + (isDebugLog(e) ? 1 : 0), 0),
+    [orderedLogs]
+  );
+  const visibleLogs = useMemo(
+    () => showDebug ? orderedLogs : orderedLogs.filter((e) => !isDebugLog(e)),
+    [orderedLogs, showDebug]
+  );
   const reviewerComment = useMemo(() => latestReviewerComment(orderedLogs), [orderedLogs]);
+
+  useEffect(() => {
+    try { localStorage.setItem('agentuse:session:showDebug', showDebug ? '1' : '0'); } catch { /* ignore */ }
+  }, [showDebug]);
 
   // Initial + follow scroll: stick to the page end while the user is near it.
   const hasScrolledRef = useRef(false);
@@ -392,11 +410,31 @@ export default function SessionDetail() {
           </div>
         )}
 
-        <div class="section-title"><span>session log</span><span class="rule"></span></div>
+        <div class="section-title">
+          <span>session log</span>
+          <span class="rule"></span>
+          {debugCount > 0 && (
+            <label class="log-debug-toggle" title="Show debug-level operational logs">
+              <input
+                type="checkbox"
+                checked={showDebug}
+                onChange={(e) => setShowDebug((e.target as HTMLInputElement).checked)}
+              />
+              <span>debug</span>
+              <span class="log-debug-count">{debugCount}</span>
+            </label>
+          )}
+        </div>
         <div class="panel">
           <ul class="logs">
-            {orderedLogs.length === 0 && <li class="log-empty">No session events yet.</li>}
-            {orderedLogs.map((entry) => (
+            {visibleLogs.length === 0 && (
+              <li class="log-empty">
+                {orderedLogs.length === 0
+                  ? 'No session events yet.'
+                  : `${debugCount} debug ${debugCount === 1 ? 'entry' : 'entries'} hidden. Enable the debug toggle to view.`}
+              </li>
+            )}
+            {visibleLogs.map((entry) => (
               <LogEntry
                 key={entry.id}
                 entry={entry}

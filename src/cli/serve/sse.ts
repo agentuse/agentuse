@@ -72,7 +72,7 @@ export const SESSION_SSE_LIVE_INTERVAL_MS = 500;
 export const SESSION_SSE_IDLE_INTERVAL_MS = 10_000;
 
 function logSignature(entry: ApprovalLogEntry): string {
-  return JSON.stringify([entry.status ?? null, entry.message ?? null, entry.title, entry.details ?? null, entry.subagentSession ?? null]);
+  return JSON.stringify([entry.status ?? null, entry.level ?? null, entry.message ?? null, entry.title, entry.details ?? null, entry.subagentSession ?? null]);
 }
 
 function writeSseHeaders(res: ServerResponse): void {

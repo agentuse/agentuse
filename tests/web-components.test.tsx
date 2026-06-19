@@ -5,7 +5,7 @@ import { StoreTable, type StoreTableColumn } from '../src/cli/serve/web/componen
 import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
 import { DecisionDialog } from '../src/cli/serve/web/components/comment-dialog';
 import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/cli/serve/web/lib/content-html';
-import { latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
+import { isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
 import { hasActionableApproval, headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 
@@ -43,6 +43,38 @@ describe('LogEntry component', () => {
     expect(html).toContain('⇲');
     // System event, not an expandable tool row.
     expect(html).not.toContain('expandable');
+  });
+
+  it('renders an operational log line with a level class, marker, and accessible name', () => {
+    const html = renderEntry({
+      id: 'log-op-1',
+      type: 'log',
+      level: 'warn',
+      title: 'MCP server slow to respond',
+      time: Date.now(),
+    });
+    expect(html).toContain('data-log-type="log"');
+    expect(html).toContain('log-level-warn');
+    expect(html).toContain('MCP server slow to respond');
+    expect(html).toContain('▲'); // warn marker glyph
+    expect(html).toContain('aria-label="warn log"'); // non-color cue for screen readers
+    // A log line is not an expandable tool row.
+    expect(html).not.toContain('expandable');
+  });
+
+  it('renders a multi-line log with the first line as title and the rest as body', () => {
+    const html = renderEntry({
+      id: 'log-op-2',
+      type: 'log',
+      level: 'error',
+      title: 'connection refused',
+      message: 'at connect (net.js:1)\nat onError (mcp.ts:9)',
+      time: Date.now(),
+    });
+    expect(html).toContain('log-level-error');
+    expect(html).toContain('connection refused');
+    expect(html).toContain('at onError (mcp.ts:9)');
+    expect(html).toContain('✗'); // error marker glyph
   });
 
   it('renders tool input/output details', () => {
@@ -388,5 +420,16 @@ describe('format helpers', () => {
     expect(logEntrySignature(entry)).toBe(same);
     expect(logEntrySignature({ ...entry, status: 'completed' })).not.toBe(same);
     expect(logEntrySignature({ ...entry, details: { output: 'x' } })).not.toBe(same);
+  });
+
+  it('logEntrySignature distinguishes log entries by level', () => {
+    const entry: ApprovalLogEntry = { id: '1', type: 'log', level: 'info', title: 'x' };
+    expect(logEntrySignature(entry)).not.toBe(logEntrySignature({ ...entry, level: 'warn' }));
+  });
+
+  it('isDebugLog matches only debug-level log entries', () => {
+    expect(isDebugLog({ id: '1', type: 'log', level: 'debug', title: 'x' })).toBe(true);
+    expect(isDebugLog({ id: '2', type: 'log', level: 'info', title: 'x' })).toBe(false);
+    expect(isDebugLog({ id: '3', type: 'tool', title: 'x' })).toBe(false);
   });
 });

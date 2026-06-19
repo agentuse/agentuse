@@ -158,11 +158,16 @@ export interface ApprovalPageInfo {
   logs?: ApprovalLogEntry[];
 }
 
+/** Severity carried by `type: 'log'` entries (operational logger output). */
+export type LogEntryLevel = 'debug' | 'info' | 'warn' | 'error' | 'system';
+
 export interface ApprovalLogEntry {
   id: string;
   type: string;
   tool?: string;
   status?: string;
+  /** Set on `type: 'log'` entries to drive level styling and the debug toggle. */
+  level?: LogEntryLevel;
   title: string;
   message?: string;
   time?: number;

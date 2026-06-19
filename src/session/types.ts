@@ -301,7 +301,10 @@ export type Part =
   | StepFinishPart
   | SnapshotPart
   | PatchPart
-  | CompactionPart;
+  | CompactionPart
+  | LearningPart
+  | ErrorPart
+  | LogPart;
 
 /** What triggered a context compaction. */
 export type CompactionReason = 'limit' | 'approval' | 'step';
@@ -318,6 +321,70 @@ export interface CompactionPart extends PartBase {
   messagesBefore: number;
   messagesAfter: number;
   usagePercentBefore?: number;
+  time: {
+    start: number;
+  };
+}
+
+/** Outcome of a learning capture attempt. Mirrors learning/types LearningOutcome. */
+export type LearningPartStatus = 'captured' | 'none' | 'failed';
+export type LearningPartSource = 'auto' | 'approval';
+
+/**
+ * Marker recorded after a learning capture attempt (self-evaluation or
+ * approval-comment promotion), so the result — including a silent failure — is
+ * visible in the session log instead of only the CLI spinner.
+ */
+export interface LearningPart extends PartBase {
+  type: 'learning';
+  status: LearningPartStatus;
+  source: LearningPartSource;
+  count: number;
+  titles?: string[];
+  detail?: string;
+  time: {
+    start: number;
+  };
+}
+
+/** Where a model/AI-SDK error originated. */
+export type ErrorPartSource = 'agent' | 'compaction';
+
+/**
+ * Marker recorded when a model/AI-SDK call fails, so the failure — and the
+ * provider's response body, which says *why* (e.g. "Instructions are required")
+ * — is visible in the session log instead of being reduced to a terse "Bad
+ * Request" status pill or only a CLI warning.
+ */
+export interface ErrorPart extends PartBase {
+  type: 'error';
+  source: ErrorPartSource;
+  /** Classification code, e.g. EXECUTION_ERROR / AUTH_ERROR / TIMEOUT. */
+  code?: string;
+  /** error.message (often a generic "Bad Request"). */
+  message: string;
+  /** Provider response body — the actual cause. */
+  detail?: string;
+  statusCode?: number;
+  time: {
+    start: number;
+  };
+}
+
+/** Severity of an operational log line mirrored into the session view. */
+export type LogPartLevel = 'debug' | 'info' | 'warn' | 'error' | 'system';
+
+/**
+ * A single operational log line (logger.debug/info/warn/error/system) captured
+ * during the run and persisted so the CLI's diagnostic stream is visible in the
+ * session log and the serve web view, not only on the terminal that launched
+ * the run. Recorded by the per-run sink in runner/session-helper. Best-effort:
+ * a failed write never affects the run.
+ */
+export interface LogPart extends PartBase {
+  type: 'log';
+  level: LogPartLevel;
+  message: string;
   time: {
     start: number;
   };
