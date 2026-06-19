@@ -6,6 +6,7 @@ import { CodexAuth } from '../auth/codex';
 import { logger } from '../utils/logger';
 import { ContextManager } from '../context-manager';
 import { compactMessages } from '../compactor';
+import { addLanguageModelUsage } from '../session/usage';
 import type { AgentChunk } from './types';
 import { isSuspendSignal } from './suspend';
 import type { CompactionReason, ModelToolOutputArtifactRef, SessionManager, ToolOutputArtifactRef } from '../session';
@@ -390,6 +391,18 @@ export async function* executeAgentCore(
     }
   };
 
+  // `stopWhen` predicate: end the current streamText segment once the provider's
+  // real per-step token usage crosses the compaction threshold. We then compact
+  // between segments (see the segment loop) so the reduction actually persists,
+  // unlike compacting inside prepareStep where the SDK rebuilds the full history
+  // every step.
+  const stopForCompaction = ({ steps }: { steps: Array<{ usage?: { inputTokens?: number; outputTokens?: number } }> }): boolean => {
+    if (!contextManager) return false;
+    const last = steps[steps.length - 1];
+    const used = (last?.usage?.inputTokens ?? 0) + (last?.usage?.outputTokens ?? 0);
+    return used > 0 && used >= contextManager.compactionThresholdTokens();
+  };
+
   // Function to create stream with current messages
   const createStream = async () => {
     // Check if we need to compact before creating stream
@@ -427,33 +440,36 @@ export async function* executeAgentCore(
       }
     }
 
+    // Cap each segment to the remaining step budget so compaction restarts do
+    // not multiply the effective step limit (each streamText call counts steps
+    // from zero).
+    const remainingSteps = Math.max(1, options.maxSteps - stepCount);
     const streamConfig: any = {
       model,
       messages,
       maxRetries: MAX_RETRIES,
       toolChoice: 'auto' as const,
-      stopWhen: stepCountIs(options.maxSteps),
+      stopWhen: contextManager
+        ? [stepCountIs(remainingSteps), stopForCompaction]
+        : stepCountIs(remainingSteps),
       ...(options.abortSignal && { abortSignal: options.abortSignal }),
       ...(providerOptions && { providerOptions }),
       ...((usesAnthropicCacheControl || contextManager) && {
         prepareStep: async ({ messages: stepMessages }: { messages: ModelMessage[] }) => {
-          let nextMessages = stepMessages as any[];
+          // Measurement + cache annotation only. Compaction runs BETWEEN
+          // streamText calls (the segment loop), because messages returned from
+          // prepareStep do not replace the SDK's accumulated history, so
+          // compacting here re-summarizes every step without ever shrinking the
+          // real conversation.
           if (contextManager) {
-            contextManager.setMessages(nextMessages);
-            messages = nextMessages;
-            const shouldCompactForLimit = contextManager.shouldCompact();
-            const shouldCompactForLongRunStep = stepCount > 0 && contextManager.shouldCompactAtBoundary('step');
-            if (shouldCompactForLimit || shouldCompactForLongRunStep) {
-              nextMessages = await compactActiveContext({ reason: shouldCompactForLimit ? 'limit' : 'step' }) as any[];
-            } else {
-              await persistContextSnapshot();
-            }
+            contextManager.setMessages(stepMessages as any[]);
+            await persistContextSnapshot();
           }
 
           return {
             messages: usesAnthropicCacheControl
-              ? applyAnthropicCacheControlToStepMessages(nextMessages)
-              : nextMessages
+              ? applyAnthropicCacheControlToStepMessages(stepMessages as any[])
+              : stepMessages
           };
         }
       }),
@@ -511,6 +527,18 @@ export async function* executeAgentCore(
     };
   };
 
+  // Segment loop: one streamText call per iteration. Compaction runs BETWEEN
+  // iterations (at the end of the loop) so the reduced history actually persists
+  // into the next call. Compacting inside a single streamText (via prepareStep)
+  // cannot persist — the SDK rebuilds the full history every step — which made
+  // compaction re-fire every step. `priorSegmentsUsage` carries cumulative token
+  // usage across segments so the consumer's cumulative-replace stays correct.
+  let priorSegmentsUsage: any;
+  let runAnotherSegment = true;
+  while (runAnotherSegment) {
+  runAnotherSegment = false;
+  let segmentFinishReason: string | undefined;
+
   let stream;
   try {
     // Track when we start the LLM generation
@@ -558,6 +586,9 @@ Error: ${errorMessage}`);
     yield { type: 'error', error };
     return;
   }
+
+  // What was actually sent this segment (createStream may compact pre-stream).
+  const segmentInput = messages;
 
   try {
     for await (const chunk of stream.fullStream) {
@@ -709,6 +740,7 @@ Error: ${errorMessage}`);
           break;
 
         case 'finish':
+          segmentFinishReason = chunk.finishReason;
           // Track the assistant's message
           if (contextManager && accumulatedText) {
             const assistantMessage: any = {
@@ -725,6 +757,15 @@ Error: ${errorMessage}`);
           const { usage, usageKind } = usageFromStreamChunk(chunk);
           if (contextManager && usage) {
             contextManager.updateUsage(usage, usageKind);
+          }
+          // A segment's finish carries cumulative usage for THAT streamText call.
+          // Offset by prior segments so the consumer's cumulative-replace yields a
+          // correct cross-run total rather than just the last segment's.
+          const emittedUsage = usage && usageKind === 'cumulative'
+            ? addLanguageModelUsage(priorSegmentsUsage, usage)
+            : usage;
+          if (emittedUsage && usageKind === 'cumulative') {
+            priorSegmentsUsage = emittedUsage;
           }
 
           // Log finish reason for debugging and warnings
@@ -754,7 +795,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
             yield {
               type: 'finish',
               finishReason: chunk.finishReason,
-              usage,
+              usage: emittedUsage,
               ...(usageKind && { usageKind }),
               ...(contextManager && { contextUsage: contextManager.getStats() }),
               toolStartTime: llmGenerationStartTime,
@@ -766,7 +807,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
             yield {
               type: 'finish',
               finishReason: chunk.finishReason,
-              usage,
+              usage: emittedUsage,
               ...(usageKind && { usageKind }),
               ...(contextManager && { contextUsage: contextManager.getStats() })
             };
@@ -825,6 +866,32 @@ Current step: ${stepCount}/${options.maxSteps}`);
         default:
           logger.debug(`[STREAM] Unknown chunk type received: ${chunk.type}`);
           break;
+      }
+    }
+
+    // Segment ended cleanly. Reconstruct the full conversation (what we sent
+    // plus everything the model generated) and, if we are over the threshold
+    // with a pending tool follow-up, compact and run another segment. Compaction
+    // here persists because the next streamText call is built from `messages`.
+    if (contextManager) {
+      try {
+        const segmentResponse: any = await stream.response;
+        messages = [...segmentInput, ...((segmentResponse?.messages as any[]) ?? [])];
+        contextManager.setMessages(messages);
+        if (
+          segmentFinishReason === 'tool-calls' &&
+          stepCount < options.maxSteps &&
+          contextManager.shouldCompact()
+        ) {
+          const compactionsBefore = contextManager.getStats().compactions;
+          messages = await compactActiveContext({ reason: 'limit' }) as any[];
+          // Only restart if compaction actually reduced the context. If it
+          // no-ops (nothing left to fold), restarting would spin forever; let
+          // the run end and the next createStream's hard-limit retry cope.
+          runAnotherSegment = contextManager.getStats().compactions > compactionsBefore;
+        }
+      } catch (reconcileError) {
+        logger.debug(`Segment compaction check failed: ${(reconcileError as Error).message}`);
       }
     }
 
@@ -911,6 +978,7 @@ Error: ${errorMessage}`);
       logger.error('Stream processing error:', error);
       yield { type: 'error', error };
     }
+  }
   }
 }
 

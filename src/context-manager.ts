@@ -232,6 +232,16 @@ export class ContextManager {
   }
 
   /**
+   * Token budget at which compaction should trigger (window * threshold).
+   * Used by the stream loop's `stopWhen` predicate, which compares it against
+   * the provider's real per-step token usage to end a segment for compaction.
+   */
+  compactionThresholdTokens(): number {
+    if (!this.modelInfo) return Number.POSITIVE_INFINITY;
+    return this.modelInfo.contextLimit * this.compactionThreshold;
+  }
+
+  /**
    * Get current usage percentage
    */
   getUsagePercentage(): number {

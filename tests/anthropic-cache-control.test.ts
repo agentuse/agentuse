@@ -383,7 +383,11 @@ describe('executeAgentCore Anthropic cache control', () => {
     expect(chunks.indexOf(usage)).toBeLessThan(chunks.indexOf(suspended));
   });
 
-  it('compacts long-run context at model step boundaries after the first tool call', async () => {
+  it('does not compact inside prepareStep (compaction moved between streams)', async () => {
+    // Even with the step floor forced on, prepareStep must only measure and
+    // annotate — never summarize. Compaction now happens between streamText
+    // calls so it actually persists; a prepareStep summary would be discarded
+    // by the SDK and re-run every step.
     process.env.STEP_COMPACTION_MIN_TOKENS = '1';
     streamTextMock.mockImplementationOnce(() => ({
       fullStream: (async function* () {
@@ -396,11 +400,7 @@ describe('executeAgentCore Anthropic cache control', () => {
         yield {
           type: 'finish',
           finishReason: 'stop',
-          usage: {
-            inputTokens: 10,
-            outputTokens: 2,
-            totalTokens: 12,
-          },
+          usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 },
         };
       })(),
     }));
@@ -409,20 +409,14 @@ describe('executeAgentCore Anthropic cache control', () => {
       for await (const _ of executeAgentCore(
         {
           name: 'step-boundary',
-          config: {
-            model: 'demo:test',
-          },
+          config: { model: 'demo:test' },
         } as any,
         {
-          read_file: {
-            description: 'Read a file',
-          } as any,
+          read_file: { description: 'Read a file' } as any,
         },
         {
           userMessage: 'Initial task',
-          systemMessages: [
-            { role: 'system', content: 'static instructions' },
-          ],
+          systemMessages: [{ role: 'system', content: 'static instructions' }],
           maxSteps: 3,
         }
       )) {
@@ -430,39 +424,23 @@ describe('executeAgentCore Anthropic cache control', () => {
       }
 
       const streamConfig = streamTextMock.mock.calls[0][0] as any;
-      // Compaction summarizes via completeText(), i.e. the next streamText call.
-      streamTextMock.mockImplementationOnce(() => ({
-        fullStream: (async function* () {
-          yield { type: 'text-delta', text: 'compacted' };
-          yield { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
-        })(),
-      }));
-      const prepared = await streamConfig.prepareStep({
-        messages: [
-          { role: 'system', content: 'old system context' },
-          { role: 'user', content: 'old user context' },
-          { role: 'assistant', content: 'old middle 1' },
-          { role: 'user', content: 'old middle 2' },
-          { role: 'assistant', content: 'recent assistant context 1' },
-          { role: 'tool', content: [{ type: 'tool-result', output: 'recent tool context' }] },
-          { role: 'user', content: 'recent user context 2' },
-        ],
-      });
-
-      // Head (system + original task) preserved, middle folded into a user-role
-      // summary, recent tail kept intact.
-      expect(prepared.messages).toHaveLength(6);
-      expect(prepared.messages[0]).toEqual({ role: 'system', content: 'old system context' });
-      expect(prepared.messages[1]).toEqual({ role: 'user', content: 'old user context' });
-      expect(prepared.messages[2]).toMatchObject({
-        role: 'user',
-        content: expect.stringContaining('[Context Summary]\ncompacted\n[End Summary]'),
-      });
-      expect(prepared.messages.slice(3)).toEqual([
+      const streamCallsBefore = streamTextMock.mock.calls.length;
+      const input = [
+        { role: 'system', content: 'old system context' },
+        { role: 'user', content: 'old user context' },
+        { role: 'assistant', content: 'old middle 1' },
+        { role: 'user', content: 'old middle 2' },
         { role: 'assistant', content: 'recent assistant context 1' },
         { role: 'tool', content: [{ type: 'tool-result', output: 'recent tool context' }] },
         { role: 'user', content: 'recent user context 2' },
-      ]);
+      ];
+      const prepared = await streamConfig.prepareStep({ messages: input });
+
+      // Returned messages are untouched (no summary injected); demo provider has
+      // no cache-control rewriting either.
+      expect(prepared.messages).toEqual(input);
+      // No extra streamText call for a summarizer was issued during prepareStep.
+      expect(streamTextMock.mock.calls.length).toBe(streamCallsBefore);
     } finally {
       delete process.env.STEP_COMPACTION_MIN_TOKENS;
     }
