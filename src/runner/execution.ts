@@ -651,6 +651,11 @@ Error: ${errorMessage}`);
           const startTime = toolStartTimes.get(toolCallId);
           const duration = startTime ? Date.now() - startTime : undefined;
 
+          // Parse once: parseToolResult is pure, and running it twice previously
+          // emitted the soft-error warning twice for the same call.
+          const toolResultStr = parseToolResult(chunk);
+          warnOnSoftToolError(chunk, toolResultStr);
+
           // Track tool results in context
           if (contextManager) {
             // Use simple format for tool message
@@ -660,7 +665,7 @@ Error: ${errorMessage}`);
                 type: 'tool-result',
                 toolCallId,
                 toolName: chunk.toolName,
-                output: parseToolResult(chunk)
+                output: toolResultStr
               }]
             };
             contextManager.addMessage(toolResultMessage);
@@ -670,7 +675,7 @@ Error: ${errorMessage}`);
             type: 'tool-result',
             toolName: chunk.toolName,
             toolCallId,  // Add toolCallId to the chunk
-            toolResult: parseToolResult(chunk),
+            toolResult: toolResultStr,
             toolResultRaw: (chunk as any).result || (chunk as any).output,
             ...(startTime && { toolStartTime: startTime }),
             ...(duration !== undefined && { toolDuration: duration })
@@ -1083,49 +1088,44 @@ function parseToolResult(chunk: any): string {
     }
   }
 
-  const resultStr = typeof output === 'string' ? output : JSON.stringify(output);
+  return typeof output === 'string' ? output : JSON.stringify(output);
+}
 
-  // Detect if the result looks like an error message
-  // Skip error detection for skill tools since skill content often contains
-  // documentation about errors (e.g., "not found" troubleshooting guides)
-  const isSkillTool = chunk.toolName === 'tools__skill_load' || chunk.toolName === 'tools__skill_read';
+/**
+ * Emit a single operational warning when a *successful* tool result actually
+ * reads like a soft failure (a tool that reports an error in its return value
+ * instead of throwing). Patterns are anchored to the result's first non-empty
+ * line so incidental keywords buried in long output (scraped pages, bash/JS
+ * scripts) don't trip a false "failed" warning. Call this exactly once per
+ * tool-result chunk: parseToolResult is pure and may run more than once.
+ */
+export function warnOnSoftToolError(chunk: any, resultStr: string): void {
+  if (!resultStr || typeof resultStr !== 'string') return;
+  // Skill content often documents errors (e.g. "not found" troubleshooting), so
+  // it would always trip the heuristic; skip it.
+  if (chunk.toolName === 'tools__skill_load' || chunk.toolName === 'tools__skill_read') return;
 
-  if (resultStr && typeof resultStr === 'string' && !isSkillTool) {
-    const errorPatterns = [
-      /^Error:/i,
-      /^Error executing/i,
-      /^Failed to/i,
-      /authentication.*failed/i,
-      /unauthorized/i,
-      /permission denied/i,
-      /not found/i,
-      /invalid.*token/i,
-      /invalid.*api.*key/i
-    ];
+  const firstLine = resultStr.split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
+  const errorPatterns = [
+    /^Error\b/i,
+    /^Error executing\b/i,
+    /^Failed to\b/i,
+    /^auth(?:entication)?\s+failed\b/i,
+    /^unauthorized\b/i,
+    /^permission denied\b/i,
+    /^not found\b/i,
+    /^invalid\s+(?:token|api[\s_-]?key)\b/i,
+  ];
+  if (!errorPatterns.some((pattern) => pattern.test(firstLine))) return;
 
-    for (const pattern of errorPatterns) {
-      if (pattern.test(resultStr)) {
-        // Extract operation from error message or use generic "operation"
-        let operation = 'operation';
+  // Best-effort context for the warning: the command/file/action the error names.
+  let operation = 'operation';
+  const commandMatch = firstLine.match(/['"`]([^'"`]+)['"`]/);
+  const fileMatch = firstLine.match(/(?:file|path|directory)\s+['"`]?([^\s'"`]+)/i);
+  const actionMatch = firstLine.match(/(?:failed to|cannot|unable to)\s+(\w+)/i);
+  if (commandMatch) operation = commandMatch[1];
+  else if (fileMatch) operation = fileMatch[1];
+  else if (actionMatch) operation = actionMatch[1];
 
-        // Try to extract operation context from error message
-        const commandMatch = resultStr.match(/['"`]([^'"`]+)['"`]/);
-        const fileMatch = resultStr.match(/(?:file|path|directory)\s+['"`]?([^\s'"`]+)/i);
-        const actionMatch = resultStr.match(/(?:failed to|cannot|unable to)\s+(\w+)/i);
-
-        if (commandMatch) {
-          operation = commandMatch[1];
-        } else if (fileMatch) {
-          operation = fileMatch[1];
-        } else if (actionMatch) {
-          operation = actionMatch[1];
-        }
-
-        logger.warnWithTool(chunk.toolName || 'unknown', operation, resultStr);
-        break;
-      }
-    }
-  }
-
-  return resultStr;
+  logger.warnWithTool(chunk.toolName || 'unknown', operation, resultStr, chunk.toolCallId);
 }

@@ -604,7 +604,7 @@ export async function processAgentStream(
         const errorStr = typeof chunk.error === 'string'
           ? chunk.error
           : ((chunk.error as any)?.message || 'Unknown error');
-        logger.warnWithTool(chunk.toolName || 'unknown', 'call', errorStr);
+        logger.warnWithTool(chunk.toolName || 'unknown', 'call', errorStr, chunk.toolCallId);
         if (prefix) logger.warn(prefix.trim()); // Show any prefix separately
         break;
 

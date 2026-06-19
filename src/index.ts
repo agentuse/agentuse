@@ -1060,7 +1060,7 @@ async function runInternalWorker() {
     return String(n);
   }
 
-  function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; tool?: string; status?: string; level?: LogPartLevel; title: string; message?: string; time?: number; details?: ApprovalLogDetails }> {
+  function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; tool?: string; callId?: string; toolId?: string; status?: string; level?: LogPartLevel; title: string; message?: string; time?: number; details?: ApprovalLogDetails }> {
     return parts.map((part: any) => {
       if (part?.type === 'log') {
         const view = describeLogPart(part);
@@ -1068,6 +1068,7 @@ async function runInternalWorker() {
           id: String(part.id),
           type: 'log',
           level: view.level,
+          ...(part.toolId && { toolId: String(part.toolId) }),
           title: view.title,
           ...(view.message !== undefined && { message: view.message }),
           ...(typeof part.time?.start === 'number' && { time: part.time.start })
@@ -1172,6 +1173,7 @@ async function runInternalWorker() {
           id: String(part.id),
           type: 'tool',
           ...(part.tool && { tool: String(part.tool) }),
+          ...(part.callID && { callId: String(part.callID) }),
           ...(typeof state.status === 'string' && { status: state.status }),
           title,
           ...(message !== undefined && { message }),

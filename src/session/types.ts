@@ -385,6 +385,9 @@ export interface LogPart extends PartBase {
   type: 'log';
   level: LogPartLevel;
   message: string;
+  /** Tool call id this log line is about, set when mirrored from
+   *  logger.warnWithTool. Lets the session view nest it under its tool entry. */
+  toolId?: string;
   time: {
     start: number;
   };

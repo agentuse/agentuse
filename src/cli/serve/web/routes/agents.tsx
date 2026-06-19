@@ -41,9 +41,16 @@ function RunButton(props: { agentPath: string; projectId: string }) {
       class="run-btn"
       disabled={busy}
       onClick={onRun}
+      aria-label="Run this agent"
       title={error ?? 'Run this agent now and open its session'}
     >
-      {busy ? 'Starting…' : 'Run'}
+      {busy ? (
+        <span class="run-btn-spinner" aria-hidden="true" />
+      ) : (
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="M5 3.5v9a.75.75 0 0 0 1.14.64l7.25-4.5a.75.75 0 0 0 0-1.28l-7.25-4.5A.75.75 0 0 0 5 3.5Z" />
+        </svg>
+      )}
     </button>
   );
 }

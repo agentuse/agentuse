@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import { initStorage } from '../src/storage';
 import { SessionManager } from '../src/session';
 import { createSessionLogSink, describeLogPart } from '../src/runner';
+import { warnOnSoftToolError } from '../src/runner/execution';
 import { logger, runWithLogSink, type LogRecord } from '../src/utils/logger';
 
 describe('describeLogPart (log part -> session-view entry)', () => {
@@ -25,6 +26,35 @@ describe('describeLogPart (log part -> session-view entry)', () => {
   });
   it('trims trailing whitespace and newlines', () => {
     expect(describeLogPart({ level: 'info', message: 'one line\n' })).toEqual({ level: 'info', title: 'one line' });
+  });
+});
+
+describe('warnOnSoftToolError (soft tool-failure heuristic)', () => {
+  const capture = (chunk: any, result: string): LogRecord[] => {
+    const records: LogRecord[] = [];
+    runWithLogSink((r) => records.push(r), () => warnOnSoftToolError(chunk, result));
+    return records;
+  };
+
+  it('does not warn when an error keyword only appears mid-output (the LinkedIn false positive)', () => {
+    const result = '// Extract posts from LinkedIn feed\nconst x = 1; // page not found handler\nwindow.MAX_ITEMS = 5;';
+    expect(capture({ toolName: 'tools__bash', toolCallId: 'c1' }, result)).toHaveLength(0);
+  });
+
+  it('does not warn when the first line is a success title containing an error word', () => {
+    expect(capture({ toolName: 'tools__bash', toolCallId: 'c2' }, '✓ Search | LinkedIn — 3 results, none unauthorized')).toHaveLength(0);
+  });
+
+  it('warns once when the result actually starts as an error, carrying the toolId', () => {
+    const records = capture({ toolName: 'tools__bash', toolCallId: 'c3' }, 'Error: command not found: foo');
+    expect(records).toHaveLength(1);
+    expect(records[0].level).toBe('warn');
+    expect(records[0].toolId).toBe('c3');
+    expect(records[0].message).toContain('failed -');
+  });
+
+  it('skips skill tools whose content documents errors', () => {
+    expect(capture({ toolName: 'tools__skill_load', toolCallId: 'c4' }, 'Error: not found')).toHaveLength(0);
   });
 });
 

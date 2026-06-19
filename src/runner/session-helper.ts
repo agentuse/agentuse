@@ -182,7 +182,7 @@ export function createSessionLogSink(
   let persistedCount = 0;
   let truncationNoted = false;
 
-  const addLogPart = async (level: LogPartLevel, message: string, time: number): Promise<void> => {
+  const addLogPart = async (level: LogPartLevel, message: string, time: number, toolId?: string): Promise<void> => {
     // `satisfies` shape-checks the log part; the cast is required because
     // addPart's `Omit<Part, ...>` collapses the discriminated union to its
     // shared keys (the learning/error markers cast the same way).
@@ -190,6 +190,7 @@ export function createSessionLogSink(
       type: 'log',
       level,
       message,
+      ...(toolId && { toolId }),
       time: { start: time },
     } satisfies Omit<LogPart, 'id' | 'sessionID' | 'messageID'>;
     await sessionManager.addPart(sessionID, agentId, messageID, partData as Omit<Part, 'id' | 'sessionID' | 'messageID'>);
@@ -210,7 +211,7 @@ export function createSessionLogSink(
           return;
         }
         try {
-          await addLogPart(record.level, record.message, record.time);
+          await addLogPart(record.level, record.message, record.time, record.toolId);
           persistedCount += 1;
         } catch { /* best-effort: drop this line */ }
       }

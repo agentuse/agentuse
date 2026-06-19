@@ -62,6 +62,31 @@ describe('LogEntry component', () => {
     expect(html).not.toContain('expandable');
   });
 
+  it('nests tool warnings under the tool row with a collapsed-visible badge', () => {
+    const html = renderEntry(
+      { id: 'tool-1', type: 'tool', tool: 'tools__bash', callId: 'call-abc', title: 'tools__bash completed', status: 'completed', time: Date.now() },
+      {
+        warnings: [
+          { id: 'warn-1', type: 'log', level: 'warn', toolId: 'call-abc', title: 'tools__bash: window.MAX_ITEMS = 5; failed - // Extract posts from LinkedIn feed', time: Date.now() },
+        ],
+      }
+    );
+    // Badge advertises the nested warning even while the row is collapsed.
+    expect(html).toContain('log-warn-badge');
+    expect(html).toContain('⚠ 1');
+    // The warning text is rendered inside the (collapsible) content, not as a sibling row.
+    expect(html).toContain('log-warnings');
+    expect(html).toContain('window.MAX_ITEMS = 5; failed');
+  });
+
+  it('renders no warning badge when a tool row has no warnings', () => {
+    const html = renderEntry(
+      { id: 'tool-2', type: 'tool', tool: 'tools__bash', callId: 'call-xyz', title: 'tools__bash completed', status: 'completed', time: Date.now() },
+    );
+    expect(html).not.toContain('log-warn-badge');
+    expect(html).not.toContain('log-warnings');
+  });
+
   it('renders a multi-line log with the first line as title and the rest as body', () => {
     const html = renderEntry({
       id: 'log-op-2',
@@ -234,11 +259,11 @@ describe('ContinuePanel component', () => {
     const html = renderToString(<ContinuePanel hidden disabled onSubmit={noop} />);
     expect(html).toContain('hidden');
   });
-  it('shows the continue affordances when actionable', () => {
+  it('shows the resume affordances when actionable', () => {
     const html = renderToString(<ContinuePanel hidden={false} disabled={false} onSubmit={noop} />);
     expect(html).not.toContain('hidden');
-    expect(html).toContain('continue session');
-    expect(html).toContain('Continue session');
+    expect(html).toContain('resume session');
+    expect(html).toContain('Resume session');
   });
 });
 

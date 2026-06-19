@@ -224,13 +224,42 @@ export default function SessionDetail() {
     () => [...logsRef.current.values()].sort((a, b) => (a.time ?? 0) - (b.time ?? 0)),
     [logsVersion]
   );
+  // Operational warnings emitted about a tool call (logger.warnWithTool carries
+  // its toolId) are nested under the matching tool entry instead of floating in
+  // the flat stream as a confusing standalone "failed" line. Orphans (no tool
+  // entry with that callId present) stay in the stream so nothing disappears.
+  const { toolWarnings, nestedLogIds } = useMemo(() => {
+    const callIds = new Set(
+      orderedLogs.filter((e) => e.type === 'tool' && e.callId).map((e) => e.callId as string)
+    );
+    const byCallId = new Map<string, ApprovalLogEntry[]>();
+    const seenPerCall = new Map<string, Set<string>>();
+    const nested = new Set<string>();
+    for (const e of orderedLogs) {
+      if (e.type !== 'log' || !e.toolId || !callIds.has(e.toolId)) continue;
+      nested.add(e.id); // hide from the flat stream regardless of dedup
+      // The same warning is emitted more than once per call; collapse identical
+      // lines so the badge count reflects distinct warnings, not retries.
+      const dedupKey = `${e.title} ${e.message ?? ''}`;
+      const seen = seenPerCall.get(e.toolId) ?? new Set<string>();
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
+      seenPerCall.set(e.toolId, seen);
+      const list = byCallId.get(e.toolId) ?? [];
+      list.push(e);
+      byCallId.set(e.toolId, list);
+    }
+    return { toolWarnings: byCallId, nestedLogIds: nested };
+  }, [orderedLogs]);
+  // Nested warnings are surfaced inside their tool entry, so exclude them from
+  // the debug-toggle count too (they aren't free-floating noise anymore).
   const debugCount = useMemo(
-    () => orderedLogs.reduce((n, e) => n + (isDebugLog(e) ? 1 : 0), 0),
-    [orderedLogs]
+    () => orderedLogs.reduce((n, e) => n + (!nestedLogIds.has(e.id) && isDebugLog(e) ? 1 : 0), 0),
+    [orderedLogs, nestedLogIds]
   );
   const visibleLogs = useMemo(
-    () => showDebug ? orderedLogs : orderedLogs.filter((e) => !isDebugLog(e)),
-    [orderedLogs, showDebug]
+    () => orderedLogs.filter((e) => !nestedLogIds.has(e.id) && (showDebug || !isDebugLog(e))),
+    [orderedLogs, showDebug, nestedLogIds]
   );
   const reviewerComment = useMemo(() => latestReviewerComment(orderedLogs), [orderedLogs]);
 
@@ -461,6 +490,7 @@ export default function SessionDetail() {
               <LogEntry
                 key={entry.id}
                 entry={entry}
+                warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
                 expanded={expandedIds.has(entry.id)}
                 showActions={actionable && entry.status === 'pending' && Boolean(entry.details) &&
                   (!currentResumeTokenRef.current || entry.details?.resumeToken === currentResumeTokenRef.current)}

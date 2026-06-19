@@ -30,6 +30,9 @@ export interface LogRecord {
   message: string;
   /** Epoch millis the line was emitted. */
   time: number;
+  /** Tool call this record is about, when emitted via warnWithTool. Lets the
+   *  session view nest the line under its originating tool entry. */
+  toolId?: string;
 }
 
 /** Receives every structured log record emitted within its async scope. */
@@ -62,11 +65,11 @@ export function withoutLogSink<T>(fn: () => T): T {
 }
 
 /** Deliver a structured record to the active sink, if any. Never throws. */
-function emitLogRecord(level: LogLevelName, message: string): void {
+function emitLogRecord(level: LogLevelName, message: string, toolId?: string): void {
   const sink = logSinkStore.getStore();
   if (!sink || sink === NOOP_LOG_SINK) return;
   try {
-    sink({ level, message, time: Date.now() });
+    sink({ level, message, time: Date.now(), ...(toolId && { toolId }) });
   } catch {
     // A misbehaving sink must never break logging.
   }
@@ -643,8 +646,8 @@ class Logger {
     }
   }
 
-  warn(message: string) {
-    emitLogRecord('warn', message);
+  warn(message: string, toolId?: string) {
+    emitLogRecord('warn', message, toolId);
     if (this.level <= LogLevel.WARN) {
       // Stop spinner before writing to avoid cursor conflicts
       this.stopSpinner(true);
@@ -689,9 +692,9 @@ class Logger {
    * Format and log a warning with tool context
    * Automatically uses debug mode based on logger configuration
    */
-  warnWithTool(tool: string, operation: string, error: string) {
+  warnWithTool(tool: string, operation: string, error: string, toolId?: string) {
     const formatted = formatWarning(tool, operation, error, this.isDebugEnabled());
-    this.warn(formatted);
+    this.warn(formatted, toolId);
   }
 
   /**

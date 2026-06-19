@@ -165,6 +165,11 @@ export interface ApprovalLogEntry {
   id: string;
   type: string;
   tool?: string;
+  /** Tool-call id of a `type: 'tool'` entry (matches a log entry's `toolId`). */
+  callId?: string;
+  /** On a `type: 'log'` entry: the tool call this line is about, so the session
+   *  view can nest it under the matching tool entry instead of the flat stream. */
+  toolId?: string;
   status?: string;
   /** Set on `type: 'log'` entries to drive level styling and the debug toggle. */
   level?: LogEntryLevel;

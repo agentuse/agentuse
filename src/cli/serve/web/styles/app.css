@@ -502,6 +502,50 @@ body {
   margin-top: 6px;
 }
 .log-item.expandable:not(.expanded) .log-content { display: none; }
+
+/* Collapsed-visible indicator that a tool entry has nested warnings. Sits in the
+   title row (outside .log-content) so it shows whether or not the row is open. */
+.log-warn-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid var(--amber-border, var(--line));
+  border-radius: 999px;
+  background: var(--amber-soft, transparent);
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  vertical-align: 1px;
+}
+/* Nested warnings, revealed when the tool entry is expanded. */
+.log-warnings {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--amber-border, var(--line));
+  border-left: 2px solid var(--amber);
+  border-radius: 6px;
+  background: var(--amber-soft, transparent);
+}
+.log-warnings-title {
+  color: var(--amber);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.log-warning + .log-warning { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.log-warning-line {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted-3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.log-warning-detail { margin-top: 4px; }
 .log-empty { color: var(--muted-2); padding: 12px 0; font-style: italic; }
 
 .store-event {
@@ -1275,19 +1319,29 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .run-btn {
   appearance: none;
   cursor: pointer;
-  white-space: nowrap;
-  padding: 4px 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   border: 1px solid var(--cyan-border);
   border-radius: 999px;
   background: var(--bg);
   color: var(--cyan);
-  font-family: var(--sans);
-  font-size: 12px;
-  font-weight: 600;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
+.page-agents .run-btn svg { width: 12px; height: 12px; margin-left: 1px; }
 .page-agents .run-btn:hover:not(:disabled) { background: var(--cyan); color: var(--bg); border-color: var(--cyan); }
 .page-agents .run-btn:disabled { cursor: default; opacity: 0.6; }
+.page-agents .run-btn-spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: log-spin 700ms linear infinite;
+}
 .page-agents .muted { color: var(--muted-2); }
 .page-agents .chip {
   display: inline-flex; align-items: center;

@@ -268,6 +268,9 @@ function isApprovalDetails(entry: ApprovalLogEntry): boolean {
 
 export interface LogEntryProps {
   entry: ApprovalLogEntry;
+  /** Operational warnings about this tool call, nested under it instead of
+   *  shown as standalone "failed" lines in the flat stream. */
+  warnings?: ApprovalLogEntry[] | undefined;
   expanded: boolean;
   showActions: boolean;
   actionsDisabled: boolean;
@@ -278,8 +281,23 @@ export interface LogEntryProps {
   onAction: (action: 'approve' | 'reject' | 'comment') => void;
 }
 
+function LogWarnings(props: { warnings: ApprovalLogEntry[] }) {
+  return (
+    <div class="log-warnings">
+      <div class="log-warnings-title">{props.warnings.length === 1 ? 'Warning' : `Warnings (${props.warnings.length})`}</div>
+      {props.warnings.map((w) => (
+        <div class="log-warning" key={w.id}>
+          <div class="log-warning-line">{w.title}</div>
+          {w.message && <div class="log-warning-detail"><LogContent value={w.message} /></div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function LogEntryImpl(props: LogEntryProps) {
   const { entry } = props;
+  const warnings = props.warnings ?? [];
   const isApprovalEntry = isApprovalDetails(entry);
   const expandable = entry.type === 'tool' && !isApprovalEntry;
   const expanded = !expandable || entry.status === 'running' || props.expanded;
@@ -324,7 +342,12 @@ function LogEntryImpl(props: LogEntryProps) {
         {...(entry.type === 'log' && !spinning ? { 'aria-label': `${entry.level ?? 'info'} log`, title: entry.level ?? 'info', role: 'img' } : {})}
       >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'error' ? '✗' : entry.type === 'log' ? logLevelMarker(entry.level) : '⋮')}</span>
       <div class="log-main">
-        <span class="log-title">{entry.title}</span>
+        <span class="log-title">
+          {entry.title}
+          {warnings.length > 0 && (
+            <span class="log-warn-badge" title={`${warnings.length} warning${warnings.length === 1 ? '' : 's'} about this tool call`}>⚠ {warnings.length}</span>
+          )}
+        </span>
         <div class="log-content">
           {entry.subagentSession && <SubagentCard session={entry.subagentSession} />}
           {storeEvent && <StoreEventBlock event={storeEvent} />}
@@ -332,6 +355,7 @@ function LogEntryImpl(props: LogEntryProps) {
             ? <ApprovalDetailCard details={entry.details} sessionId={props.sessionId} token={props.token} />
             : <ToolDetails details={entry.details} sessionId={props.sessionId} token={props.token} />)}
           {entry.message && !storeEvent && !entry.subagentSession && <LogContent value={entry.message} forceMarkdown={entry.type === 'text'} />}
+          {warnings.length > 0 && <LogWarnings warnings={warnings} />}
         </div>
         {props.showActions && (
           <div class="log-actions" data-actions-row>
@@ -351,8 +375,12 @@ function LogEntryImpl(props: LogEntryProps) {
 }
 
 /** Re-render only when the entry content or interactive surface changes. */
+const warningsSignature = (warnings: ApprovalLogEntry[] | undefined): string =>
+  (warnings ?? []).map(logEntrySignature).join('|');
+
 export const LogEntry = memo(LogEntryImpl, (prev, next) =>
   logEntrySignature(prev.entry) === logEntrySignature(next.entry) &&
+  warningsSignature(prev.warnings) === warningsSignature(next.warnings) &&
   prev.expanded === next.expanded &&
   prev.showActions === next.showActions &&
   prev.actionsDisabled === next.actionsDisabled &&
