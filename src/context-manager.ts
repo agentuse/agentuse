@@ -52,6 +52,17 @@ export class ContextManager {
   private isCompacting = false;
   private compactions = 0;
   private compacted = false;
+  // Tracked-message count right after the last compaction. Used to avoid
+  // re-summarizing an unchanged transcript (which would summarize the summary):
+  // a fresh compaction only runs once the transcript has grown past this.
+  private lastCompactionSize = 0;
+  // Calibration of the char/4 estimate against a real provider measurement.
+  // `observedInputTokens` is the last per-step prompt size the provider
+  // reported; `observedEstimateBaseline` is our raw estimate for that same set.
+  // The difference captures fixed overhead the estimate misses (tool schemas,
+  // wire formatting). See `activeContextTokens()`.
+  private observedInputTokens: number | undefined;
+  private observedEstimateBaseline = 0;
 
   constructor(
     private modelString: string,
@@ -130,10 +141,68 @@ export class ContextManager {
    * tracked messages so active context does not collapse to the most recent
    * provider step total.
    */
-  updateUsage(usage: LanguageModelUsage, _kind: 'cumulative' | 'step' = 'step'): void {
+  updateUsage(usage: LanguageModelUsage, kind: 'cumulative' | 'step' = 'step'): void {
     if (this.messages.length > 0 && usage.outputTokens) {
       this.messages[this.messages.length - 1].actualTokens = usage.outputTokens;
     }
+
+    // Calibrate from per-step usage only. A step's `inputTokens` is the real
+    // size of the prompt that was just sent (the active context at that step);
+    // cumulative `totalUsage.inputTokens` sums every step and would double-count
+    // the carried prefix, so it is not a measure of active context.
+    if (kind === 'step' && usage.inputTokens && usage.inputTokens > 0) {
+      this.observedInputTokens = usage.inputTokens;
+      this.observedEstimateBaseline = this.totalTokensUsed;
+    }
+  }
+
+  /**
+   * Best estimate of the active-context size in tokens.
+   *
+   * Starts from the char/4 estimate, then layers on the most recent real
+   * provider measurement: `observedInputTokens` plus whatever the transcript has
+   * grown by since (in estimate terms). This folds in fixed overhead the raw
+   * estimate ignores (tool schemas, formatting) without a multiplicative blow-up.
+   * When the transcript has shrunk below the measured baseline (a compaction or
+   * a fresh resume), the stale measurement is dropped and the estimate is used.
+   */
+  private activeContextTokens(): number {
+    const estimate = this.totalTokensUsed;
+    if (this.observedInputTokens === undefined || estimate < this.observedEstimateBaseline) {
+      return estimate;
+    }
+    const growthSinceObservation = estimate - this.observedEstimateBaseline;
+    return Math.max(estimate, this.observedInputTokens + growthSinceObservation);
+  }
+
+  /**
+   * Index where the preserved head ends (`messages.slice(0, headBoundary)`):
+   * the leading run of system messages plus the first user message (the original
+   * task). These are kept verbatim across compaction so the agent never loses
+   * its instructions/persona or its task, and the cache prefix stays stable.
+   */
+  private headBoundary(): number {
+    let head = 0;
+    while (head < this.messages.length && this.messages[head].message?.role === 'system') {
+      head++;
+    }
+    if (head < this.messages.length && this.messages[head].message?.role === 'user') {
+      head++;
+    }
+    return head;
+  }
+
+  /**
+   * Normalize the summarizer output into a single user message placed between
+   * the preserved head and the recent tail. A user message (rather than a
+   * mid-conversation system message, which some providers hoist or reject) keeps
+   * the summary at the right position in history.
+   */
+  private asSummaryMessage(compacted: ModelMessage): ModelMessage {
+    const content = typeof compacted.content === 'string'
+      ? compacted.content
+      : this.messageToString(compacted);
+    return { role: 'user', content };
   }
 
   /**
@@ -141,9 +210,9 @@ export class ContextManager {
    */
   shouldCompact(): boolean {
     if (!this.modelInfo || this.isCompacting) return false;
-    
+
     const threshold = this.modelInfo.contextLimit * this.compactionThreshold;
-    return this.totalTokensUsed >= threshold;
+    return this.activeContextTokens() >= threshold;
   }
 
   /**
@@ -159,7 +228,7 @@ export class ContextManager {
     const minTokens = boundary === 'step'
       ? this.stepCompactionMinTokens
       : this.approvalCompactionMinTokens;
-    return minTokens > 0 && this.totalTokensUsed >= minTokens;
+    return minTokens > 0 && this.activeContextTokens() >= minTokens;
   }
 
   /**
@@ -167,7 +236,7 @@ export class ContextManager {
    */
   getUsagePercentage(): number {
     if (!this.modelInfo) return 0;
-    return (this.totalTokensUsed / this.modelInfo.contextLimit) * 100;
+    return (this.activeContextTokens() / this.modelInfo.contextLimit) * 100;
   }
 
   /**
@@ -216,19 +285,40 @@ export class ContextManager {
    * Compact messages, keeping recent ones intact
    */
   async compact(): Promise<ModelMessage[]> {
-    if (
-      !this.onCompact ||
-      this.messages.length <= this.keepRecentMessages ||
-      (this.compacted && this.messages.length <= this.keepRecentMessages + 1)
-    ) {
+    if (!this.onCompact || this.messages.length <= this.keepRecentMessages) {
       return this.messages.map(m => m.message);
     }
 
-    // Choose a split that does not orphan a tool result. If the safe boundary
-    // collapses to the start there is nothing we can fold into a summary
-    // without corrupting the transcript, so leave the context untouched.
-    const splitIndex = this.safeSplitIndex();
-    if (splitIndex < 1) {
+    // Already compacted and nothing new has been added since: re-running now
+    // would just summarize the previous summary. Wait for the transcript to grow.
+    if (this.compacted && this.messages.length <= this.lastCompactionSize) {
+      return this.messages.map(m => m.message);
+    }
+
+    // Preserve a stable head verbatim: leading system messages (instructions /
+    // persona) plus the original user task. These are never summarized, so the
+    // agent keeps its instructions and the provider cache prefix stays stable.
+    const headEnd = this.headBoundary();
+
+    // Choose a split that does not orphan a tool-call/tool-result pair.
+    let splitIndex = this.safeSplitIndex();
+
+    // Forward-progress guarantee: if no safe split leaves a non-empty middle
+    // between the head and the kept tail (e.g. the recent region is a single
+    // unbreakable tool chain), summarize everything after the head rather than
+    // no-opping. A silent no-op here lets a small window (e.g. 200k) overflow.
+    if (splitIndex <= headEnd) {
+      splitIndex = this.messages.length;
+    }
+    if (splitIndex <= headEnd) {
+      // Nothing after the head to fold in.
+      return this.messages.map(m => m.message);
+    }
+
+    const head = this.messages.slice(0, headEnd);
+    const toCompact = this.messages.slice(headEnd, splitIndex);
+    const toKeep = this.messages.slice(splitIndex);
+    if (toCompact.length === 0) {
       return this.messages.map(m => m.message);
     }
 
@@ -236,35 +326,28 @@ export class ContextManager {
     logger.info(`Context approaching limit (${this.getUsagePercentage().toFixed(0)}% used). Compacting agent context...`);
 
     try {
-      // Split messages into old (to compact) and recent (to keep), honoring the
-      // tool-call/tool-result boundary computed above.
-      const toCompact = this.messages.slice(0, splitIndex);
-      const toKeep = this.messages.slice(splitIndex);
+      const compactedMessage = await this.onCompact(toCompact.map(m => m.message));
+      const summaryMessage = this.asSummaryMessage(compactedMessage);
+      const summaryTokens = this.estimateTokens(this.messageToString(summaryMessage));
 
-      // Get messages to compact
-      const messagesToCompact = toCompact.map(m => m.message);
-      
-      // Create compacted summary message
-      const compactedMessage = await this.onCompact(messagesToCompact);
-      
-      // Rebuild message list with compacted message + recent messages
-      const compactedTokens = this.estimateTokens(this.messageToString(compactedMessage));
-      
+      // [ system… , original task ] + [ summary ] + [ recent tail ]
       this.messages = [
-        {
-          message: compactedMessage,
-          estimatedTokens: compactedTokens
-        },
-        ...toKeep
+        ...head,
+        { message: summaryMessage, estimatedTokens: summaryTokens },
+        ...toKeep,
       ];
 
-      // Recalculate total tokens
       this.totalTokensUsed = this.messages.reduce((sum, m) => sum + m.estimatedTokens, 0);
+      // The provider measurement was taken against the pre-compaction transcript
+      // and no longer applies; fall back to the estimate until the next sample.
+      this.observedInputTokens = undefined;
+      this.observedEstimateBaseline = 0;
+      this.lastCompactionSize = this.messages.length;
       this.compactions++;
       this.compacted = true;
-      
+
       logger.info('Context compacted successfully. Continuing...');
-      
+
       return this.messages.map(m => m.message);
     } finally {
       this.isCompacting = false;
@@ -297,7 +380,7 @@ export class ContextManager {
 
   getStats(): ContextUsageStats {
     return {
-      activeTokens: this.totalTokensUsed,
+      activeTokens: this.activeContextTokens(),
       ...(this.modelInfo?.contextLimit !== undefined && { contextLimit: this.modelInfo.contextLimit }),
       usagePercentage: this.getUsagePercentage(),
       compacted: this.compacted,

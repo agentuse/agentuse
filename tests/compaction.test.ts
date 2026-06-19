@@ -254,10 +254,15 @@ describe('ContextManager', () => {
       expect(lastThree[0].content).toBe('recent message 1');
       expect(lastThree[1].content).toBe('recent response 1');
       expect(lastThree[2].content).toBe('recent message 2');
-      
-      // First message should be the summary
-      expect(compactedMessages[0].role).toBe('system');
-      expect(compactedMessages[0].content).toContain('[Context Summary]');
+
+      // The head (original first message) is preserved verbatim, not summarized.
+      expect(compactedMessages[0].content).toBe('old message 0');
+      // The summary sits between head and tail as a user message.
+      const summary = compactedMessages.find(
+        (m: any) => typeof m.content === 'string' && m.content.includes('[Context Summary]')
+      );
+      expect(summary).toBeDefined();
+      expect(summary.role).toBe('user');
     });
 
     it('should recalculate tokens after compaction', async () => {
@@ -349,13 +354,14 @@ describe('ContextManager', () => {
       }
       
       const compactedMessages = await manager.compact();
-      
-      // Should have 1 summary + 5 recent = 6 messages
-      expect(compactedMessages.length).toBe(6);
-      
+
+      // head (message 0) + summary + 5 recent = 7 messages
+      expect(compactedMessages.length).toBe(7);
+      // Head preserved verbatim
+      expect(compactedMessages[0].content).toBe('message 0');
       // Last message should be message 9
       expect(compactedMessages[compactedMessages.length - 1].content).toBe('message 9');
-      
+
       // Cleanup
       delete process.env.COMPACTION_KEEP_RECENT;
     });
@@ -411,7 +417,8 @@ describe('ContextManager', () => {
 
       const compacted = await manager.compact();
 
-      expect(compacted[0].role).toBe('system');
+      // Head (original first message) preserved verbatim at the front.
+      expect(compacted[0].content).toBe('old 0');
       assertNoOrphanedResults(compacted);
       // The call/result pair must have been moved into the kept tail together.
       expect(compacted.some(m => m.role === 'assistant' && Array.isArray(m.content)
@@ -419,7 +426,7 @@ describe('ContextManager', () => {
       expect(manager.getStats().compactions).toBe(1);
     });
 
-    it('does not compact when no safe boundary exists (unbroken tool chain)', async () => {
+    it('makes forward progress on an unbroken tool chain by folding the whole body', async () => {
       let called = 0;
       const manager = new ContextManager('test:model', async () => {
         called++;
@@ -427,8 +434,9 @@ describe('ContextManager', () => {
       });
       await manager.initialize();
 
-      // Every candidate boundary sits inside a tool-call/result pair, so there
-      // is nothing we can safely fold into a summary.
+      // Every candidate split sits inside a tool-call/result pair, so there is no
+      // safe boundary that leaves a non-empty middle. Rather than no-op (which
+      // would let a small window overflow), the whole body is summarized.
       manager.addMessage(assistantToolCall('A'));
       manager.addMessage(toolResult('A'));
       manager.addMessage(assistantToolCall('B'));
@@ -436,10 +444,11 @@ describe('ContextManager', () => {
 
       const compacted = await manager.compact();
 
-      expect(called).toBe(0);
-      expect(manager.getStats().compactions).toBe(0);
+      expect(called).toBe(1);
+      expect(manager.getStats().compactions).toBe(1);
+      // Folding the entire chain into a text summary leaves no orphaned results.
       assertNoOrphanedResults(compacted);
-      expect(compacted.length).toBe(4);
+      expect(compacted.length).toBeLessThan(4);
     });
   });
 
@@ -557,9 +566,12 @@ describe('ContextManager', () => {
       
       // Compact should work with mixed types
       const compacted = await manager.compact();
-      expect(compacted[0].content).toContain('Summary of');
-      // Last 3 messages should be preserved
-      expect(compacted.length).toBe(4); // 1 summary + 3 recent
+      const summary = compacted.find(
+        (m: any) => typeof m.content === 'string' && m.content.includes('Summary of')
+      );
+      expect(summary).toBeDefined();
+      // head + summary + last 3 preserved
+      expect(compacted.length).toBe(5);
     });
   });
 });

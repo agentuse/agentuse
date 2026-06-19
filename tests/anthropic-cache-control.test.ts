@@ -246,6 +246,13 @@ describe('executeAgentCore Anthropic cache control', () => {
         };
       })(),
     }));
+    // Compaction summarizes via completeText(), i.e. a second streamText call.
+    streamTextMock.mockImplementationOnce(() => ({
+      fullStream: (async function* () {
+        yield { type: 'text-delta', text: 'compacted' };
+        yield { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+      })(),
+    }));
 
     try {
       const chunks: any[] = [];
@@ -264,6 +271,8 @@ describe('executeAgentCore Anthropic cache control', () => {
           messages: [
             { role: 'system', content: 'old system context' },
             { role: 'user', content: 'old user context' },
+            { role: 'assistant', content: 'old middle 1' },
+            { role: 'user', content: 'old middle 2' },
             { role: 'assistant', content: 'recent assistant context 1' },
             { role: 'tool', content: [{ type: 'tool-result', output: 'recent tool context' }] },
             { role: 'user', content: 'recent user context 2' },
@@ -277,7 +286,8 @@ describe('executeAgentCore Anthropic cache control', () => {
 
       const suspended = chunks.find((chunk) => chunk.type === 'suspended');
       expect(suspended).toBeTruthy();
-      expect(generateTextMock).toHaveBeenCalledTimes(1);
+      // Main stream + one compaction (completeText) stream.
+      expect(streamTextMock).toHaveBeenCalledTimes(2);
       expect(suspended.contextSnapshot).toMatchObject({
         messageID: 'message-1',
         usage: {
@@ -285,12 +295,22 @@ describe('executeAgentCore Anthropic cache control', () => {
           compactions: 1,
         },
       });
-      expect(suspended.contextSnapshot.messages).toHaveLength(4);
-      expect(suspended.contextSnapshot.messages[0]).toMatchObject({
+      // Head (system + original task) preserved verbatim, the middle folded into
+      // a user-role summary, and the recent tail kept intact.
+      expect(suspended.contextSnapshot.messages).toHaveLength(6);
+      expect(suspended.contextSnapshot.messages[0]).toEqual({
         role: 'system',
+        content: 'old system context',
+      });
+      expect(suspended.contextSnapshot.messages[1]).toEqual({
+        role: 'user',
+        content: 'old user context',
+      });
+      expect(suspended.contextSnapshot.messages[2]).toMatchObject({
+        role: 'user',
         content: expect.stringContaining('[Context Summary]\ncompacted\n[End Summary]'),
       });
-      expect(suspended.contextSnapshot.messages.slice(1)).toEqual([
+      expect(suspended.contextSnapshot.messages.slice(3)).toEqual([
         { role: 'assistant', content: 'recent assistant context 1' },
         { role: 'tool', content: [{ type: 'tool-result', output: 'recent tool context' }] },
         { role: 'user', content: 'recent user context 2' },
@@ -410,24 +430,35 @@ describe('executeAgentCore Anthropic cache control', () => {
       }
 
       const streamConfig = streamTextMock.mock.calls[0][0] as any;
-      generateTextMock.mockClear();
+      // Compaction summarizes via completeText(), i.e. the next streamText call.
+      streamTextMock.mockImplementationOnce(() => ({
+        fullStream: (async function* () {
+          yield { type: 'text-delta', text: 'compacted' };
+          yield { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+        })(),
+      }));
       const prepared = await streamConfig.prepareStep({
         messages: [
           { role: 'system', content: 'old system context' },
           { role: 'user', content: 'old user context' },
+          { role: 'assistant', content: 'old middle 1' },
+          { role: 'user', content: 'old middle 2' },
           { role: 'assistant', content: 'recent assistant context 1' },
           { role: 'tool', content: [{ type: 'tool-result', output: 'recent tool context' }] },
           { role: 'user', content: 'recent user context 2' },
         ],
       });
 
-      expect(generateTextMock).toHaveBeenCalledTimes(1);
-      expect(prepared.messages).toHaveLength(4);
-      expect(prepared.messages[0]).toMatchObject({
-        role: 'system',
+      // Head (system + original task) preserved, middle folded into a user-role
+      // summary, recent tail kept intact.
+      expect(prepared.messages).toHaveLength(6);
+      expect(prepared.messages[0]).toEqual({ role: 'system', content: 'old system context' });
+      expect(prepared.messages[1]).toEqual({ role: 'user', content: 'old user context' });
+      expect(prepared.messages[2]).toMatchObject({
+        role: 'user',
         content: expect.stringContaining('[Context Summary]\ncompacted\n[End Summary]'),
       });
-      expect(prepared.messages.slice(1)).toEqual([
+      expect(prepared.messages.slice(3)).toEqual([
         { role: 'assistant', content: 'recent assistant context 1' },
         { role: 'tool', content: [{ type: 'tool-result', output: 'recent tool context' }] },
         { role: 'user', content: 'recent user context 2' },
