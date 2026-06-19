@@ -284,6 +284,15 @@ export default function SessionDetail() {
   }, []);
 
   const live = isLiveStatus(status, orderedLogs);
+  // While the run is live, keep a persistent "working" row pinned to the end of
+  // the stream so the next step always has a visible loading indicator — through
+  // tool execution and the model-latency gaps between steps, right up until the
+  // next entry streams in. Only suppressed while the assistant is actively typing
+  // (streaming text is its own indicator, so a second one would be redundant).
+  const tailEntry = visibleLogs.length > 0 ? visibleLogs[visibleLogs.length - 1] : undefined;
+  const tailTyping = tailEntry?.type === 'text' && tailEntry?.status === 'streaming';
+  const showWorking = live && !tailTyping;
+  const workingLabel = 'Agent is running';
   const ended = isEndedStatus(approval?.sessionStatus);
   const expired = approval?.expiresAt !== undefined && approval.expiresAt <= Date.now();
   const displayStatus = status === 'waiting' && expired ? 'expired' : displaySessionStatus(status, approval);
@@ -509,6 +518,15 @@ export default function SessionDetail() {
                 onAction={onAction}
               />
             ))}
+            {showWorking && (
+              <li class="log-item log-working" aria-live="polite">
+                <span class="log-time" />
+                <span class="log-marker"><span class="log-spinner" aria-label="working" /></span>
+                <div class="log-main">
+                  <span class="log-title">{workingLabel}<span class="log-dots" aria-hidden="true" /></span>
+                </div>
+              </li>
+            )}
           </ul>
         </div>
 

@@ -548,6 +548,27 @@ body {
 .log-warning-detail { margin-top: 4px; }
 .log-empty { color: var(--muted-2); padding: 12px 0; font-style: italic; }
 
+/* Live heartbeat row: shown at the tail of the stream while the run is active
+   but no single entry is streaming, so the page never looks frozen mid-run. */
+.log-working .log-marker { opacity: 1; }
+.log-working .log-title {
+  font-weight: 400;
+  color: var(--muted-2);
+  letter-spacing: 0.01em;
+  animation: log-working-pulse 1.7s ease-in-out infinite;
+}
+@keyframes log-working-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+.log-dots::after {
+  content: "";
+  animation: log-working-dots 1.4s steps(1, end) infinite;
+}
+@keyframes log-working-dots {
+  0%   { content: ""; }
+  25%  { content: "."; }
+  50%  { content: ".."; }
+  75%, 100% { content: "..."; }
+}
+
 .store-event {
   display: flex;
   justify-content: space-between;
