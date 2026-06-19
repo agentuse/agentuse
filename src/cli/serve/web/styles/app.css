@@ -989,6 +989,15 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 
 @media (max-width: 640px) {
   .page-approval-detail h1 { font-size: 26px; }
+  /* Stack the timestamp/marker above the log so content uses the full width. */
+  .log-item {
+    grid-template-columns: auto 1fr;
+    column-gap: 8px;
+    row-gap: 4px;
+  }
+  .log-time { grid-column: 1; grid-row: 1; }
+  .log-marker { grid-column: 2; grid-row: 1; justify-content: flex-start; }
+  .log-main { grid-column: 1 / -1; grid-row: 2; }
   .log-actions { flex-direction: column; align-items: stretch; }
   .log-actions-hint { display: none; }
   .log-actions-buttons { justify-content: stretch; }
