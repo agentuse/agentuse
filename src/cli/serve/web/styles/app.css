@@ -300,6 +300,25 @@ body {
 }
 .page-approval-detail .meta .label::before { content: "⋮ "; color: var(--cyan); opacity: 0.6; }
 .page-approval-detail .meta .value, .page-approval-detail .meta code { color: var(--fg); font-size: 13px; word-break: break-all; }
+.page-approval-detail .session-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.debug-prompt-button, .session-action-button {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted-3);
+  font-family: var(--sans);
+  font-size: 12px; font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.debug-prompt-button svg, .session-action-button svg { color: var(--cyan); flex: none; }
+.debug-prompt-button:hover, .session-action-button:hover { border-color: var(--cyan-border); color: var(--fg); background: var(--cyan-soft); }
+.debug-prompt-button:focus-visible, .session-action-button:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 1px; }
+.debug-prompt-button.copied { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+.debug-prompt-button.copied svg { color: var(--green); }
+.session-action-button.active { color: var(--fg); border-color: var(--cyan-border); background: var(--cyan-soft); }
 .page-approval-detail .section-title {
   display: flex; align-items: baseline; gap: 10px;
   margin: 36px 0 10px;

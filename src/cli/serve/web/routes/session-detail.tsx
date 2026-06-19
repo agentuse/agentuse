@@ -6,6 +6,7 @@ import { LogEntry } from '../components/log-entry';
 import { LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
 import { ContinuePanel } from '../components/continue-panel';
+import { DebugPromptButton } from '../components/debug-prompt-button';
 import { postSessionDecision, postSessionContinue, postSessionStop } from '../lib/api';
 import { useApprovalStream } from '../hooks/use-approval-stream';
 import { useTitle } from '../hooks/use-title';
@@ -125,6 +126,9 @@ export default function SessionDetail() {
   const [submittingDecision, setSubmittingDecision] = useState(false);
   const [submittingContinue, setSubmittingContinue] = useState(false);
   const [submittingStop, setSubmittingStop] = useState(false);
+  // The resume composer stays collapsed until the user clicks "Resume session";
+  // clicking again collapses it.
+  const [showResume, setShowResume] = useState(false);
   const [result, setResult] = useState<{ text: string; error: boolean }>({ text: '', error: false });
   // Terminal load failures (unauthorized, not found, corrupted session data):
   // the page can't recover, so we render this instead of the live view.
@@ -256,6 +260,7 @@ export default function SessionDetail() {
 
   useEffect(() => {
     if (continueActionable) setSubmittingContinue(false);
+    else setShowResume(false);
   }, [continueActionable]);
 
   const submitDecision = useCallback(async (action: string, comment?: string) => {
@@ -473,8 +478,38 @@ export default function SessionDetail() {
           </ul>
         </div>
 
+        <div class="session-actions">
+          {continueActionable && (
+            <button
+              type="button"
+              class={`session-action-button${showResume ? ' active' : ''}`}
+              aria-expanded={showResume}
+              aria-controls="continue-prompt"
+              onClick={() => setShowResume((v) => !v)}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-3-6.7" />
+                <path d="M21 4v5h-5" />
+              </svg>
+              <span>Resume session</span>
+            </button>
+          )}
+          <DebugPromptButton
+            context={{
+              sessionId: approval.sessionId,
+              projectId,
+              agentName: agentLabel,
+              agentFilePath: approval.agent.filePath,
+              model: approval.model,
+              sessionStatus: approval.sessionStatus,
+              errorCode: approval.errorCode,
+              errorMessage: approval.errorMessage,
+            }}
+          />
+        </div>
+
         <ContinuePanel
-          hidden={!continueActionable}
+          hidden={!continueActionable || !showResume}
           disabled={submittingContinue || !continueActionable}
           onSubmit={(prompt) => void submitContinue(prompt)}
         />
