@@ -1,41 +1,14 @@
 import type { VNode } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { useLocation } from 'preact-iso';
 import type { AgentRow } from '../lib/api';
-import { fetchAgents, runAgentDetached } from '../lib/api';
+import { fetchAgents } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { usePins } from '../hooks/use-pins';
+import { useRunAgent } from '../hooks/use-run-agent';
 import { Topbar } from '../components/topbar';
 import { RunInstructionDialog } from '../components/run-instruction-dialog';
-
-/**
- * Starts a detached run (optionally with a one-off instruction appended to the
- * agent's prompt) and navigates to its live session view. Shared by the inline
- * Run button and the "Run with Custom Instruction" dialog.
- */
-function useRunAgent(agentPath: string, projectId: string) {
-  const location = useLocation();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const run = async (prompt?: string) => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await runAgentDetached(agentPath, projectId, prompt);
-      const params = new URLSearchParams({ project: projectId, pending: '1' });
-      if (res.token) params.set('token', res.token);
-      location.route(`/sessions/${encodeURIComponent(res.sessionId)}?${params.toString()}`);
-    } catch (err) {
-      setError((err as Error).message);
-      setBusy(false);
-    }
-  };
-
-  return { run, busy, error };
-}
+import { agentDetailHref } from './agent-detail';
 
 /**
  * Starts the agent in the background and navigates straight to its live session
@@ -166,6 +139,17 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
             </svg>
             <span>Run with Custom Instruction</span>
           </button>
+          <a
+            class="menu-item"
+            role="menuitem"
+            href={agentDetailHref(agent.projectId, agent.runPath)}
+            onClick={() => setPos(null)}
+          >
+            <svg class="menu-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 4 2.5 8 6 12" /><path d="M10 4l3.5 4L10 12" />
+            </svg>
+            <span>Open agent</span>
+          </a>
           <button
             type="button"
             class={pinned ? 'menu-item unpin' : 'menu-item'}
@@ -191,10 +175,6 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
 
 function projectAnchor(projectId: string): string {
   return `project-${projectId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-}
-
-function agentIdFor(a: AgentRow): string {
-  return a.path.replace(/\.agentuse$/, '');
 }
 
 interface TreeNode {
@@ -248,14 +228,13 @@ function walk(node: TreeNode, levels: boolean[], rows: VNode[], pins: PinApi): v
     const prefix = guides(levels, last);
     if (child.agent) {
       const a = child.agent;
-      const agentId = agentIdFor(a);
       const pinned = pins.isPinned(a);
       rows.push(
         <div class={pinned ? 'tree-row pinned' : 'tree-row'} key={a.path}>
           <span class="tree-path">
             {prefix}
             {pinned && <span class="tree-pin" title="Pinned" aria-label="Pinned"><PinIcon filled /></span>}
-            <a class="tree-label" href={`/sessions?agent=${encodeURIComponent(agentId)}`}>{child.name}</a>
+            <a class="tree-label" href={agentDetailHref(a.projectId, a.runPath)}>{child.name}</a>
           </span>
           <span>{a.schedule ? <span class="chip status">{a.schedule}</span> : <span class="muted">—</span>}</span>
           <span class="tree-run"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>
@@ -281,13 +260,13 @@ function AgentTree(props: { agents: AgentRow[]; pins: PinApi }) {
 
 function PinnedRow(props: { agent: AgentRow; pins: PinApi }) {
   const a = props.agent;
-  const agentId = agentIdFor(a);
+  const locLabel = a.path.replace(/\.agentuse$/, '');
   return (
     <div class="pin-row">
       <span class="pin-main">
         <span class="tree-pin" aria-hidden="true"><PinIcon filled /></span>
-        <a class="pin-name" href={`/sessions?agent=${encodeURIComponent(agentId)}`}>{a.name}</a>
-        <span class="pin-loc">{a.projectId} / {agentId}</span>
+        <a class="pin-name" href={agentDetailHref(a.projectId, a.runPath)}>{a.name}</a>
+        <span class="pin-loc">{a.projectId} / {locLabel}</span>
       </span>
       <span>{a.schedule ? <span class="chip status">{a.schedule}</span> : <span class="muted">—</span>}</span>
       <span class="tree-run"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>

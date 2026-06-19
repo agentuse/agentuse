@@ -1063,6 +1063,76 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
   return { agents, errors };
 }
 
+/**
+ * Curated, display-ready view of an agent's capabilities for the detail page.
+ * A summary of the parsed config (NOT the raw config) so the UI can render
+ * "what can this thing touch / how does it run" without re-deriving it.
+ */
+interface AgentDetailMeta {
+  filesystem?: string[];          // permissions in use: read | write | edit
+  bashCommands?: number;          // count of allow-listed bash command patterns
+  awaitHuman?: boolean;           // tools.await_human gate
+  skills: { auto: boolean; trusted: boolean; explicit: string[] };
+  mcpServers: string[];
+  subagents: string[];
+  approval?: boolean;             // declarative suspension gate present
+  channels: string[];             // external surfaces, e.g. slack
+  timeout?: number;
+  maxSteps?: number;
+  version?: string;
+}
+
+interface AgentDetail {
+  projectId: string;
+  path: string;
+  runPath: string;
+  name: string;
+  description?: string;
+  model: string;
+  schedule?: string;
+  source: string;
+  meta: AgentDetailMeta;
+}
+
+/** Parse one agent and build its detail payload (capabilities + raw source). */
+async function collectAgentDetail(project: Project, runPath: string): Promise<AgentDetail> {
+  const absPath = resolveScopedAgentPath(project, runPath);
+  const [parsed, source] = await Promise.all([parseAgent(absPath), readFile(absPath, 'utf8')]);
+  const config = parsed.config;
+
+  const fsPerms = new Set<string>();
+  for (const entry of config.tools?.filesystem ?? []) {
+    for (const perm of entry.permissions) fsPerms.add(perm);
+  }
+  const skills = config.skills ?? { auto: true, trusted: false, explicit: {} };
+
+  const meta: AgentDetailMeta = {
+    ...(fsPerms.size > 0 && { filesystem: ['read', 'write', 'edit'].filter((p) => fsPerms.has(p)) }),
+    ...(config.tools?.bash && { bashCommands: config.tools.bash.commands.length }),
+    ...(config.tools?.await_human && { awaitHuman: true }),
+    skills: { auto: skills.auto, trusted: skills.trusted, explicit: Object.keys(skills.explicit ?? {}) },
+    mcpServers: Object.keys(config.mcpServers ?? {}),
+    subagents: (config.subagents ?? []).map((s) => s.name || s.path),
+    ...(config.approval && { approval: true }),
+    channels: Object.keys(config.channels ?? {}),
+    ...(config.timeout !== undefined && { timeout: config.timeout }),
+    ...(config.maxSteps !== undefined && { maxSteps: config.maxSteps }),
+    ...(config.version && { version: config.version }),
+  };
+
+  return {
+    projectId: project.id,
+    path: toProjectRelativeAgentPath(project, runPath),
+    runPath,
+    name: parsed.name,
+    ...(config.description && { description: config.description }),
+    model: config.model,
+    ...(config.schedule && { schedule: config.schedule }),
+    source,
+    meta,
+  };
+}
+
 function normalizeSubagentName(value: string): string {
   const fileBase = value.split('/').pop() || value;
   return fileBase
@@ -1226,6 +1296,7 @@ function isSpaPageRoute(routePath: string): boolean {
       return true;
   }
   if (/^\/stores\/[^/?#]+(?:\/[^/?#]+)?$/.test(routePath)) return true; // /stores/:s and /stores/:s/:item
+  if (/^\/agents\/[^/?#]+\/.+$/.test(routePath)) return true; // /agents/:project/:agent* (detail hub)
   return false;
 }
 
@@ -2812,6 +2883,37 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, agents, errors });
             return;
           }
+        }
+
+        // GET /api/agents/detail?project=<id>&path=<runPath>: capabilities
+        // summary + raw `.agentuse` source for the agent hub page. Behind the
+        // same header gate as the rest of the operator surface (not a capability
+        // route), so anyone who can list/run agents can read them. The file is
+        // matched against the project's already-loaded `agentFiles` set, so an
+        // arbitrary `path` cannot escape the served scope.
+        if (req.method === "GET" && routePath === '/agents/detail') {
+          const requestedProject = requestUrl.searchParams.get('project') ?? undefined;
+          const requestedPath = requestUrl.searchParams.get('path') ?? undefined;
+          if (!requestedProject || !requestedPath) {
+            sendError(res, 400, "MISSING_PARAMS", "Both project and path query params are required");
+            return;
+          }
+          const project = projects.find((p) => p.id === requestedProject);
+          if (!project) {
+            sendError(res, 404, "PROJECT_NOT_FOUND", `Project not found: ${requestedProject}`);
+            return;
+          }
+          if (!project.agentFiles.includes(requestedPath)) {
+            sendError(res, 404, "AGENT_NOT_FOUND", `Agent not loaded: ${requestedPath}`);
+            return;
+          }
+          try {
+            const detail = await collectAgentDetail(project, requestedPath);
+            sendJSON(res, 200, { success: true, ...detail });
+          } catch (err) {
+            sendError(res, 500, "AGENT_READ_FAILED", (err as Error).message);
+          }
+          return;
         }
 
         if (req.method === "GET" && routePath === '/schedules') {

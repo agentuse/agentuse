@@ -3,6 +3,7 @@ import { Topbar } from './components/topbar';
 
 const Home = lazy(() => import('./routes/home'));
 const Agents = lazy(() => import('./routes/agents'));
+const AgentDetail = lazy(() => import('./routes/agent-detail'));
 const Schedules = lazy(() => import('./routes/schedules'));
 const SessionsList = lazy(() => import('./routes/sessions-list'));
 const SessionDetail = lazy(() => import('./routes/session-detail'));
@@ -30,6 +31,7 @@ export function App() {
         <Router>
           <Route path="/" component={Home} />
           <Route path="/agents" component={Agents} />
+          <Route path="/agents/:project/:agent*" component={AgentDetail} />
           <Route path="/schedules" component={Schedules} />
           <Route path="/sessions" component={SessionsList} />
           <Route path="/sessions/:sessionId" component={SessionDetail} />

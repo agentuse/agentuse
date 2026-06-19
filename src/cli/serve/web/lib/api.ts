@@ -212,6 +212,38 @@ export function fetchAgents(): Promise<AgentsPayload> {
   return getJson('/api/agents');
 }
 
+export interface AgentDetailMeta {
+  filesystem?: string[];
+  bashCommands?: number;
+  awaitHuman?: boolean;
+  skills: { auto: boolean; trusted: boolean; explicit: string[] };
+  mcpServers: string[];
+  subagents: string[];
+  approval?: boolean;
+  channels: string[];
+  timeout?: number;
+  maxSteps?: number;
+  version?: string;
+}
+
+export interface AgentDetailPayload {
+  success: true;
+  projectId: string;
+  path: string;
+  runPath: string;
+  name: string;
+  description?: string;
+  model: string;
+  schedule?: string;
+  source: string;
+  meta: AgentDetailMeta;
+}
+
+/** Capabilities summary + raw `.agentuse` source for the agent hub page. */
+export function fetchAgentDetail(project: string, runPath: string): Promise<AgentDetailPayload> {
+  return getJson('/api/agents/detail', { project, path: runPath });
+}
+
 export interface DetachedRunResponse {
   success: true;
   sessionId: string;
