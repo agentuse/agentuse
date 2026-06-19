@@ -23,6 +23,9 @@ mock.module('ai', () => ({
   generateText: generateTextMock,
   streamText: streamTextMock,
   stepCountIs: stepCountIsMock,
+  // execution.ts pulls in api-error.ts, which imports APICallError from 'ai';
+  // the mock must provide it (with isInstance) or module load fails.
+  APICallError: { isInstance: () => false },
 }));
 
 mock.module('../src/models', () => ({

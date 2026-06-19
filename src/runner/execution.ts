@@ -9,6 +9,8 @@ import { compactMessages } from '../compactor';
 import { addLanguageModelUsage } from '../session/usage';
 import type { AgentChunk } from './types';
 import { isSuspendSignal } from './suspend';
+import { recordErrorMarker } from './session-helper';
+import { extractApiErrorDetail } from './api-error';
 import type { CompactionReason, ModelToolOutputArtifactRef, SessionManager, ToolOutputArtifactRef } from '../session';
 import { clampToolResultForModel } from '../tools/tool-output-limits.js';
 
@@ -363,7 +365,7 @@ export async function* executeAgentCore(
     if (!contextManager) return messages;
     const before = contextManager.getStats();
     const messagesBefore = contextManager.getMessages().length;
-    const compacted = await contextManager.compact();
+    const compacted = await contextManager.compact(opts.reason);
     messages = usesAnthropicCacheControl
       ? applyAnthropicCacheControlToMessages(compacted as any[])
       : compacted;
@@ -388,6 +390,17 @@ export async function* executeAgentCore(
     } catch (error) {
       logger.warn(`Approval-boundary context compaction failed; suspending with full active context.`);
       logger.debug(`Approval-boundary compaction error: ${(error as Error).message}`);
+      // This failure is non-fatal (the run suspends with full context) so it
+      // never reaches the run-level catch — surface it in the session log here.
+      if (options.sessionManager && options.sessionID && options.agentId && options.messageID) {
+        const apiDetail = extractApiErrorDetail(error);
+        await recordErrorMarker(options.sessionManager, options.sessionID, options.agentId, options.messageID, {
+          source: 'compaction',
+          message: error instanceof Error ? error.message : String(error),
+          ...(apiDetail?.detail !== undefined && { detail: apiDetail.detail }),
+          ...(apiDetail?.statusCode !== undefined && { statusCode: apiDetail.statusCode }),
+        });
+      }
     }
   };
 

@@ -4,17 +4,13 @@ import { describe, it, expect, beforeAll, beforeEach, mock } from "bun:test";
 mock.restore();
 import type { AgentCompleteEvent } from "../src/plugin/types";
 
-const generateTextMock = mock(async () => ({ text: "[]" }));
-const createModelMock = mock(async () => "mock-model");
+// evaluateExecution now goes through completeText() (streaming) instead of
+// generateText(), which is required for the ChatGPT Codex backend. Mock
+// completeText to return the raw model text directly.
+const completeTextMock = mock(async () => "[]");
 
-mock.module("../src/models", () => ({
-  createModel: createModelMock,
-}));
-
-mock.module("ai", () => ({
-  generateText: generateTextMock,
-  streamText: mock(),
-  stepCountIs: mock(),
+mock.module("../src/complete-text", () => ({
+  completeText: completeTextMock,
 }));
 
 let evaluateExecution: typeof import("../src/learning/evaluator").evaluateExecution;
@@ -36,14 +32,13 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  generateTextMock.mockReset();
-  createModelMock.mockReset();
+  completeTextMock.mockReset();
 });
 
 describe("evaluateExecution", () => {
   it("returns only high-confidence learnings with metadata", async () => {
-    generateTextMock.mockImplementation(async () => ({
-      text: JSON.stringify([
+    completeTextMock.mockImplementation(async () =>
+      JSON.stringify([
         {
           category: "tip",
           title: "Cache responses",
@@ -57,8 +52,7 @@ describe("evaluateExecution", () => {
           confidence: 0.5,
         },
       ]),
-    }));
-    createModelMock.mockImplementation(async () => "anthropic-sonnet");
+    );
 
     const result = await evaluateExecution(baseEvent, "Agent instructions", "anthropic-sonnet", undefined, []);
 
@@ -71,9 +65,9 @@ describe("evaluateExecution", () => {
   });
 
   it("parses learnings from markdown code blocks", async () => {
-    generateTextMock.mockImplementation(async () => ({
-      text: "```json\n[{\"category\":\"pattern\",\"title\":\"Fallbacks\",\"instruction\":\"Use fallback prompts when tools fail.\",\"confidence\":0.82}]\n```",
-    }));
+    completeTextMock.mockImplementation(async () =>
+      "```json\n[{\"category\":\"pattern\",\"title\":\"Fallbacks\",\"instruction\":\"Use fallback prompts when tools fail.\",\"confidence\":0.82}]\n```",
+    );
 
     const result = await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, []);
 
@@ -83,7 +77,7 @@ describe("evaluateExecution", () => {
   });
 
   it("returns empty array when response is not valid JSON", async () => {
-    generateTextMock.mockImplementation(async () => ({ text: "not json" }));
+    completeTextMock.mockImplementation(async () => "not json");
 
     const result = await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, []);
     expect(result).toEqual([]);

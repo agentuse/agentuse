@@ -74,6 +74,9 @@ const streamTextMock = mock((config: any) => {
 mock.module('ai', () => ({
   streamText: streamTextMock,
   stepCountIs: mock((n: number) => ({ stepCountIs: n })),
+  // execution.ts pulls in api-error.ts, which imports APICallError from 'ai';
+  // the mock must provide it (with isInstance) or module load fails.
+  APICallError: { isInstance: () => false },
 }));
 
 let executeAgentCore: typeof import('../src/runner/execution').executeAgentCore;

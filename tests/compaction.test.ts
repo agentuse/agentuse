@@ -11,11 +11,13 @@ mock.module('../src/models', () => ({
   }))
 }));
 
-// Mock the models API
+// Mock the models API. The window is mutable so a test can exercise large-window
+// behavior (e.g. the approval-floor regression) without affecting other tests.
+let mockContextLimit = 10000;
 mock.module('../src/utils/models-api', () => ({
   getModelInfo: mock(() => ({
     modelId: 'test-model',
-    contextLimit: 10000,
+    contextLimit: mockContextLimit,
     outputLimit: 4096
   }))
 }));
@@ -141,6 +143,30 @@ describe('ContextManager', () => {
         expect(manager.shouldCompactAtBoundary()).toBe(true);
       } finally {
         delete process.env.APPROVAL_COMPACTION_MIN_TOKENS;
+      }
+    });
+
+    it('does not compact at an approval boundary below window pressure by default', async () => {
+      // Regression for "compaction at 7%": with no APPROVAL_COMPACTION_MIN_TOKENS
+      // the absolute floor is off, so a large window with a sub-threshold context
+      // must stay window-relative. A 64k floor was ~7% of a 922k window and fired
+      // here, folding ~90% of the context at a pause for no window-pressure reason.
+      delete process.env.APPROVAL_COMPACTION_MIN_TOKENS;
+      mockContextLimit = 922_000;
+      try {
+        const manager = new ContextManager('test:model');
+        await manager.initialize();
+
+        // ~70k estimated tokens: above the old 64k floor, well under 70% of 922k.
+        for (let i = 0; i < 10; i++) {
+          manager.addMessage({ role: 'user', content: 'x'.repeat(28_000) });
+        }
+
+        expect(manager.getUsagePercentage()).toBeLessThan(70);
+        expect(manager.shouldCompact()).toBe(false);
+        expect(manager.shouldCompactAtBoundary()).toBe(false);
+      } finally {
+        mockContextLimit = 10_000;
       }
     });
 

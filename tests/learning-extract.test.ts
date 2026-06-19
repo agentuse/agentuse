@@ -4,8 +4,11 @@ import { join } from "path";
 import { tmpdir } from "os";
 import type { AgentCompleteEvent } from "../src/plugin/types";
 
-const generateTextMock = mock(async () => ({
-  text: JSON.stringify([
+// extractLearnings now goes through completeText() (streaming) instead of
+// generateText(), which is required for the ChatGPT Codex backend. Mock
+// completeText to return the raw model text directly.
+const completeTextMock = mock(async () =>
+  JSON.stringify([
     {
       category: "tip",
       title: "Shorten prompts",
@@ -13,18 +16,10 @@ const generateTextMock = mock(async () => ({
       confidence: 0.9,
     },
   ]),
-}));
+);
 
-const createModelMock = mock(async () => "mock-model");
-
-mock.module("../src/models", () => ({
-  createModel: createModelMock,
-}));
-
-mock.module("ai", () => ({
-  generateText: generateTextMock,
-  streamText: mock(),
-  stepCountIs: mock(),
+mock.module("../src/complete-text", () => ({
+  completeText: completeTextMock,
 }));
 
 const succeedMock = mock(() => {});
@@ -53,15 +48,14 @@ beforeAll(async () => {
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "learning-extract-"));
   agentFilePath = join(tempDir, "agents", "demo.md");
-  generateTextMock.mockReset();
-  createModelMock.mockReset();
+  completeTextMock.mockReset();
   succeedMock.mockReset();
   failMock.mockReset();
   startMock.mockReset();
   startMock.mockImplementation(() => ({ succeed: succeedMock, fail: failMock }));
   // Default mock returns one learning
-  generateTextMock.mockImplementation(async () => ({
-    text: JSON.stringify([
+  completeTextMock.mockImplementation(async () =>
+    JSON.stringify([
       {
         category: "tip",
         title: "Shorten prompts",
@@ -69,7 +63,7 @@ beforeEach(() => {
         confidence: 0.9,
       },
     ]),
-  }));
+  );
 });
 
 afterEach(() => {
@@ -81,8 +75,8 @@ afterAll(() => {
 });
 
 describe("extractLearnings", () => {
-  it("persists new learnings and reports success", async () => {
-    await extractLearnings({
+  it("persists new learnings and reports a captured outcome", async () => {
+    const outcome = await extractLearnings({
       event,
       agentInstructions: "Do things",
       agentModel: "gpt-4",
@@ -97,12 +91,18 @@ describe("extractLearnings", () => {
     expect(succeedMock).toHaveBeenCalledWith(
       `Extracted 1 learning(s) → ${defaultPath}`
     );
+    expect(outcome).toEqual({
+      status: "captured",
+      source: "auto",
+      count: 1,
+      titles: ["Shorten prompts"],
+    });
   });
 
-  it("skips persistence when no learnings are returned", async () => {
-    generateTextMock.mockImplementation(async () => ({ text: "[]" }));
+  it("skips persistence and reports a none outcome when no learnings are returned", async () => {
+    completeTextMock.mockImplementation(async () => "[]");
 
-    await extractLearnings({
+    const outcome = await extractLearnings({
       event,
       agentInstructions: "Do things",
       agentModel: "gpt-4",
@@ -112,21 +112,28 @@ describe("extractLearnings", () => {
 
     expect(existsSync(join(tempDir, "agents", "demo.learnings.md"))).toBe(false);
     expect(succeedMock).toHaveBeenCalledWith("No new learnings extracted");
+    expect(outcome.status).toBe("none");
+    expect(outcome.count).toBe(0);
   });
 
-  it("fails gracefully when evaluation throws", async () => {
-    createModelMock.mockImplementation(async () => {
-      throw new Error("model error");
+  it("reports a failed outcome with detail when the model call throws", async () => {
+    // Mirrors the Codex-backend regression: the helper LLM call rejects. The
+    // failure must surface as a 'failed' outcome (with the error detail) rather
+    // than being swallowed and looking like "nothing was learned".
+    completeTextMock.mockImplementation(async () => {
+      throw new Error("Stream must be set to true");
     });
 
-    await extractLearnings({
+    const outcome = await extractLearnings({
       event,
       agentInstructions: "Do things",
-      agentModel: "gpt-4",
+      agentModel: "openai:gpt-5.5",
       agentFilePath,
       config: { capture: true, apply: false },
     });
 
     expect(failMock).toHaveBeenCalledWith("Failed to extract learnings");
+    expect(outcome.status).toBe("failed");
+    expect(outcome.detail).toContain("Stream must be set to true");
   });
 });

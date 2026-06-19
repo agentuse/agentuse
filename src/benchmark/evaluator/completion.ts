@@ -1,5 +1,4 @@
-import { generateText } from 'ai';
-import { createModel } from '../../models.js';
+import { completeText } from '../../complete-text.js';
 import type { OutputValidation } from '../types.js';
 import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../../utils/anthropic.js';
 
@@ -88,23 +87,23 @@ Respond with a JSON object containing:
 Respond ONLY with the JSON object, no other text.`;
 
   try {
-    const judgeModel = await createModel(judgeModelString);
+    // For Anthropic OAuth the Claude Code identity prompt must be the system
+    // prompt; other providers get a short judge role. completeText (streaming)
+    // is used so this works on the ChatGPT Codex backend, which rejects the
+    // non-streaming generateText() path.
+    const system = isAnthropicModel(judgeModelString)
+      ? ANTHROPIC_IDENTITY_PROMPT
+      : 'You are a strict evaluator that judges agent output against criteria and replies with a JSON object only.';
 
-    // For Anthropic models, we need the Claude Code system prompt for OAuth credentials
-    const isAnthropic = isAnthropicModel(judgeModelString);
-
-    const result = await generateText({
-      model: judgeModel,
-      ...(isAnthropic && {
-        system: ANTHROPIC_IDENTITY_PROMPT,
-      }),
+    const responseText = await completeText(judgeModelString, {
+      system,
       prompt: userPrompt,
       temperature: 0,
       maxOutputTokens: 500,
     });
 
     // Parse the JSON response
-    const jsonMatch = result.text.match(/\{[\s\S]*\}/);
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return {
         valid: false,

@@ -50,6 +50,24 @@ export type LearningCategory = 'tip' | 'warning' | 'pattern' | 'tool-usage' | 'e
 export type LearningSource = 'auto' | 'approval';
 
 /**
+ * Outcome of a learning capture attempt, used to surface a marker in the
+ * session log so a silent failure (e.g. the Codex backend rejecting the helper
+ * LLM call) is visible instead of looking like "nothing was learned".
+ * - captured: one or more lessons written to the store
+ * - none: the evaluator ran but produced nothing new (or judged a comment one-off)
+ * - failed: the capture attempt threw (model/auth/parse error in `detail`)
+ */
+export type LearningOutcomeStatus = 'captured' | 'none' | 'failed';
+
+export interface LearningOutcome {
+  status: LearningOutcomeStatus;
+  source: LearningSource;
+  count: number;       // lessons captured this run
+  titles: string[];    // titles of captured lessons (for the log message)
+  detail?: string;     // error message when status is 'failed'
+}
+
+/**
  * Learning item stored in markdown
  */
 export interface Learning {

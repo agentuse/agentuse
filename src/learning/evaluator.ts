@@ -1,5 +1,4 @@
-import { generateText } from 'ai';
-import { createModel } from '../models';
+import { completeText } from '../complete-text';
 import type { AgentCompleteEvent, ToolCallTrace } from '../plugin/types';
 import type { Learning, LearningCategory } from './types';
 import { logger } from '../utils/logger';
@@ -38,8 +37,6 @@ export async function evaluateExecution(
   criteria: string | undefined,
   existingLearnings: Learning[] = [],
 ): Promise<Learning[]> {
-  const model = await createModel(agentModel);
-
   const customCriteria = criteria
     ? `\n\nAdditional evaluation criteria:\n${criteria}`
     : '';
@@ -107,30 +104,25 @@ Example format:
 
 If no learnings are applicable, respond with an empty array: []`;
 
-  // Build messages with Claude Code system prompt for OAuth compatibility
-  const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
+  // Use completeText (streaming) so this works on the ChatGPT Codex backend,
+  // which rejects the non-streaming generateText() path and silently 400s the
+  // moment a Codex-authed user triggers learning. For Anthropic OAuth the Claude
+  // Code identity prompt must be the system prompt; other providers get a short
+  // evaluator role (which also becomes Codex's required `instructions`).
+  const system = isAnthropicModel(agentModel)
+    ? ANTHROPIC_IDENTITY_PROMPT
+    : 'You extract concise, high-signal learnings from agent executions and reply with a JSON array only.';
 
-  // Add Claude Code identity prompt for Anthropic models (required for OAuth)
-  if (isAnthropicModel(agentModel)) {
-    messages.push({
-      role: 'system',
-      content: ANTHROPIC_IDENTITY_PROMPT
-    });
-  }
-
-  messages.push({ role: 'user', content: prompt });
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const result = await generateText({
-    model: model as any,
-    messages,
+  const responseText = await completeText(agentModel, {
+    system,
+    prompt,
     temperature: 0.2,
   });
 
   // Parse JSON from response
   let rawLearnings: RawLearning[] = [];
   try {
-    const text = result.text.trim();
+    const text = responseText.trim();
     // Handle markdown code blocks
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || [null, text];
     const jsonStr = jsonMatch[1] || text;
@@ -139,7 +131,7 @@ If no learnings are applicable, respond with an empty array: []`;
       rawLearnings = [];
     }
   } catch (parseError) {
-    logger.debug(`[Learning] Failed to parse response as JSON: ${result.text.slice(0, 200)}`);
+    logger.debug(`[Learning] Failed to parse response as JSON: ${responseText.slice(0, 200)}`);
     return [];
   }
 

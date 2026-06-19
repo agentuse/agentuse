@@ -11,10 +11,9 @@
  *
  * @experimental
  */
-import { generateText } from 'ai';
-import { createModel } from '../models';
+import { completeText } from '../complete-text';
 import type { ParsedAgent } from '../parser';
-import type { Learning, LearningCategory } from './types';
+import type { Learning, LearningCategory, LearningOutcome } from './types';
 import { LearningStore } from './store';
 import { logger } from '../utils/logger';
 import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic';
@@ -42,28 +41,37 @@ function readApprovalDecision(toolResult: unknown): ApprovalDecision | undefined
  * only when the agent has capture enabled and the decision carries a comment
  * (revise feedback or an approval note, whatever the status). Never throws:
  * capturing a learning must not fail a run.
+ *
+ * Returns a {@link LearningOutcome} when a capture was attempted (so the caller
+ * can surface a session-log marker), or `undefined` when there was nothing to
+ * promote (no comment, or capture disabled) and no marker is warranted.
  */
 export async function maybePromoteApprovalComment(options: {
   agent: ParsedAgent;
   agentFilePath: string | undefined;
   toolResult: unknown;
-}): Promise<void> {
+}): Promise<LearningOutcome | undefined> {
   const { agent, agentFilePath } = options;
-  if (!agentFilePath || !agent.config.learning?.capture) return;
+  if (!agentFilePath || !agent.config.learning?.capture) return undefined;
 
   const decision = readApprovalDecision(options.toolResult);
-  if (!decision?.comment) return;
+  if (!decision?.comment) return undefined;
 
   try {
-    await promoteApprovalComment({
+    const learning = await promoteApprovalComment({
       comment: decision.comment,
       agentInstructions: agent.instructions,
       agentModel: agent.config.model,
       agentFilePath,
       learningFile: agent.config.learning.file,
     });
+    return learning
+      ? { status: 'captured', source: 'approval', count: 1, titles: [learning.title] }
+      : { status: 'none', source: 'approval', count: 0, titles: [] };
   } catch (error) {
-    logger.debug(`[Learning] Approval-comment capture failed: ${error instanceof Error ? error.message : String(error)}`);
+    const detail = error instanceof Error ? error.message : String(error);
+    logger.debug(`[Learning] Approval-comment capture failed: ${detail}`);
+    return { status: 'failed', source: 'approval', count: 0, titles: [], detail };
   }
 }
 
@@ -118,27 +126,27 @@ Respond with ONLY a JSON object, no other text:
 or
 {"applies": false}`;
 
-  const model = await createModel(agentModel);
-  const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
-  if (isAnthropicModel(agentModel)) {
-    messages.push({ role: 'system', content: ANTHROPIC_IDENTITY_PROMPT });
-  }
-  messages.push({ role: 'user', content: prompt });
+  // Use completeText (streaming) so this works on the ChatGPT Codex backend,
+  // which rejects the non-streaming generateText() path. For Anthropic OAuth the
+  // Claude Code identity prompt must be the system prompt; other providers get a
+  // short role (which also becomes Codex's required `instructions`).
+  const system = isAnthropicModel(agentModel)
+    ? ANTHROPIC_IDENTITY_PROMPT
+    : 'You decide whether a reviewer comment is a durable agent-wide rule and reply with a JSON object only.';
 
-  const result = await generateText({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    model: model as any,
-    messages,
+  const responseText = await completeText(agentModel, {
+    system,
+    prompt,
     temperature: 0.2,
   });
 
   let parsed: RawPromotion;
   try {
-    const text = result.text.trim();
+    const text = responseText.trim();
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || [null, text];
     parsed = JSON.parse(jsonMatch[1] || text);
   } catch {
-    logger.debug(`[Learning] Failed to parse approval promotion response: ${result.text.slice(0, 200)}`);
+    logger.debug(`[Learning] Failed to parse approval promotion response: ${responseText.slice(0, 200)}`);
     return undefined;
   }
 

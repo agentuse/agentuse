@@ -1,4 +1,5 @@
 import type { LanguageModelUsage } from 'ai';
+import type { CompactionReason } from './session/types';
 import { getModelInfo, type ModelInfo } from './utils/models-api';
 import { logger } from './utils/logger';
 
@@ -6,7 +7,12 @@ import { logger } from './utils/logger';
 const DEFAULT_COMPACTION_THRESHOLD = 0.7; // 70% of context limit
 const DEFAULT_KEEP_RECENT_MESSAGES = 3;   // Keep last 3 messages
 const DEFAULT_CHARS_PER_TOKEN = 4;         // Conservative estimate (research shows 3-4 chars/token)
-const DEFAULT_BOUNDARY_COMPACTION_MIN_TOKENS = 64_000;
+// Approval-gate compaction is window-relative by default (the shouldCompact() 70%
+// path). The absolute floor below is opt-in via APPROVAL_COMPACTION_MIN_TOKENS;
+// 0 = off. A non-zero default fired on near-empty large windows (64k ≈ 7% of a
+// 922k window), folding ~90% of the context at a pause for no window-pressure
+// reason. Set APPROVAL_COMPACTION_MIN_TOKENS to opt back into resend-cost mode.
+const DEFAULT_BOUNDARY_COMPACTION_MIN_TOKENS = 0;
 
 // Use any for message type to avoid complex type issues
 type ModelMessage = any;
@@ -279,7 +285,7 @@ export class ContextManager {
   /**
    * Compact messages, keeping recent ones intact
    */
-  async compact(): Promise<ModelMessage[]> {
+  async compact(reason?: CompactionReason): Promise<ModelMessage[]> {
     if (!this.onCompact || this.messages.length <= this.keepRecentMessages) {
       return this.messages.map(m => m.message);
     }
@@ -318,7 +324,14 @@ export class ContextManager {
     }
 
     this.isCompacting = true;
-    logger.info(`Context approaching limit (${this.getUsagePercentage().toFixed(0)}% used). Compacting agent context...`);
+    // Boundary (approval-gate) compaction can fire well below window pressure when
+    // the absolute floor is opted into, so don't claim "approaching limit" there.
+    const pct = this.getUsagePercentage().toFixed(0);
+    logger.info(
+      reason === 'approval'
+        ? `Compacting agent context at approval gate (${pct}% of window in use)...`
+        : `Context approaching limit (${pct}% used). Compacting agent context...`
+    );
 
     try {
       const compactedMessage = await this.onCompact(toCompact.map(m => m.message));

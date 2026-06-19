@@ -3,14 +3,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
-const generateTextMock = mock(async () => ({ text: "{}" }));
-const createModelMock = mock(async () => "mock-model");
+// promoteApprovalComment now goes through completeText() (streaming) instead of
+// generateText(), which is required for the ChatGPT Codex backend. Mock
+// completeText to return the raw model text directly.
+const completeTextMock = mock(async () => "{}");
 
-mock.module("../src/models", () => ({ createModel: createModelMock }));
-mock.module("ai", () => ({
-  generateText: generateTextMock,
-  streamText: mock(),
-  stepCountIs: mock(),
+mock.module("../src/complete-text", () => ({
+  completeText: completeTextMock,
 }));
 
 let promoteApprovalComment: typeof import("../src/learning/from-approval").promoteApprovalComment;
@@ -37,9 +36,8 @@ function agentStub() {
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "learning-approval-"));
   agentFilePath = join(tempDir, "agents", "demo.md");
-  generateTextMock.mockReset();
-  createModelMock.mockReset();
-  createModelMock.mockImplementation(async () => "mock-model");
+  completeTextMock.mockReset();
+  completeTextMock.mockImplementation(async () => "{}");
 });
 
 afterEach(() => {
@@ -54,14 +52,14 @@ const learningsPath = () => join(tempDir, "agents", "demo.learnings.md");
 
 describe("promoteApprovalComment", () => {
   it("captures a durable approval comment as an approval-sourced learning", async () => {
-    generateTextMock.mockImplementation(async () => ({
-      text: JSON.stringify({
+    completeTextMock.mockImplementation(async () =>
+      JSON.stringify({
         applies: true,
         category: "warning",
         title: "Cite a source",
         instruction: "Always include a cited source before publishing.",
       }),
-    }));
+    );
 
     const result = await promoteApprovalComment({
       comment: "Looks good. Going forward, always cite a source before publishing.",
@@ -79,9 +77,9 @@ describe("promoteApprovalComment", () => {
   });
 
   it("skips run-specific comments judged not to apply", async () => {
-    generateTextMock.mockImplementation(async () => ({
-      text: JSON.stringify({ applies: false }),
-    }));
+    completeTextMock.mockImplementation(async () =>
+      JSON.stringify({ applies: false }),
+    );
 
     const result = await promoteApprovalComment({
       comment: "Fix the typo in paragraph two.",
@@ -97,16 +95,16 @@ describe("promoteApprovalComment", () => {
 
 describe("maybePromoteApprovalComment guard", () => {
   it("captures a comment-decision (revise loop), not just approve", async () => {
-    generateTextMock.mockImplementation(async () => ({
-      text: JSON.stringify({
+    completeTextMock.mockImplementation(async () =>
+      JSON.stringify({
         applies: true,
         category: "tip",
         title: "Lead with agreement",
         instruction: "Open replies by agreeing with the other person before adding your angle.",
       }),
-    }));
+    );
 
-    await maybePromoteApprovalComment({
+    const outcome = await maybePromoteApprovalComment({
       agent: agentStub(),
       agentFilePath,
       toolResult: {
@@ -118,18 +116,47 @@ describe("maybePromoteApprovalComment guard", () => {
 
     expect(existsSync(learningsPath())).toBe(true);
     expect(readFileSync(learningsPath(), "utf-8")).toContain("src:approval");
+    expect(outcome).toEqual({
+      status: "captured",
+      source: "approval",
+      count: 1,
+      titles: ["Lead with agreement"],
+    });
   });
 
   it("skips a bare approve with no comment", async () => {
-    generateTextMock.mockImplementation(async () => ({ text: "{}" }));
+    completeTextMock.mockImplementation(async () => "{}");
 
-    await maybePromoteApprovalComment({
+    const outcome = await maybePromoteApprovalComment({
       agent: agentStub(),
       agentFilePath,
       toolResult: { status: "approve", reviewer: { username: "web" } },
     });
 
-    expect(generateTextMock).not.toHaveBeenCalled();
+    expect(completeTextMock).not.toHaveBeenCalled();
+    expect(existsSync(learningsPath())).toBe(false);
+    // No capture was attempted, so no marker should be surfaced.
+    expect(outcome).toBeUndefined();
+  });
+
+  it("reports a failed outcome when the model call throws (Codex-backend regression)", async () => {
+    completeTextMock.mockImplementation(async () => {
+      throw new Error("Stream must be set to true");
+    });
+
+    const outcome = await maybePromoteApprovalComment({
+      agent: agentStub(),
+      agentFilePath,
+      toolResult: {
+        status: "comment",
+        comment: "Always cite a source before publishing.",
+        reviewer: { username: "web" },
+      },
+    });
+
+    expect(outcome?.status).toBe("failed");
+    expect(outcome?.source).toBe("approval");
+    expect(outcome?.detail).toContain("Stream must be set to true");
     expect(existsSync(learningsPath())).toBe(false);
   });
 });
