@@ -1840,6 +1840,30 @@ async function runInternalWorker() {
         };
       }
 
+      // Cascade: the gate lives on the leaf, but the root's log shows only its
+      // pending `subagent__*` bookmark entry. Surface the leaf's full gate on
+      // that bookmark entry (prompt/summary/draft/risk + resume token) so the
+      // session page renders it as one actionable approval box. Without the
+      // gate content the entry renders an empty approval card; without the
+      // token the approve/reject/comment actions never attach. Skip for a
+      // delegated child (its own page is view-only).
+      if (cascadeLeaf && !isDelegatedChild && state.status === 'pending' && expectedToken && !rolledBackAfterResume) {
+        const bookmarkPart = parts.find((part: any) =>
+          part?.type === 'tool' &&
+          part?.state?.status === 'pending' &&
+          part?.state?.resumePayload?.kind === 'subagent_wait'
+        );
+        if (bookmarkPart) {
+          const bookmarkId = String(bookmarkPart.id);
+          const leafGateDetails = buildAwaitHumanDetails(state);
+          if (leafGateDetails) {
+            logs = logs.map((entry) => entry.id === bookmarkId
+              ? { ...entry, details: { ...(entry.details ?? {}), ...leafGateDetails } }
+              : entry);
+          }
+        }
+      }
+
       const channelMessage = valueAsRecord(resumePayload.channelMessage);
       let approvalUrl: string | undefined;
       if (cascadeLeaf) {
