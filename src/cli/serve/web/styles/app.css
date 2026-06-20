@@ -1131,8 +1131,10 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .page-stores h1 { margin: 0 0 8px; font-family: var(--sans); font-size: 34px; line-height: 1.12; font-weight: 500; }
 .page-stores .lede { margin: 0; color: var(--muted-3); font-family: var(--sans); font-size: 15px; }
 .page-stores .panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
-.store-table { width: 100%; border-collapse: collapse; }
-.store-table th, .store-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.store-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.store-table { width: 100%; min-width: 760px; border-collapse: collapse; }
+.store-table th, .store-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
+.store-table .title-cell, .store-table .preview { white-space: normal; }
 .store-table th { color: var(--muted-2); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 500; background: var(--panel); }
 .store-table th[aria-sort] { color: var(--muted-3); }
 .sort-header {
@@ -1204,8 +1206,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-stores .back-link { display: inline-flex; margin-bottom: 18px; color: var(--muted-3); border-color: var(--line-strong); }
 .page-stores code { color: var(--muted-3); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
 @media (max-width: 760px) {
-  .store-table th:nth-child(4), .store-table td:nth-child(4),
-  .store-table th:nth-child(5), .store-table td:nth-child(5) { display: none; }
   .page-stores h1 { font-size: 28px; }
 }
 

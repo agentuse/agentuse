@@ -60,6 +60,7 @@ export function StoreTable<Row>(props: {
   };
 
   return (
+    <div class="store-table-scroll">
     <table class="store-table">
       <thead>
         <tr>
@@ -86,5 +87,6 @@ export function StoreTable<Row>(props: {
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
