@@ -1105,6 +1105,10 @@ export const executionLog = {
   timeout(agentPath: string, durationMs: number): void {
     console.log(`${this.formatTimestamp()} ${chalk.red('Timeout:')} ${agentPath} (${this.formatDuration(durationMs)})`);
   },
+
+  suspended(agentPath: string, durationMs: number): void {
+    console.log(`${this.formatTimestamp()} ${chalk.yellow('Awaiting approval:')} ${agentPath} (${this.formatDuration(durationMs)})`);
+  },
 };
 
 export const approvalLog = {

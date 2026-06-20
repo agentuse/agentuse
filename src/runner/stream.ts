@@ -765,19 +765,30 @@ export async function processAgentStream(
                 Date.now(),
                 (chunk.contextSnapshot?.updatedAt ?? 0) + 1
               );
+              // A 'subagent_wait' is a parent step parked on a delegated child's gate:
+              // store only the pointer down (childSessionID) so the cascade can descend.
+              // It carries no human-facing fields and triggers no Slack/announce (gated
+              // below to 'await_human'), so the parent suspends silently while the real
+              // gate stays on the leaf and surfaces once at the root.
               const buildPendingState = (activeChannelMessage?: any) => ({
                 status: 'pending',
                 input: pending.input,
                 suspendedAt,
-                resumePayload: {
-                  kind: 'await_human',
-                  ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
-                  ...(typeof payload.surface === 'string' && { surface: payload.surface }),
-                  ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
-                  ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
-                  ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
-                  ...(activeChannelMessage ? { channelMessage: activeChannelMessage } : {})
-                }
+                resumePayload: payload.kind === 'subagent_wait'
+                  ? {
+                      kind: 'subagent_wait',
+                      ...(typeof payload.childSessionID === 'string' && { childSessionID: payload.childSessionID }),
+                      ...(typeof payload.childAgentName === 'string' && { childAgentName: payload.childAgentName }),
+                    }
+                  : {
+                      kind: 'await_human',
+                      ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
+                      ...(typeof payload.surface === 'string' && { surface: payload.surface }),
+                      ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
+                      ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
+                      ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
+                      ...(activeChannelMessage ? { channelMessage: activeChannelMessage } : {})
+                    }
               });
               const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentId, options.messageID, partID, {
                 state: buildPendingState(channelMessage)

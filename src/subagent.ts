@@ -12,7 +12,10 @@ import { SessionManager } from './session/manager';
 import { loadAgentTools } from './runner/tools-loader';
 import { buildSystemMessages } from './runner/system-messages';
 import { createSessionAndMessage } from './runner/session-helper';
-import { isApprovalEnabled } from './runner/approval';
+import { isApprovalEnabled, appendApprovalInstructions, approvalToolDefaults } from './runner/approval';
+import { createAwaitHumanTool } from './tools/await-human';
+import { createToolsSnapshot } from './runner/tool-snapshot';
+import { SuspendSignal, isSuspendSignal } from './runner/suspend';
 import { extractApiErrorDetail } from './runner/api-error';
 import { usageToAssistantTokens } from './session/usage';
 
@@ -21,21 +24,23 @@ const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
 
 /**
  * Thrown at load/validation time when a delegated sub-agent enables the approval
- * gate (`approval: true`/object). The suspend/resume machinery is single-session:
- * it suspends and resumes exactly one top-level session, so an `await_human` gate
- * reached inside a delegated sub-agent would never actually suspend the parent run
- * and would leave an orphaned "pending" approval that can never be resumed.
+ * gate (`approval: true`/object) but the durable session substrate needed to
+ * suspend and resume it is absent (no parent session, manager, or project context).
  *
- * This error is re-thrown (not swallowed) by `createSubAgentTools` so the whole
- * run fails loudly before any execution, instead of registering a phantom pending
- * approval. Approval gates are only supported on the top-level agent.
+ * A delegated leaf gate works by suspending the child, parking the parent's
+ * `subagent__*` step pending, and bubbling up to suspend the root so a human can
+ * resolve it and the cascade resumes the chain. That requires the child to have a
+ * real session to suspend into. When the substrate is missing — e.g. a sub-agent
+ * tool built outside a real run — there is nowhere to suspend, so we fail loud
+ * (re-thrown, not swallowed, by `createSubAgentTools`) instead of registering a
+ * phantom pending approval that can never be resumed.
  */
 export class SubAgentApprovalUnsupportedError extends Error {
   constructor(public agentName: string, public agentPath: string) {
     super(
-      `Approval gates are only supported on the top-level agent, not delegated sub-agents. ` +
-      `Sub-agent "${agentName}" (${agentPath}) sets "approval" in its frontmatter. ` +
-      `Move the approval gate to the top-level/manager agent, or remove "approval" from the sub-agent.`
+      `Approval gate in delegated sub-agent "${agentName}" (${agentPath}) cannot be honored: ` +
+      `no durable session substrate to suspend into (missing parent session / manager / project context). ` +
+      `Run this agent under a session-backed run (e.g. \`agentuse run\` or \`agentuse serve\`), or remove "approval" from the sub-agent.`
     );
     this.name = 'SubAgentApprovalUnsupportedError';
   }
@@ -98,13 +103,15 @@ export async function createSubAgentTool(
   // Parse the agent file
   const agent = await parseAgent(resolvedPath);
 
-  // Fail loud: approval gates are not supported in delegated sub-agents.
-  // The suspend/resume machinery only suspends/resumes the top-level session,
-  // so an await_human gate here would silently no-op and orphan a pending
-  // approval. Reject at load time before any execution happens. Cover both the
-  // `approval:` frontmatter path and an explicit `tools: { await_human: true }`,
-  // which wires the gate tool directly and would otherwise slip past the guard.
-  if (isApprovalEnabled(agent.config) || agent.config.tools?.await_human === true) {
+  // Approval gates in a delegated sub-agent require the durable session substrate
+  // (parent session + manager + project context) so the child can suspend and be
+  // resumed via the cascade. When present, a leaf's await_human bubbles up to the
+  // root (see the suspended branch in execute below). When absent — e.g. a sub-agent
+  // tool built outside a real run — there is nowhere to suspend into, so fail loud
+  // at load time. Cover both `approval:` and an explicit `tools: { await_human: true }`.
+  const wantsApprovalGate = isApprovalEnabled(agent.config) || agent.config.tools?.await_human === true;
+  const hasApprovalSubstrate = !!(sessionManager && parentSessionID && parentAgentId && projectContext);
+  if (wantsApprovalGate && !hasApprovalSubstrate) {
     throw new SubAgentApprovalUnsupportedError(agent.name, resolvedPath);
   }
 
@@ -191,19 +198,26 @@ export async function createSubAgentTool(
           });
           const systemMessages = systemMessagesResult.messages;
 
+          // Parity with the top-level run: when this leaf carries its own approval
+          // gate, inject the same approval-gate instructions so it calls await_human
+          // identically whether run directly or delegated. No-ops when approval is
+          // not enabled. Persisted as the task below so a resumed child sees the same
+          // prompt.
+          const leafInstructions = appendApprovalInstructions(agent.instructions, agent.config);
+
           // Build user message: agent instructions + optional parent task
-          let userMessage = agent.instructions;
+          let userMessage = leafInstructions;
           let cacheableUserMessage: string | undefined;
 
           // Only append task if it's meaningful (not empty or generic)
           if (task && task.trim() && !task.match(/^(run|execute|perform|do)$/i)) {
             userMessage = context
-              ? `${agent.instructions}\n\nAdditional task: ${task}\n\nContext: ${JSON.stringify(context)}`
-              : `${agent.instructions}\n\nAdditional task: ${task}`;
-            cacheableUserMessage = agent.instructions;
+              ? `${leafInstructions}\n\nAdditional task: ${task}\n\nContext: ${JSON.stringify(context)}`
+              : `${leafInstructions}\n\nAdditional task: ${task}`;
+            cacheableUserMessage = leafInstructions;
           } else if (context) {
-            userMessage = `${agent.instructions}\n\nContext: ${JSON.stringify(context)}`;
-            cacheableUserMessage = agent.instructions;
+            userMessage = `${leafInstructions}\n\nContext: ${JSON.stringify(context)}`;
+            cacheableUserMessage = leafInstructions;
           }
 
           // Create session for this subagent if SessionManager is provided
@@ -228,7 +242,7 @@ export async function createSubAgentTool(
                 agent,
                 agentFilePath: resolvedPath,
                 systemMessages: systemMessages.map(m => m.content),
-                task: agent.instructions,
+                task: leafInstructions,
                 userPrompt: taskPrompt,
                 projectContext,
                 version: process.env.npm_package_version || 'unknown',
@@ -272,6 +286,28 @@ export async function createSubAgentTool(
 
             // Merge nested subagent tools into tools
             tools = { ...loadedTools.all, ...nestedSubAgentTools };
+          }
+
+          // Bind the leaf's approval gate to the child session. loadAgentTools built
+          // await_human before the session existed (sessionId undefined → no approval
+          // URL/resume token), so rebuild it now that subagentSessionID is known. This
+          // is what makes a delegated leaf gate addressable and resumable at the root.
+          if (subagentSessionID && (isApprovalEnabled(agent.config) || agent.config.tools?.await_human === true)) {
+            tools.await_human = createAwaitHumanTool(subagentSessionID, {
+              ...approvalToolDefaults(agent.config),
+              ...(projectContext?.projectRoot && { projectRoot: projectContext.projectRoot }),
+            });
+          }
+
+          // Persist a tools snapshot so the child is resumable after a gate, mirroring
+          // the top-level path (preparation.ts). Without it, resuming the child throws
+          // "Missing tools snapshot".
+          if (subagentSessionManager && subagentSessionID) {
+            try {
+              await subagentSessionManager.writeToolsSnapshot(subagentSessionID, agentId, createToolsSnapshot(tools));
+            } catch (error) {
+              logger.debug(`[SubAgent] Failed to write tools snapshot: ${(error as Error).message}`);
+            }
           }
 
           // Create doom loop detector for sub-agent
@@ -327,6 +363,39 @@ export async function createSubAgentTool(
             ? await runWithLogSink(subagentLogSink.capture, runSubagentScoped)
             : await runSubagentScoped();
 
+          // The leaf hit its approval gate. Its own stream already wrote the pending
+          // await_human part (with resume token + approval URL), so we must NOT mark the
+          // child completed. Mark it suspended and bubble the gate up: throw a
+          // SuspendSignal of kind 'subagent_wait' so the PARENT parks its subagent__*
+          // tool part pending (pointing at this child) and the parent/root session
+          // suspends durably. A human resolves it at the root and the cascade resumes.
+          if (result.suspended) {
+            if (!subagentSessionID || !subagentSessionManager) {
+              throw new Error(`Sub-agent ${agent.name} suspended without a durable session; cannot bubble the approval gate.`);
+            }
+            if (subagentMsgID && result.usage) {
+              try {
+                await subagentSessionManager.updateMessage(subagentSessionID, agentId, subagentMsgID, {
+                  assistant: {
+                    tokens: usageToAssistantTokens(result.usage),
+                    ...(result.contextUsage && { context: result.contextUsage })
+                  }
+                });
+              } catch (error) {
+                logger.debug(`[SubAgent] Failed to persist suspended usage: ${(error as Error).message}`);
+              }
+            }
+            await subagentSessionManager.setSessionSuspended(subagentSessionID, agentId);
+            // Bubble a pointer to this child only. The human-facing URL/token are
+            // resolved at the root by getApprovalInfo descending childSessionID — we
+            // deliberately do NOT propagate the child's own approval URL up.
+            throw new SuspendSignal({
+              kind: 'subagent_wait',
+              childSessionID: subagentSessionID,
+              childAgentName: agent.name,
+            });
+          }
+
           // Update session message with final token usage and mark session completed
           if (subagentSessionManager && subagentSessionID && subagentMsgID && result.usage) {
             try {
@@ -372,6 +441,14 @@ export async function createSubAgentTool(
         }
 
       } catch (error) {
+        // A bubbled approval gate (subagent_wait) must propagate so the parent parks
+        // its subagent__* part pending and suspends. Swallowing it into an error text
+        // result would orphan the child gate. The child session is already marked
+        // suspended above, so just re-throw before any error bookkeeping.
+        if (isSuspendSignal(error)) {
+          throw error;
+        }
+
         const errorMsg = error instanceof Error ? error.message : String(error);
         logger.error(`[SubAgent] ${agent.name} failed: ${errorMsg}`);
 

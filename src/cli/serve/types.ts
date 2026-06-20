@@ -154,6 +154,19 @@ export interface ApprovalPageInfo {
   errorCode?: string;
   errorMessage?: string;
   childSessions?: ChildSessionSummary[];
+  /** The delegated leaf that actually raised this gate, when surfaced at a manager
+   *  root via the subagent approval cascade. The gate is addressed at sessionId
+   *  (the root) but labeled with this leaf. */
+  originAgent?: {
+    id: string;
+    name: string;
+    filePath?: string;
+    description?: string;
+  };
+  /** True when this page is a delegated child viewed directly: approval happens at
+   *  the root (rootSessionId), so the child page shows no decision controls. */
+  viewOnly?: boolean;
+  rootSessionId?: string;
   tokenUsage?: SessionTokenUsage;
   logs?: ApprovalLogEntry[];
 }

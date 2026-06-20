@@ -5,7 +5,7 @@ import { parseScheduleExpression } from "./parser";
 import { logger, executionLog } from "../utils/logger";
 
 export interface SchedulerOptions {
-  onExecute: (schedule: Schedule) => Promise<{ success: boolean; duration: number; error?: string; sessionId?: string }>;
+  onExecute: (schedule: Schedule) => Promise<{ success: boolean; duration: number; error?: string; sessionId?: string; suspended?: boolean }>;
   scheduleJitterMs?: number;
 }
 
@@ -223,7 +223,15 @@ export class Scheduler {
       schedule.nextRun = job?.nextRun() || null;
 
       if (result.success) {
-        executionLog.complete(schedule.agentPath, result.duration);
+        if (result.suspended) {
+          // The run parked on a human approval gate (its own or a delegated
+          // sub-agent's). It did not fail — it is waiting for a decision, which the
+          // serve worker resolves and resumes out of band. Surface it distinctly so
+          // a headless schedule does not look "done" while a gate is pending.
+          executionLog.suspended(schedule.agentPath, result.duration);
+        } else {
+          executionLog.complete(schedule.agentPath, result.duration);
+        }
       } else {
         executionLog.failed(schedule.agentPath, result.duration, result.error);
       }

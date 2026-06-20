@@ -43,6 +43,9 @@ export interface Schedule {
     duration: number;
     error?: string;
     sessionId?: string;
+    // The run did not finish: it suspended on a human approval gate (its own, or a
+    // delegated sub-agent's via the cascade) and is awaiting a decision.
+    suspended?: boolean;
   };
 
   createdAt: Date;

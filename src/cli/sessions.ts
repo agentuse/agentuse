@@ -1317,6 +1317,20 @@ async function resumeSession(
     const pendingKind = pending.part.state.status === "pending"
       ? pending.part.state.resumePayload?.kind
       : undefined;
+
+    if (pendingKind === "subagent_wait") {
+      // This session is a manager parked on a delegated sub-agent's approval gate.
+      // Resolving the gate + resuming the chain (the cascade) runs in the serve
+      // worker, not this in-process single-session resume — applying the decision
+      // here would wrongly complete the subagent_wait bookmark. Direct the operator
+      // to the manager approval surface, which targets the real leaf gate.
+      throw new Error(
+        `Session ${summary.id} is waiting on a delegated sub-agent's approval gate. ` +
+        `Approve it from the manager run's approval page (\`agentuse serve\` or the approval URL), ` +
+        `not \`sessions resume\`.`
+      );
+    }
+
     const approvalResult = buildApprovalToolResult(options);
     const toolResult = approvalResult ?? (options.toolResult ? parseToolResult(options.toolResult) : undefined);
 

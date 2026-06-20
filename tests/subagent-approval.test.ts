@@ -9,10 +9,21 @@ import { parseAgent } from '../src/parser';
 import { isApprovalEnabled } from '../src/runner/approval';
 import { createAwaitHumanTool } from '../src/tools/await-human';
 import { isSuspendSignal } from '../src/runner/suspend';
+import { SessionManager } from '../src/session/manager';
 
 const fixtures = resolve(__dirname, '__fixtures__/approval');
 
-describe('approval gate in delegated sub-agents (fail loud)', () => {
+// The durable session substrate a delegated approval gate needs in order to suspend
+// into a real child session. Present here so createSubAgentTool's guard allows the
+// gate (load-time only — execute is never invoked, so no LLM/session is created).
+const substrate = {
+  sessionManager: new SessionManager(),
+  parentSessionID: 'parent-session',
+  parentAgentId: 'parent-agent',
+  projectContext: { projectRoot: '/tmp/p', stateRoot: '/tmp/p', cwd: '/tmp/p' },
+};
+
+describe('approval gate in delegated sub-agents without durable substrate (fail loud)', () => {
   async function expectRejectsWithApprovalError(promise: Promise<unknown>): Promise<void> {
     let caught: unknown;
     try {
@@ -43,7 +54,7 @@ describe('approval gate in delegated sub-agents (fail loud)', () => {
       const message = (err as Error).message;
       expect(message).toContain('sub-approval-bool');
       expect(message).toContain('approval');
-      expect(message).toContain('top-level');
+      expect(message).toContain('session');
     }
   });
 
@@ -84,6 +95,45 @@ describe('approval gate in delegated sub-agents (fail loud)', () => {
   });
 });
 
+describe('approval gate in delegated sub-agents with durable substrate (allowed)', () => {
+  it('loads an approval sub-agent when the durable session substrate is present', async () => {
+    // With a parent session + manager + project context, the leaf can suspend into a
+    // real child session and bubble up to the root, so the gate is allowed. Load only;
+    // execute (which would create the session and call the model) is never invoked.
+    const path = resolve(fixtures, 'sub-approval-bool.agentuse');
+    const tool = await createSubAgentTool(
+      path,
+      50,
+      fixtures,
+      undefined,
+      0,
+      [],
+      substrate.sessionManager,
+      substrate.parentSessionID,
+      substrate.parentAgentId,
+      substrate.projectContext,
+    );
+    expect(tool).toBeDefined();
+    expect(typeof tool.execute).toBe('function');
+  });
+
+  it('still loads the same way through the plural loader (no guard error)', async () => {
+    const tools = await createSubAgentTools(
+      [{ path: './sub-approval-bool.agentuse', name: 'approver' }],
+      fixtures,
+      undefined,
+      0,
+      [],
+      substrate.sessionManager,
+      substrate.parentSessionID,
+      substrate.parentAgentId,
+      substrate.projectContext,
+    );
+    expect(tools.subagent__approver).toBeDefined();
+    expect(typeof tools.subagent__approver.execute).toBe('function');
+  });
+});
+
 describe('top-level approval gate still works (unchanged)', () => {
   it('recognizes approval on the top-level agent config', async () => {
     const agent = await parseAgent(resolve(fixtures, 'sub-approval-bool.agentuse'));
@@ -91,10 +141,10 @@ describe('top-level approval gate still works (unchanged)', () => {
   });
 
   it('suspends the run via SuspendSignal when await_human is called at top level', async () => {
-    // This is the mechanism that suspends a top-level session: the await_human
-    // tool throws a SuspendSignal, which executeAgentCore -> processAgentStream ->
-    // runAgent turn into a suspended, resumable session. (The subagent path can
-    // never reach this, since it is rejected at load above.)
+    // This is the mechanism that suspends a session: the await_human tool throws a
+    // SuspendSignal, which executeAgentCore -> processAgentStream -> runAgent turn
+    // into a suspended, resumable session. The delegated path reuses the same
+    // mechanism on the child, then bubbles a subagent_wait gate up to the root.
     const tool = createAwaitHumanTool('session-top', { projectRoot: '/tmp/project-a' });
     try {
       await tool.execute?.({ prompt: 'Approve this?' } as any, {} as any);

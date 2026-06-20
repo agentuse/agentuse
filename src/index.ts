@@ -4,6 +4,7 @@ import { connectMCP } from './mcp';
 import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, recordLearningMarkerForLatestMessage, describeErrorPart, describeLogPart, type PreparedAgentExecution } from './runner';
 import { maybePromoteApprovalComment, describeLearningOutcome } from './learning';
 import { isApprovalEnabled } from './runner/approval';
+import { findPendingSubagentWaitChildId, loadSessionPartsFlat, descendToLeafGate, findRootSessionId } from './runner/subagent-cascade';
 import { contextUsageFromSnapshot } from './session/usage';
 import { Command } from 'commander';
 import { createProviderCommand, createAuthCommand } from './cli/auth';
@@ -1406,6 +1407,215 @@ async function runInternalWorker() {
     }));
   }
 
+  // Resume one existing (suspended) session to completion or re-suspension, reusing
+  // the same prepare/run machinery as a top-level resume. The caller must already
+  // have flipped the session to a resumable state (leaf gate resolved, or the
+  // parent's subagent_wait bookmark completed + session set running). runAgent
+  // closes the MCP clients in its own finally; we close them too if it never runs.
+  async function runExistingSession(opts: {
+    sessionManager: InstanceType<typeof SessionManager>;
+    sessionId: string;
+    projectRoot: string;
+    abortController: AbortController;
+    startTime: number;
+    debug?: boolean;
+    maxSteps?: number;
+  }): Promise<Awaited<ReturnType<typeof runAgent>>> {
+    const { sessionManager, sessionId, projectRoot, abortController, startTime, debug, maxSteps } = opts;
+    const found = await sessionManager.findSession(sessionId);
+    if (!found || !found.session.agent.filePath) {
+      throw new Error(`Cannot resume session ${sessionId}: missing agent file path`);
+    }
+    const agentPath = found.session.agent.filePath;
+    const runCwd = found.session.project.cwd || projectRoot;
+    const agent = await parseAgent(agentPath);
+    const mcp = await connectMCP(agent.config.mcpServers, debug ?? false, dirname(agentPath));
+    const projectContext = { projectRoot, stateRoot: projectRoot, cwd: runCwd };
+    let pluginManager: PluginManager | null = null;
+    try {
+      const pluginContext = resolveProjectContext(projectRoot, { projectRoot });
+      pluginManager = new PluginManager();
+      await pluginManager.loadPlugins(pluginContext.pluginDirs);
+    } catch {
+      pluginManager = null;
+    }
+    const timeoutSeconds = agent.config.timeout ?? 300;
+    const timeoutId = setTimeout(() => abortController.abort(), timeoutSeconds * 1000);
+    activeExecutionControllers.set(sessionId, abortController);
+    try {
+      const preparedExecution = await prepareAgentExecution({
+        agent,
+        mcpClients: mcp,
+        agentFilePath: agentPath,
+        cliMaxSteps: maxSteps,
+        sessionManager,
+        projectContext,
+        abortSignal: abortController.signal,
+        verbose: debug ?? false,
+        existingSessionId: sessionId,
+      });
+      return await runAgent(
+        agent, mcp, debug ?? false, abortController.signal, startTime, false, agentPath,
+        maxSteps, sessionManager, projectContext, undefined, preparedExecution, true,
+        pluginManager, true, sessionId,
+      );
+    } catch (err) {
+      // runAgent closes MCP in its own finally; if we threw before/around it, close
+      // here so a failed cascade level does not leak stdio MCP subprocesses.
+      for (const conn of mcp) {
+        try { await conn.client.close(); } catch { /* ignore */ }
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+      activeExecutionControllers.delete(sessionId);
+    }
+  }
+
+  // Complete a parent's parked subagent__* step with the resumed child's real output,
+  // matching the shape the sub-agent tool returns on a normal run, so rehydration can
+  // replay the tool result and the parent can resume.
+  async function completeSubagentBookmark(
+    sessionManager: InstanceType<typeof SessionManager>,
+    parentSessionId: string,
+    parentAgentId: string,
+    childSessionId: string,
+    childAgentName: string,
+    childResult: Awaited<ReturnType<typeof runAgent>>
+  ): Promise<void> {
+    const parts = await loadSessionPartsFlat(sessionManager, parentSessionId, parentAgentId);
+    const part = [...parts].reverse().find((p: any) =>
+      p?.type === 'tool' &&
+      p?.state?.status === 'pending' &&
+      p?.state?.resumePayload?.kind === 'subagent_wait' &&
+      p?.state?.resumePayload?.childSessionID === childSessionId
+    ) as any;
+    if (!part) {
+      throw new Error(`No pending subagent_wait bookmark for child ${childSessionId} in ${parentSessionId}`);
+    }
+    const start = typeof part.state?.suspendedAt === 'number' ? part.state.suspendedAt : Date.now();
+    await sessionManager.updatePart(parentSessionId, parentAgentId, part.messageID, part.id, {
+      state: {
+        status: 'completed',
+        input: part.state?.input ?? {},
+        output: {
+          output: childResult.text || 'Sub-agent completed without text response',
+          metadata: {
+            agent: childAgentName,
+            ...(childResult.usage?.totalTokens && { tokensUsed: childResult.usage.totalTokens }),
+          },
+        },
+        time: { start, end: Date.now() },
+      },
+    } as any);
+  }
+
+  function cascadeReparkedResponse(reqId: string, rootSessionId: string) {
+    // A level re-suspended on a new gate; the root chain stays durably parked and the
+    // gate re-surfaces at the root on the next poll. Report 'suspended' so serve keeps
+    // the session in its suspended/awaiting-approval handling.
+    return {
+      id: reqId,
+      success: true as const,
+      result: { text: '', finishReason: 'suspended', duration: 0, toolCalls: 0, sessionId: rootSessionId },
+    };
+  }
+
+  // Resolve a delegated approval gate by descending to the leaf, resolving it, then
+  // resuming child→…→root: run the leaf, complete each ancestor's bookmark with the
+  // child's output and resume it, stopping if any level re-suspends. Returns
+  // { handled: false } when the session is not a cascade root (caller does the normal
+  // single-session resume).
+  async function resumeApprovalCascade(opts: {
+    sessionManager: InstanceType<typeof SessionManager>;
+    rootSessionId: string;
+    toolResult: unknown;
+    resumeToken?: string;
+    projectRoot: string;
+    abortController: AbortController;
+    startTime: number;
+    reqId: string;
+    debug?: boolean;
+    maxSteps?: number;
+  }): Promise<{ handled: false } | { handled: true; response: any }> {
+    const { sessionManager, rootSessionId, toolResult, resumeToken, projectRoot, abortController, startTime, reqId, debug, maxSteps } = opts;
+
+    const rootFound = await sessionManager.findSession(rootSessionId);
+    if (!rootFound) return { handled: false };
+    const rootParts = await loadSessionPartsFlat(sessionManager, rootSessionId, rootFound.agentId);
+    let cursorChildId = findPendingSubagentWaitChildId(rootParts);
+    if (!cursorChildId) return { handled: false };
+
+    // Build the chain root → … → leaf following pending subagent_wait bookmarks.
+    const chain: Array<{ sessionId: string; agentId: string; agentName: string }> = [
+      { sessionId: rootSessionId, agentId: rootFound.agentId, agentName: rootFound.session.agent.name },
+    ];
+    let leafFound = false;
+    for (let i = 0; i < 16 && cursorChildId; i++) {
+      const f = await sessionManager.findSession(cursorChildId);
+      if (!f || f.session.status !== 'suspended') break;
+      chain.push({ sessionId: cursorChildId, agentId: f.agentId, agentName: f.session.agent.name });
+      const parts = await loadSessionPartsFlat(sessionManager, cursorChildId, f.agentId);
+      const pendingAwaitHuman = [...parts].reverse().find((p: any) =>
+        p?.type === 'tool' && p?.tool === 'await_human' && p?.state?.status === 'pending' &&
+        p?.state?.resumePayload?.kind === 'await_human'
+      );
+      if (pendingAwaitHuman) { leafFound = true; break; }
+      cursorChildId = findPendingSubagentWaitChildId(parts);
+    }
+    if (!leafFound) return { handled: false };
+
+    const leaf = chain[chain.length - 1];
+
+    // 1. Resolve the leaf's human gate with the decision.
+    await applyResumeToolResult({
+      sessionManager,
+      sessionId: leaf.sessionId,
+      toolResult,
+      ...(resumeToken && { resumeToken }),
+    });
+
+    // 2. Run the leaf to completion (or re-suspension on a new gate).
+    let childResult = await runExistingSession({ sessionManager, sessionId: leaf.sessionId, projectRoot, abortController, startTime, ...(debug !== undefined && { debug }), ...(maxSteps !== undefined && { maxSteps }) });
+    let childSessionId = leaf.sessionId;
+    let childAgentName = leaf.agentName;
+    if (childResult.status === 'suspended') {
+      return { handled: true, response: cascadeReparkedResponse(reqId, rootSessionId) };
+    }
+
+    // 3. Walk up: complete each ancestor's bookmark with the child's output, resume it,
+    //    stopping if it re-suspends (its gate re-surfaces at the root next poll).
+    for (let i = chain.length - 2; i >= 0; i--) {
+      const parent = chain[i];
+      await completeSubagentBookmark(sessionManager, parent.sessionId, parent.agentId, childSessionId, childAgentName, childResult);
+      await sessionManager.setSessionRunning(parent.sessionId, parent.agentId);
+      const parentResult = await runExistingSession({ sessionManager, sessionId: parent.sessionId, projectRoot, abortController, startTime, ...(debug !== undefined && { debug }), ...(maxSteps !== undefined && { maxSteps }) });
+      if (parentResult.status === 'suspended') {
+        return { handled: true, response: cascadeReparkedResponse(reqId, rootSessionId) };
+      }
+      childResult = parentResult;
+      childSessionId = parent.sessionId;
+      childAgentName = parent.agentName;
+    }
+
+    const duration = Date.now() - startTime;
+    return {
+      handled: true,
+      response: {
+        id: reqId,
+        success: true as const,
+        result: {
+          text: childResult.text || '',
+          ...(childResult.finishReason && { finishReason: childResult.finishReason }),
+          duration,
+          ...(childResult.usage && { tokens: { input: childResult.usage.inputTokens || 0, output: childResult.usage.outputTokens || 0 } }),
+          toolCalls: childResult.toolCallCount || 0,
+          sessionId: rootSessionId,
+        },
+      },
+    };
+  }
+
   async function getApprovalInfo(req: ExecuteRequest) {
     return withApprovalInfoCache(approvalInfoCacheKey(req), req.id, async () => getApprovalInfoUncached(req));
   }
@@ -1458,9 +1668,38 @@ async function runInternalWorker() {
         part?.state?.status === 'pending'
       );
       const latestApprovalPart = [...approvalParts].reverse()[0];
-      const approvalPart = pendingApprovalPart ?? latestApprovalPart;
+      let effectiveApprovalPart = pendingApprovalPart ?? latestApprovalPart;
 
-      if (!approvalPart) {
+      // Cascade: this session may have no human gate of its own but be parked on a
+      // delegated child (subagent_wait). Descend to the leaf holding the real gate
+      // and surface it here, addressed at this (root/intermediate) session.
+      let cascadeLeaf: { session: SessionInfo; agentId: string; parts: any[]; approvalPart: any } | null = null;
+      if (!pendingApprovalPart) {
+        const childSessionId = findPendingSubagentWaitChildId(parts);
+        if (childSessionId) {
+          cascadeLeaf = await descendToLeafGate(sessionManager, childSessionId);
+          if (cascadeLeaf) effectiveApprovalPart = cascadeLeaf.approvalPart;
+        }
+      }
+
+      // A delegated child viewed directly is view-only: approval happens at the root.
+      const isDelegatedChild = typeof found.session.parentSessionID === 'string' && found.session.parentSessionID.length > 0;
+      const viewOnlyRootSessionId = isDelegatedChild
+        ? await findRootSessionId(sessionManager, req.sessionId)
+        : undefined;
+      const viewOnlyFields = isDelegatedChild
+        ? { viewOnly: true as const, ...(viewOnlyRootSessionId && { rootSessionId: viewOnlyRootSessionId }) }
+        : {};
+      const originAgentFields = cascadeLeaf
+        ? { originAgent: {
+            id: cascadeLeaf.session.agent.id,
+            name: cascadeLeaf.session.agent.name,
+            ...(cascadeLeaf.session.agent.filePath && { filePath: cascadeLeaf.session.agent.filePath }),
+            ...(cascadeLeaf.session.agent.description && { description: cascadeLeaf.session.agent.description }),
+          } }
+        : {};
+
+      if (!effectiveApprovalPart) {
         return {
           id: req.id,
           success: true,
@@ -1476,6 +1715,7 @@ async function runInternalWorker() {
               ...(found.session.agent.filePath && { filePath: found.session.agent.filePath }),
               ...(found.session.agent.description && { description: found.session.agent.description })
             },
+            ...viewOnlyFields,
             ...(childSessions.length > 0 && { childSessions }),
             ...(tokenUsage && { tokenUsage }),
             logs
@@ -1483,11 +1723,13 @@ async function runInternalWorker() {
         };
       }
 
-      const state = approvalPart.state;
-      const rolledBackAfterResume = approvalWasRolledBackAfterResume(found.session, approvalPart, parts);
+      const state = effectiveApprovalPart.state;
+      const rolledBackAfterResume = cascadeLeaf
+        ? approvalWasRolledBackAfterResume(cascadeLeaf.session, effectiveApprovalPart, cascadeLeaf.parts)
+        : approvalWasRolledBackAfterResume(found.session, effectiveApprovalPart, parts);
       const sessionStatus = rolledBackAfterResume ? 'error' : found.session.status;
       if (rolledBackAfterResume) {
-        logs = logsWithRecoveredApprovalDecision(logs, approvalPart);
+        logs = logsWithRecoveredApprovalDecision(logs, effectiveApprovalPart);
       }
       const input = valueAsRecord(state.input);
       const metadata = valueAsRecord(state.metadata);
@@ -1539,6 +1781,8 @@ async function runInternalWorker() {
               ...(found.session.agent.filePath && { filePath: found.session.agent.filePath }),
               ...(found.session.agent.description && { description: found.session.agent.description })
             },
+            ...originAgentFields,
+            ...viewOnlyFields,
             ...(childSessions.length > 0 && { childSessions }),
             ...(tokenUsage && { tokenUsage }),
             logs
@@ -1547,11 +1791,19 @@ async function runInternalWorker() {
       }
 
       const channelMessage = valueAsRecord(resumePayload.channelMessage);
-      const approvalUrl = typeof resumePayload.approvalUrl === 'string'
-        ? resumePayload.approvalUrl
-        : typeof channelMessage.url === 'string'
-          ? channelMessage.url
-          : undefined;
+      let approvalUrl: string | undefined;
+      if (cascadeLeaf) {
+        // The leaf minted a URL to its own (view-only) child page; the human acts at
+        // the root, so rewrite the gate URL to this session.
+        const { getSessionUrl } = await import('./tools/await-human.js');
+        approvalUrl = getSessionUrl(req.sessionId, req.projectRoot);
+      } else {
+        approvalUrl = typeof resumePayload.approvalUrl === 'string'
+          ? resumePayload.approvalUrl
+          : typeof channelMessage.url === 'string'
+            ? channelMessage.url
+            : undefined;
+      }
       const detailDraftUrl = safeHttpUrl(input.draft_url);
       const detailArtifactUrl = safeHttpUrl(input.artifact_url);
       return {
@@ -1569,6 +1821,8 @@ async function runInternalWorker() {
             ...(found.session.agent.filePath && { filePath: found.session.agent.filePath }),
             ...(found.session.agent.description && { description: found.session.agent.description })
           },
+          ...originAgentFields,
+          ...viewOnlyFields,
           ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
           ...(typeof input.summary === 'string' && { summary: input.summary }),
           ...(typeof input.draft === 'string' && { draft: input.draft }),
@@ -1578,7 +1832,9 @@ async function runInternalWorker() {
           ...(typeof input.risk === 'string' && { risk: input.risk }),
           ...(typeof resumePayload.surface === 'string' && { surface: resumePayload.surface }),
           ...(approvalUrl && { approvalUrl }),
-          ...(state.status === 'pending' && expectedToken && !rolledBackAfterResume && { currentResumeToken: expectedToken }),
+          // Delegated children are view-only: never surface an actionable token; the
+          // root surfaces the gate (with this same leaf token) for the human to act.
+          ...(state.status === 'pending' && expectedToken && !rolledBackAfterResume && !isDelegatedChild && { currentResumeToken: expectedToken }),
           ...(typeof resumePayload.expiresAt === 'number' && { expiresAt: resumePayload.expiresAt }),
           ...(typeof state.suspendedAt === 'number' && { suspendedAt: state.suspendedAt }),
           ...(Object.keys(channelMessage).length > 0 && { channelMessage }),
@@ -1906,14 +2162,36 @@ async function runInternalWorker() {
       const summarizeApproval = async (
         { session, agentId }: { session: SessionInfo; agentId: string }
       ): Promise<ApprovalSummary | null> => {
+        // Delegated children surface through their root manager's single cascade
+        // entry, not as separate approvals. Skip them here to avoid double-counting.
+        if (typeof session.parentSessionID === 'string' && session.parentSessionID.length > 0) {
+          return null;
+        }
         const cacheKey = approvalPartCacheKey(req.projectRoot, session, agentId);
         const updatedAt = session.time.updated;
         const cached = approvalPartCache.get(cacheKey);
-        const approvalPart = cached && cached.updatedAt === updatedAt
+        let approvalPart = cached && cached.updatedAt === updatedAt
           ? cached.part
           : await sessionManager.getLatestApprovalPart(session.id, agentId);
         if (!cached || cached.updatedAt !== updatedAt) {
           approvalPartCache.set(cacheKey, { updatedAt, part: approvalPart });
+        }
+        // Cascade: a root parked on a delegated child's gate (subagent_wait) has no
+        // await_human part of its own. Descend to the leaf and surface its gate here,
+        // labeled with the leaf but addressed at the root session.
+        let originAgentName: string | undefined;
+        let originAgentFilePath: string | undefined;
+        if (!approvalPart && session.status === 'suspended') {
+          const rootParts = await loadSessionPartsFlat(sessionManager, session.id, agentId);
+          const childId = findPendingSubagentWaitChildId(rootParts);
+          if (childId) {
+            const leaf = await descendToLeafGate(sessionManager, childId);
+            if (leaf) {
+              approvalPart = leaf.approvalPart;
+              originAgentName = leaf.session.agent.name;
+              originAgentFilePath = leaf.session.agent.filePath;
+            }
+          }
         }
         if (!approvalPart) return null;
 
@@ -1973,9 +2251,10 @@ async function runInternalWorker() {
         return {
           sessionId: session.id,
           agentId,
-          agentName: session.agent.name || session.agent.id,
+          // Label cascade entries with the originating leaf; addressed at the root.
+          agentName: originAgentName ?? (session.agent.name || session.agent.id),
           ...(session.agent.description && { agentDescription: session.agent.description }),
-          ...(session.agent.filePath && { agentFilePath: session.agent.filePath }),
+          ...((originAgentFilePath ?? session.agent.filePath) && { agentFilePath: originAgentFilePath ?? session.agent.filePath }),
           status,
           sessionStatus: session.status,
           ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
@@ -2141,6 +2420,25 @@ async function runInternalWorker() {
             success: false,
             error: { code: 'SESSION_REQUIRED', message: 'Missing sessionId for resume request' },
           };
+        }
+
+        // Cascade: if this session is a manager root parked on a delegated child's
+        // gate (subagent_wait), resolve + resume the whole chain rather than a single
+        // session. Falls through to the normal resume when there is no cascade.
+        const cascade = await resumeApprovalCascade({
+          sessionManager,
+          rootSessionId: req.sessionId,
+          toolResult: req.toolResult,
+          ...(req.resumeToken && { resumeToken: req.resumeToken }),
+          projectRoot: req.projectRoot,
+          abortController,
+          startTime,
+          reqId: req.id,
+          ...(req.debug !== undefined && { debug: req.debug }),
+          ...(req.maxSteps !== undefined && { maxSteps: req.maxSteps }),
+        });
+        if (cascade.handled) {
+          return cascade.response;
         }
 
         const resumed = await applyResumeToolResult({

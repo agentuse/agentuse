@@ -24,7 +24,7 @@ Every run is a session. The review surface is the unified **session page** at `/
 8. After the session finishes, reviewers can send follow-up instructions from the same session page to continue the session with its existing context.
 
 <Note>
-Approval gates are only supported on the **top-level agent**, not on delegated sub-agents. Suspend/resume operates on a single top-level session, so an approval gate inside a delegated sub-agent could never suspend the run. If a sub-agent sets `approval` in its frontmatter, AgentUse fails the run at load time with a clear error. Put the gate on the top-level (or `type: manager`) agent instead.
+A leaf agent's approval gate works the **same whether the agent is run directly or delegated by a `type: manager`** agent. See [Approval in delegated sub-agents](#approval-in-delegated-sub-agents) below.
 </Note>
 
 ## Create an Agent with Approval
@@ -170,6 +170,45 @@ When Slack Socket Mode is configured, the approval details thread can also accep
 When the agent receives a comment, it decides whether to revise, ask for approval again, or stop with a clear explanation.
 
 After the run completes, the same session page becomes a lightweight continuation surface. Add a follow-up instruction in the **Continue session** box to resume the completed or errored session with its existing context. This matches Slack thread replies, but keeps the web session page as the source of truth for details and logs.
+
+## Approval in delegated sub-agents
+
+A leaf agent's approval gate behaves identically whether you run it directly or a `type: manager` agent delegates to it. You define `approval: true` once on the leaf, and the same human gate fires in both modes. Only the channel the request surfaces through changes.
+
+```md title="reply-to-post.agentuse — the leaf, reused in both modes"
+---
+model: anthropic:claude-sonnet-4-6
+approval: true
+---
+
+Draft a reply to the given post in the brand voice, then publish it.
+```
+
+- **Run it directly** (`agentuse run reply-to-post.agentuse`) and you get the gate, as for any top-level agent.
+- **Delegate it** from a manager and the *same* gate fires inside the sub-agent. The request surfaces **on the manager run's session page** (and the `/approvals` inbox, and Slack if configured), labeled with the originating leaf. Approve / reject / comment there: the decision resolves the leaf's gate, the leaf finishes, and the manager resumes automatically.
+
+```md title="manager.agentuse — delegates to the same leaf, unchanged"
+---
+type: manager
+schedule: "0 9 * * *"
+subagents:
+  - path: ./reply-to-post.agentuse
+---
+
+For each post worth replying to, delegate to reply-to-post.
+```
+
+This works for an interactive manager and for a scheduled/headless one: the run suspends durably and resumes when the decision arrives.
+
+<Note>
+**Approve at the manager root.** The delegated leaf's own session page is view-only and links up to the manager run, where the decision is made. This keeps one canonical approval surface per run.
+</Note>
+
+**v1 behavior and limits:**
+
+- One approval at a time per manager run. To gate several items, have a single leaf loop and call the gate once per item (it re-suspends and re-surfaces at the root each time), rather than fanning out to many sub-agents that suspend simultaneously — concurrent multi-gate fan-out is not yet supported.
+- The human always decides outward/irreversible actions (human relay). Automatic, classifier-based approval of low-risk calls is a separate, later option.
+- Resolve a delegated gate from the manager's approval page, `/approvals` inbox, or Slack — not `agentuse sessions resume`, which handles only single-session gates.
 
 ## Configuration Fields
 

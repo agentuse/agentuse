@@ -1,6 +1,9 @@
 export interface SuspendPayload {
-  kind: 'await_human';
-  prompt: string;
+  // 'await_human' is a real human gate (leaf). 'subagent_wait' is a parent step
+  // parked on a delegated child's gate — it carries no human-facing fields, only
+  // the pointer down to the suspended child so the cascade can descend/resume.
+  kind: 'await_human' | 'subagent_wait';
+  prompt?: string;
   surface?: 'web';
   channelMessage?: {
     type: 'slack-message';
@@ -16,6 +19,9 @@ export interface SuspendPayload {
   expiresAt?: number;
   resumeToken?: string;
   approvalUrl?: string;
+  // subagent_wait only: the suspended child gate this parent step is parked on.
+  childSessionID?: string;
+  childAgentName?: string;
 }
 
 export class SuspendSignal extends Error {

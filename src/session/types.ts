@@ -214,7 +214,10 @@ export type ToolStatePending = {
   input?: unknown;
   suspendedAt?: number;
   resumePayload?: {
-    kind: 'await_human';
+    // 'await_human': a real human gate (the leaf's await_human tool part).
+    // 'subagent_wait': a parent's subagent__* step parked on a delegated child's
+    // gate — no human-facing fields, just childSessionID for the cascade descent.
+    kind: 'await_human' | 'subagent_wait';
     prompt?: string;
     channel?: string;
     approvalUrl?: string;
@@ -227,6 +230,9 @@ export type ToolStatePending = {
       channel?: string;
       url?: string;
     };
+    // subagent_wait only: the suspended child gate this step is parked on.
+    childSessionID?: string;
+    childAgentName?: string;
   };
 };
 

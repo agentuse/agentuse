@@ -1602,7 +1602,7 @@ export function createServeCommand(): Command {
       // Uses subprocess to work around EBADF issue when spawning from async callbacks
       const executeScheduledAgent = async (
         schedule: Schedule
-      ): Promise<{ success: boolean; duration: number; error?: string; sessionId?: string }> => {
+      ): Promise<{ success: boolean; duration: number; error?: string; sessionId?: string; suspended?: boolean }> => {
         const startTime = Date.now();
         const project = projectsById.get(schedule.projectId);
         if (!project) {
@@ -1684,6 +1684,7 @@ export function createServeCommand(): Command {
             success: true,
             duration,
             ...(spawnResult.result.sessionId && { sessionId: spawnResult.result.sessionId }),
+            ...(spawnResult.result.finishReason === 'suspended' && { suspended: true }),
           };
         } else {
           totalExecutions++;
