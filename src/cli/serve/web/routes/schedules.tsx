@@ -4,6 +4,7 @@ import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { formatApprovalTime } from '../lib/format';
+import { agentDetailHref } from './agent-detail';
 
 function dayLabel(ms: number): string {
   return new Date(ms).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: '2-digit' });
@@ -31,7 +32,7 @@ function Slot(props: { schedule: SerializedSchedule; multiProject: boolean }) {
       <div class="slot-time">{time}</div>
       <div class="slot-main">
         {multiProject && <div class="slot-proj">{schedule.projectId}</div>}
-        <div class="slot-agent"><code>{schedule.agentPath}</code></div>
+        <a class="slot-agent" href={agentDetailHref(schedule.projectId, schedule.agentPath)}><code>{schedule.agentPath}</code></a>
         <div class="slot-cadence" title={`${schedule.expression}${staggerNote}`}>{schedule.human}</div>
       </div>
       <div class="slot-side">{lastRun}</div>

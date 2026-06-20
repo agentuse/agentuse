@@ -1840,6 +1840,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   overflow: hidden;
 }
 .page-schedules .slot {
+  position: relative;
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr) auto;
   gap: 16px;
@@ -1849,6 +1850,12 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   transition: background 120ms ease;
 }
 .page-schedules .slot:hover { background: var(--panel-hover); }
+/* Whole row links to the agent detail view via a stretched ::after overlay,
+   while the last-run session link (slot-side) stays clickable above it. */
+.page-schedules a.slot-agent { display: inline-block; text-decoration: none; color: inherit; }
+.page-schedules a.slot-agent::after { content: ''; position: absolute; inset: 0; }
+.page-schedules .slot:hover .slot-agent code { color: var(--cyan); }
+.page-schedules .slot-side a { position: relative; z-index: 1; }
 .page-schedules .slot.disabled .slot-time { color: var(--muted-2); }
 .page-schedules .slot-time {
   font-family: var(--mono);
