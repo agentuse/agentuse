@@ -158,4 +158,81 @@ describe('approval list worker', () => {
       await rm(dataHome, { recursive: true, force: true });
     }
   });
+
+  it('classifies an orphaned pending gate on a terminally-errored session as errored, not pending', async () => {
+    const originalXdgDataHome = process.env.XDG_DATA_HOME;
+    const dataHome = await mkdtemp(join(tmpdir(), 'agentuse-approvals-errored-'));
+    const projectRoot = join(dataHome, 'project');
+    process.env.XDG_DATA_HOME = dataHome;
+    try {
+      await initStorage(projectRoot);
+      const sessionManager = new SessionManager();
+
+      const addPendingGate = async (agentId: string, name: string): Promise<string> => {
+        const sessionId = await sessionManager.createSession({
+          agent: { id: agentId, name, isSubAgent: false },
+          model: 'demo:test',
+          version: 'test',
+          config: {},
+          project: { root: projectRoot, cwd: projectRoot },
+        });
+        const messageId = await sessionManager.createMessage(sessionId, agentId, {
+          user: { prompt: { task: 'review' } },
+          assistant: {
+            system: [],
+            modelID: 'demo:test',
+            providerID: 'demo',
+            mode: 'build',
+            path: { cwd: projectRoot, root: projectRoot },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          },
+        });
+        await sessionManager.addPart(sessionId, agentId, messageId, {
+          type: 'tool',
+          callID: `call-${agentId}`,
+          tool: 'await_human',
+          state: {
+            status: 'pending',
+            input: { prompt: `Approve ${name}?` },
+            suspendedAt: Date.now(),
+            resumePayload: { kind: 'await_human', resumeToken: `${name}-token` },
+          },
+        });
+        return sessionId;
+      };
+
+      // A genuinely suspended gate awaiting a human -> stays 'pending'.
+      const liveId = await addPendingGate('agents/live', 'Live');
+      await sessionManager.setSessionSuspended(liveId, 'agents/live');
+
+      // A gate whose run died (EXECUTION_ERROR) without resolving the part. The part
+      // is still 'pending' but the session is terminally errored -> must be 'errored',
+      // not surfaced as an actionable pending approval.
+      const deadId = await addPendingGate('agents/dead', 'Dead');
+      await sessionManager.setSessionError(deadId, 'agents/dead', {
+        message: 'mainFeed root not found',
+        code: 'EXECUTION_ERROR',
+      });
+
+      worker = await startWorker();
+      worker.child.stdin.write(`${JSON.stringify({
+        id: 'list-errored',
+        type: 'list-approvals',
+        projectRoot,
+      })}\n`);
+
+      const response = await readWorkerJson(worker.rl);
+      expect(response.success).toBe(true);
+      const byId: Record<string, { status: string }> = Object.fromEntries(
+        response.approvals.map((a: { sessionId: string; status: string }) => [a.sessionId, a])
+      );
+      expect(byId[liveId]?.status).toBe('pending');
+      expect(byId[deadId]?.status).toBe('errored');
+    } finally {
+      if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdgDataHome;
+      await rm(dataHome, { recursive: true, force: true });
+    }
+  });
 });

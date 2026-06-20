@@ -2319,6 +2319,13 @@ async function runInternalWorker() {
         } else if (state.status === 'pending' && session.error?.code === 'TIMEOUT') {
           status = 'expired';
           errorMessage = session.error.message || 'Session timed out';
+        } else if (state.status === 'pending' && session.status !== 'suspended' && session.status !== 'running') {
+          // The gate part is still 'pending' but the run terminally ended (errored,
+          // completed, stopped, timed out) without resolving it. An orphaned gate on a
+          // dead session is not an actionable approval - classify it as errored so it
+          // drops out of the pending bucket instead of lingering as unclearable forever.
+          status = 'errored';
+          errorMessage = session.error?.message || sessionError.errorMessage;
         } else if (state.status === 'pending') {
           status = 'pending';
         } else if (state.status === 'completed') {
