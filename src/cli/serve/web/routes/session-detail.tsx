@@ -290,7 +290,7 @@ export default function SessionDetail() {
   // next entry streams in. Only suppressed while the assistant is actively typing
   // (streaming text is its own indicator, so a second one would be redundant).
   const tailEntry = visibleLogs.length > 0 ? visibleLogs[visibleLogs.length - 1] : undefined;
-  const tailTyping = tailEntry?.type === 'text' && tailEntry?.status === 'streaming';
+  const tailTyping = (tailEntry?.type === 'text' || tailEntry?.type === 'reasoning') && tailEntry?.status === 'streaming';
   const showWorking = live && !tailTyping;
   const workingLabel = 'Agent is running';
   const ended = isEndedStatus(approval?.sessionStatus);

@@ -437,6 +437,33 @@ body {
 .log-item[data-log-type="learning"] .log-content { color: var(--muted-3); font-size: 12px; }
 .log-item.error[data-log-type="learning"] .log-marker,
 .log-item.error[data-log-type="learning"] .log-title { color: var(--red); }
+/* Model reasoning (extended thinking): the "why" behind the answer. The body
+   keeps markdown structure but sheds the answer's card chrome for a quiet
+   left-rule, so it reads as the model's inner monologue — subordinate to the
+   visible answer it precedes, present but never competing for attention. */
+.log-item[data-log-type="reasoning"] .log-marker { color: var(--muted); opacity: 0.7; }
+.log-item[data-log-type="reasoning"] .log-title { color: var(--muted-3); font-weight: 500; }
+.log-item.streaming[data-log-type="reasoning"] .log-marker { opacity: 1; }
+/* Strip the bordered/filled markdown card and swap in a subordinate left rule
+   so reasoning is visually distinct from a real assistant answer. */
+.log-item[data-log-type="reasoning"] .log-content > .content-render > .content-markdown,
+.log-item[data-log-type="reasoning"] .log-content > .content-markdown {
+  border: 0;
+  border-left: 2px solid var(--line-strong);
+  border-radius: 0;
+  background: transparent;
+  padding: 1px 0 1px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.log-item[data-log-type="reasoning"] .content-markdown h2,
+.log-item[data-log-type="reasoning"] .content-markdown h3,
+.log-item[data-log-type="reasoning"] .content-markdown h4,
+.log-item[data-log-type="reasoning"] .content-markdown h5,
+.log-item[data-log-type="reasoning"] .content-markdown h6 {
+  color: var(--muted-3);
+  font-size: 13px;
+}
 /* Model/AI-SDK errors: red accent, with the provider response body shown so a
    failure is diagnosable inline instead of being a bare "Bad Request" pill. */
 .log-item[data-log-type="error"] .log-marker { color: var(--red); opacity: 0.95; }

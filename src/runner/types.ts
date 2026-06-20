@@ -66,8 +66,14 @@ export interface PreparedAgentExecution {
 }
 
 export interface AgentChunk {
-  type: 'text' | 'tool-call' | 'tool-result' | 'tool-error' | 'finish' | 'usage' | 'error' | 'suspended' | 'llm-start' | 'llm-first-token';
+  type: 'text' | 'reasoning' | 'tool-call' | 'tool-result' | 'tool-error' | 'finish' | 'usage' | 'error' | 'suspended' | 'llm-start' | 'llm-first-token';
   text?: string;
+  /** Provider block id grouping a reasoning stream; deltas with the same id
+   *  belong to one ReasoningPart. Set on `type: 'reasoning'` chunks. */
+  reasoningId?: string;
+  /** Marks the end of a reasoning block (reasoning-end), so the consumer can
+   *  finalize the part. No `text` delta accompanies this. */
+  reasoningDone?: boolean;
   toolName?: string;
   toolCallId?: string;      // Tool call ID from AI SDK
   toolInput?: unknown;

@@ -340,7 +340,7 @@ function LogEntryImpl(props: LogEntryProps) {
       <span
         class="log-marker"
         {...(entry.type === 'log' && !spinning ? { 'aria-label': `${entry.level ?? 'info'} log`, title: entry.level ?? 'info', role: 'img' } : {})}
-      >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'error' ? '✗' : entry.type === 'log' ? logLevelMarker(entry.level) : '⋮')}</span>
+      >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : '⋮')}</span>
       <div class="log-main">
         <span class="log-title">
           {entry.title}
@@ -354,7 +354,7 @@ function LogEntryImpl(props: LogEntryProps) {
           {entry.details && (isApprovalEntry
             ? <ApprovalDetailCard details={entry.details} sessionId={props.sessionId} token={props.token} />
             : <ToolDetails details={entry.details} sessionId={props.sessionId} token={props.token} />)}
-          {entry.message && !storeEvent && !entry.subagentSession && <LogContent value={entry.message} forceMarkdown={entry.type === 'text'} />}
+          {entry.message && !storeEvent && !entry.subagentSession && <LogContent value={entry.message} forceMarkdown={entry.type === 'text' || entry.type === 'reasoning'} />}
           {warnings.length > 0 && <LogWarnings warnings={warnings} />}
         </div>
         {props.showActions && (

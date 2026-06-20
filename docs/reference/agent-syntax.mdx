@@ -157,21 +157,40 @@ Additional instructions or context.
 
   **Supported Options:**
   - `reasoningEffort`: Controls thinking effort for reasoning models (`'none'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`)
+  - `reasoningSummary`: Requests a streamed natural-language summary of the model's reasoning (`'auto'` or `'detailed'`), so the reasoning shows up inline in the [session trace](/reference/session-storage). **Defaults to `'auto'` on reasoning-capable models** (the reasoning tokens are billed either way, so the summary is near-free visibility). Non-reasoning models (e.g. `gpt-4o`) omit it.
   - `textVerbosity`: Controls response length and detail (`'low'`, `'medium'`, `'high'`)
   - `promptCacheKey`: Optional OpenAI prompt-cache routing key. AgentUse sets a stable default per agent when omitted.
   - `promptCacheRetention`: Optional OpenAI prompt-cache retention policy (`'in_memory'` or `'24h'`)
-  - Defaults: when `reasoningEffort`, `textVerbosity`, or `promptCacheRetention` are omitted, AgentUse leaves them unset and uses the OpenAI/AI SDK defaults. When `promptCacheKey` is omitted, AgentUse generates a stable key per agent.
+  - Defaults: when `reasoningEffort`, `textVerbosity`, or `promptCacheRetention` are omitted, AgentUse leaves them unset and uses the OpenAI/AI SDK defaults. When `promptCacheKey` is omitted, AgentUse generates a stable key per agent. `reasoningSummary` defaults to `'auto'` on reasoning-capable models; set it explicitly (or to disable, you currently cannot turn it off via config without leaving a non-reasoning model).
 
   ```yaml
   openai:
-    reasoningEffort: high  # More thorough reasoning
-    textVerbosity: low     # Concise responses
-    promptCacheRetention: 24h  # Optional extended prompt caching on supported models
+    reasoningEffort: high       # More thorough reasoning
+    reasoningSummary: auto      # Surface reasoning in the trace (default on reasoning models)
+    textVerbosity: low          # Concise responses
+    promptCacheRetention: 24h   # Optional extended prompt caching on supported models
   ```
 
   <Note>
-    These options are particularly useful with GPT-5 models to balance response quality, latency, and cost. Some effort levels are model-specific; for example, `xhigh` and `none` are only accepted by OpenAI models that support them.
+    These options are particularly useful with GPT-5 models to balance response quality, latency, and cost. Some effort levels are model-specific; for example, `xhigh` and `none` are only accepted by OpenAI models that support them. Whether a reasoning summary actually streams depends on `reasoningEffort` and task complexity — the model may emit nothing for trivial tasks.
   </Note>
+</ParamField>
+
+<ParamField path="anthropic" type="object" required={false}>
+  Anthropic-specific options for Claude models.
+
+  **Supported Options:**
+  - `thinking.budgetTokens`: Enables Claude [extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking) with the given token budget (minimum `1024`). When set, Claude streams its reasoning, which appears inline in the [session trace](/reference/session-storage).
+
+  ```yaml
+  anthropic:
+    thinking:
+      budgetTokens: 4096
+  ```
+
+  <Warning>
+    Extended thinking is **off by default** and is an explicit opt-in: enabling it generates new thinking tokens billed at **output rates** (a real cost increase that scales with the budget). AgentUse automatically raises `max_tokens` above the budget to satisfy Anthropic's constraint and reserve room for the answer.
+  </Warning>
 </ParamField>
 
 <ParamField path="skills" type='"auto" | "trusted" | string[] | object' required={false}>

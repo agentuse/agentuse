@@ -368,8 +368,9 @@ For OpenAI models (especially GPT-5), you can control thinking effort and verbos
 ---
 model: openai:gpt-5.5
 openai:
-  reasoningEffort: high  # Options: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'
-  textVerbosity: low     # Options: 'low', 'medium', 'high'
+  reasoningEffort: high      # Options: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'
+  reasoningSummary: auto     # Options: 'auto', 'detailed' — surface reasoning in the session trace
+  textVerbosity: low         # Options: 'low', 'medium', 'high'
   promptCacheRetention: 24h  # Optional: extended prompt caching on supported models
 ---
 ```
@@ -383,6 +384,8 @@ openai:
   - `high`: More comprehensive reasoning, slower responses
   - `xhigh`: Maximum reasoning for models that support it
 
+  **reasoningSummary**: Streams a natural-language summary of the model's reasoning so it appears inline in the session trace (`auto` or `detailed`). On reasoning-capable models this **defaults to `auto`** — the reasoning tokens are billed whether or not you ask for the summary, so surfacing it is near-free. Non-reasoning models (e.g. `gpt-4o`) omit it automatically.
+
   **textVerbosity**: Controls response length and detail
   - `low`: Concise, minimal prose
   - `medium`: Balanced detail (default)  
@@ -392,13 +395,31 @@ openai:
 </Info>
 
 <Note>
-  If you omit `reasoningEffort`, `textVerbosity`, or `promptCacheRetention`, AgentUse leaves those fields unset and uses the OpenAI/AI SDK defaults. Reasoning effort is typically `medium` on reasoning models. `none`, `xhigh`, and `24h` retention are model-specific OpenAI options; if a model does not support a selected option, OpenAI will reject the request.
+  If you omit `reasoningEffort`, `textVerbosity`, or `promptCacheRetention`, AgentUse leaves those fields unset and uses the OpenAI/AI SDK defaults. Reasoning effort is typically `medium` on reasoning models. `none`, `xhigh`, and `24h` retention are model-specific OpenAI options; if a model does not support a selected option, OpenAI will reject the request. Whether a reasoning summary actually streams also depends on the effort level and task complexity.
 </Note>
+
+### Anthropic Provider Options
+
+For Claude models, you can enable extended thinking so the model's reasoning streams into the session trace:
+
+```yaml
+---
+model: anthropic:claude-opus-4-8
+anthropic:
+  thinking:
+    budgetTokens: 4096  # Minimum 1024
+---
+```
+
+<Warning>
+  Extended thinking is **off by default** — an explicit opt-in. Enabling it generates new thinking tokens billed at **output rates**, a real cost increase that scales with the budget (unlike OpenAI's `reasoningSummary`, where the reasoning is billed either way). AgentUse automatically raises `max_tokens` above the budget so Anthropic's `max_tokens > budget` constraint is met and there's headroom for the answer.
+</Warning>
 
 These options help you optimize for:
 - **Speed vs Quality**: Lower reasoning effort for faster responses
 - **Conciseness vs Detail**: Lower verbosity for more direct answers
 - **Cost Optimization**: Lower settings reduce token usage
+- **Reasoning visibility**: `reasoningSummary` (OpenAI) and `thinking` (Anthropic) surface the model's "why" inline in the session view
 
 ## Troubleshooting
 

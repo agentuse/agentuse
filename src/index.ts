@@ -1091,6 +1091,7 @@ async function runInternalWorker() {
         return {
           id: String(part.id),
           type: 'reasoning',
+          ...(typeof part.time?.end === 'number' ? { status: 'completed' } : { status: 'streaming' }),
           title: 'Reasoning',
           ...(message !== undefined && { message }),
           ...(typeof part.time?.start === 'number' && { time: part.time.start })

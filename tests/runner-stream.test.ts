@@ -280,4 +280,48 @@ describe('processAgentStream session logging', () => {
     });
     expect(partUpdates[0][4].state.status).toBe('pending');
   });
+
+  it('persists reasoning chunks as a streamed reasoning part, finalized before text', async () => {
+    const adds: any[] = [];
+    const updates: any[] = [];
+    let partCounter = 0;
+    const sessionManager = {
+      addPart: async (_s: string, _a: string, _m: string, part: any) => {
+        adds.push(part);
+        return `part-${++partCounter}`;
+      },
+      updatePart: async (...args: any[]) => {
+        updates.push(args);
+      },
+      updateMessage: async () => {}
+    };
+
+    async function* chunks(): AsyncGenerator<AgentChunk> {
+      yield { type: 'reasoning', reasoningId: 'r1', text: 'Let me ' };
+      yield { type: 'reasoning', reasoningId: 'r1', text: 'think.' };
+      yield { type: 'reasoning', reasoningId: 'r1', reasoningDone: true };
+      yield { type: 'text', text: 'Answer.' };
+      yield { type: 'finish', finishReason: 'stop' };
+    }
+
+    await processAgentStream(chunks(), {
+      sessionManager: sessionManager as any,
+      sessionID: 'session-1',
+      agentId: 'agent-1',
+      messageID: 'message-1',
+      quiet: true
+    });
+
+    // First part created is the reasoning block, then the text part.
+    expect(adds[0]).toMatchObject({ type: 'reasoning', text: 'Let me ' });
+    expect(adds.some((p) => p.type === 'text')).toBe(true);
+
+    // The reasoning part (part-1) is finalized with the accumulated text + an end time.
+    const reasoningFinalize = updates.find((u) => u[3] === 'part-1');
+    expect(reasoningFinalize).toBeDefined();
+    expect(reasoningFinalize![4]).toMatchObject({
+      text: 'Let me think.',
+      time: { start: expect.any(Number), end: expect.any(Number) }
+    });
+  });
 });

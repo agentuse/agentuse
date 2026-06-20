@@ -161,6 +161,13 @@ When `agentuse serve` is running, the same sessions are browsable as web pages:
 The `/agents` page deep-links each agent to `/sessions?agent=<id>`, and the
 `/schedules` last-run badge links to that run's session page.
 
+When the model streams its reasoning, it renders inline in the log as dimmed
+"Reasoning" entries (the model's "why", subordinate to the visible answer it
+precedes). This is on by default for reasoning-capable OpenAI models; for Claude
+it requires opting into extended thinking. See
+[model configuration](/guides/model-configuration#provider-options) for the
+`openai.reasoningSummary` and `anthropic.thinking` options.
+
 ```bash
 agentuse serve
 open http://127.0.0.1:12233/sessions

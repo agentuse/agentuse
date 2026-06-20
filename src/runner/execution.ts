@@ -2,6 +2,7 @@ import { streamText, stepCountIs, type ModelMessage, type ToolSet } from 'ai';
 import { createHash } from 'crypto';
 import type { ParsedAgent } from '../parser';
 import { createModel } from '../models';
+import { getModelFromRegistry } from '../generated/models';
 import { CodexAuth } from '../auth/codex';
 import { logger } from '../utils/logger';
 import { ContextManager } from '../context-manager';
@@ -18,6 +19,9 @@ import { clampToolResultForModel } from '../tools/tool-output-limits.js';
 const MAX_RETRIES = 3;
 const ANTHROPIC_CACHE_CONTROL = { type: 'ephemeral' as const };
 const OPENAI_CACHE_KEY_PREFIX = 'agentuse';
+// Tokens reserved for the visible answer above the extended-thinking budget, so
+// max_tokens stays comfortably greater than thinking.budget_tokens.
+const ANTHROPIC_THINKING_ANSWER_RESERVE = 8192;
 
 function isAnthropicModel(model: string): boolean {
   return model.split(':')[0] === 'anthropic';
@@ -37,8 +41,16 @@ function defaultOpenAIPromptCacheKey(agent: ParsedAgent): string {
 
 function openAIOptionsWithCacheDefaults(agent: ParsedAgent): Record<string, unknown> {
   const configured = agent.config.openai ?? {};
+  // Reasoning-capable models already generate (and bill) reasoning tokens; ask
+  // for an `auto` summary by default so the reasoning is visible in the session
+  // trace at ~no extra cost. Gate on the registry's reasoning flag: the
+  // Responses API rejects reasoningSummary on non-reasoning models (gpt-4o), and
+  // an unknown model is treated as non-reasoning (a broken run is worse than an
+  // opt-in-able missing summary). Explicit user config always wins.
+  const isReasoningModel = getModelFromRegistry(agent.config.model)?.reasoning === true;
   return {
     promptCacheKey: configured.promptCacheKey ?? defaultOpenAIPromptCacheKey(agent),
+    ...(isReasoningModel && { reasoningSummary: 'auto' }),
     ...configured,
   };
 }
@@ -428,6 +440,22 @@ export async function* executeAgentCore(
     const provider = agent.config.model.split(':')[0];
     const isCustomProvider = !['anthropic', 'openai', 'openrouter', 'demo', 'bedrock'].includes(provider);
 
+    // Claude extended thinking budget (opt-in). When set, max_tokens must exceed
+    // the budget, so reserve headroom above it for the visible answer and clamp
+    // to the model's output limit when known.
+    const anthropicThinkingBudget = provider === 'anthropic'
+      ? agent.config.anthropic?.thinking?.budgetTokens
+      : undefined;
+    const anthropicMaxOutputTokens = anthropicThinkingBudget
+      ? Math.max(
+          anthropicThinkingBudget + 1,
+          Math.min(
+            getModelFromRegistry(agent.config.model)?.limit?.output ?? Number.MAX_SAFE_INTEGER,
+            anthropicThinkingBudget + ANTHROPIC_THINKING_ANSWER_RESERVE
+          )
+        )
+      : undefined;
+
     // Only include provider options if they exist and match the model provider
     let providerOptions: any = undefined;
     if (provider === 'openai') {
@@ -451,6 +479,12 @@ export async function* executeAgentCore(
       } else {
         providerOptions = { openai: openaiOptions };
       }
+    } else if (provider === 'anthropic' && anthropicThinkingBudget) {
+      // Extended thinking is an explicit opt-in (it bills new output tokens).
+      // When enabled, Claude streams its reasoning, which the session trace
+      // renders inline. cacheControl is applied per-message elsewhere, so the
+      // top-level options carry only the thinking directive.
+      providerOptions = { anthropic: { thinking: { type: 'enabled', budgetTokens: anthropicThinkingBudget } } };
     }
 
     // Cap each segment to the remaining step budget so compaction restarts do
@@ -489,6 +523,8 @@ export async function* executeAgentCore(
       // Custom/local providers need explicit maxOutputTokens (local reasoning
       // models generate unlimited thinking tokens without it)
       ...(isCustomProvider && { maxOutputTokens: 16384 }),
+      // Extended thinking requires max_tokens > budget; reserve answer headroom.
+      ...(anthropicMaxOutputTokens && { maxOutputTokens: anthropicMaxOutputTokens }),
     };
 
     // Only add tools if there are any
@@ -755,6 +791,33 @@ Error: ${errorMessage}`);
             accumulatedText += textContent;
             yield { type: 'text', text: textContent };
           }
+          break;
+
+        // Reasoning (extended thinking) stream. The provider emits these before
+        // the visible answer and tool calls; we surface them as 'reasoning'
+        // events so the session trace can render the model's "why" inline
+        // instead of dropping it as unknown-chunk debug noise. Grouped by `id`:
+        // deltas sharing an id form one reasoning block.
+        case 'reasoning-start':
+          // Boundary marker only — the part is created lazily on first delta.
+          break;
+
+        case 'reasoning-delta': {
+          const reasoningText = (chunk as any).text ?? (chunk as any).delta;
+          if (reasoningText && typeof reasoningText === 'string') {
+            // Reasoning is genuinely the model's first output token, so count
+            // it toward time-to-first-token if text hasn't started yet.
+            if (!llmFirstTokenTime && llmGenerationStartTime) {
+              llmFirstTokenTime = Date.now();
+              yield { type: 'llm-first-token', llmFirstTokenTime };
+            }
+            yield { type: 'reasoning', reasoningId: (chunk as any).id, text: reasoningText };
+          }
+          break;
+        }
+
+        case 'reasoning-end':
+          yield { type: 'reasoning', reasoningId: (chunk as any).id, reasoningDone: true };
           break;
 
         case 'finish':

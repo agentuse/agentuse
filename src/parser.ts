@@ -148,9 +148,22 @@ const AgentSchema = z.object({
   maxSteps: z.number().positive().int().optional(),
   openai: z.object({
     reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+    // Request a streamed natural-language summary of the model's reasoning
+    // (Responses API). Without it, reasoning is encrypted and never surfaces as
+    // text — so this is what makes reasoning visible in the session trace.
+    reasoningSummary: z.enum(['auto', 'detailed']).optional(),
     textVerbosity: z.enum(['low', 'medium', 'high']).optional(),
     promptCacheKey: z.string().min(1).max(64).optional(),
     promptCacheRetention: z.enum(['in_memory', '24h']).optional()
+  }).strict().optional(),
+  anthropic: z.object({
+    // Claude extended thinking. Off by default: enabling it generates new
+    // thinking tokens billed at OUTPUT rates (min budget 1024), a real cost
+    // increase — so it's an explicit opt-in. When set, Claude streams its
+    // reasoning, which shows up inline in the session trace.
+    thinking: z.object({
+      budgetTokens: z.number().int().min(1024)
+    }).strict().optional()
   }).strict().optional(),
   mcp_servers: z.record(MCPServerSchema).optional(),  // Deprecated: use mcpServers
   mcpServers: z.record(MCPServerSchema).optional(),   // Preferred: camelCase

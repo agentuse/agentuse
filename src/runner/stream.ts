@@ -180,6 +180,12 @@ export async function processAgentStream(
   let textUpdateTimer: NodeJS.Timeout | null = null;
   const TEXT_UPDATE_DEBOUNCE_MS = 500; // Write to disk every 500ms max
 
+  // Track current reasoning (extended-thinking) part, keyed by the provider's
+  // block id. Mirrors the text-part streaming/debounce so the model's reasoning
+  // shows up live in the session trace.
+  let currentReasoningPart: { partID?: string; text: string; startTime: number; createPromise?: Promise<void>; id?: string } | null = null;
+  let reasoningUpdateTimer: NodeJS.Timeout | null = null;
+
   // Track pending session updates to ensure they complete before returning
   // Use Set with self-cleanup to avoid holding references to resolved promises
   const pendingSessionUpdates = new Set<Promise<unknown>>();
@@ -226,6 +232,43 @@ export async function processAgentStream(
     }
   };
 
+  // Helper to finalize the current reasoning part (flush debounce + stamp end).
+  const finalizeReasoningPart = async () => {
+    if (reasoningUpdateTimer) {
+      clearTimeout(reasoningUpdateTimer);
+      reasoningUpdateTimer = null;
+    }
+
+    if (currentReasoningPart && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
+      const reasoningPart = currentReasoningPart;
+      if (reasoningPart.createPromise) {
+        await reasoningPart.createPromise;
+      }
+      if (!reasoningPart.partID) {
+        currentReasoningPart = null;
+        return;
+      }
+      try {
+        await options.sessionManager.updatePart(
+          options.sessionID,
+          options.agentId,
+          options.messageID,
+          reasoningPart.partID,
+          {
+            text: reasoningPart.text.trimEnd(),
+            time: {
+              start: reasoningPart.startTime,
+              end: Date.now()
+            }
+          }
+        );
+      } catch (err) {
+        logger.debug(`Failed to finalize reasoning part: ${(err as Error).message}`);
+      }
+      currentReasoningPart = null;
+    }
+  };
+
   const recordUsage = (chunk: AgentChunk) => {
     // Normalize AI SDK usage semantics. `totalUsage` arrives here as
     // usageKind=cumulative and replaces the running total; fallback
@@ -260,7 +303,77 @@ export async function processAgentStream(
 
   for await (const chunk of generator) {
     switch (chunk.type) {
+      case 'reasoning': {
+        // End-of-block marker: finalize and stop.
+        if (chunk.reasoningDone) {
+          await finalizeReasoningPart();
+          break;
+        }
+        const reasoningText = chunk.text;
+        if (!reasoningText) break;
+        // A different block id means the prior reasoning block ended.
+        if (currentReasoningPart && currentReasoningPart.id !== chunk.reasoningId) {
+          await finalizeReasoningPart();
+        }
+
+        if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
+          if (!currentReasoningPart) {
+            // First delta of this block: create the part (await for partID).
+            const startTime = Date.now();
+            const reasoningPart: { partID?: string; text: string; startTime: number; createPromise?: Promise<void>; id?: string } = {
+              text: reasoningText,
+              startTime,
+              ...(chunk.reasoningId !== undefined && { id: chunk.reasoningId })
+            };
+            currentReasoningPart = reasoningPart;
+            const addPromise = options.sessionManager.addPart(options.sessionID, options.agentId, options.messageID, {
+              type: 'reasoning',
+              text: reasoningText,
+              time: { start: startTime }
+            } as any).then(partID => {
+              reasoningPart.partID = partID;
+            }).catch(err => logger.debug(`Failed to create reasoning part: ${err.message}`));
+            reasoningPart.createPromise = addPromise;
+            trackSessionUpdate(addPromise);
+          } else {
+            // Subsequent deltas: update in-memory now, debounce disk writes.
+            const reasoningPart = currentReasoningPart;
+            reasoningPart.text += reasoningText;
+
+            if (reasoningUpdateTimer) {
+              clearTimeout(reasoningUpdateTimer);
+            }
+            const getText = () => currentReasoningPart?.text || '';
+            reasoningUpdateTimer = setTimeout(() => {
+              if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
+                const updatePromise = Promise.resolve()
+                  .then(async () => {
+                    if (reasoningPart.createPromise) {
+                      await reasoningPart.createPromise;
+                    }
+                    if (!reasoningPart.partID) return;
+                    await options.sessionManager!.updatePart(
+                      options.sessionID!,
+                      options.agentId!,
+                      options.messageID!,
+                      reasoningPart.partID,
+                      { text: getText() }
+                    );
+                  })
+                  .catch(err => logger.debug(`Failed to update reasoning part: ${err.message}`));
+                trackSessionUpdate(updatePromise);
+              }
+              reasoningUpdateTimer = null;
+            }, TEXT_UPDATE_DEBOUNCE_MS);
+          }
+        }
+        break;
+      }
+
       case 'text':
+        // Reasoning always precedes the visible answer; close out any open
+        // reasoning block before the text part begins.
+        await finalizeReasoningPart();
         parts.push({
           type: 'text',
           text: chunk.text!,
@@ -374,7 +487,8 @@ export async function processAgentStream(
           options.doomLoopDetector.check(chunk.toolName!, chunk.toolInput);
         }
 
-        // Finalize any pending text part before tool call
+        // Finalize any pending reasoning/text part before tool call
+        await finalizeReasoningPart();
         await finalizeTextPart();
 
         parts.push({
@@ -610,6 +724,7 @@ export async function processAgentStream(
 
       case 'suspended': {
         suspended = true;
+        await finalizeReasoningPart();
         await finalizeTextPart();
 
         if (chunk.contextSnapshot) {
@@ -701,7 +816,8 @@ export async function processAgentStream(
       }
 
       case 'finish':
-        // Finalize any pending text part
+        // Finalize any pending reasoning/text part
+        await finalizeReasoningPart();
         await finalizeTextPart();
 
         recordUsage(chunk);
@@ -739,13 +855,15 @@ export async function processAgentStream(
         break;
 
       case 'error':
-        // Finalize any pending text part before throwing error
+        // Finalize any pending reasoning/text part before throwing error
+        await finalizeReasoningPart();
         await finalizeTextPart();
         throw chunk.error;
     }
   }
 
-  // Finalize any pending text part before returning (safety fallback)
+  // Finalize any pending reasoning/text part before returning (safety fallback)
+  await finalizeReasoningPart();
   await finalizeTextPart();
 
   // Wait for all pending session updates to complete before returning
