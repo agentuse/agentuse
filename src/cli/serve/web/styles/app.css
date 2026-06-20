@@ -2042,12 +2042,33 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-approval-detail .subagent-name { color: var(--fg); font-weight: 500; overflow-wrap: anywhere; }
 .page-approval-detail .subagent-id { color: var(--muted-2); font-size: 11px; font-family: var(--mono); overflow-wrap: anywhere; }
 .page-approval-detail .subagent-event code { color: var(--muted-3); overflow-wrap: anywhere; }
+/* The status chip shares the `.status` class with the page header pill, which
+   carries margin-bottom: 18px. Inside the card that margin throws off the
+   vertical centering of the chip against the agent name, so reset it here. */
+.page-approval-detail .subagent-event .chip.status { margin: 0; }
 .page-approval-detail .subagent-command {
   grid-column: 2 / -1;
   color: var(--muted-2);
   font-size: 11px;
   font-family: var(--mono);
   overflow-wrap: anywhere;
+}
+/* Mobile: the 3-column grid (chip / name / long session id) overflows on
+   narrow screens because the id and command tracks size to their unbreakable
+   content. Stack into a wrapping flex row so the chip + name stay on the first
+   line and the long id / command each wrap on their own full-width line. */
+@media (max-width: 640px) {
+  .page-approval-detail .subagent-event {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+  }
+  .page-approval-detail .subagent-id,
+  .page-approval-detail .subagent-command {
+    flex-basis: 100%;
+    min-width: 0;
+  }
 }
 
 /* clickable artifact tiles inside an approval card */
