@@ -1,5 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { ThemeToggle } from './theme-toggle';
+import { WORDMARK_SVG } from '../../brand';
 
 export type TopbarPage = 'agents' | 'sessions' | 'schedules' | 'stores' | 'approvals';
 
@@ -18,7 +19,13 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
   };
   return (
     <div class="topbar">
-      <a class="brand" href="/" aria-label="AgentUse home"><span class="brand-name">agentuse</span></a>
+      <a
+        class="brand"
+        href="/"
+        aria-label="AgentUse home"
+        dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }}
+      />
+
       <span class="nav-wrap">
         <span class="nav" role="navigation" aria-label="AgentUse serve">
           {navItem('agents', 'agents')}

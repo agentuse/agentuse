@@ -335,10 +335,13 @@ export function approvalsTopbarStyles(): string {
       font-size: 12px;
       color: var(--muted);
     }
-    .topbar .brand { display: inline-flex; align-items: center; color: var(--fg); text-decoration: none; border-bottom: 0; }
-    .topbar .brand svg { height: 18px; width: auto; display: block; }
-    .topbar a.brand:hover { color: var(--fg); opacity: 0.8; }
-    .topbar .brand-name { color: var(--fg); }
+    .topbar .brand { display: inline-flex; align-items: center; text-decoration: none; border-bottom: 0; }
+    .topbar .brand .brand-mark { display: inline-flex; align-items: center; }
+    .topbar .brand .brand-mark svg { height: 18px; width: auto; display: block; }
+    .topbar .brand .brand-mark-dark { display: none; }
+    :root[data-theme="dark"] .topbar .brand .brand-mark-light { display: none; }
+    :root[data-theme="dark"] .topbar .brand .brand-mark-dark { display: inline-flex; }
+    .topbar a.brand:hover { opacity: 0.8; }
     .topbar .nav-wrap { justify-self: center; }
     .topbar .nav {
       display: inline-flex;
