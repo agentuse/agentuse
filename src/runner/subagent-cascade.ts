@@ -25,6 +25,10 @@ export interface LeafGate {
   approvalPart: any;
 }
 
+/** Depth cap shared by every cascade walk (descend to leaf, ascend to root, and the
+ *  resume-path chain builder). Bounds against cyclic/corrupt parent/child links. */
+export const MAX_CASCADE_DEPTH = 16;
+
 /** The childSessionID a session is parked on, if it holds a pending subagent_wait. */
 export function findPendingSubagentWaitChildId(parts: any[]): string | undefined {
   const part = [...parts].reverse().find((p: any) =>
@@ -66,7 +70,7 @@ export async function descendToLeafGate(
   childSessionId: string,
   depth = 0
 ): Promise<LeafGate | null> {
-  if (depth > 16) return null;
+  if (depth > MAX_CASCADE_DEPTH) return null;
   const found = await reader.findSession(childSessionId);
   if (!found || found.session.status !== 'suspended') return null;
   const parts = await loadSessionPartsFlat(reader, childSessionId, found.agentId);
@@ -86,7 +90,7 @@ export async function findRootSessionId(
   sessionId: string
 ): Promise<string> {
   let currentId = sessionId;
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < MAX_CASCADE_DEPTH; i++) {
     const f = await reader.findSession(currentId);
     const parent = (f?.session as { parentSessionID?: string } | undefined)?.parentSessionID;
     if (typeof parent !== 'string' || parent.length === 0) break;

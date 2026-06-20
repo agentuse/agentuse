@@ -4,7 +4,7 @@ import { connectMCP } from './mcp';
 import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, recordLearningMarkerForLatestMessage, describeErrorPart, describeLogPart, type PreparedAgentExecution } from './runner';
 import { maybePromoteApprovalComment, describeLearningOutcome } from './learning';
 import { isApprovalEnabled } from './runner/approval';
-import { findPendingSubagentWaitChildId, loadSessionPartsFlat, descendToLeafGate, findRootSessionId } from './runner/subagent-cascade';
+import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
 import { contextUsageFromSnapshot } from './session/usage';
 import { Command } from 'commander';
 import { createProviderCommand, createAuthCommand } from './cli/auth';
@@ -1422,27 +1422,41 @@ async function runInternalWorker() {
     maxSteps?: number;
   }): Promise<Awaited<ReturnType<typeof runAgent>>> {
     const { sessionManager, sessionId, projectRoot, abortController, startTime, debug, maxSteps } = opts;
-    const found = await sessionManager.findSession(sessionId);
-    if (!found || !found.session.agent.filePath) {
-      throw new Error(`Cannot resume session ${sessionId}: missing agent file path`);
-    }
-    const agentPath = found.session.agent.filePath;
-    const runCwd = found.session.project.cwd || projectRoot;
-    const agent = await parseAgent(agentPath);
-    const mcp = await connectMCP(agent.config.mcpServers, debug ?? false, dirname(agentPath));
-    const projectContext = { projectRoot, stateRoot: projectRoot, cwd: runCwd };
-    let pluginManager: PluginManager | null = null;
+    const existingSessionPreRunError = Symbol.for('agentuse.existingSessionPreRunError');
+    const markPreRunError = (error: unknown): unknown => {
+      if (error && typeof error === 'object') {
+        try {
+          Object.defineProperty(error, existingSessionPreRunError, { value: true });
+        } catch {
+          // Non-extensible errors still propagate normally; they just won't be rollback-marked.
+        }
+      }
+      return error;
+    };
+    let mcp: Awaited<ReturnType<typeof connectMCP>> = [];
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let enteredRunAgent = false;
     try {
-      const pluginContext = resolveProjectContext(projectRoot, { projectRoot });
-      pluginManager = new PluginManager();
-      await pluginManager.loadPlugins(pluginContext.pluginDirs);
-    } catch {
-      pluginManager = null;
-    }
-    const timeoutSeconds = agent.config.timeout ?? 300;
-    const timeoutId = setTimeout(() => abortController.abort(), timeoutSeconds * 1000);
-    activeExecutionControllers.set(sessionId, abortController);
-    try {
+      const found = await sessionManager.findSession(sessionId);
+      if (!found || !found.session.agent.filePath) {
+        throw new Error(`Cannot resume session ${sessionId}: missing agent file path`);
+      }
+      const agentPath = found.session.agent.filePath;
+      const runCwd = found.session.project.cwd || projectRoot;
+      const agent = await parseAgent(agentPath);
+      mcp = await connectMCP(agent.config.mcpServers, debug ?? false, dirname(agentPath));
+      const projectContext = { projectRoot, stateRoot: projectRoot, cwd: runCwd };
+      let pluginManager: PluginManager | null = null;
+      try {
+        const pluginContext = resolveProjectContext(projectRoot, { projectRoot });
+        pluginManager = new PluginManager();
+        await pluginManager.loadPlugins(pluginContext.pluginDirs);
+      } catch {
+        pluginManager = null;
+      }
+      const timeoutSeconds = agent.config.timeout ?? 300;
+      timeoutId = setTimeout(() => abortController.abort(), timeoutSeconds * 1000);
+      activeExecutionControllers.set(sessionId, abortController);
       const preparedExecution = await prepareAgentExecution({
         agent,
         mcpClients: mcp,
@@ -1454,6 +1468,7 @@ async function runInternalWorker() {
         verbose: debug ?? false,
         existingSessionId: sessionId,
       });
+      enteredRunAgent = true;
       return await runAgent(
         agent, mcp, debug ?? false, abortController.signal, startTime, false, agentPath,
         maxSteps, sessionManager, projectContext, undefined, preparedExecution, true,
@@ -1465,11 +1480,15 @@ async function runInternalWorker() {
       for (const conn of mcp) {
         try { await conn.client.close(); } catch { /* ignore */ }
       }
-      throw err;
+      throw enteredRunAgent ? err : markPreRunError(err);
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
       activeExecutionControllers.delete(sessionId);
     }
+  }
+
+  function isExistingSessionPreRunError(error: unknown): boolean {
+    return Boolean(error && typeof error === 'object' && (error as any)[Symbol.for('agentuse.existingSessionPreRunError')]);
   }
 
   // Complete a parent's parked subagent__* step with the resumed child's real output,
@@ -1482,7 +1501,7 @@ async function runInternalWorker() {
     childSessionId: string,
     childAgentName: string,
     childResult: Awaited<ReturnType<typeof runAgent>>
-  ): Promise<void> {
+  ): Promise<NonNullable<Awaited<ReturnType<typeof applyResumeToolResult>>['rollback']>> {
     const parts = await loadSessionPartsFlat(sessionManager, parentSessionId, parentAgentId);
     const part = [...parts].reverse().find((p: any) =>
       p?.type === 'tool' &&
@@ -1493,6 +1512,13 @@ async function runInternalWorker() {
     if (!part) {
       throw new Error(`No pending subagent_wait bookmark for child ${childSessionId} in ${parentSessionId}`);
     }
+    const rollback = {
+      sessionId: parentSessionId,
+      agentId: parentAgentId,
+      messageId: part.messageID,
+      partId: part.id,
+      state: part.state,
+    };
     const start = typeof part.state?.suspendedAt === 'number' ? part.state.suspendedAt : Date.now();
     await sessionManager.updatePart(parentSessionId, parentAgentId, part.messageID, part.id, {
       state: {
@@ -1508,6 +1534,7 @@ async function runInternalWorker() {
         time: { start, end: Date.now() },
       },
     } as any);
+    return rollback;
   }
 
   function cascadeReparkedResponse(reqId: string, rootSessionId: string) {
@@ -1551,16 +1578,12 @@ async function runInternalWorker() {
       { sessionId: rootSessionId, agentId: rootFound.agentId, agentName: rootFound.session.agent.name },
     ];
     let leafFound = false;
-    for (let i = 0; i < 16 && cursorChildId; i++) {
+    for (let i = 0; i < MAX_CASCADE_DEPTH && cursorChildId; i++) {
       const f = await sessionManager.findSession(cursorChildId);
       if (!f || f.session.status !== 'suspended') break;
       chain.push({ sessionId: cursorChildId, agentId: f.agentId, agentName: f.session.agent.name });
       const parts = await loadSessionPartsFlat(sessionManager, cursorChildId, f.agentId);
-      const pendingAwaitHuman = [...parts].reverse().find((p: any) =>
-        p?.type === 'tool' && p?.tool === 'await_human' && p?.state?.status === 'pending' &&
-        p?.state?.resumePayload?.kind === 'await_human'
-      );
-      if (pendingAwaitHuman) { leafFound = true; break; }
+      if (findPendingAwaitHumanPart(parts)) { leafFound = true; break; }
       cursorChildId = findPendingSubagentWaitChildId(parts);
     }
     if (!leafFound) return { handled: false };
@@ -1568,15 +1591,28 @@ async function runInternalWorker() {
     const leaf = chain[chain.length - 1];
 
     // 1. Resolve the leaf's human gate with the decision.
-    await applyResumeToolResult({
+    let leafRollback: Awaited<ReturnType<typeof applyResumeToolResult>>['rollback'] | undefined;
+    const appliedLeaf = await applyResumeToolResult({
       sessionManager,
       sessionId: leaf.sessionId,
       toolResult,
       ...(resumeToken && { resumeToken }),
     });
+    leafRollback = appliedLeaf.rollback;
 
     // 2. Run the leaf to completion (or re-suspension on a new gate).
-    let childResult = await runExistingSession({ sessionManager, sessionId: leaf.sessionId, projectRoot, abortController, startTime, ...(debug !== undefined && { debug }), ...(maxSteps !== undefined && { maxSteps }) });
+    let childResult: Awaited<ReturnType<typeof runAgent>>;
+    try {
+      childResult = await runExistingSession({ sessionManager, sessionId: leaf.sessionId, projectRoot, abortController, startTime, ...(debug !== undefined && { debug }), ...(maxSteps !== undefined && { maxSteps }) });
+      leafRollback = undefined;
+    } catch (error) {
+      if (leafRollback && isExistingSessionPreRunError(error)) {
+        await restoreResumeToolResult({ sessionManager, rollback: leafRollback }).catch((restoreErr) => {
+          logger.warn(`Failed to restore delegated approval after resume setup error: ${(restoreErr as Error).message}`);
+        });
+      }
+      throw error;
+    }
     let childSessionId = leaf.sessionId;
     let childAgentName = leaf.agentName;
     if (childResult.status === 'suspended') {
@@ -1587,9 +1623,23 @@ async function runInternalWorker() {
     //    stopping if it re-suspends (its gate re-surfaces at the root next poll).
     for (let i = chain.length - 2; i >= 0; i--) {
       const parent = chain[i];
-      await completeSubagentBookmark(sessionManager, parent.sessionId, parent.agentId, childSessionId, childAgentName, childResult);
-      await sessionManager.setSessionRunning(parent.sessionId, parent.agentId);
-      const parentResult = await runExistingSession({ sessionManager, sessionId: parent.sessionId, projectRoot, abortController, startTime, ...(debug !== undefined && { debug }), ...(maxSteps !== undefined && { maxSteps }) });
+      let parentRollback: Awaited<ReturnType<typeof completeSubagentBookmark>> | undefined;
+      let enteredParentRun = false;
+      let parentResult: Awaited<ReturnType<typeof runAgent>>;
+      try {
+        parentRollback = await completeSubagentBookmark(sessionManager, parent.sessionId, parent.agentId, childSessionId, childAgentName, childResult);
+        await sessionManager.setSessionRunning(parent.sessionId, parent.agentId);
+        enteredParentRun = true;
+        parentResult = await runExistingSession({ sessionManager, sessionId: parent.sessionId, projectRoot, abortController, startTime, ...(debug !== undefined && { debug }), ...(maxSteps !== undefined && { maxSteps }) });
+        parentRollback = undefined;
+      } catch (error) {
+        if (parentRollback && (!enteredParentRun || isExistingSessionPreRunError(error))) {
+          await restoreResumeToolResult({ sessionManager, rollback: parentRollback }).catch((restoreErr) => {
+            logger.warn(`Failed to restore sub-agent bookmark after resume setup error: ${(restoreErr as Error).message}`);
+          });
+        }
+        throw error;
+      }
       if (parentResult.status === 'suspended') {
         return { handled: true, response: cascadeReparkedResponse(reqId, rootSessionId) };
       }
@@ -1941,6 +1991,7 @@ async function runInternalWorker() {
         if (!expiresAt || expiresAt > now) continue;
 
         const start = state.suspendedAt ?? expiresAt;
+        const timeoutMessage = `Approval not received before ${new Date(expiresAt).toISOString()}`;
         await sessionManager.updatePart(
           session.id,
           agentId,
@@ -1959,13 +2010,23 @@ async function runInternalWorker() {
 
         await sessionManager.setSessionError(session.id, agentId, {
           code: 'APPROVAL_TIMEOUT',
-          message: `Approval not received before ${new Date(expiresAt).toISOString()}`
+          message: timeoutMessage
         }).catch(() => {});
+
+        const rootSessionId = typeof session.parentSessionID === 'string' && session.parentSessionID.length > 0
+          ? await findRootSessionId(sessionManager, session.id)
+          : session.id;
+        if (rootSessionId !== session.id) {
+          await sessionManager.stopSessionTree(rootSessionId, {
+            code: 'APPROVAL_TIMEOUT',
+            message: timeoutMessage
+          }).catch(() => {});
+        }
 
         const input = valueAsRecord(state.input);
         const channelMessage = valueAsRecord(resumePayload?.channelMessage);
         expired.push({
-          sessionId: session.id,
+          sessionId: rootSessionId,
           agentId,
           agentName: session.agent.name || session.agent.id,
           ...(typeof input.prompt === 'string' && { prompt: input.prompt }),

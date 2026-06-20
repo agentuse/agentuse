@@ -149,4 +149,87 @@ describe('subagent approval cascade (worker integration)', () => {
       await rm(dataHome, { recursive: true, force: true });
     }
   });
+
+  it('expires a delegated leaf gate by timing out the manager root tree', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const dataHome = await mkdtemp(join(tmpdir(), 'agentuse-cascade-expire-'));
+    const projectRoot = join(dataHome, 'project');
+    process.env.XDG_DATA_HOME = dataHome;
+    try {
+      await initStorage(projectRoot);
+
+      const rootSm = new SessionManager();
+      const rootAgentId = 'agents/manager';
+      const rootId = await rootSm.createSession({
+        agent: { id: rootAgentId, name: 'Manager', isSubAgent: false },
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      const rootMsg = await rootSm.createMessage(rootId, rootAgentId, {
+        user: { prompt: { task: 'delegate' } }, assistant: ASSISTANT(projectRoot),
+      });
+
+      const leafSm = new SessionManager();
+      leafSm.setParentPath(rootSm.getFullPath()!);
+      const leafAgentId = 'agents/reply-to-post';
+      const leafId = await leafSm.createSession({
+        agent: { id: leafAgentId, name: 'reply-to-post', isSubAgent: true },
+        parentSessionID: rootId,
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      const leafMsg = await leafSm.createMessage(leafId, leafAgentId, {
+        user: { prompt: { task: 'reply' } }, assistant: ASSISTANT(projectRoot),
+      });
+      const expiresAt = Date.now() - 1_000;
+      await leafSm.addPart(leafId, leafAgentId, leafMsg, {
+        type: 'tool', callID: 'leaf-call', tool: 'await_human',
+        state: {
+          status: 'pending', input: { prompt: 'Approve this reply?' }, suspendedAt: expiresAt - 1_000,
+          resumePayload: { kind: 'await_human', resumeToken: 'leaf-token', expiresAt },
+        },
+      } as any);
+      await leafSm.setSessionSuspended(leafId, leafAgentId);
+
+      await rootSm.addPart(rootId, rootAgentId, rootMsg, {
+        type: 'tool', callID: 'root-call', tool: 'subagent__reply_to_post',
+        state: {
+          status: 'pending', input: { task: 'reply' }, suspendedAt: expiresAt - 1_000,
+          resumePayload: { kind: 'subagent_wait', childSessionID: leafId, childAgentName: 'reply-to-post' },
+        },
+      } as any);
+      await rootSm.setSessionSuspended(rootId, rootAgentId);
+
+      const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], { cwd: process.cwd(), env: { ...process.env } });
+      const rl = createInterface({ input: child.stdout });
+      worker = { child, rl };
+      await readReady(rl);
+
+      child.stdin.write(`${JSON.stringify({ id: 'sweep', type: 'sweep-expired', projectRoot })}\n`);
+      const sweep = await readResponseFor(rl, 'sweep');
+      expect(sweep.success).toBe(true);
+      expect(sweep.expired).toHaveLength(1);
+      expect(sweep.expired[0]).toMatchObject({
+        sessionId: rootId,
+        agentName: 'reply-to-post',
+        expiresAt,
+      });
+
+      const verifySm = new SessionManager();
+      const rootFound = await verifySm.findSession(rootId);
+      const leafFound = await verifySm.findSession(leafId);
+      expect(rootFound?.session.status).toBe('error');
+      expect(rootFound?.session.error?.code).toBe('APPROVAL_TIMEOUT');
+      expect(leafFound?.session.status).toBe('error');
+      expect(leafFound?.session.error?.code).toBe('APPROVAL_TIMEOUT');
+
+      const rootParts = await verifySm.getMessageParts(rootId, rootFound!.agentId, rootMsg);
+      const rootBookmark = rootParts.find((p: any) => p?.tool === 'subagent__reply_to_post');
+      expect(rootBookmark?.state?.status).toBe('error');
+    } finally {
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(dataHome, { recursive: true, force: true });
+    }
+  });
 });

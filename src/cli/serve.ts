@@ -306,6 +306,14 @@ interface ApprovalPageInfo {
   errorCode?: string;
   errorMessage?: string;
   childSessions?: ChildSessionSummary[];
+  originAgent?: {
+    id: string;
+    name: string;
+    filePath?: string;
+    description?: string;
+  };
+  viewOnly?: boolean;
+  rootSessionId?: string;
   tokenUsage?: SessionTokenUsage;
   logs?: ApprovalLogEntry[];
 }
@@ -2050,6 +2058,11 @@ export function createServeCommand(): Command {
       const slackBotToken = process.env.SLACK_BOT_TOKEN;
       const slackAppToken = process.env.SLACK_APP_TOKEN;
 
+      const approvalActionSessionId = (info: WorkerApprovalInfoResult, fallbackSessionId: string): string =>
+        info.approval.viewOnly && info.approval.rootSessionId
+          ? info.approval.rootSessionId
+          : fallbackSessionId;
+
       // Shared resume kickoff for both /approvals/:id/decision and the unified
       // /sessions/:id/decision. The caller validates auth + state, then hands us
       // the resolved gate resumeToken; we run the worker resume, update any
@@ -2060,10 +2073,11 @@ export function createServeCommand(): Command {
       ): void => {
         const { project, sessionId, info, resumeToken, status, comment } = params;
         const projectWorker = workers.get(project.id)!;
-        const activeKey = `${project.id}:${sessionId}`;
-        approvalLog.received('web', status, sessionId, 'web');
+        const targetSessionId = approvalActionSessionId(info, sessionId);
+        const activeKey = `${project.id}:${targetSessionId}`;
+        approvalLog.received('web', status, targetSessionId, 'web');
         const resumeStart = Date.now();
-        approvalLog.resumeStarted(sessionId);
+        approvalLog.resumeStarted(targetSessionId);
         const slackChannelMessage = info.approval.channelMessage?.type === 'slack-message' &&
           info.approval.channelMessage.channel &&
           info.approval.channelMessage.ts &&
@@ -2082,7 +2096,7 @@ export function createServeCommand(): Command {
             ts: slackChannelMessage.ts,
             ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
             prompt: info.approval.prompt,
-            sessionId,
+            sessionId: targetSessionId,
             projectId: project.id,
             agentName: info.approval.agent.name,
             ...(slackChannelMessage.approvalUrl && { approvalUrl: slackChannelMessage.approvalUrl }),
@@ -2093,7 +2107,7 @@ export function createServeCommand(): Command {
         }
         const resumePromise = Promise.resolve().then(() => projectWorker.execute({
           projectRoot: project.root,
-          sessionId,
+          sessionId: targetSessionId,
           toolResult: {
             status,
             ...(comment && { comment }),
@@ -2105,11 +2119,11 @@ export function createServeCommand(): Command {
           if (!result.success) {
             const alreadyCompleted = /SESSION_NOT_SUSPENDED:\s*completed/i.test(result.error.message);
             if (alreadyCompleted) {
-              approvalLog.resumeCompleted(sessionId, Date.now() - resumeStart);
+              approvalLog.resumeCompleted(targetSessionId, Date.now() - resumeStart);
               return;
             }
-            approvalLog.resumeFailed(sessionId, Date.now() - resumeStart, result.error.message);
-            logger.warn(`Approval resume ${sessionId} failed: ${result.error.message}`);
+            approvalLog.resumeFailed(targetSessionId, Date.now() - resumeStart, result.error.message);
+            logger.warn(`Approval resume ${targetSessionId} failed: ${result.error.message}`);
             if (slackChannelMessage && info.approval.prompt) {
               void updateSlackApprovalRequestStatus({
                 botToken: slackBotToken!,
@@ -2117,7 +2131,7 @@ export function createServeCommand(): Command {
                 ts: slackChannelMessage.ts,
                 ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
                 prompt: info.approval.prompt,
-                sessionId,
+                sessionId: targetSessionId,
                 projectId: project.id,
                 agentName: info.approval.agent.name,
                 ...(slackChannelMessage.approvalUrl && { approvalUrl: slackChannelMessage.approvalUrl }),
@@ -2128,7 +2142,7 @@ export function createServeCommand(): Command {
               }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
             }
           } else {
-            approvalLog.resumeCompleted(sessionId, Date.now() - resumeStart);
+            approvalLog.resumeCompleted(targetSessionId, Date.now() - resumeStart);
             if (slackChannelMessage && info.approval.prompt) {
               void updateSlackApprovalRequestStatus({
                 botToken: slackBotToken!,
@@ -2136,7 +2150,7 @@ export function createServeCommand(): Command {
                 ts: slackChannelMessage.ts,
                 ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
                 prompt: info.approval.prompt,
-                sessionId,
+                sessionId: targetSessionId,
                 projectId: project.id,
                 agentName: info.approval.agent.name,
                 ...(slackChannelMessage.approvalUrl && { approvalUrl: slackChannelMessage.approvalUrl }),
@@ -2154,7 +2168,7 @@ export function createServeCommand(): Command {
         activeApprovalResumes.set(activeKey, resumePromise);
 
         res.writeHead(202, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ sessionId, status: "resuming" }));
+        res.end(JSON.stringify({ sessionId: targetSessionId, status: "resuming" }));
       };
 
       // Shared continue kickoff for both /approvals/:id/continue and
@@ -2225,7 +2239,8 @@ export function createServeCommand(): Command {
           return;
         }
 
-        const activeKey = `${project.id}:${decision.sessionId}`;
+        const targetSessionId = approvalActionSessionId(info, decision.sessionId);
+        const activeKey = `${project.id}:${targetSessionId}`;
         const existingResume = activeApprovalResumes.get(activeKey);
         if (existingResume) {
           await existingResume;
@@ -2234,10 +2249,10 @@ export function createServeCommand(): Command {
 
         const resumePromise = Promise.resolve().then(async () => {
           const resumeStart = Date.now();
-          approvalLog.resumeStarted(decision.sessionId);
+          approvalLog.resumeStarted(targetSessionId);
           const result = await projectWorker.execute({
             projectRoot: project.root,
-            sessionId: decision.sessionId,
+            sessionId: targetSessionId,
             toolResult: decision.toolResult,
             resumeToken: decision.resumeToken,
             debug: options.debug,
@@ -2246,13 +2261,13 @@ export function createServeCommand(): Command {
           if (!result.success) {
             const alreadyCompleted = /SESSION_NOT_SUSPENDED:\s*completed/i.test(result.error.message);
             if (alreadyCompleted) {
-              approvalLog.resumeCompleted(decision.sessionId, Date.now() - resumeStart);
+              approvalLog.resumeCompleted(targetSessionId, Date.now() - resumeStart);
               return;
             }
-            approvalLog.resumeFailed(decision.sessionId, Date.now() - resumeStart, result.error.message);
+            approvalLog.resumeFailed(targetSessionId, Date.now() - resumeStart, result.error.message);
             throw new Error(result.error.message);
           }
-          approvalLog.resumeCompleted(decision.sessionId, Date.now() - resumeStart);
+          approvalLog.resumeCompleted(targetSessionId, Date.now() - resumeStart);
         }).finally(() => {
           if (activeApprovalResumes.get(activeKey) === resumePromise) {
             activeApprovalResumes.delete(activeKey);
@@ -3247,7 +3262,8 @@ export function createServeCommand(): Command {
             sendError(res, found.status, found.code, found.message);
             return;
           }
-          const activeKey = `${found.project.id}:${sessionId}`;
+          const statusSessionId = approvalActionSessionId(found.info, sessionId);
+          const activeKey = `${found.project.id}:${statusSessionId}`;
           const status = activeApprovalResumes.has(activeKey)
             ? 'resuming'
             : activeSessionContinuations.has(activeKey)
@@ -3354,7 +3370,8 @@ export function createServeCommand(): Command {
             }
 
             const project = found.project;
-            const activeKey = `${project.id}:${sessionId}`;
+            const targetSessionId = approvalActionSessionId(found.info, sessionId);
+            const activeKey = `${project.id}:${targetSessionId}`;
             if (activeApprovalResumes.has(activeKey) || activeSessionContinuations.has(activeKey)) {
               sendError(res, 409, "APPROVAL_RESUMING", "Approval decision has already been submitted and the session is resuming");
               return;
