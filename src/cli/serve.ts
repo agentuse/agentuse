@@ -1800,12 +1800,21 @@ export function createServeCommand(): Command {
               const agentPath = resolveScopedAgentPath(project, relativePath);
               const agent = await parseAgent(agentPath);
 
+              // agentFiles is the source of truth for the /agents listing
+              // (collectAgents iterates it) and the project's agent count. Keep
+              // it in sync so a moved/renamed/added agent shows up without a
+              // restart, instead of leaving stale paths that 404 as "File not
+              // found" and hiding the new ones.
+              if (!project.agentFiles.includes(relativePath)) {
+                project.agentFiles.push(relativePath);
+              }
+
               const schedule = agent.config.schedule
                 ? scheduler.add(project.id, relativePath, agent.config.schedule)
                 : undefined;
               printHotReload(project.id, "added", relativePath, schedule);
 
-              agentCounts.set(project.id, (agentCounts.get(project.id) ?? 0) + 1);
+              agentCounts.set(project.id, project.agentFiles.length);
               updateRegistryCounts();
             } catch (err) {
               logger.warn(`Hot reload: Failed to parse new agent ${project.id}/${relativePath}: ${(err as Error).message}`);
@@ -1833,7 +1842,14 @@ export function createServeCommand(): Command {
               logger.debug(`Hot reload: Unregistered schedule for ${project.id}/${relativePath}`);
             }
 
-            agentCounts.set(project.id, Math.max(0, (agentCounts.get(project.id) ?? 0) - 1));
+            // Drop the stale path from the listing source of truth (see
+            // onAgentAdded). Without this, collectAgents keeps trying to parse
+            // a file that no longer exists and surfaces it as a "File not
+            // found" error row.
+            const idx = project.agentFiles.indexOf(relativePath);
+            if (idx !== -1) project.agentFiles.splice(idx, 1);
+
+            agentCounts.set(project.id, project.agentFiles.length);
             updateRegistryCounts();
           },
 
