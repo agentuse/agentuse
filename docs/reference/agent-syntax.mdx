@@ -358,7 +358,7 @@ Configure filesystem and bash tool permissions via the `tools` field:
 tools:
   filesystem:
     - path: ${root}
-      permissions: [read, write, edit]
+      permissions: [read, write]   # write also grants edit
   bash:
     commands:
       - "git *"

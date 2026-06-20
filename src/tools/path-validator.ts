@@ -2,11 +2,12 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { minimatch } from 'minimatch';
-import type {
-  FilesystemPathConfig,
-  FilesystemPermission,
-  PathValidationResult,
-  ToolOutputArtifactSink
+import {
+  grantsPermission,
+  type FilesystemPathConfig,
+  type FilesystemPermission,
+  type PathValidationResult,
+  type ToolOutputArtifactSink
 } from './types.js';
 
 // Sensitive file patterns that are blocked by default
@@ -273,7 +274,7 @@ export class PathValidator {
     const matches: { config: FilesystemPathConfig; pattern: string }[] = [];
 
     for (const config of this.configs) {
-      if (!config.permissions.includes(permission)) {
+      if (!grantsPermission(config.permissions, permission)) {
         continue;
       }
 
@@ -357,7 +358,7 @@ export class PathValidator {
     const patterns: string[] = [];
 
     for (const config of this.configs) {
-      if (config.permissions.includes(permission)) {
+      if (grantsPermission(config.permissions, permission)) {
         const configPatterns = config.paths ?? (config.path ? [config.path] : []);
         patterns.push(...configPatterns.map(p => this.resolveVariables(p)));
       }

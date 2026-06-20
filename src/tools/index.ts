@@ -38,7 +38,11 @@ export function getTools(
       tools['tools__filesystem_write'] = createWriteTool(config.filesystem, context);
     }
 
-    if (hasEdit) {
+    // `write` is a superset of `edit` (overwrite-anything implies replace-substring),
+    // so a `[read, write]` grant gets the targeted-edit tool too. This keeps the
+    // common case efficient (edits over full rewrites) without forcing every agent
+    // author to also list `edit`. `edit` alone remains a narrower grant.
+    if (hasWrite || hasEdit) {
       tools['tools__filesystem_edit'] = createEditTool(config.filesystem, context);
     }
   }

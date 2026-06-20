@@ -27,6 +27,26 @@ export const ToolsConfigSchema = z.object({
 
 // Derive types from Zod schemas
 export type FilesystemPermission = z.infer<typeof FilesystemPermissionSchema>;
+
+/**
+ * Whether a set of granted permissions satisfies a requested operation.
+ *
+ * Capability hierarchy is read < edit < write: `write` (create/overwrite any
+ * file) is strictly stronger than `edit` (replace a substring in an existing
+ * file), so granting `write` implies `edit`. This keeps the common
+ * `[read, write]` grant working with both the write and edit tools, while
+ * `edit` on its own remains a useful narrower grant (modify existing files,
+ * cannot create or wholesale-overwrite).
+ */
+export function grantsPermission(
+  granted: FilesystemPermission[],
+  operation: FilesystemPermission
+): boolean {
+  if (granted.includes(operation)) return true;
+  if (operation === 'edit' && granted.includes('write')) return true;
+  return false;
+}
+
 export type FilesystemPathConfig = z.infer<typeof FilesystemPathConfigSchema>;
 export type BashConfig = z.infer<typeof BashConfigSchema>;
 export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;

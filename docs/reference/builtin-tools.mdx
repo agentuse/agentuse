@@ -20,7 +20,7 @@ Both tools use **containment-based** path matching by default:
 
 ## Filesystem Tool
 
-Controls access for Read, Write, and Edit operations.
+Controls access for Read, Write, and Edit operations. Granting a permission exposes the matching tool to the agent: `read` → `filesystem_read`, `write` → `filesystem_write` (and `filesystem_edit`), `edit` → `filesystem_edit`.
 
 ### Configuration
 
@@ -30,7 +30,7 @@ tools:
     - path: ${root}
       permissions: [read]
     - path: ${root}/src
-      permissions: [read, write, edit]
+      permissions: [read, write]   # write also grants edit
     - paths:
         - ${root}/docs
         - ${root}/tests
@@ -44,6 +44,20 @@ tools:
 | `path` | `string` | Single path or pattern |
 | `paths` | `string[]` | Multiple paths or patterns (alternative to `path`) |
 | `permissions` | `Permission[]` | Array of allowed operations: `read`, `write`, `edit` |
+
+### Permission Model
+
+The capability hierarchy is `read` < `edit` < `write`:
+
+- **`read`** — read file contents.
+- **`edit`** — replace strings inside an *existing* file (cannot create new files or overwrite a file wholesale).
+- **`write`** — create or overwrite any file. Because this is strictly stronger than `edit`, **granting `write` also grants `edit`** (the agent gets both the write and edit tools).
+
+In practice this means `[read, write]` is all most agents need — the agent can read, do targeted edits, and do full writes. List `edit` on its own only when you want the narrower grant: modify existing files but never create or clobber them.
+
+<Note>
+  Prefer `[read, write]` over `[read, write, edit]` — `edit` is redundant alongside `write`. Use `[read, edit]` deliberately when an agent should tweak existing files without the ability to create or overwrite them.
+</Note>
 
 ### Path Variables
 
@@ -60,7 +74,7 @@ tools:
 # Containment mode (recommended for most cases)
 filesystem:
   - path: ${root}
-    permissions: [read, write, edit]
+    permissions: [read, write]   # read + edit + write
 
 # Restrict to specific subdirectory
 filesystem:
@@ -72,7 +86,7 @@ filesystem:
 # Fine-grained control with glob patterns
 filesystem:
   - path: ${root}/**/*.ts
-    permissions: [edit]
+    permissions: [edit]          # edit existing files only, no create/overwrite
   - path: ${root}/**/*.md
     permissions: [read]
 ```
@@ -80,6 +94,28 @@ filesystem:
 ### Read Limits
 
 `read_file` returns up to **2000 lines** per call by default (`AGENTUSE_TOOL_MAX_LINES`); pass an explicit `limit` to read more, or an `offset` to page through a larger file. Individual lines longer than **2000 characters** (`AGENTUSE_TOOL_MAX_LINE_LENGTH`) are truncated with a `... (truncated)` suffix. See [Tool Output environment variables](/reference/environment-variables#tool-output) to tune these.
+
+### Edit Operations
+
+The edit tool replaces exact strings rather than rewriting whole files. It uses fuzzy matching to tolerate minor whitespace, indentation, and line-ending differences. **Prefer editing over full writes on large files** — rewriting a large file regenerates its entire contents as output tokens, which is slow and can exhaust a run's time budget.
+
+A single edit replaces one string:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `file_path` | `string` | Absolute path to the file |
+| `old_string` | `string` | Exact string to find and replace |
+| `new_string` | `string` | Replacement string |
+| `replace_all` | `boolean` | Replace all occurrences (default: `false`, first match only) |
+
+To make several changes in one call, pass an `edits` array instead of the top-level `old_string`/`new_string`:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `file_path` | `string` | Absolute path to the file |
+| `edits` | `Edit[]` | Array of `{ old_string, new_string, replace_all? }` |
+
+Batched edits apply **sequentially** (each to the result of the previous) and are **all-or-nothing**: if any edit fails to match, the file is left unchanged. Provide either the single form or the `edits` array, not both.
 
 ## Bash Tool
 

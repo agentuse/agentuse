@@ -293,6 +293,29 @@ describe('PathValidator Security', () => {
       expect(result.allowed).toBe(false);
     });
 
+    it('allows edit when write is granted (write implies edit)', () => {
+      const configs: FilesystemPathConfig[] = [
+        { path: `${projectRoot}/**`, permissions: ['read', 'write'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      fs.writeFileSync(path.join(projectRoot, 'file.txt'), 'content');
+
+      expect(validator.validate(path.join(projectRoot, 'file.txt'), 'edit').allowed).toBe(true);
+    });
+
+    it('blocks write when only edit is granted (edit does not imply write)', () => {
+      const configs: FilesystemPathConfig[] = [
+        { path: `${projectRoot}/**`, permissions: ['read', 'edit'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      fs.writeFileSync(path.join(projectRoot, 'file.txt'), 'content');
+
+      expect(validator.validate(path.join(projectRoot, 'file.txt'), 'edit').allowed).toBe(true);
+      expect(validator.validate(path.join(projectRoot, 'file.txt'), 'write').allowed).toBe(false);
+    });
+
     it('allows all operations when all permissions granted', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read', 'write', 'edit'] },
