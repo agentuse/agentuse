@@ -39,7 +39,7 @@ function defaultOpenAIPromptCacheKey(agent: ParsedAgent): string {
   return [OPENAI_CACHE_KEY_PREFIX, slug || 'agent', hash].join('-');
 }
 
-function openAIOptionsWithCacheDefaults(agent: ParsedAgent): Record<string, unknown> {
+export function openAIOptionsWithCacheDefaults(agent: ParsedAgent): Record<string, unknown> {
   const configured = agent.config.openai ?? {};
   // Reasoning-capable models already generate (and bill) reasoning tokens; ask
   // for an `auto` summary by default so the reasoning is visible in the session
@@ -53,6 +53,27 @@ function openAIOptionsWithCacheDefaults(agent: ParsedAgent): Record<string, unkn
     ...(isReasoningModel && { reasoningSummary: 'auto' }),
     ...configured,
   };
+}
+
+/**
+ * Resolve Claude extended-thinking settings from agent config (opt-in). Returns
+ * `undefined` when thinking is not configured. When set, `max_tokens` must
+ * exceed the budget, so reserve headroom above it for the visible answer and
+ * clamp to the model's output limit when known. Pure + exported for testing.
+ */
+export function resolveAnthropicThinking(
+  agent: ParsedAgent
+): { budgetTokens: number; maxOutputTokens: number } | undefined {
+  const budgetTokens = agent.config.anthropic?.thinking?.budgetTokens;
+  if (!budgetTokens) return undefined;
+  const maxOutputTokens = Math.max(
+    budgetTokens + 1,
+    Math.min(
+      getModelFromRegistry(agent.config.model)?.limit?.output ?? Number.MAX_SAFE_INTEGER,
+      budgetTokens + ANTHROPIC_THINKING_ANSWER_RESERVE
+    )
+  );
+  return { budgetTokens, maxOutputTokens };
 }
 
 function withAnthropicCacheControl(providerOptions: any): any {
@@ -440,21 +461,11 @@ export async function* executeAgentCore(
     const provider = agent.config.model.split(':')[0];
     const isCustomProvider = !['anthropic', 'openai', 'openrouter', 'demo', 'bedrock'].includes(provider);
 
-    // Claude extended thinking budget (opt-in). When set, max_tokens must exceed
-    // the budget, so reserve headroom above it for the visible answer and clamp
-    // to the model's output limit when known.
-    const anthropicThinkingBudget = provider === 'anthropic'
-      ? agent.config.anthropic?.thinking?.budgetTokens
-      : undefined;
-    const anthropicMaxOutputTokens = anthropicThinkingBudget
-      ? Math.max(
-          anthropicThinkingBudget + 1,
-          Math.min(
-            getModelFromRegistry(agent.config.model)?.limit?.output ?? Number.MAX_SAFE_INTEGER,
-            anthropicThinkingBudget + ANTHROPIC_THINKING_ANSWER_RESERVE
-          )
-        )
-      : undefined;
+    // Claude extended thinking (opt-in); resolves budget + the max_tokens needed
+    // to satisfy Anthropic's max_tokens > budget constraint.
+    const anthropicThinking = provider === 'anthropic' ? resolveAnthropicThinking(agent) : undefined;
+    const anthropicThinkingBudget = anthropicThinking?.budgetTokens;
+    const anthropicMaxOutputTokens = anthropicThinking?.maxOutputTokens;
 
     // Only include provider options if they exist and match the model provider
     let providerOptions: any = undefined;

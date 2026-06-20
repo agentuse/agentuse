@@ -414,6 +414,54 @@ Test OpenAI prompt cache settings.`;
       expect(() => parseAgentContent(content, 'test')).toThrow('Invalid agent configuration');
     });
 
+    it('accepts OpenAI reasoningSummary auto/detailed', () => {
+      for (const summary of ['auto', 'detailed'] as const) {
+        const agent = parseAgentContent(`---
+model: openai:gpt-5
+openai:
+  reasoningSummary: ${summary}
+---
+
+Test reasoning summary.`, 'test');
+        expect(agent.config.openai?.reasoningSummary).toBe(summary);
+      }
+    });
+
+    it('rejects an invalid OpenAI reasoningSummary value', () => {
+      const content = `---
+model: openai:gpt-5
+openai:
+  reasoningSummary: verbose
+---
+
+Test invalid reasoning summary.`;
+      expect(() => parseAgentContent(content, 'test')).toThrow('Invalid agent configuration');
+    });
+
+    it('accepts Anthropic extended thinking budget', () => {
+      const agent = parseAgentContent(`---
+model: anthropic:claude-opus-4-8
+anthropic:
+  thinking:
+    budgetTokens: 4096
+---
+
+Test extended thinking.`, 'test');
+      expect(agent.config.anthropic?.thinking?.budgetTokens).toBe(4096);
+    });
+
+    it('rejects an Anthropic thinking budget below the 1024 minimum', () => {
+      const content = `---
+model: anthropic:claude-opus-4-8
+anthropic:
+  thinking:
+    budgetTokens: 500
+---
+
+Test invalid thinking budget.`;
+      expect(() => parseAgentContent(content, 'test')).toThrow('Invalid agent configuration');
+    });
+
     it('expands learning: true to capture + apply', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0

@@ -324,4 +324,45 @@ describe('processAgentStream session logging', () => {
       time: { start: expect.any(Number), end: expect.any(Number) }
     });
   });
+
+  it('splits distinct reasoning block ids into separate finalized parts', async () => {
+    const adds: any[] = [];
+    const updates: any[] = [];
+    let partCounter = 0;
+    const sessionManager = {
+      addPart: async (_s: string, _a: string, _m: string, part: any) => {
+        adds.push(part);
+        return `part-${++partCounter}`;
+      },
+      updatePart: async (...args: any[]) => { updates.push(args); },
+      updateMessage: async () => {}
+    };
+
+    async function* chunks(): AsyncGenerator<AgentChunk> {
+      // A new block id closes out the prior block even without an explicit end.
+      yield { type: 'reasoning', reasoningId: 'r1', text: 'First ' };
+      yield { type: 'reasoning', reasoningId: 'r1', text: 'thought.' };
+      yield { type: 'reasoning', reasoningId: 'r2', text: 'Second thought.' };
+      yield { type: 'text', text: 'Done.' };
+      yield { type: 'finish', finishReason: 'stop' };
+    }
+
+    await processAgentStream(chunks(), {
+      sessionManager: sessionManager as any,
+      sessionID: 'session-1',
+      agentId: 'agent-1',
+      messageID: 'message-1',
+      quiet: true
+    });
+
+    // Two separate reasoning parts, each created with the first delta of its block.
+    const reasoningAdds = adds.filter((p) => p.type === 'reasoning');
+    expect(reasoningAdds).toHaveLength(2);
+    expect(reasoningAdds[0]).toMatchObject({ text: 'First ' });
+    expect(reasoningAdds[1]).toMatchObject({ text: 'Second thought.' });
+
+    // Both blocks are finalized: part-1 with the accumulated first block, part-2 with the second.
+    expect(updates.find((u) => u[3] === 'part-1')?.[4]).toMatchObject({ text: 'First thought.' });
+    expect(updates.find((u) => u[3] === 'part-2')?.[4]).toMatchObject({ text: 'Second thought.' });
+  });
 });
