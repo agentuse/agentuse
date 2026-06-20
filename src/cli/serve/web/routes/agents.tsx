@@ -275,13 +275,24 @@ function PinnedRow(props: { agent: AgentRow; pins: PinApi }) {
   );
 }
 
+/** Case-insensitive substring match across the fields a user is likely to type. */
+function matchesFilter(agent: AgentRow, query: string): boolean {
+  if (!query) return true;
+  const haystack = `${agent.name} ${agent.path} ${agent.description ?? ''} ${agent.projectId} ${agent.model} ${agent.schedule ?? ''}`.toLowerCase();
+  return query.split(/\s+/).filter(Boolean).every((term) => haystack.includes(term));
+}
+
 export default function Agents() {
   useTitle('AgentUse / Agents');
   const { data, error, loading } = useFetch('agents', () => fetchAgents(), { refreshMs: 30_000 });
   const { isPinned, toggle, keys } = usePins();
   const pins: PinApi = { isPinned, toggle };
 
-  const allAgents = data?.agents ?? [];
+  const [filter, setFilter] = useState('');
+  const query = filter.trim().toLowerCase();
+
+  const loadedAgents = data?.agents ?? [];
+  const allAgents = query ? loadedAgents.filter((a) => matchesFilter(a, query)) : loadedAgents;
   const byProject = new Map<string, AgentRow[]>();
   for (const agent of allAgents) {
     const list = byProject.get(agent.projectId);
@@ -303,8 +314,29 @@ export default function Agents() {
           <div class="eyebrow">loaded agents</div>
           <h1>Agents</h1>
           <p class="lede">{data
-            ? `${data.agents.length} agent${data.agents.length === 1 ? '' : 's'} across ${byProject.size} project${byProject.size === 1 ? '' : 's'} in this serve daemon.`
+            ? query
+              ? `${allAgents.length} of ${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} match “${filter.trim()}”.`
+              : `${data.agents.length} agent${data.agents.length === 1 ? '' : 's'} across ${byProject.size} project${byProject.size === 1 ? '' : 's'} in this serve daemon.`
             : loading ? 'Loading agents…' : ''}</p>
+          {loadedAgents.length > 0 && (
+            <div class="agents-filter">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="7" cy="7" r="4.5" /><path d="m11 11 3 3" />
+              </svg>
+              <input
+                type="search"
+                value={filter}
+                onInput={(e) => setFilter((e.target as HTMLInputElement).value)}
+                placeholder="Filter agents by name, path, model…"
+                aria-label="Filter agents"
+                spellcheck={false}
+                autocomplete="off"
+              />
+              {filter && (
+                <button type="button" class="agents-filter-clear" aria-label="Clear filter" onClick={() => setFilter('')}>×</button>
+              )}
+            </div>
+          )}
           {error && <div class="errors">Failed to load agents: {error.message}</div>}
           {errors.length > 0 && (
             <details class="issues">
@@ -327,7 +359,7 @@ export default function Agents() {
           </section>
         )}
         {byProject.size === 0
-          ? <div class="panel"><div class="empty">{loading ? 'Loading…' : 'No agents loaded by this serve daemon.'}</div></div>
+          ? <div class="panel"><div class="empty">{loading ? 'Loading…' : query ? `No agents match “${filter.trim()}”.` : 'No agents loaded by this serve daemon.'}</div></div>
           : [...byProject.entries()].map(([projectId, agents]) => (
             <section class="group" id={projectAnchor(projectId)} key={projectId}>
               <h2 class="group-title"><span>{projectId}</span><span class="count">{agents.length} agent{agents.length === 1 ? '' : 's'}</span><span class="rule"></span></h2>

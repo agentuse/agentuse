@@ -1235,6 +1235,45 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .panel,
 .page-agents .panel,
 .page-schedules .panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.page-agents .agents-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 0 12px;
+  max-width: 420px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  transition: border-color 120ms ease;
+}
+.page-agents .agents-filter:focus-within { border-color: var(--cyan-border); }
+.page-agents .agents-filter > svg { width: 15px; height: 15px; color: var(--muted-2); flex-shrink: 0; }
+.page-agents .agents-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 14px;
+  padding: 9px 0;
+}
+.page-agents .agents-filter input::placeholder { color: var(--muted-2); }
+.page-agents .agents-filter input::-webkit-search-cancel-button { display: none; }
+.page-agents .agents-filter-clear {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-2);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  transition: color 120ms ease;
+}
+.page-agents .agents-filter-clear:hover { color: var(--fg); }
 .page-home .empty,
 .page-agents .empty,
 .page-schedules .empty { padding: 18px; color: var(--muted-2); font-style: italic; }
@@ -2038,4 +2077,12 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted-2);
+}
+
+/* iOS Safari auto-zooms when a focused field's font-size is < 16px. Lift the
+   agents filter input to 16px on small screens so focusing never triggers a
+   zoom; 16px is the mobile baseline, so it stays proportionate. Desktop sizing
+   (14px above) is untouched. */
+@media (max-width: 760px) {
+  .page-agents .agents-filter input { font-size: 16px; }
 }
