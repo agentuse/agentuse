@@ -612,6 +612,24 @@ export default function SessionDetail() {
               errorMessage: approval.errorMessage,
             }}
           />
+          {stopActionable && (
+            <button
+              type="button"
+              class="debug-prompt-button stop-session-button"
+              disabled={submittingStop}
+              onClick={() => void submitStop()}
+              title={live
+                ? 'Stop this session and any running subagents'
+                : 'Discard this pending request without approving or rejecting (does not run the agent)'}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                {live
+                  ? <rect x="6" y="6" width="12" height="12" rx="2" />
+                  : <><path d="M18 6 6 18" /><path d="M6 6 18 18" /></>}
+              </svg>
+              <span>{live ? 'Stop session' : 'Discard'}</span>
+            </button>
+          )}
         </div>
 
         <ContinuePanel
@@ -619,13 +637,6 @@ export default function SessionDetail() {
           disabled={submittingContinue || !continueActionable}
           onSubmit={(prompt) => void submitContinue(prompt)}
         />
-
-        {stopActionable && (
-          <div class="stop-panel">
-            <div class="stop-text">Stop this session and any running subagents.</div>
-            <button class="danger" disabled={submittingStop} onClick={() => void submitStop()}>Stop session</button>
-          </div>
-        )}
 
         <div class="inactive-banner" hidden={actionable || continueActionable || stopActionable || live || busy}>
           This session is not accepting actions right now.

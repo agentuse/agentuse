@@ -364,6 +364,10 @@ body {
 .debug-prompt-button:focus-visible, .session-action-button:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 1px; }
 .debug-prompt-button.copied { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
 .debug-prompt-button.copied svg { color: var(--green); }
+.stop-session-button svg { color: var(--red); }
+.stop-session-button:hover { border-color: var(--red-border); color: var(--fg); background: var(--red-soft); }
+.stop-session-button:focus-visible { outline-color: var(--red-border); }
+.stop-session-button:disabled { opacity: 0.5; cursor: default; }
 .session-action-button.active { color: var(--fg); border-color: var(--cyan-border); background: var(--cyan-soft); }
 .page-approval-detail .section-title {
   display: flex; align-items: baseline; gap: 10px;
@@ -2042,25 +2046,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .chip.agent { color: var(--fg); }
 
 /* --- session detail extras --- */
-/* The session detail page reuses the .page-approval-detail shell already styled
-   above; these are the components the SPA added that the shell didn't cover. */
-.page-approval-detail .stop-panel {
-  margin: 14px 0 0;
-  padding: 12px 14px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  border: 1px solid var(--red-border);
-  border-radius: 8px;
-  background: var(--red-soft);
-  color: var(--fg);
-  font-size: 13px;
-}
-.page-approval-detail .stop-panel[hidden] { display: none; }
-.page-approval-detail .stop-text { color: var(--fg); overflow-wrap: anywhere; }
-.page-approval-detail .stop-panel button { white-space: nowrap; }
-
 /* token-usage meta cells share the .meta .cell styling; just give them an
    identifiable hook and keep the hidden attribute working. */
 .page-approval-detail .meta .token-cell[hidden] { display: none; }
