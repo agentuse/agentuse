@@ -435,27 +435,61 @@ export default function SessionDetail() {
   const agentHeadline = approval.agent.description || agentLabel;
   const busy = status === 'resuming' || status === 'continuing';
   const tokenUsage = headerTokenUsage(approval);
-  const eyebrow = actionable
-    ? 'human approval requested'
-    : continueActionable
-      ? approval.sessionStatus === 'error' ? 'session needs attention' : 'session completed'
-      : 'session log';
-  const promptText = actionable
-    ? 'Review the pending request in the session log below, then approve, reject, or send a comment back to the agent. The session is paused until you respond.'
-    : continueActionable
-      ? approval.sessionStatus === 'error'
-        ? 'This run stopped with an error. Review the session log, then send a follow-up instruction to continue the same session with its existing context.'
-        : 'This run has finished. Send a follow-up instruction to continue the same session with its existing context.'
-      : busy
-        ? 'AgentUse is working on this session. The session log updates as new work arrives.'
-        : expired
-          ? 'This approval request has expired. The session log remains available for review.'
-          : 'Live view of this run. The session log updates as new work arrives.';
+  // A delegated child viewed directly: it has no decision controls of its own
+  // (the gate is acted on at the parent), so frame the page as a sub-agent run
+  // and offer a breadcrumb back to the parent.
+  const isSubagentView = Boolean(approval.viewOnly);
+  const parentLabel = approval.parentAgentName ?? 'parent run';
+  const parentTarget = approval.parentSessionId ?? approval.rootSessionId;
+  const parentLink = approval.parentHref
+    ?? (parentTarget
+      ? `/sessions/${encodeURIComponent(parentTarget)}${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`
+      : undefined);
+  const eyebrow = isSubagentView
+    ? 'sub-agent run'
+    : actionable
+      ? 'human approval requested'
+      : continueActionable
+        ? approval.sessionStatus === 'error' ? 'session needs attention' : 'session completed'
+        : 'session log';
+  const promptText = isSubagentView
+    ? approval.sessionStatus === 'suspended'
+      ? 'This sub-agent is paused for approval. The decision is made on its parent run. Open it from the breadcrumb above.'
+      : 'A delegated sub-agent run. Approvals and follow-ups for it are handled on the parent run.'
+    : actionable
+      ? 'Review the pending request in the session log below, then approve, reject, or send a comment back to the agent. The session is paused until you respond.'
+      : continueActionable
+        ? approval.sessionStatus === 'error'
+          ? 'This run stopped with an error. Review the session log, then send a follow-up instruction to continue the same session with its existing context.'
+          : 'This run has finished. Send a follow-up instruction to continue the same session with its existing context.'
+        : busy
+          ? 'AgentUse is working on this session. The session log updates as new work arrives.'
+          : expired
+            ? 'This approval request has expired. The session log remains available for review.'
+            : 'Live view of this run. The session log updates as new work arrives.';
 
   return (
     <div class="page-approval-detail">
       <Topbar currentPage="sessions" />
       <main>
+        {isSubagentView && (
+          <nav class="subagent-trail" aria-label="Breadcrumb">
+            {parentLink
+              ? (
+                <a class="trail-up" href={parentLink}>
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="9 14 4 9 9 4" />
+                    <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
+                  </svg>
+                  <span>{parentLabel}</span>
+                </a>
+              )
+              : <span class="trail-up trail-up-static">{parentLabel}</span>}
+            <span class="trail-sep">/</span>
+            <span class="trail-current">{agentLabel}</span>
+            <span class="trail-tag">sub-agent</span>
+          </nav>
+        )}
         <header>
           <span class={`status ${displayStatus}`}>{displayStatus}</span>
           <div class="eyebrow">{eyebrow}</div>

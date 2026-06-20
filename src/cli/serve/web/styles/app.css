@@ -259,6 +259,48 @@ body {
 .page-approval-detail .status.completed, .page-approval-detail .status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
 .page-approval-detail .status.expired, .page-approval-detail .status.error, .page-approval-detail .status.rejected { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+/* Sub-agent (delegated child) breadcrumb: identifies the page as a sub-agent and
+   links back up to its parent run, where decisions are made. */
+.page-approval-detail .subagent-trail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin-bottom: 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.page-approval-detail .trail-up {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted-2);
+  text-decoration: none;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.page-approval-detail a.trail-up:hover {
+  color: var(--fg);
+  border-color: var(--line-strong);
+  background: var(--panel-hover);
+}
+.page-approval-detail a.trail-up:hover svg { transform: translateX(-1px); }
+.page-approval-detail .trail-up svg { flex: none; transition: transform 0.15s ease; }
+.page-approval-detail .trail-up-static { cursor: default; }
+.page-approval-detail .trail-sep { color: var(--muted-3); }
+.page-approval-detail .trail-current { color: var(--fg); font-weight: 500; overflow-wrap: anywhere; }
+.page-approval-detail .trail-tag {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--cyan);
+  border: 1px solid var(--cyan-border);
+  background: var(--cyan-soft);
+}
 .page-approval-detail .eyebrow {
   font-size: 11px;
   color: var(--cyan);
@@ -2029,7 +2071,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   grid-template-columns: auto minmax(120px, 1fr) minmax(180px, auto);
   gap: 10px 14px;
   align-items: center;
-  margin-bottom: 10px;
+  margin: 6px 0 10px;
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;

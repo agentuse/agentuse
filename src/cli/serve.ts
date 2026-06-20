@@ -314,6 +314,9 @@ interface ApprovalPageInfo {
   };
   viewOnly?: boolean;
   rootSessionId?: string;
+  parentSessionId?: string;
+  parentAgentName?: string;
+  parentHref?: string;
   tokenUsage?: SessionTokenUsage;
   logs?: ApprovalLogEntry[];
 }
@@ -3229,6 +3232,13 @@ export function createServeCommand(): Command {
             );
             const approval = { ...found.info.approval };
             delete approval.logs;
+            if (approval.parentSessionId) {
+              const params = new URLSearchParams();
+              const parentToken = sessionViewToken(approval.parentSessionId, apiKey);
+              if (parentToken) params.set('token', parentToken);
+              params.set('project', found.project.id);
+              approval.parentHref = `/sessions/${encodeURIComponent(approval.parentSessionId)}?${params.toString()}`;
+            }
             return { ok: true, snapshot: { status, approval, logs } };
           };
           if (!approvalHub.subscribe({ key: sessionId, sessionId, poll, req, res })) {
@@ -3298,6 +3308,15 @@ export function createServeCommand(): Command {
               return `/sessions/${encodeURIComponent(childSessionId)}?${params.toString()}`;
             }
           );
+          const parentSid = found.info.approval.parentSessionId;
+          let parentHref: string | undefined;
+          if (parentSid) {
+            const params = new URLSearchParams();
+            const parentToken = sessionViewToken(parentSid, apiKey);
+            if (parentToken) params.set('token', parentToken);
+            params.set('project', found.project.id);
+            parentHref = `/sessions/${encodeURIComponent(parentSid)}?${params.toString()}`;
+          }
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             success: true,
@@ -3306,6 +3325,7 @@ export function createServeCommand(): Command {
             approval: {
               ...found.info.approval,
               logs,
+              ...(parentHref && { parentHref }),
             },
             logs,
             decision: found.info.approval.decision

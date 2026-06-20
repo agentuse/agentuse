@@ -1734,11 +1734,24 @@ async function runInternalWorker() {
 
       // A delegated child viewed directly is view-only: approval happens at the root.
       const isDelegatedChild = typeof found.session.parentSessionID === 'string' && found.session.parentSessionID.length > 0;
+      const parentSessionId = isDelegatedChild ? found.session.parentSessionID : undefined;
       const viewOnlyRootSessionId = isDelegatedChild
         ? await findRootSessionId(sessionManager, req.sessionId)
         : undefined;
+      // Resolve the immediate parent's agent name so the child page can render a
+      // readable breadcrumb back to it.
+      let parentAgentName: string | undefined;
+      if (parentSessionId) {
+        const parentFound = await sessionManager.findSession(parentSessionId);
+        parentAgentName = parentFound?.session.agent.name;
+      }
       const viewOnlyFields = isDelegatedChild
-        ? { viewOnly: true as const, ...(viewOnlyRootSessionId && { rootSessionId: viewOnlyRootSessionId }) }
+        ? {
+            viewOnly: true as const,
+            ...(parentSessionId && { parentSessionId }),
+            ...(parentAgentName && { parentAgentName }),
+            ...(viewOnlyRootSessionId && { rootSessionId: viewOnlyRootSessionId }),
+          }
         : {};
       const originAgentFields = cascadeLeaf
         ? { originAgent: {

@@ -348,8 +348,11 @@ function LogEntryImpl(props: LogEntryProps) {
             <span class="log-warn-badge" title={`${warnings.length} warning${warnings.length === 1 ? '' : 's'} about this tool call`}>⚠ {warnings.length}</span>
           )}
         </span>
+        {/* The sub-agent card carries status + a link to the child run, so keep
+            it visible even when the row is collapsed; only the tool input/output
+            below stays behind the expand toggle. */}
+        {entry.subagentSession && <SubagentCard session={entry.subagentSession} />}
         <div class="log-content">
-          {entry.subagentSession && <SubagentCard session={entry.subagentSession} />}
           {storeEvent && <StoreEventBlock event={storeEvent} />}
           {entry.details && (isApprovalEntry
             ? <ApprovalDetailCard details={entry.details} sessionId={props.sessionId} token={props.token} />

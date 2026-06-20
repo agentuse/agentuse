@@ -167,6 +167,11 @@ export interface ApprovalPageInfo {
    *  the root (rootSessionId), so the child page shows no decision controls. */
   viewOnly?: boolean;
   rootSessionId?: string;
+  /** The immediate parent (manager) of a delegated child: id, agent name, and a
+   *  tokenized link, so the child page can render a breadcrumb back to it. */
+  parentSessionId?: string;
+  parentAgentName?: string;
+  parentHref?: string;
   tokenUsage?: SessionTokenUsage;
   logs?: ApprovalLogEntry[];
 }
