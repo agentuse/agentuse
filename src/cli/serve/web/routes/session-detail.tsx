@@ -198,6 +198,26 @@ export default function SessionDetail() {
     }
   }, []);
 
+  // The router reuses this component instance across /sessions/:id navigations,
+  // so logsRef and the per-session state persist. Without an explicit reset, a
+  // child (sub-agent) session's logs — including its own approval entry — linger
+  // when you navigate back to the manager, rendering a duplicate approval box.
+  // Clear accumulated state whenever the session id changes. token is excluded:
+  // it tracks sessionId via the URL, and resetting on a token-only refresh would
+  // wipe live logs mid-session.
+  useEffect(() => {
+    logsRef.current = new Map();
+    currentResumeTokenRef.current = token;
+    setApproval(null);
+    setStatus('loading');
+    setPendingActionable(false);
+    setExpandedIds(new Set());
+    setResult({ text: '', error: false });
+    setFatalError(null);
+    setLogsVersion((v) => v + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
   useApprovalStream({
     sessionId,
     token,
