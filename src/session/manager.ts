@@ -609,25 +609,36 @@ export class SessionManager {
     return { session, agentId, path: sessionPath };
   }
 
+  // A session's own message lives at `{sessionPath}/{messageID}/message`. Since
+  // `listKeys` walks recursively, a parent's listing also turns up nested subagent
+  // messages (`{sessionPath}/subagent/{child}/{messageID}/message`) — those carry a
+  // slash in the middle segment. Restrict to direct children so reads, and the
+  // token usage aggregated from them, stay scoped to this session, not its subtree.
+  private ownMessageKeys(sessionPath: string, keys: string[]): string[] {
+    const prefix = `${sessionPath}/`;
+    const suffix = '/message';
+    return keys
+      .filter((key) => {
+        if (!key.startsWith(prefix) || !key.endsWith(suffix)) return false;
+        const inner = key.slice(prefix.length, key.length - suffix.length);
+        return inner.length > 0 && !inner.includes('/');
+      })
+      .sort();
+  }
+
   /**
    * Return the first message in a session. Current sessions store one user /
    * assistant exchange, which is the exchange resume needs to continue.
    */
   async getPrimaryMessage(sessionID: string, agentId: string): Promise<Message | null> {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
-    const keys = await listKeys(sessionPath);
-    const messageKey = keys
-      .filter(key => key.startsWith(`${sessionPath}/`) && key.endsWith('/message'))
-      .sort()[0];
+    const messageKey = this.ownMessageKeys(sessionPath, await listKeys(sessionPath))[0];
     return messageKey ? readJSON<Message>(messageKey) : null;
   }
 
   async getSessionMessages(sessionID: string, agentId: string): Promise<Message[]> {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
-    const keys = await listKeys(sessionPath);
-    const messageKeys = keys
-      .filter(key => key.startsWith(`${sessionPath}/`) && key.endsWith('/message'))
-      .sort();
+    const messageKeys = this.ownMessageKeys(sessionPath, await listKeys(sessionPath));
     const messages = await Promise.all(messageKeys.map(key => readJSON<Message>(key)));
     return messages
       .filter((message): message is Message => message !== null)

@@ -424,4 +424,67 @@ describe('reading nested subagent sessions from a fresh manager', () => {
       await rm(projectRoot, { recursive: true, force: true });
     }
   });
+
+  // getSessionMessages walks the session dir recursively; a parent's own message
+  // list must not include a nested subagent's message, or the token usage
+  // aggregated from those messages would count the subagent's tokens against the
+  // parent.
+  it('scopes getSessionMessages to a session own messages (no nested subagent leak)', async () => {
+    const originalXdgDataHome = process.env.XDG_DATA_HOME;
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-msg-scope-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+    try {
+      await initStorage(projectRoot);
+      const base = {
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      };
+      const assistant = {
+        system: [],
+        modelID: 'demo:test',
+        providerID: 'demo',
+        mode: 'build',
+        path: { cwd: projectRoot, root: projectRoot },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      };
+
+      const parentManager = new SessionManager();
+      const parentId = await parentManager.createSession({
+        ...base,
+        agent: { id: 'agents/parent', name: 'parent', isSubAgent: false },
+      });
+      const parentMsgId = await parentManager.createMessage(parentId, 'agents/parent', {
+        user: { prompt: { task: 'parent task' } },
+        assistant,
+      });
+
+      const childManager = new SessionManager();
+      childManager.setParentPath(parentManager.getFullPath()!);
+      const childId = await childManager.createSession({
+        ...base,
+        parentSessionID: parentId,
+        agent: { id: 'agents/child', name: 'child', isSubAgent: true },
+      });
+      const childMsgId = await childManager.createMessage(childId, 'agents/child', {
+        user: { prompt: { task: 'child task' } },
+        assistant,
+      });
+
+      const reader = new SessionManager();
+      const parent = await reader.findSession(parentId);
+      const parentMessages = await reader.getSessionMessages(parentId, parent!.agentId);
+      expect(parentMessages.map((m) => m.id)).toEqual([parentMsgId]);
+
+      const child = await reader.findSession(childId);
+      const childMessages = await reader.getSessionMessages(childId, child!.agentId);
+      expect(childMessages.map((m) => m.id)).toEqual([childMsgId]);
+    } finally {
+      if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdgDataHome;
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
 });
