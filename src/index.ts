@@ -1385,12 +1385,9 @@ async function runInternalWorker() {
   async function childSessionSummaries(
     sessionManager: InstanceType<typeof SessionManager>,
     sessionId: string,
-    sessionPath?: string,
-    sessionCreatedAt?: number
+    sessionPath?: string
   ) {
-    const children = await sessionManager.listChildSessions(sessionId, sessionPath, {
-      ...(typeof sessionCreatedAt === 'number' && { fallbackCreatedAfter: sessionCreatedAt - 60_000 })
-    });
+    const children = await sessionManager.listChildSessions(sessionId, sessionPath);
     return children.map(({ session }) => ({
       sessionId: session.id,
       agent: {
@@ -1709,8 +1706,7 @@ async function runInternalWorker() {
       const childSessions = await childSessionSummaries(
         sessionManager,
         req.sessionId,
-        found.path,
-        found.session.time.created
+        found.path
       );
       const approvalParts = parts.filter((part: any) =>
         part?.type === 'tool' &&

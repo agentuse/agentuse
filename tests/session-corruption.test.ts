@@ -55,9 +55,11 @@ describe('storage corruption handling', () => {
       const state = await initStorage(projectRoot);
       const mgr = new SessionManager();
 
-      // A parent + its child, plus an unrelated session that we corrupt.
+      // A parent + its nested child, plus an unrelated session that we corrupt.
       const parentId = await mgr.createSession({ ...baseAgent('agents/parent', 'parent', projectRoot) });
-      const childId = await mgr.createSession({
+      const childMgr = new SessionManager();
+      childMgr.setParentPath(mgr.getFullPath()!);
+      const childId = await childMgr.createSession({
         ...baseAgent('agents/child', 'child', projectRoot),
         parentSessionID: parentId,
       });
@@ -66,12 +68,13 @@ describe('storage corruption handling', () => {
       // Corrupt the unrelated session's session.json on disk.
       await corruptSessionFile(join(state.dir, `${unrelatedId}-agents-other`, 'session.json'));
 
-      // listChildSessions walks every session.json (this is the production path
-      // that 500'd). It must skip the bad file and still return the real child.
+      // The scoped child read returns the nested child and never touches the
+      // corrupt unrelated session.
       const children = await mgr.listChildSessions(parentId);
       expect(children.map((c) => c.session.id)).toContain(childId);
 
-      // The corrupt session is simply absent from scans, not fatal.
+      // stopSessionTree does a full cross-session scan (the production path that
+      // 500'd): it must skip the corrupt file and still stop the tree.
       const stopped = await mgr.stopSessionTree(parentId);
       expect(stopped.map((s) => s.sessionId)).toContain(parentId);
     } finally {

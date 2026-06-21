@@ -381,8 +381,13 @@ describe('reading nested subagent sessions from a fresh manager', () => {
         time: { start: Date.now(), end: Date.now() },
       } as any);
 
+      // A top-level orphan (no parentPath set → written outside the parent's
+      // subagent dir, the shape a since-fixed pre-2026-06-05 resume bug produced).
+      // listChildSessions reads only the nested subagent dir now, so it must NOT
+      // surface this orphan: the per-poll full-project scan that used to find it
+      // was removed.
       const orphanChildManager = new SessionManager();
-      const orphanChildId = await orphanChildManager.createSession({
+      await orphanChildManager.createSession({
         ...base,
         parentSessionID: parentId,
         agent: { id: 'agents/orphan-child', name: 'orphan child', isSubAgent: true },
@@ -395,7 +400,7 @@ describe('reading nested subagent sessions from a fresh manager', () => {
       expect(reader.getFullPath()).toBe(parentManager.getFullPath());
 
       const children = await reader.listChildSessions(parentId, parent!.path);
-      expect(children.map((entry) => entry.session.id)).toEqual([childId, orphanChildId]);
+      expect(children.map((entry) => entry.session.id)).toEqual([childId]);
 
       const found = await reader.findSession(childId);
       expect(found?.session.id).toBe(childId);

@@ -767,37 +767,21 @@ export class SessionManager {
 
   async listChildSessions(
     parentSessionID: string,
-    parentSessionPath?: string,
-    options: { fallbackCreatedAfter?: number } = {}
+    parentSessionPath?: string
   ): Promise<SessionEntry[]> {
-    const entriesById = new Map<string, SessionEntry>();
-    const scopedEntries = parentSessionPath
-      ? await this.readSessionEntries({ relativeDir: `${parentSessionPath}/subagent` })
-      : [];
-    for (const entry of scopedEntries) {
-      if (entry.session.parentSessionID === parentSessionID) {
-        entriesById.set(entry.session.id, entry);
-      }
-    }
-
-    // Historical resumed runs may have child sessions linked by parentSessionID
-    // but stored outside the parent's subagent directory because the resumed
-    // SessionManager did not know the parent's full path. Keep those visible,
-    // but restrict the compatibility scan to top-level sessions created after
-    // the parent when the caller can provide that bound.
-    const allEntries = parentSessionPath
-      ? await this.readSessionEntries({
-          includeSubagents: false,
-          ...(typeof options.fallbackCreatedAfter === 'number' && { createdAfter: options.fallbackCreatedAfter })
-        })
-      : await this.readSessionEntries();
-    for (const entry of allEntries) {
-      if (entry.session.parentSessionID === parentSessionID) {
-        entriesById.set(entry.session.id, entry);
-      }
-    }
-
-    return Array.from(entriesById.values())
+    // Subagent sessions are stored nested under the parent's own
+    // `{parent}/subagent/` directory (since the 2025-12 storage layout), so a
+    // scoped read of that directory is authoritative. We deliberately do NOT
+    // scan the whole project for orphaned children: that compatibility path only
+    // existed to surface a handful of pre-2026-06-05 sessions that a since-fixed
+    // resume bug wrote to the top level, and it cost an O(project) session-file
+    // scan on every poll of a live session view.
+    const scopePath = parentSessionPath ?? (await this.findSession(parentSessionID))?.path;
+    if (!scopePath) return [];
+    const entries = await this.readSessionEntries({ relativeDir: `${scopePath}/subagent` });
+    return entries
+      // The scoped read recurses into nested subagent dirs, so keep only direct
+      // children — grandchildren carry a different parentSessionID.
       .filter((entry) => entry.session.parentSessionID === parentSessionID)
       .sort((a, b) =>
         a.session.time.created - b.session.time.created ||
