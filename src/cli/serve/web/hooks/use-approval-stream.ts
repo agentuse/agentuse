@@ -73,33 +73,41 @@ export function useApprovalStream(options: {
     if (token) url.searchParams.set('token', token);
     if (project) url.searchParams.set('project', project);
 
-    const poll = async () => {
-      if (closed || !polling) return;
-      let delay = 1500;
+    // One status fetch → dispatch to the view. Shared by the initial paint and
+    // the polling fallback so first load / SPA navigation never waits on the SSE
+    // handshake. Returns the next poll delay (ms); `fatal` is true when a
+    // terminal error was surfaced and the caller should stop.
+    const fetchAndDispatch = async (): Promise<{ fatal: boolean; delay: number }> => {
       try {
         const payload = await fetchSessionStatus(sessionId, token, project);
-        if (closed) return;
+        if (closed) return { fatal: false, delay: 1500 };
         seenOk = true;
         const { logs, ...approval } = payload.approval;
         handlersRef.current.onStatus(payload.status, approval);
         handlersRef.current.onLogs(payload.logs ?? logs ?? []);
-        delay = isLiveStatus(payload.status, payload.logs ?? []) ? 500 : 1500;
+        return { fatal: false, delay: isLiveStatus(payload.status, payload.logs ?? []) ? 500 : 1500 };
       } catch (err) {
         const status = (err as { status?: number }).status;
         const code = (err as { code?: string }).code;
         if ((status !== undefined && TERMINAL_STATUSES.has(status)) || (code !== undefined && TERMINAL_CODES.has(code))) {
           // A just-started detached run can 404 until its session is written;
-          // keep polling (faster) within the grace window instead of failing.
+          // keep retrying (faster) within the grace window instead of failing.
           const pendingNotFound = status === 404 && pending && !seenOk
             && Date.now() - mountedAt < PENDING_NOT_FOUND_GRACE_MS;
-          if (pendingNotFound) {
-            delay = 600;
-          } else {
+          if (!pendingNotFound) {
             handlersRef.current.onFatalError(code ?? 'REQUEST_FAILED', (err as Error).message);
-            return;
+            return { fatal: true, delay: 0 };
           }
+          return { fatal: false, delay: 600 };
         }
+        return { fatal: false, delay: 1500 };
       }
+    };
+
+    const poll = async () => {
+      if (closed || !polling) return;
+      const { fatal, delay } = await fetchAndDispatch();
+      if (fatal) return;
       if (!closed && polling) {
         pollTimer = setTimeout(() => void poll(), delay);
       }
@@ -173,7 +181,20 @@ export function useApprovalStream(options: {
       // With SSE the server pushes the change; nothing to do.
     };
 
+    // Paint from the API right away (in parallel with opening the stream) so the
+    // page shows the session in one round-trip instead of waiting on the SSE
+    // handshake — which, on a slow/buffered stream, may never deliver its first
+    // event and leaves the page stuck on "Loading session…". SSE then takes over
+    // for live deltas. A terminal error on this first load tears the stream down.
     connect();
+    void fetchAndDispatch().then(({ fatal }) => {
+      if (!fatal) return;
+      closed = true;
+      source?.close();
+      source = null;
+      if (pollTimer) clearTimeout(pollTimer);
+      if (sseRetryTimer) clearTimeout(sseRetryTimer);
+    });
 
     return () => {
       closed = true;
