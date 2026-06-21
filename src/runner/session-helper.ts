@@ -1,7 +1,7 @@
 import type { ParsedAgent } from '../parser';
 import type { SessionManager } from '../session';
-import type { ErrorPartSource, LogPart, LogPartLevel, Part, SessionTrigger } from '../session/types';
-import type { LearningOutcome } from '../learning/types';
+import type { ErrorPartSource, LogPart, LogPartLevel, Part, SessionTrigger, ToolPart } from '../session/types';
+import type { ApprovalReview, LearningOutcome } from '../learning/types';
 import { computeAgentId } from '../utils/agent-id';
 import { logger, withoutLogSink, type LogRecord } from '../utils/logger';
 
@@ -297,6 +297,88 @@ export async function recordLearningMarkerForLatestMessage(
     await recordLearningMarker(sessionManager, sessionID, agentId, latest.id, outcome);
   } catch (error) {
     logger.debug(`Failed to persist approval learning marker: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * The reviewer feedback behind a run: every resolved approval gate that carried
+ * a comment, paired with the work shown at that gate. Empty when the run had no
+ * commented gates (a plain un-gated run, or bare approvals). Best-effort —
+ * capture must degrade gracefully when a session is sparse.
+ */
+export interface ApprovalContext {
+  reviews: ApprovalReview[];
+}
+
+/** Truncate a value for the approval-context prompt without breaking on objects. */
+function approvalText(value: unknown, limit: number): string | undefined {
+  const str = typeof value === 'string' ? value.trim() : '';
+  if (!str) return undefined;
+  return str.length > limit ? `${str.slice(0, limit)}...(truncated)` : str;
+}
+
+/**
+ * Render the await_human gate input (what the reviewer read) into a compact
+ * Markdown block. Pulls the human-facing, text-bearing fields only; URLs and
+ * artifact paths are dropped since the model can't follow them.
+ */
+function formatReviewedWork(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const i = input as Record<string, unknown>;
+  const sections: string[] = [];
+  const add = (label: string, value: unknown, limit: number) => {
+    const text = approvalText(value, limit);
+    if (text) sections.push(`${label}: ${text}`);
+  };
+  add('Question', i.prompt, 500);
+  add('Summary', i.summary, 1500);
+  add('Draft', i.draft, 4000);
+  add('Context', i.context, 1500);
+  add('Risk', i.risk, 1000);
+  return sections.length > 0 ? sections.join('\n\n') : undefined;
+}
+
+/** Pull a non-empty reviewer comment out of a resolved gate's decision output. */
+function readGateComment(output: unknown): string | undefined {
+  if (!output || typeof output !== 'object') return undefined;
+  const comment = (output as Record<string, unknown>).comment;
+  return typeof comment === 'string' && comment.trim().length > 0 ? comment.trim() : undefined;
+}
+
+/**
+ * Gather every reviewer comment across a run's resolved approval gates, each
+ * paired with the work shown at that gate, so the learning evaluator can ground
+ * a deictic comment ("this is too long") in the actual output instead of judging
+ * it in a vacuum. Scans the whole session because a revise loop produces several
+ * gates and only the run that finally completes captures learnings.
+ *
+ * Best-effort: returns `{ reviews: [] }` on any failure. Capturing learnings
+ * must never break a run.
+ */
+export async function gatherApprovalContext(
+  sessionManager: SessionManager,
+  sessionID: string,
+  agentId: string,
+): Promise<ApprovalContext> {
+  try {
+    const messages = await sessionManager.getSessionMessages(sessionID, agentId);
+    const reviews: ApprovalReview[] = [];
+    for (const message of messages) {
+      const parts = await sessionManager.getMessageParts(sessionID, agentId, message.id);
+      for (const part of parts) {
+        if (part.type !== 'tool' || part.tool !== 'await_human') continue;
+        const gate = part as ToolPart;
+        if (gate.state.status !== 'completed') continue;
+        const comment = readGateComment(gate.state.output);
+        if (!comment) continue;
+        const work = formatReviewedWork(gate.state.input);
+        reviews.push({ comment, ...(work && { work }) });
+      }
+    }
+    return { reviews };
+  } catch (error) {
+    logger.debug(`Failed to gather approval context: ${(error as Error).message}`);
+    return { reviews: [] };
   }
 }
 

@@ -664,6 +664,7 @@ export async function processAgentStream(
               subAgentTokens += tokens;
             }
 
+            const traceOutput = chunk.toolResultRaw ?? chunk.toolResult;
             toolCallTraces.push({
               name: pending.name,
               type: isSubAgent ? 'subagent' : 'tool',
@@ -672,6 +673,7 @@ export async function processAgentStream(
               ...(tokens && { tokens }),
               success: toolSuccess,
               input: pending.input,
+              ...(traceOutput !== undefined && { output: traceOutput }),
             });
 
             // Update the session storage part with completed state

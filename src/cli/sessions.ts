@@ -11,8 +11,8 @@ import { loadGlobalEnv } from "../utils/global-config";
 import { logger, LogLevel } from "../utils/logger";
 import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
-import { applyResumeToolResult, restoreResumeToolResult, runAgent, recordLearningMarkerForLatestMessage, describeErrorPart } from "../runner";
-import { maybePromoteApprovalComment, describeLearningOutcome } from "../learning";
+import { applyResumeToolResult, restoreResumeToolResult, runAgent, describeErrorPart } from "../runner";
+import { describeLearningOutcome } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
 
 interface SessionSummary {
@@ -1375,13 +1375,8 @@ async function resumeSession(
         summary.id
       );
 
-      // Promote a reviewer comment (revise feedback or an approval note) into a
-      // durable learning when the agent has capture enabled. Best-effort, never
-      // fails the resume. Surface the outcome in the session log.
-      const learningOutcome = await maybePromoteApprovalComment({ agent, agentFilePath: agentPath, toolResult });
-      if (learningOutcome) {
-        await recordLearningMarkerForLatestMessage(sessionManager, summary.id, found.agentId, learningOutcome);
-      }
+      // Learning capture (execution + any reviewer comments) runs once inside
+      // runAgent's post-run lifecycle, so nothing extra is needed here.
 
       process.stdout.write(JSON.stringify({
         success: true,

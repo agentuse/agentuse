@@ -5,7 +5,7 @@ import type { AgentCompleteEvent, PluginManager } from '../plugin';
 import { AuthenticationError } from '../models';
 import { logger, runWithLogSink } from '../utils/logger';
 import { extractLearnings } from '../learning/index.js';
-import { recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, type SessionLogSink } from './session-helper';
+import { recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, gatherApprovalContext, type SessionLogSink } from './session-helper';
 import { usageToAssistantTokens, addAssistantTokens, type AssistantTokens } from '../session/usage';
 import {
   sendRunChannelMessages,
@@ -561,12 +561,21 @@ export async function runPostLifecycle(options: {
 
   if (agent.config.learning?.capture && agentFilePath) {
     try {
+      // Single learning pass over the whole run: execution traces AND any
+      // reviewer comments left at approval gates. The reviews are read from the
+      // session here (one place) rather than promoted separately at each resume
+      // site, so a comment and the run that produced the reviewed work are
+      // evaluated together and deduped in one call.
+      const reviews = (options.sessionManager && options.sessionId && options.agentId)
+        ? (await gatherApprovalContext(options.sessionManager, options.sessionId, options.agentId)).reviews
+        : [];
       const outcome = await extractLearnings({
         event,
         agentInstructions: agent.instructions,
         agentModel: agent.config.model,
         agentFilePath,
         config: agent.config.learning,
+        reviews,
       });
       // Surface the outcome (including a silent failure) in the session log.
       if (options.sessionManager && options.sessionId && options.agentId && options.messageId) {

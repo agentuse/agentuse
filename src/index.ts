@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
-import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, recordLearningMarkerForLatestMessage, describeErrorPart, describeLogPart, type PreparedAgentExecution } from './runner';
-import { maybePromoteApprovalComment, describeLearningOutcome } from './learning';
+import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, describeErrorPart, describeLogPart, type PreparedAgentExecution } from './runner';
+import { describeLearningOutcome } from './learning';
 import { isApprovalEnabled } from './runner/approval';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
 import { contextUsageFromSnapshot } from './session/usage';
@@ -2711,24 +2711,8 @@ async function runInternalWorker() {
         resumeRollback = undefined;
         const duration = Date.now() - startTime;
 
-        // Promote a reviewer comment (revise feedback or an approval note) into
-        // a durable learning when the agent has capture enabled. Best-effort,
-        // never fails the run. Surface the outcome in the session log.
-        if (req.type === 'resume') {
-          const learningOutcome = await maybePromoteApprovalComment({
-            agent,
-            agentFilePath: agentPath,
-            toolResult: req.toolResult,
-          });
-          if (learningOutcome && continuationSession && sessionManager) {
-            await recordLearningMarkerForLatestMessage(
-              sessionManager,
-              continuationSession.sessionId,
-              continuationSession.agentId,
-              learningOutcome,
-            );
-          }
-        }
+        // Learning capture (execution + any reviewer comments) runs once inside
+        // runAgent's post-run lifecycle, so nothing extra is needed here.
 
         return {
           id: req.id,

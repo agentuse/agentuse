@@ -68,6 +68,17 @@ export interface LearningOutcome {
 }
 
 /**
+ * A resolved approval gate that carried a reviewer comment: the reviewer's
+ * comment plus the work that was shown to them at that gate. The unified
+ * evaluator uses these to ground a deictic comment ("too long", "cite this") in
+ * the actual output instead of judging it in a vacuum.
+ */
+export interface ApprovalReview {
+  comment: string;
+  work?: string;
+}
+
+/**
  * Learning item stored in markdown
  */
 export interface Learning {

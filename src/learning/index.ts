@@ -5,7 +5,7 @@
 
 import ora from 'ora';
 import type { AgentCompleteEvent } from '../plugin/types';
-import type { LearningConfig, LearningOutcome } from './types';
+import type { ApprovalReview, LearningConfig, LearningOutcome } from './types';
 import { evaluateExecution } from './evaluator';
 import { LearningStore } from './store';
 import { logger } from '../utils/logger';
@@ -16,6 +16,8 @@ export interface ExtractLearningsOptions {
   agentModel: string;
   agentFilePath: string;
   config: LearningConfig;
+  /** Reviewer comments from this run's approval gates (paired with the work). */
+  reviews?: ApprovalReview[];
 }
 
 /**
@@ -32,6 +34,9 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
 
   // Skip if capture is not enabled (shouldn't happen, but safety check)
   if (!config.capture) return { status: 'none', source: 'auto', count: 0, titles: [] };
+
+  const reviews = options.reviews ?? [];
+  const hadReviews = reviews.length > 0;
 
   const spinner = ora({
     text: 'Extracting learnings...',
@@ -53,18 +58,22 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
       agentModel,
       config.criteria,
       existingLearnings,
+      reviews,
     );
 
     if (learnings.length === 0) {
       spinner.succeed('No new learnings extracted');
-      return { status: 'none', source: 'auto', count: 0, titles: [] };
+      return { status: 'none', source: hadReviews ? 'approval' : 'auto', count: 0, titles: [] };
     }
 
     await store.add(learnings);
     spinner.succeed(`Extracted ${learnings.length} learning(s) → ${store.filePath}`);
+    // A run can yield both reviewer-sourced and execution-sourced learnings;
+    // label the marker by the higher-signal source when any is present.
+    const source = learnings.some(l => l.source === 'approval') ? 'approval' : 'auto';
     return {
       status: 'captured',
-      source: 'auto',
+      source,
       count: learnings.length,
       titles: learnings.map(l => l.title),
     };
@@ -72,7 +81,7 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     const detail = error instanceof Error ? error.message : String(error);
     spinner.fail('Failed to extract learnings');
     logger.debug(`[Learning] Error: ${detail}`);
-    return { status: 'failed', source: 'auto', count: 0, titles: [], detail };
+    return { status: 'failed', source: hadReviews ? 'approval' : 'auto', count: 0, titles: [], detail };
   }
 }
 
@@ -106,6 +115,5 @@ export function describeLearningOutcome(o: {
 }
 
 export { LearningStore, resolveLearningFilePath } from './store';
-export { maybePromoteApprovalComment, promoteApprovalComment } from './from-approval';
-export type { Learning, LearningConfig, LearningOutcome } from './types';
+export type { ApprovalReview, Learning, LearningConfig, LearningOutcome } from './types';
 export { LearningConfigSchema } from './types';
