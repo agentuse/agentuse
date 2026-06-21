@@ -42,7 +42,7 @@ export class WebAssets {
   private manifestCache: WebManifest | null = null;
   private manifestMtimeMs = 0;
   private lastCheck = 0;
-  private shellCache: { html: string; entry: string } | null = null;
+  private shellCache: { html: string; key: string } | null = null;
 
   constructor(rootOverride?: string) {
     this.root = rootOverride ?? WebAssets.resolveRoot();
@@ -125,7 +125,11 @@ export class WebAssets {
   renderShell(): string | null {
     const manifest = this.manifest();
     if (!manifest) return null;
-    if (this.shellCache && this.shellCache.entry === manifest.entry) {
+    // Key the cache on the entry AND the css hrefs: a CSS-only rebuild changes the
+    // stylesheet hash but not the JS entry, and keying on entry alone would keep
+    // serving the stale CSS link until the entry happened to change.
+    const key = `${manifest.entry}|${manifest.css.join(",")}`;
+    if (this.shellCache && this.shellCache.key === key) {
       return this.shellCache.html;
     }
     const cssLinks = manifest.css
@@ -148,7 +152,7 @@ export class WebAssets {
   <script type="module" src="/assets/${escapeHtml(manifest.entry)}"></script>
 </body>
 </html>`;
-    this.shellCache = { html, entry: manifest.entry };
+    this.shellCache = { html, key };
     return html;
   }
 }

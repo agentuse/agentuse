@@ -235,7 +235,11 @@ body {
 .page-approval-detail a:hover { opacity: 0.8; }
 .page-approval-detail .topbar a { border-bottom: 0; color: inherit; }
 .page-approval-detail .topbar a:hover { opacity: 1; }
-.page-approval-detail main { width: min(960px, calc(100vw - 32px)); margin: 0 auto; padding: 40px 0 24px; }
+/* Top padding is tuned so the session bar's resting gap below the topbar
+   matches the gap beneath the bar (its 12px band padding + 16px margin), keeping
+   the bar visually balanced at the top and minimizing how far it travels when it
+   pins into its sticky state on scroll. */
+.page-approval-detail main { width: min(960px, calc(100vw - 32px)); margin: 0 auto; padding: 16px 0 24px; }
 .page-approval-detail header { margin-bottom: 28px; }
 .page-approval-detail .status {
   display: inline-flex; align-items: center; gap: 8px;
@@ -256,50 +260,119 @@ body {
 .page-approval-detail .status.waiting::before { animation: pulse 1.4s ease-in-out infinite; }
 .page-approval-detail .status.resuming, .page-approval-detail .status.continuing { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .page-approval-detail .status.resuming::before, .page-approval-detail .status.continuing::before { animation: pulse 0.8s ease-in-out infinite; }
+.page-approval-detail .status.running, .page-approval-detail .status.streaming { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+.page-approval-detail .status.running::before, .page-approval-detail .status.streaming::before { animation: pulse 1.4s ease-in-out infinite; }
 .page-approval-detail .status.completed, .page-approval-detail .status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
 .page-approval-detail .status.expired, .page-approval-detail .status.error, .page-approval-detail .status.rejected { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-/* Sub-agent (delegated child) breadcrumb: identifies the page as a sub-agent and
-   links back up to its parent run, where decisions are made. */
-.page-approval-detail .subagent-trail {
+/* Session bar: a compact identity row pinned just under the topbar on every
+   session view. Sub-agent runs show a breadcrumb back to their parent; normal
+   runs show the run status and agent name. Both carry a scroll-to-top control
+   that appears once the page is scrolled. --topbar-h is measured in JS so the
+   offset tracks the topbar even when its nav wraps to a second row. */
+.page-approval-detail .session-bar {
+  position: sticky;
+  top: var(--topbar-h, 60px);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  /* Opaque band that bleeds to the edges of the centered main column (matching
+     padding keeps the content aligned) so log entries scroll cleanly beneath. */
+  margin-inline: -16px;
+  padding: 12px 16px;
+  background: var(--bg);
+  /* The separator + opaque band only matter once the bar detaches and log
+     entries scroll beneath it. At the top it reads as a plain identity row, so
+     the border stays transparent there (kept transparent, not removed, so the
+     bar's height doesn't shift when it gains the line on scroll). */
+  border-bottom: 1px solid transparent;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.page-approval-detail .session-bar.is-scrolled {
+  border-bottom-color: var(--line);
+}
+.page-approval-detail .session-bar-lead {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px 10px;
-  margin-bottom: 16px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.page-approval-detail .session-bar .status {
+  margin-bottom: 0;
+  flex: none;
+}
+.page-approval-detail .session-bar-name {
   font-family: var(--mono);
   font-size: 12px;
+  font-weight: 500;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
-.page-approval-detail .trail-up {
+/* Scroll-to-top: revealed only once the page is scrolled away from the top, so it
+   never invites a no-op click while already there. */
+.page-approval-detail .session-bar-top {
+  flex: none;
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 9px 3px 7px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  justify-content: center;
+  min-height: 0;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted-2);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+.page-approval-detail .session-bar.is-scrolled .session-bar-top {
+  opacity: 1;
+  pointer-events: auto;
+}
+.page-approval-detail .session-bar-top:hover {
+  color: var(--fg);
+  background: var(--panel-hover);
+  transform: translateY(-2px);
+}
+.page-approval-detail .session-bar-top:active { transform: translateY(0); }
+.page-approval-detail .session-bar-top:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .page-approval-detail .session-bar-top { transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease; transform: none; }
+  .page-approval-detail .session-bar-top:hover { transform: none; }
+}
+/* Back-to-parent: an icon-only control on sub-agent runs. The parent name lives in
+   its tooltip/aria-label rather than inline, keeping the bar compact. */
+.page-approval-detail .session-bar-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
   color: var(--muted-2);
   text-decoration: none;
-  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
 }
-.page-approval-detail a.trail-up:hover {
+.page-approval-detail a.session-bar-back:hover {
   color: var(--fg);
-  border-color: var(--line-strong);
   background: var(--panel-hover);
+  transform: translateX(-2px);
 }
-.page-approval-detail a.trail-up:hover svg { transform: translateX(-1px); }
-.page-approval-detail .trail-up svg { flex: none; transition: transform 0.15s ease; }
-.page-approval-detail .trail-up-static { cursor: default; }
-.page-approval-detail .trail-sep { color: var(--muted-3); }
-.page-approval-detail .trail-current { color: var(--fg); font-weight: 500; overflow-wrap: anywhere; }
-.page-approval-detail .trail-tag {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  color: var(--cyan);
-  border: 1px solid var(--cyan-border);
-  background: var(--cyan-soft);
+.page-approval-detail .session-bar-back:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
+.page-approval-detail .session-bar-back svg { flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  .page-approval-detail a.session-bar-back:hover { transform: none; }
 }
 .page-approval-detail .eyebrow {
   font-size: 11px;
@@ -307,6 +380,21 @@ body {
   letter-spacing: 0.18em; text-transform: uppercase;
   margin-bottom: 8px;
 }
+/* Sub-agent approval CTA: a paused child's pending gate has no controls of its
+   own, so its log-actions row links to the parent run where the decision is made. */
+.page-approval-detail .log-parent-approve {
+  display: inline-flex; align-items: center; gap: 8px; flex: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  text-decoration: none;
+  font-family: var(--sans); font-size: 13px; font-weight: 500;
+  transition: background 0.15s ease;
+}
+.page-approval-detail .log-parent-approve:hover { background: var(--primary-bg-hover); }
+.page-approval-detail .log-parent-approve svg { flex: none; transition: transform 0.15s ease; }
+.page-approval-detail .log-parent-approve:hover svg { transform: translateX(2px); }
 .page-approval-detail h1 {
   font-family: var(--sans);
   font-size: clamp(28px, 4vw, 42px);

@@ -143,12 +143,20 @@ export default function SessionDetail() {
   const [showDebug, setShowDebug] = useState<boolean>(() => {
     try { return localStorage.getItem('agentuse:session:showDebug') === '1'; } catch { return false; }
   });
+  // True once the page is scrolled away from the top; reveals the session bar's
+  // scroll-to-top control (the bar itself stays pinned for both view types).
+  const [scrolled, setScrolled] = useState(false);
 
   // Logs accumulate monotonically across the session; the status payload can
   // briefly return fewer entries during approval handoffs, so merge by id.
   const logsRef = useRef(new Map<string, ApprovalLogEntry>());
   const currentResumeTokenRef = useRef<string | undefined>(token);
   const followScrollRef = useRef(true);
+  // First-paint scroll-to-end happens once per session. The router reuses this
+  // component across /sessions/:id navigations, so this must be reset on session
+  // change (see the [sessionId] effect) or a sub-agent opened from its parent
+  // would inherit the parent's "already scrolled" state and land at the top.
+  const hasScrolledRef = useRef(false);
   const resultRef = useRef(result);
   resultRef.current = result;
 
@@ -208,6 +216,10 @@ export default function SessionDetail() {
   useEffect(() => {
     logsRef.current = new Map();
     currentResumeTokenRef.current = token;
+    // Treat the new session as never-scrolled so its first logs jump to the end,
+    // matching a fresh page load even when arriving via in-app navigation.
+    hasScrolledRef.current = false;
+    followScrollRef.current = true;
     setApproval(null);
     setStatus('loading');
     setPendingActionable(false);
@@ -288,7 +300,6 @@ export default function SessionDetail() {
   }, [showDebug]);
 
   // Initial + follow scroll: stick to the page end while the user is near it.
-  const hasScrolledRef = useRef(false);
   useLayoutEffect(() => {
     if (orderedLogs.length === 0) return;
     if (!hasScrolledRef.current || followScrollRef.current) {
@@ -301,6 +312,46 @@ export default function SessionDetail() {
     try {
       if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
     } catch { /* ignore */ }
+  }, []);
+
+  // The sub-agent breadcrumb sticks directly below the sticky topbar, whose
+  // height changes when its nav wraps to a second row on narrow screens. Measure
+  // it into --topbar-h so the trail's sticky offset tracks the real height
+  // instead of a brittle hard-coded value.
+  useLayoutEffect(() => {
+    const topbar = document.querySelector<HTMLElement>('.topbar');
+    if (!topbar || typeof ResizeObserver === 'undefined') return;
+    const apply = () => {
+      document.documentElement.style.setProperty('--topbar-h', `${Math.round(topbar.getBoundingClientRect().height)}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(topbar);
+    return () => ro.disconnect();
+  }, []);
+
+  // The session bar's scroll-to-top control only makes sense once the page is
+  // scrolled away from the top; track that with a cheap rAF-throttled listener.
+  useEffect(() => {
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        setScrolled(window.scrollY > 8);
+      });
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  const scrollToTop = useCallback(() => {
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
   }, []);
 
   const live = isLiveStatus(status, orderedLogs);
@@ -435,9 +486,9 @@ export default function SessionDetail() {
   const agentHeadline = approval.agent.description || agentLabel;
   const busy = status === 'resuming' || status === 'continuing';
   const tokenUsage = headerTokenUsage(approval);
-  // A delegated child viewed directly: it has no decision controls of its own
-  // (the gate is acted on at the parent), so frame the page as a sub-agent run
-  // and offer a breadcrumb back to the parent.
+  // A delegated child viewed directly is framed as a sub-agent run: the session bar
+  // shows a breadcrumb back to its parent and the page has no decision controls of
+  // its own (the gate is acted on at the parent).
   const isSubagentView = Boolean(approval.viewOnly);
   const parentLabel = approval.parentAgentName ?? 'parent run';
   const parentTarget = approval.parentSessionId ?? approval.rootSessionId;
@@ -445,6 +496,10 @@ export default function SessionDetail() {
     ?? (parentTarget
       ? `/sessions/${encodeURIComponent(parentTarget)}${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`
       : undefined);
+  // A paused sub-agent has no controls of its own — the gate is acted on at the
+  // parent run. Surface a prominent jump-to-parent CTA so the reviewer isn't left
+  // hunting for the (intentionally hidden) approve buttons.
+  const showParentApproveCta = isSubagentView && approval.sessionStatus === 'suspended' && Boolean(parentLink);
   const eyebrow = isSubagentView
     ? 'sub-agent run'
     : actionable
@@ -454,7 +509,7 @@ export default function SessionDetail() {
         : 'session log';
   const promptText = isSubagentView
     ? approval.sessionStatus === 'suspended'
-      ? 'This sub-agent is paused for approval. The decision is made on its parent run. Open it from the breadcrumb above.'
+      ? 'This sub-agent is paused for approval. The decision is made on its parent run — open it from the pending request at the end of the log.'
       : 'A delegated sub-agent run. Approvals and follow-ups for it are handled on the parent run.'
     : actionable
       ? 'Review the pending request in the session log below, then approve, reject, or send a comment back to the agent. The session is paused until you respond.'
@@ -472,26 +527,35 @@ export default function SessionDetail() {
     <div class="page-approval-detail">
       <Topbar currentPage="sessions" />
       <main>
-        {isSubagentView && (
-          <nav class="subagent-trail" aria-label="Breadcrumb">
-            {parentLink
-              ? (
-                <a class="trail-up" href={parentLink}>
-                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <polyline points="9 14 4 9 9 4" />
-                    <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
-                  </svg>
-                  <span>{parentLabel}</span>
-                </a>
-              )
-              : <span class="trail-up trail-up-static">{parentLabel}</span>}
-            <span class="trail-sep">/</span>
-            <span class="trail-current">{agentLabel}</span>
-            <span class="trail-tag">sub-agent</span>
-          </nav>
-        )}
+        <div class={`session-bar${scrolled ? ' is-scrolled' : ''}`}>
+          <div class="session-bar-lead">
+            {isSubagentView && parentLink && (
+              <a class="session-bar-back" href={parentLink} aria-label={`Back to ${parentLabel}`} title={`Back to ${parentLabel}`}>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="9 14 4 9 9 4" />
+                  <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
+                </svg>
+              </a>
+            )}
+            <span class={`status ${displayStatus}`}>{displayStatus}</span>
+            <span class="session-bar-name">{agentLabel}</span>
+          </div>
+          <button
+            type="button"
+            class="session-bar-top"
+            onClick={scrollToTop}
+            aria-label="Scroll to top"
+            title="Scroll to top"
+            tabIndex={scrolled ? 0 : -1}
+            aria-hidden={!scrolled}
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 19V5" />
+              <path d="m5 12 7-7 7 7" />
+            </svg>
+          </button>
+        </div>
         <header>
-          <span class={`status ${displayStatus}`}>{displayStatus}</span>
           <div class="eyebrow">{eyebrow}</div>
           <h1>{agentHeadline}</h1>
           <p class="prompt">{promptText}</p>
@@ -564,6 +628,8 @@ export default function SessionDetail() {
                 expanded={expandedIds.has(entry.id)}
                 showActions={actionable && entry.status === 'pending' && Boolean(entry.details) &&
                   (!currentResumeTokenRef.current || entry.details?.resumeToken === currentResumeTokenRef.current)}
+                parentApproveHref={showParentApproveCta ? parentLink : undefined}
+                parentApproveLabel={parentLabel}
                 actionsDisabled={submittingDecision}
                 projectId={projectId}
                 sessionId={sessionId}

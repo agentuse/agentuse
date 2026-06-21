@@ -274,6 +274,10 @@ export interface LogEntryProps {
   expanded: boolean;
   showActions: boolean;
   actionsDisabled: boolean;
+  /** On a view-only sub-agent page, the pending gate has no local controls —
+   *  this links to the parent run where the decision is actually made. */
+  parentApproveHref?: string | undefined;
+  parentApproveLabel?: string | undefined;
   projectId: string | undefined;
   sessionId: string;
   token: string | undefined;
@@ -372,6 +376,18 @@ function LogEntryImpl(props: LogEntryProps) {
             </div>
           </div>
         )}
+        {!props.showActions && props.parentApproveHref && isApprovalEntry && entry.status === 'pending' && (
+          <div class="log-actions" data-actions-row>
+            <div class="log-actions-hint">The decision is made on the parent run.</div>
+            <a class="log-parent-approve" href={props.parentApproveHref}>
+              <span>Approve on {props.parentApproveLabel ?? 'the parent run'}</span>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="5" y1="12" x2="19" y2="12" />
+                <polyline points="12 5 19 12 12 19" />
+              </svg>
+            </a>
+          </div>
+        )}
       </div>
     </li>
   );
@@ -387,6 +403,8 @@ export const LogEntry = memo(LogEntryImpl, (prev, next) =>
   prev.expanded === next.expanded &&
   prev.showActions === next.showActions &&
   prev.actionsDisabled === next.actionsDisabled &&
+  prev.parentApproveHref === next.parentApproveHref &&
+  prev.parentApproveLabel === next.parentApproveLabel &&
   prev.projectId === next.projectId &&
   prev.sessionId === next.sessionId &&
   prev.token === next.token
