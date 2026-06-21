@@ -517,6 +517,13 @@ export default function SessionDetail() {
           </div>
         </header>
 
+        {approval.additionalInstruction && (
+          <div class="panel additional-instruction">
+            <div class="label">additional instruction</div>
+            <div class="body">{approval.additionalInstruction}</div>
+          </div>
+        )}
+
         {reviewerComment && (
           <div class="panel reviewer-comment">
             <div class="label">latest reviewer comment</div>

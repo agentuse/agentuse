@@ -1694,6 +1694,14 @@ async function runInternalWorker() {
       const messages = await sessionManager.getSessionMessages(req.sessionId, found.agentId);
       const contextOverride = contextUsageFromSnapshot(await sessionManager.readContextSnapshot(req.sessionId, found.agentId));
       const tokenUsage = aggregateSessionTokenUsage(messages, contextOverride);
+      // The per-run instruction this session was started with (CLI args / the
+      // "run with custom instruction" composer), kept separate from the agent's
+      // own body. It lives in the first message's metadata, not in the parts the
+      // log is built from, so surface it here for the session page to display.
+      const firstUserPrompt = messages[0]?.user?.prompt?.user;
+      const additionalInstruction = typeof firstUserPrompt === 'string' && firstUserPrompt.trim()
+        ? firstUserPrompt
+        : undefined;
       const parts = (await Promise.all(
         messages.map((message) => sessionManager.getMessageParts(req.sessionId!, found.agentId, message.id))
       )).flat();
@@ -1779,6 +1787,7 @@ async function runInternalWorker() {
               ...(found.session.agent.description && { description: found.session.agent.description })
             },
             ...viewOnlyFields,
+            ...(additionalInstruction && { additionalInstruction }),
             ...(childSessions.length > 0 && { childSessions }),
             ...(tokenUsage && { tokenUsage }),
             logs
@@ -1846,6 +1855,7 @@ async function runInternalWorker() {
             },
             ...originAgentFields,
             ...viewOnlyFields,
+            ...(additionalInstruction && { additionalInstruction }),
             ...(childSessions.length > 0 && { childSessions }),
             ...(tokenUsage && { tokenUsage }),
             logs
@@ -1910,6 +1920,7 @@ async function runInternalWorker() {
           },
           ...originAgentFields,
           ...viewOnlyFields,
+          ...(additionalInstruction && { additionalInstruction }),
           ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
           ...(typeof input.summary === 'string' && { summary: input.summary }),
           ...(typeof input.draft === 'string' && { draft: input.draft }),

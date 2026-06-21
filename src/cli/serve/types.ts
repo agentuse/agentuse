@@ -132,6 +132,9 @@ export interface ApprovalPageInfo {
     description?: string;
   };
   prompt?: string;
+  /** The per-run instruction the session was started with (CLI args / the "run
+   *  with custom instruction" composer), appended to the agent's own body. */
+  additionalInstruction?: string;
   summary?: string;
   draft?: string;
   draftUrl?: string;
