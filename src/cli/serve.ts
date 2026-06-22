@@ -29,6 +29,7 @@ import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
 import { ulid } from "ulid";
 import { sessionViewToken, validateSessionToken } from "../utils/session-token";
+import { readArtifactManifest, getManifestPath } from "../tools/artifact-manifest";
 import {
   approvalListThemeStyles,
   escapeHtml,
@@ -1269,7 +1270,8 @@ function isEndedSessionStatus(status: string | undefined): boolean {
  *
  * Exempt: any `/approvals/*` route (legacy, token-authenticated) and, only on
  * the non-API surface, the unified session page `/sessions/:id`, its action
- * subroutes `/sessions/:id/{decision,continue,status,stop}`, and artifact
+ * subroutes `/sessions/:id/{decision,continue,status,stop}`, the artifact
+ * listing `/sessions/:id/artifacts-list`, and artifact
  * viewer subpaths `/sessions/:id/{artifacts,tool-artifacts}/*`. These carry their own capability
  * auth (session token / api key / local); the artifact handler validates the
  * `?token=` session token via `sessionAuthorized` before serving any file.
@@ -1284,7 +1286,7 @@ function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
   if (legacyApprovalRoute && legacyApprovalRoute[1] !== 'events') return true;
   if (isApi) return false;
   if (routePath === '/sessions/events') return false;
-  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|events|artifacts\/.+|tool-artifacts\/.+))?$/.test(routePath);
+  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|events|artifacts-list|artifacts\/.+|tool-artifacts\/.+))?$/.test(routePath);
 }
 
 /**
@@ -3330,6 +3332,39 @@ export function createServeCommand(): Command {
             logs,
             decision: found.info.approval.decision
           }));
+          return;
+        }
+
+        // GET /sessions/:id/artifacts-list: project artifacts this run produced,
+        // read from the artifact manifest. Token-gated like the rest of the
+        // session page data so the SPA fetches it with ?token=. The file bytes are
+        // served separately by /sessions/:id/artifacts/<path>.
+        const sessionArtifactsListMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/artifacts-list$/) : null;
+        if (sessionArtifactsListMatch) {
+          const sessionId = decodeURIComponent(sessionArtifactsListMatch[1]);
+          const token = requestUrl.searchParams.get('token') ?? undefined;
+          const projectId = requestUrl.searchParams.get('project') ?? undefined;
+          if (!sessionAuthorized(sessionId, token)) {
+            sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+            return;
+          }
+          const found = await findSessionInfo(sessionId, projectId);
+          if (!found.success) {
+            sendError(res, found.status, found.code, found.message);
+            return;
+          }
+          const manifest = await readArtifactManifest(getManifestPath(found.project.root));
+          const artifacts = manifest.artifacts
+            .filter((a) => a.sessionId === sessionId)
+            .map((a) => ({
+              name: a.name,
+              ...(a.title !== undefined ? { title: a.title } : {}),
+              type: a.type,
+              group: a.group,
+              createdAt: a.createdAt,
+              updatedAt: a.updatedAt,
+            }));
+          sendJSON(res, 200, { success: true, artifacts });
           return;
         }
 

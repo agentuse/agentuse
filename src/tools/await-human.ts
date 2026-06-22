@@ -62,6 +62,31 @@ export function getSessionUrl(sessionId: string | undefined, projectRoot?: strin
   return url.toString();
 }
 
+/**
+ * Build a deep link to a single rendered artifact: `/sessions/<id>/artifacts/<rel>`.
+ * Reuses the SESSION token, so a viewer authorized for the session can open the
+ * file. The `:id` segment only scopes auth — the server resolves `projectRelPath`
+ * against the project root, so any project artifact is reachable with the current
+ * session's token. `projectRelPath` must be project-root-relative and POSIX-style.
+ */
+export function getArtifactUrl(
+  sessionId: string | undefined,
+  projectRelPath: string,
+  projectRoot?: string
+): string | undefined {
+  if (!sessionId) return undefined;
+  const baseUrl = getApprovalBaseUrl(projectRoot);
+  const encodedPath = projectRelPath
+    .split('/')
+    .filter((seg) => seg.length > 0)
+    .map(encodeURIComponent)
+    .join('/');
+  const url = new URL(`${baseUrl.replace(/\/$/, '')}/sessions/${encodeURIComponent(sessionId)}/artifacts/${encodedPath}`);
+  const token = sessionViewToken(sessionId, process.env.AGENTUSE_API_KEY);
+  if (token) url.searchParams.set('token', token);
+  return url.toString();
+}
+
 export interface AwaitHumanDefaults {
   timeout?: string;
   slack?: { channelId?: string };

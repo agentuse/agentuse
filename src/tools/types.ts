@@ -19,10 +19,23 @@ export const BashConfigSchema = z.object({
   allowedPaths: z.array(z.string()).optional(),
 });
 
+export const ArtifactsConfigSchema = z.union([
+  z.boolean(),
+  z.object({
+    // Override the default artifact directory (project-relative). Defaults to
+    // `.agentuse/artifacts`.
+    dir: z.string().optional(),
+  }).strict(),
+]);
+
 export const ToolsConfigSchema = z.object({
   filesystem: z.array(FilesystemPathConfigSchema).optional(),
   bash: BashConfigSchema.optional(),
   await_human: z.boolean().optional(),
+  // Dedicated artifact tools (tools__artifact_save + tools__artifact_list). When
+  // set, the agent can save viewable, session-linked deliverables under
+  // `.agentuse/artifacts/` without a broad filesystem-write grant.
+  artifacts: ArtifactsConfigSchema.optional(),
 });
 
 // Derive types from Zod schemas
@@ -49,6 +62,7 @@ export function grantsPermission(
 
 export type FilesystemPathConfig = z.infer<typeof FilesystemPathConfigSchema>;
 export type BashConfig = z.infer<typeof BashConfigSchema>;
+export type ArtifactsConfig = z.infer<typeof ArtifactsConfigSchema>;
 export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
 
 // Path validation result

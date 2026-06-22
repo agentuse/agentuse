@@ -2,6 +2,7 @@ import type { Tool } from 'ai';
 import { createReadTool, createWriteTool, createEditTool } from './filesystem.js';
 import { createBashTool } from './bash.js';
 import { createAwaitHumanTool } from './await-human.js';
+import { createArtifactTool, createListArtifactsTool, type ArtifactToolContext } from './artifacts.js';
 import type { ToolsConfig } from './types.js';
 import type { PathResolverContext } from './path-validator.js';
 
@@ -52,11 +53,25 @@ export function getTools(
     tools['tools__bash'] = createBashTool(config.bash, context.projectRoot, context);
   }
 
+  // Create artifact tools if configured. The artifact tool owns its write path
+  // (under .agentuse/artifacts/), so it does not depend on a filesystem grant.
+  if (config.artifacts) {
+    const artifactCtx: ArtifactToolContext = {
+      projectRoot: context.projectRoot,
+      sessionId: context.sessionId,
+      agentId: context.agentId,
+      ...(typeof config.artifacts === 'object' && config.artifacts.dir
+        ? { dir: config.artifacts.dir }
+        : {}),
+    };
+    tools['tools__artifact_save'] = createArtifactTool(artifactCtx);
+    tools['tools__artifact_list'] = createListArtifactsTool(artifactCtx);
+  }
+
   const extraContext = context as PathResolverContext & {
-    sessionId?: string;
     approval?: Parameters<typeof createAwaitHumanTool>[1];
   };
-  const sessionId = extraContext.sessionId;
+  const sessionId = context.sessionId;
   if (config.await_human) {
     tools['await_human'] = createAwaitHumanTool(sessionId, {
       ...extraContext.approval,

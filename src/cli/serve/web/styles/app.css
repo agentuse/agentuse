@@ -525,6 +525,20 @@ body {
   color: var(--muted);
   font-size: 12px;
 }
+/* Artifacts the run produced. Green accent matches the "produced/completed"
+   semantics this view already uses for completed/approved status. */
+.page-approval-detail .session-artifacts {
+  margin: 0 0 18px;
+  border-color: var(--green-border);
+  background: var(--green-soft);
+}
+.page-approval-detail .session-artifacts .label {
+  color: var(--green);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
 
 /* logs */
 .logs { list-style: none; margin: 0; padding: 0; }

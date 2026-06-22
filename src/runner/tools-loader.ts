@@ -100,6 +100,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
         projectRoot: projectContext.projectRoot,
         agentDir,
         sessionId,
+        agentId,
         toolOutputArtifacts,
         approval: approvalToolDefaults(agent.config),
       } as PathResolverContext);
@@ -179,14 +180,36 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     }
   }
 
+  // Single ordered merge point for every tool source. New sources (e.g. a future
+  // plugin-contributed-tools capability) attach here — append the source's map to
+  // this list — instead of threading another spread through the return. Order is
+  // precedence: later sources win on name collisions.
+  const toolSources: Record<string, Tool>[] = [
+    mcpTools,
+    configuredTools,
+    skillTools,
+    storeTools,
+    sandboxTools,
+  ];
+
   return {
     mcpTools,
     configuredTools,
     skillTools,
     storeTools,
     sandboxTools,
-    all: { ...mcpTools, ...configuredTools, ...skillTools, ...storeTools, ...sandboxTools },
+    all: Object.assign({}, ...toolSources),
     store,
     sandboxInstance,
   };
 }
+
+/**
+ * A source of tools merged into an agent's tool set. This names the shape a
+ * future tool source (e.g. plugin-contributed tools) would implement to attach
+ * at the merge point in {@link loadAgentTools}. Not yet consumed — it documents
+ * the extension seam so adding a source later needs no refactor.
+ */
+export type ToolProvider = (
+  options: LoadAgentToolsOptions
+) => Record<string, Tool> | Promise<Record<string, Tool>>;

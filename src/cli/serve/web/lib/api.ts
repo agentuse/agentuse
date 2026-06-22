@@ -118,6 +118,24 @@ export function fetchSessionStatus(sessionId: string, token: string | undefined,
   return getJson(`/sessions/${encodeURIComponent(sessionId)}/status`, { token, project, logs: '1' });
 }
 
+export interface SessionArtifact {
+  name: string;
+  title?: string;
+  type: string;
+  group: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionArtifactsPayload {
+  success: true;
+  artifacts: SessionArtifact[];
+}
+
+export function fetchSessionArtifacts(sessionId: string, token: string | undefined, project?: string): Promise<SessionArtifactsPayload> {
+  return getJson(`/sessions/${encodeURIComponent(sessionId)}/artifacts-list`, { token, project });
+}
+
 export function postSessionDecision(sessionId: string, token: string | undefined, body: {
   status: string;
   comment?: string;

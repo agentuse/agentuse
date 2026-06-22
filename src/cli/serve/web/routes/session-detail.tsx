@@ -7,7 +7,7 @@ import { LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
 import { ContinuePanel } from '../components/continue-panel';
 import { DebugPromptButton } from '../components/debug-prompt-button';
-import { postSessionDecision, postSessionContinue, postSessionStop } from '../lib/api';
+import { postSessionDecision, postSessionContinue, postSessionStop, fetchSessionArtifacts, type SessionArtifact } from '../lib/api';
 import { useApprovalStream } from '../hooks/use-approval-stream';
 import { useTitle } from '../hooks/use-title';
 import {
@@ -138,6 +138,9 @@ export default function SessionDetail() {
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [decisionDialog, setDecisionDialog] = useState<DecisionDialogMode | null>(null);
   const [nudge, setNudge] = useState(0);
+  // Project artifacts this run produced, from the artifact manifest. Refetched as
+  // the log grows so newly written artifacts appear without a page reload.
+  const [artifacts, setArtifacts] = useState<SessionArtifact[]>([]);
   // Debug-level operational logs are hidden by default to keep the log readable;
   // the preference persists across sessions.
   const [showDebug, setShowDebug] = useState<boolean>(() => {
@@ -227,8 +230,31 @@ export default function SessionDetail() {
     setResult({ text: '', error: false });
     setFatalError(null);
     setLogsVersion((v) => v + 1);
+    setArtifacts([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
+
+  // Pull the run's artifacts from the manifest, refreshing as the log grows so a
+  // freshly written artifact surfaces live. Best-effort: a fetch error just
+  // leaves the panel empty rather than disrupting the page.
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    fetchSessionArtifacts(sessionId, token, projectId)
+      .then((payload) => {
+        if (cancelled) return;
+        // The effect refetches on every log batch, but artifacts change rarely;
+        // skip the state update (and re-render) when the list is unchanged.
+        setArtifacts((prev) => {
+          const next = payload.artifacts;
+          const same = prev.length === next.length
+            && prev.every((a, i) => a.name === next[i].name && a.updatedAt === next[i].updatedAt);
+          return same ? prev : next;
+        });
+      })
+      .catch(() => { /* leave panel empty */ });
+    return () => { cancelled = true; };
+  }, [sessionId, token, projectId, logsVersion]);
 
   useApprovalStream({
     sessionId,
@@ -486,6 +512,12 @@ export default function SessionDetail() {
   const agentHeadline = approval.agent.description || agentLabel;
   const busy = status === 'resuming' || status === 'continuing';
   const tokenUsage = headerTokenUsage(approval);
+  // Resolved theme currently applied to the document (set by the theme toggle).
+  // Threaded into artifact links so a new-tab markdown/text artifact renders in
+  // the same theme as the app rather than the default.
+  const resolvedTheme = typeof document !== 'undefined'
+    ? document.documentElement.getAttribute('data-theme') ?? undefined
+    : undefined;
   // A delegated child viewed directly is framed as a sub-agent run: the session bar
   // shows a breadcrumb back to its parent and the page has no decision controls of
   // its own (the gate is acted on at the parent).
@@ -593,6 +625,39 @@ export default function SessionDetail() {
             <div class="label">latest reviewer comment</div>
             <div class="body"><LogContent value={reviewerComment.comment} forceMarkdown /></div>
             {reviewerComment.reviewer && <div class="meta-line">from {reviewerComment.reviewer}</div>}
+          </div>
+        )}
+
+        {artifacts.length > 0 && (
+          <div class="panel session-artifacts">
+            <div class="label">artifacts</div>
+            <div class="artifact-tiles">
+              {[...artifacts]
+                .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+                .map((a) => {
+                  const encoded = a.name.split('/').map(encodeURIComponent).join('/');
+                  const base = `/sessions/${encodeURIComponent(sessionId)}/artifacts/${encoded}`;
+                  const params = new URLSearchParams();
+                  if (token) params.set('token', token);
+                  if (resolvedTheme) params.set('theme', resolvedTheme);
+                  const qs = params.toString();
+                  const href = qs ? `${base}?${qs}` : base;
+                  const label = a.title || a.name.split('/').pop() || a.name;
+                  return (
+                    <a
+                      key={a.name}
+                      class="artifact-open"
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`Open artifact ${label} (new tab)`}
+                    >
+                      <span class="artifact-open-name">{label}</span>
+                      <span class="artifact-open-hint">open</span>
+                    </a>
+                  );
+                })}
+            </div>
           </div>
         )}
 
