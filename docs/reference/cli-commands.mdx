@@ -34,6 +34,9 @@ agentuse run <agent-file> [prompt...] [options]
 -C, --directory <path>  Run as if agentuse was started in <path> instead of the current directory
 --env-file <path>       Path to custom .env file
 -m, --model <model>     Override the model specified in the agent file
+--mock                  Mock all tool outputs with the LLM instead of executing them (no real side effects)
+--mock-model <model>    Model used to generate mock tool outputs (default: the agent model)
+--mock-approval         Also mock the await_human approval gate instead of suspending
 ```
 
 <Note>
@@ -132,6 +135,24 @@ agentuse run agent.agentuse --model anthropic:claude-sonnet-4-6:ANTHROPIC_API_KE
   agent and all its sub-agents will use the specified model, regardless of what models
   are defined in their individual agent files.
 </Info>
+
+### Testing with Mocked Tools
+
+`--mock` runs an agent with **no real tool side effects**: each tool call is answered by an
+LLM-generated result instead of executing. The agent runs for real; only tool execution is faked.
+
+```bash
+agentuse run agent.agentuse --mock                          # mock every tool output
+agentuse run agent.agentuse --mock --mock-model demo:default # zero-cost mock model
+```
+
+- **Mock model** defaults to the agent's model; override with `--mock-model` (or `AGENTUSE_MOCK_MODEL`). The mock model is still a real LLM call, so credentials are required — use `demo:default` for zero cost.
+- **Sub-agents run for real**; their leaf tools are mocked.
+- **The approval gate stays real**: `await_human` still suspends so you can verify the agent pauses for approval. Pass `--mock-approval` to mock it too.
+
+<Note>
+  MCP servers still connect at startup for tool discovery, but no tool executes (no mutations). Mock outputs are non-deterministic.
+</Note>
 
 ### Remote Agent Security
 

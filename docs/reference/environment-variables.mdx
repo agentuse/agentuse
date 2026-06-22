@@ -210,6 +210,23 @@ model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
   </Note>
 </ParamField>
 
+## Mock Mode (Testing)
+
+Mock all tool outputs with the LLM instead of executing them. Mirror the `--mock` flags on
+`agentuse run`; see [Testing with Mocked Tools](/reference/cli-commands#testing-with-mocked-tools).
+
+<ParamField path="AGENTUSE_MOCK_MODE" type="boolean">
+  `1` to mock all tool outputs (no real bash/filesystem/MCP/store side effects). Same as `--mock`.
+</ParamField>
+
+<ParamField path="AGENTUSE_MOCK_MODEL" type="string">
+  Model used for mock outputs. Defaults to the agent's model; use `demo:default` for zero cost. Same as `--mock-model`.
+</ParamField>
+
+<ParamField path="AGENTUSE_MOCK_APPROVAL" type="boolean">
+  `1` to also mock the `await_human` approval gate instead of suspending. Same as `--mock-approval`.
+</ParamField>
+
 ## Context Management
 
 <ParamField path="CONTEXT_COMPACTION" type="boolean">

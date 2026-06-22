@@ -16,6 +16,7 @@ import { logger } from '../utils/logger';
 import type { ParsedAgent } from '../parser';
 import { approvalToolDefaults, isApprovalEnabled } from './approval';
 import type { ToolOutputArtifactSink } from '../tools/types.js';
+import { isMockMode, wrapToolsWithLLMMock } from './mock-tools';
 
 /**
  * Options for loading agent tools
@@ -192,13 +193,20 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     sandboxTools,
   ];
 
+  // In mock mode, replace every merged tool's execute with an LLM-backed mock so
+  // the agent runs end-to-end without real side effects. Sub-agent tools are
+  // merged outside this point (see preparation.ts), so they stay real while each
+  // sub-agent's own leaf tools get mocked via its own loadAgentTools call.
+  const mergedTools: Record<string, Tool> = Object.assign({}, ...toolSources);
+  const all = isMockMode() ? wrapToolsWithLLMMock(mergedTools, agent) : mergedTools;
+
   return {
     mcpTools,
     configuredTools,
     skillTools,
     storeTools,
     sandboxTools,
-    all: Object.assign({}, ...toolSources),
+    all,
     store,
     sandboxInstance,
   };

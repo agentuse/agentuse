@@ -165,7 +165,10 @@ program
   .option('-m, --model <model>', 'Override the model specified in the agent file')
   .option('--session-id <id>', 'Resume from an existing session id')
   .option('--json', 'Output result as JSON (implies --quiet --no-tty)')
-  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string, sessionId?: string, json?: boolean }) => {
+  .option('--mock', 'Mock all tool outputs with the LLM instead of executing them (for testing; no real side effects)')
+  .option('--mock-model <model>', 'Model used to generate mock tool outputs (default: the agent model)')
+  .option('--mock-approval', 'Also mock the await_human approval gate instead of suspending (for fully-unattended mock runs)')
+  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string, sessionId?: string, json?: boolean, mock?: boolean, mockModel?: string, mockApproval?: boolean }) => {
     const startTime = Date.now();
     let originalCwd: string | undefined;
 
@@ -201,6 +204,12 @@ program
 
       process.env.AGENTUSE_DEBUG = options.debug ? 'true' : 'false';
 
+      // Mock mode: tool outputs are LLM-generated, no real tools execute. Env so
+      // the runner (loadAgentTools) and recursive sub-agents pick it up.
+      if (options.mock) process.env.AGENTUSE_MOCK_MODE = '1';
+      if (options.mockModel) process.env.AGENTUSE_MOCK_MODEL = options.mockModel;
+      if (options.mockApproval) process.env.AGENTUSE_MOCK_APPROVAL = '1';
+
       const loggerConfig: { level?: LogLevel; enableDebug?: boolean; disableTUI?: boolean } = {};
       let quietMode = false;
 
@@ -235,6 +244,16 @@ program
           logger.info('agentuse collects anonymous usage data to improve the product.');
           logger.info('Set AGENTUSE_TELEMETRY_DISABLED=true to opt out.\n');
           await telemetry.markFirstRunComplete();
+        }
+      }
+
+      if (options.mock && !effectiveQuiet) {
+        logger.warn('⚠ Mock mode: tool outputs are LLM-generated; no real tools will run.');
+        if (process.env.AGENTUSE_MOCK_MODEL) {
+          logger.warn(`  Mock model: ${process.env.AGENTUSE_MOCK_MODEL}`);
+        }
+        if (!process.env.AGENTUSE_MOCK_APPROVAL) {
+          logger.warn('  Approval gate (await_human) stays real; pass --mock-approval to mock it too.');
         }
       }
 
