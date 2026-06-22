@@ -32,6 +32,7 @@ export interface SessionInfo {
   // Model and version
   model: string;                     // Full model identifier (e.g., "anthropic:claude-sonnet-4-0")
   version: string;                   // agentuse version
+  mock?: boolean;                    // True when run under --mock (tool outputs are LLM-generated)
 
   // Configuration (from agent YAML)
   config: {

@@ -79,6 +79,7 @@ export interface SessionSummary {
   updatedAt: number;
   errorCode?: string;
   errorMessage?: string;
+  mock?: boolean;
 }
 
 export interface SessionStatusInfo {
@@ -95,6 +96,7 @@ export interface SessionStatusInfo {
   };
   errorCode?: string;
   errorMessage?: string;
+  mock?: boolean;
 }
 
 export interface ChildSessionSummary {
@@ -177,6 +179,8 @@ export interface ApprovalPageInfo {
   parentHref?: string;
   tokenUsage?: SessionTokenUsage;
   logs?: ApprovalLogEntry[];
+  /** True when the run was started with --mock (tool outputs are LLM-generated). */
+  mock?: boolean;
 }
 
 /** Severity carried by `type: 'log'` entries (operational logger output). */

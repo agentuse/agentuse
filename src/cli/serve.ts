@@ -211,6 +211,7 @@ interface SessionSummary {
   updatedAt: number;
   errorCode?: string;
   errorMessage?: string;
+  mock?: boolean;
 }
 
 type SessionRow = SessionSummary & { project: string };
@@ -240,6 +241,7 @@ interface SessionStatusInfo {
   };
   errorCode?: string;
   errorMessage?: string;
+  mock?: boolean;
 }
 
 interface ChildSessionSummary {
@@ -321,6 +323,7 @@ interface ApprovalPageInfo {
   parentHref?: string;
   tokenUsage?: SessionTokenUsage;
   logs?: ApprovalLogEntry[];
+  mock?: boolean;
 }
 
 interface SessionTokenUsage {

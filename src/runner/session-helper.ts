@@ -3,6 +3,7 @@ import type { SessionManager } from '../session';
 import type { ErrorPartSource, LogPart, LogPartLevel, Part, SessionTrigger, ToolPart } from '../session/types';
 import type { ApprovalReview, LearningOutcome } from '../learning/types';
 import { computeAgentId } from '../utils/agent-id';
+import { isMockMode } from './mock-tools';
 import { logger, withoutLogSink, type LogRecord } from '../utils/logger';
 
 export interface SessionContext {
@@ -74,6 +75,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
     },
     model: agent.config.model,
     version,
+    ...(isMockMode() && { mock: true }),
     config: {
       ...(config.timeout !== undefined && { timeout: config.timeout }),
       ...(config.maxSteps !== undefined && { maxSteps: config.maxSteps }),

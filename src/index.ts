@@ -1794,6 +1794,7 @@ async function runInternalWorker() {
             sessionStatus: found.session.status,
             ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
             model: found.session.model,
+            ...(found.session.mock && { mock: true }),
             ...sessionErrorFields(found.session),
             agent: {
               id: found.session.agent.id,
@@ -1861,6 +1862,7 @@ async function runInternalWorker() {
             sessionStatus,
             ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
             model: found.session.model,
+            ...(found.session.mock && { mock: true }),
             ...sessionErrorFields(found.session),
             agent: {
               id: found.session.agent.id,
@@ -1926,6 +1928,7 @@ async function runInternalWorker() {
           sessionStatus,
           ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
           model: found.session.model,
+          ...(found.session.mock && { mock: true }),
           ...sessionErrorFields(found.session),
           agent: {
             id: found.session.agent.id,
@@ -2008,6 +2011,7 @@ async function runInternalWorker() {
           ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
           ...(typeof found.session.time?.updated === 'number' && { updatedAt: found.session.time.updated }),
           model: found.session.model,
+          ...(found.session.mock && { mock: true }),
           ...sessionErrorFields(found.session),
           agent: {
             id: found.session.agent.id,
@@ -2464,6 +2468,7 @@ async function runInternalWorker() {
           createdAt: session.time.created,
           updatedAt: session.time.updated,
           ...sessionErrorFields(session),
+          ...(session.mock && { mock: true }),
         }))
         .sort((a, b) => b.createdAt - a.createdAt);
 

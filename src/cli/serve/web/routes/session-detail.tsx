@@ -574,6 +574,7 @@ export default function SessionDetail() {
               </a>
             )}
             <span class={`status ${displayStatus}`}>{displayStatus}</span>
+            {approval?.mock && <span class="mock-badge" title="Tool outputs were LLM-generated; no real tools ran">mock</span>}
             <span class="session-bar-name">{agentLabel}</span>
           </div>
           <button

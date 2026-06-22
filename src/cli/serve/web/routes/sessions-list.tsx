@@ -28,6 +28,7 @@ function SessionRowView(props: { row: SessionRow; multiProject: boolean }) {
         {multiProject && <span class="chip project">{row.project}</span>}
         <span class="chip agent">{row.agent.name || row.agent.id}</span>
         <span class="chip trigger">{row.trigger}</span>
+        {row.mock && <span class="chip mock">mock</span>}
         <span class="row-time" title={formatApprovalTime(row.createdAt)}>{formatRelativeTime(row.createdAt)}</span>
       </div>
       <div class="row-title">{title}</div>

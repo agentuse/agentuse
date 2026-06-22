@@ -2241,6 +2241,26 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .chip.project { color: var(--cyan); }
 .chip.agent { color: var(--fg); }
 
+/* Mock-run marker: tool outputs were LLM-generated, no real tools ran. */
+.chip.mock {
+  color: var(--amber);
+  border-color: var(--amber-border);
+  background: var(--amber-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+.page-approval-detail .mock-badge {
+  display: inline-flex; align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--amber);
+  border: 1px solid var(--amber-border);
+  background: var(--amber-soft);
+}
+
 /* --- session detail extras --- */
 /* token-usage meta cells share the .meta .cell styling; just give them an
    identifiable hook and keep the hidden attribute working. */
