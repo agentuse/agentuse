@@ -1,4 +1,4 @@
-import { fetchInfo } from '../lib/api';
+import { fetchInfo, fetchApprovals } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
@@ -22,6 +22,10 @@ const CARDS: Array<{ href: string; title: string; desc: string }> = [
 export default function Home() {
   useTitle('AgentUse');
   const { data, error, loading } = useFetch('home', () => fetchInfo(), { refreshMs: 30_000 });
+  // Pending approvals are the one count worth surfacing live on the landing page:
+  // it tells the operator at a glance whether anything needs them right now.
+  const approvals = useFetch('home-approvals', () => fetchApprovals(), { refreshMs: 30_000 });
+  const pendingApprovals = approvals.data?.buckets.pending.length ?? 0;
 
   const projects = data?.projects ?? [];
   const totalAgents = projects.reduce((sum, p) => sum + p.agentCount, 0);
@@ -34,7 +38,8 @@ export default function Home() {
   const countFor = (title: string): string | undefined =>
     title === 'Agents' ? plural(totalAgents, 'agent')
       : title === 'Schedules' ? plural(totalSchedules, 'run')
-        : undefined;
+        : title === 'Approvals' ? (pendingApprovals > 0 ? `${pendingApprovals} pending` : undefined)
+          : undefined;
 
   return (
     <div class="page-home">

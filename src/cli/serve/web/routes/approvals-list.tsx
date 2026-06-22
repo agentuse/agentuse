@@ -6,7 +6,7 @@ import { useFetch } from '../hooks/use-fetch';
 import { useApprovalsStream } from '../hooks/use-approvals-stream';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
-import { formatApprovalTime } from '../lib/format';
+import { formatApprovalTime, errorText } from '../lib/format';
 
 function ApprovalRowView(props: { row: ApprovalRow; multiProject: boolean }) {
   const { row, multiProject } = props;
@@ -27,7 +27,7 @@ function ApprovalRowView(props: { row: ApprovalRow; multiProject: boolean }) {
       ? `expired ${formatApprovalTime(row.decisionAt ?? row.expiresAt)}`
       : `decided ${formatApprovalTime(row.decisionAt)}`;
 
-  const decisionLabel = row.errorMessage || row.decisionComment || '';
+  const decisionLabel = errorText(row.errorMessage) || row.decisionComment || '';
 
   const inner = (
     <>

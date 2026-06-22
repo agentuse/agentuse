@@ -11,6 +11,7 @@ import { createInterface, type Interface as ReadlineInterface } from "readline";
 import chalk from "chalk";
 import * as dotenv from "dotenv";
 import { parseAgent } from "../parser";
+import { formatScheduleHuman } from "../scheduler/parser";
 import { type AgentChunk } from "../runner";
 import { findProjectRoot, resolveProjectContext } from "../utils/project";
 import { logger, LogLevel, executionLog, approvalLog } from "../utils/logger";
@@ -1037,6 +1038,8 @@ interface AgentSummary {
   model: string;
   /** Raw schedule expression when the agent declares one. */
   schedule?: string;
+  /** Human-readable form of `schedule` (e.g. "At 09:00 AM, only on Monday"). */
+  scheduleHuman?: string;
 }
 
 interface CollectAgentsResult {
@@ -1064,7 +1067,10 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
           name: parsed.name,
           ...(parsed.config.description && { description: parsed.config.description }),
           model: parsed.config.model,
-          ...(parsed.config.schedule && { schedule: parsed.config.schedule }),
+          ...(parsed.config.schedule && {
+            schedule: parsed.config.schedule,
+            scheduleHuman: formatScheduleHuman(parsed.config.schedule),
+          }),
         });
       } catch (err) {
         errors.push({ projectId: project.id, path: agentFile, message: (err as Error).message });
@@ -1102,6 +1108,7 @@ interface AgentDetail {
   description?: string;
   model: string;
   schedule?: string;
+  scheduleHuman?: string;
   source: string;
   meta: AgentDetailMeta;
 }
@@ -1139,7 +1146,10 @@ async function collectAgentDetail(project: Project, runPath: string): Promise<Ag
     name: parsed.name,
     ...(config.description && { description: config.description }),
     model: config.model,
-    ...(config.schedule && { schedule: config.schedule }),
+    ...(config.schedule && {
+      schedule: config.schedule,
+      scheduleHuman: formatScheduleHuman(config.schedule),
+    }),
     source,
     meta,
   };

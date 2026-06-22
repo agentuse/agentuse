@@ -148,7 +148,20 @@ body {
 .theme-toggle svg { width: 12px; height: 12px; display: block; }
 @media (max-width: 640px) {
   .topbar { padding: 12px 16px; grid-template-columns: 1fr auto; gap: 10px; }
-  .topbar .nav-wrap { grid-column: 1 / -1; grid-row: 2; justify-self: center; }
+  /* The 5-item pill can be wider than a phone viewport. Let it scroll
+     horizontally instead of clipping the first/last item; `safe center` keeps
+     it centered when it fits and reachable from the start when it doesn't. */
+  .topbar .nav-wrap {
+    grid-column: 1 / -1; grid-row: 2;
+    justify-self: stretch;
+    display: flex;
+    justify-content: safe center;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .topbar .nav-wrap::-webkit-scrollbar { display: none; }
+  .topbar .nav { flex: none; }
 }
 
 /* ---------------- approvals list ---------------- */
@@ -205,11 +218,18 @@ body {
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 10.5px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.04em;
   border: 1px solid var(--line-strong);
   background: var(--panel);
   color: var(--muted-3);
+}
+/* State pills stay uppercase (a recognizable status convention); identifier
+   chips (project id, agent name) keep their natural case so names aren't shouted
+   and stay consistent with the value chips used elsewhere in the app. */
+.page-approvals .chip.status, .page-approvals .chip.trigger,
+.page-sessions .chip.status, .page-sessions .chip.trigger {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 .page-approvals .chip.status.pending { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
 .page-approvals .chip.status.approved, .page-approvals .chip.status.commented { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
@@ -402,6 +422,16 @@ body {
   letter-spacing: -0.02em;
   margin: 0 0 18px;
   font-weight: 500;
+}
+/* Agent description: a readable subhead under the name headline (the name is the
+   H1). Plain sans, not the giant H1 treatment the description used to get. */
+.page-approval-detail .agent-tagline {
+  margin: -6px 0 16px;
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--muted-3);
+  overflow-wrap: anywhere;
 }
 .page-approval-detail .prompt {
   font-family: var(--sans);
@@ -1374,6 +1404,40 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 @media (max-width: 760px) {
   .page-stores h1 { font-size: 28px; }
 }
+/* On phones the wide min-width table forced a horizontal scroll and left rows
+   inflated to the height of off-screen wrapped chips. Re-flow each row into a
+   self-contained card with label:value stacks so every column is visible without
+   scrolling and rows size to their own content. */
+@media (max-width: 640px) {
+  .page-stores .store-table-scroll { overflow-x: visible; }
+  .page-stores .store-table { min-width: 0; width: 100%; display: block; }
+  .page-stores .store-table thead { display: none; }
+  .page-stores .store-table tbody { display: block; }
+  .page-stores .store-table tr {
+    display: block;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .page-stores .store-table tr:last-child { border-bottom: 0; }
+  .page-stores .store-table td {
+    display: block;
+    padding: 4px 0;
+    border: 0;
+    white-space: normal;
+  }
+  .page-stores .store-table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 3px;
+    color: var(--muted-2);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  /* The store name leads the card, no redundant "STORE" label above it. */
+  .page-stores .store-table td:first-child::before { display: none; }
+  .page-stores .title-cell { min-width: 0; }
+}
 
 /* --- shared page shell (home / agents / schedules) --- */
 /* These three SPA pages share the same outer layout the server rendered via
@@ -1462,7 +1526,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 /* --- home --- */
 .page-home .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  /* 200px min lets all five nav cards sit on one row at desktop width (no
+     orphaned fifth card), while still wrapping cleanly on narrow screens. */
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 12px;
   margin-bottom: 32px;
 }
@@ -1494,6 +1560,12 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .proj-counts { font-family: var(--mono); font-size: 12px; color: var(--muted-3); white-space: nowrap; text-align: right; }
 .page-home .api-hint { margin-top: 28px; color: var(--muted-2); font-size: 12px; }
 .page-home .api-hint code { color: var(--muted-3); }
+/* On narrow screens the nowrap counts column crowds the wrapping path; stack the
+   counts beneath the id/path so neither is squeezed or overlapped. */
+@media (max-width: 560px) {
+  .page-home .proj { grid-template-columns: 1fr; gap: 6px; }
+  .page-home .proj-counts { text-align: left; }
+}
 
 /* --- home / schedules shared group + day section titles --- */
 .page-home .group,
@@ -1750,7 +1822,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-family: var(--mono); font-size: 11px; color: var(--cyan);
   letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 10px;
 }
-.page-agent-detail h1 { margin: 0 0 8px; font-size: 30px; line-height: 1.1; letter-spacing: -0.01em; }
+.page-agent-detail h1 { margin: 0 0 8px; font-family: var(--sans); font-size: 30px; line-height: 1.1; letter-spacing: -0.01em; font-weight: 500; }
 .page-agent-detail .lede { margin: 0; color: var(--muted-3); font-family: var(--sans); font-size: 15px; max-width: 62ch; }
 .page-agent-detail .lede .muted { color: var(--muted-2); font-style: italic; }
 .page-agent-detail .hero-path { margin-top: 12px; }
@@ -1961,6 +2033,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .page-agents .tree-row > span:nth-child(2) { display: none; }
   .page-agents .pin-list { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 10px; }
   .page-agents .pin-row > span:nth-child(2) { display: none; }
+  /* Touch targets: bump the run + overflow controls toward the 44px guideline
+     on small (touch) screens, where the dense desktop 26px is hard to hit. */
+  .page-agents .run-btn, .page-agents .menu-btn { width: 36px; height: 36px; }
+  .page-agents .run-btn svg { width: 13px; height: 13px; }
+  .page-agents .menu-btn svg { width: 18px; height: 18px; }
 }
 /* Parse-error badge + popover. A <details> disclosure anchors the panel
    directly under the badge. */
@@ -2145,8 +2222,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 10.5px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.04em;
   border: 1px solid var(--line-strong);
   background: var(--panel);
   color: var(--muted-3);
@@ -2264,4 +2340,38 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
    (14px above) is untouched. */
 @media (max-width: 760px) {
   .page-agents .agents-filter input { font-size: 16px; }
+}
+
+/* --- reduced motion ---------------------------------------------------- */
+/* Calm the page for users who ask for less motion: drop the decorative status
+   pulse, the "working" text pulse, and the animated dots; keep loading spinners
+   but slow them so a load is still legible without spinning hard. */
+@media (prefers-reduced-motion: reduce) {
+  .page-approval-detail .status::before,
+  .log-working .log-title,
+  .log-dots::after { animation: none !important; }
+  .log-spinner,
+  .page-agents .run-btn-spinner { animation-duration: 1.6s; }
+}
+
+/* --- keyboard focus ---------------------------------------------------- */
+/* Consistent visible focus ring for the interactive surfaces that were missing
+   one (links/cards/rows/selects), so keyboard and switch users can see where
+   they are. Components with bespoke focus styles keep theirs. */
+.topbar .nav-item:focus-visible,
+.theme-toggle button:focus-visible,
+.page-home .card:focus-visible,
+.page-home a.proj:focus-visible,
+.page-sessions a.row:focus-visible,
+.page-approvals a.row:focus-visible,
+.page-agents a.tree-label:focus-visible,
+.page-agents .pin-name:focus-visible,
+.page-agent-detail .run-row:focus-visible,
+.page-agent-detail .back:focus-visible,
+.page-sessions .filters select:focus-visible,
+.page-sessions .filter-clear:focus-visible,
+.store-table .sort-header:focus-visible {
+  outline: 2px solid var(--cyan-border);
+  outline-offset: 2px;
+  border-radius: 8px;
 }

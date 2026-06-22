@@ -21,8 +21,8 @@ export function agentDetailHref(projectId: string, runPath: string): string {
   return `/agents/${encodeURIComponent(projectId)}/${segs}`;
 }
 
-function Chip(props: { children: ComponentChildren; tone?: 'cyan' | 'amber' | 'muted' }) {
-  return <span class={`cap-chip${props.tone ? ` ${props.tone}` : ''}`}>{props.children}</span>;
+function Chip(props: { children: ComponentChildren; tone?: 'cyan' | 'amber' | 'muted'; title?: string }) {
+  return <span class={`cap-chip${props.tone ? ` ${props.tone}` : ''}`} {...(props.title ? { title: props.title } : {})}>{props.children}</span>;
 }
 
 /** One labeled capability row; renders nothing when it has no chips. */
@@ -36,7 +36,7 @@ function CapRow(props: { label: string; chips: VNode[] }) {
   );
 }
 
-function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: string | undefined }) {
+function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: string | undefined; scheduleHuman: string | undefined }) {
   const { meta } = props;
   const skillChips: VNode[] = [];
   if (meta.skills.explicit.length > 0) {
@@ -51,7 +51,7 @@ function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: s
   if (meta.awaitHuman) toolChips.push(<Chip key="await" tone="amber">await_human</Chip>);
 
   const runtimeChips: VNode[] = [<Chip key="model" tone="cyan">{props.model}</Chip>];
-  if (props.schedule) runtimeChips.push(<Chip key="sched">{props.schedule}</Chip>);
+  if (props.schedule) runtimeChips.push(<Chip key="sched" title={props.schedule}>{props.scheduleHuman ?? props.schedule}</Chip>);
   if (typeof meta.timeout === 'number') runtimeChips.push(<Chip key="to">timeout {meta.timeout}s</Chip>);
   if (typeof meta.maxSteps === 'number') runtimeChips.push(<Chip key="ms">{meta.maxSteps} steps</Chip>);
   if (meta.version) runtimeChips.push(<Chip key="v">v{meta.version}</Chip>);
@@ -215,7 +215,7 @@ export default function AgentDetail() {
               </div>
             </header>
 
-            <Capabilities meta={data.meta} model={data.model} schedule={data.schedule} />
+            <Capabilities meta={data.meta} model={data.model} schedule={data.schedule} scheduleHuman={data.scheduleHuman} />
 
             <SourcePanel source={data.source} runPath={data.runPath} project={data.projectId} path={data.path} />
 

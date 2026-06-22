@@ -81,7 +81,7 @@ export function StoreTable<Row>(props: {
         {sorted.map((row) => (
           <tr key={props.rowKey(row)} {...(props.rowProps?.(row) ?? {})}>
             {props.columns.map((column) => (
-              <td key={column.key}>{column.render(row)}</td>
+              <td key={column.key} data-label={column.label}>{column.render(row)}</td>
             ))}
           </tr>
         ))}

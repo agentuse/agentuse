@@ -124,7 +124,7 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
           {agent.schedule && (
             <div class="menu-meta">
               <span class="menu-meta-label">Schedule</span>
-              <span class="chip status">{agent.schedule}</span>
+              <span class="chip status" title={agent.schedule}>{agent.scheduleHuman ?? agent.schedule}</span>
             </div>
           )}
           <div class="menu-sep" />
@@ -236,7 +236,7 @@ function walk(node: TreeNode, levels: boolean[], rows: VNode[], pins: PinApi): v
             {pinned && <span class="tree-pin" title="Pinned" aria-label="Pinned"><PinIcon filled /></span>}
             <a class="tree-label" href={agentDetailHref(a.projectId, a.runPath)}>{child.name}</a>
           </span>
-          <span>{a.schedule ? <span class="chip status">{a.schedule}</span> : <span class="muted">—</span>}</span>
+          <span>{a.schedule ? <span class="chip status" title={a.schedule}>{a.scheduleHuman ?? a.schedule}</span> : <span class="muted">—</span>}</span>
           <span class="tree-run"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>
           <span class="tree-menu"><AgentMenu agent={a} pinned={pinned} onTogglePin={() => pins.toggle(a)} /></span>
         </div>
@@ -268,7 +268,7 @@ function PinnedRow(props: { agent: AgentRow; pins: PinApi }) {
         <a class="pin-name" href={agentDetailHref(a.projectId, a.runPath)}>{a.name}</a>
         <span class="pin-loc">{a.projectId} / {locLabel}</span>
       </span>
-      <span>{a.schedule ? <span class="chip status">{a.schedule}</span> : <span class="muted">—</span>}</span>
+      <span>{a.schedule ? <span class="chip status" title={a.schedule}>{a.scheduleHuman ?? a.schedule}</span> : <span class="muted">—</span>}</span>
       <span class="tree-run"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>
       <span class="tree-menu"><AgentMenu agent={a} pinned onTogglePin={() => props.pins.toggle(a)} /></span>
     </div>

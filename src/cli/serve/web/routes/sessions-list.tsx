@@ -6,7 +6,7 @@ import { useFetch } from '../hooks/use-fetch';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
-import { formatApprovalTime } from '../lib/format';
+import { formatApprovalTime, formatRelativeTime, errorText } from '../lib/format';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
 const STATUSES = ['', 'running', 'suspended', 'completed', 'error'];
@@ -28,10 +28,10 @@ function SessionRowView(props: { row: SessionRow; multiProject: boolean }) {
         {multiProject && <span class="chip project">{row.project}</span>}
         <span class="chip agent">{row.agent.name || row.agent.id}</span>
         <span class="chip trigger">{row.trigger}</span>
-        <span class="row-time">{formatApprovalTime(row.createdAt)}</span>
+        <span class="row-time" title={formatApprovalTime(row.createdAt)}>{formatRelativeTime(row.createdAt)}</span>
       </div>
       <div class="row-title">{title}</div>
-      {row.errorMessage && <div class="row-decision">{row.errorMessage}</div>}
+      {row.errorMessage && <div class="row-decision">{errorText(row.errorMessage)}</div>}
       <div class="row-meta"><code>{row.sessionId}</code></div>
     </a>
   );

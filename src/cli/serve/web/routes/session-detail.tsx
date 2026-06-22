@@ -509,7 +509,11 @@ export default function SessionDetail() {
   }
 
   const agentLabel = approval.agent.name || approval.agent.id;
-  const agentHeadline = approval.agent.description || agentLabel;
+  // The name is the headline; the description (often a full sentence with
+  // implementation notes) reads as a subhead rather than a giant multi-line H1.
+  const agentDescription = approval.agent.description && approval.agent.description !== agentLabel
+    ? approval.agent.description
+    : undefined;
   const busy = status === 'resuming' || status === 'continuing';
   const tokenUsage = headerTokenUsage(approval);
   // Resolved theme currently applied to the document (set by the theme toggle).
@@ -589,7 +593,8 @@ export default function SessionDetail() {
         </div>
         <header>
           <div class="eyebrow">{eyebrow}</div>
-          <h1>{agentHeadline}</h1>
+          <h1>{agentLabel}</h1>
+          {agentDescription && <p class="agent-tagline">{agentDescription}</p>}
           <p class="prompt">{promptText}</p>
           <div class="meta">
             <div class="cell"><span class="label">session</span><code>{approval.sessionId}</code></div>

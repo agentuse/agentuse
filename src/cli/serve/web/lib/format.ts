@@ -9,6 +9,41 @@ export function formatLogTime(value?: number): string {
   return value ? new Date(value).toLocaleTimeString() : '';
 }
 
+/**
+ * Compact relative time ("3m ago", "2h ago", "5d ago") for list rows; falls back
+ * to a localized date past a week. Pair with `title={formatApprovalTime(value)}`
+ * so the exact timestamp stays available on hover.
+ */
+export function formatRelativeTime(value?: number, now: number = Date.now()): string {
+  if (!value) return 'Unknown';
+  const diff = now - value;
+  if (diff < 0) return formatApprovalTime(value);
+  const sec = Math.round(diff / 1000);
+  if (sec < 45) return 'just now';
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.round(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return new Date(value).toLocaleDateString();
+}
+
+/**
+ * Coerce a possibly-non-string error field to displayable text. Guards against an
+ * object slipping through the API and rendering as the useless "[object Object]".
+ */
+export function errorText(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    const message = (value as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+    try { return JSON.stringify(value); } catch { return String(value); }
+  }
+  return String(value);
+}
+
 export function isJsonLikeContent(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) return false;

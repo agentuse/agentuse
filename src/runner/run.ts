@@ -4,6 +4,7 @@ import type { SessionInfo, SessionManager, SessionTrigger } from '../session';
 import type { AgentCompleteEvent, PluginManager } from '../plugin';
 import { AuthenticationError } from '../models';
 import { logger, runWithLogSink } from '../utils/logger';
+import { toErrorMessage } from '../utils/error-message';
 import { extractLearnings } from '../learning/index.js';
 import { recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, gatherApprovalContext, type SessionLogSink } from './session-helper';
 import { usageToAssistantTokens, addAssistantTokens, type AssistantTokens } from '../session/usage';
@@ -448,7 +449,7 @@ export async function runAgent(
         const errorCode = error instanceof AuthenticationError ? 'AUTH_ERROR' :
           (error instanceof Error && error.name === 'AbortError') ? 'TIMEOUT' :
           'EXECUTION_ERROR';
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = toErrorMessage(error);
         const apiDetail = extractApiErrorDetail(error);
         await sessionManager.setSessionError(sessionID, agentId, {
           code: errorCode,

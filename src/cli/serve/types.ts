@@ -250,6 +250,8 @@ export interface AgentSummary {
   model: string;
   /** Raw schedule expression when the agent declares one. */
   schedule?: string;
+  /** Human-readable form of `schedule` (e.g. "Every 5 minutes"). */
+  scheduleHuman?: string;
 }
 
 export interface Project {
