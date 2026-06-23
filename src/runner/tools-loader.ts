@@ -198,7 +198,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   // merged outside this point (see preparation.ts), so they stay real while each
   // sub-agent's own leaf tools get mocked via its own loadAgentTools call.
   const mergedTools: Record<string, Tool> = Object.assign({}, ...toolSources);
-  const all = isMockMode() ? wrapToolsWithLLMMock(mergedTools, agent) : mergedTools;
+  const all = isMockMode() ? wrapToolsWithLLMMock(mergedTools) : mergedTools;
 
   return {
     mcpTools,

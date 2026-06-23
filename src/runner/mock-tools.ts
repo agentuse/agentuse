@@ -1,5 +1,4 @@
 import type { Tool } from 'ai';
-import type { ParsedAgent } from '../parser';
 import { completeText } from '../complete-text';
 import { logger } from '../utils/logger';
 
@@ -26,9 +25,24 @@ export function isMockMode(): boolean {
   return envFlag(process.env.AGENTUSE_MOCK_MODE);
 }
 
-/** Model used to generate mock outputs: `AGENTUSE_MOCK_MODEL` override, else the agent's model. */
-export function resolveMockModel(agentModel: string): string {
-  return process.env.AGENTUSE_MOCK_MODEL || agentModel;
+/**
+ * Model used to generate mock outputs, from the required `--mock-model` /
+ * `AGENTUSE_MOCK_MODEL`. The CLI validates this up front; this runtime guard
+ * covers any env-only path (e.g. a subprocess that set `AGENTUSE_MOCK_MODE`
+ * directly). We deliberately do NOT fall back to the agent's own model: that
+ * ran mock onto the agent's premium, rate-limited token and produced the opaque
+ * 429s this mode is meant to avoid. The user must name a model they can reach.
+ */
+export function resolveMockModel(): string {
+  const model = process.env.AGENTUSE_MOCK_MODEL;
+  if (!model) {
+    throw new Error(
+      'Mock mode is active but no mock model is set. Pass --mock-model <model> (or set AGENTUSE_MOCK_MODEL). ' +
+        'Mock generates every tool result via this model, so use the lowest-end model you can reach ' +
+        '(e.g. anthropic:claude-haiku-4-5 or openai:gpt-5.4-nano).',
+    );
+  }
+  return model;
 }
 
 /**
@@ -90,11 +104,10 @@ function parseMockResult(text: string): unknown {
  */
 export function wrapToolsWithLLMMock(
   tools: Record<string, Tool>,
-  agent: ParsedAgent,
   opts?: { exclude?: Set<string> },
 ): Record<string, Tool> {
   const exclude = opts?.exclude ?? mockExclusions();
-  const mockModel = resolveMockModel(agent.config.model);
+  const mockModel = resolveMockModel();
 
   return Object.fromEntries(
     Object.entries(tools).map(([name, tool]) => {

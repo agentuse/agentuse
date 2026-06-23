@@ -457,8 +457,10 @@ export async function createSubAgentTool(
           try {
             await subagentSessionManager.setSessionError(subagentSessionID, agentId, {
               code: 'EXECUTION_ERROR',
+              // Spread first so the explicit top-level message (which carries any
+              // retry-wrapper context) wins over the unwrapped provider message.
+              ...extractApiErrorDetail(error),
               message: errorMsg,
-              ...extractApiErrorDetail(error)
             });
           } catch {
             // Ignore session update errors
