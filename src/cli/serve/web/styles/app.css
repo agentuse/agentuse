@@ -2321,6 +2321,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   gap: 8px;
   align-items: flex-start;
 }
+/* Saved-artifact tile sits inline in the log row (outside .log-content), so it
+   carries its own spacing from the title above. */
+.page-approval-detail .artifact-tiles.saved-artifact {
+  margin: 6px 0 4px;
+}
 .page-approval-detail .artifact-open {
   display: inline-flex;
   align-items: center;

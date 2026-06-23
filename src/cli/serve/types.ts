@@ -230,6 +230,14 @@ export interface ApprovalLogDetails {
     bytes?: number;
     originalChars?: number;
   };
+  /** A deliverable saved by `tools__artifact_save`, rendered as a viewable tile linking to the artifact. */
+  savedArtifact?: {
+    url: string;
+    /** Project-root-relative path, viewable via /sessions/:id/artifacts/*. */
+    path: string;
+    title?: string;
+    group?: string;
+  };
   decisionStatus?: string;
   decisionComment?: string;
   decisionReviewer?: string;

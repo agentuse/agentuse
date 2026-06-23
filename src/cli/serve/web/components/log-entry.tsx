@@ -86,6 +86,25 @@ function artifactName(artifactPath: string): string {
   return parts[parts.length - 1] || artifactPath;
 }
 
+/** Viewable tile for a deliverable saved via `tools__artifact_save`. Shown inline
+ *  (not behind the expand toggle) since the link is the whole point of the call. */
+function SavedArtifactCard(props: { artifact: NonNullable<ApprovalLogDetails['savedArtifact']>; sessionId: string; token: string | undefined }) {
+  const { artifact } = props;
+  return (
+    <div class="artifact-tiles saved-artifact">
+      <a
+        class="artifact-open"
+        href={artifactHref(props.sessionId, artifact.path, props.token)}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <span class="artifact-open-name">{artifact.title || artifactName(artifact.path)}</span>
+        <span class="artifact-open-hint">open</span>
+      </a>
+    </div>
+  );
+}
+
 function ApprovalDetailCard(props: { details: ApprovalLogDetails; sessionId: string; token: string | undefined }) {
   const details = props.details;
   const artifactPaths = details.artifactPaths ?? [];
@@ -303,7 +322,9 @@ function LogEntryImpl(props: LogEntryProps) {
   const { entry } = props;
   const warnings = props.warnings ?? [];
   const isApprovalEntry = isApprovalDetails(entry);
-  const expandable = entry.type === 'tool' && !isApprovalEntry;
+  const savedArtifact = entry.details?.savedArtifact;
+  // A saved-artifact row shows its tile inline; there's nothing to expand into.
+  const expandable = entry.type === 'tool' && !isApprovalEntry && !savedArtifact;
   const expanded = !expandable || entry.status === 'running' || props.expanded;
   const storeEvent = storeToolEvent(entry, props.projectId);
   const spinning = entry.status === 'streaming' || entry.status === 'running';
@@ -356,6 +377,7 @@ function LogEntryImpl(props: LogEntryProps) {
             it visible even when the row is collapsed; only the tool input/output
             below stays behind the expand toggle. */}
         {entry.subagentSession && <SubagentCard session={entry.subagentSession} />}
+        {savedArtifact && <SavedArtifactCard artifact={savedArtifact} sessionId={props.sessionId} token={props.token} />}
         <div class="log-content">
           {storeEvent && <StoreEventBlock event={storeEvent} />}
           {entry.details && (isApprovalEntry

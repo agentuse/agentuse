@@ -971,6 +971,13 @@ async function runInternalWorker() {
       bytes?: number;
       originalChars?: number;
     };
+    /** A deliverable saved by `tools__artifact_save`, rendered as a viewable tile. */
+    savedArtifact?: {
+      url: string;
+      path: string;
+      title?: string;
+      group?: string;
+    };
     decisionStatus?: string;
     decisionComment?: string;
     decisionReviewer?: string;
@@ -1184,7 +1191,7 @@ async function runInternalWorker() {
       if (part?.type === 'tool') {
         const state = part.state ?? {};
         const isAwaitHuman = part.tool === 'await_human';
-        const details = isAwaitHuman ? buildAwaitHumanDetails(state) : buildToolDetails(state);
+        const details = isAwaitHuman ? buildAwaitHumanDetails(state) : buildToolDetails(state, part.tool);
         const message = details
           ? undefined
           : state.status === 'completed'
@@ -1326,8 +1333,44 @@ async function runInternalWorker() {
     return toolOutputArtifactFromText(outputText);
   }
 
-  function buildToolDetails(state: any): ApprovalLogDetails | undefined {
+  /**
+   * `tools__artifact_save` returns `{ success, path, group, url }` and is called
+   * with a `title`. Surface that as a viewable tile instead of dumping the raw
+   * (often huge) file content and JSON result into the log.
+   */
+  function savedArtifactFromState(state: any): ApprovalLogDetails['savedArtifact'] | undefined {
+    const output = valueAsRecord(state?.output);
+    const outputText = typeof state?.output === 'string'
+      ? state.output
+      : typeof output.output === 'string'
+        ? output.output
+        : undefined;
+    if (!outputText) return undefined;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = valueAsRecord(JSON.parse(outputText));
+    } catch {
+      return undefined;
+    }
+    if (parsed.success !== true) return undefined;
+    const url = safeHttpUrl(parsed.url);
+    const path = typeof parsed.path === 'string' ? parsed.path.trim() : '';
+    if (!url || !path) return undefined;
+    const input = valueAsRecord(state?.input);
+    const title = typeof input.title === 'string' && input.title.trim() ? input.title.trim() : undefined;
+    const group = typeof parsed.group === 'string' && parsed.group ? parsed.group : undefined;
+    return { url, path, ...(title ? { title } : {}), ...(group ? { group } : {}) };
+  }
+
+  function buildToolDetails(state: any, tool?: string): ApprovalLogDetails | undefined {
     const fields: ApprovalLogDetails = {};
+
+    if (state?.status === 'completed' && tool === 'tools__artifact_save') {
+      const saved = savedArtifactFromState(state);
+      // The tile is the whole story for a saved artifact; skip the input/output dump.
+      if (saved) return { savedArtifact: saved };
+    }
+
     const input = formatApprovalLogValue(state?.input);
     if (input !== undefined) fields.input = input;
 
