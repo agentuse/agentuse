@@ -18,6 +18,7 @@ import { createToolsSnapshot } from './runner/tool-snapshot';
 import { SuspendSignal, isSuspendSignal } from './runner/suspend';
 import { extractApiErrorDetail } from './runner/api-error';
 import { usageToAssistantTokens } from './session/usage';
+import { resolveMaxSteps } from './utils/config';
 
 // Constants
 const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
@@ -66,7 +67,8 @@ export function getMaxSubAgentDepth(): number {
 /**
  * Create a tool that runs another agent as a sub-agent
  * @param agentPath Path to the agent file (.agentuse)
- * @param maxSteps Maximum steps the sub-agent can take
+ * @param maxSteps Step budget from the parent's subagent entry. When omitted, falls back to the
+ *   leaf's own `maxSteps:` and then DEFAULT_MAX_STEPS (mirrors the standalone resolveMaxSteps chain)
  * @param basePath Optional base path for resolving relative paths
  * @param modelOverride Optional model override from parent agent
  * @param depth Current nesting depth (0 = main agent)
@@ -79,7 +81,7 @@ export function getMaxSubAgentDepth(): number {
  */
 export async function createSubAgentTool(
   agentPath: string,
-  maxSteps: number = 50,
+  maxSteps?: number,
   basePath?: string,
   modelOverride?: string,
   depth: number = 0,
@@ -102,6 +104,13 @@ export async function createSubAgentTool(
 
   // Parse the agent file
   const agent = await parseAgent(resolvedPath);
+
+  // Resolve the effective step budget with the same precedence as a standalone run:
+  // parent's subagent-entry maxSteps > the leaf's own `maxSteps:` > DEFAULT_MAX_STEPS (100).
+  // Previously this hard-defaulted to 50 and never consulted agent.config.maxSteps, so a
+  // delegated leaf silently ran at half the standalone default and its declared maxSteps
+  // was dead config (it only reached session display, never execution).
+  const effectiveMaxSteps = resolveMaxSteps(maxSteps, agent.config.maxSteps);
 
   // Approval gates in a delegated sub-agent require the durable session substrate
   // (parent session + manager + project context) so the child can suspend and be
@@ -248,7 +257,7 @@ export async function createSubAgentTool(
                 version: process.env.npm_package_version || 'unknown',
                 config: {
                   ...(agent.config.timeout !== undefined && { timeout: agent.config.timeout }),
-                  ...(agent.config.maxSteps !== undefined && { maxSteps: agent.config.maxSteps }),
+                  maxSteps: effectiveMaxSteps,
                   ...(agent.config.mcpServers && { mcpServers: Object.keys(agent.config.mcpServers) }),
                   ...(agent.config.subagents && { subagents: agent.config.subagents.map(s => ({
                     path: s.path,
@@ -330,7 +339,7 @@ export async function createSubAgentTool(
                 userMessage,
                 ...(cacheableUserMessage !== undefined && { cacheableUserMessage }),
                 systemMessages,
-                maxSteps,
+                maxSteps: effectiveMaxSteps,
                 ...(abortSignal && { abortSignal }),  // Pass parent's abort signal
                 subAgentNames: new Set(Object.keys(nestedSubAgentTools)),  // Track nested sub-agent names for logging
                 ...(subagentSessionManager && { sessionManager: subagentSessionManager }),
