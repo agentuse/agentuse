@@ -9,76 +9,41 @@ AgentUse runs AI agents from natural-language markdown files. Agents live in
 `.agentuse` files and can use tools, skills, subagents, approval gates,
 stores, sessions, schedules, and the AgentUse HTTP server.
 
-## Start Here
+## Skill Catalog
 
-Use builtin skills for official AgentUse instructions that match the installed
-CLI version:
-
-```bash
-agentuse skills
-agentuse skills list
-agentuse skills get core
-agentuse skills get core --full
-```
-
-Use installed skills only when you need to inspect project or user-provided
-skills:
+Builtin skills carry official instructions matched to the installed CLI
+version. Installed skills are the project/user skills discovered from
+`.agentuse/skills`, `~/.agentuse/skills`, `.claude/skills`, and
+`~/.claude/skills`.
 
 ```bash
-agentuse skills installed
-agentuse skills installed list --json
-agentuse skills installed get <name>
-agentuse skills installed path <name>
+agentuse skills [list]                  # builtin catalog
+agentuse skills get <name> [--full]     # builtin skill content
+agentuse skills installed [list|get|path] <name>   # project/user skills
 ```
 
-## Common Workflows
+## Load A Specialized Builtin Skill
+
+- `agentuse skills get runner` — running, listing, sessions, serve, schedules.
+- `agentuse skills get creator` — authoring, improving, reviewing `.agentuse`.
+
+## Entrypoints
 
 ```bash
-agentuse agents
-agentuse agents --verbose
-agentuse agents --json
-
-agentuse run <agent-file>
-agentuse run <agent-file> "additional instructions"
-agentuse run <agent-file> --json
-
-agentuse sessions
-agentuse sessions show <session-id> --full
-
-agentuse serve
-agentuse serve ps
+agentuse agents          # what can run in this project
+agentuse run <file>      # run an agent (append "text" for one-off instructions)
+agentuse sessions        # inspect prior runs
+agentuse serve           # daemon for webhooks, approvals, channels, schedules
 ```
 
-## When To Load Another Builtin Skill
-
-- Running, listing, serving, scheduling, or inspecting agents:
-  `agentuse skills get runner`
-- Creating, improving, or reviewing `.agentuse` files:
-  `agentuse skills get creator`
-
-Load specialized skills when the task needs more detail than this overview.
-
-## Operating Guidance
-
-- Use `agentuse agents` first when the user asks what agents are available in
-  the current project.
-- Use `agentuse run <agent-file>` when the user names a specific `.agentuse`
-  file or path.
-- Use `agentuse sessions` to inspect prior runs and debug what happened.
-- Use `agentuse skills` for official AgentUse builtin skills.
-- Use `agentuse skills installed` for local project/user skills discovered
-  from `.agentuse/skills`, `~/.agentuse/skills`, `.claude/skills`, and
-  `~/.claude/skills`.
+See the `runner` skill for the full command set and flags.
 
 ## Schedules
 
-Agents with a `schedule:` field only run while `agentuse serve` is running for
-a project watched by the daemon. Before relying on a scheduled agent, confirm
-the project is registered in `~/.agentuse/config.json` and that `agentuse serve`
-is running.
-
-Use one-shot scheduling outside YAML schedules. YAML `schedule:` is for
-recurring jobs.
+A `schedule:` agent only runs while `agentuse serve` is running for a project
+watched by the daemon. Before relying on one, confirm the project is registered
+in `~/.agentuse/config.json` and the daemon is up (`agentuse serve ps`). YAML
+`schedule:` is for recurring jobs; schedule one-off runs outside YAML.
 
 ## References
 

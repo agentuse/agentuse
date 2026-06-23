@@ -5,71 +5,51 @@ description: Run and manage AgentUse agents from the CLI. Use when you need to l
 
 # AgentUse Runner
 
-Use `agentuse` to run `.agentuse` files, inspect their execution state, and
-operate the HTTP server used for webhooks, approvals, and schedules.
+Run `.agentuse` files, inspect their execution state, and operate the HTTP
+server used for webhooks, approvals, channels, and schedules.
 
-## Common Commands
+## Commands
 
 ```bash
-agentuse agents
-agentuse agents --verbose
-agentuse agents --json
+agentuse agents [--verbose|--json]
 
-agentuse run <agent-file>
-agentuse run <agent-file> "additional instructions"
-agentuse run <agent-file> --model <provider:model>
-agentuse run <agent-file> --timeout <seconds>
-agentuse run <agent-file> --json
-agentuse run <agent-file> --no-tty
-agentuse run <agent-file> -C /path/to/project
+agentuse run <file>                  # append "text" for one-off instructions
+agentuse run <file> --model <provider:model>
+agentuse run <file> --timeout <seconds>
+agentuse run <file> --json --no-tty -C /path/to/project
 
-agentuse sessions
-agentuse sessions -n 20
+agentuse sessions [-n 20|--json]
 agentuse sessions show <session-id> --full
-agentuse sessions --json
 
-agentuse serve
-agentuse serve -p 8080
-agentuse serve ps
-agentuse serve agents
-agentuse serve schedules
+agentuse serve [-p 8080]
+agentuse serve ps                    # daemon status + counts
+agentuse serve agents                # agents the daemon actually loaded (live)
+agentuse serve schedules             # schedules the daemon actually loaded (live)
+
+agentuse skills installed            # only when inspecting project/user skills
 ```
 
-## Operating Guidance
+`serve agents` / `serve schedules` report live loaded data, not the cached
+`serve ps` counts.
 
-- Use `agentuse agents` first when the user asks what can run in the current
-  project.
-- Use `agentuse run <agent-file>` when the user names a specific `.agentuse`
-  file or path.
-- Append a prompt after the file path for temporary instructions without
-  editing the agent.
-- Use `agentuse sessions` to inspect prior runs and debug failures.
-- Use `agentuse serve` for webhooks, approval review pages, Slack channels,
-  and scheduled agents.
-- Use `agentuse serve agents` and `agentuse serve schedules` to see what a
-  running daemon actually loaded (live data, not just the `serve ps` counts).
-  Both also serve `/agents` and `/schedules` pages in the serve web UI.
-- The serve web UI also has `/sessions` (every run, filter by `?agent=` /
-  `?trigger=`) and the per-session page `/sessions/<id>`, which is both the run
-  log and the approve/reject/continue surface when a run is suspended on an
-  approval gate. `/approvals` is the filtered list of sessions awaiting review.
-- Use `agentuse skills installed` only when inspecting project or user-installed
-  skills.
+## Serve Web UI
+
+- `/agents`, `/schedules` — what the daemon loaded.
+- `/sessions` — every run; filter with `?agent=` / `?trigger=`.
+- `/sessions/<id>` — run log, and the approve/reject/continue surface when a
+  run is suspended on an approval gate.
+- `/approvals` — sessions awaiting review.
 
 ## Scheduled Agents
 
-Agents with a `schedule:` field only run while `agentuse serve` is running for
-a project watched by the daemon.
+A `schedule:` agent only runs while `agentuse serve` is running for a watched
+project. Before relying on one:
 
-Before relying on a scheduled agent:
-
-1. Confirm the project is registered in `~/.agentuse/config.json` under
-   `serve.projects`.
-2. Confirm the daemon is running with `agentuse serve ps`.
+1. Confirm the project is in `~/.agentuse/config.json` under `serve.projects`.
+2. Confirm the daemon is up (`agentuse serve ps`).
 3. Use a process manager for long-running schedules.
 
-Use one-shot scheduling outside YAML schedules. YAML `schedule:` is for
-recurring jobs.
+YAML `schedule:` is for recurring jobs; schedule one-off runs outside YAML.
 
 ## References
 
