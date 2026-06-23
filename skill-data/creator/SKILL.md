@@ -83,9 +83,52 @@ delegation brief for a trusted teammate:
 - enough context to finish unattended
 - external status or delivery through tools when needed
 
+### Write lean: hard-code invariants, delegate judgment
+
+The prompt is a brief, not a manual. It is re-sent on every step, so length
+is a recurring token cost, and a long prompt buries the few rules that
+actually matter. Pin down only what must be exact:
+
+- safety boundaries (read-only, never call X, which store to write),
+- exact commands, paths, and flags the model cannot guess,
+- the output schema and where it goes,
+- ordering that changes the result.
+
+For everything else - how to investigate, how to phrase, how to handle the
+long tail of edge cases - state the goal and the constraint, then let the
+model decide. Spelling out every branch makes the agent brittle (it breaks on
+the case you did not enumerate) and bloats the prompt.
+
+Smell tests that you are over-specifying: the same rule restated in three
+places, a paragraph justifying *why* a step exists, an enumerated decision
+tree the model could derive from one sentence of intent. Cut them - aim for
+what a competent teammate needs, not a spec.
+
 ## Gotchas
 
 Recurring mistakes to avoid when authoring or reviewing `.agentuse` files.
+
+### Reading large files burns context: there is no builtin grep or glob
+
+AgentUse exposes only `filesystem_read` / `filesystem_write` /
+`filesystem_edit` - there is **no builtin grep, glob, or content-search
+tool**. The only way to search inside files is `bash` (`grep` / `rg`) or a
+script (`python3` / `jq`). And `filesystem_read` returns the *whole* file
+unless you pass `limit` / `offset`.
+
+So an agent told "read `registry.yaml`" or "read the log" will slurp the
+entire file into context, often re-reading it across steps - the fastest way
+to blow the window on a big or repeatedly-scanned file. When the agent only
+needs a few fields out of a large or structured file:
+
+- grant a search/filter command (`grep '<pattern>' <path>/*`, `rg`, or a
+  `python3` / `jq` one-liner that prints only the matching rows) and tell the
+  agent to use it instead of reading the file whole;
+- or read with `limit` / `offset`, and read a given file once.
+
+Match the `bash` allowlist to this. A read-heavy agent granted only `cat` and
+`ls` cannot search, so it falls back to whole-file reads - the exact pattern
+that runs up context.
 
 ### Approval gates are async; do not pad `timeout:` for human review
 
@@ -120,6 +163,21 @@ and let the skill own its script paths and eval patterns. Copying the
 skill's `cat .../scripts/foo.js | agent-browser eval ...` into the agent
 body causes drift the moment the skill reorganises files. Treat the skill
 as the source of truth.
+
+The line to draw is *internals vs. knowledge*, not "never duplicate":
+
+- **Always** mention how to invoke the skill by name (`/linkedin`).
+- **Never** inline its drift-prone internals - exact script paths, eval
+  invocations, file layout. Those break when the skill reorganises.
+- **Sometimes do** repeat the durable context and instructions the skill
+  carries, inline in the prompt, when it makes the agent more reliable.
+  An agent that restates the few steps and rules it depends on still runs
+  correctly if the skill is not loaded that turn; one that only names the
+  skill stalls when it does not load. The cost is the usual prompt-length
+  tradeoff, so repeat the stable guidance the run actually hinges on, not
+  the whole skill.
+
+Rule of thumb: reference the parts that change, repeat the parts that do not.
 
 ### Skill scripts read via bash need explicit filesystem + bash allowlist entries
 
