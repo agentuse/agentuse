@@ -764,8 +764,27 @@ Error: ${errorMessage}`);
             return;
           }
 
-          // Pass tool errors as structured results to let AI decide on retry
-          const errorMessage = chunkError?.message || chunkError || 'Unknown error';
+          // Pass tool errors as structured results to let AI decide on retry.
+          // Unwrap retry/cause wrappers first: a tool whose execute makes its
+          // own LLM call (e.g. `--mock`) surfaces an AI SDK RetryError whose
+          // message collapses to "Failed after 3 attempts. Last error: Error",
+          // hiding the provider's real status + reason. Recover them so the
+          // session log is diagnosable.
+          const apiDetail = extractApiErrorDetail(chunkError);
+          const baseMessage =
+            (typeof chunkError?.message === 'string' && chunkError.message) ||
+            (typeof chunkError === 'string' ? chunkError : '') ||
+            apiDetail?.message ||
+            'Unknown error';
+          const errorMessage = apiDetail
+            ? [
+                apiDetail.statusCode !== undefined ? `[${apiDetail.statusCode}]` : '',
+                baseMessage,
+                apiDetail.detail ? `:: ${apiDetail.detail}` : '',
+              ]
+                .filter(Boolean)
+                .join(' ')
+            : baseMessage;
           yield {
             type: 'tool-result',  // Treat as result so AI sees it
             toolCallId,  // Include toolCallId so session storage can match and update the pending tool call
