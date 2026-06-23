@@ -160,7 +160,7 @@ agentuse run agent.agentuse --mock --mock-model openai:gpt-5.4-nano
   Pick one in a provider you're authenticated for. (Model IDs drift over time; the current low-end tier is the rule, not these exact names.)
 </Tip>
 
-- **`--mock-model` is required.** Mock fires an LLM call for *every* tool result, so it must run on a model you can reach. It is deliberately **not** defaulted to the agent's own model: that ran mock onto the agent's premium, rate-limited token and produced opaque `429`s. Set it per run, or once via `AGENTUSE_MOCK_MODEL`.
+- **A mock model is required.** Mock fires an LLM call for *every* tool result, so it must run on a model you can reach. It is deliberately **not** defaulted to the agent's own model: that ran mock onto the agent's premium, rate-limited token and produced opaque `429`s. Provide it per run with `--mock-model`, or set a global default once via `AGENTUSE_MOCK_MODEL` in the shell, `~/.agentuse/.env`, or the [`env` block of `~/.agentuse/config.json`](/reference/configuration-files#global-env-defaults). The flag wins over all of them.
 - **Sub-agents run for real**; their leaf tools are mocked.
 - **The approval gate stays real**: `await_human` still suspends so you can verify the agent pauses for approval. Pass `--mock-approval` to mock it too.
 

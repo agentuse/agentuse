@@ -13,7 +13,7 @@ AgentUse reads configuration from agent files, environment files, global default
 | `.env.local` | Project | Local environment variables loaded before `.env` when present |
 | `.env` | Project | Environment variables for API keys, model providers, MCP servers, and runtime behavior |
 | `--env-file <path>` | Run command | Load a specific environment file for `agentuse run` |
-| `~/.agentuse/config.json` | User | Global `agentuse serve` defaults |
+| `~/.agentuse/config.json` | User | Global `agentuse serve` defaults and an `env` block of variable defaults |
 | `AGENTUSE_CONFIG=/path/to/config.json` | Process | Override the global config file path |
 | `.agentuse/plugins/*.{ts,js}` | Project | Project-local plugins |
 | `~/.agentuse/plugins/*.{ts,js}` | User | User-global plugins |
@@ -125,6 +125,28 @@ CLI flags override config values:
 `AGENTUSE_API_KEY` remains env-only and is not read from config.
 
 See [Webhooks](/guides/webhooks) and [CLI Commands](/reference/cli-commands#agentuse-serve) for serve usage.
+
+## Global env defaults
+
+Alongside `serve`, `~/.agentuse/config.json` accepts an `env` block of environment variable defaults, mirroring the `env` key in Claude Code's `settings.json`. Use it for non-secret defaults you want applied to every run without maintaining a separate `~/.agentuse/.env` file:
+
+```json
+{
+  "env": {
+    "AGENTUSE_MOCK_MODEL": "anthropic:claude-haiku-4-5"
+  }
+}
+```
+
+Values must be strings. The block is applied at startup and **never overrides a variable that is already set**, so the precedence is:
+
+```
+shell env  >  ~/.agentuse/.env  >  config.json "env"
+```
+
+Per-command flags still win over all of these. For example, `--mock-model <model>` overrides `AGENTUSE_MOCK_MODEL` from any source, and `--mock` is satisfied by a mock model coming from the flag, the shell, `~/.agentuse/.env`, or the config `env` block.
+
+Keep secrets (like `AGENTUSE_API_KEY` and provider API keys) in an environment file rather than `config.json`, which is plain non-secret configuration.
 
 ## Plugins
 

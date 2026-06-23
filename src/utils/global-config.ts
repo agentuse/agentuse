@@ -20,6 +20,13 @@ export interface GlobalServeConfig {
 
 export interface GlobalConfig {
   serve?: GlobalServeConfig;
+  /**
+   * Environment variables applied into `process.env` at startup, mirroring the
+   * `env` block in Claude Code's settings.json. Lets non-secret defaults (e.g.
+   * `AGENTUSE_MOCK_MODEL`) live in config.json instead of a separate `.env`.
+   * Applied with override:false, so shell env and `.env` always win.
+   */
+  env?: Record<string, string>;
 }
 
 export function getGlobalConfigPath(): string {
@@ -43,6 +50,39 @@ export function loadGlobalEnv(options: { override?: boolean } = {}): string | un
     quiet: true,
   });
   return envPath;
+}
+
+/**
+ * Apply the config.json `env` block into `process.env`. Like dotenv's
+ * `override:false`, it never clobbers a variable that is already set, so shell
+ * env and `.env` (loaded first) always win. Returns the keys it actually set.
+ * Throws if the config is malformed (callers that load config separately should
+ * pass it in to avoid a second read + throw path).
+ */
+export function applyGlobalConfigEnv(config = loadGlobalConfig()): string[] {
+  const env = config?.env;
+  if (!env) return [];
+  const applied: string[] = [];
+  for (const [key, value] of Object.entries(env)) {
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+      applied.push(key);
+    }
+  }
+  return applied;
+}
+
+/**
+ * Load user-global defaults at startup: the `~/.agentuse/.env` file first, then
+ * the `env` block from `~/.agentuse/config.json`. Neither overrides a variable
+ * already present in `process.env`, giving precedence shell > .env > config.json.
+ * Propagates on a malformed config.json so the user is told instead of silently
+ * getting defaults.
+ */
+export function loadGlobalDefaults(): { envFile: string | undefined; configEnvKeys: string[] } {
+  const envFile = loadGlobalEnv();
+  const configEnvKeys = applyGlobalConfigEnv();
+  return { envFile, configEnvKeys };
 }
 
 export function expandHome(p: string): string {
@@ -73,6 +113,19 @@ function validate(input: unknown, configPath: string): GlobalConfig {
   }
   const root = input as Record<string, unknown>;
   const out: GlobalConfig = {};
+
+  if (root.env !== undefined) {
+    if (root.env === null || typeof root.env !== 'object' || Array.isArray(root.env)) {
+      fail(configPath, '`env` must be an object');
+    }
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(root.env as Record<string, unknown>)) {
+      if (typeof value !== 'string') fail(configPath, `env.${key} must be a string`);
+      env[key] = value;
+    }
+    out.env = env;
+  }
+
   if (root.serve === undefined) return out;
   if (root.serve === null || typeof root.serve !== 'object' || Array.isArray(root.serve)) {
     fail(configPath, '`serve` must be an object');

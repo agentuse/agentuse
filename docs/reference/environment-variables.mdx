@@ -223,6 +223,8 @@ Mock all tool outputs with the LLM instead of executing them. Mirror the `--mock
   Model that generates mock outputs. **Required** whenever mock mode is on (same as `--mock-model`). Not defaulted to the agent's model on purpose: mock fires an LLM call per tool result, and running that on the agent's premium, rate-limited token caused opaque `429`s.
 
   Use the **lowest-end model you can reach** here: mocking only fabricates a plausible tool result, not real reasoning, so a small fast model is plenty and keeps cost and rate-limit pressure low. Good picks: `anthropic:claude-haiku-4-5`, `openai:gpt-5.4-nano`, or `openrouter:deepseek/deepseek-v4-flash`.
+
+  Set it for one run with `--mock-model`, or as a global default in the shell, `~/.agentuse/.env`, or the [`env` block of `~/.agentuse/config.json`](/reference/configuration-files#global-env-defaults). `--mock-model` overrides whichever source supplies it.
 </ParamField>
 
 <ParamField path="AGENTUSE_MOCK_APPROVAL" type="boolean">

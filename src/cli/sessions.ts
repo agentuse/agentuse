@@ -7,7 +7,7 @@ import type { SessionInfo, Message, Part, SessionStatus } from "../session/types
 import { initStorage } from "../storage";
 import { SessionManager } from "../session";
 import { resolveProjectContext } from "../utils/project";
-import { loadGlobalEnv } from "../utils/global-config";
+import { loadGlobalDefaults } from "../utils/global-config";
 import { logger, LogLevel } from "../utils/logger";
 import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
@@ -1295,7 +1295,7 @@ async function resumeSession(
     fallbackCwd
   );
 
-  loadGlobalEnv();
+  loadGlobalDefaults();
   if (projectContext.envFile) {
     try {
       dotenv.config({ path: projectContext.envFile, quiet: true });

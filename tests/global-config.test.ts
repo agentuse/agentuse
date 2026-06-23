@@ -7,6 +7,7 @@ import {
   getGlobalConfigPath,
   getGlobalEnvPath,
   loadGlobalEnv,
+  applyGlobalConfigEnv,
   expandHome,
 } from '../src/utils/global-config';
 
@@ -197,6 +198,61 @@ describe('loadGlobalConfig', () => {
   it('throws on empty default string', () => {
     const file = makeTmpConfig({ serve: { default: '' } });
     expect(() => loadGlobalConfig(file)).toThrow(/serve.default/);
+  });
+
+  it('loads an env block', () => {
+    const file = makeTmpConfig({
+      env: { AGENTUSE_MOCK_MODEL: 'anthropic:claude-haiku-4-5', FOO: 'bar' },
+    });
+    expect(loadGlobalConfig(file)?.env).toEqual({
+      AGENTUSE_MOCK_MODEL: 'anthropic:claude-haiku-4-5',
+      FOO: 'bar',
+    });
+  });
+
+  it('loads an env-only config (no serve section)', () => {
+    const file = makeTmpConfig({ env: { FOO: 'bar' } });
+    const cfg = loadGlobalConfig(file);
+    expect(cfg?.env).toEqual({ FOO: 'bar' });
+    expect(cfg?.serve).toBeUndefined();
+  });
+
+  it('throws when env is not an object', () => {
+    const file = makeTmpConfig({ env: 'oops' });
+    expect(() => loadGlobalConfig(file)).toThrow(/`env` must be an object/);
+  });
+
+  it('throws when an env value is not a string', () => {
+    const file = makeTmpConfig({ env: { FOO: 123 } });
+    expect(() => loadGlobalConfig(file)).toThrow(/env.FOO must be a string/);
+  });
+});
+
+describe('applyGlobalConfigEnv', () => {
+  const KEY = 'AGENTUSE_TEST_CONFIG_ENV';
+  const original = process.env[KEY];
+  afterEach(() => {
+    if (original === undefined) delete process.env[KEY];
+    else process.env[KEY] = original;
+  });
+
+  it('sets variables not already present and returns applied keys', () => {
+    delete process.env[KEY];
+    const applied = applyGlobalConfigEnv({ env: { [KEY]: 'from-config' } });
+    expect(applied).toEqual([KEY]);
+    expect(process.env[KEY]).toBe('from-config');
+  });
+
+  it('does not override an already-set variable (shell/.env win)', () => {
+    process.env[KEY] = 'already-set';
+    const applied = applyGlobalConfigEnv({ env: { [KEY]: 'from-config' } });
+    expect(applied).toEqual([]);
+    expect(process.env[KEY]).toBe('already-set');
+  });
+
+  it('returns [] when there is no env block', () => {
+    expect(applyGlobalConfigEnv({})).toEqual([]);
+    expect(applyGlobalConfigEnv(null)).toEqual([]);
   });
 });
 

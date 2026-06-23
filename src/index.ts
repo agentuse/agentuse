@@ -41,7 +41,7 @@ import { AuthenticationError } from './models';
 import * as dotenv from 'dotenv';
 import { existsSync } from 'fs';
 import { resolveLocalAgentPath, resolveProjectContext } from './utils/project';
-import { loadGlobalEnv } from './utils/global-config';
+import { loadGlobalDefaults } from './utils/global-config';
 import { resolveTimeout } from './utils/config';
 import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
@@ -204,21 +204,6 @@ program
 
       process.env.AGENTUSE_DEBUG = options.debug ? 'true' : 'false';
 
-      // Mock mode: tool outputs are LLM-generated, no real tools execute. Env so
-      // the runner (loadAgentTools) and recursive sub-agents pick it up.
-      // --mock-model is required: mock fires an LLM call per tool result, and
-      // defaulting onto the agent's own (premium, rate-limited) model is exactly
-      // what produced opaque 429s. Force an explicit, reachable choice instead.
-      if (options.mock && !options.mockModel) {
-        throw new Error(
-          '--mock requires --mock-model <model>. Mock generates every tool result via that model, ' +
-            'so use the lowest-end model you can reach (e.g. anthropic:claude-haiku-4-5 or openai:gpt-5.4-nano).',
-        );
-      }
-      if (options.mock) process.env.AGENTUSE_MOCK_MODE = '1';
-      if (options.mockModel) process.env.AGENTUSE_MOCK_MODEL = options.mockModel;
-      if (options.mockApproval) process.env.AGENTUSE_MOCK_APPROVAL = '1';
-
       const loggerConfig: { level?: LogLevel; enableDebug?: boolean; disableTUI?: boolean } = {};
       let quietMode = false;
 
@@ -239,6 +224,36 @@ program
         logger.forcePlainOutput();
       }
       logger.configure({ ...loggerConfig, ...(quietMode ? { quiet: true } : {}) });
+
+      // Load user-global defaults (~/.agentuse/.env then config.json `env`) before
+      // anything reads env (mock model below, telemetry). Neither overrides a var
+      // already set, so precedence is shell > .env > config.json.
+      const { envFile: loadedGlobalEnvFile, configEnvKeys } = loadGlobalDefaults();
+      if (loadedGlobalEnvFile) {
+        logger.debug(`Loading global environment from: ${loadedGlobalEnvFile}`);
+      }
+      if (configEnvKeys.length > 0) {
+        logger.debug(`Applied env from global config: ${configEnvKeys.join(', ')}`);
+      }
+
+      // Mock mode: tool outputs are LLM-generated, no real tools execute. Env so
+      // the runner (loadAgentTools) and recursive sub-agents pick it up. A mock
+      // model is required: mock fires an LLM call per tool result, and defaulting
+      // onto the agent's own (premium, rate-limited) model is what produced the
+      // opaque 429s this mode avoids. Force an explicit, reachable choice — the
+      // --mock-model flag (which wins) or AGENTUSE_MOCK_MODEL from the shell,
+      // ~/.agentuse/.env, or the config.json `env` block (resolved just above).
+      if (options.mockModel) process.env.AGENTUSE_MOCK_MODEL = options.mockModel;
+      if (options.mock && !process.env.AGENTUSE_MOCK_MODEL) {
+        throw new Error(
+          '--mock requires a mock model. Pass --mock-model <model>, or set AGENTUSE_MOCK_MODEL ' +
+            '(in the shell, ~/.agentuse/.env, or the `env` block of ~/.agentuse/config.json). ' +
+            'Mock generates every tool result via that model, so use the lowest-end model you can ' +
+            'reach (e.g. anthropic:claude-haiku-4-5 or openai:gpt-5.4-nano).',
+        );
+      }
+      if (options.mock) process.env.AGENTUSE_MOCK_MODE = '1';
+      if (options.mockApproval) process.env.AGENTUSE_MOCK_APPROVAL = '1';
 
       // Initialize telemetry
       await telemetry.init(packageVersion);
@@ -267,11 +282,6 @@ program
       // Log startup time if debug
       if (options.debug) {
         logger.info(`Starting AgentUse at ${new Date().toISOString()}`);
-      }
-      
-      const loadedGlobalEnvFile = loadGlobalEnv();
-      if (loadedGlobalEnvFile) {
-        logger.debug(`Loading global environment from: ${loadedGlobalEnvFile}`);
       }
 
       // Parse CLI timeout value (will be used as override later)
@@ -902,7 +912,7 @@ async function runInternalWorker() {
 
   // Configure logger to be quiet
   logger.configure({ level: LogLevel.ERROR, quiet: true, disableTUI: true });
-  loadGlobalEnv();
+  loadGlobalDefaults();
 
   interface ExecuteRequest {
     id: string;

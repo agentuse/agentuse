@@ -23,7 +23,7 @@ import { telemetry, parseModel } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
-import { loadGlobalConfig, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
+import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
@@ -1440,6 +1440,12 @@ export function createServeCommand(): Command {
       const loadedGlobalEnv = loadGlobalEnv();
       if (loadedGlobalEnv) {
         loadedServeEnvFiles.push(loadedGlobalEnv);
+      }
+      // Apply config.json `env` after .env so .env wins; pass the already-loaded
+      // config to avoid a second read (and second malformed-config throw path).
+      const appliedConfigEnv = applyGlobalConfigEnv(globalConfig);
+      if (appliedConfigEnv.length > 0 && options.debug) {
+        logger.debug(`Applied env from global config: ${appliedConfigEnv.join(', ')}`);
       }
 
       // Precedence: explicit CLI flag > config > built-in default.
