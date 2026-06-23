@@ -34,8 +34,8 @@ agentuse run <agent-file> [prompt...] [options]
 -C, --directory <path>  Run as if agentuse was started in <path> instead of the current directory
 --env-file <path>       Path to custom .env file
 -m, --model <model>     Override the model specified in the agent file
---mock                  Mock all tool outputs with the LLM instead of executing them (no real side effects)
---mock-model <model>    Model used to generate mock tool outputs (default: the agent model)
+--mock                  Mock all tool outputs with the LLM instead of executing them (no real side effects). Requires --mock-model.
+--mock-model <model>    Model that generates mock tool outputs (required with --mock; pick a cheap, reachable model)
 --mock-approval         Also mock the await_human approval gate instead of suspending
 ```
 
@@ -142,11 +142,25 @@ agentuse run agent.agentuse --model anthropic:claude-sonnet-4-6:ANTHROPIC_API_KE
 LLM-generated result instead of executing. The agent runs for real; only tool execution is faked.
 
 ```bash
-agentuse run agent.agentuse --mock                          # mock every tool output
-agentuse run agent.agentuse --mock --mock-model demo:default # zero-cost mock model
+agentuse run agent.agentuse --mock --mock-model anthropic:claude-haiku-4-5
+agentuse run agent.agentuse --mock --mock-model openai:gpt-5.4-nano
 ```
 
-- **Mock model** defaults to the agent's model; override with `--mock-model` (or `AGENTUSE_MOCK_MODEL`). The mock model is still a real LLM call, so credentials are required — use `demo:default` for zero cost.
+<Tip>
+  **Use the lowest-end model you can reach for `--mock-model`.** Mocking is not a reasoning task: the model only has to fabricate a plausible result for a tool given its name and arguments. Your agent's *actual* reasoning still runs on its own model, untouched. A small, fast model produces fine mock output while keeping cost and rate-limit pressure low, which matters because mock fires one LLM call for **every** tool result (and they run concurrently when the agent batches tool calls).
+
+  Good low-end picks, by provider:
+
+  | Provider     | Suggested `--mock-model`               |
+  | ------------ | -------------------------------------- |
+  | `anthropic`  | `anthropic:claude-haiku-4-5`           |
+  | `openai`     | `openai:gpt-5.4-nano`                  |
+  | `openrouter` | `openrouter:deepseek/deepseek-v4-flash` |
+
+  Pick one in a provider you're authenticated for. (Model IDs drift over time; the current low-end tier is the rule, not these exact names.)
+</Tip>
+
+- **`--mock-model` is required.** Mock fires an LLM call for *every* tool result, so it must run on a model you can reach. It is deliberately **not** defaulted to the agent's own model: that ran mock onto the agent's premium, rate-limited token and produced opaque `429`s. Set it per run, or once via `AGENTUSE_MOCK_MODEL`.
 - **Sub-agents run for real**; their leaf tools are mocked.
 - **The approval gate stays real**: `await_human` still suspends so you can verify the agent pauses for approval. Pass `--mock-approval` to mock it too.
 

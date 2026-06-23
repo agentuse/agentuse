@@ -165,8 +165,8 @@ program
   .option('-m, --model <model>', 'Override the model specified in the agent file')
   .option('--session-id <id>', 'Resume from an existing session id')
   .option('--json', 'Output result as JSON (implies --quiet --no-tty)')
-  .option('--mock', 'Mock all tool outputs with the LLM instead of executing them (for testing; no real side effects)')
-  .option('--mock-model <model>', 'Model used to generate mock tool outputs (default: the agent model)')
+  .option('--mock', 'Mock all tool outputs with the LLM instead of executing them (for testing; no real side effects). Requires --mock-model.')
+  .option('--mock-model <model>', 'Model that generates mock tool outputs (required with --mock; pick a cheap, reachable model)')
   .option('--mock-approval', 'Also mock the await_human approval gate instead of suspending (for fully-unattended mock runs)')
   .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string, sessionId?: string, json?: boolean, mock?: boolean, mockModel?: string, mockApproval?: boolean }) => {
     const startTime = Date.now();
@@ -206,6 +206,15 @@ program
 
       // Mock mode: tool outputs are LLM-generated, no real tools execute. Env so
       // the runner (loadAgentTools) and recursive sub-agents pick it up.
+      // --mock-model is required: mock fires an LLM call per tool result, and
+      // defaulting onto the agent's own (premium, rate-limited) model is exactly
+      // what produced opaque 429s. Force an explicit, reachable choice instead.
+      if (options.mock && !options.mockModel) {
+        throw new Error(
+          '--mock requires --mock-model <model>. Mock generates every tool result via that model, ' +
+            'so use the lowest-end model you can reach (e.g. anthropic:claude-haiku-4-5 or openai:gpt-5.4-nano).',
+        );
+      }
       if (options.mock) process.env.AGENTUSE_MOCK_MODE = '1';
       if (options.mockModel) process.env.AGENTUSE_MOCK_MODEL = options.mockModel;
       if (options.mockApproval) process.env.AGENTUSE_MOCK_APPROVAL = '1';
@@ -249,9 +258,7 @@ program
 
       if (options.mock && !effectiveQuiet) {
         logger.warn('⚠ Mock mode: tool outputs are LLM-generated; no real tools will run.');
-        if (process.env.AGENTUSE_MOCK_MODEL) {
-          logger.warn(`  Mock model: ${process.env.AGENTUSE_MOCK_MODEL}`);
-        }
+        logger.warn(`  Mock model: ${process.env.AGENTUSE_MOCK_MODEL}`);
         if (!process.env.AGENTUSE_MOCK_APPROVAL) {
           logger.warn('  Approval gate (await_human) stays real; pass --mock-approval to mock it too.');
         }

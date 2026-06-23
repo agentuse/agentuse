@@ -216,11 +216,13 @@ Mock all tool outputs with the LLM instead of executing them. Mirror the `--mock
 `agentuse run`; see [Testing with Mocked Tools](/reference/cli-commands#testing-with-mocked-tools).
 
 <ParamField path="AGENTUSE_MOCK_MODE" type="boolean">
-  `1` to mock all tool outputs (no real bash/filesystem/MCP/store side effects). Same as `--mock`.
+  `1` to mock all tool outputs (no real bash/filesystem/MCP/store side effects). Same as `--mock`. Requires `AGENTUSE_MOCK_MODEL`.
 </ParamField>
 
-<ParamField path="AGENTUSE_MOCK_MODEL" type="string">
-  Model used for mock outputs. Defaults to the agent's model; use `demo:default` for zero cost. Same as `--mock-model`.
+<ParamField path="AGENTUSE_MOCK_MODEL" type="string" required>
+  Model that generates mock outputs. **Required** whenever mock mode is on (same as `--mock-model`). Not defaulted to the agent's model on purpose: mock fires an LLM call per tool result, and running that on the agent's premium, rate-limited token caused opaque `429`s.
+
+  Use the **lowest-end model you can reach** here: mocking only fabricates a plausible tool result, not real reasoning, so a small fast model is plenty and keeps cost and rate-limit pressure low. Good picks: `anthropic:claude-haiku-4-5`, `openai:gpt-5.4-nano`, or `openrouter:deepseek/deepseek-v4-flash`.
 </ParamField>
 
 <ParamField path="AGENTUSE_MOCK_APPROVAL" type="boolean">
