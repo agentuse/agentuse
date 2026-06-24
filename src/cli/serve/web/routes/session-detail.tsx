@@ -7,7 +7,7 @@ import { LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
 import { ContinuePanel } from '../components/continue-panel';
 import { DebugPromptButton } from '../components/debug-prompt-button';
-import { postSessionDecision, postSessionContinue, postSessionStop, fetchSessionArtifacts, type SessionArtifact } from '../lib/api';
+import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, type SessionArtifact } from '../lib/api';
 import { useApprovalStream } from '../hooks/use-approval-stream';
 import { useTitle } from '../hooks/use-title';
 import {
@@ -129,6 +129,7 @@ export default function SessionDetail() {
   const [submittingDecision, setSubmittingDecision] = useState(false);
   const [submittingContinue, setSubmittingContinue] = useState(false);
   const [submittingStop, setSubmittingStop] = useState(false);
+  const [submittingReopen, setSubmittingReopen] = useState(false);
   // The resume composer stays collapsed until the user clicks "Resume session";
   // clicking again collapses it.
   const [showResume, setShowResume] = useState(false);
@@ -396,6 +397,9 @@ export default function SessionDetail() {
   const actionable = pendingActionable && !expired;
   const continueActionable = ended && !live && Boolean(approval?.agent.filePath) && !fatalError;
   const stopActionable = approval !== null && !ended && !expired && !submittingStop && !fatalError;
+  // An errored session whose resolved approval gate can be rolled back for a retry.
+  const reopenActionable = ended && approval?.sessionStatus === 'error'
+    && Boolean(approval?.reopenable) && !live && !submittingReopen && !fatalError;
 
   useEffect(() => {
     if (continueActionable) setSubmittingContinue(false);
@@ -440,6 +444,30 @@ export default function SessionDetail() {
       setSubmittingContinue(false);
     }
   }, [sessionId, token, projectId, submittingContinue, continueActionable]);
+
+  const submitReopen = useCallback(async () => {
+    if (submittingReopen) return;
+    // Manual, warned recovery: re-running can repeat any external action the
+    // failed run already took before it errored.
+    const ok = typeof window === 'undefined' || window.confirm(
+      'Reopen this session for retry?\n\nThis rolls the approval gate back to pending so you can re-submit your decision and resume. If the failed run already took an external action (e.g. scheduled a post), retrying may repeat it.'
+    );
+    if (!ok) return;
+    setSubmittingReopen(true);
+    setResult({ text: '⋮ reopening approval gate…', error: false });
+    try {
+      await postSessionReopen(sessionId, token, {
+        ...(projectId ? { project: projectId } : {}),
+      });
+      setResult({ text: '✓ gate reopened — re-submit your decision below to resume.', error: false });
+      setStatus('waiting');
+      setNudge((n) => n + 1);
+    } catch (err) {
+      setResult({ text: (err as Error).message || String(err), error: true });
+    } finally {
+      setSubmittingReopen(false);
+    }
+  }, [sessionId, token, projectId, submittingReopen]);
 
   const submitStop = useCallback(async () => {
     if (submittingStop) return;
@@ -729,6 +757,21 @@ export default function SessionDetail() {
         </div>
 
         <div class="session-actions">
+          {reopenActionable && (
+            <button
+              type="button"
+              class="debug-prompt-button"
+              disabled={submittingReopen}
+              onClick={() => void submitReopen()}
+              title="Roll the approval gate back to pending so you can re-submit your decision and retry the resume that failed"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-3-6.7" />
+                <path d="M21 4v5h-5" />
+              </svg>
+              <span>Retry</span>
+            </button>
+          )}
           {continueActionable && (
             <button
               type="button"
@@ -782,7 +825,7 @@ export default function SessionDetail() {
           onSubmit={(prompt) => void submitContinue(prompt)}
         />
 
-        <div class="inactive-banner" hidden={actionable || continueActionable || stopActionable || live || busy}>
+        <div class="inactive-banner" hidden={actionable || continueActionable || stopActionable || reopenActionable || live || busy}>
           This session is not accepting actions right now.
         </div>
 

@@ -276,6 +276,11 @@ interface WorkerStopSessionResult {
   }>;
 }
 
+interface WorkerReopenGateResult {
+  success: true;
+  agentId: string;
+}
+
 interface ApprovalPageInfo {
   sessionId: string;
   sessionStatus: string;
@@ -543,6 +548,18 @@ class AgentWorker {
       reason: options.reason,
       timeout: 30,
     }) as Promise<WorkerStopSessionResult | WorkerExecuteError>;
+  }
+
+  reopenGate(options: {
+    projectRoot: string;
+    sessionId: string;
+  }): Promise<WorkerReopenGateResult | WorkerExecuteError> {
+    return this.request({
+      type: "reopen-gate",
+      projectRoot: options.projectRoot,
+      sessionId: options.sessionId,
+      timeout: 30,
+    }) as Promise<WorkerReopenGateResult | WorkerExecuteError>;
   }
 
   continueSession(options: {
@@ -3588,6 +3605,70 @@ export function createServeCommand(): Command {
               return;
             }
             sendJSON(res, 200, { success: true, sessionId, stopped: result.stopped });
+          } catch (err) {
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // POST /sessions/:id/reopen: roll an ended (error/completed) session back
+        // to its suspended approval gate so the reviewer can retry a resume that
+        // failed downstream. User-initiated only; the normal approval/decision
+        // flow takes over once it is suspended again.
+        const sessionReopenMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/reopen$/) : null;
+        if (sessionReopenMatch) {
+          try {
+            const sessionId = decodeURIComponent(sessionReopenMatch[1]);
+            const token = requestUrl.searchParams.get('token') ?? undefined;
+            const body = await parseJSONBody(req);
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+
+            if (!sessionAuthorized(sessionId, token)) {
+              sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+              return;
+            }
+
+            const found = await findSessionInfo(sessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+
+            const sessionStatus = found.info.approval.sessionStatus;
+            if (sessionStatus === 'suspended') {
+              sendError(res, 409, "SESSION_SUSPENDED", "Session is already suspended");
+              return;
+            }
+            if (sessionStatus === 'running') {
+              sendError(res, 409, "SESSION_RUNNING", `Session ${sessionId} is still running`);
+              return;
+            }
+            if (!isEndedSessionStatus(sessionStatus)) {
+              sendError(res, 409, "SESSION_NOT_ENDED", `Session is ${sessionStatus}`);
+              return;
+            }
+
+            const project = found.project;
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) {
+              sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
+              return;
+            }
+
+            const activeKey = `${project.id}:${sessionId}`;
+            activeApprovalResumes.delete(activeKey);
+            activeSessionContinuations.delete(activeKey);
+
+            const result = await projectWorker.reopenGate({ projectRoot: project.root, sessionId });
+            if (!result.success) {
+              const code = result.error.code;
+              const httpStatus = code === 'NO_REOPENABLE_GATE' ? 409
+                : code === 'SESSION_NOT_FOUND' ? 404
+                : 400;
+              sendError(res, httpStatus, code, result.error.message);
+              return;
+            }
+            sendJSON(res, 200, { success: true, sessionId, status: "suspended" });
           } catch (err) {
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }

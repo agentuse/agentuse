@@ -158,6 +158,9 @@ export interface ApprovalPageInfo {
   decision?: unknown;
   errorCode?: string;
   errorMessage?: string;
+  /** True when an ended (error/completed) session can be rolled back to its
+   *  suspended approval gate for a manual retry (POST /sessions/:id/reopen). */
+  reopenable?: boolean;
   childSessions?: ChildSessionSummary[];
   /** The delegated leaf that actually raised this gate, when surfaced at a manager
    *  root via the subagent approval cascade. The gate is addressed at sessionId

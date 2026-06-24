@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
-import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, describeErrorPart, describeLogPart, type PreparedAgentExecution } from './runner';
+import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, reopenSuspendedGate, describeErrorPart, describeLogPart, type PreparedAgentExecution } from './runner';
 import { describeLearningOutcome } from './learning';
 import { isApprovalEnabled } from './runner/approval';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
@@ -916,7 +916,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'sweep-expired' | 'list-approvals' | 'list-sessions' | 'stop-session';
+    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'sweep-expired' | 'list-approvals' | 'list-sessions' | 'stop-session' | 'reopen-gate';
     agentPath?: string;
     projectRoot: string;
     prompt?: string;
@@ -1815,6 +1815,17 @@ async function runInternalWorker() {
         }
       }
 
+      // An ended session (error/completed) whose latest gate was resolved via a
+      // resume can be manually rolled back to its suspended approval so a reviewer
+      // can retry a resume that failed downstream. The gate keeps its original
+      // resumePayload, which is what reopenSuspendedGate rebuilds the pending
+      // state from. Surfaced as `reopenable` so the UI can offer a Retry action.
+      const reopenable = (found.session.status === 'error' || found.session.status === 'completed')
+        && approvalParts.some((part: any) =>
+          (part?.state?.status === 'completed' || part?.state?.status === 'error') &&
+          part?.state?.metadata?.resumePayload?.kind === 'await_human'
+        );
+
       // A delegated child viewed directly is view-only: approval happens at the root.
       const isDelegatedChild = typeof found.session.parentSessionID === 'string' && found.session.parentSessionID.length > 0;
       const parentSessionId = isDelegatedChild ? found.session.parentSessionID : undefined;
@@ -1856,6 +1867,7 @@ async function runInternalWorker() {
             model: found.session.model,
             ...(found.session.mock && { mock: true }),
             ...sessionErrorFields(found.session),
+            ...(reopenable && { reopenable }),
             agent: {
               id: found.session.agent.id,
               name: found.session.agent.name,
@@ -1924,6 +1936,7 @@ async function runInternalWorker() {
             model: found.session.model,
             ...(found.session.mock && { mock: true }),
             ...sessionErrorFields(found.session),
+            ...(reopenable && { reopenable }),
             agent: {
               id: found.session.agent.id,
               name: found.session.agent.name,
@@ -2929,6 +2942,32 @@ async function runInternalWorker() {
     }
   }
 
+  async function reopenGate(req: ExecuteRequest) {
+    try {
+      if (!req.sessionId) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_REQUIRED', message: 'Missing sessionId for reopen request' },
+        };
+      }
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const result = await reopenSuspendedGate({ sessionManager, sessionId: req.sessionId });
+      if (!result.ok) {
+        return { id: req.id, success: false, error: { code: result.code, message: result.message } };
+      }
+      invalidateListCaches(req.projectRoot);
+      return { id: req.id, success: true, agentId: result.agentId };
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false,
+        error: { code: 'REOPEN_GATE_ERROR', message: (err as Error).message },
+      };
+    }
+  }
+
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -2987,6 +3026,10 @@ async function runInternalWorker() {
         });
       } else if (request.type === 'stop-session') {
         stopSession(request).then((response) => {
+          console.log(JSON.stringify(response));
+        });
+      } else if (request.type === 'reopen-gate') {
+        reopenGate(request).then((response) => {
           console.log(JSON.stringify(response));
         });
       } else if (request.type === 'execute' || request.type === 'resume' || request.type === 'continue-session') {
