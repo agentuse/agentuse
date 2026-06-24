@@ -29,6 +29,45 @@ function toToolResultOutput(value: unknown): { type: 'text'; value: string } | {
   }
 }
 
+function isToolResultOutput(value: unknown): boolean {
+  return typeof value === 'object' && value !== null
+    && typeof (value as { type?: unknown }).type === 'string'
+    && 'value' in (value as object);
+}
+
+// Heal context snapshots written before the prepareStep/stream-consumer race was
+// fixed (see runner/execution.ts). Those snapshots can carry a tool-result whose
+// `output` is a bare string instead of the AI SDK v5 `{ type, value }`
+// ToolResultOutput form, and/or a duplicate tool-result for a toolCallId that
+// already has one. Either makes the messages fail `modelMessageSchema` validation
+// on resume. Normalize on read so existing sessions can still resume: wrap any
+// bare-string output, and keep only the first tool-result per toolCallId.
+function normalizeRehydratedMessages(messages: ModelMessage[]): ModelMessage[] {
+  const seenResults = new Set<string>();
+  const out: ModelMessage[] = [];
+  for (const message of messages) {
+    const content = (message as { content?: unknown }).content;
+    if (message.role === 'tool' && Array.isArray(content)) {
+      const kept = content.filter((part: any) => {
+        if (part?.type !== 'tool-result') return true;
+        if (seenResults.has(part.toolCallId)) return false;
+        seenResults.add(part.toolCallId);
+        return true;
+      }).map((part: any) => {
+        if (part?.type === 'tool-result' && !isToolResultOutput(part.output)) {
+          return { ...part, output: toToolResultOutput(part.output) };
+        }
+        return part;
+      });
+      if (kept.length === 0) continue; // dropped the whole (now-empty) tool message
+      out.push({ ...(message as object), content: kept } as ModelMessage);
+    } else {
+      out.push(message);
+    }
+  }
+  return out;
+}
+
 export async function rehydrateMessages(
   sessionManager: SessionManager,
   sessionID: string,
@@ -46,7 +85,7 @@ export async function rehydrateMessages(
     for (const part of parts.filter((part) => getPartOrder(part) > snapshot.updatedAt)) {
       appendPartMessages(messages, part);
     }
-    return messages;
+    return normalizeRehydratedMessages(messages);
   }
 
   const messages: ModelMessage[] = [];
@@ -65,7 +104,7 @@ export async function rehydrateMessages(
     appendPartMessages(messages, part);
   }
 
-  return messages;
+  return normalizeRehydratedMessages(messages);
 }
 
 function appendPartMessages(messages: ModelMessage[], part: Part): void {

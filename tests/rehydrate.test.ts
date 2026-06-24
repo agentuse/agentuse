@@ -191,6 +191,87 @@ describe('rehydrateMessages', () => {
     }
   });
 
+  it('heals a snapshot with a duplicate, bare-string tool-result (prepareStep/stream race)', async () => {
+    // Reproduces the corruption that crashed resume with "Invalid prompt: The
+    // messages do not match the ModelMessage[] schema": a context snapshot where
+    // the same store_update tool-call has two tool-results — one proper
+    // ({type:'json',value}) from prepareStep and one bare string from the racing
+    // in-stream addMessage. The bare string is invalid per the AI SDK v5 schema.
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-rehydrate-dupe-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+
+    try {
+      await initStorage(projectRoot);
+      const sessionManager = new SessionManager();
+      const sessionID = await sessionManager.createSession({
+        agent: { id: 'agents/review', name: 'review', isSubAgent: false },
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: { root: projectRoot, cwd: projectRoot }
+      });
+      const agentId = 'agents/review';
+      const messageID = await sessionManager.createMessage(sessionID, agentId, {
+        user: { prompt: { task: 'Draft a post' } },
+        assistant: {
+          system: ['system'],
+          modelID: 'test',
+          providerID: 'demo',
+          mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+        }
+      });
+
+      await sessionManager.writeContextSnapshot(sessionID, agentId, {
+        version: 1,
+        updatedAt: 1_000,
+        messageID,
+        messages: [
+          { role: 'system', content: 'system' },
+          { role: 'user', content: 'Draft a post' },
+          { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'call-x', toolName: 'store_update', input: { id: 'a' } }] },
+          // Proper, schema-valid result (from prepareStep's setMessages)
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call-x', toolName: 'store_update', output: { type: 'json', value: { success: true } } }] },
+          // Duplicate, schema-INVALID result (bare string from the racing add)
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call-x', toolName: 'store_update', output: '{"success":true}' }] },
+        ] as any,
+        usage: {
+          activeTokens: 10,
+          contextLimit: 1000,
+          usagePercentage: 1,
+          compacted: false,
+          compactions: 0,
+          updatedAt: 1_000,
+        }
+      });
+
+      const messages = await rehydrateMessages(sessionManager, sessionID, agentId);
+
+      // The duplicate tool-result message is dropped, leaving one valid result.
+      const toolResults = messages.filter(
+        (m: any) => m.role === 'tool' && Array.isArray(m.content) &&
+          m.content.some((p: any) => p.type === 'tool-result' && p.toolCallId === 'call-x')
+      );
+      expect(toolResults).toHaveLength(1);
+      expect((toolResults[0] as any).content[0].output).toEqual({ type: 'json', value: { success: true } });
+
+      // Every surviving tool-result output is the wrapped ToolResultOutput form.
+      for (const m of messages as any[]) {
+        if (m.role !== 'tool' || !Array.isArray(m.content)) continue;
+        for (const p of m.content) {
+          if (p.type !== 'tool-result') continue;
+          expect(typeof p.output).toBe('object');
+          expect(typeof p.output.type).toBe('string');
+        }
+      }
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
   it('appends approval parts created after an un-compacted suspension snapshot', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-rehydrate-suspension-snapshot-'));
     process.env.XDG_DATA_HOME = projectRoot;

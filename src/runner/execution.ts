@@ -703,20 +703,19 @@ Error: ${errorMessage}`);
           const toolResultStr = parseToolResult(chunk);
           warnOnSoftToolError(chunk, toolResultStr);
 
-          // Track tool results in context
-          if (contextManager) {
-            // Use simple format for tool message
-            const toolResultMessage: any = {
-              role: 'tool',
-              content: [{
-                type: 'tool-result',
-                toolCallId,
-                toolName: chunk.toolName,
-                output: toolResultStr
-              }]
-            };
-            contextManager.addMessage(toolResultMessage);
-          }
+          // Note: we intentionally do NOT add the tool result to contextManager
+          // here. `prepareStep` (createStream) is the single source of truth for
+          // the active context: it calls contextManager.setMessages() with the
+          // SDK's canonical, schema-valid step messages at the start of every
+          // step. Adding the result here too created two racing writers — and
+          // this one used a bare-string `output` (invalid per the AI SDK v5
+          // ModelMessage schema) rather than the `{ type, value }` ToolResultOutput
+          // form. When the bare-string add landed after prepareStep's setMessages
+          // (e.g. just before a suspension), the persisted context snapshot ended
+          // up with a duplicate, schema-invalid tool-result, which then failed
+          // validation on resume ("messages do not match the ModelMessage[]
+          // schema"). contextManager always has a prepareStep (see createStream's
+          // condition), so dropping this redundant add is safe.
 
           yield {
             type: 'tool-result',
