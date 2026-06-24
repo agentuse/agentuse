@@ -2003,6 +2003,7 @@ async function runInternalWorker() {
           model: found.session.model,
           ...(found.session.mock && { mock: true }),
           ...sessionErrorFields(found.session),
+          ...(reopenable && { reopenable }),
           agent: {
             id: found.session.agent.id,
             name: found.session.agent.name,
