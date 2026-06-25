@@ -76,6 +76,25 @@ Skills are instructions, not tool grants: declare an agent's tools in
 frontmatter even when a skill documents them with `allowed-tools`. Put reusable
 instructions in `.agentuse/skills/<name>/SKILL.md` or install with `agentuse add`.
 
+## Source Precedence: Skills Are Defaults, Learnings Override Them
+
+The runtime composes one prompt from layered sources, in this precedence
+(highest first): **agent instructions → Learned Guidelines → Skills → other
+reference files.** The system prompt's operational/safety rules sit above all of
+these. This shapes where a rule belongs:
+
+- Put **soft defaults** in skills. Don't bake a hard "never do X" into a skill
+  that a learning should be able to override — a captured correction outranks a
+  skill default, so an absolute skill rule fights the feedback loop.
+- State a rule **once**, at the right layer, and reference it. The same craft
+  rule copied into both a skill and the agent drifts; the lower-precedence copy
+  then silently wins (this is the "same rule in three places" smell above, seen
+  from the runtime side).
+- `learning: true` (sugar for `capture + apply`) injects the agent's stored
+  learnings every run — for delegated subagents too, not just top-level runs. So
+  a leaf's prior-run corrections actually reach it; rely on that instead of
+  hand-restating past corrections in the prompt.
+
 ## Gotchas
 
 - **No builtin grep/glob.** Only `filesystem_read|write|edit` exist, and
