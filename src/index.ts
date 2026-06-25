@@ -43,6 +43,7 @@ import { existsSync } from 'fs';
 import { resolveLocalAgentPath, resolveProjectContext } from './utils/project';
 import { loadGlobalDefaults } from './utils/global-config';
 import { resolveTimeout } from './utils/config';
+import { toErrorMessage } from './utils/error-message';
 import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
 import { telemetry, categorizeError, aggregateToolCalls, countSteps, parseModel } from './telemetry';
@@ -863,7 +864,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       const errorType = categorizeError(error);
 
       // Log to session if it exists
-      await logSessionInterrupt(errorType ?? 'EXECUTION_ERROR', (error as Error).message);
+      await logSessionInterrupt(errorType ?? 'EXECUTION_ERROR', toErrorMessage(error));
 
       telemetry.captureExecution({
         provider: 'unknown',
@@ -877,7 +878,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       await telemetry.shutdown();
 
       if (options.json) {
-        outputJsonError(errorType ?? 'EXECUTION_ERROR', (error as Error).message);
+        outputJsonError(errorType ?? 'EXECUTION_ERROR', toErrorMessage(error));
       } else {
         logger.error('Error', error as Error);
       }
@@ -2862,7 +2863,7 @@ async function runInternalWorker() {
         return {
           id: req.id,
           success: false,
-          error: { code: 'EXECUTION_ERROR', message: (err as Error).message },
+          error: { code: 'EXECUTION_ERROR', message: toErrorMessage(err) },
         };
       }
     } catch (err) {

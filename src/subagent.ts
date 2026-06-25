@@ -17,6 +17,7 @@ import { createAwaitHumanTool } from './tools/await-human';
 import { createToolsSnapshot } from './runner/tool-snapshot';
 import { SuspendSignal, isSuspendSignal } from './runner/suspend';
 import { extractApiErrorDetail } from './runner/api-error';
+import { toErrorMessage } from './utils/error-message';
 import { usageToAssistantTokens } from './session/usage';
 import { resolveMaxSteps } from './utils/config';
 
@@ -458,7 +459,10 @@ export async function createSubAgentTool(
           throw error;
         }
 
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        // toErrorMessage (not String(error)): a provider can reject with a plain
+        // object, and String() on it yields the useless "[object Object]" that then
+        // gets persisted as the session error and bubbled to the parent manager.
+        const errorMsg = toErrorMessage(error);
         logger.error(`[SubAgent] ${agent.name} failed: ${errorMsg}`);
 
         // Mark session as error if we have session info
@@ -561,7 +565,7 @@ export async function createSubAgentTools(
         throw error;
       }
 
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = toErrorMessage(error);
       logger.error(`Failed to load sub-agent from ${config.path}: ${errorMsg}`);
 
       // Provide helpful error messages for common issues

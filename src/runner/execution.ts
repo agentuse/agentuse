@@ -12,6 +12,7 @@ import type { AgentChunk } from './types';
 import { isSuspendSignal } from './suspend';
 import { recordErrorMarker } from './session-helper';
 import { extractApiErrorDetail } from './api-error';
+import { toErrorMessage } from '../utils/error-message';
 import type { CompactionReason, ModelToolOutputArtifactRef, SessionManager, ToolOutputArtifactRef } from '../session';
 import { clampToolResultForModel } from '../tools/tool-output-limits.js';
 
@@ -262,7 +263,7 @@ function limitModelFacingToolOutputs(tools: ToolSet, writeToolOutputArtifact?: T
 }
 
 function isContextLimitError(error: unknown): boolean {
-  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorMessage = toErrorMessage(error);
   const errorLower = errorMessage.toLowerCase();
   return (
     errorLower.includes('context_length_exceeded') ||
@@ -429,7 +430,7 @@ export async function* executeAgentCore(
         const apiDetail = extractApiErrorDetail(error);
         await recordErrorMarker(options.sessionManager, options.sessionID, options.agentId, options.messageID, {
           source: 'compaction',
-          message: error instanceof Error ? error.message : String(error),
+          message: toErrorMessage(error),
           ...(apiDetail?.detail !== undefined && { detail: apiDetail.detail }),
           ...(apiDetail?.statusCode !== undefined && { statusCode: apiDetail.statusCode }),
         });
@@ -609,7 +610,7 @@ export async function* executeAgentCore(
     stream = await createStreamWithCompactionRetry();
   } catch (error: any) {
     // Handle initial stream creation errors
-    const errorMessage = error?.message || String(error);
+    const errorMessage = toErrorMessage(error);
 
     // Check for token limit errors
     if (isContextLimitError(error)) {
@@ -1024,7 +1025,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
     }
 
     // Check for token limit errors first
-    const errorMessage = error?.message || String(error);
+    const errorMessage = toErrorMessage(error);
     const errorLower = errorMessage.toLowerCase();
 
     if (
