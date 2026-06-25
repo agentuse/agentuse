@@ -177,8 +177,14 @@ export function useApprovalStream(options: {
       if (polling) {
         if (pollTimer) clearTimeout(pollTimer);
         void poll();
+        return;
       }
-      // With SSE the server pushes the change; nothing to do.
+      // SSE transport: normally the server pushes changes, but a client-initiated
+      // action (decision / continue / reopen) mutates server state out-of-band,
+      // and for an ended session the stream is idle or closed — so it never pushes
+      // the transition (e.g. error → suspended after a reopen). Force a one-shot
+      // refetch so the UI updates without waiting for a manual reload.
+      void fetchAndDispatch();
     };
 
     // Paint from the API right away (in parallel with opening the stream) so the
