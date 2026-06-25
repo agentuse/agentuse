@@ -219,9 +219,9 @@ export async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: str
     });
     const toInject = ranked.slice(0, maxLearnings);
 
-    const prompt = `## Learned Guidelines
+    const prompt = `## Learned Guidelines (override skill defaults on conflict)
 
-Based on previous runs, follow these guidelines:
+Corrections captured from previous runs. These take precedence over Skills — if one contradicts a skill's default, follow the guideline:
 
 ${toInject.map(l => `- [${l.category}] ${l.instruction}`).join('\n')}`;
 

@@ -19,5 +19,12 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
 
   return `${basePrompt}${subAgentAddition}
 
+Guidance precedence — when guidance from different sources conflicts, the higher source wins:
+1. Your agent instructions (the task below) — authoritative.
+2. Learned Guidelines — corrections captured from prior runs; these OVERRIDE skill defaults.
+3. Skills — shared defaults and craft, not unoverridable mandates.
+4. Other reference files.
+Skills give you sensible defaults; a Learned Guideline or your own instructions override them. Do not let an elaborately-worded skill rule outweigh a higher-precedence instruction.
+
 Today's date: ${todayDate}`;
 }

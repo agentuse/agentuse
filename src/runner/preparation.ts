@@ -72,7 +72,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       if (preloadedSkills.length > 0) {
         resolvedInstructions = [
           resolvedInstructions,
-          '## Preloaded Skills',
+          '## Skills (shared defaults — your agent instructions and Learned Guidelines override these on conflict)',
           preloadedSkills.map((skill) => skill.output).join('\n\n'),
         ].join('\n\n');
         logger.debug(`[Skills] Preloaded ${preloadedSkills.map((skill) => skill.name).join(', ')}`);

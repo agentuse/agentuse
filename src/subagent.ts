@@ -10,7 +10,7 @@ import { resolve, dirname } from 'path';
 import { computeAgentId } from './utils/agent-id';
 import { SessionManager } from './session/manager';
 import { loadAgentTools } from './runner/tools-loader';
-import { buildSystemMessages } from './runner/system-messages';
+import { buildSystemMessages, buildLearningPrompt } from './runner/system-messages';
 import { createSessionAndMessage } from './runner/session-helper';
 import { isApprovalEnabled, appendApprovalInstructions, approvalToolDefaults } from './runner/approval';
 import { createAwaitHumanTool } from './tools/await-human';
@@ -213,7 +213,21 @@ export async function createSubAgentTool(
           // identically whether run directly or delegated. No-ops when approval is
           // not enabled. Persisted as the task below so a resumed child sees the same
           // prompt.
-          const leafInstructions = appendApprovalInstructions(agent.instructions, agent.config);
+          let leafInstructions = appendApprovalInstructions(agent.instructions, agent.config);
+
+          // Inject this leaf's own learnings (parity with the top-level run path in
+          // preparation.ts). Without this, a subagent's `learning.apply` is silently a
+          // no-op: it captures learnings every run but never reads them back, so a
+          // delegated leaf can never act on its own prior-run corrections. Built into
+          // leafInstructions here so it persists with the task and a resumed child sees
+          // the same prompt.
+          if (agent.config.learning?.apply) {
+            const learningResult = await buildLearningPrompt(agent, resolvedPath);
+            if (learningResult) {
+              leafInstructions = `${leafInstructions}\n\n${learningResult.prompt}`;
+              logger.debug(`[SubAgent] Appended ${learningResult.count} learning(s) to ${agent.name}`);
+            }
+          }
 
           // Build user message: agent instructions + optional parent task
           let userMessage = leafInstructions;
