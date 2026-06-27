@@ -1885,7 +1885,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agent-detail .group-title .send-agent-btn:hover { background: color-mix(in srgb, var(--cyan) 16%, transparent); }
 .page-agent-detail .source-panel { border-left: 2px solid var(--cyan-border); }
 .page-agent-detail .source-pre {
-  margin: 0; padding: 16px 18px; overflow: auto; max-height: 60vh;
+  margin: 0; padding: 16px 18px; overflow-x: auto;
   font-family: var(--mono); font-size: 12.5px; line-height: 1.6; color: var(--fg); white-space: pre; tab-size: 2;
 }
 
