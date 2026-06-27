@@ -1883,11 +1883,39 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   transition: background 120ms ease;
 }
 .page-agent-detail .group-title .send-agent-btn:hover { background: color-mix(in srgb, var(--cyan) 16%, transparent); }
+.page-agent-detail .group-title .source-view-btn {
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted-2);
+  background: transparent; border: 1px solid var(--line-strong); cursor: pointer;
+  padding: 3px 10px; border-radius: 6px;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.page-agent-detail .group-title .source-view-btn:hover { color: var(--fg); border-color: var(--fg); }
 .page-agent-detail .source-panel { border-left: 2px solid var(--cyan-border); }
 .page-agent-detail .source-pre {
   margin: 0; padding: 16px 18px; overflow-x: auto;
   font-family: var(--mono); font-size: 12.5px; line-height: 1.6; color: var(--fg); white-space: pre; tab-size: 2;
 }
+/* rendered source: YAML frontmatter highlighted, body as markdown */
+.page-agent-detail .source-frontmatter {
+  color: var(--fg); background: var(--cyan-soft);
+  border-bottom: 1px solid var(--line); font-size: 12px;
+}
+.page-agent-detail .source-frontmatter .yk { color: var(--cyan); }
+.page-agent-detail .source-frontmatter .yd { color: var(--muted-2); }
+.page-agent-detail .source-frontmatter .yc { color: var(--muted-2); font-style: italic; }
+.page-agent-detail .source-frontmatter .yv-str { color: var(--fg); }
+.page-agent-detail .source-frontmatter .yv-quote { color: var(--green); }
+.page-agent-detail .source-frontmatter .yv-num { color: var(--amber); }
+.page-agent-detail .source-frontmatter .yv-kw { color: var(--amber); }
+.page-agent-detail .source-body { padding: 4px 18px 18px; }
+.page-agent-detail .source-body .content-render { font-size: 13.5px; line-height: 1.65; }
+/* heading hierarchy for the rendered body (renderer maps # → h2, ## → h3, …);
+   scoped to the source view so the compact session-log headings stay flat */
+.page-agent-detail .source-body .content-markdown h2 { font-size: 20px; margin-top: 20px; }
+.page-agent-detail .source-body .content-markdown h3 { font-size: 16.5px; margin-top: 16px; }
+.page-agent-detail .source-body .content-markdown h4 { font-size: 14.5px; }
+.page-agent-detail .source-body .content-markdown h5 { font-size: 13px; }
+.page-agent-detail .source-body .content-markdown h6 { font-size: 12.5px; color: var(--muted); }
 
 /* send-to-coding-agent dialog (shared: agent hub + session view; renders in the
    top layer, so it is intentionally not page-scoped) */

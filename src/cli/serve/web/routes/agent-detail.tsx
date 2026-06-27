@@ -8,7 +8,61 @@ import { useTitle } from '../hooks/use-title';
 import { useRunAgent } from '../hooks/use-run-agent';
 import { Topbar } from '../components/topbar';
 import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
+import { LogContent } from '../components/content';
 import { formatApprovalTime } from '../lib/format';
+
+/**
+ * Split an `.agentuse` file into its YAML frontmatter and Markdown body.
+ * Frontmatter is the block between a leading `---` line and the next `---`
+ * line; everything after is the body. Returns `frontmatter: null` when the
+ * file has no leading delimiter, so the whole source renders as body.
+ */
+function splitFrontmatter(source: string): { frontmatter: string | null; body: string } {
+  const m = source.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!m) return { frontmatter: null, body: source };
+  return { frontmatter: m[1], body: source.slice(m[0].length) };
+}
+
+/** Highlight a YAML scalar value: quoted strings, numbers, booleans, null. */
+function yamlValue(raw: string): VNode {
+  const v = raw.trim();
+  let cls = 'yv-str';
+  if (/^(true|false|null|~)$/i.test(v)) cls = 'yv-kw';
+  else if (/^-?\d+(\.\d+)?$/.test(v)) cls = 'yv-num';
+  else if (/^["'].*["']$/.test(v)) cls = 'yv-quote';
+  const lead = raw.slice(0, raw.length - raw.trimStart().length);
+  return <>{lead}<span class={cls}>{v}</span></>;
+}
+
+/**
+ * Lightweight YAML highlighter for the frontmatter block — keys, list markers,
+ * comments, and scalar values get distinct colors. Zero-dep and structure-
+ * preserving (it never reflows the source), matching the hand-rolled markdown
+ * renderer rather than pulling a parser into the browser bundle.
+ */
+function FrontmatterView(props: { yaml: string }) {
+  const lines = props.yaml.split('\n');
+  return (
+    <pre class="source-pre source-frontmatter"><code>{lines.map((line, i) => {
+      const nl = i < lines.length - 1 ? '\n' : '';
+      const comment = line.match(/^(\s*)(#.*)$/);
+      if (comment) return <span key={i}>{comment[1]}<span class="yc">{comment[2]}</span>{nl}</span>;
+      const kv = line.match(/^(\s*)([\w.$-]+)(:)(\s*)(.*)$/);
+      if (kv) {
+        return <span key={i}>{kv[1]}<span class="yk">{kv[2]}</span>{kv[3]}{kv[4]}{kv[5] ? yamlValue(kv[5]) : ''}{nl}</span>;
+      }
+      const item = line.match(/^(\s*)(-)(\s+)(.*)$/);
+      if (item) {
+        const inner = item[4].match(/^([\w.$-]+)(:)(\s*)(.*)$/);
+        return (
+          <span key={i}>{item[1]}<span class="yd">{item[2]}</span>{item[3]}
+            {inner ? <><span class="yk">{inner[1]}</span>{inner[2]}{inner[3]}{inner[4] ? yamlValue(inner[4]) : ''}</> : yamlValue(item[4])}{nl}</span>
+        );
+      }
+      return <span key={i}>{line}{nl}</span>;
+    })}</code></pre>
+  );
+}
 
 /** project-relative path → the `?agent=` session-filter id (drops the extension). */
 function agentIdFromPath(path: string): string {
@@ -145,23 +199,33 @@ function buildCodingAgentPrompt(opts: { project: string; path: string; source: s
 function SourcePanel(props: { source: string; runPath: string; project: string; path: string }) {
   const [copied, setCopied] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
+  const [rendered, setRendered] = useState(true);
   const copy = () => {
     void navigator.clipboard?.writeText(props.source).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
   };
+  const { frontmatter, body } = splitFrontmatter(props.source);
   return (
     <section class="group">
       <h2 class="group-title">
         <span>Source</span>
         <span class="count">{props.runPath}</span>
         <span class="rule" />
+        <button type="button" class="source-view-btn" onClick={() => setRendered((v) => !v)}>{rendered ? 'raw' : 'rendered'}</button>
         <button type="button" class="send-agent-btn" onClick={() => setSendOpen(true)}>Send to Coding Agent…</button>
         <button type="button" class="copy-btn" onClick={copy}>{copied ? 'copied' : 'copy'}</button>
       </h2>
       <div class="panel source-panel">
-        <pre class="source-pre"><code>{props.source}</code></pre>
+        {rendered ? (
+          <div class="source-rendered">
+            {frontmatter !== null && <FrontmatterView yaml={frontmatter} />}
+            <div class="source-body"><LogContent value={body} forceMarkdown /></div>
+          </div>
+        ) : (
+          <pre class="source-pre"><code>{props.source}</code></pre>
+        )}
       </div>
       <SendToCodingAgentDialog
         open={sendOpen}
