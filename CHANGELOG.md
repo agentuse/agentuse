@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.15.0] - upcoming
+## [0.15.0] - 2026-06-30
 
 This release centers on context-compaction reliability, accurate token accounting across approval gates, and making an agent run observable from the `serve` web UI. Approval gates, the session/approval web UI, the JSON API, and channels/Slack remain **experimental**: route shapes, UI details, and API response formats may still evolve based on production feedback.
 

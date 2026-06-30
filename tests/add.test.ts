@@ -35,6 +35,12 @@ describe('agentuse add', () => {
       expect(result.needsClone).toBe(true);
     });
 
+    it('rejects malformed github shorthand and refs', () => {
+      expect(() => resolveSource('user/repo#bad ref')).toThrow(/Invalid git ref/);
+      expect(() => resolveSource('user/repo#../../main')).toThrow(/Invalid git ref/);
+      expect(() => resolveSource('not-a-repo')).toThrow(/Invalid GitHub source/);
+    });
+
     it('resolves https git URL', () => {
       const result = resolveSource('https://github.com/user/repo.git');
       expect(result.type).toBe('git');

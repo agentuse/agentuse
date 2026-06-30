@@ -61,6 +61,175 @@ export interface ParsedCommand {
   raw: string;       // Original command text
 }
 
+function stripOuterQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) return trimmed;
+  const quote = trimmed[0];
+  if ((quote !== '"' && quote !== "'") || trimmed[trimmed.length - 1] !== quote) {
+    return trimmed;
+  }
+  return trimmed.slice(1, -1);
+}
+
+function isPathLike(value: string): boolean {
+  return (
+    value.startsWith('/') ||
+    value.startsWith('./') ||
+    value.startsWith('../') ||
+    value.startsWith('~/') ||
+    value.includes('/') ||
+    value === '.' ||
+    value === '..'
+  );
+}
+
+function readShellWord(input: string, start: number): { word: string; end: number } | null {
+  let i = start;
+  while (i < input.length && /\s/.test(input[i])) i += 1;
+  if (i >= input.length) return null;
+
+  let word = '';
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+
+  for (; i < input.length; i += 1) {
+    const char = input[i];
+
+    if (escaped) {
+      word += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaped = true;
+      word += char;
+      continue;
+    }
+
+    if (quote) {
+      word += char;
+      if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      word += char;
+      continue;
+    }
+
+    if (/\s/.test(char) || char === '|' || char === ';' || char === '&' || char === '<' || char === '>') {
+      break;
+    }
+
+    word += char;
+  }
+
+  return word ? { word, end: i } : null;
+}
+
+export function extractPipeTargets(commandString: string): string[] {
+  const targets: string[] = [];
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+
+  for (let i = 0; i < commandString.length; i += 1) {
+    const char = commandString[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char !== '|') continue;
+    if (commandString[i + 1] === '|') {
+      i += 1;
+      continue;
+    }
+
+    const first = readShellWord(commandString, commandString[i + 1] === '&' ? i + 2 : i + 1);
+    if (!first) continue;
+
+    let target = stripOuterQuotes(first.word);
+    let end = first.end;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(target)) {
+      const next = readShellWord(commandString, end);
+      if (!next) break;
+      target = stripOuterQuotes(next.word);
+      end = next.end;
+    }
+    targets.push(target);
+  }
+
+  return targets;
+}
+
+export function extractRedirectionTargets(commandString: string): string[] {
+  const targets: string[] = [];
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+
+  for (let i = 0; i < commandString.length; i += 1) {
+    const char = commandString[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char !== '<' && char !== '>') continue;
+
+    let opEnd = i + 1;
+    const next = commandString[opEnd];
+    if (char === '<' && next === '<') {
+      // Here-doc and here-string delimiters are not filesystem paths.
+      i = opEnd;
+      continue;
+    }
+    if ((char === '>' && next === '|') || (char === '<' && next === '>')) opEnd += 1;
+    if (next === char) opEnd += 1;
+    if (commandString[opEnd] === '&') {
+      // File descriptor duplication, e.g. 2>&1.
+      continue;
+    }
+    if (commandString[opEnd] === '(') {
+      // Process substitution, not a direct path target.
+      continue;
+    }
+
+    const target = readShellWord(commandString, opEnd);
+    if (!target) continue;
+    const clean = stripOuterQuotes(target.word);
+    if (clean && isPathLike(clean)) targets.push(clean);
+    i = target.end - 1;
+  }
+
+  return targets;
+}
+
 /**
  * Parse a bash command string into structured commands
  * Returns array of commands found in the input (handles pipelines, &&, ||, etc.)
@@ -134,22 +303,14 @@ export async function extractPaths(commandString: string): Promise<string[]> {
         }
 
         // Check if it looks like a path
-        if (
-          arg.startsWith('/') ||
-          arg.startsWith('./') ||
-          arg.startsWith('../') ||
-          arg.startsWith('~/') ||
-          arg.includes('/') ||
-          arg === '.' ||
-          arg === '..'
-        ) {
+        if (isPathLike(arg)) {
           // Remove quotes if present
-          const cleanPath = arg.replace(/^['"]|['"]$/g, '');
+          const cleanPath = stripOuterQuotes(arg);
           paths.push(cleanPath);
         }
       }
     }
   }
 
-  return paths;
+  return [...paths, ...extractRedirectionTargets(commandString)];
 }

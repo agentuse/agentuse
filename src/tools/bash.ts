@@ -153,10 +153,10 @@ function isPathWithinAllowed(
   allowedPaths: string[],
   context: PathResolverContext
 ): boolean {
-  const normalizedTarget = path.normalize(targetPath);
+  const normalizedTarget = resolveRealPath(targetPath);
 
   // Check project root
-  const normalizedProjectRoot = path.normalize(projectRoot);
+  const normalizedProjectRoot = resolveRealPath(projectRoot);
   const relativeToProject = path.relative(normalizedProjectRoot, normalizedTarget);
   if (!relativeToProject.startsWith('..') && !path.isAbsolute(relativeToProject)) {
     return true;
@@ -165,7 +165,7 @@ function isPathWithinAllowed(
   // Check allowedPaths with variable resolution
   for (const allowedPath of allowedPaths) {
     const resolvedAllowedPath = resolveAllowedPath(allowedPath, context);
-    const normalizedAllowed = path.normalize(resolvedAllowedPath);
+    const normalizedAllowed = resolveRealPath(resolvedAllowedPath);
     const relative = path.relative(normalizedAllowed, normalizedTarget);
     if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
       return true;

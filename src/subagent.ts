@@ -458,6 +458,9 @@ export async function createSubAgentTool(
           for (const conn of mcpConnections) {
             try {
               await conn.client.close();
+              if (conn.rawClient) {
+                await conn.rawClient.close();
+              }
             } catch (error) {
               // Ignore errors when closing
             }

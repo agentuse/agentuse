@@ -81,6 +81,11 @@ describe('WebAssets static serving', () => {
     fs.rmSync(path.join(webDir, '..', 'serve-web-secret.txt'), { force: true });
   });
 
+  it('returns 400 for malformed asset URL encoding', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/assets/%E0%A4%A`);
+    expect(res.status).toBe(400);
+  });
+
   it('404s unknown assets and non-asset paths', async () => {
     expect((await fetch(`http://127.0.0.1:${port}/assets/nope.js`)).status).toBe(404);
     expect((await fetch(`http://127.0.0.1:${port}/sessions`)).status).toBe(404);

@@ -8,6 +8,22 @@ import {
   OPENCODE_GO_PROVIDER_ID,
 } from "../providers/opencode-go";
 
+const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+function parseGitHubRepoFromRemote(remoteUrl: string): string | undefined {
+  const sshMatch = remoteUrl.match(/^git@github\.com:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/);
+  if (sshMatch) return sshMatch[1];
+
+  try {
+    const url = new URL(remoteUrl);
+    if (url.hostname !== "github.com") return undefined;
+    const repo = url.pathname.replace(/^\/+/, "").replace(/\.git$/, "");
+    return GITHUB_REPO_RE.test(repo) ? repo : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function createReadlineInterface() {
   return readline.createInterface({
     input: process.stdin,
@@ -501,16 +517,15 @@ export function createProviderCommand(): Command {
     .description("Set up long-lived OAuth token for GitHub Actions (1 year validity)")
     .option("--repo <repo>", "GitHub repository (owner/repo) - auto-detected from git if not specified")
     .action(async (options: { repo?: string }) => {
-      const { execSync } = await import("child_process");
+      const { execFileSync, spawnSync } = await import("child_process");
 
       // Auto-detect repo from git remote if not specified
       if (!options.repo) {
         try {
-          const remoteUrl = execSync("git remote get-url origin", { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
-          // Parse GitHub URL: git@github.com:owner/repo.git or https://github.com/owner/repo.git
-          const match = remoteUrl.match(/github\.com[:/]([^/]+\/[^/.]+)/);
-          if (match) {
-            options.repo = match[1];
+          const remoteUrl = execFileSync("git", ["remote", "get-url", "origin"], { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+          const repo = parseGitHubRepoFromRemote(remoteUrl);
+          if (repo) {
+            options.repo = repo;
             process.stdout.write(`📦 Auto-detected repository: ${options.repo}\n\n`);
           }
         } catch {
@@ -525,17 +540,21 @@ export function createProviderCommand(): Command {
         process.stdout.write("  agentuse auth setup-github --repo owner/repo  # Specify repo\n");
         process.exit(1);
       }
+      if (!GITHUB_REPO_RE.test(options.repo)) {
+        logger.error(`Invalid repository "${options.repo}". Expected owner/repo`);
+        process.exit(1);
+      }
 
       // Check prerequisites
       try {
-        execSync("gh --version", { stdio: "ignore" });
+        execFileSync("gh", ["--version"], { stdio: "ignore" });
       } catch {
         logger.error("GitHub CLI (gh) is not installed. Run: brew install gh");
         process.exit(1);
       }
 
       try {
-        execSync("gh auth status", { stdio: "ignore" });
+        execFileSync("gh", ["auth", "status"], { stdio: "ignore" });
       } catch {
         logger.error("Not authenticated with gh. Run: gh auth login");
         process.exit(1);
@@ -543,7 +562,7 @@ export function createProviderCommand(): Command {
 
       // Check if we have secrets:write permission by trying to list secrets
       try {
-        execSync(`gh secret list --repo ${options.repo}`, { stdio: "ignore" });
+        execFileSync("gh", ["secret", "list", "--repo", options.repo], { stdio: "ignore" });
       } catch {
         logger.error(`Cannot access secrets for ${options.repo}`);
         process.stdout.write("\nYou need a PAT with 'secrets:write' permission.\n");
@@ -582,9 +601,14 @@ export function createProviderCommand(): Command {
       process.stdout.write("\n📤 Uploading token to GitHub secrets...\n");
 
       try {
-        execSync(`echo "${token}" | gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${options.repo}`, {
-          stdio: "pipe",
+        const result = spawnSync("gh", ["secret", "set", "CLAUDE_CODE_OAUTH_TOKEN", "--repo", options.repo], {
+          input: token,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
         });
+        if (result.status !== 0) {
+          throw new Error(result.stderr || result.error?.message || "gh secret set failed");
+        }
 
         process.stdout.write("\n✅ GitHub Actions setup complete!\n\n");
         process.stdout.write("Secret created:\n");

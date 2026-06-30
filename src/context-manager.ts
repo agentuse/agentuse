@@ -24,6 +24,20 @@ function nonNegativeIntEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function ratioEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) && parsed > 0 && parsed < 1 ? parsed : fallback;
+}
+
 interface TrackedMessage {
   message: ModelMessage;
   estimatedTokens: number;
@@ -66,8 +80,8 @@ export class ContextManager {
     private onCompact?: (messages: ModelMessage[]) => Promise<ModelMessage>
   ) {
     // Read from environment variables
-    this.compactionThreshold = parseFloat(process.env.COMPACTION_THRESHOLD || String(DEFAULT_COMPACTION_THRESHOLD));
-    this.keepRecentMessages = parseInt(process.env.COMPACTION_KEEP_RECENT || String(DEFAULT_KEEP_RECENT_MESSAGES));
+    this.compactionThreshold = ratioEnv('COMPACTION_THRESHOLD', DEFAULT_COMPACTION_THRESHOLD);
+    this.keepRecentMessages = positiveIntEnv('COMPACTION_KEEP_RECENT', DEFAULT_KEEP_RECENT_MESSAGES);
     this.approvalCompactionMinTokens = nonNegativeIntEnv(
       'APPROVAL_COMPACTION_MIN_TOKENS',
       DEFAULT_BOUNDARY_COMPACTION_MIN_TOKENS

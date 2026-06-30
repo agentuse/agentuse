@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import type { Tool } from "ai";
 import { Store, createStore } from "../src/store/store";
 import { createStoreTools } from "../src/store/tools";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, symlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -458,6 +458,30 @@ describe("createStore()", () => {
     const store = createStore(tempDir, "shared-store", "my-agent");
 
     expect(store.getStoreName()).toBe("shared-store");
+  });
+
+  it("allows nested isolated store names for path-based agent ids", () => {
+    const store = createStore(tempDir, true, "agents/research");
+
+    expect(store.getStoreName()).toBe("agents/research");
+    expect(store.getStorePath()).toContain(join("agents", "research", "items.json"));
+  });
+
+  it("rejects shared store names that escape the store root", () => {
+    expect(() => createStore(tempDir, "../outside", "my-agent")).toThrow(/Invalid store name/);
+    expect(() => createStore(tempDir, "nested/../../outside", "my-agent")).toThrow(/Invalid store name/);
+    expect(() => createStore(tempDir, String.raw`nested\outside`, "my-agent")).toThrow(/Invalid store name/);
+  });
+
+  it("rejects store paths that traverse symlinked store directories", () => {
+    const outside = mkdtempSync(join(tmpdir(), "store-outside-"));
+    mkdirSync(join(tempDir, ".agentuse", "store"), { recursive: true });
+    symlinkSync(outside, join(tempDir, ".agentuse", "store", "linked"), "dir");
+
+    expect(() => createStore(tempDir, "linked", "my-agent")).toThrow(/symbolic link/);
+    expect(() => createStore(tempDir, "linked/nested", "my-agent")).toThrow(/symbolic link/);
+
+    rmSync(outside, { recursive: true, force: true });
   });
 });
 

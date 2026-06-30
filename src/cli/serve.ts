@@ -94,6 +94,7 @@ interface WorkerExecuteOptions {
   toolResult?: unknown;
   resumeToken?: string | undefined;
   trigger?: SessionTrigger | undefined;
+  signal?: AbortSignal | undefined;
 }
 
 interface WorkerExecuteResult {
@@ -399,6 +400,11 @@ class AgentWorker {
   private ready = false;
   private readyPromise: Promise<void> | null = null;
   private readyResolve: (() => void) | null = null;
+  private readyReject: ((error: Error) => void) | null = null;
+  private spawnPromise: Promise<void> | null = null;
+  private shuttingDown = false;
+  private respawnTimer: NodeJS.Timeout | null = null;
+  private respawnAttempts = 0;
 
   constructor(private envOverrides: NodeJS.ProcessEnv = {}) {}
 
@@ -406,18 +412,27 @@ class AgentWorker {
    * Spawn the worker process. Must be called during server startup (sync context).
    */
   spawn(): Promise<void> {
+    if (this.process && this.ready) return Promise.resolve();
+    if (this.spawnPromise) return this.spawnPromise;
+    this.shuttingDown = false;
+    if (this.respawnTimer) {
+      clearTimeout(this.respawnTimer);
+      this.respawnTimer = null;
+    }
+
     // Fork the same CLI with --internal-worker flag
     // This avoids needing a separate worker bundle - more elegant for npm package
     const cliPath = process.argv[1];
 
     this.readyPromise = new Promise((resolve, reject) => {
       this.readyResolve = resolve;
+      this.readyReject = reject;
 
       // Timeout if worker doesn't become ready within 10 seconds
       const startupTimeout = setTimeout(() => {
         if (!this.ready) {
           reject(new Error("Worker failed to start within 10 seconds"));
-          this.shutdown();
+          this.process?.kill("SIGTERM");
         }
       }, 10000);
 
@@ -425,20 +440,22 @@ class AgentWorker {
       const originalResolve = this.readyResolve;
       this.readyResolve = () => {
         clearTimeout(startupTimeout);
+        this.readyReject = null;
         originalResolve?.();
       };
     });
 
-    this.process = spawn(process.execPath, [cliPath, "--internal-worker"], {
+    const child = spawn(process.execPath, [cliPath, "--internal-worker"], {
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
         ...this.envOverrides,
       },
     });
+    this.process = child;
 
     this.readline = createInterface({
-      input: this.process.stdout!,
+      input: child.stdout!,
       terminal: false,
     });
 
@@ -446,21 +463,30 @@ class AgentWorker {
       this.handleWorkerMessage(line);
     });
 
-    this.process.stderr?.on("data", (data) => {
+    child.stderr?.on("data", (data) => {
       logger.debug(`[Worker stderr] ${data.toString().trim()}`);
     });
 
-    this.process.on("error", (err) => {
+    child.on("error", (err) => {
+      if (this.process !== child) return;
       logger.error(`Worker process error: ${err.message}`);
       this.handleWorkerDeath();
     });
 
-    this.process.on("exit", (code) => {
+    child.on("exit", (code) => {
+      if (this.process !== child) return;
       logger.warn(`Worker process exited with code ${code}`);
       this.handleWorkerDeath();
     });
 
-    return this.readyPromise;
+    this.spawnPromise = this.readyPromise
+      .then(() => {
+        this.respawnAttempts = 0;
+      })
+      .finally(() => {
+        this.spawnPromise = null;
+      });
+    return this.spawnPromise;
   }
 
   private handleWorkerMessage(line: string) {
@@ -501,6 +527,11 @@ class AgentWorker {
     this.ready = false;
     this.process = null;
     this.readline = null;
+    if (this.readyReject) {
+      this.readyReject(new Error("Worker process died before becoming ready"));
+      this.readyReject = null;
+      this.readyResolve = null;
+    }
 
     // Reject all pending requests
     for (const pending of this.pendingRequests.values()) {
@@ -513,6 +544,21 @@ class AgentWorker {
       });
     }
     this.pendingRequests.clear();
+    this.scheduleRespawn();
+  }
+
+  private scheduleRespawn() {
+    if (this.shuttingDown || this.respawnTimer || this.spawnPromise) return;
+    const delayMs = Math.min(30_000, 500 * 2 ** this.respawnAttempts);
+    this.respawnAttempts += 1;
+    this.respawnTimer = setTimeout(() => {
+      this.respawnTimer = null;
+      this.spawn().catch((error) => {
+        logger.warn(`Worker respawn failed: ${(error as Error).message}`);
+        this.scheduleRespawn();
+      });
+    }, delayMs);
+    this.respawnTimer.unref?.();
   }
 
   /**
@@ -533,7 +579,7 @@ class AgentWorker {
       toolResult: options.toolResult,
       resumeToken: options.resumeToken,
       trigger: options.trigger,
-    }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
+    }, { signal: options.signal }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
   }
 
   stopSession(options: {
@@ -647,8 +693,19 @@ class AgentWorker {
     }) as Promise<WorkerListSessionsResult | WorkerExecuteError>;
   }
 
-  private request(options: Record<string, unknown> & { timeout?: number | undefined }): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerStopSessionResult> {
+  private request(
+    options: Record<string, unknown> & { timeout?: number | undefined },
+    requestOptions: { signal?: AbortSignal | undefined } = {}
+  ): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerStopSessionResult> {
     return new Promise((resolve) => {
+      if (requestOptions.signal?.aborted) {
+        resolve({
+          success: false,
+          error: { code: "ABORTED", message: "Request aborted" },
+        });
+        return;
+      }
+
       if (!this.process || !this.ready) {
         resolve({
           success: false,
@@ -673,7 +730,25 @@ class AgentWorker {
         }
       }, timeoutMs);
 
-      this.pendingRequests.set(id, { resolve, timeoutId });
+      const abortHandler = () => {
+        const pending = this.pendingRequests.get(id);
+        if (!pending) return;
+        if (pending.timeoutId) clearTimeout(pending.timeoutId);
+        this.pendingRequests.delete(id);
+        pending.resolve({
+          success: false,
+          error: { code: "ABORTED", message: "Request aborted" },
+        });
+      };
+      requestOptions.signal?.addEventListener("abort", abortHandler, { once: true });
+
+      this.pendingRequests.set(id, {
+        resolve: (value) => {
+          requestOptions.signal?.removeEventListener("abort", abortHandler);
+          resolve(value);
+        },
+        timeoutId,
+      });
 
       const request = {
         id,
@@ -688,6 +763,11 @@ class AgentWorker {
    * Shutdown the worker process.
    */
   shutdown() {
+    this.shuttingDown = true;
+    if (this.respawnTimer) {
+      clearTimeout(this.respawnTimer);
+      this.respawnTimer = null;
+    }
     const child = this.process;
     if (child) {
       child.stdin?.end();
@@ -710,11 +790,60 @@ class AgentWorker {
   }
 }
 
-function parseRequestBody(req: IncomingMessage): Promise<RunRequest> {
+class RequestBodyTooLargeError extends Error {
+  constructor(limitBytes: number) {
+    super(`Request body too large; limit is ${limitBytes} bytes`);
+    this.name = "RequestBodyTooLargeError";
+  }
+}
+
+const MAX_JSON_BODY_BYTES = 1_000_000;
+const LOGGED_APPROVAL_REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
+
+function shouldLogApprovalRequest(logged: Map<string, number>, key: string, now = Date.now()): boolean {
+  for (const [existingKey, loggedAt] of logged) {
+    if (now - loggedAt > LOGGED_APPROVAL_REQUEST_TTL_MS) {
+      logged.delete(existingKey);
+    }
+  }
+  if (logged.has(key)) return false;
+  logged.set(key, now);
+  return true;
+}
+
+function readRequestBody(req: IncomingMessage, limitBytes = MAX_JSON_BODY_BYTES): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
-    req.on("data", (chunk) => (body += chunk));
+    let bytes = 0;
+    let done = false;
+    const fail = (error: Error) => {
+      if (done) return;
+      done = true;
+      reject(error);
+    };
+    req.on("data", (chunk) => {
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > limitBytes) {
+        fail(new RequestBodyTooLargeError(limitBytes));
+      } else {
+        body += chunk;
+      }
+    });
     req.on("end", () => {
+      if (done) return;
+      done = true;
+      resolve(body);
+    });
+    req.on("error", (error) => {
+      if (done && error.name === "AbortError") return;
+      if (!done) fail(error);
+    });
+  });
+}
+
+function parseRequestBody(req: IncomingMessage): Promise<RunRequest> {
+  return new Promise((resolve, reject) => {
+    readRequestBody(req).then((body) => {
       try {
         const parsed = JSON.parse(body);
         if (!parsed.agent || typeof parsed.agent !== "string") {
@@ -725,23 +854,19 @@ function parseRequestBody(req: IncomingMessage): Promise<RunRequest> {
       } catch {
         reject(new Error("Invalid JSON body"));
       }
-    });
-    req.on("error", reject);
+    }, reject);
   });
 }
 
 function parseJSONBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
+    readRequestBody(req).then((body) => {
       try {
         resolve(body ? JSON.parse(body) : {});
       } catch {
         reject(new Error("Invalid JSON body"));
       }
-    });
-    req.on("error", reject);
+    }, reject);
   });
 }
 
@@ -752,6 +877,14 @@ function sendJSON(res: ServerResponse, status: number, data: unknown) {
 
 function sendError(res: ServerResponse, status: number, code: string, message: string) {
   sendJSON(res, status, { success: false, error: { code, message } });
+}
+
+function sendRequestParseError(res: ServerResponse, err: unknown): boolean {
+  if (err instanceof RequestBodyTooLargeError) {
+    sendError(res, 413, "REQUEST_TOO_LARGE", err.message);
+    return true;
+  }
+  return false;
 }
 
 function sendHTML(res: ServerResponse, status: number, html: string) {
@@ -2111,7 +2244,7 @@ export function createServeCommand(): Command {
 
       const activeApprovalResumes = new Map<string, Promise<unknown>>();
       const activeSessionContinuations = new Map<string, Promise<unknown>>();
-      const loggedApprovalRequests = new Set<string>();
+      const loggedApprovalRequests = new Map<string, number>();
       const slackBotToken = process.env.SLACK_BOT_TOKEN;
       const slackAppToken = process.env.SLACK_APP_TOKEN;
 
@@ -3500,6 +3633,7 @@ export function createServeCommand(): Command {
 
             startApprovalResume(res, { project, sessionId, info, resumeToken, status, comment });
           } catch (err) {
+            if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
           return;
@@ -3554,6 +3688,7 @@ export function createServeCommand(): Command {
 
             startSessionContinue(res, { project, sessionId, prompt });
           } catch (err) {
+            if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
           return;
@@ -3606,6 +3741,7 @@ export function createServeCommand(): Command {
             }
             sendJSON(res, 200, { success: true, sessionId, stopped: result.stopped });
           } catch (err) {
+            if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
           return;
@@ -3670,6 +3806,7 @@ export function createServeCommand(): Command {
             }
             sendJSON(res, 200, { success: true, sessionId, status: "suspended" });
           } catch (err) {
+            if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
           return;
@@ -3750,8 +3887,7 @@ export function createServeCommand(): Command {
             }
 
             const logKey = `${found.project.id}:${sessionId}:${token}`;
-            if (!loggedApprovalRequests.has(logKey)) {
-              loggedApprovalRequests.add(logKey);
+            if (shouldLogApprovalRequest(loggedApprovalRequests, logKey)) {
               const filePath = found.info.approval.agent.filePath;
               const agentLabel = filePath
                 ? relative(found.project.root, filePath)
@@ -3765,6 +3901,7 @@ export function createServeCommand(): Command {
 
             sendJSON(res, 200, { success: true, status: "logged", sessionId });
           } catch (err) {
+            if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
           return;
@@ -3872,6 +4009,7 @@ export function createServeCommand(): Command {
 
             startApprovalResume(res, { project, sessionId, info, resumeToken: token, status, comment });
           } catch (err) {
+            if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
           return;
@@ -3943,6 +4081,7 @@ export function createServeCommand(): Command {
 
             startSessionContinue(res, { project, sessionId, prompt });
           } catch (err) {
+            if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
           return;
@@ -3987,6 +4126,7 @@ export function createServeCommand(): Command {
             res.writeHead(202, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ sessionId, status: "running" }));
           } catch (err) {
+            if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
           return;
@@ -4088,22 +4228,36 @@ export function createServeCommand(): Command {
             return;
           }
 
-          // Create abort controller for timeout
-          const timeoutSeconds = body.timeout ?? agent.config.timeout ?? 300;
-          const abortController = new AbortController();
-          const timeoutId = setTimeout(() => abortController.abort(), timeoutSeconds * 1000);
-
-          // Handle client disconnect
-          req.on("close", () => {
-            abortController.abort();
-          });
-
           const projectWorker = workers.get(project.id);
           if (!projectWorker) {
-            clearTimeout(timeoutId);
             sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
             return;
           }
+
+          // Fresh executions are preassigned an id so a client disconnect can
+          // stop the worker run instead of letting side effects continue until
+          // the worker-side timeout.
+          const timeoutSeconds = body.timeout ?? agent.config.timeout ?? 300;
+          const abortController = new AbortController();
+          const requestSessionId = body.sessionId ?? ulid();
+          let responseFinished = false;
+          let stopRequested = false;
+          const requestStop = () => {
+            if (stopRequested) return;
+            stopRequested = true;
+            void projectWorker.stopSession({
+              projectRoot: project.root,
+              sessionId: requestSessionId,
+              reason: "client-disconnect",
+            }).catch(() => {});
+          };
+          res.on("finish", () => {
+            responseFinished = true;
+          });
+          res.on("close", () => {
+            if (!responseFinished) abortController.abort();
+          });
+          abortController.signal.addEventListener("abort", requestStop, { once: true });
 
           // Execute via worker process to work around EBADF issue in async callbacks
           // MCP server spawning fails in HTTP handlers due to bundler/Node.js fd issues
@@ -4116,10 +4270,11 @@ export function createServeCommand(): Command {
             maxSteps: body.maxSteps,
             debug: options.debug,
             sessionId: body.sessionId,
+            ...(!body.sessionId && { newSessionId: requestSessionId }),
             trigger: 'api',
+            signal: abortController.signal,
           });
 
-          clearTimeout(timeoutId);
           const duration = Date.now() - startTime;
 
           if (spawnResult.success) {
@@ -4195,6 +4350,10 @@ export function createServeCommand(): Command {
             const errorCode = spawnResult.error.code;
             const errorMessage = spawnResult.error.message;
 
+            if (errorCode === 'ABORTED' && res.destroyed) {
+              return;
+            }
+
             // Capture telemetry
             telemetry.captureExecution({
               ...parseModel(body.model || agent.config.model),
@@ -4234,11 +4393,12 @@ export function createServeCommand(): Command {
               res.end();
             } else {
               // JSON error response
-              const httpStatus = errorCode === 'TIMEOUT' ? 504 : 500;
+              const httpStatus = errorCode === 'TIMEOUT' ? 504 : errorCode === 'ABORTED' ? 499 : 500;
               sendError(res, httpStatus, errorCode, errorMessage);
             }
           }
         } catch (err) {
+          if (sendRequestParseError(res, err)) return;
           const message = (err as Error).message;
 
           if (message.includes("Invalid JSON")) {

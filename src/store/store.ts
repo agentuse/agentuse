@@ -3,13 +3,13 @@
  */
 
 import { readFile, writeFile, mkdir, unlink, rename } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { existsSync, lstatSync } from 'fs';
+import { join, dirname, resolve, relative, isAbsolute } from 'path';
 import process from 'node:process';
 import { randomBytes } from 'crypto';
 import { ulid } from 'ulid';
 import { logger } from '../utils/logger';
-import { StoreFileSchema } from './schema';
+import { StoreFileSchema, isSafeStoreName } from './schema';
 import type {
   StoreItem,
   StoreFile,
@@ -47,6 +47,22 @@ function searchHaystack(item: StoreItem): string {
  */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function assertNoSymlinkPathSegments(projectRoot: string, storeName: string): void {
+  let current = resolve(projectRoot);
+  for (const segment of ['.agentuse', 'store', ...storeName.split('/')]) {
+    current = join(current, segment);
+    if (!existsSync(current)) continue;
+    try {
+      if (lstatSync(current).isSymbolicLink()) {
+        throw new Error(`Invalid store path: ${current} is a symbolic link`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw error;
+    }
+  }
 }
 
 /**
@@ -161,7 +177,16 @@ export class Store {
     storeName: string,
     agentName?: string
   ) {
-    const storeDir = join(projectRoot, '.agentuse', 'store', storeName);
+    if (!isSafeStoreName(storeName)) {
+      throw new Error(`Invalid store name: ${storeName}`);
+    }
+    const storeRoot = resolve(projectRoot, '.agentuse', 'store');
+    const storeDir = resolve(storeRoot, storeName);
+    const relativeStoreDir = relative(storeRoot, storeDir);
+    if (relativeStoreDir.startsWith('..') || isAbsolute(relativeStoreDir)) {
+      throw new Error(`Invalid store name: ${storeName}`);
+    }
+    assertNoSymlinkPathSegments(projectRoot, storeName);
     this.storePath = join(storeDir, 'items.json');
     this.lockPath = join(storeDir, 'lock');
     this.storeName = storeName;

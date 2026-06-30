@@ -94,7 +94,14 @@ export class WebAssets {
   serveAsset(req: IncomingMessage, res: ServerResponse, pathname: string): boolean {
     if ((req.method !== "GET" && req.method !== "HEAD") || !pathname.startsWith("/assets/")) return false;
 
-    const relPath = decodeURIComponent(pathname.slice("/assets/".length));
+    let relPath: string;
+    try {
+      relPath = decodeURIComponent(pathname.slice("/assets/".length));
+    } catch {
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("Bad request");
+      return true;
+    }
     if (!this.root || !relPath) {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not found");

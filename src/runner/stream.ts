@@ -301,8 +301,9 @@ export async function processAgentStream(
     }
   };
 
-  for await (const chunk of generator) {
-    switch (chunk.type) {
+  try {
+    for await (const chunk of generator) {
+      switch (chunk.type) {
       case 'reasoning': {
         // End-of-block marker: finalize and stop.
         if (chunk.reasoningDone) {
@@ -872,17 +873,18 @@ export async function processAgentStream(
         await finalizeReasoningPart();
         await finalizeTextPart();
         throw chunk.error;
+      }
     }
-  }
+  } finally {
+    // Finalize any pending reasoning/text part before returning or throwing.
+    await finalizeReasoningPart();
+    await finalizeTextPart();
 
-  // Finalize any pending reasoning/text part before returning (safety fallback)
-  await finalizeReasoningPart();
-  await finalizeTextPart();
-
-  // Wait for all pending session updates to complete before returning
-  // This ensures tool states are persisted (e.g., "running" -> "completed")
-  if (pendingSessionUpdates.size > 0) {
-    await Promise.allSettled(pendingSessionUpdates);
+    // Wait for all pending session updates to complete before returning.
+    // This ensures tool states are persisted (e.g., "running" -> "completed").
+    if (pendingSessionUpdates.size > 0) {
+      await Promise.allSettled(pendingSessionUpdates);
+    }
   }
 
   return {

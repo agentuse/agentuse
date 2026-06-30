@@ -4,6 +4,13 @@
 
 import { z } from 'zod';
 
+export function isSafeStoreName(storeName: string): boolean {
+  return Boolean(storeName) &&
+    !storeName.includes('\0') &&
+    !storeName.includes('\\') &&
+    !storeName.split('/').some((part) => part === '' || part === '.' || part === '..');
+}
+
 /**
  * Schema for a store item
  */
@@ -72,5 +79,5 @@ export const StoreFileSchema = z.object({
  */
 export const StoreConfigSchema = z.union([
   z.literal(true),
-  z.string().min(1),
+  z.string().min(1).refine(isSafeStoreName, 'Store name must be a safe relative path'),
 ]);

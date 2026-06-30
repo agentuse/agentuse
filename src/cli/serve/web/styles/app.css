@@ -148,14 +148,13 @@ body {
 .theme-toggle svg { width: 12px; height: 12px; display: block; }
 @media (max-width: 640px) {
   .topbar { padding: 12px 16px; grid-template-columns: 1fr auto; gap: 10px; }
-  /* The 5-item pill can be wider than a phone viewport. Let it scroll
-     horizontally instead of clipping the first/last item; `safe center` keeps
-     it centered when it fits and reachable from the start when it doesn't. */
+  /* The 5-item pill can be wider than a phone viewport. Start-align the
+     scroll area so the tail item is reachable instead of clipped. */
   .topbar .nav-wrap {
     grid-column: 1 / -1; grid-row: 2;
     justify-self: stretch;
     display: flex;
-    justify-content: safe center;
+    justify-content: flex-start;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;

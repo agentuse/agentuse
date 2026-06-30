@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { existsSync, rmSync, mkdirSync, cpSync, statSync, readFileSync } from 'fs';
 import { glob } from 'glob';
 import { join, basename, dirname, resolve } from 'path';
@@ -75,6 +75,30 @@ interface CopyResult {
 }
 
 type ConflictMode = 'prompt' | 'skip-all' | 'overwrite-all';
+const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const GIT_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
+function validateGitRef(ref: string): void {
+  if (
+    !GIT_REF_RE.test(ref) ||
+    ref.includes('..') ||
+    ref.endsWith('/') ||
+    ref.endsWith('.') ||
+    ref.includes('//')
+  ) {
+    throw new Error(`Invalid git ref: ${ref}`);
+  }
+}
+
+function cloneSource(resolved: ResolvedSource, workDir: string): void {
+  const args = ['clone', '--depth', '1'];
+  if (resolved.ref) {
+    validateGitRef(resolved.ref);
+    args.push('--branch', resolved.ref);
+  }
+  args.push('--', resolved.path, workDir);
+  execFileSync('git', args, { stdio: 'pipe' });
+}
 
 /**
  * Resolve the source to a normalized format
@@ -96,7 +120,15 @@ export function resolveSource(source: string): ResolvedSource {
   }
 
   // GitHub shorthand (user/repo or user/repo#ref)
-  const [repo, ref] = source.split('#');
+  const parts = source.split('#');
+  if (parts.length > 2) {
+    throw new Error(`Invalid GitHub source: ${source}`);
+  }
+  const [repo, ref] = parts;
+  if (!repo || !GITHUB_REPO_RE.test(repo)) {
+    throw new Error(`Invalid GitHub source: ${source}. Expected owner/repo or owner/repo#ref`);
+  }
+  if (ref) validateGitRef(ref);
   return { type: 'github', path: `https://github.com/${repo}.git`, ref, needsClone: true };
 }
 
@@ -261,13 +293,10 @@ export async function add(
   // 1. Get working directory
   if (resolved.needsClone) {
     workDir = join(tmpdir(), `agentuse-add-${Date.now()}`);
-    const cloneCmd = resolved.ref
-      ? `git clone --depth 1 --branch ${resolved.ref} "${resolved.path}" "${workDir}"`
-      : `git clone --depth 1 "${resolved.path}" "${workDir}"`;
 
     console.log(chalk.gray(`Cloning ${resolved.path}...`));
     try {
-      execSync(cloneCmd, { stdio: 'pipe' });
+      cloneSource(resolved, workDir);
     } catch (error) {
       throw new Error(`Failed to clone repository: ${(error as Error).message}`);
     }
@@ -475,14 +504,11 @@ export function createAddCommand(): Command {
 
         if (resolved.needsClone) {
           workDir = join(tmpdir(), `agentuse-add-${Date.now()}`);
-          const cloneCmd = resolved.ref
-            ? `git clone --depth 1 --branch ${resolved.ref} "${resolved.path}" "${workDir}"`
-            : `git clone --depth 1 "${resolved.path}" "${workDir}"`;
 
           const spinner = p.spinner();
           spinner.start(`Cloning ${resolved.path}`);
           try {
-            execSync(cloneCmd, { stdio: 'pipe' });
+            cloneSource(resolved, workDir);
             spinner.stop('Repository cloned');
           } catch (error) {
             spinner.stop('Clone failed');

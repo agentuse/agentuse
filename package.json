@@ -1,6 +1,6 @@
 {
   "name": "agentuse",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "AI agents on autopilot - define in markdown, run on cron, CI/CD, or serverless",
   "type": "module",
   "author": "",
@@ -52,7 +52,7 @@
     "dev:serve": "bun --watch src/index.ts serve",
     "link": "npm link",
     "unlink": "npm unlink",
-    "test": "bun test tests/plugin-manager.test.ts && bun test $(ls tests/*.test.ts | grep -v plugin-manager)",
+    "test": "bun test tests/plugin-manager.test.ts && for f in tests/*.test.ts; do [ \"$f\" = \"tests/plugin-manager.test.ts\" ] || bun test \"$f\" || exit 1; done",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build && bun run test",
     "pack-dry": "bun run build && npm pack --dry-run",

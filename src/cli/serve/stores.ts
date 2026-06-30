@@ -2,9 +2,11 @@ import { existsSync } from "fs";
 import { readFile } from "fs/promises";
 import { dirname, join } from "path";
 import { glob } from "glob";
-import { StoreFileSchema } from "../../store/schema";
+import { StoreFileSchema, isSafeStoreName } from "../../store/schema";
 import type { StoreItem } from "../../store/types";
 import { escapeHtml, formatApprovalTime, isJsonLikeContent, valueAsRecord } from "./ui";
+
+export { isSafeStoreName };
 
 interface StoreLogEntry {
   tool?: string;
@@ -114,12 +116,6 @@ export function renderStoreToolEvent(entry: StoreLogEntry, projectId?: string): 
     </div>
     ${event.href ? `<a class="store-event-link" href="${escapeHtml(event.href)}">Open in Store</a>` : ''}
   </div>`;
-}
-
-export function isSafeStoreName(storeName: string): boolean {
-  return Boolean(storeName) &&
-    !storeName.includes('\0') &&
-    !storeName.split('/').some((part) => part === '' || part === '..');
 }
 
 function resolveStoreRoot(projectRoot: string): string {

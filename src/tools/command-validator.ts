@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as os from 'os';
 import type { CommandValidationResult } from './types.js';
-import { parseBashCommand, extractPaths, type ParsedCommand } from './bash-parser.js';
+import { parseBashCommand, extractPaths, extractPipeTargets, extractRedirectionTargets, type ParsedCommand } from './bash-parser.js';
 import { matchStructured, type StructuredCommand } from './wildcard.js';
 import { resolveRealPath, type PathResolverContext } from './path-validator.js';
 
@@ -396,6 +396,28 @@ export class CommandValidator {
     return null;
   }
 
+  private checkShellOperatorDenylist(command: string): string | null {
+    for (const target of extractPipeTargets(command)) {
+      const commandName = path.basename(target);
+      const blockedPipeTargets = new Set([
+        'nc', 'netcat', 'ncat', 'curl', 'wget',
+        'sh', 'bash', 'zsh', 'fish',
+        'python', 'python3', 'node', 'perl', 'ruby',
+      ]);
+      if (blockedPipeTargets.has(commandName)) {
+        return `Command blocked by built-in security policy: pipe to "${commandName}"`;
+      }
+    }
+
+    for (const target of extractRedirectionTargets(command)) {
+      if (target.startsWith('/dev/tcp/') || target.startsWith('/dev/udp/')) {
+        return 'Command blocked by built-in security policy: network redirection';
+      }
+    }
+
+    return null;
+  }
+
   /**
    * Match a string against a pattern (for simple checks)
    */
@@ -536,6 +558,11 @@ export class CommandValidator {
 
     if (parsedCommands.length === 0) {
       return { allowed: false, error: 'No valid commands found' };
+    }
+
+    const operatorDenyError = this.checkShellOperatorDenylist(normalizedCommand);
+    if (operatorDenyError) {
+      return { allowed: false, error: operatorDenyError };
     }
 
     // Validate each command individually (includes denylist check)
