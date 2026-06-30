@@ -2428,3 +2428,107 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   outline-offset: 2px;
   border-radius: 8px;
 }
+
+/* --- Cmd+K agent palette (global "go to agent") --- */
+.palette-backdrop {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 12vh 16px 16px;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+:root[data-theme="light"] .palette-backdrop { background: rgba(0,0,0,0.30); }
+.palette {
+  width: 100%; max-width: 560px;
+  max-height: 70vh;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+  overflow: hidden;
+}
+.palette-input {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+.palette-input > svg { width: 16px; height: 16px; color: var(--muted-2); flex-shrink: 0; }
+.palette-input input {
+  flex: 1; min-width: 0;
+  border: 0; outline: 0; background: transparent;
+  color: var(--fg);
+  font-family: var(--sans);
+  /* 16px min keeps iOS Safari from auto-zooming the viewport on focus. */
+  font-size: 16px;
+  padding: 14px 0;
+}
+.palette-input input::placeholder { color: var(--muted-2); }
+.palette-esc {
+  flex-shrink: 0;
+  font-family: var(--mono); font-size: 10px;
+  color: var(--muted-2);
+  padding: 2px 6px;
+  border: 1px solid var(--line); border-radius: 5px;
+}
+.palette-list { overflow-y: auto; overflow-x: hidden; padding: 6px; }
+.palette-empty { padding: 24px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+.palette-row {
+  display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0; border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--sans); font-size: 14px; text-align: left;
+  cursor: pointer;
+}
+.palette-row.active { background: var(--panel-hover); }
+.palette-name {
+  font-weight: 500;
+  max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.palette-name mark { background: transparent; color: var(--cyan); font-weight: 700; }
+.palette-desc {
+  max-width: 100%;
+  color: var(--muted); font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.palette-foot {
+  display: flex; gap: 16px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted-2); font-size: 11px;
+}
+.palette-foot span { display: inline-flex; align-items: center; gap: 5px; }
+.palette-foot kbd {
+  font-family: var(--mono); font-size: 10px;
+  color: var(--muted);
+  padding: 1px 5px;
+  border: 1px solid var(--line); border-radius: 4px;
+}
+.palette-trigger {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--sans); font-size: 13px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.palette-trigger:hover { border-color: var(--line-strong); color: var(--fg); }
+.palette-trigger > svg { width: 14px; height: 14px; flex-shrink: 0; }
+.palette-trigger-kbd {
+  font-family: var(--mono); font-size: 10px;
+  color: var(--muted-2);
+  padding: 1px 5px;
+  border: 1px solid var(--line); border-radius: 4px;
+}
+@media (max-width: 640px) {
+  .palette-trigger { padding: 7px; }
+  .palette-trigger-label, .palette-trigger-kbd { display: none; }
+}

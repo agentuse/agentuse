@@ -1,5 +1,6 @@
 import { ErrorBoundary, LocationProvider, Router, Route, lazy } from 'preact-iso';
 import { Topbar } from './components/topbar';
+import { AgentPalette } from './components/agent-palette';
 
 const Home = lazy(() => import('./routes/home'));
 const Agents = lazy(() => import('./routes/agents'));
@@ -28,6 +29,7 @@ export function App() {
   return (
     <LocationProvider>
       <ErrorBoundary>
+        <AgentPalette />
         <Router>
           <Route path="/" component={Home} />
           <Route path="/agents" component={Agents} />
