@@ -1890,6 +1890,28 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   transition: color 120ms ease, border-color 120ms ease;
 }
 .page-agent-detail .group-title .source-view-btn:hover { color: var(--fg); border-color: var(--fg); }
+.page-agent-detail .group-title .send-agent-btn { white-space: nowrap; }
+
+/* Source/Recent-runs headers cram on narrow screens: let the row wrap, give
+   the path its own line, and drop the flex spacer so buttons sit left-aligned. */
+@media (max-width: 600px) {
+  .page-agent-detail .group-title {
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 8px;
+    column-gap: 8px;
+  }
+  .page-agent-detail .group-title .count {
+    flex: 1 1 100%;
+    order: 1;
+    word-break: break-all;
+  }
+  .page-agent-detail .group-title .rule { display: none; }
+  .page-agent-detail .group-title .see-all,
+  .page-agent-detail .group-title .copy-btn,
+  .page-agent-detail .group-title .source-view-btn,
+  .page-agent-detail .group-title .send-agent-btn { order: 2; }
+}
 .page-agent-detail .source-panel { border-left: 2px solid var(--cyan-border); }
 .page-agent-detail .source-pre {
   margin: 0; padding: 16px 18px; overflow-x: auto;
@@ -2181,7 +2203,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
-.page-sessions .filters select {
+.page-sessions .filters select,
+.page-sessions .filters input {
   min-height: 34px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -2194,17 +2217,65 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   padding: 6px 9px;
   cursor: pointer;
 }
+.page-sessions .filters input {
+  cursor: text;
+  width: 100%;
+}
+.page-sessions .filters input::placeholder { color: var(--muted-2); }
+.page-sessions .filters input:focus-visible { outline: none; border-color: var(--cyan-border); }
+
+/* Searchable agent picker: type to search the list, choose to apply. */
+.page-sessions .agent-select { position: relative; min-width: 240px; }
+.page-sessions .agent-select input { padding-right: 26px; }
+.page-sessions .agent-select-clear {
+  position: absolute; top: 50%; right: 7px; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  border: 0; border-radius: 4px;
+  background: transparent; color: var(--muted-2);
+  font-size: 15px; line-height: 1; cursor: pointer;
+}
+.page-sessions .agent-select-clear:hover { background: var(--panel-hover); color: var(--fg); }
+.page-sessions .agent-select-pop {
+  position: absolute; z-index: 50; top: calc(100% + 4px); left: 0;
+  width: max(100%, 320px); max-height: 320px; overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  background: var(--bg);
+  box-shadow: 0 16px 40px rgba(0,0,0,0.4);
+}
+.page-sessions .agent-select-empty { padding: 12px 10px; color: var(--muted); font-size: 12px; }
+.page-sessions .agent-select-opt {
+  display: flex; flex-direction: column; gap: 1px;
+  width: 100%; padding: 7px 9px;
+  border: 0; border-radius: 6px;
+  background: transparent; color: var(--fg);
+  font: inherit; text-align: left; cursor: pointer;
+}
+.page-sessions .agent-select-opt.active { background: var(--panel-hover); }
+.page-sessions .agent-select-opt.selected .agent-select-id { color: var(--cyan); }
+.page-sessions .agent-select-id {
+  font-size: 12.5px; font-family: var(--mono);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.page-sessions .agent-select-name {
+  font-size: 11px; color: var(--muted-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .page-sessions .filter-clear {
   display: inline-flex;
   align-items: center;
   min-height: 34px;
+  max-width: 100%;
   padding: 6px 11px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: var(--bg);
   color: var(--muted-3);
   font-size: 12px;
-  white-space: nowrap;
+  /* Long agent ids must wrap rather than push the page wider than the viewport
+     (which broke the topbar nav and added a horizontal scrollbar on mobile). */
+  overflow-wrap: anywhere;
   text-decoration: none;
   border-bottom: 1px solid var(--line-strong);
 }
@@ -2262,6 +2333,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 @media (max-width: 560px) {
   .page-sessions .filters label { width: 100%; }
   .page-sessions .filters select { width: 100%; }
+  /* 16px keeps iOS Safari from zooming the viewport when the field is focused. */
+  .page-sessions .filters input { width: 100%; min-width: 0; font-size: 16px; }
+  .page-sessions .agent-select { width: 100%; min-width: 0; }
+  .page-sessions .agent-select-pop { width: 100%; }
+  .page-sessions .filter-clear { width: 100%; }
 }
 
 /* --- shared chip variants (sessions / approvals rows) --- */

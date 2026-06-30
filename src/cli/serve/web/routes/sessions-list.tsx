@@ -1,11 +1,12 @@
 import { useLocation } from 'preact-iso';
 import { useEffect, useState } from 'preact/hooks';
 import type { SessionRow, SessionsPayload } from '../lib/api';
-import { fetchSessions } from '../lib/api';
+import { fetchSessions, fetchAgents } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
+import { AgentFilterSelect } from '../components/agent-filter-select';
 import { formatApprovalTime, formatRelativeTime, errorText } from '../lib/format';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
@@ -41,13 +42,28 @@ function SessionRowView(props: { row: SessionRow; multiProject: boolean }) {
 export default function SessionsList() {
   const location = useLocation();
   const q = location.query;
-  const win = q.window || '24h';
   const statusFilter = q.status || '';
   const triggerFilter = q.trigger || '';
   const agentFilter = q.agent || undefined;
   const approvalFilter = q.approval || undefined;
+  // Default to 24h for the general feed, but widen to 30d when an agent or
+  // approval filter is active: those runs are often days old, and a 24h default
+  // would show "no sessions" for an agent that simply hasn't run today.
+  const win = q.window || (agentFilter || approvalFilter ? '30d' : '24h');
 
   useTitle('AgentUse / Sessions');
+
+  // Agent list powers the filter's type-ahead so operators pick a real agent id
+  // instead of guessing a substring (which silently misses renamed/moved ids).
+  const agentsFetch = useFetch('sessions-agent-options', () => fetchAgents(), {});
+  const agentOptions = (() => {
+    const byId = new Map<string, string>();
+    for (const a of agentsFetch.data?.agents ?? []) {
+      const id = a.path.replace(/\.agentuse$/, '');
+      if (!byId.has(id)) byId.set(id, a.name);
+    }
+    return [...byId.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  })();
 
   const key = `sessions:${win}:${statusFilter}:${triggerFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}`;
   const [streamData, setStreamData] = useState<SessionsPayload | null>(null);
@@ -115,6 +131,14 @@ export default function SessionsList() {
     location.route(withParam(key, (event.target as HTMLSelectElement).value));
   };
 
+  // Commit the agent filter on change/Enter (not per keystroke), navigating only
+  // when the value actually differs from what's already applied.
+  const commitAgent = (value: string) => {
+    const next = value.trim();
+    if (next === (agentFilter ?? '')) return;
+    location.route(withParam('agent', next));
+  };
+
   return (
     <div class="page-sessions">
       <Topbar currentPage="sessions" right={<span class="pending-count">{rows.length} shown</span>} />
@@ -136,7 +160,9 @@ export default function SessionsList() {
               {TRIGGERS.map((t) => <option value={t} key={t || 'any'}>{t || 'any'}</option>)}
             </select>
           </label>
-          {agentFilter && <a class="filter-clear" href={withParam('agent', '')}>agent: {agentFilter} ✕</a>}
+          <label>agent
+            <AgentFilterSelect options={agentOptions} value={agentFilter ?? ''} onChange={commitAgent} />
+          </label>
           {approvalFilter && <a class="filter-clear" href={withParam('approval', '')}>approval: {approvalFilter} ✕</a>}
         </div>
 
