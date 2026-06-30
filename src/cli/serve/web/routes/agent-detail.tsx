@@ -281,9 +281,9 @@ export default function AgentDetail() {
 
             <Capabilities meta={data.meta} model={data.model} schedule={data.schedule} scheduleHuman={data.scheduleHuman} />
 
-            <SourcePanel source={data.source} runPath={data.runPath} project={data.projectId} path={data.path} />
-
             <RecentRuns agentId={agentIdFromPath(data.path)} project={data.projectId} />
+
+            <SourcePanel source={data.source} runPath={data.runPath} project={data.projectId} path={data.path} />
           </>
         )}
       </main>
