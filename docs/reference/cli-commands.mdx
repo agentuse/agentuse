@@ -523,6 +523,19 @@ curl "http://127.0.0.1:12233/api/agents"
 
 `description` and `schedule` are present only when the agent declares them.
 
+#### GET /api/agents/detail
+
+Returns the capability summary and raw `.agentuse` source for one loaded agent.
+The endpoint is operator-gated like the rest of `/api/*`, and `path` must match
+an agent already loaded by the project.
+
+```bash
+curl "http://127.0.0.1:12233/api/agents/detail?project=projA&path=daily.agentuse" \
+  -H "Authorization: Bearer $AGENTUSE_API_KEY"
+```
+
+The browsable agent detail hub is at `/agents/<project>/<agent-path>`.
+
 #### GET /api/schedules
 
 Lists the scheduled agents currently registered with the running daemon as JSON,

@@ -346,13 +346,13 @@ Additional instructions or context.
 ## Tools Configuration
 
 Tools are available to agents through:
-1. **Built-in Tools** - Filesystem and Bash tools with configurable permissions
+1. **Built-in Tools** - Filesystem, Bash, and artifact tools with configurable permissions
 2. **MCP Servers** - Connect to any Model Context Protocol server
 3. **Sub-Agents** - Delegate tasks to other agents
 
 ### Built-in Tools
 
-Configure filesystem and bash tool permissions via the `tools` field:
+Configure filesystem, bash, and artifact tools via the `tools` field:
 
 ```yaml
 tools:
@@ -363,10 +363,11 @@ tools:
     commands:
       - "git *"
       - "npm *"
+  artifacts: true                  # enables artifact_save and artifact_list
 ```
 
 <Card title="Built-in Tools Reference" icon="wrench" href="/reference/builtin-tools">
-  See full configuration options for filesystem and bash tools
+  See full configuration options for filesystem, bash, and artifact tools
 </Card>
 
 ## MCP Servers
@@ -446,7 +447,7 @@ mcpServers:
 subagents:
   - path: ./agents/researcher.agentuse
     name: researcher  # Optional custom name
-    maxSteps: 100    # Optional step limit (default: 50)
+    maxSteps: 100    # Optional step limit (default: 100)
   - path: ./agents/writer.agentuse
   - path: ../shared/validator.agentuse
 ```

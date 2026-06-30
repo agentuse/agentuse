@@ -8,7 +8,7 @@ description: Compose agents that can delegate to other agents
 Sub-agents allow you to create modular, reusable agents that can be composed together. A parent agent can delegate specific tasks to specialized sub-agents through tool calls.
 
 <Info>
-  Sub-agents are automatically converted to tools that parent agents can call. Each sub-agent runs with a default limit of 50 steps.
+  Sub-agents are automatically converted to tools that parent agents can call. Each sub-agent uses the parent entry's `maxSteps`, then the leaf agent's own `maxSteps`, then the 100-step default.
 </Info>
 
 ## Basic Usage
@@ -80,7 +80,7 @@ model: anthropic:claude-sonnet-4-6
 subagents:
   - path: ./researcher.agentuse
     name: custom_researcher  # Override default name
-    maxSteps: 25            # Override default 50 steps
+    maxSteps: 25            # Override the default step budget
   - path: ./writer.agentuse
     maxSteps: 100           # Allow more steps for complex writing
 ---

@@ -156,10 +156,11 @@ When `agentuse serve` is running, the same sessions are browsable as web pages:
   `?trigger=scheduled|manual|slack|api`, and `?days=<n|all>`.
 - `/sessions/<id>` is the per-session page: the full run log, and when the
   session is suspended on an approval gate, the approve / reject / comment and
-  continue controls.
+  resume controls.
 
-The `/agents` page deep-links each agent to `/sessions?agent=<id>`, and the
-`/schedules` last-run badge links to that run's session page.
+The `/agents` page opens each agent's detail hub, where you can inspect source,
+recent runs, and start a run. Schedule rows also link to the agent detail hub;
+last-run badges still link to the matching session page.
 
 When the model streams its reasoning, it renders inline in the log as dimmed
 "Reasoning" entries (the model's "why", subordinate to the visible answer it

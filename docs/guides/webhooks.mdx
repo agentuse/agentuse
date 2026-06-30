@@ -156,6 +156,11 @@ Execute an agent and receive the result. (Legacy alias: `POST /run`.)
 Lists the agents the daemon loaded as JSON. `path` matches what `POST /api/run`
 expects. (The browsable HTML page is at `/agents`.)
 
+For one agent's capability summary and raw source, use
+`GET /api/agents/detail?project=<id>&path=<agent-path>`. The path must match an
+agent already loaded by that project; the browsable detail hub is at
+`/agents/<project>/<agent-path>`.
+
 ```json
 {
   "success": true,

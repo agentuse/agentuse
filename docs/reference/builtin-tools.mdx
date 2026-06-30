@@ -1,13 +1,13 @@
 ---
 title: Built-in Tools
-description: Configuration reference for built-in filesystem and bash tools
+description: Configuration reference for built-in filesystem, bash, and artifact tools
 ---
 
-AgentUse provides two built-in tools for file operations and command execution. This reference documents their configuration options and path matching behavior.
+AgentUse provides built-in tools for file operations, command execution, and session-linked artifacts. This reference documents their configuration options and path matching behavior.
 
 ## Path Matching Behavior
 
-Both tools use **containment-based** path matching by default:
+Filesystem paths and Bash `allowedPaths` use **containment-based** path matching by default:
 
 | Pattern | Mode | Matches |
 |---------|------|---------|
@@ -116,6 +116,34 @@ To make several changes in one call, pass an `edits` array instead of the top-le
 | `edits` | `Edit[]` | Array of `{ old_string, new_string, replace_all? }` |
 
 Batched edits apply **sequentially** (each to the result of the previous) and are **all-or-nothing**: if any edit fails to match, the file is left unchanged. Provide either the single form or the `edits` array, not both.
+
+## Artifact Tools
+
+Artifact tools let an agent save substantial deliverables for the user to view in the session UI without granting broad filesystem write access.
+
+### Configuration
+
+```yaml
+tools:
+  artifacts: true
+```
+
+Optional custom project-relative directory:
+
+```yaml
+tools:
+  artifacts:
+    dir: .agentuse/artifacts
+```
+
+When enabled, the agent receives:
+
+| Tool | Description |
+|------|-------------|
+| `artifact_save` | Save a report, plan, spec, HTML page, chart, or other deliverable under the artifact directory and link it to the current run |
+| `artifact_list` | List saved artifacts from the manifest, filterable by current session or group |
+
+`artifact_save` writes under `.agentuse/artifacts/` by default, records metadata in a manifest, and returns a viewable session URL when a session is active. Markdown artifacts can include `title` and `tags`, which are merged into frontmatter. To read an artifact's content later, use `filesystem_read` on the returned path.
 
 ## Bash Tool
 

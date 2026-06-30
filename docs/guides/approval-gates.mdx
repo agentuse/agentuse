@@ -149,6 +149,7 @@ The session page shows the best available review details from the agent:
 - `draft`: inline draft content
 - `draft_url`: URL to a draft artifact
 - `artifact_url`: URL to the primary review artifact, such as a PR, preview, document, or generated artifact
+- `artifact_path` / `artifact_paths`: project-relative local files the session page can open in the artifact viewer
 - `context`: relevant background, constraints, or work completed so far
 - `risk`: known risks, unresolved questions, or reviewer attention areas
 - Session logs before and after the decision
@@ -169,7 +170,9 @@ When Slack Socket Mode is configured, the approval details thread can also accep
 
 When the agent receives a comment, it decides whether to revise, ask for approval again, or stop with a clear explanation.
 
-After the run completes, the same session page becomes a lightweight continuation surface. Add a follow-up instruction in the **Continue session** box to resume the completed or errored session with its existing context. This matches Slack thread replies, but keeps the web session page as the source of truth for details and logs.
+After the run completes, the same session page becomes a lightweight continuation surface. Add a follow-up instruction in the **Resume session** box to resume the completed or errored session with its existing context. This matches Slack thread replies, but keeps the web session page as the source of truth for details and logs.
+
+If an approval decision was submitted but the resumed run failed downstream, the session page may offer **Retry**. Retry reopens the latest resolved approval gate, preserves the original session token, and lets the reviewer submit the decision again. Use it only when it is safe to retry the downstream work; the UI warns about possible duplicate external side effects.
 
 ## Approval in delegated sub-agents
 
@@ -320,6 +323,24 @@ The continuation endpoint also returns immediately while AgentUse starts the fol
 {
   "sessionId": "session_abc123",
   "status": "continuing"
+}
+```
+
+Reopen the latest resolved approval gate on an ended session:
+
+```bash
+curl -X POST "http://127.0.0.1:12233/sessions/session_abc123/reopen?token=$sessionToken" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+The reopen endpoint returns the session to `suspended` so the normal decision flow can run again:
+
+```json
+{
+  "success": true,
+  "sessionId": "session_abc123",
+  "status": "suspended"
 }
 ```
 
