@@ -8,7 +8,7 @@ import { AuthStorage } from "../src/auth/storage";
 
 describe("validateModel", () => {
   it("returns valid for a known model", () => {
-    const result = validateModel("anthropic:claude-sonnet-4-6");
+    const result = validateModel("anthropic:claude-sonnet-5");
     expect(result.valid).toBe(true);
     expect(result.model).toBeDefined();
   });
@@ -110,8 +110,8 @@ describe("warnIfModelNotInRegistry (custom provider skip)", () => {
 
   it("returns model string for valid registry models", async () => {
     await loadCustomProviderNames();
-    const result = warnIfModelNotInRegistry("anthropic:claude-sonnet-4-6");
-    expect(result).toBe("anthropic:claude-sonnet-4-6");
+    const result = warnIfModelNotInRegistry("anthropic:claude-sonnet-5");
+    expect(result).toBe("anthropic:claude-sonnet-5");
   });
 
   it("skips validation for bedrock models (not in registry)", async () => {

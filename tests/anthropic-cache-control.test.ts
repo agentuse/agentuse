@@ -23,9 +23,11 @@ mock.module('ai', () => ({
   generateText: generateTextMock,
   streamText: streamTextMock,
   stepCountIs: stepCountIsMock,
-  // execution.ts pulls in api-error.ts, which imports APICallError from 'ai';
-  // the mock must provide it (with isInstance) or module load fails.
+  // execution.ts pulls in api-error.ts, which imports APICallError and
+  // RetryError from 'ai'; the mock must provide both (with isInstance) or
+  // module load fails when this file runs in isolation.
   APICallError: { isInstance: () => false },
+  RetryError: { isInstance: () => false },
 }));
 
 mock.module('../src/models', () => ({

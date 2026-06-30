@@ -31,8 +31,11 @@ const streamTextMock = mock((_config: any): any => ({ fullStream: (async functio
 mock.module('ai', () => ({
   streamText: streamTextMock,
   stepCountIs: mock((n: number) => ({ stepCountIs: n })),
-  // executeAgentCore pulls in api-error.ts, which imports APICallError from 'ai'.
+  // executeAgentCore pulls in api-error.ts, which imports APICallError and
+  // RetryError from 'ai'; the mock must provide both or module load fails in
+  // isolation.
   APICallError: { isInstance: () => false },
+  RetryError: { isInstance: () => false },
 }));
 
 const isSummarizer = (config: any) =>
