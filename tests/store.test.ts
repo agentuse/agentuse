@@ -472,19 +472,39 @@ describe("Store Locking", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("creates lock file on first access", async () => {
+  it("releases the lock as soon as a write completes (per-op, not run-scoped)", async () => {
     const store = new Store(tempDir, "lock-test", "agent1");
 
     await store.create({ data: {} });
 
+    // The lock is held only for the write, so it is already gone once create()
+    // resolves - no run-scoped hold that could strand the store on a crash.
     const lockPath = join(tempDir, ".agentuse", "store", "lock-test", "lock");
-    expect(existsSync(lockPath)).toBe(true);
+    expect(existsSync(lockPath)).toBe(false);
+  });
 
-    const lockContent = JSON.parse(readFileSync(lockPath, "utf-8"));
-    expect(lockContent.pid).toBe(process.pid);
-    expect(lockContent.agent).toBe("agent1");
+  it("steals a stale lock even when its PID is still alive (leaked-in-worker case)", async () => {
+    const { mkdirSync, writeFileSync } = require("fs");
+    const lockDir = join(tempDir, ".agentuse", "store", "lock-test");
+    mkdirSync(lockDir, { recursive: true });
+    const lockPath = join(lockDir, "lock");
 
+    // A leaked lock from a long-lived process (PID 1 is always alive) with a
+    // timestamp older than any single op could take. PID liveness says "valid"
+    // forever; age says "abandoned".
+    writeFileSync(
+      lockPath,
+      JSON.stringify({
+        pid: 1,
+        agent: "errored-session",
+        timestamp: new Date(Date.now() - 5 * 60_000).toISOString(),
+      })
+    );
+
+    const store = new Store(tempDir, "lock-test", "fresh");
+    await expect(store.create({ data: { ok: true } })).resolves.toBeDefined();
     await store.releaseLock();
+    expect(existsSync(lockPath)).toBe(false);
   });
 
   it("removes lock file on release", async () => {
@@ -509,20 +529,22 @@ describe("Store Locking", () => {
     await store2.releaseLock();
   });
 
-  it("supports reentrant locking in same process without breaking existing users", async () => {
+  it("lets concurrent Store instances in one process interleave writes without lost updates", async () => {
     const store1 = new Store(tempDir, "lock-test", "manager");
-    await store1.create({ data: { from: "manager" } });
-
-    // Second store instance in same process should reuse lock, not throw
     const store2 = new Store(tempDir, "lock-test", "subagent");
-    await expect(store2.create({ data: { from: "subagent" } })).resolves.toBeDefined();
-
-    // Releasing one instance shouldn't remove lock while another still holds it
-    await store2.releaseLock();
     const lockPath = join(tempDir, ".agentuse", "store", "lock-test", "lock");
-    expect(existsSync(lockPath)).toBe(true);
 
-    await store1.releaseLock();
+    // Fire both writes at once. Per-op locking serializes the transactions, so
+    // both items land - neither clobbers the other's snapshot.
+    await Promise.all([
+      store1.create({ data: { from: "manager" } }),
+      store2.create({ data: { from: "subagent" } }),
+    ]);
+
+    const items = await store1.list();
+    expect(items).toHaveLength(2);
+
+    // The lock is not held between ops, so it is free once both writes finish.
     expect(existsSync(lockPath)).toBe(false);
   });
 

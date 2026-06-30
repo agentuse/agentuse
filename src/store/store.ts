@@ -113,19 +113,29 @@ function isProcessRunning(pid: number): boolean {
 export class Store {
   private storePath: string;
   private lockPath: string;
-  private items: StoreItem[] = [];
-  private loaded = false;
-  private locked = false;
   private agentName: string | undefined;
   private storeName: string;
-  private static lockRefCounts: Map<string, number> = new Map();
-  // Per-lockPath promise chain that serializes acquire/release for a given
-  // lock file. The serve worker handles execute/resume requests concurrently
-  // (src/index.ts), so multiple Store instances in the same process can call
-  // acquireLock/releaseLock on the same path at once. Those methods check the
-  // lock file and the ref count across `await` points; without serialization
-  // the interleavings drift the ref count and leave the lock file on disk with
-  // a live PID, permanently blocking every other process.
+
+  // A store lock is held only for the duration of a single read-modify-write
+  // op (milliseconds), never across an agent run. So any lock older than this
+  // is, by definition, abandoned - no op takes seconds. We steal a stale lock
+  // even when its PID is still alive, which is the case that used to strand a
+  // store forever: a session errors inside the long-lived `serve` worker, its
+  // lock leaks, and the worker PID stays alive so the dead-PID check never
+  // fires. Age, not PID liveness, is the load-bearing staleness signal.
+  private static readonly STALE_LOCK_MS = 30_000;
+  // When another *live, fresh* process holds the lock, retry briefly before
+  // giving up - per-op holds clear in milliseconds, so a short wait wins.
+  private static readonly ACQUIRE_RETRY_MS = 25;
+  private static readonly ACQUIRE_MAX_WAIT_MS = 5_000;
+
+  // Per-lockPath promise chain that serializes whole transactions in-process.
+  // The serve worker handles execute/resume requests concurrently
+  // (src/index.ts), so multiple Store instances in the same process can run
+  // ops on the same store at once. Running each transaction inside this chain
+  // means no two in-process read-modify-write cycles overlap, so the on-disk
+  // lock only has to guard against *other* processes - and we need no ref
+  // counting (the source of the old drift that stranded locks on disk).
   private static lockChains: Map<string, Promise<unknown>> = new Map();
 
   /**
@@ -159,187 +169,189 @@ export class Store {
   }
 
   /**
-   * Acquire exclusive lock on the store
-   * @throws Error if store is already locked by another process
+   * Run a read-modify-write transaction under the store lock. The lock is held
+   * only for this op: acquire -> read fresh from disk -> mutate -> atomic write
+   * -> release. The whole body runs inside withLockChain so concurrent ops in
+   * this process serialize (no lost update), and the on-disk lock guards
+   * against other processes. `mutate` is synchronous and must throw before
+   * returning to abort the write, leaving the store untouched.
    */
-  private async acquireLock(): Promise<void> {
-    if (this.locked) return;
-    await Store.withLockChain(this.lockPath, () => this.acquireLockUnsafe());
-  }
-
-  /**
-   * Core acquire logic. MUST run inside withLockChain so the check-then-act
-   * sequence below is never interleaved with a concurrent acquire/release on
-   * the same lock path.
-   */
-  private async acquireLockUnsafe(): Promise<void> {
-    if (this.locked) return;
-
-    // The ref count is the sole authority for same-process re-entrancy. If we
-    // already hold this lock in this process, just share it - never re-read the
-    // file's PID to decide re-entrancy (that path fabricated phantom holders
-    // when a leftover lock file lingered, leaking the lock permanently).
-    const existingCount = Store.lockRefCounts.get(this.lockPath) ?? 0;
-    if (existingCount > 0) {
-      Store.lockRefCounts.set(this.lockPath, existingCount + 1);
-      this.locked = true;
-      return;
-    }
-
-    const storeDir = dirname(this.lockPath);
-
-    // Ensure directory exists
-    if (!existsSync(storeDir)) {
-      await mkdir(storeDir, { recursive: true });
-    }
-
-    // No same-process holder: inspect any on-disk lock before taking it.
-    if (existsSync(this.lockPath)) {
+  private withWriteLock<T>(
+    mutate: (items: StoreItem[]) => { items: StoreItem[]; result: T }
+  ): Promise<T> {
+    return Store.withLockChain(this.lockPath, async () => {
+      await this.acquireFileLock();
       try {
-        const lockContent = await readFile(this.lockPath, 'utf-8');
-        const lockData = JSON.parse(lockContent);
-        const { pid, agent, timestamp } = lockData;
-
-        if (pid === process.pid) {
-          // Our own PID but no live ref count: a leftover from a prior holder
-          // in this process. Reclaim it instead of counting a phantom holder.
-          logger.warn(`[Store] Reclaiming leftover lock from this process`);
-        } else if (isProcessRunning(pid)) {
-          // Lock is held by a different running process
-          const lockAge = Date.now() - new Date(timestamp).getTime();
-          const lockAgeStr = lockAge > 60000
-            ? `${Math.round(lockAge / 60000)}m ago`
-            : `${Math.round(lockAge / 1000)}s ago`;
-
-          throw new Error(
-            `Store "${this.storeName}" is locked by another process.\n` +
-            `  PID: ${pid}\n` +
-            `  Agent: ${agent || 'unknown'}\n` +
-            `  Locked: ${lockAgeStr}\n` +
-            `Wait for it to complete, or remove the lock file:\n` +
-            `  rm "${this.lockPath}"`
-          );
-        } else {
-          // Stale lock from dead process - we can steal it
-          logger.warn(`[Store] Removing stale lock from PID ${pid}`);
-        }
-      } catch (error) {
-        if ((error as Error).message.includes('is locked by another process')) {
-          throw error;
-        }
-        // Lock file is corrupted, remove it
-        logger.warn(`[Store] Removing corrupted lock file`);
+        const items = await this.readItems();
+        const { items: next, result } = mutate(items);
+        await this.writeItems(next);
+        return result;
+      } finally {
+        await this.releaseFileLock();
       }
-    }
-
-    // Write our lock
-    const lockData = {
-      pid: process.pid,
-      agent: this.agentName,
-      timestamp: new Date().toISOString(),
-    };
-    await writeFile(this.lockPath, JSON.stringify(lockData, null, 2), 'utf-8');
-    this.locked = true;
-    Store.lockRefCounts.set(this.lockPath, 1);
+    });
   }
 
   /**
-   * Release the lock on the store
+   * Read the store file fresh from disk. Does not take the lock - atomic
+   * writes (temp + rename) mean a reader always sees a whole prior or next
+   * file, never a torn one, so reads can run lock-free.
    */
-  async releaseLock(): Promise<void> {
-    if (!this.locked) return;
-    await Store.withLockChain(this.lockPath, () => this.releaseLockUnsafe());
-  }
-
-  /**
-   * Core release logic. MUST run inside withLockChain so it never interleaves
-   * with a concurrent acquire/release on the same lock path.
-   */
-  private async releaseLockUnsafe(): Promise<void> {
-    if (!this.locked) return;
-    // Mark this instance released up front so the ref count tracks the number
-    // of live holders exactly, even if the file I/O below throws.
-    this.locked = false;
-
+  private async readItems(): Promise<StoreItem[]> {
+    if (!existsSync(this.storePath)) return [];
     try {
-      const currentCount = (Store.lockRefCounts.get(this.lockPath) ?? 1) - 1;
-      if (currentCount > 0) {
-        // Other holders in this process remain - keep the file in place.
-        Store.lockRefCounts.set(this.lockPath, currentCount);
-        return;
-      }
-
-      Store.lockRefCounts.delete(this.lockPath);
-
-      if (existsSync(this.lockPath)) {
-        // Only remove if we still own the lock
-        const lockContent = await readFile(this.lockPath, 'utf-8').catch(() => null);
-        const lockData = lockContent ? JSON.parse(lockContent) : null;
-        if (!lockData || lockData.pid === process.pid) {
-          await unlink(this.lockPath);
-        }
-      }
-    } catch {
-      // Ignore errors when releasing lock
+      const content = await readFile(this.storePath, 'utf-8');
+      const data = JSON.parse(content);
+      const validated = StoreFileSchema.parse(data);
+      // Cast is safe because Zod schema matches our type structure
+      return validated.items as StoreItem[];
+    } catch (error) {
+      // If file is corrupted, start fresh but log warning
+      logger.warn(`[Store] Failed to load store from ${this.storePath}: ${(error as Error).message}`);
+      return [];
     }
   }
 
   /**
-   * Ensure the store is loaded from disk
+   * Atomically write items to disk (temp file, then rename). Prevents
+   * corruption if the process is killed mid-write. Caller must hold the lock.
    */
-  private async ensureLoaded(): Promise<void> {
-    if (this.loaded) return;
-
-    // Acquire lock before loading
-    await this.acquireLock();
-
-    if (existsSync(this.storePath)) {
-      try {
-        const content = await readFile(this.storePath, 'utf-8');
-        const data = JSON.parse(content);
-        const validated = StoreFileSchema.parse(data);
-        // Cast is safe because Zod schema matches our type structure
-        this.items = validated.items as StoreItem[];
-      } catch (error) {
-        // If file is corrupted, start fresh but log warning
-        logger.warn(`[Store] Failed to load store from ${this.storePath}: ${(error as Error).message}`);
-        this.items = [];
-      }
-    }
-
-    this.loaded = true;
-  }
-
-  /**
-   * Save the store to disk using atomic write (write to temp, then rename)
-   * This prevents data corruption if the process is killed mid-write
-   */
-  private async save(): Promise<void> {
+  private async writeItems(items: StoreItem[]): Promise<void> {
     const storeDir = dirname(this.storePath);
-
-    // Ensure directory exists
     if (!existsSync(storeDir)) {
       await mkdir(storeDir, { recursive: true });
     }
 
-    const storeFile: StoreFile = {
-      version: 1,
-      items: this.items,
-    };
-
-    // Atomic write: write to temp file, then rename
+    const storeFile: StoreFile = { version: 1, items };
     const tempPath = `${this.storePath}.${randomBytes(4).toString('hex')}.tmp`;
     await writeFile(tempPath, JSON.stringify(storeFile, null, 2), 'utf-8');
     await rename(tempPath, this.storePath);
   }
 
   /**
+   * Take the on-disk lock for this op. MUST run inside withLockChain so no
+   * concurrent in-process acquire/release interleaves. Steals an abandoned
+   * lock (own PID, corrupted, dead PID, or older than STALE_LOCK_MS), and
+   * retries briefly when a live, fresh lock from another process blocks us.
+   */
+  private async acquireFileLock(): Promise<void> {
+    const storeDir = dirname(this.lockPath);
+    if (!existsSync(storeDir)) {
+      await mkdir(storeDir, { recursive: true });
+    }
+
+    const deadline = Date.now() + Store.ACQUIRE_MAX_WAIT_MS;
+    for (;;) {
+      const blocker = await this.inspectLock();
+      if (!blocker) {
+        await this.writeLockFile();
+        return;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Store "${this.storeName}" is locked by another process.\n` +
+          `  PID: ${blocker.pid}\n` +
+          `  Agent: ${blocker.agent || 'unknown'}\n` +
+          `  Locked: ${blocker.ageStr}\n` +
+          `Wait for it to complete, or remove the lock file:\n` +
+          `  rm "${this.lockPath}"`
+        );
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, Store.ACQUIRE_RETRY_MS));
+    }
+  }
+
+  /**
+   * Inspect any on-disk lock. Returns null when we may take it (no file, our
+   * own leftover, corrupted, stale-by-age, or dead PID), or details of a live,
+   * fresh lock from another process that we must wait on.
+   */
+  private async inspectLock(): Promise<{ pid: number; agent?: string | undefined; ageStr: string } | null> {
+    if (!existsSync(this.lockPath)) return null;
+
+    let lockData: { pid?: number; agent?: string; timestamp?: string } | null;
+    try {
+      lockData = JSON.parse(await readFile(this.lockPath, 'utf-8'));
+    } catch {
+      logger.warn(`[Store] Removing corrupted lock file`);
+      return null;
+    }
+
+    const pid = lockData?.pid;
+    if (typeof pid !== 'number') {
+      logger.warn(`[Store] Removing lock file with no PID`);
+      return null;
+    }
+
+    // Our own leftover from a write killed mid-flight: reclaim it.
+    if (pid === process.pid) return null;
+
+    const ageMs = Date.now() - new Date(lockData?.timestamp ?? 0).getTime();
+
+    // Age is the load-bearing signal: a lock older than a single op could
+    // possibly take is abandoned, even if its PID still runs (the leaked-in-
+    // worker case). An unparseable timestamp counts as infinitely old.
+    if (!Number.isFinite(ageMs) || ageMs >= Store.STALE_LOCK_MS) {
+      logger.warn(`[Store] Stealing stale lock from PID ${pid} (age ${Math.round(ageMs / 1000)}s)`);
+      return null;
+    }
+
+    if (!isProcessRunning(pid)) {
+      logger.warn(`[Store] Removing stale lock from dead PID ${pid}`);
+      return null;
+    }
+
+    const ageStr = ageMs > 60000
+      ? `${Math.round(ageMs / 60000)}m ago`
+      : `${Math.round(ageMs / 1000)}s ago`;
+    return { pid, agent: lockData?.agent, ageStr };
+  }
+
+  /**
+   * Write our identity into the lock file.
+   */
+  private async writeLockFile(): Promise<void> {
+    const lockData = {
+      pid: process.pid,
+      agent: this.agentName,
+      timestamp: new Date().toISOString(),
+    };
+    await writeFile(this.lockPath, JSON.stringify(lockData, null, 2), 'utf-8');
+  }
+
+  /**
+   * Remove the on-disk lock if we still own it. Best-effort.
+   */
+  private async releaseFileLock(): Promise<void> {
+    try {
+      if (!existsSync(this.lockPath)) return;
+      const content = await readFile(this.lockPath, 'utf-8').catch(() => null);
+      const lockData = content ? JSON.parse(content) : null;
+      if (!lockData || lockData.pid === process.pid) {
+        await unlink(this.lockPath).catch(() => {});
+      }
+    } catch {
+      // Ignore errors when releasing the lock.
+    }
+  }
+
+  /**
+   * Defensive sweep, kept for callers that ran in the old run-scoped model
+   * (preparation cleanup, run.ts, subagent). Per-op locking already releases
+   * after every write, so by the time this runs no transaction is in flight;
+   * it just clears any lock file this process leaked. Idempotent.
+   */
+  async releaseLock(): Promise<void> {
+    await Store.withLockChain(this.lockPath, () => this.releaseFileLock());
+  }
+
+  /**
    * Create a new item in the store
    */
   async create(options: StoreCreateOptions): Promise<StoreItem> {
-    await this.ensureLoaded();
-
     const now = new Date().toISOString();
+    // Validate the payload before taking the lock so a bad call fails fast
+    // without any lock churn.
     const item: StoreItem = {
       id: ulid(),
       createdAt: now,
@@ -353,69 +365,69 @@ export class Store {
       ...(this.agentName && { createdBy: this.agentName }),
     };
 
-    this.items.push(item);
-    await this.save();
-
-    return item;
+    return this.withWriteLock((items) => {
+      items.push(item);
+      return { items, result: item };
+    });
   }
 
   /**
    * Get an item by ID
    */
   async get(id: string): Promise<StoreItem | null> {
-    await this.ensureLoaded();
-    return this.items.find(item => item.id === id) || null;
+    const items = await this.readItems();
+    return items.find(item => item.id === id) || null;
   }
 
   /**
    * Update an item by ID
    */
   async update(id: string, options: StoreUpdateOptions): Promise<StoreItem | null> {
-    await this.ensureLoaded();
+    // Validate before taking the lock; a rejected payload leaves the store
+    // untouched (the mutate body never runs).
+    const normalizedData = options.data !== undefined ? normalizeStoreData(options.data) : undefined;
 
-    const index = this.items.findIndex(item => item.id === id);
-    if (index === -1) return null;
+    return this.withWriteLock((items) => {
+      const index = items.findIndex(item => item.id === id);
+      if (index === -1) return { items, result: null };
 
-    const existing = this.items[index];
-    const updated: StoreItem = {
-      ...existing,
-      updatedAt: new Date().toISOString(),
-      ...(options.type !== undefined && { type: options.type }),
-      ...(options.title !== undefined && { title: options.title }),
-      ...(options.status !== undefined && { status: options.status }),
-      ...(options.parentId !== undefined && { parentId: options.parentId }),
-      ...(options.tags !== undefined && { tags: options.tags }),
-      ...(options.data !== undefined && {
-        data: { ...existing.data, ...normalizeStoreData(options.data) }
-      }),
-    };
+      const existing = items[index];
+      const updated: StoreItem = {
+        ...existing,
+        updatedAt: new Date().toISOString(),
+        ...(options.type !== undefined && { type: options.type }),
+        ...(options.title !== undefined && { title: options.title }),
+        ...(options.status !== undefined && { status: options.status }),
+        ...(options.parentId !== undefined && { parentId: options.parentId }),
+        ...(options.tags !== undefined && { tags: options.tags }),
+        ...(normalizedData !== undefined && {
+          data: { ...existing.data, ...normalizedData }
+        }),
+      };
 
-    this.items[index] = updated;
-    await this.save();
-
-    return updated;
+      items[index] = updated;
+      return { items, result: updated };
+    });
   }
 
   /**
    * Delete an item by ID
    */
   async delete(id: string): Promise<boolean> {
-    await this.ensureLoaded();
+    return this.withWriteLock((items) => {
+      const index = items.findIndex(item => item.id === id);
+      if (index === -1) return { items, result: false };
 
-    const index = this.items.findIndex(item => item.id === id);
-    if (index === -1) return false;
-
-    this.items.splice(index, 1);
-    await this.save();
-
-    return true;
+      items.splice(index, 1);
+      return { items, result: true };
+    });
   }
 
   /**
    * Apply filters and newest-first sorting (no pagination).
    */
-  private filterAndSort(options: StoreListOptions): StoreItem[] {
-    let results = [...this.items];
+  private filterAndSort(items: StoreItem[], options: StoreListOptions): StoreItem[] {
+    let results = [...items];
 
     if (options.ids) {
       const ids = new Set(options.ids);
@@ -468,8 +480,8 @@ export class Store {
    * List items with optional filtering and pagination.
    */
   async list(options: StoreListOptions = {}): Promise<StoreItem[]> {
-    await this.ensureLoaded();
-    return this.paginate(this.filterAndSort(options), options);
+    const items = await this.readItems();
+    return this.paginate(this.filterAndSort(items, options), options);
   }
 
   /**
@@ -478,8 +490,8 @@ export class Store {
    * callers paginate without re-fetching the whole store.
    */
   async query(options: StoreListOptions = {}): Promise<StoreQueryResult> {
-    await this.ensureLoaded();
-    const filtered = this.filterAndSort(options);
+    const items = await this.readItems();
+    const filtered = this.filterAndSort(items, options);
     return { items: this.paginate(filtered, options), total: filtered.length };
   }
 
