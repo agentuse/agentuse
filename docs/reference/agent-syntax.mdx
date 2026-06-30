@@ -38,16 +38,16 @@ Additional instructions or context.
   - `bedrock` - Amazon Bedrock (Claude, Llama, Mistral, Nova, etc.)
   
   ```yaml
-  model: anthropic:claude-sonnet-4-6
+  model: anthropic:claude-sonnet-5
   model: openai:gpt-5.4-mini
-  model: openrouter:z-ai/glm-5.1
+  model: openrouter:z-ai/glm-5.2
   model: opencode-go:kimi-k2.7-code
   model: bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0
   ```
   
   You can also specify a custom environment variable suffix:
   ```yaml
-  model: anthropic:claude-sonnet-4-6:dev  # Uses ANTHROPIC_API_KEY_DEV
+  model: anthropic:claude-sonnet-5:dev  # Uses ANTHROPIC_API_KEY_DEV
   model: opencode-go:kimi-k2.7-code:dev   # Uses OPENCODE_GO_API_KEY_DEV
   ```
 </ParamField>
@@ -510,7 +510,7 @@ mcpServers:
 ```markdown
 ---
 name: agent
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 ---
 
 You are a helpful assistant.
@@ -532,7 +532,7 @@ What the agent should do.
 ```markdown
 ---
 name: personalized
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 ---
 
 You are a helpful AI assistant.
@@ -550,7 +550,7 @@ Provide assistance based on the user's specific needs and context.
 ```markdown
 ---
 name: adaptive
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 ---
 
 You adapt based on user needs.

@@ -88,7 +88,7 @@ export OPENAI_API_KEY_PERSONAL=sk-proj-personal-key
 export OPENCODE_GO_API_KEY_TEAM=opencode-go-team-key
 
 # Then specify in model string
-agentuse run agent.md --model anthropic:claude-sonnet-4-6:dev
+agentuse run agent.md --model anthropic:claude-sonnet-5:dev
 agentuse run agent.md --model openai:gpt-5.5:OPENAI_API_KEY_PERSONAL
 agentuse run agent.md --model opencode-go:kimi-k2.7-code:OPENCODE_GO_API_KEY_TEAM
 ```
@@ -249,11 +249,11 @@ Output:
 📁 Credentials stored in: ~/.local/share/agentuse/auth.json
 
 Stored credentials:
-  🔑 anthropic (oauth) → Use as: anthropic:claude-sonnet-4-6
+  🔑 anthropic (oauth) → Use as: anthropic:claude-sonnet-5
   🎫 openai (api) → Use as: openai:gpt-5.5
 
 Environment variables:
-  🌍 openrouter (OPENROUTER_API_KEY) → Use as: openrouter:z-ai/glm-5.1
+  🌍 openrouter (OPENROUTER_API_KEY) → Use as: openrouter:z-ai/glm-5.2
 
 Custom Providers:
   🔌 ollama → http://localhost:11434/v1
@@ -338,7 +338,7 @@ openai:
 ```markdown
 ---
 name: specialized-agent
-model: openrouter:z-ai/glm-5.1  # Uses OpenRouter
+model: openrouter:z-ai/glm-5.2  # Uses OpenRouter
 ---
 ```
 

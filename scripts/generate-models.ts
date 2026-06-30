@@ -81,7 +81,9 @@ interface SeriesDef {
 
 const SERIES: SeriesDef[] = [
   // Anthropic — claude-*
-  { source: 'anthropic', ourProvider: 'anthropic', series: 'claude', filter: id => id.includes('claude') },
+  // keepMajors: 2 — current major plus one previous, so a staggered rollout (Sonnet/Fable at 5 while
+  // Opus/Haiku are still 4) keeps all current flagships without dragging in legacy Claude 3 lines.
+  { source: 'anthropic', ourProvider: 'anthropic', series: 'claude', filter: id => id.includes('claude'), keepMajors: 2 },
   // OpenAI — gpt-N* (excludes non-versioned families like gpt-image / gpt-realtime).
   { source: 'openai', ourProvider: 'openai', series: 'gpt', filter: id => /^gpt-\d/.test(id) },
 

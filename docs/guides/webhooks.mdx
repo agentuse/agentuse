@@ -98,7 +98,7 @@ Execute an agent and receive the result. (Legacy alias: `POST /run`.)
   "agent": "path/to/agent.agentuse",
   "project": "projA",
   "prompt": "Optional additional instructions",
-  "model": "anthropic:claude-sonnet-4-6",
+  "model": "anthropic:claude-sonnet-5",
   "timeout": 300,
   "maxSteps": 100
 }
@@ -165,7 +165,7 @@ agent already loaded by that project; the browsable detail hub is at
 {
   "success": true,
   "agents": [
-    { "projectId": "projA", "path": "daily.agentuse", "name": "Daily Digest", "model": "anthropic:claude-sonnet-4-6", "schedule": "0 9 * * *" }
+    { "projectId": "projA", "path": "daily.agentuse", "name": "Daily Digest", "model": "anthropic:claude-sonnet-5", "schedule": "0 9 * * *" }
   ],
   "errors": []
 }
@@ -313,7 +313,7 @@ Create an agent to handle GitHub events:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 description: Process GitHub webhook events
 tools:
   bash:

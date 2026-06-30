@@ -122,7 +122,7 @@ agentuse run agent.agentuse --model opencode-go:kimi-k2.7-code:dev
 # This will use OPENAI_API_KEY_DEV instead of OPENAI_API_KEY
 
 # Use specific environment variable
-agentuse run agent.agentuse --model anthropic:claude-sonnet-4-6:ANTHROPIC_API_KEY_PERSONAL
+agentuse run agent.agentuse --model anthropic:claude-sonnet-5:ANTHROPIC_API_KEY_PERSONAL
 ```
 
 <Warning>
@@ -451,7 +451,7 @@ Execute an agent and receive the result. (Legacy alias: `POST /run`.)
   "agent": "path/to/agent.agentuse",
   "project": "projA",
   "prompt": "Optional additional prompt",
-  "model": "anthropic:claude-sonnet-4-6",
+  "model": "anthropic:claude-sonnet-5",
   "timeout": 300,
   "maxSteps": 100
 }
@@ -513,7 +513,7 @@ curl "http://127.0.0.1:12233/api/agents"
       "path": "daily.agentuse",
       "name": "Daily Digest",
       "description": "Posts a daily digest",
-      "model": "anthropic:claude-sonnet-4-6",
+      "model": "anthropic:claude-sonnet-5",
       "schedule": "0 9 * * *"
     }
   ],
@@ -713,7 +713,7 @@ Agents with a `schedule` config in their frontmatter are automatically executed 
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 schedule: "1h"
 ---
 ```
@@ -758,7 +758,7 @@ agentuse serve agents [pid] [--json]
 AGENT           NAME          MODEL                        SCHEDULE
 ────────────────────────────────────────────────────────────────────
 adhoc.agentuse  Adhoc Helper  anthropic:claude-haiku-4-5   —
-daily.agentuse  Daily Digest  anthropic:claude-sonnet-4-6  0 9 * * *
+daily.agentuse  Daily Digest  anthropic:claude-sonnet-5  0 9 * * *
 ```
 
 Omit `pid` when only one daemon is running. Agents that failed to parse are listed after the table. Use `--json` for the raw payload. When the daemon requires an API key, set `AGENTUSE_API_KEY` so the command can authenticate.

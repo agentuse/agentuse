@@ -12,7 +12,7 @@ frontmatter and plain-English instructions. The filename is the agent name.
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 description: "Short action-oriented purpose"
 ---
 
@@ -28,7 +28,7 @@ Describe where results should go and what format they should use.
 ## Common Frontmatter
 
 ```yaml
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 description: "Analyze daily metrics and send a concise summary"
 timeout: 600
 maxSteps: 100

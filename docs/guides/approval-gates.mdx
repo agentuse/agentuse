@@ -33,7 +33,7 @@ Use the smallest possible config:
 
 ```md
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 approval: true
 ---
 
@@ -61,7 +61,7 @@ For a social publishing agent:
 
 ```md
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 approval: true
 channels:
   slack:
@@ -84,7 +84,7 @@ For a release agent:
 
 ```md
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 approval:
   timeout: 24h
 ---
@@ -180,7 +180,7 @@ A leaf agent's approval gate behaves identically whether you run it directly or 
 
 ```md title="reply-to-post.agentuse — the leaf, reused in both modes"
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 approval: true
 ---
 

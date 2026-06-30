@@ -14,10 +14,9 @@ This page lists recommended models for AgentUse, organized by provider.
 ## Quick Reference
 
 **Default models:**
-- **Anthropic**: `anthropic:claude-sonnet-4-6` (balanced performance)
+- **Anthropic**: `anthropic:claude-sonnet-5` (balanced performance)
 - **OpenAI**: `openai:gpt-5.5` (latest GPT)
-- **OpenRouter**: `openrouter:z-ai/glm-5.1` (open source)
-- **OpenCode Go**: `opencode-go:kimi-k2.7-code` (open coding models)
+- **OpenRouter**: `openrouter:z-ai/glm-5.2` (open source)
 - **Amazon Bedrock**: `bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0`
 
 ## Recommended Models
@@ -27,8 +26,9 @@ This page lists recommended models for AgentUse, organized by provider.
 
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
+| `anthropic:claude-fable-5` | Claude Fable 5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
+| `anthropic:claude-sonnet-5` | Claude Sonnet 5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-opus-4-8` | Claude Opus 4.8 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
-| `anthropic:claude-sonnet-4-6` | Claude Sonnet 4.6 | 1,000,000 | 64,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-haiku-4-5` | Claude Haiku 4.5 (latest) | 200,000 | 64,000 | Reasoning, Vision, Tools |
 
 ### OpenAI
@@ -40,8 +40,8 @@ This page lists recommended models for AgentUse, organized by provider.
 | `openai:gpt-5.4-nano` | GPT-5.4 nano | 272,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.4-mini` | GPT-5.4 mini | 272,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.3-codex` | GPT-5.3 Codex | 272,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.3-chat-latest` | GPT-5.3 Chat (latest) | 128,000 | 16,384 | Vision, Tools |
 | `openai:gpt-5.3-codex-spark` | GPT-5.3 Codex Spark | 100,000 | 32,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.3-chat-latest` | GPT-5.3 Chat (latest) | 128,000 | 16,384 | Vision, Tools |
 | `openai:gpt-5.1-codex-max` | GPT-5.1 Codex Max | 272,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.1-codex-mini` | GPT-5.1 Codex mini | 272,000 | 128,000 | Reasoning, Vision, Tools |
 
@@ -49,33 +49,18 @@ This page lists recommended models for AgentUse, organized by provider.
 
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
-| `openrouter:z-ai/glm-5.1` | GLM-5.1 | 202,752 | 131,072 | Reasoning, Tools |
+| `openrouter:z-ai/glm-5.2` | GLM-5.2 | 1,048,576 | 32,768 | Reasoning, Tools |
 | `openrouter:z-ai/glm-5v-turbo` | GLM-5V-Turbo | 202,752 | 131,072 | Reasoning, Vision, Tools |
 | `openrouter:x-ai/grok-4.3` | Grok 4.3 | 1,000,000 | 1,000,000 | Reasoning, Vision, Tools |
 | `openrouter:deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1,048,576 | 384,000 | Reasoning, Tools |
-| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,576 | 131,072 | Reasoning, Tools |
+| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,000,000 | 65,536 | Reasoning, Tools |
 | `openrouter:qwen/qwen3.7-max` | Qwen3.7 Max | 1,000,000 | 65,536 | Reasoning, Tools |
 | `openrouter:qwen/qwen3.7-plus` | Qwen3.7 Plus | 1,000,000 | 65,536 | Reasoning, Vision, Tools |
 | `openrouter:google/gemini-3.5-flash` | Gemini 3.5 Flash | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
 | `openrouter:google/gemini-3.1-pro-preview` | Gemini 3.1 Pro Preview | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
 | `openrouter:minimax/minimax-m3` | MiniMax-M3 | 524,288 | 512,000 | Reasoning, Vision, Tools |
-| `openrouter:google/gemini-3-flash-preview` | Gemini 3 Flash Preview | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
+| `openrouter:google/gemini-3-flash-preview` | Gemini 3 Flash Preview | 1,048,576 | 65,535 | Reasoning, Vision, Tools |
 | `openrouter:moonshotai/kimi-k2.6` | Kimi K2.6 | 262,144 | 262,144 | Reasoning, Vision, Tools |
-
-### OpenCode Go
-
-OpenCode Go model IDs are passed through unchanged and are not validated against the static registry. Use any model available from your OpenCode Go subscription.
-
-| Model ID | Name | API Shape |
-|----------|------|-----------|
-| `opencode-go:kimi-k2.7-code` | Kimi K2.7 Code | OpenAI-compatible |
-| `opencode-go:kimi-k2.6` | Kimi K2.6 | OpenAI-compatible |
-| `opencode-go:glm-5.1` | GLM-5.1 | OpenAI-compatible |
-| `opencode-go:deepseek-v4-flash` | DeepSeek V4 Flash | OpenAI-compatible |
-| `opencode-go:minimax-m3` | MiniMax M3 | Anthropic-compatible |
-| `opencode-go:qwen3.7-plus` | Qwen3.7 Plus | Anthropic-compatible |
-
-See the live OpenCode Go model list at `https://opencode.ai/zen/go/v1/models`.
 
 ### Amazon Bedrock
 
@@ -122,7 +107,7 @@ Specify a model in your agent file:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 ---
 ```
 
@@ -130,6 +115,5 @@ Or override via CLI:
 
 ```bash
 agentuse run agent.agentuse -m openai:gpt-5.5
-agentuse run agent.agentuse -m opencode-go:kimi-k2.7-code
 agentuse run agent.agentuse -m ollama:glm-5-flash:q4_K_M
 ```

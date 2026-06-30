@@ -16,7 +16,7 @@ Add `sandbox: true` and configure filesystem paths:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 sandbox: true
 tools:
   filesystem:
@@ -134,7 +134,7 @@ Only declared vars that exist on the host are forwarded. Unset vars are silently
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 sandbox: true
 tools:
   filesystem:
@@ -170,7 +170,7 @@ Run analysis scripts, save charts to the project, and store key metrics.
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 sandbox:
   provider: docker
   setup: npm install -g snyk

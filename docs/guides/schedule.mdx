@@ -11,7 +11,7 @@ Run agents automatically on a schedule using `agentuse serve`. Configure schedul
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 schedule: "1h"
 ---
 
@@ -85,7 +85,7 @@ A scheduled agent for daily reports:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5
 description: Generate daily analytics report
 schedule: "0 8 * * 1-5"    # Weekdays at 8am
 tools:
