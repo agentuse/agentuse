@@ -52,9 +52,11 @@ beforeAll(async () => { ({ executeAgentCore } = await import('../src/runner/exec
 
 // Capturing SessionManager: records the compaction markers executeAgentCore persists.
 let compactionParts: any[] = [];
+let errorParts: any[] = [];
 const sessionManager = {
   addPart: mock(async (_s: string, _a: string, _m: string, part: any) => {
     if (part?.type === 'compaction') compactionParts.push(part);
+    if (part?.type === 'error') errorParts.push(part);
   }),
   writeContextSnapshot: mock(async () => {}),
   writeToolOutputArtifact: mock(async () => undefined),
@@ -65,6 +67,7 @@ let infoLines: string[] = [];
 let infoSpy: ReturnType<typeof spyOn>;
 beforeEach(() => {
   compactionParts = [];
+  errorParts = [];
   infoLines = [];
   streamTextMock.mockReset();
   sessionManager.addPart.mockClear();
@@ -150,6 +153,59 @@ describe('compaction pipeline: marker + log behavior', () => {
     expect(typeof compactionParts[0].tokensAfter).toBe('number');
     expect(infoLines.some((l) => /approaching limit/i.test(l))).toBe(true);
     expect(infoLines.some((l) => /approval gate/i.test(l))).toBe(false);
+  });
+
+  it('a failed mid-run compaction is non-fatal: records an error marker and continues with full context', async () => {
+    // Same mid-run window pressure as above, but the summarizer call fails.
+    // Regression for the "agent stopped mid-work and reported completed" bug:
+    // the run must NOT silently truncate — it should surface the failure and
+    // keep going with the un-compacted context.
+    let main = 0;
+    streamTextMock.mockImplementation((config: any) => {
+      if (isSummarizer(config)) {
+        // completeText throws on an error chunk in the stream.
+        return { fullStream: (async function* () { yield { type: 'error', error: new Error('summarizer API down') }; })() };
+      }
+      main++;
+      if (main === 1) {
+        return {
+          fullStream: (async function* () {
+            yield { type: 'tool-call', toolCallId: 't1', toolName: 'read_file', input: { path: 'big.log' } };
+            yield { type: 'tool-result', toolCallId: 't1', toolName: 'read_file', output: 'ok' };
+            yield { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 8000, outputTokens: 50, totalTokens: 8050 } };
+          })(),
+          response: Promise.resolve({ messages: [
+            { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read_file', input: {} }] },
+            { role: 'tool', content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'read_file', output: { type: 'text', value: 'x'.repeat(40000) } }] },
+            { role: 'assistant', content: 'analysis so far' },
+          ] }),
+        };
+      }
+      // The run continued into a second segment despite the failed compaction.
+      return {
+        fullStream: (async function* () {
+          yield { type: 'text-delta', text: 'done after recovery' };
+          yield { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1000, outputTokens: 10, totalTokens: 1010 } };
+        })(),
+        response: Promise.resolve({ messages: [{ role: 'assistant', content: 'done after recovery' }] }),
+      };
+    });
+
+    const chunks = await drain(executeAgentCore(
+      { name: 'pipe-agent', config: { model: 'demo:test' } } as any,
+      { read_file: { description: 'Read a file' } as any },
+      { userMessage: 'read the big log', systemMessages: [{ role: 'system', content: 'you are an agent' }], maxSteps: 10, ...sessionOpts },
+    ));
+
+    // No successful compaction marker (compaction threw), but a compaction
+    // error marker WAS recorded, and the run continued into segment 2.
+    expect(compactionParts).toHaveLength(0);
+    expect(errorParts.length).toBeGreaterThanOrEqual(1);
+    expect(errorParts.every((p) => p.source === 'compaction')).toBe(true);
+    expect(main).toBeGreaterThanOrEqual(2);
+    expect(chunks.some((c) => c.type === 'error')).toBe(false);
+    const text = chunks.filter((c) => c.type === 'text').map((c) => c.text).join('');
+    expect(text).toContain('done after recovery');
   });
 
   it('approval gate with the default floor (off) persists NO marker and never logs "approval gate"', async () => {

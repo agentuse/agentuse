@@ -3,6 +3,8 @@ import { createHash } from 'crypto';
 import type { ParsedAgent } from '../parser';
 import { createModel } from '../models';
 import { getModelFromRegistry } from '../generated/models';
+import { BUILTIN_PROVIDERS } from '../providers/registry-sources';
+import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
 import { CodexAuth } from '../auth/codex';
 import { logger } from '../utils/logger';
 import { ContextManager } from '../context-manager';
@@ -417,6 +419,20 @@ export async function* executeAgentCore(
     return messages;
   };
 
+  // Surface a compaction failure in the session log (with the provider's
+  // response body, not just "Error"). Best-effort; used by the non-fatal
+  // compaction paths where the throw never reaches the run-level catch.
+  const recordCompactionFailure = async (error: unknown) => {
+    if (!options.sessionManager || !options.sessionID || !options.agentId || !options.messageID) return;
+    const apiDetail = extractApiErrorDetail(error);
+    await recordErrorMarker(options.sessionManager, options.sessionID, options.agentId, options.messageID, {
+      source: 'compaction',
+      message: toErrorMessage(error),
+      ...(apiDetail?.detail !== undefined && { detail: apiDetail.detail }),
+      ...(apiDetail?.statusCode !== undefined && { statusCode: apiDetail.statusCode }),
+    });
+  };
+
   const compactAtSuspensionBoundary = async () => {
     if (!contextManager?.shouldCompactAtBoundary()) return;
     try {
@@ -426,15 +442,7 @@ export async function* executeAgentCore(
       logger.debug(`Approval-boundary compaction error: ${(error as Error).message}`);
       // This failure is non-fatal (the run suspends with full context) so it
       // never reaches the run-level catch — surface it in the session log here.
-      if (options.sessionManager && options.sessionID && options.agentId && options.messageID) {
-        const apiDetail = extractApiErrorDetail(error);
-        await recordErrorMarker(options.sessionManager, options.sessionID, options.agentId, options.messageID, {
-          source: 'compaction',
-          message: toErrorMessage(error),
-          ...(apiDetail?.detail !== undefined && { detail: apiDetail.detail }),
-          ...(apiDetail?.statusCode !== undefined && { statusCode: apiDetail.statusCode }),
-        });
-      }
+      await recordCompactionFailure(error);
     }
   };
 
@@ -455,12 +463,28 @@ export async function* executeAgentCore(
     // Check if we need to compact before creating stream
     contextManager?.setMessages(messages);
     if (contextManager?.shouldCompact()) {
-      messages = await compactActiveContext();
+      try {
+        messages = await compactActiveContext();
+      } catch (error) {
+        // Proactive compaction is best-effort. If the summarizer call fails
+        // (e.g. a transient provider error), don't kill the run — proceed with
+        // the un-compacted context (compactActiveContext leaves `messages`
+        // untouched on throw) and let the provider's real limit be the backstop.
+        // A genuine context-length rejection is still caught and retried by
+        // createStreamWithCompactionRetry below.
+        logger.warn('Pre-stream context compaction failed; continuing with full context.');
+        logger.debug(`Pre-stream compaction error: ${(error as Error).message}`);
+        await recordCompactionFailure(error);
+        contextManager?.setMessages(messages);
+      }
     }
 
     // Extract provider options based on model provider
     const provider = agent.config.model.split(':')[0];
-    const isCustomProvider = !['anthropic', 'openai', 'openrouter', 'demo', 'bedrock'].includes(provider);
+    // Cap output tokens for OpenAI-compatible gateways whose real output limit
+    // we can't rely on: user-added custom providers, plus opencode-go (the zen
+    // gateway). The first-class providers pass their real limits elsewhere.
+    const isCustomProvider = !BUILTIN_PROVIDERS.includes(provider) || provider === OPENCODE_GO_PROVIDER_ID;
 
     // Claude extended thinking (opt-in); resolves budget + the max_tokens needed
     // to satisfy Anthropic's max_tokens > budget constraint.
@@ -995,11 +1019,27 @@ Current step: ${stepCount}/${options.maxSteps}`);
           contextManager.shouldCompact()
         ) {
           const compactionsBefore = contextManager.getStats().compactions;
-          messages = await compactActiveContext({ reason: 'limit' }) as any[];
-          // Only restart if compaction actually reduced the context. If it
-          // no-ops (nothing left to fold), restarting would spin forever; let
-          // the run end and the next createStream's hard-limit retry cope.
-          runAnotherSegment = contextManager.getStats().compactions > compactionsBefore;
+          try {
+            messages = await compactActiveContext({ reason: 'limit' }) as any[];
+            // Only restart if compaction actually reduced the context. If it
+            // no-ops (nothing left to fold), restarting would spin forever; let
+            // the run end and the next createStream's hard-limit retry cope.
+            runAnotherSegment = contextManager.getStats().compactions > compactionsBefore;
+          } catch (compactionError) {
+            // Compaction failed (e.g. a transient summarizer error). The segment
+            // was cut short by stopForCompaction with tool work still pending, so
+            // stopping here would silently truncate the run AND report it as a
+            // clean completion (the exact "agent never called the subagent" +
+            // "status: completed" failure). Surface the failure and continue with
+            // the un-compacted context — the provider's real limit is the
+            // backstop, and a genuine overflow is caught + retried in
+            // createStreamWithCompactionRetry.
+            logger.warn('Between-segment context compaction failed; continuing with full context.');
+            logger.debug(`Between-segment compaction error: ${(compactionError as Error).message}`);
+            await recordCompactionFailure(compactionError);
+            messages = contextManager.getMessages();
+            runAnotherSegment = true;
+          }
         }
       } catch (reconcileError) {
         logger.debug(`Segment compaction check failed: ${(reconcileError as Error).message}`);
