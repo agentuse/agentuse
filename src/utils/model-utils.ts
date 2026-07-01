@@ -3,7 +3,7 @@
  */
 
 import fuzzysort from 'fuzzysort';
-import { getAllModelIds, getModelFromRegistry, type ModelInfo } from '../generated/models';
+import { getSuggestedModelIds, getModelFromRegistry, type ModelInfo } from '../generated/models';
 import { logger } from './logger';
 import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
 
@@ -28,9 +28,10 @@ export function validateModel(modelString: string): ValidationResult {
     return { valid: true, model };
   }
 
-  // Model not found - find similar ones using fuzzy matching
-  const allModels = getAllModelIds();
-  const results = fuzzysort.go(modelString, allModels, {
+  // Model not found - suggest from the curated flagship lineup (not the full
+  // table, which would surface hundreds of noisy near-matches).
+  const suggestible = getSuggestedModelIds();
+  const results = fuzzysort.go(modelString, suggestible, {
     limit: 3,
     threshold: -10000, // Include even weak matches
   });
@@ -68,6 +69,11 @@ function isCustomProvider(provider: string): boolean {
   return customProviderNamesCache?.has(provider) ?? false;
 }
 
+// Models we've already warned about this process, so a model used across many
+// agent/subagent runs (or resumes) only logs the "not in registry" notice once
+// instead of on every createModel() call.
+const warnedModels = new Set<string>();
+
 /**
  * Warn if model is not in registry (non-blocking)
  * Returns the original model string to continue with
@@ -86,7 +92,8 @@ export function warnIfModelNotInRegistry(modelString: string): string {
 
   const result = validateModel(modelString);
 
-  if (!result.valid) {
+  if (!result.valid && !warnedModels.has(modelString)) {
+    warnedModels.add(modelString);
     logger.warn(`${result.warning}`);
     if (result.suggestions && result.suggestions.length > 0) {
       logger.warn(`Did you mean: ${result.suggestions.join(', ')}?`);
@@ -101,8 +108,8 @@ export function warnIfModelNotInRegistry(modelString: string): string {
  * Get fuzzy suggestions for a model string
  */
 export function getSuggestions(modelString: string, limit = 5): string[] {
-  const allModels = getAllModelIds();
-  const results = fuzzysort.go(modelString, allModels, {
+  const suggestible = getSuggestedModelIds();
+  const results = fuzzysort.go(modelString, suggestible, {
     limit,
     threshold: -10000,
   });

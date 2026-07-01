@@ -16,6 +16,7 @@ import {
   OPENCODE_GO_PROVIDER_ID,
   resolveOpenCodeGoBaseURL,
 } from './providers/opencode-go';
+import { BUILTIN_PROVIDERS } from './providers/registry-sources';
 
 /**
  * Check if DevTools is enabled via environment variable
@@ -127,9 +128,9 @@ export function parseModelConfig(modelString: string): ModelConfig {
     return { provider, modelName: rest };
   }
 
-  // Built-in providers support the env suffix syntax: provider:model:env
-  const builtinProviders = ['anthropic', 'openai', 'openrouter', OPENCODE_GO_PROVIDER_ID, 'demo'];
-  if (builtinProviders.includes(provider)) {
+  // Built-in providers support the env suffix syntax: provider:model:env.
+  // (bedrock returned above — its colon-bearing ids skip suffix parsing.)
+  if (BUILTIN_PROVIDERS.includes(provider)) {
     const secondColon = rest.indexOf(':');
     if (secondColon === -1) {
       return { provider, modelName: rest };

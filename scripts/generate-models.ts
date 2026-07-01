@@ -14,6 +14,7 @@
 
 import { writeFileSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, relative } from 'path';
+import { REGISTRY_PROVIDER_SOURCES } from '../src/providers/registry-sources';
 
 const MODELS_DEV_API = 'https://models.dev/api.json';
 
@@ -141,11 +142,10 @@ interface ProviderModels {
   [modelId: string]: ModelData;
 }
 
-interface Registry {
-  anthropic: ProviderModels;
-  openai: ProviderModels;
-  openrouter: ProviderModels;
-}
+// Provider bucket -> its models. The full registry's buckets are dynamic
+// (driven by REGISTRY_PROVIDER_SOURCES); the curated registry only ever fills
+// the anthropic/openai/openrouter buckets that SERIES targets.
+type Registry = Record<string, ProviderModels>;
 
 async function fetchModelsDevData(): Promise<Record<string, { models: Record<string, ModelData> }>> {
   console.log('Fetching models from models.dev...');
@@ -259,11 +259,93 @@ function buildRegistry(apiData: Record<string, { models: Record<string, ModelDat
   return registry;
 }
 
-function generateRegistryCode(registry: Registry): string {
+/**
+ * Full, unpruned registry: every model that each supported provider lists on
+ * models.dev, mapped into our provider buckets. This is what powers
+ * context-limit lookup, so an explicitly pinned valid model (e.g.
+ * anthropic:claude-sonnet-4-6, opencode-go:kimi-k2.6,
+ * bedrock:us.anthropic.claude-sonnet-4-5-...) keeps its real window instead of
+ * collapsing to the fallback. The curated `buildRegistry` output is only for
+ * *suggestions* and docs — see SUGGESTED_MODEL_IDS.
+ *
+ * Coverage is driven entirely by REGISTRY_PROVIDER_SOURCES (our provider prefix
+ * -> models.dev provider key), so adding a provider there is all it takes.
+ */
+function buildFullRegistry(apiData: Record<string, { models: Record<string, ModelData> }>): Registry {
+  const registry: Registry = {};
+  for (const [bucket, source] of Object.entries(REGISTRY_PROVIDER_SOURCES)) {
+    registry[bucket] = {};
+    const provider = apiData[source];
+    if (!provider?.models) {
+      console.warn(`Warning: no models found on models.dev for source '${source}' (bucket '${bucket}')`);
+      continue;
+    }
+    for (const [modelId, model] of Object.entries(provider.models)) {
+      if (!isSelectableChatModel(modelId, model)) continue;
+      registry[bucket][modelId] = { ...model, id: modelId };
+    }
+  }
+  return registry;
+}
+
+/**
+ * models.dev lists non-generative endpoints (embeddings, moderation, rerank,
+ * image/audio/video generation, transcription) alongside chat models. Those
+ * can't back an agent run and must not be treated as valid selectable models,
+ * so they are excluded from the registry.
+ *
+ * Image/audio/video generators are caught by their output modality; the
+ * text-output-but-not-chat endpoints (embeddings, moderation, rerank, whisper,
+ * tts — which models.dev still tags `output: ["text"]`) are caught by id.
+ */
+function isSelectableChatModel(id: string, model: ModelData): boolean {
+  const outputs = model.modalities?.output ?? ['text'];
+  if (!outputs.includes('text')) return false;
+  return !/(?:embed|moderation|rerank|whisper|transcrib|\btts\b|guardrail)/i.test(id);
+}
+
+/** Sort a provider's models latest-first (dated aliases last, then by version, then shortest id). */
+function sortModels(models: ProviderModels): ProviderModels {
+  const entries = Object.entries(models);
+  entries.sort(([a], [b]) => {
+    // Dated versions (e.g., -20251101) go last
+    const aHasDate = /\d{8}$/.test(a);
+    const bHasDate = /\d{8}$/.test(b);
+    if (aHasDate !== bHasDate) return aHasDate ? 1 : -1;
+
+    // Sort by version number (higher = first)
+    const aVersion = parseModelVersion(a);
+    const bVersion = parseModelVersion(b);
+    if (aVersion !== bVersion) return bVersion - aVersion;
+
+    // Same version: prefer shorter names (base model before variants)
+    return a.length - b.length;
+  });
+  return Object.fromEntries(entries);
+}
+
+/** Flatten a registry into sorted `provider:id` strings (latest first per provider). */
+function registryToIds(registry: Registry): string[] {
+  const ids: string[] = [];
+  for (const [provider, models] of Object.entries(registry)) {
+    for (const id of Object.keys(sortModels(models))) {
+      ids.push(`${provider}:${id}`);
+    }
+  }
+  return ids;
+}
+
+/** Escape a string for emission inside a single-quoted TS literal (the full table
+ *  includes third-party model names that may contain apostrophes/backslashes). */
+function escSingle(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function generateRegistryCode(registry: Registry, suggestedIds: string[]): string {
   const formatModel = (model: ModelData): string => {
     return `{
-      id: '${model.id}',
-      name: '${model.name}',
+      id: '${escSingle(model.id)}',
+      name: '${escSingle(model.name)}',
       reasoning: ${model.reasoning ?? false},
       toolCall: ${model.tool_call ?? false},
       modalities: {
@@ -284,32 +366,18 @@ ${model.limit?.input !== undefined ? `        input: ${model.limit.input},\n` : 
 
   const formatProvider = (models: ProviderModels): string => {
     return Object.entries(models)
-      .map(([id, model]) => `    '${id}': ${formatModel(model)}`)
+      .map(([id, model]) => `    '${escSingle(id)}': ${formatModel(model)}`)
       .join(',\n');
   };
 
-  const sortModels = (models: ProviderModels): ProviderModels => {
-    const entries = Object.entries(models);
-    entries.sort(([a], [b]) => {
-      // Dated versions (e.g., -20251101) go last
-      const aHasDate = /\d{8}$/.test(a);
-      const bHasDate = /\d{8}$/.test(b);
-      if (aHasDate !== bHasDate) return aHasDate ? 1 : -1;
-
-      // Sort by version number (higher = first)
-      const aVersion = parseModelVersion(a);
-      const bVersion = parseModelVersion(b);
-      if (aVersion !== bVersion) return bVersion - aVersion;
-
-      // Same version: prefer shorter names (base model before variants)
-      return a.length - b.length;
-    });
-    return Object.fromEntries(entries);
-  };
-
-  registry.anthropic = sortModels(registry.anthropic);
-  registry.openai = sortModels(registry.openai);
-  registry.openrouter = sortModels(registry.openrouter);
+  // Provider buckets are dynamic (driven by REGISTRY_PROVIDER_SOURCES). Sort
+  // each, then emit the Provider union and MODELS object from whatever is here.
+  const providerKeys = Object.keys(registry);
+  for (const key of providerKeys) registry[key] = sortModels(registry[key]);
+  const providerUnion = providerKeys.map((k) => `'${escSingle(k)}'`).join(' | ');
+  const modelsBody = providerKeys
+    .map((k) => `  '${escSingle(k)}': {\n${formatProvider(registry[k])}\n  }`)
+    .join(',\n');
 
   return `// AUTO-GENERATED FILE - DO NOT EDIT
 // Generated by: pnpm generate:models
@@ -338,21 +406,20 @@ export interface ModelInfo {
   };
 }
 
-export type Provider = 'anthropic' | 'openai' | 'openrouter';
+export type Provider = ${providerUnion};
 
 export const MODELS: Record<Provider, Record<string, ModelInfo>> = {
-  anthropic: {
-${formatProvider(registry.anthropic)}
-  },
-  openai: {
-${formatProvider(registry.openai)}
-  },
-  openrouter: {
-${formatProvider(registry.openrouter)}
-  },
+${modelsBody}
 };
 
-// Get all supported model IDs as flat list
+// Curated flagship lineup (one current model per product line). Used ONLY for
+// fuzzy "did you mean" suggestions and docs — NOT for validity or limits, which
+// read the full MODELS table above so any real model resolves correctly.
+export const SUGGESTED_MODEL_IDS: string[] = [
+${suggestedIds.map(id => `  '${escSingle(id)}'`).join(',\n')}
+];
+
+// Get every model ID known to the registry (full table) as a flat list.
 export function getAllModelIds(): string[] {
   const ids: string[] = [];
   for (const [provider, models] of Object.entries(MODELS)) {
@@ -361,6 +428,11 @@ export function getAllModelIds(): string[] {
     }
   }
   return ids;
+}
+
+// Get the curated suggestion lineup (for fuzzy match / docs).
+export function getSuggestedModelIds(): string[] {
+  return SUGGESTED_MODEL_IDS;
 }
 
 // Get model info by full model string (provider:modelId)
@@ -627,16 +699,24 @@ async function main(): Promise<void> {
     // Fetch from API
     const apiData = await fetchModelsDevData();
 
-    // Build registry
+    // Full table (all models from source providers) — powers limits + validity.
+    const fullRegistry = buildFullRegistry(apiData);
+    // Curated flagship lineup — powers suggestions, docs, and stale-ref rewrites.
+    // Sort here: generateRegistryCode only sorts the full table, so the curated
+    // object must be sorted before generateDocsPage / updateFileReferences /
+    // registryToIds consume it (they all rely on latest-first ordering).
     const registry = buildRegistry(apiData);
+    for (const key of Object.keys(registry)) registry[key] = sortModels(registry[key]);
+    const suggestedIds = registryToIds(registry);
 
-    console.log('\nRegistry built:');
-    console.log(`  Anthropic: ${Object.keys(registry.anthropic).length} models`);
-    console.log(`  OpenAI: ${Object.keys(registry.openai).length} models`);
-    console.log(`  OpenRouter: ${Object.keys(registry.openrouter).length} models`);
+    console.log('\nFull registry (limits + validity):');
+    for (const [bucket, models] of Object.entries(fullRegistry)) {
+      console.log(`  ${bucket}: ${Object.keys(models).length} models`);
+    }
+    console.log(`Curated suggestions: ${suggestedIds.length} models`);
 
     // Generate registry TypeScript file
-    const registryCode = generateRegistryCode(registry);
+    const registryCode = generateRegistryCode(fullRegistry, suggestedIds);
     const registryPath = join(projectRoot, 'src/generated/models.ts');
     writeFileSync(registryPath, registryCode);
     console.log(`\nGenerated: src/generated/models.ts`);

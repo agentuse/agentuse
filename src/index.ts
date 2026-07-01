@@ -17,7 +17,7 @@ import { createBenchmarkCommand } from './cli/benchmark';
 import { createAgentsCommand } from './cli/agents';
 import { createAddCommand } from './cli/add';
 import { createDoctorCommand } from './cli/doctor';
-import { OPENCODE_GO_PROVIDER_ID } from './providers/opencode-go';
+import { BUILTIN_PROVIDERS } from './providers/registry-sources';
 import { logger, LogLevel } from './utils/logger';
 import { safeHttpUrl } from './utils/url';
 import { basename, resolve, dirname, join } from 'path';
@@ -445,12 +445,11 @@ program
         }
 
         const [provider] = modelParts;
-        const builtinProviders = ['anthropic', 'openai', 'openrouter', OPENCODE_GO_PROVIDER_ID, 'demo', 'bedrock'];
-        if (!builtinProviders.includes(provider)) {
+        if (!BUILTIN_PROVIDERS.includes(provider)) {
           // Check if it's a custom provider
           const customProvider = await AuthStorage.getCustomProvider(provider);
           if (!customProvider) {
-            throw new Error(`Unknown provider '${provider}'. Built-in: ${builtinProviders.join(', ')}. Add custom providers with: agentuse provider add <name> --url <url>`);
+            throw new Error(`Unknown provider '${provider}'. Built-in: ${BUILTIN_PROVIDERS.join(', ')}. Add custom providers with: agentuse provider add <name> --url <url>`);
           }
         }
 
@@ -1041,6 +1040,14 @@ async function runInternalWorker() {
       ...(typeof session.error.code === 'string' && session.error.code ? { errorCode: session.error.code } : {}),
       ...(typeof session.error.message === 'string' && session.error.message ? { errorMessage: session.error.message } : {})
     };
+  }
+
+  // Showcase mode: mock runs stay fully functional (cheap, no real side effects)
+  // but AGENTUSE_HIDE_MOCK=1 suppresses the mock flag in serve payloads so a demo
+  // does not read as fake. Storage keeps session.mock intact; only the API/UI view
+  // is affected.
+  function mockField(session: { mock?: boolean }) {
+    return session.mock && process.env.AGENTUSE_HIDE_MOCK !== '1' ? { mock: true as const } : {};
   }
 
   function aggregateSessionTokenUsage(
@@ -1866,7 +1873,7 @@ async function runInternalWorker() {
             sessionStatus: found.session.status,
             ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
             model: found.session.model,
-            ...(found.session.mock && { mock: true }),
+            ...mockField(found.session),
             ...sessionErrorFields(found.session),
             ...(reopenable && { reopenable }),
             agent: {
@@ -1935,7 +1942,7 @@ async function runInternalWorker() {
             sessionStatus,
             ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
             model: found.session.model,
-            ...(found.session.mock && { mock: true }),
+            ...mockField(found.session),
             ...sessionErrorFields(found.session),
             ...(reopenable && { reopenable }),
             agent: {
@@ -2002,7 +2009,7 @@ async function runInternalWorker() {
           sessionStatus,
           ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
           model: found.session.model,
-          ...(found.session.mock && { mock: true }),
+          ...mockField(found.session),
           ...sessionErrorFields(found.session),
           ...(reopenable && { reopenable }),
           agent: {
@@ -2086,7 +2093,7 @@ async function runInternalWorker() {
           ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
           ...(typeof found.session.time?.updated === 'number' && { updatedAt: found.session.time.updated }),
           model: found.session.model,
-          ...(found.session.mock && { mock: true }),
+          ...mockField(found.session),
           ...sessionErrorFields(found.session),
           agent: {
             id: found.session.agent.id,
@@ -2543,7 +2550,7 @@ async function runInternalWorker() {
           createdAt: session.time.created,
           updatedAt: session.time.updated,
           ...sessionErrorFields(session),
-          ...(session.mock && { mock: true }),
+          ...mockField(session),
         }))
         .sort((a, b) => b.createdAt - a.createdAt);
 

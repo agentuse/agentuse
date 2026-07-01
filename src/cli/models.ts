@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { MODELS, type Provider, type ModelInfo } from '../generated/models';
+import { MODELS, SUGGESTED_MODEL_IDS, type Provider, type ModelInfo } from '../generated/models';
 import { AuthStorage } from '../auth/storage';
 import {
   OPENCODE_GO_DISPLAY_NAME,
@@ -13,37 +13,47 @@ export function createModelsCommand(): Command {
     .description('List recommended AI models')
     .argument('[provider]', 'Filter by provider (anthropic, openai, openrouter, opencode-go, or custom)')
     .option('-v, --verbose', 'Show detailed model information')
-    .action(async (provider: string | undefined, options: { verbose?: boolean }) => {
-      const builtinProviders: Provider[] = ['anthropic', 'openai', 'openrouter'];
-      const specialProviders = [OPENCODE_GO_PROVIDER_ID];
+    .option('-a, --all', 'Show every model in the registry, not just the recommended lineup')
+    .action(async (provider: string | undefined, options: { verbose?: boolean; all?: boolean }) => {
+      const registryProviders = Object.keys(MODELS) as Provider[];
       const customProviders = await AuthStorage.getCustomProviders();
       const customNames = Object.keys(customProviders);
-      const isCustomFilter = provider && customNames.includes(provider);
+      const isCustomFilter = Boolean(provider && customNames.includes(provider));
       const isOpenCodeGoFilter = provider === OPENCODE_GO_PROVIDER_ID;
 
-      // If filtering by custom provider, don't show builtin models
-      const providers: Provider[] = isCustomFilter || isOpenCodeGoFilter
-        ? []
-        : (!provider ? builtinProviders : [provider as Provider]);
-
       // Validate provider
-      if (provider && !builtinProviders.includes(provider as Provider) && !specialProviders.includes(provider) && !isCustomFilter) {
+      if (provider && !registryProviders.includes(provider as Provider) && !isCustomFilter) {
         console.error(chalk.red(`Unknown provider: ${provider}`));
-        const allProviders = [...builtinProviders, ...specialProviders, ...customNames];
-        console.log(chalk.gray(`Available providers: ${allProviders.join(', ')}`));
+        console.log(chalk.gray(`Available providers: ${[...registryProviders, ...customNames].join(', ')}`));
         process.exit(1);
       }
 
-      console.log(chalk.bold('\nRecommended Models\n'));
-      console.log(chalk.gray('Note: Other models from these providers may also work.\n'));
+      // Registry buckets rendered generically. Default view = curated flagships
+      // for the primary providers; --all = every registry provider. opencode-go
+      // has a dedicated section (below) in the curated view, so it is dropped
+      // from the generic loop unless --all renders its full bucket there.
+      let providers: Provider[];
+      if (provider) {
+        providers = isCustomFilter ? [] : [provider as Provider];
+      } else if (options.all) {
+        providers = registryProviders;
+      } else {
+        providers = ['anthropic', 'openai', 'openrouter'];
+      }
+      if (!options.all) providers = providers.filter((p) => p !== OPENCODE_GO_PROVIDER_ID);
+
+      console.log(chalk.bold(options.all ? '\nAll Models\n' : '\nRecommended Models\n'));
+      console.log(chalk.gray(options.all
+        ? 'Every model known to the registry (used for validation and context limits).\n'
+        : 'Note: Other models from these providers may also work. Use --all to list them.\n'));
 
       for (const p of providers) {
-        const models = MODELS[p];
-        if (!models || Object.keys(models).length === 0) continue;
+        const entries = entriesForProvider(p, options.all ?? false);
+        if (entries.length === 0) continue;
 
         console.log(chalk.cyan.bold(`${p.charAt(0).toUpperCase() + p.slice(1)}`));
 
-        for (const [modelId, model] of Object.entries(models)) {
+        for (const [modelId, model] of entries) {
           const fullId = `${p}:${modelId}`;
 
           if (options.verbose) {
@@ -56,7 +66,7 @@ export function createModelsCommand(): Command {
         console.log();
       }
 
-      if (!provider || isOpenCodeGoFilter) {
+      if ((!provider || isOpenCodeGoFilter) && !options.all) {
         console.log(chalk.cyan.bold(OPENCODE_GO_DISPLAY_NAME));
 
         for (const model of OPENCODE_GO_MODELS) {
@@ -104,6 +114,25 @@ export function createModelsCommand(): Command {
     });
 
   return modelsCommand;
+}
+
+/**
+ * Models to list for a provider. By default the curated recommended lineup
+ * (SUGGESTED_MODEL_IDS, in suggested order); with `all`, every model the full
+ * registry knows for that provider.
+ */
+function entriesForProvider(p: Provider, all: boolean): Array<[string, ModelInfo]> {
+  const models = MODELS[p] ?? {};
+  if (all) return Object.entries(models);
+  const prefix = `${p}:`;
+  const curated = SUGGESTED_MODEL_IDS
+    .filter((id) => id.startsWith(prefix))
+    .map((id) => id.slice(prefix.length))
+    .filter((modelId) => models[modelId])
+    .map((modelId) => [modelId, models[modelId]] as [string, ModelInfo]);
+  // A provider with no curated lineup (e.g. bedrock) but an explicit request
+  // still shows its full bucket rather than an empty section.
+  return curated.length > 0 ? curated : Object.entries(models);
 }
 
 function printCompactModel(fullId: string, model: ModelInfo): void {

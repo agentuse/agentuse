@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { validateModel, getSuggestions, warnIfModelNotInRegistry, loadCustomProviderNames } from "../src/utils/model-utils";
-import { getProviderModels } from "../src/generated/models";
+import { getProviderModels, MODELS } from "../src/generated/models";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
@@ -44,6 +44,31 @@ describe("validateModel", () => {
   it("returns valid for demo provider models", () => {
     const result = validateModel("demo:hello");
     expect(result.valid).toBe(true);
+  });
+});
+
+describe("registry excludes non-chat endpoints", () => {
+  it("contains no embedding/moderation/rerank/transcription ids", () => {
+    const nonChat = /(?:embed|moderation|rerank|whisper|transcrib|\btts\b|guardrail)/i;
+    for (const models of Object.values(MODELS)) {
+      for (const id of Object.keys(models)) {
+        expect(nonChat.test(id)).toBe(false);
+      }
+    }
+  });
+
+  it("contains no image/audio/video-only generators (all can emit text)", () => {
+    for (const models of Object.values(MODELS)) {
+      for (const model of Object.values(models)) {
+        expect(model.modalities.output.includes("text")).toBe(true);
+      }
+    }
+  });
+
+  it("rejects a non-chat model id as invalid", () => {
+    // Locks in the filter: even though models.dev lists it, an embedding
+    // endpoint must not validate as a selectable agent model.
+    expect(validateModel("openai:text-embedding-3-large").valid).toBe(false);
   });
 });
 

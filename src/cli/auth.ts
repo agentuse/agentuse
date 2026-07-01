@@ -7,6 +7,7 @@ import {
   OPENCODE_GO_DISPLAY_NAME,
   OPENCODE_GO_PROVIDER_ID,
 } from "../providers/opencode-go";
+import { AUTH_PROVIDERS, BUILTIN_PROVIDERS } from "../providers/registry-sources";
 
 const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -129,9 +130,8 @@ export function createProviderCommand(): Command {
     .option("--key <key>", "Optional API key for the endpoint")
     .action(async (name: string, options: { url: string; key?: string }) => {
       // Validate name doesn't conflict with built-in providers
-      const reserved = ["anthropic", "openai", "openrouter", OPENCODE_GO_PROVIDER_ID, "demo", "bedrock"];
-      if (reserved.includes(name.toLowerCase())) {
-        logger.error(`Cannot use reserved provider name '${name}'. Reserved: ${reserved.join(", ")}`);
+      if (BUILTIN_PROVIDERS.includes(name.toLowerCase())) {
+        logger.error(`Cannot use reserved provider name '${name}'. Reserved: ${BUILTIN_PROVIDERS.join(", ")}`);
         process.exit(1);
       }
 
@@ -230,7 +230,7 @@ export function createProviderCommand(): Command {
     .option("--oauth", "Remove only OAuth credentials")
     .option("--api", "Remove only API key credentials")
     .action(async (provider?: string, options?: { oauth?: boolean; api?: boolean }) => {
-      const knownProviders = ["anthropic", "openai", "openrouter", OPENCODE_GO_PROVIDER_ID];
+      const knownProviders = AUTH_PROVIDERS;
 
       // Build list of stored credentials
       const storedList: { provider: string; type: string; key: string; isCustom?: boolean }[] = [];
