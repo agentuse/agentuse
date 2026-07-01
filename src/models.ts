@@ -106,6 +106,60 @@ function resolveBaseURL(
 }
 
 /**
+ * Native OpenAI (reached at the default api.openai.com base URL) is served by
+ * the Responses API, which can carry images/PDFs inside a tool result and is
+ * OpenAI's recommended surface. A custom base URL implies an OpenAI-compatible
+ * endpoint that generally only implements Chat Completions, so those stay on
+ * `.chat()`. Keep this in sync with {@link resolveMediaToolResultSupport}.
+ */
+function openaiApiKeyUsesResponses(baseURL: string | undefined): boolean {
+  return !baseURL;
+}
+
+/** Which media kinds a model's transport can deliver inside a tool result. */
+export interface MediaToolResultSupport {
+  image: boolean;
+  pdf: boolean;
+}
+
+/**
+ * Resolve whether the model's *transport* can deliver an image/PDF inside a
+ * tool result. This is distinct from the model's input modalities: a model may
+ * accept images (per the registry) yet its wire transport cannot carry one in a
+ * tool result. The AI SDK converters decide this per provider/transport:
+ *  - Anthropic (Messages API): image + pdf.
+ *  - OpenAI Responses API (OAuth, or API key on native OpenAI): image + pdf.
+ *  - OpenAI Chat Completions (custom base URL) / OpenRouter: neither (media is
+ *    stringified into text).
+ *  - Bedrock: image only (a PDF/file-data part throws UnsupportedFunctionalityError).
+ *  - Other/custom providers: neither (safe default).
+ *
+ * Kept in sync with the transport selection in {@link createModel}.
+ */
+export async function resolveMediaToolResultSupport(
+  modelString: string
+): Promise<MediaToolResultSupport> {
+  const config = parseModelConfig(modelString);
+  switch (config.provider) {
+    case 'anthropic':
+      return { image: true, pdf: true };
+    case 'bedrock':
+      return { image: true, pdf: false };
+    case 'openai': {
+      const hasOAuth = !config.envVar && !config.envSuffix && !!(await CodexAuth.access());
+      if (hasOAuth) return { image: true, pdf: true };
+      return openaiApiKeyUsesResponses(resolveBaseURL(config, 'openai'))
+        ? { image: true, pdf: true }
+        : { image: false, pdf: false };
+    }
+    default:
+      // openrouter (Chat-Completions-compatible), opencode-go, and custom
+      // providers cannot carry media in a tool result.
+      return { image: false, pdf: false };
+  }
+}
+
+/**
  * Parse model string to extract provider, model name, and optional env suffix
  * Format: "provider:model[:env]"
  * Examples:
@@ -361,7 +415,14 @@ export async function createModel(modelString: string) {
       openaiOptions.baseURL = baseURL;
     }
     const openai = createOpenAI(openaiOptions);
-    return await maybeWrapWithDevTools(openai.chat(config.modelName));
+    // Native OpenAI speaks the Responses API (richer tool-result content, incl.
+    // images/PDFs in tool results). A custom base URL implies an OpenAI-compatible
+    // proxy that typically only speaks Chat Completions, so keep .chat() there.
+    return await maybeWrapWithDevTools(
+      openaiApiKeyUsesResponses(baseURL)
+        ? openai.responses(config.modelName)
+        : openai.chat(config.modelName)
+    );
 
   } else if (config.provider === 'openrouter') {
     let apiKey: string | undefined;

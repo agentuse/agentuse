@@ -17,6 +17,8 @@ import { extractApiErrorDetail } from './api-error';
 import { toErrorMessage } from '../utils/error-message';
 import type { CompactionReason, ModelToolOutputArtifactRef, SessionManager, ToolOutputArtifactRef } from '../session';
 import { clampToolResultForModel } from '../tools/tool-output-limits.js';
+import { stripInlineMediaData } from '../tools/media.js';
+import { messagesContainInlineMedia } from '../session/media-cache.js';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -747,7 +749,11 @@ Error: ${errorMessage}`);
             toolName: chunk.toolName,
             toolCallId,  // Add toolCallId to the chunk
             toolResult: toolResultStr,
-            toolResultRaw: (chunk as any).result || (chunk as any).output,
+            // Strip any inline base64 media before this raw value is persisted to
+            // the session store / traces (stream.ts). stripInlineMediaData returns
+            // a copy, so the AI SDK's own reference (used by toModelOutput to send
+            // the real bytes to the model) keeps its data.
+            toolResultRaw: stripInlineMediaData((chunk as any).result || (chunk as any).output),
             ...(startTime && { toolStartTime: startTime }),
             ...(duration !== undefined && { toolDuration: duration })
           };
@@ -1130,6 +1136,32 @@ Error: ${errorMessage}`);
       yield { type: 'error', error };
     }
   }
+  }
+
+  // End-of-run: if the completed run read media that still lives in the active
+  // context, persist a context snapshot so a later continue-session can replay
+  // the actual image/PDF. Durable message parts only keep the stripped text ref
+  // (the base64 is removed before persistence), and no snapshot is written on a
+  // normal completion, only on suspension/compaction. writeContextSnapshot
+  // externalizes the media to the session cache, so the snapshot stays lean.
+  // (Requires the context manager; with CONTEXT_COMPACTION=false there is no
+  // active-context snapshot and continued sessions fall back to text refs.)
+  if (contextManager && options.sessionManager && options.sessionID && options.agentId) {
+    try {
+      const finalMessages = contextManager.getMessages();
+      if (messagesContainInlineMedia(finalMessages)) {
+        const stats = contextManager.getStats();
+        await options.sessionManager.writeContextSnapshot(options.sessionID, options.agentId, {
+          version: 1,
+          updatedAt: stats.updatedAt,
+          ...(options.messageID && { messageID: options.messageID }),
+          messages: finalMessages,
+          usage: stats,
+        });
+      }
+    } catch (err) {
+      logger.debug(`Failed to persist end-of-run media context snapshot: ${(err as Error).message}`);
+    }
   }
 }
 

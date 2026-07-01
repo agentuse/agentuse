@@ -7,6 +7,16 @@ import { PathValidator, type PathResolverContext } from './path-validator.js';
 import { fuzzyReplace } from './edit-replacers.js';
 import { grantsPermission, type FilesystemPathConfig, type ToolOutput, type ToolErrorOutput } from './types.js';
 import { getToolOutputLimits, truncateEnd } from './tool-output-limits.js';
+import {
+  sniffMediaType,
+  mediaByteCap,
+  humanBytes,
+  buildMediaContentValue,
+  isMediaToolOutput,
+  mediaFilename,
+  type InlineMedia,
+  type MediaToolOutput,
+} from './media.js';
 
 /**
  * Format file content with line numbers (cat -n style)
@@ -83,7 +93,11 @@ export function createReadTool(
   const validator = new PathValidator(configs, context);
 
   const allowedPaths = formatPathsForDescription(configs, 'read', context);
-  const description = `Read file contents from the filesystem. Returns content with line numbers.
+  const description = `Read file contents from the filesystem.
+
+Text files return their content with line numbers (cat -n style), honoring \`offset\`/\`limit\`.
+
+Image files (PNG, JPEG, GIF, WebP) and PDFs are returned as the actual image/document to the model, so you can read charts, screenshots, scanned pages and PDF documents directly. File type is detected by content, not extension. \`offset\`/\`limit\` are ignored for these. This only works on models that accept image/PDF input; on a text-only model an image/PDF read returns an error instead.
 
 **You can only read files from these paths:**
 ${allowedPaths}
@@ -94,14 +108,14 @@ Use absolute paths within these directories. Other paths will be rejected.`;
     description,
     inputSchema: z.object({
       file_path: z.string().describe('Absolute path to the file to read'),
-      offset: z.number().optional().describe('Line number to start from (1-indexed)'),
-      limit: z.number().optional().describe('Maximum number of lines to read'),
+      offset: z.number().optional().describe('Line number to start from (1-indexed). Ignored for image/PDF files.'),
+      limit: z.number().optional().describe('Maximum number of lines to read. Ignored for image/PDF files.'),
     }),
     execute: async ({ file_path, offset, limit }: {
       file_path: string;
       offset?: number;
       limit?: number;
-    }): Promise<ToolOutput> => {
+    }): Promise<ToolOutput | MediaToolOutput> => {
       // Validate path
       const validation = validator.validate(file_path, 'read');
       if (!validation.allowed) {
@@ -123,8 +137,26 @@ Use absolute paths within these directories. Other paths will be rejected.`;
           return { output: JSON.stringify(error) };
         }
 
-        // Read file content
-        const content = await fs.readFile(validation.resolvedPath, 'utf-8');
+        // Read the raw bytes once, then decide by magic number whether this is an
+        // image/PDF (multimodal path) or plain text. Reading a Buffer and decoding
+        // utf-8 is byte-for-byte equivalent to fs.readFile(path, 'utf-8'), so the
+        // text path below is unchanged.
+        const buf = await fs.readFile(validation.resolvedPath);
+        const sniffed = sniffMediaType(buf);
+
+        if (sniffed) {
+          const mediaResult = buildMediaReadResult(buf, sniffed, validation.resolvedPath, {
+            modelId: context.modelId,
+            modelInputModalities: context.modelInputModalities,
+            mediaToolResultSupport: context.mediaToolResultSupport,
+            offset,
+            limit,
+          });
+          return mediaResult;
+        }
+
+        // --- Text path (unchanged behavior) ---
+        const content = buf.toString('utf-8');
         const lines = content.split('\n');
         const totalLines = lines.length;
 
@@ -151,7 +183,95 @@ Use absolute paths within these directories. Other paths will be rejected.`;
         return { output: JSON.stringify(error) };
       }
     },
+    // Convert the tool result into what the model actually sees. Only the media
+    // path is special; every other result reproduces the AI SDK's default for a
+    // non-string output ({ type: 'json', value }) so text reads and JSON error
+    // envelopes are byte-for-byte unchanged.
+    toModelOutput: ({ output }) => {
+      if (isMediaToolOutput(output)) {
+        return {
+          type: 'content',
+          value: buildMediaContentValue(output._media, output.output),
+        };
+      }
+      return { type: 'json', value: output };
+    },
   };
+}
+
+/**
+ * Build the tool result for an image/PDF read: enforce the capability gate and
+ * size cap, then carry the base64 on the `_media` sibling. Returns a text error
+ * envelope (as a plain ToolOutput) when the model can't accept the media or the
+ * file is too large.
+ */
+function buildMediaReadResult(
+  buf: Buffer,
+  sniffed: { mediaType: string; kind: 'image' | 'pdf' },
+  resolvedPath: string,
+  opts: {
+    modelId?: string | undefined;
+    modelInputModalities?: string[] | undefined;
+    mediaToolResultSupport?: { image: boolean; pdf: boolean } | undefined;
+    offset?: number | undefined;
+    limit?: number | undefined;
+  }
+): ToolOutput | MediaToolOutput {
+  const filename = mediaFilename(resolvedPath);
+  const kindLabel = sniffed.kind === 'pdf' ? 'PDF' : 'image';
+  const model = opts.modelId ? `model ${opts.modelId}` : 'the current model';
+
+  // Modality gate: does the model accept this input at all? Only block when the
+  // registry POSITIVELY says it lacks the modality. Unknown model -> attempt.
+  const modalities = opts.modelInputModalities;
+  if (modalities && !modalities.includes(sniffed.kind)) {
+    const error: ToolErrorOutput = {
+      success: false,
+      error: `${filename} is ${kindLabel} (${sniffed.mediaType}), but ${model} does not accept ${sniffed.kind} input. Cannot read this file. Extract or convert it to text first, or run on a ${sniffed.kind}-capable model.`,
+    };
+    return { output: JSON.stringify(error) };
+  }
+
+  // Transport gate: even a vision-capable model can be on a wire that cannot
+  // carry the media in a tool result (OpenAI Chat/OpenRouter would stringify it;
+  // Bedrock throws on a PDF). Emitting a media part there would send base64 as
+  // text or crash the run, so return a text error instead.
+  const transport = opts.mediaToolResultSupport;
+  if (transport && !transport[sniffed.kind]) {
+    const error: ToolErrorOutput = {
+      success: false,
+      error: `${filename} is ${kindLabel} (${sniffed.mediaType}), and ${model} can reason over ${sniffed.kind}s, but its provider/transport cannot deliver ${sniffed.kind === 'pdf' ? 'a PDF' : 'an image'} inside a tool result. Read it as text, or run on Anthropic or native OpenAI where ${sniffed.kind} tool results are supported.`,
+    };
+    return { output: JSON.stringify(error) };
+  }
+
+  // Size guardrail (raw bytes, before base64 inflation).
+  const cap = mediaByteCap(sniffed.kind);
+  if (buf.length > cap) {
+    const error: ToolErrorOutput = {
+      success: false,
+      error: `${filename} is ${humanBytes(buf.length)}, which exceeds the ${humanBytes(cap)} limit for ${sniffed.kind} input. Reduce or split the file before reading.`,
+    };
+    return { output: JSON.stringify(error) };
+  }
+
+  // offset/limit are line-based and meaningless for binary media.
+  const ignoredPaging = opts.offset !== undefined || opts.limit !== undefined
+    ? ' (offset/limit ignored for binary media)'
+    : '';
+
+  const media: InlineMedia = {
+    kind: sniffed.kind,
+    mediaType: sniffed.mediaType,
+    data: buf.toString('base64'),
+    bytes: buf.length,
+    filename,
+    path: resolvedPath,
+  };
+
+  const caption = `[Read ${kindLabel} ${filename} (${sniffed.mediaType}, ${humanBytes(buf.length)})${ignoredPaging}. Content provided to the model as ${sniffed.kind === 'pdf' ? 'a document' : 'an image'}.]`;
+
+  return { output: caption, _media: media } satisfies MediaToolOutput;
 }
 
 /**

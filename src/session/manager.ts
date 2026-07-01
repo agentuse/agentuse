@@ -4,6 +4,7 @@ import { createWriteStream } from 'fs';
 import path from 'path';
 import { writeJSON, readJSON, listKeys, getStorageState, sanitizeAgentName, CorruptStorageError } from '../storage';
 import { logger } from '../utils/logger';
+import { dehydrateSnapshotMedia, rehydrateSnapshotMedia } from './media-cache';
 import type {
   SessionInfo,
   SessionTrigger,
@@ -906,12 +907,30 @@ export class SessionManager {
 
   async writeContextSnapshot(sessionID: string, agentId: string, snapshot: ContextSnapshot): Promise<void> {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
-    await writeJSON(`${sessionPath}/context`, snapshot);
+    // Externalize any inline base64 media to session-owned cache files before
+    // persisting, so a snapshot that carried an image/PDF stays small (and does
+    // not re-serialize megabytes of base64 on every suspension).
+    const state = await getStorageState();
+    const lean = await dehydrateSnapshotMedia(snapshot, path.join(state.dir, sessionPath));
+    await writeJSON(`${sessionPath}/context`, lean);
   }
 
-  async readContextSnapshot(sessionID: string, agentId: string): Promise<ContextSnapshot | null> {
+  /**
+   * Read a persisted context snapshot. By default, media externalized by
+   * {@link writeContextSnapshot} is restored inline so the messages are valid AI
+   * SDK ModelMessages for replay. Callers that only need usage/metadata (not the
+   * message bytes) can pass `{ rehydrateMedia: false }` to skip the cache reads.
+   */
+  async readContextSnapshot(
+    sessionID: string,
+    agentId: string,
+    opts: { rehydrateMedia?: boolean } = {}
+  ): Promise<ContextSnapshot | null> {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
-    return readJSON<ContextSnapshot>(`${sessionPath}/context`);
+    const snapshot = await readJSON<ContextSnapshot>(`${sessionPath}/context`);
+    if (!snapshot || opts.rehydrateMedia === false) return snapshot;
+    const state = await getStorageState();
+    return rehydrateSnapshotMedia(snapshot, path.join(state.dir, sessionPath));
   }
 
   async writeToolOutputArtifact(

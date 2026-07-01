@@ -38,6 +38,25 @@ export interface PathResolverContext {
   sessionId?: string | undefined;
   /** Stable agent id, for tools that record provenance (e.g. artifacts). */
   agentId?: string | undefined;
+  /** Resolved model string (provider:id), for capability-gate error messages. */
+  modelId?: string | undefined;
+  /**
+   * The running model's input modalities (e.g. ["text","image","pdf"]) from the
+   * registry, used to gate media reads: an image/PDF is only handed to the model
+   * when this includes "image"/"pdf". Undefined when the model is not in the
+   * registry — treated as "unknown capability", so media reads are still
+   * attempted (the provider surfaces a clear error if truly unsupported).
+   */
+  modelInputModalities?: string[] | undefined;
+  /**
+   * Whether the model's transport can actually deliver an image/PDF inside a
+   * tool result. Distinct from modalities: e.g. gpt-4o accepts images, but the
+   * OpenAI Chat-Completions transport (custom base URL) or OpenRouter would
+   * stringify it, and Bedrock throws on a PDF. When a kind is unsupported here,
+   * a media read returns a text error instead of emitting a broken part.
+   * Undefined falls back to the modalities-only gate (legacy behavior).
+   */
+  mediaToolResultSupport?: { image: boolean; pdf: boolean } | undefined;
 }
 
 /**

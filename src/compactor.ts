@@ -1,4 +1,5 @@
 import { completeText } from './complete-text';
+import { redactMediaData } from './tools/media';
 import { logger } from './utils/logger';
 
 // Use any for message type to avoid complex type issues
@@ -25,9 +26,11 @@ export async function compactMessages(
     // Prepare messages for summarization
     const contextToSummarize = messages.map(msg => {
       const role = msg.role;
-      const content = typeof msg.content === 'string' 
-        ? msg.content 
-        : JSON.stringify(msg.content);
+      // Redact inline media base64 so a read image/PDF is summarized as a short
+      // placeholder, not sent to the summarizer as megabytes of base64 text.
+      const content = typeof msg.content === 'string'
+        ? msg.content
+        : JSON.stringify(redactMediaData(msg.content));
       return `${role}: ${content}`;
     }).join('\n\n');
 

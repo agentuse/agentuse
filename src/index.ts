@@ -1776,7 +1776,8 @@ async function runInternalWorker() {
       }
 
       const messages = await sessionManager.getSessionMessages(req.sessionId, found.agentId);
-      const contextOverride = contextUsageFromSnapshot(await sessionManager.readContextSnapshot(req.sessionId, found.agentId));
+      // Usage/metadata only: skip media rehydration (no need to read cache files).
+      const contextOverride = contextUsageFromSnapshot(await sessionManager.readContextSnapshot(req.sessionId, found.agentId, { rehydrateMedia: false }));
       const tokenUsage = aggregateSessionTokenUsage(messages, contextOverride);
       // The per-run instruction this session was started with (CLI args / the
       // "run with custom instruction" composer), kept separate from the agent's

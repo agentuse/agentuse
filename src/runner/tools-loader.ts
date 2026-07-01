@@ -12,6 +12,8 @@ import {
 import { createStore, createStoreTools, type Store } from '../store/index.js';
 import { createSandbox, createSandboxTools, type SandboxInstance } from '../sandbox.js';
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
+import { getModelFromRegistry } from '../generated/models.js';
+import { resolveMediaToolResultSupport } from '../models.js';
 import { logger } from '../utils/logger';
 import type { ParsedAgent } from '../parser';
 import { approvalToolDefaults, isApprovalEnabled } from './approval';
@@ -97,6 +99,11 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
         ...(effectiveToolsConfig ?? {}),
         ...(isApprovalEnabled(agent.config) && { await_human: true })
       };
+      // Resolve the running model's input modalities (can it reason over an
+      // image/PDF?) and transport media support (can its wire actually deliver
+      // one in a tool result?) so filesystem_read gates media reads on both.
+      const modelInputModalities = getModelFromRegistry(agent.config.model)?.modalities.input;
+      const mediaToolResultSupport = await resolveMediaToolResultSupport(agent.config.model);
       configuredTools = getConfiguredTools(toolsConfig, {
         projectRoot: projectContext.projectRoot,
         agentDir,
@@ -104,6 +111,9 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
         agentId,
         toolOutputArtifacts,
         approval: approvalToolDefaults(agent.config),
+        modelId: agent.config.model,
+        modelInputModalities,
+        mediaToolResultSupport,
       } as PathResolverContext);
       if (Object.keys(configuredTools).length > 0) {
         logger.debug(`${logPrefix}Loaded ${Object.keys(configuredTools).length} configured tool(s): ${Object.keys(configuredTools).join(', ')}`);

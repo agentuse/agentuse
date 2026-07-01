@@ -1,6 +1,7 @@
 import type { LanguageModelUsage } from 'ai';
 import type { CompactionReason } from './session/types';
 import { getModelInfo, type ModelInfo } from './utils/models-api';
+import { redactMediaData, estimateInlineMediaTokens } from './tools/media';
 import { logger } from './utils/logger';
 
 // Constants
@@ -114,13 +115,15 @@ export class ContextManager {
     if (Array.isArray(message.content)) {
       return message.content
         .map((part: any) => {
-          if ('text' in part) return part.text;
-          return JSON.stringify(part);
+          if (part && typeof part === 'object' && 'text' in part) return part.text;
+          // Redact inline media base64 first so a tool-result image is not
+          // stringified as ~megabytes of characters (see estimateTokens caller).
+          return JSON.stringify(redactMediaData(part));
         })
         .join(' ');
     }
-    
-    return JSON.stringify(message.content);
+
+    return JSON.stringify(redactMediaData(message.content));
   }
 
   /**
@@ -128,13 +131,16 @@ export class ContextManager {
    */
   addMessage(message: ModelMessage): void {
     const text = this.messageToString(message);
-    const estimatedTokens = this.estimateTokens(text);
-    
+    // messageToString redacts inline media base64 to a short placeholder, so add
+    // the media's real (approximate) token weight back rather than counting it as
+    // ~zero. Base64 length is a ~1000x overestimate of an image's token cost.
+    const estimatedTokens = this.estimateTokens(text) + estimateInlineMediaTokens(message);
+
     this.messages.push({
       message,
       estimatedTokens
     });
-    
+
     this.totalTokensUsed += estimatedTokens;
   }
 

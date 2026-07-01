@@ -64,8 +64,8 @@ only what must be exact:
 - the output schema and where it goes,
 - ordering that changes the result.
 
-For everything else — how to investigate, how to phrase, the long tail of edge
-cases — state the goal and the constraint, then let the model decide. Spelling
+For everything else, how to investigate, how to phrase, the long tail of edge
+cases, state the goal and the constraint, then let the model decide. Spelling
 out every branch makes the agent brittle on the case you did not enumerate.
 
 Over-specification smells: the same rule in three places, a paragraph
@@ -84,14 +84,14 @@ reference files.** The system prompt's operational/safety rules sit above all of
 these. This shapes where a rule belongs:
 
 - Put **soft defaults** in skills. Don't bake a hard "never do X" into a skill
-  that a learning should be able to override — a captured correction outranks a
+  that a learning should be able to override, a captured correction outranks a
   skill default, so an absolute skill rule fights the feedback loop.
 - State a rule **once**, at the right layer, and reference it. The same craft
   rule copied into both a skill and the agent drifts; the lower-precedence copy
   then silently wins (this is the "same rule in three places" smell above, seen
   from the runtime side).
 - `learning: true` (sugar for `capture + apply`) injects the agent's stored
-  learnings every run — for delegated subagents too, not just top-level runs. So
+  learnings every run, for delegated subagents too, not just top-level runs. So
   a leaf's prior-run corrections actually reach it; rely on that instead of
   hand-restating past corrections in the prompt.
 
@@ -101,7 +101,14 @@ these. This shapes where a rule belongs:
   `filesystem_read` returns the whole file unless you pass `limit`/`offset`. For
   big or structured files, grant `grep`/`rg`/`jq` via bash and tell the agent to
   search, not slurp. A read agent given only `cat`/`ls` falls back to whole-file
-  reads — the exact context blowup to avoid.
+  reads, the exact context blowup to avoid.
+- **`filesystem_read` also reads images and PDFs.** PNG/JPEG/GIF/WebP and PDF
+  files (detected by content, not extension) are returned to the model as the
+  actual image/document, so an agent can read a chart, screenshot, or PDF
+  directly. This only works on a model whose input modalities include
+  `image`/`pdf` (Claude, GPT-4o, Gemini, etc.); on a text-only model the read
+  returns an error instead. Size caps apply (images ~5MB, PDFs ~32MB); `limit`/
+  `offset` are ignored for media.
 
 - **Approval gates are async.** `approval: true` / `await_human` gates suspend
   the run; `timeout:` does not tick during the wait. Size `timeout:` for the
@@ -123,7 +130,7 @@ these. This shapes where a rule belongs:
   changes, repeat what doesn't.
 
 - **Skill scripts read via bash need explicit allowlists.** Grant
-  `tools.filesystem` read on the skill dir (absolute path — `~` may not expand)
+  `tools.filesystem` read on the skill dir (absolute path, `~` may not expand)
   and a narrow `bash.commands` like `cat /Users/<you>/.claude/skills/<name>/scripts/*`.
   Not a blanket `cat *`.
 
@@ -133,7 +140,7 @@ these. This shapes where a rule belongs:
 
 ## References
 
-Don't hardcode a doc list here — it goes stale. Fetch the canonical index and
+Don't hardcode a doc list here, it goes stale. Fetch the canonical index and
 load the specific page(s) you need:
 
 ```
