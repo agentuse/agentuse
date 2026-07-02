@@ -543,4 +543,42 @@ This is a test agent.`;
       expect(agent.instructions).toContain('This is a test agent');
     });
   });
+
+  describe('metadata', () => {
+    it('preserves free-form metadata keys and values', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+description: Score inbound leads
+metadata:
+  draft: true
+  owner: leon
+  reviewed: false
+  needs: load-test before prod
+---
+
+Test agent`;
+
+      const agent = parseAgentContent(content, 'test');
+
+      expect(agent.config.metadata).toEqual({
+        draft: true,
+        owner: 'leon',
+        reviewed: false,
+        needs: 'load-test before prod'
+      });
+      expect(warnings).toHaveLength(0);
+    });
+
+    it('leaves metadata undefined when absent', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+---
+
+Test agent`;
+
+      const agent = parseAgentContent(content, 'test');
+
+      expect(agent.config.metadata).toBeUndefined();
+    });
+  });
 });

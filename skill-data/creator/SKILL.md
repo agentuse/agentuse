@@ -33,6 +33,9 @@ description: "Analyze daily metrics and send a concise summary"
 timeout: 600
 maxSteps: 100
 schedule: "0 9 * * *"
+metadata:            # free-form annotations; framework never interprets them
+  draft: true
+  owner: leon
 subagents:
   - path: ./researcher.agentuse
     name: research
@@ -52,6 +55,10 @@ mcpServers:
 - Inputs, outputs, destinations, and success criteria stated in the body.
 - Multi-role work: subagents with clear names and `maxSteps` limits.
 - Recurring work: YAML `schedule:` + a note that `agentuse serve` must run.
+- Custom labels (draft, owner, team): put them under `metadata:`. It is the
+  only place custom keys survive parsing; `agentuse agents` shows them as chips
+  and `--json` exposes them under `.metadata` for filtering. Metadata is an
+  annotation, not runtime input (it is not injected into the prompt).
 
 ## Write Lean: Hard-Code Invariants, Delegate Judgment
 

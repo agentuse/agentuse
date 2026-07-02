@@ -144,6 +144,11 @@ const AgentSchema = z.object({
   description: z.string().optional(),
   version: z.string().optional(),
   notes: z.string().optional(),
+  // Free-form annotations for developers/tooling (e.g. draft, owner, team).
+  // The framework never interprets these keys, it only preserves and surfaces
+  // them. This is the sanctioned home for custom keys, which are otherwise
+  // stripped from frontmatter.
+  metadata: z.record(z.unknown()).optional(),
   timeout: z.number().positive().optional(),
   maxSteps: z.number().positive().int().optional(),
   openai: z.object({

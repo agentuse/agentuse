@@ -131,6 +131,35 @@ Additional instructions or context.
   ```
 </ParamField>
 
+<ParamField path="metadata" type="object" required={false}>
+  Free-form annotations for you and your tooling. The framework never
+  interprets these keys, it only preserves and surfaces them. This is the
+  sanctioned home for custom keys, which are otherwise stripped from
+  frontmatter.
+
+  ```yaml
+  metadata:
+    draft: true
+    owner: leon
+    team: growth
+  ```
+
+  Metadata is shown by `agentuse agents`: top-level keys render as chips after
+  the description (a `true` flag prints its bare key, a scalar prints
+  `key=value`, falsey flags are omitted), and the full object is available in
+  `agentuse agents --json` under `.metadata` for filtering.
+
+  ```bash
+  # List only draft agents
+  agentuse agents --json | jq '.agents[] | select(.metadata.draft)'
+  ```
+
+  <Note>
+    Metadata is an annotation, not runtime input: it is not injected into the
+    agent's prompt.
+  </Note>
+</ParamField>
+
 <ParamField path="mcpServers" type="object" required={false}>
   Configuration for Model Context Protocol (MCP) servers that provide tools and resources to the agent.
 
@@ -172,7 +201,7 @@ Additional instructions or context.
   ```
 
   <Note>
-    These options are particularly useful with GPT-5 models to balance response quality, latency, and cost. Some effort levels are model-specific; for example, `xhigh` and `none` are only accepted by OpenAI models that support them. Whether a reasoning summary actually streams depends on `reasoningEffort` and task complexity — the model may emit nothing for trivial tasks.
+    These options are particularly useful with GPT-5 models to balance response quality, latency, and cost. Some effort levels are model-specific; for example, `xhigh` and `none` are only accepted by OpenAI models that support them. Whether a reasoning summary actually streams depends on `reasoningEffort` and task complexity, the model may emit nothing for trivial tasks.
   </Note>
 </ParamField>
 
@@ -263,7 +292,7 @@ Additional instructions or context.
       - pip install pandas numpy
   ```
 
-  When enabled, the agent receives `sandbox__exec` for running commands in the container. File I/O uses the existing filesystem tool — each filesystem path is mounted at its real host path with per-path ro/rw mode derived from permissions.
+  When enabled, the agent receives `sandbox__exec` for running commands in the container. File I/O uses the existing filesystem tool, each filesystem path is mounted at its real host path with per-path ro/rw mode derived from permissions.
 
   <Note>
     This feature is experimental. See the [Sandbox guide](/guides/sandbox) for full documentation.

@@ -14,6 +14,31 @@ interface AgentInfo {
   description: string | undefined;
   model: string;
   schedule: string | undefined;
+  metadata: Record<string, unknown> | undefined;
+}
+
+/**
+ * Render free-form metadata as compact chips for the human-readable list.
+ * The framework does not interpret keys: a `true` flag prints its bare key
+ * (e.g. `draft`), a scalar prints `key=value`, anything else prints the key
+ * alone. Falsey flags (false/null/undefined) are omitted.
+ */
+function formatMetadataChips(metadata: Record<string, unknown> | undefined): string {
+  if (!metadata) return '';
+  const chips: string[] = [];
+  for (const [key, value] of Object.entries(metadata)) {
+    if (value === true) {
+      chips.push(key);
+    } else if (value === false || value == null) {
+      continue;
+    } else if (typeof value === 'string' || typeof value === 'number') {
+      chips.push(`${key}=${value}`);
+    } else {
+      chips.push(key);
+    }
+  }
+  if (chips.length === 0) return '';
+  return '  ' + chips.map((c) => chalk.magenta(c)).join(' ');
 }
 
 /**
@@ -41,6 +66,7 @@ async function discoverAgents(projectRoot: string): Promise<AgentInfo[]> {
           description: parsed.description,
           model: parsed.config.model,
           schedule: parsed.config.schedule,
+          metadata: parsed.config.metadata,
         });
       } catch {
         // Skip files that fail to parse
@@ -73,6 +99,7 @@ export function createAgentsCommand(): Command {
             description: a.description ?? null,
             model: a.model,
             schedule: a.schedule ?? null,
+            metadata: a.metadata ?? null,
           })),
         };
         console.log(JSON.stringify(output, null, 2));
@@ -114,7 +141,8 @@ export function createAgentsCommand(): Command {
           const path = chalk.cyan(agent.relativePath);
           const schedule = agent.schedule ? chalk.yellow(` ⏱ ${formatScheduleHuman(agent.schedule)}`) : '';
           const desc = agent.description ? chalk.gray(` · ${agent.description}`) : '';
-          console.log(`  ${path}${schedule}${desc}`);
+          const meta = formatMetadataChips(agent.metadata);
+          console.log(`  ${path}${schedule}${desc}${meta}`);
           if (options.verbose) {
             console.log(chalk.gray(`    model: ${agent.model}`));
           }
