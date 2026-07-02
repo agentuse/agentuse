@@ -267,6 +267,12 @@ export interface AgentSummary {
   schedule?: string;
   /** Human-readable form of `schedule` (e.g. "Every 5 minutes"). */
   scheduleHuman?: string;
+  /**
+   * Free-form frontmatter `metadata:`. Opaque to the daemon, passed through so
+   * the UI can surface it (selectable column, detail list). Omitted when the
+   * agent declares none.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 export interface Project {

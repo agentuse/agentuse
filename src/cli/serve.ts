@@ -1193,6 +1193,8 @@ interface AgentSummary {
   schedule?: string;
   /** Human-readable form of `schedule` (e.g. "At 09:00 AM, only on Monday"). */
   scheduleHuman?: string;
+  /** Free-form frontmatter `metadata:`, passed through untouched for the UI. */
+  metadata?: Record<string, unknown>;
 }
 
 interface CollectAgentsResult {
@@ -1224,6 +1226,7 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
             schedule: parsed.config.schedule,
             scheduleHuman: formatScheduleHuman(parsed.config.schedule),
           }),
+          ...(parsed.config.metadata && { metadata: parsed.config.metadata }),
         });
       } catch (err) {
         errors.push({ projectId: project.id, path: agentFile, message: (err as Error).message });
@@ -1262,6 +1265,7 @@ interface AgentDetail {
   model: string;
   schedule?: string;
   scheduleHuman?: string;
+  metadata?: Record<string, unknown>;
   source: string;
   meta: AgentDetailMeta;
 }
@@ -1303,6 +1307,7 @@ async function collectAgentDetail(project: Project, runPath: string): Promise<Ag
       schedule: config.schedule,
       scheduleHuman: formatScheduleHuman(config.schedule),
     }),
+    ...(config.metadata && { metadata: config.metadata }),
     source,
     meta,
   };

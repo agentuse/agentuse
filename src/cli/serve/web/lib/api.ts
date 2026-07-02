@@ -263,6 +263,7 @@ export interface AgentDetailPayload {
   model: string;
   schedule?: string;
   scheduleHuman?: string;
+  metadata?: Record<string, unknown>;
   source: string;
   meta: AgentDetailMeta;
 }

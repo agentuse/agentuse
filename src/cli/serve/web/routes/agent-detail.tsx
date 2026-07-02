@@ -90,7 +90,7 @@ function CapRow(props: { label: string; chips: VNode[] }) {
   );
 }
 
-function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: string | undefined; scheduleHuman: string | undefined }) {
+function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: string | undefined; scheduleHuman: string | undefined; metadata: Record<string, unknown> | undefined }) {
   const { meta } = props;
   const skillChips: VNode[] = [];
   if (meta.skills.explicit.length > 0) {
@@ -115,6 +115,18 @@ function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: s
   const chanChips = meta.channels.map((c) => <Chip key={c} tone="cyan">{c}</Chip>);
   if (meta.approval) chanChips.push(<Chip key="approval" tone="amber">approval gate</Chip>);
 
+  // Free-form metadata, one chip per key. Values are formatted, never
+  // interpreted: the framework has no opinion on what these keys mean.
+  const metaChips: VNode[] = [];
+  for (const [k, v] of Object.entries(props.metadata ?? {})) {
+    const val = v === true ? 'true'
+      : v === false ? 'false'
+      : v == null ? '—'
+      : typeof v === 'object' ? JSON.stringify(v)
+      : String(v);
+    metaChips.push(<Chip key={k} title={`${k}: ${val}`}>{k}: {val}</Chip>);
+  }
+
   return (
     <div class="cap-grid">
       <CapRow label="Runtime" chips={runtimeChips} />
@@ -123,6 +135,7 @@ function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: s
       <CapRow label="MCP" chips={mcpChips} />
       <CapRow label="Subagents" chips={subChips} />
       <CapRow label="Surfaces" chips={chanChips} />
+      <CapRow label="Metadata" chips={metaChips} />
     </div>
   );
 }
@@ -279,7 +292,7 @@ export default function AgentDetail() {
               </div>
             </header>
 
-            <Capabilities meta={data.meta} model={data.model} schedule={data.schedule} scheduleHuman={data.scheduleHuman} />
+            <Capabilities meta={data.meta} model={data.model} schedule={data.schedule} scheduleHuman={data.scheduleHuman} metadata={data.metadata} />
 
             <RecentRuns agentId={agentIdFromPath(data.path)} project={data.projectId} />
 

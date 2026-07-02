@@ -5,6 +5,8 @@ import { fetchAgents } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { usePins } from '../hooks/use-pins';
+import { useAgentColumns } from '../hooks/use-agent-columns';
+import { useMediaQuery } from '../hooks/use-media-query';
 import { useRunAgent } from '../hooks/use-run-agent';
 import { Topbar } from '../components/topbar';
 import { RunInstructionDialog } from '../components/run-instruction-dialog';
@@ -127,6 +129,19 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
               <span class="chip status" title={agent.schedule}>{agent.scheduleHuman ?? agent.schedule}</span>
             </div>
           )}
+          {agent.metadata && Object.keys(agent.metadata).length > 0 && (
+            <div class="menu-meta-block">
+              <span class="menu-meta-label">Metadata</span>
+              <div class="menu-kv">
+                {Object.entries(agent.metadata).map(([k, v]) => (
+                  <div class="menu-kv-row" key={k}>
+                    <span class="menu-kv-key">{k}</span>
+                    <span class="menu-kv-val"><MetaValue value={v} /></span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div class="menu-sep" />
           <button
             type="button"
@@ -221,7 +236,7 @@ interface PinApi {
   toggle: (a: AgentRow) => void;
 }
 
-function walk(node: TreeNode, levels: boolean[], rows: VNode[], pins: PinApi): void {
+function walk(node: TreeNode, levels: boolean[], rows: VNode[], pins: PinApi, columns: string[]): void {
   const children = sortChildren(node);
   children.forEach((child, idx) => {
     const last = idx === children.length - 1;
@@ -236,8 +251,7 @@ function walk(node: TreeNode, levels: boolean[], rows: VNode[], pins: PinApi): v
             {pinned && <span class="tree-pin" title="Pinned" aria-label="Pinned"><PinIcon filled /></span>}
             <a class="tree-label" href={agentDetailHref(a.projectId, a.runPath)}>{child.name}</a>
           </span>
-          <span>{a.schedule ? <span class="chip status" title={a.schedule}>{a.scheduleHuman ?? a.schedule}</span> : <span class="muted">—</span>}</span>
-          <span class="tree-run"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>
+          {columns.map((id) => <span class={columnCellClass(id)} key={id}><ColumnCell id={id} agent={a} /></span>)}
           <span class="tree-menu"><AgentMenu agent={a} pinned={pinned} onTogglePin={() => pins.toggle(a)} /></span>
         </div>
       );
@@ -247,18 +261,18 @@ function walk(node: TreeNode, levels: boolean[], rows: VNode[], pins: PinApi): v
           <span class="tree-path">{prefix}<span class="tree-label">{child.name}/</span></span>
         </div>
       );
-      walk(child, [...levels, !last], rows, pins);
+      walk(child, [...levels, !last], rows, pins, columns);
     }
   });
 }
 
-function AgentTree(props: { agents: AgentRow[]; pins: PinApi }) {
+function AgentTree(props: { agents: AgentRow[]; pins: PinApi; columns: string[] }) {
   const rows: VNode[] = [];
-  walk(buildTree(props.agents), [], rows, props.pins);
+  walk(buildTree(props.agents), [], rows, props.pins, props.columns);
   return <>{rows}</>;
 }
 
-function PinnedRow(props: { agent: AgentRow; pins: PinApi }) {
+function PinnedRow(props: { agent: AgentRow; pins: PinApi; columns: string[] }) {
   const a = props.agent;
   const locLabel = a.path.replace(/\.agentuse$/, '');
   return (
@@ -268,17 +282,94 @@ function PinnedRow(props: { agent: AgentRow; pins: PinApi }) {
         <a class="pin-name" href={agentDetailHref(a.projectId, a.runPath)}>{a.name}</a>
         <span class="pin-loc">{a.projectId} / {locLabel}</span>
       </span>
-      <span>{a.schedule ? <span class="chip status" title={a.schedule}>{a.scheduleHuman ?? a.schedule}</span> : <span class="muted">—</span>}</span>
-      <span class="tree-run"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>
+      {props.columns.map((id) => <span class={columnCellClass(id)} key={id}><ColumnCell id={id} agent={a} /></span>)}
       <span class="tree-menu"><AgentMenu agent={a} pinned onTogglePin={() => props.pins.toggle(a)} /></span>
     </div>
   );
 }
 
+/** Union of metadata keys across the loaded agents, sorted, for the column picker. */
+function metadataKeys(agents: AgentRow[]): string[] {
+  const keys = new Set<string>();
+  for (const a of agents) {
+    if (a.metadata) for (const k of Object.keys(a.metadata)) keys.add(k);
+  }
+  return [...keys].sort();
+}
+
+/** Flatten metadata scalars into a search string (keys always, scalar values too). */
+function metadataText(metadata: Record<string, unknown> | undefined): string {
+  if (!metadata) return '';
+  return Object.entries(metadata)
+    .map(([k, v]) => (v == null || typeof v === 'object' ? k : `${k} ${v}`))
+    .join(' ');
+}
+
+/**
+ * One metadata value rendered for a cell: booleans as a chip/muted flag,
+ * scalars as truncated text, missing or non-scalar values as a muted dash.
+ * The framework never interprets the key, so this only formats the value.
+ */
+function MetaValue({ value }: { value: unknown }): VNode {
+  if (value === true) return <span class="chip status">true</span>;
+  if (value === false) return <span class="muted">false</span>;
+  if (value == null) return <span class="muted">—</span>;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const s = String(value);
+    return <span class="tree-meta-val" title={s}>{s}</span>;
+  }
+  let json = '';
+  try { json = JSON.stringify(value); } catch { /* circular; leave blank */ }
+  return <span class="muted" title={json}>{'{…}'}</span>;
+}
+
+const META_PREFIX = 'meta:';
+
+interface ColumnDef { id: string; label: string; }
+
+/** Every column that can be shown: the two built-ins, then one per metadata key. */
+function availableColumns(metaKeys: string[]): ColumnDef[] {
+  return [
+    { id: 'schedule', label: 'Schedule' },
+    { id: 'run', label: 'Run' },
+    ...metaKeys.map((k) => ({ id: META_PREFIX + k, label: k })),
+  ];
+}
+
+function columnLabel(id: string): string {
+  if (id === 'schedule') return 'Schedule';
+  if (id === 'run') return 'Run';
+  return id.startsWith(META_PREFIX) ? id.slice(META_PREFIX.length) : id;
+}
+
+/** Cell alignment class for a column (run + metadata get their own). */
+function columnCellClass(id: string): string {
+  if (id === 'run') return 'tree-run';
+  if (id.startsWith(META_PREFIX)) return 'tree-meta';
+  return '';
+}
+
+/** Render one column's cell for an agent row. */
+function ColumnCell({ id, agent }: { id: string; agent: AgentRow }): VNode {
+  if (id === 'schedule') {
+    return agent.schedule
+      ? <span class="chip status" title={agent.schedule}>{agent.scheduleHuman ?? agent.schedule}</span>
+      : <span class="muted">—</span>;
+  }
+  if (id === 'run') return <RunButton agentPath={agent.runPath} projectId={agent.projectId} />;
+  if (id.startsWith(META_PREFIX)) return <MetaValue value={agent.metadata?.[id.slice(META_PREFIX.length)]} />;
+  return <span class="muted">—</span>;
+}
+
+/** Grid template for a tree/pin grid: Tree(1fr) + one auto per column + menu. */
+function columnsGridTemplate(columns: string[]): string {
+  return ['minmax(0, 1fr)', ...columns.map(() => 'auto'), 'auto'].join(' ');
+}
+
 /** Case-insensitive substring match across the fields a user is likely to type. */
 function matchesFilter(agent: AgentRow, query: string): boolean {
   if (!query) return true;
-  const haystack = `${agent.name} ${agent.path} ${agent.description ?? ''} ${agent.projectId} ${agent.model} ${agent.schedule ?? ''}`.toLowerCase();
+  const haystack = `${agent.name} ${agent.path} ${agent.description ?? ''} ${agent.projectId} ${agent.model} ${agent.schedule ?? ''} ${metadataText(agent.metadata)}`.toLowerCase();
   return query.split(/\s+/).filter(Boolean).every((term) => haystack.includes(term));
 }
 
@@ -287,11 +378,24 @@ export default function Agents() {
   const { data, error, loading } = useFetch('agents', () => fetchAgents(), { refreshMs: 30_000 });
   const { isPinned, toggle, keys } = usePins();
   const pins: PinApi = { isPinned, toggle };
+  const { columns, addColumn, removeColumn } = useAgentColumns();
+  const narrow = useMediaQuery('(max-width: 700px)');
 
   const [filter, setFilter] = useState('');
   const query = filter.trim().toLowerCase();
 
   const loadedAgents = data?.agents ?? [];
+  // Column model: built-ins + one per metadata key. `activeColumns` keeps the
+  // user's saved order, dropping any metadata column whose key is no longer in
+  // the payload. `renderColumns` is what actually renders (narrow screens keep
+  // only Run; the rest live in the ⋯ menu).
+  const metaKeys = metadataKeys(loadedAgents);
+  const allColumns = availableColumns(metaKeys);
+  const allColumnIds = new Set(allColumns.map((c) => c.id));
+  const activeColumns = columns.filter((id) => allColumnIds.has(id));
+  const inactiveColumns = allColumns.filter((c) => !activeColumns.includes(c.id));
+  const renderColumns = narrow ? activeColumns.filter((id) => id === 'run') : activeColumns;
+  const gridTemplate = columnsGridTemplate(renderColumns);
   const allAgents = query ? loadedAgents.filter((a) => matchesFilter(a, query)) : loadedAgents;
   const byProject = new Map<string, AgentRow[]>();
   for (const agent of allAgents) {
@@ -337,6 +441,39 @@ export default function Agents() {
               )}
             </div>
           )}
+          {loadedAgents.length > 0 && (
+            <div class="agents-cols">
+              <span class="agents-cols-label">Columns</span>
+              {activeColumns.length === 0 && <span class="agents-cols-empty">none</span>}
+              {activeColumns.map((id) => (
+                <span class="col-pill" key={id}>
+                  {columnLabel(id)}
+                  <button
+                    type="button"
+                    class="col-pill-x"
+                    aria-label={`Remove ${columnLabel(id)} column`}
+                    onClick={() => removeColumn(id)}
+                  >×</button>
+                </span>
+              ))}
+              {inactiveColumns.length > 0 && (
+                <div class="agents-cols-select agents-cols-add">
+                  <select
+                    aria-label="Add column"
+                    value=""
+                    onChange={(e) => {
+                      const el = e.target as HTMLSelectElement;
+                      if (el.value) addColumn(el.value);
+                      el.value = '';
+                    }}
+                  >
+                    <option value="">+ Add column</option>
+                    {inactiveColumns.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
           {error && <div class="errors">Failed to load agents: {error.message}</div>}
           {errors.length > 0 && (
             <details class="issues">
@@ -352,8 +489,8 @@ export default function Agents() {
           <section class="group pinned-group">
             <h2 class="group-title"><span>Pinned</span><span class="count">{pinnedAgents.length}</span><span class="rule"></span></h2>
             <div class="panel">
-              <div class="pin-list">
-                {pinnedAgents.map((a) => <PinnedRow key={`${a.projectId}::${a.path}`} agent={a} pins={pins} />)}
+              <div class="pin-list" style={{ gridTemplateColumns: gridTemplate }}>
+                {pinnedAgents.map((a) => <PinnedRow key={`${a.projectId}::${a.path}`} agent={a} pins={pins} columns={renderColumns} />)}
               </div>
             </div>
           </section>
@@ -364,9 +501,13 @@ export default function Agents() {
             <section class="group" id={projectAnchor(projectId)} key={projectId}>
               <h2 class="group-title"><span>{projectId}</span><span class="count">{agents.length} agent{agents.length === 1 ? '' : 's'}</span><span class="rule"></span></h2>
               <div class="panel">
-                <div class="tree">
-                  <div class="tree-head"><span>Tree</span><span>Schedule</span><span>Run</span><span></span></div>
-                  <AgentTree agents={agents} pins={pins} />
+                <div class="tree" style={{ gridTemplateColumns: gridTemplate }}>
+                  <div class="tree-head">
+                    <span>Tree</span>
+                    {renderColumns.map((id) => <span key={id}>{columnLabel(id)}</span>)}
+                    <span></span>
+                  </div>
+                  <AgentTree agents={agents} pins={pins} columns={renderColumns} />
                 </div>
               </div>
             </section>
