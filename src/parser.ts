@@ -151,6 +151,12 @@ const AgentSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
   timeout: z.number().positive().optional(),
   maxSteps: z.number().positive().int().optional(),
+  // Per-response output-token ceiling (max_tokens). Optional: unset, first-class
+  // Anthropic models default to their real registry limit capped at 32000, other
+  // providers use the SDK default. Raise this for an agent that must emit a large
+  // single response or write a big file in one tool call; it's clamped to the
+  // model's real output limit when known.
+  maxOutputTokens: z.number().positive().int().optional(),
   openai: z.object({
     reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
     // Request a streamed natural-language summary of the model's reasoning

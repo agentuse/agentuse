@@ -27,6 +27,51 @@ const OPENAI_CACHE_KEY_PREFIX = 'agentuse';
 // Tokens reserved for the visible answer above the extended-thinking budget, so
 // max_tokens stays comfortably greater than thinking.budget_tokens.
 const ANTHROPIC_THINKING_ANSWER_RESERVE = 8192;
+// Default per-response output ceiling for first-class Anthropic models when the
+// agent sets no explicit cap. The AI SDK defaults model ids it doesn't recognize
+// (anything newer than @ai-sdk/anthropic's hardcoded table, e.g. claude-sonnet-5)
+// to a tiny 4096 max_tokens, which silently truncates normal-length outputs and
+// tool-call arguments — fatal, since a `length` finish ends the agentic loop. We
+// pass the model's real limit from our own registry instead, capped here so an
+// unattended run can't emit a runaway single response. 32000 fits any realistic
+// single-step write, stays under the 64k `output-128k` beta threshold, and is 8x
+// the broken default. Agents that need bigger single outputs set `maxOutputTokens`.
+const DEFAULT_MAX_OUTPUT_TOKENS = 32000;
+// Custom/local OpenAI-compatible gateways expose no reliable output limit, so they
+// keep a fixed conservative ceiling (local reasoning models otherwise generate
+// unbounded thinking tokens).
+const CUSTOM_PROVIDER_MAX_OUTPUT_TOKENS = 16384;
+
+// Resolve the per-response max_tokens to send to the provider. Precedence:
+//   1. Extended thinking already computed a budget-aware ceiling — use it as-is.
+//   2. Custom/local gateway — fixed conservative cap (real limit unknowable),
+//      overridable by an explicit agent setting.
+//   3. Explicit `maxOutputTokens` frontmatter — honored, clamped to the model's
+//      real ceiling when the registry knows it (avoids provider max_tokens errors).
+//   4. First-class Anthropic model — the model's registry output limit, capped to
+//      DEFAULT_MAX_OUTPUT_TOKENS. This is the fix for the SDK's 4096 fallback.
+//   5. Everything else (OpenAI/Google, model unknown to the registry) — return
+//      undefined so the SDK uses its own (correct, model-max) default.
+export function resolveMaxOutputTokens(agent: ParsedAgent): number | undefined {
+  const provider = agent.config.model.split(':')[0];
+  const isCustomProvider =
+    !BUILTIN_PROVIDERS.includes(provider) || provider === OPENCODE_GO_PROVIDER_ID;
+
+  const anthropicThinkingMax =
+    provider === 'anthropic' ? resolveAnthropicThinking(agent)?.maxOutputTokens : undefined;
+  if (anthropicThinkingMax) return anthropicThinkingMax;
+
+  const override = agent.config.maxOutputTokens;
+  if (isCustomProvider) return override ?? CUSTOM_PROVIDER_MAX_OUTPUT_TOKENS;
+
+  const registryOutput = getModelFromRegistry(agent.config.model)?.limit?.output;
+  if (override) return registryOutput ? Math.min(override, registryOutput) : override;
+
+  if (provider === 'anthropic' && registryOutput && registryOutput > 0) {
+    return Math.min(registryOutput, DEFAULT_MAX_OUTPUT_TOKENS);
+  }
+  return undefined;
+}
 
 function isAnthropicModel(model: string): boolean {
   return model.split(':')[0] === 'anthropic';
@@ -483,16 +528,14 @@ export async function* executeAgentCore(
 
     // Extract provider options based on model provider
     const provider = agent.config.model.split(':')[0];
-    // Cap output tokens for OpenAI-compatible gateways whose real output limit
-    // we can't rely on: user-added custom providers, plus opencode-go (the zen
-    // gateway). The first-class providers pass their real limits elsewhere.
-    const isCustomProvider = !BUILTIN_PROVIDERS.includes(provider) || provider === OPENCODE_GO_PROVIDER_ID;
 
     // Claude extended thinking (opt-in); resolves budget + the max_tokens needed
     // to satisfy Anthropic's max_tokens > budget constraint.
     const anthropicThinking = provider === 'anthropic' ? resolveAnthropicThinking(agent) : undefined;
     const anthropicThinkingBudget = anthropicThinking?.budgetTokens;
-    const anthropicMaxOutputTokens = anthropicThinking?.maxOutputTokens;
+    // Per-response output ceiling. Without this, the AI SDK caps model ids it
+    // doesn't recognize (e.g. claude-sonnet-5) at 4096, silently truncating runs.
+    const maxOutputTokens = resolveMaxOutputTokens(agent);
 
     // Only include provider options if they exist and match the model provider
     let providerOptions: any = undefined;
@@ -558,11 +601,9 @@ export async function* executeAgentCore(
           };
         }
       }),
-      // Custom/local providers need explicit maxOutputTokens (local reasoning
-      // models generate unlimited thinking tokens without it)
-      ...(isCustomProvider && { maxOutputTokens: 16384 }),
-      // Extended thinking requires max_tokens > budget; reserve answer headroom.
-      ...(anthropicMaxOutputTokens && { maxOutputTokens: anthropicMaxOutputTokens }),
+      // Resolved from our own model registry (with thinking/custom/override
+      // precedence), so a stale SDK model table can't silently cap us at 4096.
+      ...(maxOutputTokens && { maxOutputTokens }),
     };
 
     // Only add tools if there are any

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { parseAgentContent } from '../src/parser';
-import { openAIOptionsWithCacheDefaults, resolveAnthropicThinking } from '../src/runner/execution';
+import {
+  openAIOptionsWithCacheDefaults,
+  resolveAnthropicThinking,
+  resolveMaxOutputTokens
+} from '../src/runner/execution';
 
 // Build a ParsedAgent from frontmatter so the tests exercise the real config
 // path (zod parse + defaults) without mocking, and without a live model call.
@@ -57,5 +61,60 @@ describe('resolveAnthropicThinking', () => {
     );
     expect(r!.maxOutputTokens).toBe(64000);
     expect(r!.maxOutputTokens).toBeGreaterThan(r!.budgetTokens);
+  });
+});
+
+describe('resolveMaxOutputTokens', () => {
+  it('caps a first-class Anthropic model at the default, never the SDK 4096', () => {
+    // claude-sonnet-5 registry output is 128000 -> min(128000, 32000). Regression
+    // guard: the AI SDK would otherwise silently cap this unknown-to-it id at 4096.
+    expect(resolveMaxOutputTokens(agent('model: anthropic:claude-sonnet-5'))).toBe(32000);
+  });
+
+  it("uses a small model's own output limit when it is below the default cap", () => {
+    // claude-3-5-sonnet-20241022 output is 8192 -> min(8192, 32000), not inflated.
+    expect(
+      resolveMaxOutputTokens(agent('model: anthropic:claude-3-5-sonnet-20241022'))
+    ).toBe(8192);
+  });
+
+  it("honors an explicit override, clamped to the model's real ceiling", () => {
+    expect(
+      resolveMaxOutputTokens(agent('model: anthropic:claude-sonnet-5\nmaxOutputTokens: 50000'))
+    ).toBe(50000);
+    // 200000 clamps down to sonnet-5's real 128000 output limit.
+    expect(
+      resolveMaxOutputTokens(agent('model: anthropic:claude-sonnet-5\nmaxOutputTokens: 200000'))
+    ).toBe(128000);
+  });
+
+  it('lets extended thinking win with its budget-aware ceiling', () => {
+    // opus budget 4096 -> 4096 + 8192 reserve.
+    expect(
+      resolveMaxOutputTokens(
+        agent('model: anthropic:claude-opus-4-8\nanthropic:\n  thinking:\n    budgetTokens: 4096')
+      )
+    ).toBe(12288);
+  });
+
+  it('leaves OpenAI alone by default so the SDK uses the model max', () => {
+    expect(resolveMaxOutputTokens(agent('model: openai:gpt-5'))).toBeUndefined();
+  });
+
+  it("applies an override to non-Anthropic providers too, clamped to the model's limit", () => {
+    // gpt-5 output limit is 128000, so 20000 passes through unclamped.
+    expect(
+      resolveMaxOutputTokens(agent('model: openai:gpt-5\nmaxOutputTokens: 20000'))
+    ).toBe(20000);
+  });
+
+  it('falls back to the SDK default for an Anthropic model unknown to the registry', () => {
+    expect(
+      resolveMaxOutputTokens(agent('model: anthropic:claude-does-not-exist-9'))
+    ).toBeUndefined();
+  });
+
+  it('gives custom/local gateways a fixed conservative cap', () => {
+    expect(resolveMaxOutputTokens(agent('model: mycustomgw:some-model'))).toBe(16384);
   });
 });

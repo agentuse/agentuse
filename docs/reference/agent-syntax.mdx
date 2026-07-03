@@ -90,6 +90,30 @@ Additional instructions or context.
   </Warning>
 </ParamField>
 
+<ParamField path="maxOutputTokens" type="number" required={false}>
+  Maximum tokens the model may generate in a **single response** (the provider's
+  `max_tokens`). This is a per-step ceiling, not a run-wide total.
+
+  Leave it unset in almost all cases. When unset, first-class Anthropic models
+  default to their real output limit capped at **32,000**, and other providers use
+  their own model-max default. Raise it only for an agent that must emit a large
+  single response or write a big file in one tool call; the value is clamped down
+  to the model's real output limit when that limit is known.
+
+  ```yaml
+  maxOutputTokens: 64000   # allow a bigger single response / file write
+  ```
+
+  <Note>
+    This exists because a model id newer than the underlying SDK's model table
+    (e.g. `claude-sonnet-5`) would otherwise be capped at a tiny 4096 `max_tokens`,
+    silently truncating normal-length outputs and tool-call arguments. A truncated
+    response ends the run, so AgentUse sets the cap from its own model registry
+    instead. Extended thinking (`anthropic.thinking`) computes its own ceiling and
+    takes precedence over this field.
+  </Note>
+</ParamField>
+
 <ParamField path="description" type="string" required={false}>
   A brief description of what the agent does.
 
