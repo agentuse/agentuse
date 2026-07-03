@@ -1,4 +1,5 @@
 import type { ParsedAgent } from '../parser';
+import { announceSessionFinished } from './announce';
 import type { MCPConnection } from '../mcp';
 import type { SessionInfo, SessionManager, SessionTrigger } from '../session';
 import type { AgentCompleteEvent, PluginManager } from '../plugin';
@@ -417,6 +418,13 @@ export async function runAgent(
       ...(result.contextUsage && { contextUsage: result.contextUsage })
     };
 
+    // Poke the serve daemon (if any) so subscribed devices get a Web Push.
+    void announceSessionFinished({
+      status: 'completed',
+      agentName: agent.name,
+      ...(prepSessionID && { sessionId: prepSessionID }),
+    });
+
     const consoleOutput = captureActive ? logger.stopCapture() : '';
     captureActive = false;
     await sendRunChannelMessages({
@@ -480,6 +488,11 @@ export async function runAgent(
       logger.stopCapture();
       captureActive = false;
     }
+    void announceSessionFinished({
+      status: 'failed',
+      agentName: agent.name,
+      ...(sessionID && { sessionId: sessionID }),
+    });
     await sendRunChannelMessages({
       event: 'failure',
       agent,

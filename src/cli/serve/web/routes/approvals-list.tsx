@@ -6,6 +6,7 @@ import { useFetch } from '../hooks/use-fetch';
 import { useApprovalsStream } from '../hooks/use-approvals-stream';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
+import { PushBell } from '../components/push-bell';
 import { formatApprovalTime, errorText } from '../lib/format';
 
 function ApprovalRowView(props: { row: ApprovalRow; multiProject: boolean }) {
@@ -115,7 +116,7 @@ export default function ApprovalsList() {
     <div class="page-approvals">
       <Topbar currentPage="approvals" right={<span class="pending-count">{totalPending} pending</span>} />
       <main>
-        <h1>Approvals</h1>
+        <h1>Approvals <PushBell category="approvals" /></h1>
         {error && (
           <div class="errors">Failed to load approvals: {error.message}</div>
         )}

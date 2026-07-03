@@ -1169,6 +1169,48 @@ dialog#decision-dialog::backdrop {
   background: rgba(0,0,0,0.30);
 }
 dialog#decision-dialog form { margin: 0; padding: 0; }
+
+/* ---------------- push notification bell ---------------- */
+.push-bell {
+  min-height: 0;
+  width: 30px; height: 30px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  vertical-align: middle;
+  margin-left: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted-2);
+  cursor: pointer;
+}
+.push-bell:hover { color: var(--muted-3); border-color: var(--line-strong); background: var(--panel-hover); }
+.push-bell[aria-pressed="true"] { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+.push-bell[aria-pressed="true"]:hover { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+.push-bell[data-state="denied"] { opacity: 0.6; }
+.push-bell[disabled] { opacity: 0.5; cursor: default; }
+.push-bell svg { width: 14px; height: 14px; display: block; }
+.push-bell-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 0 0 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+}
+.push-bell-dialog::backdrop {
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+:root[data-theme="light"] .push-bell-dialog::backdrop { background: rgba(0,0,0,0.30); }
+.push-bell-dialog .dialog-close {
+  min-height: 0; padding: 4px 8px;
+  background: transparent; border: 0;
+  color: var(--muted-2); font-size: 16px; line-height: 1;
+  cursor: pointer; border-radius: 6px;
+}
+.push-bell-dialog .dialog-close:hover { background: var(--panel-hover); color: var(--fg); border: 0; }
 .dialog-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 18px;

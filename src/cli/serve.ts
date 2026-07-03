@@ -17,6 +17,7 @@ import { findProjectRoot, resolveProjectContext } from "../utils/project";
 import { logger, LogLevel, executionLog, approvalLog } from "../utils/logger";
 import { printLogo } from "../utils/branding";
 import { getSessionStorageDir, initStorage } from "../storage/index.js";
+import { getXdgDataDir } from "../storage/paths.js";
 import { Scheduler, type Schedule, type SerializedSchedule } from "../scheduler";
 import { FileWatcher } from "../watcher";
 import { telemetry, parseModel } from "../telemetry";
@@ -37,8 +38,15 @@ import {
   renderMarkdownArtifact,
   normalizeApiPath
 } from "./serve/ui";
-import { FAVICON_SVG, TOUCH_ICON_180_PNG, ICON_192_PNG, ICON_512_PNG, WEB_MANIFEST_JSON } from "./serve/brand";
+import { FAVICON_SVG, TOUCH_ICON_180_PNG_BASE64, ICON_192_PNG_BASE64, ICON_512_PNG_BASE64, WEB_MANIFEST_JSON } from "./serve/brand";
+
+// Decoded once; brand.ts itself stays Buffer-free because the web bundle
+// shares it (see the note in brand.ts).
+const TOUCH_ICON_180_PNG = Buffer.from(TOUCH_ICON_180_PNG_BASE64, "base64");
+const ICON_192_PNG = Buffer.from(ICON_192_PNG_BASE64, "base64");
+const ICON_512_PNG = Buffer.from(ICON_512_PNG_BASE64, "base64");
 import { WebAssets, renderWebAssetsMissingPage } from "./serve/static";
+import { PushService, SERVICE_WORKER_JS } from "./serve/push";
 import { ApprovalEventHub, ApprovalListEventHub } from "./serve/sse";
 import {
   findStoreItem,
@@ -1454,7 +1462,7 @@ function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
   if (legacyApprovalRoute && legacyApprovalRoute[1] !== 'events') return true;
   if (isApi) return false;
   if (routePath === '/sessions/events') return false;
-  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|events|artifacts-list|artifacts\/.+|tool-artifacts\/.+))?$/.test(routePath);
+  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|finished|events|artifacts-list|artifacts\/.+|tool-artifacts\/.+))?$/.test(routePath);
 }
 
 /**
@@ -2250,6 +2258,9 @@ export function createServeCommand(): Command {
       const activeApprovalResumes = new Map<string, Promise<unknown>>();
       const activeSessionContinuations = new Map<string, Promise<unknown>>();
       const loggedApprovalRequests = new Map<string, number>();
+      // Sessions whose terminal state already produced a push, so runner
+      // retries or duplicate pokes can't buzz devices twice.
+      const notifiedFinishedSessions = new Map<string, number>();
       const slackBotToken = process.env.SLACK_BOT_TOKEN;
       const slackAppToken = process.env.SLACK_APP_TOKEN;
 
@@ -2797,6 +2808,10 @@ export function createServeCommand(): Command {
       // and the tiny no-store HTML shell at every page route. All page data is
       // fetched client-side from the existing /api/* and /sessions/:id/* JSON.
       const staticAssets = new WebAssets();
+      // Web Push to home-screen-installed clients: VAPID keys + device
+      // subscriptions persist in the data dir; notifications fire on pending
+      // approvals and session completions (see pushService.notify call sites).
+      const pushService = new PushService(getXdgDataDir(), (msg) => console.log(msg));
       // Push session/approval state to the SPA over SSE (one worker poll per
       // session, fanned to all subscribed tabs), replacing in-page polling.
       const approvalHub = new ApprovalEventHub();
@@ -3062,6 +3077,15 @@ export function createServeCommand(): Command {
           }
         }
 
+        // Service worker for Web Push. Public (browsers fetch it without auth
+        // headers) and served at root so its scope covers the whole app.
+        // no-cache so worker updates roll out on next page load.
+        if (req.method === "GET" && routePath === "/sw.js") {
+          res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-cache" });
+          res.end(SERVICE_WORKER_JS);
+          return;
+        }
+
         // SPA static assets (hashed, immutable) — public, served before the auth
         // gate so the browser can load the bundle on token-only deep links.
         if (staticAssets.serveAsset(req, res, requestUrl.pathname)) return;
@@ -3090,6 +3114,82 @@ export function createServeCommand(): Command {
             return;
           }
           sendHTML(res, 200, shell);
+          return;
+        }
+
+        // Web Push subscription management, operator surface (behind the
+        // header gate above). Subscriptions are per browser+device; prefs
+        // pick which event categories that device gets.
+        if (isApi && routePath === "/push/public-key" && req.method === "GET") {
+          sendJSON(res, 200, { publicKey: pushService.publicKey });
+          return;
+        }
+        if (isApi && routePath === "/push/subscription") {
+          if (req.method === "GET") {
+            const endpoint = requestUrl.searchParams.get("endpoint");
+            if (!endpoint) {
+              sendError(res, 400, "INVALID_REQUEST", "Missing endpoint query parameter");
+              return;
+            }
+            const record = pushService.get(endpoint);
+            if (!record) {
+              sendError(res, 404, "NOT_FOUND", "No subscription for this endpoint");
+              return;
+            }
+            sendJSON(res, 200, { prefs: record.prefs });
+            return;
+          }
+          if (req.method === "POST") {
+            try {
+              const body = await parseJSONBody(req);
+              const sub = body.subscription as { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } } | undefined;
+              if (
+                typeof sub?.endpoint !== "string" ||
+                !/^https?:\/\//.test(sub.endpoint) ||
+                typeof sub.keys?.p256dh !== "string" ||
+                typeof sub.keys?.auth !== "string"
+              ) {
+                sendError(res, 400, "INVALID_REQUEST", "subscription must include endpoint and p256dh/auth keys");
+                return;
+              }
+              const prefs: Partial<{ approvals: boolean; sessions: boolean }> = {};
+              if (typeof body.prefs === "object" && body.prefs !== null) {
+                const raw = body.prefs as Record<string, unknown>;
+                if (typeof raw.approvals === "boolean") prefs.approvals = raw.approvals;
+                if (typeof raw.sessions === "boolean") prefs.sessions = raw.sessions;
+              }
+              const record = pushService.upsert(
+                { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } },
+                prefs,
+                req.headers["user-agent"]
+              );
+              // A device with every category off has no reason to stay registered.
+              if (!record.prefs.approvals && !record.prefs.sessions) {
+                pushService.remove(record.endpoint);
+                sendJSON(res, 200, { subscribed: false });
+                return;
+              }
+              sendJSON(res, 200, { subscribed: true, prefs: record.prefs });
+            } catch (err) {
+              if (sendRequestParseError(res, err)) return;
+              sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            }
+            return;
+          }
+        }
+        if (isApi && routePath === "/push/unsubscribe" && req.method === "POST") {
+          try {
+            const body = await parseJSONBody(req);
+            const endpoint = typeof body.endpoint === "string" ? body.endpoint : null;
+            if (!endpoint) {
+              sendError(res, 400, "INVALID_REQUEST", "Missing endpoint");
+              return;
+            }
+            sendJSON(res, 200, { removed: pushService.remove(endpoint) });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
           return;
         }
 
@@ -3776,6 +3876,66 @@ export function createServeCommand(): Command {
           return;
         }
 
+        // POST /sessions/:id/finished: the runner's best-effort poke that a run
+        // reached a terminal state (see runner/announce.ts), fanned out as a Web
+        // Push to devices subscribed to the sessions category. The reported
+        // status is never trusted — it is re-read from storage — and the poke
+        // carries the session view token, validated like every session action.
+        const sessionFinishedMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/finished$/) : null;
+        if (sessionFinishedMatch) {
+          try {
+            const sessionId = decodeURIComponent(sessionFinishedMatch[1]);
+            const body = await parseJSONBody(req);
+            const token = typeof body.token === 'string' ? body.token : requestUrl.searchParams.get('token') ?? undefined;
+            const projectId = typeof body.project === 'string' ? body.project : undefined;
+
+            if (!sessionAuthorized(sessionId, token)) {
+              sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+              return;
+            }
+
+            const found = await findSessionStatusInfo(sessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+
+            const status = found.session.sessionStatus;
+            if (status !== 'completed' && status !== 'error') {
+              sendJSON(res, 200, { success: true, status: "ignored", reason: `session is ${status}` });
+              return;
+            }
+            if (notifiedFinishedSessions.has(sessionId)) {
+              sendJSON(res, 200, { success: true, status: "already-notified" });
+              return;
+            }
+            notifiedFinishedSessions.set(sessionId, Date.now());
+            // Bound the dedup map; entries older than a day can't recur anyway.
+            if (notifiedFinishedSessions.size > 1000) {
+              const cutoff = Date.now() - 24 * 3600 * 1000;
+              for (const [key, at] of notifiedFinishedSessions) {
+                if (at < cutoff) notifiedFinishedSessions.delete(key);
+              }
+            }
+
+            const agentName = found.session.agent.name;
+            const sessionQuery = new URLSearchParams();
+            if (token) sessionQuery.set('token', token);
+            sessionQuery.set('project', found.project.id);
+            void pushService.notify('sessions', {
+              title: status === 'completed' ? "Session completed" : "Session failed",
+              body: multiProject ? `${found.project.id}/${agentName}` : agentName,
+              url: `/sessions/${encodeURIComponent(sessionId)}?${sessionQuery.toString()}`,
+              tag: `session-${sessionId}`,
+            });
+            sendJSON(res, 200, { success: true, status: "notified" });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
         // POST /sessions/:id/reopen: roll an ended (error/completed) session back
         // to its suspended approval gate so the reviewer can retry a resume that
         // failed downstream. User-initiated only; the normal approval/decision
@@ -3926,6 +4086,19 @@ export function createServeCommand(): Command {
                 found.info.approval.approvalUrl ?? approvalUrl,
                 sessionId
               );
+              // Same dedup guard as the log line: one push per unique approval.
+              const label = multiProject ? `${found.project.id}/${agentLabel}` : agentLabel;
+              const prompt = found.info.approval.prompt;
+              const approvalQuery = new URLSearchParams();
+              const viewToken = sessionViewToken(sessionId, apiKey);
+              if (viewToken) approvalQuery.set('token', viewToken);
+              approvalQuery.set('project', found.project.id);
+              void pushService.notify('approvals', {
+                title: "Approval needed",
+                body: prompt ? `${label}: ${prompt.slice(0, 140)}` : label,
+                url: `/sessions/${encodeURIComponent(sessionId)}?${approvalQuery.toString()}`,
+                tag: `approval-${sessionId}`,
+              });
             }
 
             sendJSON(res, 200, { success: true, status: "logged", sessionId });

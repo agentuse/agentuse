@@ -331,6 +331,36 @@ export function fetchSessions(options: {
   });
 }
 
+// --- Web Push ----------------------------------------------------------------
+// Subscriptions are per browser+device; prefs pick which event categories this
+// device gets. A device with every category off is dropped server-side.
+
+export interface PushPrefs {
+  approvals: boolean;
+  sessions: boolean;
+}
+
+export interface PushSubscriptionKeys {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
+export function fetchPushPublicKey(): Promise<{ publicKey: string }> {
+  return getJson('/api/push/public-key');
+}
+
+/** Throws ApiRequestError(404) when this device is unknown to the server. */
+export function fetchPushPrefs(endpoint: string): Promise<{ prefs: PushPrefs }> {
+  return getJson('/api/push/subscription', { endpoint });
+}
+
+export function postPushSubscription(body: {
+  subscription: PushSubscriptionKeys;
+  prefs: Partial<PushPrefs>;
+}): Promise<{ subscribed: boolean; prefs?: PushPrefs }> {
+  return postJson('/api/push/subscription', body);
+}
+
 export function sessionsEventUrl(options: {
   agent?: string | undefined;
   status?: string | undefined;

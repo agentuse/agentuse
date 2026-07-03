@@ -6,6 +6,7 @@ import { useFetch } from '../hooks/use-fetch';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
+import { PushBell } from '../components/push-bell';
 import { AgentFilterSelect } from '../components/agent-filter-select';
 import { formatApprovalTime, formatRelativeTime, errorText } from '../lib/format';
 
@@ -143,7 +144,7 @@ export default function SessionsList() {
     <div class="page-sessions">
       <Topbar currentPage="sessions" right={<span class="pending-count">{rows.length} shown</span>} />
       <main>
-        <h1>Sessions</h1>
+        <h1>Sessions <PushBell category="sessions" /></h1>
         <div class="filters">
           <label>window
             <select value={win} onChange={onSelect('window')}>

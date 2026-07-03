@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'bun:test';
 import {
   FAVICON_SVG,
-  TOUCH_ICON_180_PNG,
-  ICON_192_PNG,
-  ICON_512_PNG,
+  TOUCH_ICON_180_PNG_BASE64,
+  ICON_192_PNG_BASE64,
+  ICON_512_PNG_BASE64,
   WEB_MANIFEST_JSON,
 } from '../src/cli/serve/brand';
+
+const TOUCH_ICON_180_PNG = Buffer.from(TOUCH_ICON_180_PNG_BASE64, 'base64');
+const ICON_192_PNG = Buffer.from(ICON_192_PNG_BASE64, 'base64');
+const ICON_512_PNG = Buffer.from(ICON_512_PNG_BASE64, 'base64');
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
