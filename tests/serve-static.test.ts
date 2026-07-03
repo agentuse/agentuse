@@ -101,6 +101,16 @@ describe('WebAssets static serving', () => {
     expect(shell).toContain('<link rel="icon" type="image/svg+xml" href="/favicon.svg">');
   });
 
+  it('includes home-screen install tags in the shell', () => {
+    const shell = assets.renderShell()!;
+    expect(shell).toContain('<link rel="manifest" href="/manifest.webmanifest">');
+    expect(shell).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
+    expect(shell).toContain('<meta name="apple-mobile-web-app-capable" content="yes">');
+    expect(shell).toContain('<meta name="apple-mobile-web-app-title" content="AgentUse">');
+    expect(shell).toContain('name="theme-color" media="(prefers-color-scheme: dark)" content="#000000"');
+    expect(shell).toContain('name="theme-color" media="(prefers-color-scheme: light)" content="#fafaf9"');
+  });
+
   it('re-reads the manifest when it changes on disk', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-web-reload-'));
     try {

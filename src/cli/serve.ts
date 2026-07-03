@@ -37,7 +37,7 @@ import {
   renderMarkdownArtifact,
   normalizeApiPath
 } from "./serve/ui";
-import { FAVICON_SVG } from "./serve/brand";
+import { FAVICON_SVG, TOUCH_ICON_180_PNG, ICON_192_PNG, ICON_512_PNG, WEB_MANIFEST_JSON } from "./serve/brand";
 import { WebAssets, renderWebAssetsMissingPage } from "./serve/static";
 import { ApprovalEventHub, ApprovalListEventHub } from "./serve/sse";
 import {
@@ -3036,6 +3036,30 @@ export function createServeCommand(): Command {
           res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" });
           res.end(FAVICON_SVG);
           return;
+        }
+
+        // Home-screen install assets: web app manifest + PNG icons (iOS
+        // ignores SVG for touch icons). Public like the favicon so Add to
+        // Home Screen works from capability (token-only) session links too.
+        if (req.method === "GET" && routePath === "/manifest.webmanifest") {
+          res.writeHead(200, { "Content-Type": "application/manifest+json", "Cache-Control": "public, max-age=86400" });
+          res.end(WEB_MANIFEST_JSON);
+          return;
+        }
+        if (req.method === "GET") {
+          const installIcon =
+            routePath === "/apple-touch-icon.png" || routePath === "/apple-touch-icon-precomposed.png"
+              ? TOUCH_ICON_180_PNG
+              : routePath === "/icon-192.png"
+                ? ICON_192_PNG
+                : routePath === "/icon-512.png"
+                  ? ICON_512_PNG
+                  : null;
+          if (installIcon) {
+            res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" });
+            res.end(installIcon);
+            return;
+          }
         }
 
         // SPA static assets (hashed, immutable) — public, served before the auth
