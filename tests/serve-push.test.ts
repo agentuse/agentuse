@@ -196,6 +196,9 @@ describe('PushService delivery against a mock push service', () => {
     const decrypted = decryptPayload(req.body, RECEIVER_PRIVATE, Buffer.from('BTBZMqHH6r4Tts7J_aSIgg', 'base64url'));
     expect(JSON.parse(decrypted.toString())).toEqual({
       web_push: 8030,
+      // Top-level copy: the placement iOS 18.x actually honors (verified
+      // on-device); the nested copy follows the WebKit launch-blog format.
+      app_badge: 3,
       notification: {
         title: payload.title,
         body: payload.body,

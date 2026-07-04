@@ -234,8 +234,14 @@ export class PushService {
     // killed home-screen app is launched from a notification. Browsers
     // without declarative support fire the regular push event and the
     // service worker renders the same fields imperatively.
+    //
+    // app_badge is emitted at BOTH levels deliberately: iOS 18.7 (verified
+    // on-device 2026-07) only honors the explainer's top-level placement and
+    // ignores the nested one from the WebKit launch blog; the nested copy
+    // stays for implementations that follow the blog format.
     const message = {
       web_push: 8030,
+      ...(payload.appBadge !== undefined && { app_badge: payload.appBadge }),
       notification: {
         title: payload.title,
         body: payload.body,
@@ -320,6 +326,7 @@ self.addEventListener("push", (event) => {
     // declared notification imperatively.
     const n = raw && raw.web_push === 8030 ? raw.notification : raw;
     data = { ...data, ...n, url: (n && (n.navigate || n.url)) || "/" };
+    if (raw && typeof raw.app_badge !== "undefined") data.app_badge = raw.app_badge;
   } catch {}
   event.waitUntil((async () => {
     if (typeof data.app_badge !== "undefined" && self.navigator.setAppBadge) {
