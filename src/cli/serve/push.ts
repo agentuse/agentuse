@@ -49,6 +49,8 @@ export interface PushPayload {
   url: string;
   /** Notifications with the same tag replace each other on the device. */
   tag?: string;
+  /** Sets the installed app's icon badge (iOS 16.4+/Android/desktop PWAs). */
+  appBadge?: number;
 }
 
 interface VapidKeys {
@@ -239,6 +241,7 @@ export class PushService {
         body: payload.body,
         navigate: payload.url,
         ...(payload.tag && { tag: payload.tag }),
+        ...(payload.appBadge !== undefined && { app_badge: payload.appBadge }),
       },
     };
     const body = encryptPayload(
@@ -318,13 +321,18 @@ self.addEventListener("push", (event) => {
     const n = raw && raw.web_push === 8030 ? raw.notification : raw;
     data = { ...data, ...n, url: (n && (n.navigate || n.url)) || "/" };
   } catch {}
-  event.waitUntil(self.registration.showNotification(data.title, {
-    body: data.body,
-    tag: data.tag,
-    icon: "/icon-192.png",
-    badge: "/icon-192.png",
-    data: { url: data.url },
-  }));
+  event.waitUntil((async () => {
+    if (typeof data.app_badge !== "undefined" && self.navigator.setAppBadge) {
+      try { await self.navigator.setAppBadge(Number(data.app_badge) || 0); } catch {}
+    }
+    await self.registration.showNotification(data.title, {
+      body: data.body,
+      tag: data.tag,
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      data: { url: data.url },
+    });
+  })());
 });
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();

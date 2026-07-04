@@ -7,7 +7,8 @@ import { LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
 import { ContinuePanel } from '../components/continue-panel';
 import { DebugPromptButton } from '../components/debug-prompt-button';
-import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, type SessionArtifact } from '../lib/api';
+import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
+import { syncAppBadge } from '../lib/badge';
 import { useApprovalStream } from '../hooks/use-approval-stream';
 import { useTitle } from '../hooks/use-title';
 import {
@@ -420,6 +421,9 @@ export default function SessionDetail() {
       setResult({ text: '✓ decision recorded — agentuse is resuming the session.', error: false });
       setStatus('resuming');
       setNudge((n) => n + 1);
+      // A handled approval changes the app-icon badge count; resync it
+      // best-effort (401s silently on key-gated daemons without the header).
+      void fetchApprovals().then((p) => syncAppBadge(p.buckets.pending.length)).catch(() => {});
     } catch (err) {
       setResult({ text: (err as Error).message || String(err), error: true });
       setSubmittingDecision(false);

@@ -172,6 +172,7 @@ describe('PushService delivery against a mock push service', () => {
       body: 'agent x',
       url: 'https://serve.example/sessions/01TEST?token=tok&project=demo',
       tag: 'approval-01TEST',
+      appBadge: 3,
     };
     await service.notify('approvals', payload);
 
@@ -200,6 +201,7 @@ describe('PushService delivery against a mock push service', () => {
         body: payload.body,
         navigate: payload.url,
         tag: payload.tag,
+        app_badge: 3,
       },
     });
   });
@@ -235,5 +237,6 @@ describe('service worker source', () => {
     expect(SERVICE_WORKER_JS).toContain('clients.claim');
     expect(SERVICE_WORKER_JS).toContain('8030');
     expect(SERVICE_WORKER_JS).toContain('navigate');
+    expect(SERVICE_WORKER_JS).toContain('setAppBadge');
   });
 });

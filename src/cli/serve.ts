@@ -4107,12 +4107,24 @@ export function createServeCommand(): Command {
               const viewToken = sessionViewToken(sessionId, apiKey);
               if (viewToken) approvalQuery.set('token', viewToken);
               approvalQuery.set('project', found.project.id);
-              void pushService.notify('approvals', {
-                title: "Approval needed",
-                body: prompt ? `${label}: ${prompt.slice(0, 140)}` : label,
-                url: `${effectivePublicUrl}/sessions/${encodeURIComponent(sessionId)}?${approvalQuery.toString()}`,
-                tag: `approval-${sessionId}`,
-              });
+              // Badge the home-screen icon with the total pending count.
+              // Counted out-of-band so the runner's callback isn't delayed.
+              void (async () => {
+                let appBadge: number | undefined;
+                try {
+                  const list = await buildApprovalListPayload(new URL(`${serverUrl}/api/approvals`));
+                  if (list.success) appBadge = list.payload.buckets.pending.length;
+                } catch {
+                  // Badge is decoration; never block the notification on it.
+                }
+                await pushService.notify('approvals', {
+                  title: "Approval needed",
+                  body: prompt ? `${label}: ${prompt.slice(0, 140)}` : label,
+                  url: `${effectivePublicUrl}/sessions/${encodeURIComponent(sessionId)}?${approvalQuery.toString()}`,
+                  tag: `approval-${sessionId}`,
+                  ...(appBadge !== undefined && appBadge > 0 && { appBadge }),
+                });
+              })();
             }
 
             sendJSON(res, 200, { success: true, status: "logged", sessionId });

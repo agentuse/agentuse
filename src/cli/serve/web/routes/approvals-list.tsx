@@ -7,6 +7,7 @@ import { useApprovalsStream } from '../hooks/use-approvals-stream';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { PushBell } from '../components/push-bell';
+import { syncAppBadge } from '../lib/badge';
 import { formatApprovalTime, errorText } from '../lib/format';
 
 function ApprovalRowView(props: { row: ApprovalRow; multiProject: boolean }) {
@@ -111,6 +112,12 @@ export default function ApprovalsList() {
   const loading = fetched.loading && !data;
   const totalPending = data?.buckets.pending.length ?? 0;
   const multiProject = data?.multiProject ?? false;
+
+  // The list is the source of truth for the app-icon badge: opening it (or
+  // watching it live) corrects whatever count pushes left behind.
+  useEffect(() => {
+    if (data) syncAppBadge(totalPending);
+  }, [data, totalPending]);
 
   return (
     <div class="page-approvals">
