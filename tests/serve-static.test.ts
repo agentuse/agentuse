@@ -1,18 +1,25 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { createServer, type Server } from 'http';
+import { brotliCompressSync, gzipSync } from 'zlib';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { WebAssets, renderWebAssetsMissingPage } from '../src/cli/serve/static';
 
+const ENTRY_JS = 'console.log("entry");';
+
 function writeWebFixture(rootDir: string): void {
   fs.mkdirSync(path.join(rootDir, 'chunks'), { recursive: true });
-  fs.writeFileSync(path.join(rootDir, 'main-abc123.js'), 'console.log("entry");');
+  fs.writeFileSync(path.join(rootDir, 'main-abc123.js'), ENTRY_JS);
   fs.writeFileSync(path.join(rootDir, 'main-def456.css'), 'body { margin: 0; }');
   fs.writeFileSync(path.join(rootDir, 'chunks', 'route-xyz789.js'), 'export {};');
+  // Precompressed siblings, as scripts/build-web.ts emits them.
+  fs.writeFileSync(path.join(rootDir, 'main-abc123.js.br'), brotliCompressSync(ENTRY_JS));
+  fs.writeFileSync(path.join(rootDir, 'main-abc123.js.gz'), gzipSync(ENTRY_JS));
   fs.writeFileSync(path.join(rootDir, 'manifest.json'), JSON.stringify({
     entry: 'main-abc123.js',
     css: ['main-def456.css'],
+    preload: ['chunks/route-xyz789.js'],
     files: ['main-abc123.js', 'main-def456.css', 'chunks/route-xyz789.js'],
   }));
 }
@@ -72,6 +79,40 @@ describe('WebAssets static serving', () => {
     const css = await fetch(`http://127.0.0.1:${port}/assets/main-def456.css`);
     expect(css.status).toBe(200);
     expect(css.headers.get('content-type')).toBe('text/css; charset=utf-8');
+  });
+
+  it('serves the brotli sibling and decodes to the original bytes', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/assets/main-abc123.js`, {
+      headers: { 'Accept-Encoding': 'gzip, deflate, br' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-encoding')).toBe('br');
+    expect(res.headers.get('vary')).toBe('Accept-Encoding');
+    expect(res.headers.get('content-type')).toBe('text/javascript; charset=utf-8');
+    // fetch transparently decodes; the payload must round-trip, not double-decode.
+    expect(await res.text()).toBe(ENTRY_JS);
+  });
+
+  it('falls back to gzip when brotli is not accepted', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/assets/main-abc123.js`, {
+      headers: { 'Accept-Encoding': 'gzip' },
+    });
+    expect(res.headers.get('content-encoding')).toBe('gzip');
+    expect(await res.text()).toBe(ENTRY_JS);
+  });
+
+  it('serves uncompressed bytes when no encoding is accepted', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/assets/main-abc123.js`, {
+      headers: { 'Accept-Encoding': 'identity' },
+    });
+    expect(res.headers.get('content-encoding')).toBeNull();
+    expect(await res.text()).toBe(ENTRY_JS);
+  });
+
+  it('modulepreloads the entry and its static-import chunks', () => {
+    const shell = assets.renderShell()!;
+    expect(shell).toContain('<link rel="modulepreload" href="/assets/main-abc123.js">');
+    expect(shell).toContain('<link rel="modulepreload" href="/assets/chunks/route-xyz789.js">');
   });
 
   it('blocks path traversal outside the web root', async () => {

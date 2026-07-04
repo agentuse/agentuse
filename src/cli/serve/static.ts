@@ -7,6 +7,8 @@ import { approvalThemeBootScript, escapeHtml } from "./ui";
 export interface WebManifest {
   entry: string;
   css: string[];
+  /** Chunks the entry statically imports; modulepreloaded by the shell. */
+  preload?: string[];
   files: string[];
 }
 
@@ -115,16 +117,34 @@ export class WebAssets {
       return true;
     }
 
-    res.writeHead(200, {
-      "Content-Type": CONTENT_TYPES[extname(filePath)] ?? "application/octet-stream",
-      // Filenames are content-hashed, so they are immutable by construction.
+    // Serve a precompressed sibling (.br/.gz) the build emitted when the client
+    // accepts it. Filenames are content-hashed and immutable, so there is no
+    // per-request compression cost — we just stream the smaller file.
+    const ext = extname(filePath);
+    const headers: Record<string, string> = {
+      "Content-Type": CONTENT_TYPES[ext] ?? "application/octet-stream",
       "Cache-Control": "public, max-age=31536000, immutable",
-    });
+      Vary: "Accept-Encoding",
+    };
+    let servePath = filePath;
+    if (ext === ".js" || ext === ".css") {
+      const accept = String(req.headers["accept-encoding"] ?? "");
+      if (/\bbr\b/.test(accept) && existsSync(`${filePath}.br`)) {
+        servePath = `${filePath}.br`;
+        headers["Content-Encoding"] = "br";
+      } else if (/\bgzip\b/.test(accept) && existsSync(`${filePath}.gz`)) {
+        servePath = `${filePath}.gz`;
+        headers["Content-Encoding"] = "gzip";
+      }
+    }
+    headers["Content-Length"] = String(statSync(servePath).size);
+
+    res.writeHead(200, headers);
     if (req.method === "HEAD") {
       res.end();
       return true;
     }
-    createReadStream(filePath).pipe(res);
+    createReadStream(servePath).pipe(res);
     return true;
   }
 
@@ -135,12 +155,18 @@ export class WebAssets {
     // Key the cache on the entry AND the css hrefs: a CSS-only rebuild changes the
     // stylesheet hash but not the JS entry, and keying on entry alone would keep
     // serving the stale CSS link until the entry happened to change.
-    const key = `${manifest.entry}|${manifest.css.join(",")}`;
+    const preload = manifest.preload ?? [];
+    const key = `${manifest.entry}|${manifest.css.join(",")}|${preload.join(",")}`;
     if (this.shellCache && this.shellCache.key === key) {
       return this.shellCache.html;
     }
     const cssLinks = manifest.css
       .map((href) => `<link rel="stylesheet" href="/assets/${escapeHtml(href)}">`)
+      .join("\n  ");
+    // Preload the entry's static-import chunks (shared framework/vendor code)
+    // so they download alongside the entry rather than after it parses.
+    const preloadLinks = preload
+      .map((href) => `<link rel="modulepreload" href="/assets/${escapeHtml(href)}">`)
       .join("\n  ");
     const html = `<!doctype html>
 <html lang="en">
@@ -161,6 +187,7 @@ export class WebAssets {
   <script>${approvalThemeBootScript()}</script>
   ${cssLinks}
   <link rel="modulepreload" href="/assets/${escapeHtml(manifest.entry)}">
+  ${preloadLinks}
 </head>
 <body>
   <div id="app"></div>

@@ -7,6 +7,7 @@
 import { basename, extname, relative, resolve } from "path";
 import { mkdir, readdir, readFile, rm, writeFile } from "fs/promises";
 import { createHash } from "crypto";
+import { brotliCompressSync, gzipSync, constants as zlibConstants } from "zlib";
 
 const ROOT = resolve(import.meta.dir, "..");
 const ENTRY = resolve(ROOT, "src/cli/serve/web/main.tsx");
@@ -75,11 +76,40 @@ async function buildWeb(): Promise<void> {
     await writeFile(resolve(OUTDIR, cssPath), content);
   }
 
-  const manifest = { entry, css, files: outputs.map((o) => o.path) };
+  // The entry statically imports the shared framework/vendor chunk(s); route
+  // chunks are dynamic import() (lazy). Record the static imports so the HTML
+  // shell can modulepreload them in parallel with the entry instead of paying
+  // an extra round-trip once the entry parses and discovers them.
+  const entryCode = await readFile(resolve(OUTDIR, entry), "utf-8");
+  const preload = [...entryCode.matchAll(/from\s*"\.\/(chunks\/[^"]+\.js)"/g)].map((m) => m[1]);
+
+  const manifest = { entry, css, preload, files: outputs.map((o) => o.path) };
   await writeFile(resolve(OUTDIR, "manifest.json"), JSON.stringify(manifest, null, 2));
 
+  // Pre-brotli/gzip the JS+CSS so the server streams immutable, precompressed
+  // bytes with zero per-request CPU (filenames are content-hashed). woff2 is
+  // already compressed; source maps are dev-only, so both are skipped.
+  let compressedSavings = 0;
+  for (const o of outputs) {
+    if (!o.path.endsWith(".js") && !o.path.endsWith(".css")) continue;
+    const abs = resolve(OUTDIR, o.path);
+    const buf = await readFile(abs);
+    const br = brotliCompressSync(buf, {
+      params: {
+        [zlibConstants.BROTLI_PARAM_QUALITY]: 11,
+        [zlibConstants.BROTLI_PARAM_SIZE_HINT]: buf.length,
+      },
+    });
+    await writeFile(`${abs}.br`, br);
+    await writeFile(`${abs}.gz`, gzipSync(buf, { level: 9 }));
+    compressedSavings += buf.length - br.length;
+  }
+
   const total = result.outputs.reduce((sum, o) => sum + o.size, 0);
-  console.log(`web ui: ${result.outputs.length} files, ${(total / 1024).toFixed(1)} kB -> dist/web (entry ${entry})`);
+  console.log(
+    `web ui: ${result.outputs.length} files, ${(total / 1024).toFixed(1)} kB -> dist/web ` +
+      `(entry ${entry}, brotli saves ${(compressedSavings / 1024).toFixed(1)} kB over the wire)`,
+  );
 }
 
 await buildWeb();
