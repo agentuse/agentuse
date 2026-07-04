@@ -69,6 +69,24 @@ body {
     var(--bg);
 }
 
+/* ---------------- native-app touch feel ----------------
+   Pinch-zoom stays on (accessibility, and this is a log / code / JSON reader),
+   but shed what makes a PWA read like a web page: the tap-delay + double-tap
+   zoom on controls, the grey tap-flash, the iOS long-press callout on chrome,
+   and overscroll rubber-banding / pull-to-refresh. Body content (log text,
+   code, the copyable session-id field) stays selectable and zoomable. */
+html { -webkit-tap-highlight-color: transparent; }
+html, body { overscroll-behavior: none; }
+a, button, select, summary, label, input, textarea,
+[role="button"], .nav-item, .palette-trigger {
+  touch-action: manipulation;
+}
+.topbar, .brand, .nav, .nav-item, .session-bar, .status, .eyebrow, kbd {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 /* ---------------- topbar ---------------- */
 .topbar {
   position: sticky;
@@ -2550,6 +2568,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
    (14px above) is untouched. */
 @media (max-width: 760px) {
   .page-agents .agents-filter input { font-size: 16px; }
+  /* Same guard for the reply / comment / coding-agent textareas (13.5px and
+     12.5px on desktop): focusing them on iOS would otherwise zoom the viewport. */
+  textarea, .cca-detail textarea { font-size: 16px; }
 }
 
 /* --- reduced motion ---------------------------------------------------- */
