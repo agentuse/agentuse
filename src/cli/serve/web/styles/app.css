@@ -2756,7 +2756,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .palette-trigger {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 6px 8px 6px 10px;
-  border: 1px solid var(--line); border-radius: 8px;
+  border: 1px solid var(--line); border-radius: 999px;
   background: var(--panel);
   color: var(--muted);
   font-family: var(--sans); font-size: 13px;
