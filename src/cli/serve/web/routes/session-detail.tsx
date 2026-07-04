@@ -11,6 +11,7 @@ import { postSessionDecision, postSessionContinue, postSessionStop, postSessionR
 import { syncAppBadge } from '../lib/badge';
 import { useApprovalStream } from '../hooks/use-approval-stream';
 import { useTitle } from '../hooks/use-title';
+import { useSmartBack } from '../hooks/use-smart-back';
 import {
   formatApprovalTime,
   isDebugLog,
@@ -113,6 +114,7 @@ export function hasActionableApproval(status: string, header: ApprovalHeader | n
 export default function SessionDetail() {
   const { params } = useRoute();
   const location = useLocation();
+  const goBack = useSmartBack('/sessions');
   const sessionId = decodeURIComponent(params.sessionId ?? '');
   const token = location.query.token || undefined;
   const projectId = location.query.project || undefined;
@@ -597,14 +599,20 @@ export default function SessionDetail() {
       <main>
         <div class={`session-bar${scrolled ? ' is-scrolled' : ''}`}>
           <div class="session-bar-lead">
-            {isSubagentView && parentLink && (
+            {isSubagentView && parentLink ? (
               <a class="session-bar-back" href={parentLink} aria-label={`Back to ${parentLabel}`} title={`Back to ${parentLabel}`}>
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <polyline points="9 14 4 9 9 4" />
                   <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
                 </svg>
               </a>
-            )}
+            ) : !isSubagentView ? (
+              <a class="session-bar-back" href="/sessions" onClick={goBack} aria-label="Back to sessions" title="Back to sessions">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </a>
+            ) : null}
             <span class={`status ${displayStatus}`}>{displayStatus}</span>
             {approval?.mock && <span class="mock-badge" title="Tool outputs were LLM-generated; no real tools ran">mock</span>}
             <span class="session-bar-name">{agentLabel}</span>

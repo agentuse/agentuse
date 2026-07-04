@@ -1,6 +1,7 @@
 import { ErrorBoundary, LocationProvider, Router, Route, lazy } from 'preact-iso';
 import { Topbar } from './components/topbar';
 import { AgentPalette } from './components/agent-palette';
+import { NavTracker } from './hooks/use-smart-back';
 
 const Home = lazy(() => import('./routes/home'));
 const Agents = lazy(() => import('./routes/agents'));
@@ -28,6 +29,7 @@ function NotFound() {
 export function App() {
   return (
     <LocationProvider>
+      <NavTracker />
       <ErrorBoundary>
         <AgentPalette />
         <Router>

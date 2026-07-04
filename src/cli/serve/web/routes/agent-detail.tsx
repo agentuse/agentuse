@@ -6,6 +6,7 @@ import { fetchAgentDetail, fetchSessions } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { useRunAgent } from '../hooks/use-run-agent';
+import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
 import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
 import { LogContent } from '../components/content';
@@ -263,12 +264,13 @@ export default function AgentDetail() {
 
   useTitle(data ? `AgentUse / ${data.name}` : 'AgentUse / Agent');
   const { run, busy, error: runError } = useRunAgent(runPath, project);
+  const goBack = useSmartBack('/agents');
 
   return (
     <div class="page-agent-detail">
       <Topbar currentPage="agents" />
       <main>
-        <a class="back" href="/agents">← agents</a>
+        <a class="back" href="/agents" onClick={goBack}>← Back</a>
 
         {loading && <div class="panel"><div class="empty">Loading agent…</div></div>}
         {error && (

@@ -3,6 +3,7 @@ import { useLocation, useRoute } from 'preact-iso';
 import { fetchStoreItem } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
+import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
 import { formatApprovalTime, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
 
@@ -37,12 +38,13 @@ export default function StoreItemDetail() {
   if (data?.project) backParams.set('project', data.project);
   backParams.set('highlight', itemId);
   const backHref = `/stores/${encodeURIComponent(storeName)}?${backParams.toString()}`;
+  const goBack = useSmartBack(backHref);
 
   return (
     <div class="page-stores">
       <Topbar currentPage="stores" right={<span class="session-pill">store <code>{storeName}</code></span>} />
       <main>
-        <a class="back-link" href={backHref}>Back to store table</a>
+        <a class="back-link" href={backHref} onClick={goBack}>Back to store table</a>
         {error && <div class="errors">Failed to load item: {error.message}</div>}
         {loading && !item && <div class="empty">Loading item…</div>}
         {item && (
