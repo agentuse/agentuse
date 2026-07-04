@@ -315,8 +315,61 @@ export class PushService {
  * postMessage.
  */
 export const SERVICE_WORKER_JS = `const NAV_CACHE = "agentuse-push-nav";
+const ASSET_CACHE = "agentuse-assets-v1";
+const SHELL_KEY = "/__app_shell";
 self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(clients.claim()));
+self.addEventListener("activate", (event) => event.waitUntil((async () => {
+  // Drop caches from older SW versions; keep the push-nav cache and the
+  // current asset cache (bump ASSET_CACHE's version to force a cold refill).
+  const keep = new Set([NAV_CACHE, ASSET_CACHE]);
+  for (const name of await caches.keys()) {
+    if (!keep.has(name)) await caches.delete(name);
+  }
+  await clients.claim();
+})()));
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  if (req.method !== "GET") return;
+  let url;
+  try { url = new URL(req.url); } catch { return; }
+  if (url.origin !== self.location.origin) return;
+  // Never intercept server-sent event streams.
+  if ((req.headers.get("accept") || "").includes("text/event-stream")) return;
+
+  // Hashed, immutable build assets: cache-first, served offline once seen.
+  if (url.pathname.startsWith("/assets/")) {
+    event.respondWith((async () => {
+      const cache = await caches.open(ASSET_CACHE);
+      const hit = await cache.match(req);
+      if (hit) return hit;
+      const res = await fetch(req);
+      if (res && res.ok) cache.put(req, res.clone());
+      return res;
+    })());
+    return;
+  }
+
+  // SPA navigations: network-first so the shell always points at the latest
+  // asset hashes; fall back to the last good shell when offline.
+  if (req.mode === "navigate") {
+    event.respondWith((async () => {
+      try {
+        const res = await fetch(req);
+        if (res && res.ok) {
+          const cache = await caches.open(ASSET_CACHE);
+          cache.put(SHELL_KEY, res.clone());
+        }
+        return res;
+      } catch (err) {
+        const cache = await caches.open(ASSET_CACHE);
+        const shell = await cache.match(SHELL_KEY);
+        if (shell) return shell;
+        throw err;
+      }
+    })());
+    return;
+  }
+});
 self.addEventListener("push", (event) => {
   let data = { title: "AgentUse", body: "", url: "/" };
   try {
