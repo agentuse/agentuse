@@ -1217,7 +1217,12 @@ a, button, select, summary, label, input, textarea,
   background: var(--bg);
 }
 .log-actions-buttons { display: inline-flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
-.page-approval-detail button {
+/* These approval-flow button styles are intentionally broad (`button`) so the
+   class-less dialog buttons pick them up. Exclude the topbar's chrome buttons
+   (search palette, reload, settings) — the fixed-width .icon-btn otherwise gets
+   this rule's `padding: 0 16px` on top of `width: 30px`, crushing its content
+   box (and SVG) to zero. */
+.page-approval-detail button:not(.icon-btn):not(.palette-trigger) {
   font-family: var(--mono);
   font-size: 13px;
   font-weight: 500;
