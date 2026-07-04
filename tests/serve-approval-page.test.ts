@@ -27,6 +27,19 @@ describe('approval web page', () => {
       .toBeUndefined();
   });
 
+  it('quantizes the default window clock so nearby polls share one cutoff', () => {
+    // The default (no explicit `now`) must bucket the clock, otherwise every
+    // request resolves a distinct createdAfter, the worker's list-response cache
+    // key never repeats, and concurrent scans on a large project trip the 30s
+    // timeout instead of coalescing.
+    const url = new URL('http://127.0.0.1:12233/approvals');
+    const first = __testing.approvalListCreatedAfter(url);
+    const second = __testing.approvalListCreatedAfter(url);
+    expect(first).toBeDefined();
+    expect(first).toBe(second as number);
+    expect((first as number) % 60_000).toBe(0);
+  });
+
   it('keeps the approvals SSE list refresh at the dashboard polling cadence', () => {
     expect(__testing.APPROVAL_LIST_SSE_INTERVAL_MS).toBe(10_000);
   });
