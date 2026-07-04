@@ -277,9 +277,16 @@ export class PushService {
 /**
  * The service worker, served at /sw.js (root scope). Kept minimal: display
  * every push (iOS revokes subscriptions that receive silent pushes) and
- * focus-or-open the payload URL on tap.
+ * deep-link to the payload URL on tap.
+ *
+ * The tap handler cannot rely on clients.openWindow(url) alone: iOS launches
+ * a cold web app at start_url and ignores the requested URL. So the target is
+ * parked in the Cache API first, and the app finishes the jump on boot (see
+ * web/lib/push-nav.ts). Warm windows are focused and told to navigate via
+ * postMessage.
  */
-export const SERVICE_WORKER_JS = `self.addEventListener("push", (event) => {
+export const SERVICE_WORKER_JS = `const NAV_CACHE = "agentuse-push-nav";
+self.addEventListener("push", (event) => {
   let data = { title: "AgentUse", body: "", url: "/" };
   try { data = { ...data, ...event.data.json() }; } catch {}
   event.waitUntil(self.registration.showNotification(data.title, {
@@ -292,10 +299,23 @@ export const SERVICE_WORKER_JS = `self.addEventListener("push", (event) => {
 });
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = new URL(event.notification.data.url, self.location.origin).href;
-  event.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
-    const existing = wins.find((w) => w.url === url);
-    return existing ? existing.focus() : clients.openWindow(url);
-  }));
+  const data = event.notification.data || {};
+  const url = new URL(data.url || "/", self.location.origin);
+  event.waitUntil((async () => {
+    try {
+      const cache = await caches.open(NAV_CACHE);
+      await cache.put("/pending-navigation", new Response(JSON.stringify({ url: url.href, at: Date.now() })));
+    } catch {}
+    const wins = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    // Prefer a window already on this session (query differences ignored),
+    // else reuse any open window rather than stacking a new one.
+    const existing = wins.find((w) => new URL(w.url).pathname === url.pathname) || wins[0];
+    if (existing) {
+      await existing.focus();
+      existing.postMessage({ type: "push-navigate", url: url.href });
+      return;
+    }
+    await clients.openWindow(url.href);
+  })());
 });
 `;

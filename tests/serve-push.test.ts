@@ -3,7 +3,41 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createServer, type Server } from 'http';
+import { createDecipheriv, createECDH, createHmac } from 'crypto';
 import { encryptPayload, PushService, SERVICE_WORKER_JS } from '../src/cli/serve/push';
+
+// Receiver-side decryption (what a browser's push stack does), used to verify
+// round-trips. Keys from RFC 8291 Appendix A: the test p256dh used throughout
+// this file pairs with this private scalar.
+const RECEIVER_PRIVATE = Buffer.from('q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94', 'base64url');
+
+function hkdf(salt: Buffer, ikm: Buffer, info: Buffer, length: number): Buffer {
+  const prk = createHmac('sha256', salt).update(ikm).digest();
+  return createHmac('sha256', prk).update(Buffer.concat([info, Buffer.from([1])])).digest().subarray(0, length);
+}
+
+function decryptPayload(body: Buffer, receiverPrivate: Buffer, auth: Buffer): Buffer {
+  const salt = body.subarray(0, 16);
+  const idlen = body.readUInt8(20);
+  const senderPub = body.subarray(21, 21 + idlen);
+  const ciphertext = body.subarray(21 + idlen, body.length - 16);
+  const tag = body.subarray(body.length - 16);
+
+  const receiver = createECDH('prime256v1');
+  receiver.setPrivateKey(receiverPrivate);
+  const sharedSecret = receiver.computeSecret(senderPub);
+  const keyInfo = Buffer.concat([Buffer.from('WebPush: info\0'), receiver.getPublicKey(), senderPub]);
+  const ikm = hkdf(auth, sharedSecret, keyInfo, 32);
+  const cek = hkdf(salt, ikm, Buffer.from('Content-Encoding: aes128gcm\0'), 16);
+  const nonce = hkdf(salt, ikm, Buffer.from('Content-Encoding: nonce\0'), 12);
+
+  const decipher = createDecipheriv('aes-128-gcm', cek, nonce);
+  decipher.setAuthTag(tag);
+  const padded = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  // Strip the 0x02 final-record delimiter (and any zero padding after it).
+  const delim = padded.lastIndexOf(2);
+  return padded.subarray(0, delim);
+}
 
 describe('web push encryption', () => {
   it('matches the RFC 8291 Appendix A test vector byte-for-byte', () => {
@@ -94,7 +128,7 @@ describe('PushService delivery against a mock push service', () => {
   let dataDir: string;
   let server: Server;
   let port: number;
-  let received: Array<{ url: string; headers: Record<string, string | string[] | undefined>; bodyLength: number }>;
+  let received: Array<{ url: string; headers: Record<string, string | string[] | undefined>; body: Buffer }>;
   let respondWith: number;
 
   beforeEach(async () => {
@@ -105,7 +139,7 @@ describe('PushService delivery against a mock push service', () => {
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {
-        received.push({ url: req.url ?? '', headers: req.headers, bodyLength: Buffer.concat(chunks).length });
+        received.push({ url: req.url ?? '', headers: req.headers, body: Buffer.concat(chunks) });
         res.writeHead(respondWith);
         res.end();
       });
@@ -133,7 +167,13 @@ describe('PushService delivery against a mock push service', () => {
     service.upsert(realSub('/dev-a', port), { approvals: true });
     service.upsert(realSub('/dev-b', port), { approvals: false, sessions: true });
 
-    await service.notify('approvals', { title: 'Approval needed', body: 'agent x', url: '/approvals' });
+    const payload = {
+      title: 'Approval needed',
+      body: 'agent x',
+      url: '/sessions/01TEST?token=tok&project=demo',
+      tag: 'approval-01TEST',
+    };
+    await service.notify('approvals', payload);
 
     expect(received).toHaveLength(1);
     const req = received[0]!;
@@ -149,8 +189,10 @@ describe('PushService delivery against a mock push service', () => {
     const claims = JSON.parse(Buffer.from(jwt.split('.')[1]!, 'base64url').toString());
     expect(claims.aud).toBe(`http://127.0.0.1:${port}`);
     expect(claims.exp).toBeGreaterThan(Date.now() / 1000);
-    // Coding header (86) + payload + padding delimiter + GCM tag.
-    expect(req.bodyLength).toBeGreaterThan(86);
+    // Round-trip: what the device decrypts must be the exact payload, deep
+    // link included — this is what the service worker's tap handler gets.
+    const decrypted = decryptPayload(req.body, RECEIVER_PRIVATE, Buffer.from('BTBZMqHH6r4Tts7J_aSIgg', 'base64url'));
+    expect(JSON.parse(decrypted.toString())).toEqual(payload);
   });
 
   it('prunes subscriptions the push service reports gone', async () => {
@@ -169,5 +211,13 @@ describe('service worker source', () => {
     expect(SERVICE_WORKER_JS).toContain('showNotification');
     expect(SERVICE_WORKER_JS).toContain('notificationclick');
     expect(SERVICE_WORKER_JS).toContain('openWindow');
+  });
+
+  it('parks the tap target for the iOS cold-launch workaround', () => {
+    // iOS opens a cold PWA at start_url and ignores openWindow's URL; the
+    // target must be cached for web/lib/push-nav.ts to consume at boot.
+    expect(SERVICE_WORKER_JS).toContain('agentuse-push-nav');
+    expect(SERVICE_WORKER_JS).toContain('/pending-navigation');
+    expect(SERVICE_WORKER_JS).toContain('push-navigate');
   });
 });
