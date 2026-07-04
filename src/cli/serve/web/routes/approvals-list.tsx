@@ -121,7 +121,7 @@ export default function ApprovalsList() {
 
   return (
     <div class="page-approvals">
-      <Topbar currentPage="approvals" right={<span class="pending-count">{totalPending} pending</span>} />
+      <Topbar currentPage="approvals" />
       <main>
         <h1>Approvals <PushBell category="approvals" /></h1>
         {error && (
