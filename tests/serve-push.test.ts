@@ -170,7 +170,7 @@ describe('PushService delivery against a mock push service', () => {
     const payload = {
       title: 'Approval needed',
       body: 'agent x',
-      url: '/sessions/01TEST?token=tok&project=demo',
+      url: 'https://serve.example/sessions/01TEST?token=tok&project=demo',
       tag: 'approval-01TEST',
     };
     await service.notify('approvals', payload);
@@ -189,10 +189,19 @@ describe('PushService delivery against a mock push service', () => {
     const claims = JSON.parse(Buffer.from(jwt.split('.')[1]!, 'base64url').toString());
     expect(claims.aud).toBe(`http://127.0.0.1:${port}`);
     expect(claims.exp).toBeGreaterThan(Date.now() / 1000);
-    // Round-trip: what the device decrypts must be the exact payload, deep
-    // link included — this is what the service worker's tap handler gets.
+    // Round-trip: the device must decrypt a Declarative Web Push message so
+    // iOS 18.4+ shows it natively and performs `navigate` on tap (SW click
+    // handlers are unreliable on killed iOS home-screen apps).
     const decrypted = decryptPayload(req.body, RECEIVER_PRIVATE, Buffer.from('BTBZMqHH6r4Tts7J_aSIgg', 'base64url'));
-    expect(JSON.parse(decrypted.toString())).toEqual(payload);
+    expect(JSON.parse(decrypted.toString())).toEqual({
+      web_push: 8030,
+      notification: {
+        title: payload.title,
+        body: payload.body,
+        navigate: payload.url,
+        tag: payload.tag,
+      },
+    });
   });
 
   it('prunes subscriptions the push service reports gone', async () => {
@@ -219,5 +228,12 @@ describe('service worker source', () => {
     expect(SERVICE_WORKER_JS).toContain('agentuse-push-nav');
     expect(SERVICE_WORKER_JS).toContain('/pending-navigation');
     expect(SERVICE_WORKER_JS).toContain('push-navigate');
+  });
+
+  it('activates updates promptly and renders declarative payloads', () => {
+    expect(SERVICE_WORKER_JS).toContain('skipWaiting');
+    expect(SERVICE_WORKER_JS).toContain('clients.claim');
+    expect(SERVICE_WORKER_JS).toContain('8030');
+    expect(SERVICE_WORKER_JS).toContain('navigate');
   });
 });

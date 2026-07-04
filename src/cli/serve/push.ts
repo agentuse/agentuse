@@ -41,6 +41,11 @@ export interface PushSubscriptionRecord {
 export interface PushPayload {
   title: string;
   body: string;
+  /**
+   * Absolute URL to open on tap. Must be absolute: it is sent as the
+   * Declarative Web Push `navigate` field, which iOS handles at the OS level
+   * with no page context to resolve a relative path against.
+   */
   url: string;
   /** Notifications with the same tag replace each other on the device. */
   tag?: string;
@@ -221,8 +226,23 @@ export class PushService {
    * mean the subscription is dead and the caller should prune it.
    */
   async send(sub: PushSubscriptionRecord, payload: PushPayload, urgency: "normal" | "high"): Promise<number> {
+    // Declarative Web Push format (RFC-8030 homage marker). On iOS 18.4+ the
+    // OS shows the notification and performs `navigate` on tap natively —
+    // crucial because iOS does not reliably run notificationclick when a
+    // killed home-screen app is launched from a notification. Browsers
+    // without declarative support fire the regular push event and the
+    // service worker renders the same fields imperatively.
+    const message = {
+      web_push: 8030,
+      notification: {
+        title: payload.title,
+        body: payload.body,
+        navigate: payload.url,
+        ...(payload.tag && { tag: payload.tag }),
+      },
+    };
     const body = encryptPayload(
-      Buffer.from(JSON.stringify(payload)),
+      Buffer.from(JSON.stringify(message)),
       fromB64url(sub.keys.p256dh),
       fromB64url(sub.keys.auth)
     );
@@ -286,9 +306,18 @@ export class PushService {
  * postMessage.
  */
 export const SERVICE_WORKER_JS = `const NAV_CACHE = "agentuse-push-nav";
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => event.waitUntil(clients.claim()));
 self.addEventListener("push", (event) => {
   let data = { title: "AgentUse", body: "", url: "/" };
-  try { data = { ...data, ...event.data.json() }; } catch {}
+  try {
+    const raw = event.data.json();
+    // Payloads are Declarative Web Push JSON (web_push: 8030); on platforms
+    // that fire this event instead of handling it natively, render the
+    // declared notification imperatively.
+    const n = raw && raw.web_push === 8030 ? raw.notification : raw;
+    data = { ...data, ...n, url: (n && (n.navigate || n.url)) || "/" };
+  } catch {}
   event.waitUntil(self.registration.showNotification(data.title, {
     body: data.body,
     tag: data.tag,

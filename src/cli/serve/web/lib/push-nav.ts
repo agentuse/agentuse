@@ -49,10 +49,16 @@ export function initPushNavigation(): void {
     if (target && target.pathname !== location.pathname) location.assign(target.href);
   });
 
-  void takePendingUrl().then((raw) => {
-    if (!raw) return;
-    const target = sameOriginUrl(raw);
-    if (!target || target.pathname === location.pathname) return;
-    location.replace(target.href);
-  });
+  void (async () => {
+    // On a cold launch the service worker's cache write races app boot, so
+    // check a few times before concluding there is no parked target.
+    for (const delay of [0, 400, 1200, 2400]) {
+      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      const raw = await takePendingUrl();
+      if (!raw) continue;
+      const target = sameOriginUrl(raw);
+      if (target && target.pathname !== location.pathname) location.replace(target.href);
+      return;
+    }
+  })();
 }

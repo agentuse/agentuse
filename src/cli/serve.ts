@@ -905,11 +905,25 @@ function sendHTML(res: ServerResponse, status: number, html: string) {
   res.end(html);
 }
 
-function approvalListCreatedAfter(requestUrl: URL, now = Date.now()): number | undefined {
+// The worker's list-response cache (src/index.ts) keys on the resolved
+// createdAfter cutoff. Deriving that cutoff from a raw Date.now() yields a
+// distinct value on every request, so the 5-minute cache and its in-flight
+// promise coalescing never hit: every approvals/sessions poll and every SSE tick
+// re-runs a full O(sessions-in-window) scan, and on a large project those
+// uncoalesced concurrent scans saturate the single-threaded worker and trip the
+// 30s request timeout. Quantizing the clock to a coarse bucket makes requests
+// within the same bucket share one cutoff, so they coalesce onto a single scan
+// and the cache actually holds. 60s granularity is immaterial to 7d/30d windows.
+const LIST_WINDOW_BUCKET_MS = 60_000;
+function listWindowNow(): number {
+  return Math.floor(Date.now() / LIST_WINDOW_BUCKET_MS) * LIST_WINDOW_BUCKET_MS;
+}
+
+function approvalListCreatedAfter(requestUrl: URL, now = listWindowNow()): number | undefined {
   return listCreatedAfter(requestUrl, APPROVAL_LIST_DEFAULT_DAYS, now);
 }
 
-function sessionListCreatedAfter(requestUrl: URL, now = Date.now()): number | undefined {
+function sessionListCreatedAfter(requestUrl: URL, now = listWindowNow()): number | undefined {
   const filter = sessionWindowFilterValue(requestUrl);
   if (filter === 'all') return undefined;
   const amount = Number(filter.slice(0, -1));
@@ -918,7 +932,7 @@ function sessionListCreatedAfter(requestUrl: URL, now = Date.now()): number | un
   return now - amount * multiplier;
 }
 
-function listCreatedAfter(requestUrl: URL, defaultDays: number, now = Date.now()): number | undefined {
+function listCreatedAfter(requestUrl: URL, defaultDays: number, now = listWindowNow()): number | undefined {
   const daysParam = requestUrl.searchParams.get('days');
   if (daysParam === 'all') return undefined;
 
@@ -3925,7 +3939,7 @@ export function createServeCommand(): Command {
             void pushService.notify('sessions', {
               title: status === 'completed' ? "Session completed" : "Session failed",
               body: multiProject ? `${found.project.id}/${agentName}` : agentName,
-              url: `/sessions/${encodeURIComponent(sessionId)}?${sessionQuery.toString()}`,
+              url: `${effectivePublicUrl}/sessions/${encodeURIComponent(sessionId)}?${sessionQuery.toString()}`,
               tag: `session-${sessionId}`,
             });
             sendJSON(res, 200, { success: true, status: "notified" });
@@ -4096,7 +4110,7 @@ export function createServeCommand(): Command {
               void pushService.notify('approvals', {
                 title: "Approval needed",
                 body: prompt ? `${label}: ${prompt.slice(0, 140)}` : label,
-                url: `/sessions/${encodeURIComponent(sessionId)}?${approvalQuery.toString()}`,
+                url: `${effectivePublicUrl}/sessions/${encodeURIComponent(sessionId)}?${approvalQuery.toString()}`,
                 tag: `approval-${sessionId}`,
               });
             }
