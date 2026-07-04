@@ -398,6 +398,7 @@ export default function SessionDetail() {
   const expired = approval?.expiresAt !== undefined && approval.expiresAt <= Date.now();
   const displayStatus = status === 'waiting' && expired ? 'expired' : displaySessionStatus(status, approval);
   const actionable = pendingActionable && !expired;
+  const canRememberLearning = approval?.learning?.apply === true;
   const continueActionable = ended && !live && Boolean(approval?.agent.filePath) && !fatalError;
   const stopActionable = approval !== null && !ended && !expired && !submittingStop && !fatalError;
   // An errored session whose resolved approval gate can be rolled back for a retry.
@@ -409,7 +410,7 @@ export default function SessionDetail() {
     else setShowResume(false);
   }, [continueActionable]);
 
-  const submitDecision = useCallback(async (action: string, comment?: string) => {
+  const submitDecision = useCallback(async (action: string, comment?: string, remember?: string) => {
     if (submittingDecision || !currentResumeTokenRef.current) return;
     setSubmittingDecision(true);
     setResult({ text: '⋮ submitting decision…', error: false });
@@ -417,6 +418,7 @@ export default function SessionDetail() {
       await postSessionDecision(sessionId, token, {
         status: action,
         ...(comment ? { comment } : {}),
+        ...(remember ? { remember } : {}),
         resumeToken: currentResumeTokenRef.current,
         ...(projectId ? { project: projectId } : {}),
       });
@@ -850,11 +852,12 @@ export default function SessionDetail() {
       <DecisionDialog
         open={decisionDialog !== null}
         mode={decisionDialog ?? 'comment'}
+        allowRemember={canRememberLearning}
         onClose={() => setDecisionDialog(null)}
-        onSubmit={(comment) => {
+        onSubmit={({ comment, remember }) => {
           const action = decisionDialog;
           setDecisionDialog(null);
-          if (action) void submitDecision(action, comment);
+          if (action) void submitDecision(action, comment, remember);
         }}
       />
     </div>

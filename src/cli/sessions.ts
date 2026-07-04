@@ -12,7 +12,7 @@ import { logger, LogLevel } from "../utils/logger";
 import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
 import { applyResumeToolResult, restoreResumeToolResult, runAgent, describeErrorPart } from "../runner";
-import { describeLearningOutcome } from "../learning";
+import { describeLearningOutcome, saveManualLearning } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
 
 interface SessionSummary {
@@ -647,6 +647,7 @@ export function createSessionsCommand(): Command {
     .option("--approve [comment]", "Approve a suspended approval request")
     .option("--reject [comment]", "Reject a suspended approval request with an optional comment")
     .option("--comment <comment>", "Send a reviewer comment to a suspended approval request")
+    .option("--remember <rule>", "Save a future learning rule while sending --comment")
     .option("--tool-result <json>", "JSON result for a suspended non-approval await_* tool")
     .option("--prompt <text>", "Instruction for continuing an ended session")
     .option("--project [path]", "Search a project path; defaults to the current project")
@@ -657,6 +658,7 @@ export function createSessionsCommand(): Command {
       approve?: string | boolean;
       reject?: string | boolean;
       comment?: string;
+      remember?: string;
       toolResult?: string;
       prompt?: string;
       project?: string | boolean;
@@ -1078,7 +1080,7 @@ async function showSession(
             const l = part as Part & {
               type: "learning";
               status: "captured" | "none" | "failed";
-              source: "auto" | "approval";
+              source: "auto" | "approval" | "manual";
               count: number;
               titles?: string[];
               detail?: string;
@@ -1248,6 +1250,7 @@ async function resumeSession(
     approve?: string | boolean;
     reject?: string | boolean;
     comment?: string;
+    remember?: string;
     toolResult?: string;
     prompt?: string;
     project?: string | boolean;
@@ -1285,6 +1288,9 @@ async function resumeSession(
   }
   if (!found.session.agent.filePath) {
     throw new Error(`Session ${summary.id} does not record an agent file path`);
+  }
+  if (options.remember !== undefined && options.comment === undefined) {
+    throw new Error("--remember requires --comment");
   }
 
   const fallbackCwd = resolved.allSearchMatch ? summary.projectRoot : selectedCwd;
@@ -1345,6 +1351,25 @@ async function resumeSession(
       throw new Error(`Session ${summary.id} is waiting on ${pending.part.tool}. Use --tool-result <json>.`);
     }
 
+    if (options.remember !== undefined) {
+      const remember = options.remember.trim();
+      if (!remember) {
+        throw new Error("--remember must not be empty");
+      }
+      if (pendingKind !== "await_human" && pending.part.tool !== "await_human") {
+        throw new Error("--remember only applies to approval comments");
+      }
+      const agent = await parseAgent(found.session.agent.filePath);
+      if (!agent.config.learning?.apply) {
+        throw new Error("Cannot remember a learning because this agent does not have learning.apply enabled");
+      }
+      await saveManualLearning({
+        agentFilePath: found.session.agent.filePath,
+        config: agent.config.learning,
+        instruction: remember,
+      });
+    }
+
     const resumed = await applyResumeToolResult({
       sessionManager,
       sessionId: summary.id,
@@ -1397,7 +1422,7 @@ async function resumeSession(
     return;
   }
 
-  if (options.approve !== undefined || options.reject !== undefined || options.comment !== undefined || options.toolResult) {
+  if (options.approve !== undefined || options.reject !== undefined || options.comment !== undefined || options.remember !== undefined || options.toolResult) {
     throw new Error(`Session ${summary.id} is ${found.session.status}; approval and tool-result flags only apply to suspended sessions`);
   }
 

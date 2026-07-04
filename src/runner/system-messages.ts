@@ -211,10 +211,13 @@ export async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: str
     }
 
     const maxLearnings = 10; // Prevent context bloat
-    // Human-sourced (approval) learnings outrank auto-extracted ones, then by
-    // confidence, so the highest-signal rules survive the cap.
+    // Explicit manual rules outrank approval-promoted and auto-extracted ones,
+    // then by confidence, so the highest-signal rules survive the cap.
+    const sourceRank = (source: 'auto' | 'approval' | 'manual') =>
+      source === 'manual' ? 0 : source === 'approval' ? 1 : 2;
     const ranked = [...learnings].sort((a, b) => {
-      if (a.source !== b.source) return a.source === 'approval' ? -1 : 1;
+      const rankDelta = sourceRank(a.source) - sourceRank(b.source);
+      if (rankDelta !== 0) return rankDelta;
       return b.confidence - a.confidence;
     });
     const toInject = ranked.slice(0, maxLearnings);

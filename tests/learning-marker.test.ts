@@ -29,6 +29,11 @@ describe('describeLearningOutcome', () => {
     expect(message).toContain('from reviewer comment');
   });
 
+  it('labels a manual capture distinctly', () => {
+    const { message } = describeLearningOutcome({ status: 'captured', source: 'manual', count: 1, titles: ['Cite a source'] });
+    expect(message).toContain('from manual rule');
+  });
+
   it('renders a none outcome', () => {
     const { title, message } = describeLearningOutcome({ status: 'none', source: 'auto', count: 0 });
     expect(title).toBe('No new learnings');

@@ -1350,6 +1350,29 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
 .dialog-body .prefix {
   color: var(--cyan); opacity: 0.7; font-size: 13px; padding-top: 12px;
 }
+.remember-learning {
+  grid-column: 2;
+  display: grid;
+  gap: 10px;
+}
+.remember-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  color: var(--muted-3);
+  font-size: 12.5px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.remember-toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--cyan);
+}
+.remember-rule {
+  min-height: 72px;
+}
 textarea {
   width: 100%;
   min-height: 96px;

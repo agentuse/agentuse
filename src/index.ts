@@ -1754,6 +1754,20 @@ async function runInternalWorker() {
     return withApprovalInfoCache(approvalInfoCacheKey(req), req.id, async () => getApprovalInfoUncached(req));
   }
 
+  async function learningInfoForSession(session: SessionInfo): Promise<{ capture: boolean; apply: boolean } | undefined> {
+    const agentPath = session.agent.filePath;
+    if (!agentPath) return undefined;
+    try {
+      const agent = await parseAgent(agentPath);
+      return agent.config.learning
+        ? { capture: agent.config.learning.capture, apply: agent.config.learning.apply }
+        : undefined;
+    } catch (error) {
+      logger.debug(`Failed to read learning config for ${agentPath}: ${(error as Error).message}`);
+      return undefined;
+    }
+  }
+
   async function getApprovalInfoUncached(req: ExecuteRequest) {
     try {
       if (!req.sessionId) {
@@ -1864,6 +1878,7 @@ async function runInternalWorker() {
             ...(cascadeLeaf.session.agent.description && { description: cascadeLeaf.session.agent.description }),
           } }
         : {};
+      const learning = await learningInfoForSession(cascadeLeaf?.session ?? found.session);
 
       if (!effectiveApprovalPart) {
         return {
@@ -1883,6 +1898,7 @@ async function runInternalWorker() {
               ...(found.session.agent.filePath && { filePath: found.session.agent.filePath }),
               ...(found.session.agent.description && { description: found.session.agent.description })
             },
+            ...(learning && { learning }),
             ...viewOnlyFields,
             ...(additionalInstruction && { additionalInstruction }),
             ...(childSessions.length > 0 && { childSessions }),
@@ -1952,6 +1968,7 @@ async function runInternalWorker() {
               ...(found.session.agent.filePath && { filePath: found.session.agent.filePath }),
               ...(found.session.agent.description && { description: found.session.agent.description })
             },
+            ...(learning && { learning }),
             ...originAgentFields,
             ...viewOnlyFields,
             ...(additionalInstruction && { additionalInstruction }),
@@ -2019,6 +2036,7 @@ async function runInternalWorker() {
             ...(found.session.agent.filePath && { filePath: found.session.agent.filePath }),
             ...(found.session.agent.description && { description: found.session.agent.description })
           },
+          ...(learning && { learning }),
           ...originAgentFields,
           ...viewOnlyFields,
           ...(additionalInstruction && { additionalInstruction }),

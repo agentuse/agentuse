@@ -5,6 +5,8 @@ import { tmpdir } from "os";
 import { writeFileSync } from "fs";
 import { LearningStore, resolveLearningFilePath } from "../src/learning/store";
 import type { Learning } from "../src/learning/types";
+import { saveManualLearning } from "../src/learning";
+import { buildLearningPrompt } from "../src/runner/system-messages";
 
 const baseLearning: Learning = {
   id: "learn001",
@@ -62,16 +64,19 @@ describe("LearningStore", () => {
     expect(loaded[1].extractedAt.startsWith("2024-02-10")).toBe(true);
   });
 
-  it("round-trips provenance and ranks approval learnings first on load order", async () => {
+  it("round-trips provenance", async () => {
     await store.save([
       baseLearning,
       { ...baseLearning, id: "appr001", title: "Cite sources", source: "approval" },
+      { ...baseLearning, id: "man001", title: "Use reviewer language", source: "manual" },
     ]);
     const loaded = await store.load();
 
     expect(loaded.find(l => l.id === "learn001")?.source).toBe("auto");
     const approval = loaded.find(l => l.id === "appr001");
     expect(approval?.source).toBe("approval");
+    const manual = loaded.find(l => l.id === "man001");
+    expect(manual?.source).toBe("manual");
   });
 
   it("reads legacy learnings files written without a src field", async () => {
@@ -120,5 +125,44 @@ Always wait for explicit approval before publishing.
     const loaded = await store.load();
     const updated = loaded.find(l => l.id === "learn003");
     expect(updated?.appliedCount).toBe(2);
+  });
+
+  it("saves explicit manual learnings", async () => {
+    const agentFile = join(tempDir, "agent.md");
+
+    const outcome = await saveManualLearning({
+      agentFilePath: agentFile,
+      config: { capture: true, apply: true },
+      instruction: "Always include source links before publishing.",
+    });
+
+    expect(outcome.status).toBe("captured");
+    expect(outcome.source).toBe("manual");
+    const loaded = await store.load();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]).toMatchObject({
+      source: "manual",
+      confidence: 1,
+      instruction: "Always include source links before publishing.",
+    });
+  });
+
+  it("injects manual learnings before approval and auto learnings", async () => {
+    const agentFile = join(tempDir, "agent.md");
+    await store.save([
+      { ...baseLearning, id: "auto001", instruction: "Auto rule", source: "auto", confidence: 0.99 },
+      { ...baseLearning, id: "appr001", instruction: "Approval rule", source: "approval", confidence: 0.95 },
+      { ...baseLearning, id: "man001", instruction: "Manual rule", source: "manual", confidence: 1 },
+    ]);
+
+    const result = await buildLearningPrompt({
+      name: "agent",
+      instructions: "Do work.",
+      config: { model: "demo:test", learning: { capture: true, apply: true } },
+    }, agentFile);
+
+    const prompt = result?.prompt ?? "";
+    expect(prompt.indexOf("Manual rule")).toBeLessThan(prompt.indexOf("Approval rule"));
+    expect(prompt.indexOf("Approval rule")).toBeLessThan(prompt.indexOf("Auto rule"));
   });
 });

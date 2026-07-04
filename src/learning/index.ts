@@ -5,7 +5,7 @@
 
 import ora from 'ora';
 import type { AgentCompleteEvent } from '../plugin/types';
-import type { ApprovalReview, LearningConfig, LearningOutcome } from './types';
+import type { ApprovalReview, Learning, LearningConfig, LearningOutcome } from './types';
 import { evaluateExecution } from './evaluator';
 import { LearningStore } from './store';
 import { logger } from '../utils/logger';
@@ -85,6 +85,44 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
   }
 }
 
+function manualLearningTitle(instruction: string): string {
+  const firstLine = instruction.split('\n').find(line => line.trim().length > 0)?.trim() ?? '';
+  if (!firstLine) return 'Manual rule';
+  return firstLine.length > 80 ? `${firstLine.slice(0, 77).trim()}...` : firstLine;
+}
+
+export async function saveManualLearning(options: {
+  agentFilePath: string;
+  config: LearningConfig;
+  instruction: string;
+}): Promise<LearningOutcome> {
+  const instruction = options.instruction.trim();
+  if (!instruction) {
+    return { status: 'none', source: 'manual', count: 0, titles: [] };
+  }
+
+  const store = LearningStore.fromAgentFile(options.agentFilePath, options.config.file);
+  const learning: Learning = {
+    id: Math.random().toString(36).slice(2, 10),
+    category: 'tip',
+    title: manualLearningTitle(instruction),
+    instruction,
+    confidence: 1,
+    appliedCount: 0,
+    extractedAt: new Date().toISOString(),
+    source: 'manual',
+  };
+
+  const before = await store.load();
+  await store.add([learning]);
+  const after = await store.load();
+  const captured = after.some(l => l.id === learning.id) && after.length > before.length;
+
+  return captured
+    ? { status: 'captured', source: 'manual', count: 1, titles: [learning.title] }
+    : { status: 'none', source: 'manual', count: 0, titles: [] };
+}
+
 /**
  * Render a learning capture outcome (or persisted learning marker) into a
  * one-line title + message for the session log. Shared by the CLI session view
@@ -92,12 +130,16 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
  */
 export function describeLearningOutcome(o: {
   status: 'captured' | 'none' | 'failed';
-  source: 'auto' | 'approval';
+  source: 'auto' | 'approval' | 'manual';
   count: number;
   titles?: string[] | undefined;
   detail?: string | undefined;
 }): { title: string; message: string } {
-  const sourceLabel = o.source === 'approval' ? 'from reviewer comment' : 'from this run';
+  const sourceLabel = o.source === 'manual'
+    ? 'from manual rule'
+    : o.source === 'approval'
+      ? 'from reviewer comment'
+      : 'from this run';
   if (o.status === 'failed') {
     return {
       title: 'Learning capture failed',

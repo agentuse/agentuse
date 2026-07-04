@@ -124,7 +124,10 @@ export class LearningStore {
       if (token.startsWith('id:')) out.id = token.slice(3);
       else if (token.startsWith('confidence:')) out.confidence = parseFloat(token.slice(11));
       else if (token.startsWith('applied:')) out.applied = parseInt(token.slice(8));
-      else if (token.startsWith('src:')) out.source = token.slice(4) === 'approval' ? 'approval' : 'auto';
+      else if (token.startsWith('src:')) {
+        const source = token.slice(4);
+        out.source = source === 'manual' || source === 'approval' ? source : 'auto';
+      }
       else if (/^\d{4}-\d{2}-\d{2}$/.test(token)) out.date = token;
     }
     return out;

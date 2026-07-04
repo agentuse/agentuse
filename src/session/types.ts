@@ -335,7 +335,7 @@ export interface CompactionPart extends PartBase {
 
 /** Outcome of a learning capture attempt. Mirrors learning/types LearningOutcome. */
 export type LearningPartStatus = 'captured' | 'none' | 'failed';
-export type LearningPartSource = 'auto' | 'approval';
+export type LearningPartSource = 'auto' | 'approval' | 'manual';
 
 /**
  * Marker recorded after a learning capture attempt (self-evaluation or

@@ -46,8 +46,9 @@ export type LearningCategory = 'tip' | 'warning' | 'pattern' | 'tool-usage' | 'e
  * How a learning entered the store.
  * - auto: extracted by self-evaluation of an execution
  * - approval: promoted from a human reviewer's approval-gate comment
+ * - manual: explicitly saved by a human reviewer as a durable rule
  */
-export type LearningSource = 'auto' | 'approval';
+export type LearningSource = 'auto' | 'approval' | 'manual';
 
 /**
  * Outcome of a learning capture attempt, used to surface a marker in the

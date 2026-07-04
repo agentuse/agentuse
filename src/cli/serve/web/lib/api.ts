@@ -91,6 +91,7 @@ export function fetchApprovalStatus(sessionId: string, token: string, project?: 
 export function postApprovalDecision(sessionId: string, body: {
   status: string;
   comment?: string;
+  remember?: string;
   resumeToken: string;
   project?: string;
 }): Promise<{ sessionId: string; status: string }> {
@@ -139,6 +140,7 @@ export function fetchSessionArtifacts(sessionId: string, token: string | undefin
 export function postSessionDecision(sessionId: string, token: string | undefined, body: {
   status: string;
   comment?: string;
+  remember?: string;
   resumeToken: string;
   project?: string;
 }): Promise<{ sessionId: string; status: string }> {

@@ -10,7 +10,7 @@ tag: Experimental
 
 ## What is Learning?
 
-Learning lets an agent **capture** insights from its executions into a readable markdown file and **apply** them in future runs. Capture has two sources: self-evaluation of each run, and promotion of a human reviewer's approval-gate comment (see [Learning from approval comments](#learning-from-approval-comments)).
+Learning lets an agent **capture** insights from its executions into a readable markdown file and **apply** them in future runs. Capture has three sources: self-evaluation of each run, promotion of a human reviewer's approval-gate comment, and explicit manual rules saved by a reviewer (see [Learning from approval comments](#learning-from-approval-comments)).
 
 ## Quick Start
 
@@ -103,9 +103,17 @@ learning: true
 
 When you leave a note like "Going forward, always cite a source before publishing", a generalizability filter decides whether the comment is a **durable agent-wide rule** or a **one-off edit** to this run. Only durable rules are captured (as `src:approval`, confidence `0.95`); one-off edits (like "fix the typo in paragraph two" or "give me the source link") are ignored. Approval-sourced learnings rank ahead of auto-extracted ones when injected, so your corrections survive the per-run cap.
 
+For faster teaching, the approval comment dialog can also save an explicit future rule. Use the comment for the current revision, then check **Remember this as a future rule** and write the durable rule separately. Manual rules are stored as `src:manual`, confidence `1.00`, and rank ahead of approval-promoted and auto-extracted learnings. The CLI equivalent is:
+
+```bash
+agentuse sessions resume 01K... \
+  --comment "Please revise this pass with citations" \
+  --remember "Always include source links before publishing."
+```
+
 ## How Application Works
 
-On next run (when `apply: true`):
+On next run or approval resume (when `apply: true`):
 
 1. Loads up to 10 learnings from storage
 2. Appends them to your agent instructions as a `## Learned Guidelines` section
@@ -139,9 +147,13 @@ like "checking emails before coffee" rather than abstract advice.
 <!-- id:e5f6g7h8 | confidence:0.88 | applied:1 | src:approval | 2026-01-27 -->
 Each actionable tip should include a specific time estimate
 (e.g., "5-minute brain dump") to make it feel achievable.
+
+### [tip] Cite sources before publishing
+<!-- id:i9j0k1l2 | confidence:1.00 | applied:0 | src:manual | 2026-01-27 -->
+Always include source links before publishing.
 ```
 
-The `src:` field records provenance: `auto` (self-evaluation) or `approval` (promoted from a reviewer comment). Older files without `src:` load as `auto`.
+The `src:` field records provenance: `auto` (self-evaluation), `approval` (promoted from a reviewer comment), or `manual` (explicitly saved by a reviewer). Older files without `src:` load as `auto`.
 
 ## Custom Evaluation Criteria
 

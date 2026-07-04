@@ -133,6 +133,10 @@ export interface ApprovalPageInfo {
     filePath?: string;
     description?: string;
   };
+  learning?: {
+    capture: boolean;
+    apply: boolean;
+  };
   prompt?: string;
   /** The per-run instruction the session was started with (CLI args / the "run
    *  with custom instruction" composer), appended to the agent's own body. */

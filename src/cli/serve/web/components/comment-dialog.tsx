@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 
 export type DecisionDialogMode = 'comment' | 'reject';
 
@@ -30,11 +30,14 @@ const COPY: Record<DecisionDialogMode, {
 export function DecisionDialog(props: {
   open: boolean;
   mode: DecisionDialogMode;
-  onSubmit: (comment?: string) => void;
+  allowRemember?: boolean;
+  onSubmit: (payload: { comment?: string; remember?: string }) => void;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const rememberRef = useRef<HTMLTextAreaElement>(null);
+  const [rememberChecked, setRememberChecked] = useState(false);
   const copy = COPY[props.mode];
 
   useEffect(() => {
@@ -42,6 +45,8 @@ export function DecisionDialog(props: {
     if (!dialog) return;
     if (props.open && !dialog.open) {
       if (inputRef.current) inputRef.current.value = '';
+      if (rememberRef.current) rememberRef.current.value = '';
+      setRememberChecked(false);
       if (typeof dialog.showModal === 'function') dialog.showModal();
       else dialog.setAttribute('open', '');
       requestAnimationFrame(() => inputRef.current?.focus());
@@ -57,8 +62,18 @@ export function DecisionDialog(props: {
       inputRef.current?.focus();
       return;
     }
+    const remember = rememberChecked ? (rememberRef.current?.value ?? '').trim() : '';
+    if (rememberChecked && !remember) {
+      rememberRef.current?.focus();
+      return;
+    }
     if (inputRef.current) inputRef.current.value = '';
-    props.onSubmit(text || undefined);
+    if (rememberRef.current) rememberRef.current.value = '';
+    setRememberChecked(false);
+    props.onSubmit({
+      ...(text && { comment: text }),
+      ...(remember && { remember }),
+    });
   };
 
   return (
@@ -91,6 +106,32 @@ export function DecisionDialog(props: {
               }
             }}
           />
+          {props.mode === 'comment' && props.allowRemember && (
+            <div class="remember-learning">
+              <label class="remember-toggle">
+                <input
+                  type="checkbox"
+                  checked={rememberChecked}
+                  onChange={(event) => setRememberChecked((event.currentTarget as HTMLInputElement).checked)}
+                />
+                <span>Remember this as a future rule</span>
+              </label>
+              {rememberChecked && (
+                <textarea
+                  id="remember-learning-rule"
+                  ref={rememberRef}
+                  class="remember-rule"
+                  placeholder="write the rule the agent should follow next time"
+                  onKeyDown={(event) => {
+                    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                      event.preventDefault();
+                      submit();
+                    }
+                  }}
+                />
+              )}
+            </div>
+          )}
         </div>
         <div class="dialog-foot">
           <span class="hint"><span class="kbd">⌘⏎</span> {props.mode === 'reject' ? 'reject' : 'send'} <span class="kbd">esc</span> cancel</span>

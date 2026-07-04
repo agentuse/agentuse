@@ -26,6 +26,7 @@ import { registerServer, unregisterServer, updateServer, listServers, formatUpti
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
+import { saveManualLearning } from "../learning";
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
@@ -300,6 +301,10 @@ interface ApprovalPageInfo {
     name: string;
     filePath?: string;
     description?: string;
+  };
+  learning?: {
+    capture: boolean;
+    apply: boolean;
   };
   prompt?: string;
   summary?: string;
@@ -2283,6 +2288,24 @@ export function createServeCommand(): Command {
           ? info.approval.rootSessionId
           : fallbackSessionId;
 
+      const saveRememberedLearning = async (info: WorkerApprovalInfoResult, remember?: string): Promise<void> => {
+        const instruction = remember?.trim();
+        if (!instruction) return;
+        const targetAgent = info.approval.originAgent ?? info.approval.agent;
+        if (!targetAgent.filePath) {
+          throw new Error("Cannot remember a learning because this approval does not record an agent file path");
+        }
+        const agent = await parseAgent(targetAgent.filePath);
+        if (!agent.config.learning?.apply) {
+          throw new Error("Cannot remember a learning because this agent does not have learning.apply enabled");
+        }
+        await saveManualLearning({
+          agentFilePath: targetAgent.filePath,
+          config: agent.config.learning,
+          instruction,
+        });
+      };
+
       // Shared resume kickoff for both /approvals/:id/decision and the unified
       // /sessions/:id/decision. The caller validates auth + state, then hands us
       // the resolved gate resumeToken; we run the worker resume, update any
@@ -3735,6 +3758,7 @@ export function createServeCommand(): Command {
             const body = await parseJSONBody(req);
             const status = typeof body.status === 'string' ? body.status : undefined;
             const comment = typeof body.comment === 'string' && body.comment.length > 0 ? body.comment : undefined;
+            const remember = typeof body.remember === 'string' && body.remember.trim().length > 0 ? body.remember.trim() : undefined;
             const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
 
             if (!sessionAuthorized(sessionId, token)) {
@@ -3743,6 +3767,10 @@ export function createServeCommand(): Command {
             }
             if (!status) {
               sendError(res, 400, "STATUS_REQUIRED", "Missing approval status");
+              return;
+            }
+            if (remember && status !== 'comment') {
+              sendError(res, 400, "REMEMBER_REQUIRES_COMMENT", "Remembered learnings can only be saved with a comment decision");
               return;
             }
 
@@ -3774,6 +3802,7 @@ export function createServeCommand(): Command {
               return;
             }
 
+            await saveRememberedLearning(info, remember);
             startApprovalResume(res, { project, sessionId, info, resumeToken, status, comment });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
@@ -4187,6 +4216,7 @@ export function createServeCommand(): Command {
             const token = typeof body.resumeToken === 'string' ? body.resumeToken : undefined;
             const status = typeof body.status === 'string' ? body.status : undefined;
             const comment = typeof body.comment === 'string' && body.comment.length > 0 ? body.comment : undefined;
+            const remember = typeof body.remember === 'string' && body.remember.trim().length > 0 ? body.remember.trim() : undefined;
             const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
 
             if (!token) {
@@ -4195,6 +4225,10 @@ export function createServeCommand(): Command {
             }
             if (!status) {
               sendError(res, 400, "STATUS_REQUIRED", "Missing approval status");
+              return;
+            }
+            if (remember && status !== 'comment') {
+              sendError(res, 400, "REMEMBER_REQUIRES_COMMENT", "Remembered learnings can only be saved with a comment decision");
               return;
             }
 
@@ -4238,6 +4272,7 @@ export function createServeCommand(): Command {
               return;
             }
 
+            await saveRememberedLearning(info, remember);
             startApprovalResume(res, { project, sessionId, info, resumeToken: token, status, comment });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
