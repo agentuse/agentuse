@@ -75,7 +75,7 @@ function renderMarkdownTextBlock(value: string): string {
       cursor += 1;
     }
     const tableRows = rows.map(row => `<tr>${header.map((_, index) => `<td>${renderInlineMarkdown(row[index] ?? '')}</td>`).join('')}</tr>`).join('');
-    html.push(`<table><thead><tr>${header.map(cell => `<th>${renderInlineMarkdown(cell)}</th>`).join('')}</tr></thead>${tableRows ? `<tbody>${tableRows}</tbody>` : ''}</table>`);
+    html.push(`<div class="content-table-scroll" tabindex="0" role="group" aria-label="Table"><table><thead><tr>${header.map(cell => `<th>${renderInlineMarkdown(cell)}</th>`).join('')}</tr></thead>${tableRows ? `<tbody>${tableRows}</tbody>` : ''}</table></div>`);
     return cursor;
   };
 

@@ -1053,11 +1053,29 @@ a, button, select, summary, label, input, textarea,
   border: 0;
   background: var(--line);
 }
-.content-markdown table {
-  width: 100%;
+/* Tables scroll sideways instead of squeezing columns on narrow screens.
+   width: max-content lets the table take its natural width (numbers stay on
+   one line); min-width keeps narrow tables full-bleed; the 200% cap makes
+   prose-heavy cells wrap at word boundaries instead of scrolling for miles
+   (a single unbreakable token can still push past the cap and just scrolls). */
+.content-markdown .content-table-scroll {
   margin: 10px 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.content-markdown .content-table-scroll:focus-visible {
+  outline: 2px solid var(--cyan-border);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.content-markdown table {
+  width: max-content;
+  min-width: 100%;
+  max-width: 200%;
+  margin: 0;
   border-collapse: collapse;
   font-size: 13px;
+  overflow-wrap: break-word;
 }
 .content-markdown th,
 .content-markdown td {

@@ -394,7 +394,8 @@ describe('content-html', () => {
       'Tail',
     ].join('\n'));
     expect(html).toContain('<h3>Result</h3>');
-    expect(html).toContain('<table>');
+    expect(html).toContain('<div class="content-table-scroll" tabindex="0" role="group" aria-label="Table"><table>');
+    expect(html).toContain('</table></div>');
     expect(html).toContain('<th>Area</th>');
     expect(html).toContain('<td><strong>fixed</strong></td>');
     expect(html).toContain('<hr>');
