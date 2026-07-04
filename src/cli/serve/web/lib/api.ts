@@ -147,7 +147,6 @@ export function postSessionDecision(sessionId: string, token: string | undefined
 
 export function postSessionContinue(sessionId: string, token: string | undefined, body: {
   prompt: string;
-  resumeToken: string;
   project?: string;
 }): Promise<{ sessionId: string; status: string }> {
   return postJson(withToken(`/sessions/${encodeURIComponent(sessionId)}/continue`, token), body);

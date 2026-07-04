@@ -433,13 +433,16 @@ export default function SessionDetail() {
   }, [sessionId, token, projectId, submittingDecision]);
 
   const submitContinue = useCallback(async (prompt: string) => {
-    if (submittingContinue || !continueActionable || !currentResumeTokenRef.current) return;
+    // Unlike an approval decision, continuing an ended session needs no resume
+    // token: the /continue endpoint is authorized by the view token (absent on
+    // local daemons) and a completed session never carries a currentResumeToken.
+    // Gating on it here made "Resume session" silently no-op on local daemons.
+    if (submittingContinue || !continueActionable) return;
     setSubmittingContinue(true);
     setResult({ text: '⋮ continuing session…', error: false });
     try {
       const payload = await postSessionContinue(sessionId, token, {
         prompt,
-        resumeToken: currentResumeTokenRef.current,
         ...(projectId ? { project: projectId } : {}),
       });
       setResult({ text: '✓ follow-up recorded — agentuse is continuing the session.', error: false });
