@@ -4109,11 +4109,14 @@ export function createServeCommand(): Command {
               approvalQuery.set('project', found.project.id);
               // Badge the home-screen icon with the total pending count.
               // Counted out-of-band so the runner's callback isn't delayed.
+              // Floor of 1: this push IS a pending approval, so even when the
+              // list query races the announcement (or fails), the badge must
+              // never be omitted or zero.
               void (async () => {
-                let appBadge: number | undefined;
+                let pendingCount = 0;
                 try {
                   const list = await buildApprovalListPayload(new URL(`${serverUrl}/api/approvals`));
-                  if (list.success) appBadge = list.payload.buckets.pending.length;
+                  if (list.success) pendingCount = list.payload.buckets.pending.length;
                 } catch {
                   // Badge is decoration; never block the notification on it.
                 }
@@ -4122,7 +4125,7 @@ export function createServeCommand(): Command {
                   body: prompt ? `${label}: ${prompt.slice(0, 140)}` : label,
                   url: `${effectivePublicUrl}/sessions/${encodeURIComponent(sessionId)}?${approvalQuery.toString()}`,
                   tag: `approval-${sessionId}`,
-                  ...(appBadge !== undefined && appBadge > 0 && { appBadge }),
+                  appBadge: Math.max(1, pendingCount),
                 });
               })();
             }
