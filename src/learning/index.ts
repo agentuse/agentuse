@@ -5,10 +5,13 @@
 
 import ora from 'ora';
 import type { AgentCompleteEvent } from '../plugin/types';
-import type { ApprovalReview, Learning, LearningConfig, LearningOutcome } from './types';
+import type { ApprovalReview, LearningConfig, LearningOutcome, LearningSource } from './types';
 import { evaluateExecution } from './evaluator';
 import { LearningStore } from './store';
 import { logger } from '../utils/logger';
+
+export const LEARNING_APPLY_REQUIRED_MESSAGE =
+  "Cannot remember a learning because this agent does not have learning.apply enabled";
 
 export interface ExtractLearningsOptions {
   event: AgentCompleteEvent;
@@ -88,7 +91,8 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
 function manualLearningTitle(instruction: string): string {
   const firstLine = instruction.split('\n').find(line => line.trim().length > 0)?.trim() ?? '';
   if (!firstLine) return 'Manual rule';
-  return firstLine.length > 80 ? `${firstLine.slice(0, 77).trim()}...` : firstLine;
+  const chars = Array.from(firstLine); // code points, not UTF-16 units
+  return chars.length > 80 ? `${chars.slice(0, 77).join('').trim()}...` : firstLine;
 }
 
 export async function saveManualLearning(options: {
@@ -102,25 +106,19 @@ export async function saveManualLearning(options: {
   }
 
   const store = LearningStore.fromAgentFile(options.agentFilePath, options.config.file);
-  const learning: Learning = {
-    id: Math.random().toString(36).slice(2, 10),
+  const title = manualLearningTitle(instruction);
+  await store.upsertManual({
+    id: '',
     category: 'tip',
-    title: manualLearningTitle(instruction),
+    title,
     instruction,
     confidence: 1,
     appliedCount: 0,
     extractedAt: new Date().toISOString(),
     source: 'manual',
-  };
+  });
 
-  const before = await store.load();
-  await store.add([learning]);
-  const after = await store.load();
-  const captured = after.some(l => l.id === learning.id) && after.length > before.length;
-
-  return captured
-    ? { status: 'captured', source: 'manual', count: 1, titles: [learning.title] }
-    : { status: 'none', source: 'manual', count: 0, titles: [] };
+  return { status: 'captured', source: 'manual', count: 1, titles: [title] };
 }
 
 /**
@@ -130,7 +128,7 @@ export async function saveManualLearning(options: {
  */
 export function describeLearningOutcome(o: {
   status: 'captured' | 'none' | 'failed';
-  source: 'auto' | 'approval' | 'manual';
+  source: LearningSource;
   count: number;
   titles?: string[] | undefined;
   detail?: string | undefined;
@@ -156,6 +154,6 @@ export function describeLearningOutcome(o: {
   };
 }
 
-export { LearningStore, resolveLearningFilePath } from './store';
-export type { ApprovalReview, Learning, LearningConfig, LearningOutcome } from './types';
+export { LearningStore, resolveLearningFilePath, generateLearningId } from './store';
+export type { ApprovalReview, Learning, LearningConfig, LearningOutcome, LearningSource } from './types';
 export { LearningConfigSchema } from './types';

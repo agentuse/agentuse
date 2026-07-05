@@ -147,6 +147,70 @@ Always wait for explicit approval before publishing.
     });
   });
 
+  it("upserts a manual rule by upgrading a similar existing learning instead of dropping it", async () => {
+    const agentFile = join(tempDir, "agent.md");
+    await store.save([
+      {
+        ...baseLearning,
+        id: "auto001",
+        title: "Source links",
+        instruction: "always include source links when publishing reports",
+        source: "auto",
+        confidence: 0.5,
+      },
+    ]);
+
+    const outcome = await saveManualLearning({
+      agentFilePath: agentFile,
+      config: { capture: true, apply: true },
+      instruction: "Always include source links before publishing.",
+    });
+
+    expect(outcome.status).toBe("captured");
+    const loaded = await store.load();
+    expect(loaded).toHaveLength(1); // upgraded in place, not silently dropped or duplicated
+    expect(loaded[0].source).toBe("manual");
+    expect(loaded[0].confidence).toBe(1);
+    expect(loaded[0].instruction).toBe("Always include source links before publishing.");
+  });
+
+  it("upserts a manual rule as a fresh insert when nothing similar exists", async () => {
+    const agentFile = join(tempDir, "agent.md");
+
+    const outcome = await saveManualLearning({
+      agentFilePath: agentFile,
+      config: { capture: true, apply: true },
+      instruction: "Never delete files without an explicit confirmation step.",
+    });
+
+    expect(outcome.status).toBe("captured");
+    const loaded = await store.load();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].source).toBe("manual");
+  });
+
+  it("generates distinct 8-char hex ids for dissimilar manual rules", async () => {
+    const agentFile = join(tempDir, "agent.md");
+
+    await saveManualLearning({
+      agentFilePath: agentFile,
+      config: { capture: true, apply: true },
+      instruction: "Always cite primary sources in the final report.",
+    });
+    await saveManualLearning({
+      agentFilePath: agentFile,
+      config: { capture: true, apply: true },
+      instruction: "Never delete files without an explicit confirmation step.",
+    });
+
+    const loaded = await store.load();
+    expect(loaded).toHaveLength(2);
+    for (const l of loaded) {
+      expect(l.id).toMatch(/^[0-9a-f]{8}$/);
+    }
+    expect(loaded[0].id).not.toBe(loaded[1].id);
+  });
+
   it("injects manual learnings before approval and auto learnings", async () => {
     const agentFile = join(tempDir, "agent.md");
     await store.save([
@@ -158,7 +222,7 @@ Always wait for explicit approval before publishing.
     const result = await buildLearningPrompt({
       name: "agent",
       instructions: "Do work.",
-      config: { model: "demo:test", learning: { capture: true, apply: true } },
+      config: { model: "demo:test", skills: { auto: false, trusted: false, explicit: {} }, learning: { capture: true, apply: true } },
     }, agentFile);
 
     const prompt = result?.prompt ?? "";

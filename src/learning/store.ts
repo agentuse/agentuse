@@ -1,7 +1,39 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname, resolve, basename } from 'path';
+import { randomUUID } from 'crypto';
 import type { Learning, LearningCategory, LearningSource } from './types';
+
+// Serialize read-modify-write sequences on the same learnings file so two
+// concurrent saves (e.g. two serve approval decisions on the same agent) can't
+// clobber each other. Intra-process only; cross-process races remain rare.
+const fileLocks = new Map<string, Promise<unknown>>();
+async function withFileLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = fileLocks.get(key) ?? Promise.resolve();
+  const run = prev.then(fn, fn); // run fn once, after prev settles either way
+  fileLocks.set(key, run.then(() => {}, () => {}));
+  return run;
+}
+
+/** Collision-checked 8-char hex id (randomUUID is always long enough, unlike
+ *  Math.random().toString(36) which can yield 1-char ids like from 0.5). */
+export function generateLearningId(existing: Iterable<string> = []): string {
+  const taken = new Set(existing);
+  let id = randomUUID().replace(/-/g, '').slice(0, 8);
+  while (taken.has(id)) id = randomUUID().replace(/-/g, '').slice(0, 8);
+  return id;
+}
+
+/** Local-timezone YYYY-MM-DD (new Date().toISOString().slice(0,10) drifts to
+ *  UTC, showing the wrong calendar day for non-UTC reviewers). */
+function toLocalDate(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso.slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 /**
  * Resolve learning file path
@@ -51,30 +83,71 @@ export class LearningStore {
   }
 
   async add(newLearnings: Learning[]): Promise<void> {
-    const existing = await this.load();
-
-    // Dedupe by similar instruction
-    const toAdd = newLearnings.filter(n =>
-      !existing.some(e => this.similar(e.instruction, n.instruction))
-    );
-
-    if (toAdd.length > 0) {
+    await withFileLock(this.filePath, async () => {
+      const existing = await this.load();
+      const toAdd = newLearnings.filter(n =>
+        !existing.some(e => this.similar(e.instruction, n.instruction))
+      );
+      if (toAdd.length === 0) return;
+      const taken = new Set(existing.map(l => l.id).filter(Boolean));
+      for (const l of toAdd) {
+        if (!l.id || l.id.length < 4 || taken.has(l.id)) l.id = generateLearningId(taken);
+        taken.add(l.id);
+      }
       await this.save([...existing, ...toAdd]);
-    }
+    });
+  }
+
+  /**
+   * Persist an explicit manual rule. Unlike add(), this never silently drops on a
+   * similarity match: an existing similar learning is upgraded in place to a
+   * manual, confidence-1 rule (the reviewer's wording wins) while keeping its id
+   * and appliedCount; otherwise the rule is inserted with a fresh id. Single
+   * load+save under the file lock.
+   * @returns whether an existing learning was upgraded (vs. a new one inserted)
+   */
+  async upsertManual(draft: Learning): Promise<{ upgraded: boolean }> {
+    return withFileLock(this.filePath, async () => {
+      const existing = await this.load();
+      const idx = existing.findIndex(e => this.similar(e.instruction, draft.instruction));
+      if (idx >= 0) {
+        const prior = existing[idx];
+        existing[idx] = {
+          ...prior,
+          category: draft.category,
+          title: draft.title,
+          instruction: draft.instruction,
+          source: 'manual',
+          confidence: 1,
+          extractedAt: draft.extractedAt,
+          // keep prior.id and prior.appliedCount
+        };
+        await this.save(existing);
+        return { upgraded: true };
+      }
+      const taken = new Set(existing.map(l => l.id).filter(Boolean));
+      const id = draft.id && draft.id.length >= 4 && !taken.has(draft.id)
+        ? draft.id
+        : generateLearningId(taken);
+      await this.save([...existing, { ...draft, id }]);
+      return { upgraded: false };
+    });
   }
 
   async incrementApplied(ids: string[]): Promise<void> {
-    const learnings = await this.load();
-    let changed = false;
-    for (const l of learnings) {
-      if (ids.includes(l.id)) {
-        l.appliedCount++;
-        changed = true;
+    await withFileLock(this.filePath, async () => {
+      const learnings = await this.load();
+      let changed = false;
+      for (const l of learnings) {
+        if (ids.includes(l.id)) {
+          l.appliedCount++;
+          changed = true;
+        }
       }
-    }
-    if (changed) {
-      await this.save(learnings);
-    }
+      if (changed) {
+        await this.save(learnings);
+      }
+    });
   }
 
   private similar(a: string, b: string): boolean {
@@ -139,7 +212,7 @@ export class LearningStore {
 
     for (const l of learnings) {
       md += `### [${l.category}] ${l.title}\n`;
-      md += `<!-- id:${l.id} | confidence:${l.confidence.toFixed(2)} | applied:${l.appliedCount} | src:${l.source} | ${l.extractedAt.slice(0, 10)} -->\n`;
+      md += `<!-- id:${l.id} | confidence:${l.confidence.toFixed(2)} | applied:${l.appliedCount} | src:${l.source} | ${toLocalDate(l.extractedAt)} -->\n`;
       md += `${l.instruction}\n\n`;
     }
     return md.trim() + '\n';

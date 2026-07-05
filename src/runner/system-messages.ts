@@ -6,7 +6,7 @@ import { parseScheduleExpression, formatScheduleHuman } from '../scheduler/parse
 import { parseAgent, type ParsedAgent } from '../parser';
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
 import { logger } from '../utils/logger';
-import { LearningStore } from '../learning/index.js';
+import { LearningStore, type LearningSource } from '../learning/index.js';
 import { addAnthropicIdentity, isAnthropicModel } from '../utils/anthropic';
 
 /**
@@ -213,7 +213,7 @@ export async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: str
     const maxLearnings = 10; // Prevent context bloat
     // Explicit manual rules outrank approval-promoted and auto-extracted ones,
     // then by confidence, so the highest-signal rules survive the cap.
-    const sourceRank = (source: 'auto' | 'approval' | 'manual') =>
+    const sourceRank = (source: LearningSource) =>
       source === 'manual' ? 0 : source === 'approval' ? 1 : 2;
     const ranked = [...learnings].sort((a, b) => {
       const rankDelta = sourceRank(a.source) - sourceRank(b.source);

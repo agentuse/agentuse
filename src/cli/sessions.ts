@@ -12,7 +12,7 @@ import { logger, LogLevel } from "../utils/logger";
 import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
 import { applyResumeToolResult, restoreResumeToolResult, runAgent, describeErrorPart } from "../runner";
-import { describeLearningOutcome, saveManualLearning } from "../learning";
+import { describeLearningOutcome, saveManualLearning, LEARNING_APPLY_REQUIRED_MESSAGE, type LearningSource, type LearningConfig } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
 
 interface SessionSummary {
@@ -1080,7 +1080,7 @@ async function showSession(
             const l = part as Part & {
               type: "learning";
               status: "captured" | "none" | "failed";
-              source: "auto" | "approval" | "manual";
+              source: LearningSource;
               count: number;
               titles?: string[];
               detail?: string;
@@ -1289,7 +1289,7 @@ async function resumeSession(
   if (!found.session.agent.filePath) {
     throw new Error(`Session ${summary.id} does not record an agent file path`);
   }
-  if (options.remember !== undefined && options.comment === undefined) {
+  if (options.remember !== undefined && (options.comment === undefined || options.comment.trim() === "")) {
     throw new Error("--remember requires --comment");
   }
 
@@ -1351,6 +1351,8 @@ async function resumeSession(
       throw new Error(`Session ${summary.id} is waiting on ${pending.part.tool}. Use --tool-result <json>.`);
     }
 
+    let rememberTarget: { agentFilePath: string; config: LearningConfig; instruction: string } | undefined;
+    let rememberAgent: Awaited<ReturnType<typeof parseAgent>> | undefined;
     if (options.remember !== undefined) {
       const remember = options.remember.trim();
       if (!remember) {
@@ -1359,15 +1361,15 @@ async function resumeSession(
       if (pendingKind !== "await_human" && pending.part.tool !== "await_human") {
         throw new Error("--remember only applies to approval comments");
       }
-      const agent = await parseAgent(found.session.agent.filePath);
-      if (!agent.config.learning?.apply) {
-        throw new Error("Cannot remember a learning because this agent does not have learning.apply enabled");
+      rememberAgent = await parseAgent(found.session.agent.filePath);
+      if (!rememberAgent.config.learning?.apply) {
+        throw new Error(LEARNING_APPLY_REQUIRED_MESSAGE);
       }
-      await saveManualLearning({
+      rememberTarget = {
         agentFilePath: found.session.agent.filePath,
-        config: agent.config.learning,
+        config: rememberAgent.config.learning,
         instruction: remember,
-      });
+      };
     }
 
     const resumed = await applyResumeToolResult({
@@ -1378,7 +1380,9 @@ async function resumeSession(
     });
     try {
       const agentPath = resumed.agentFilePath ?? found.session.agent.filePath;
-      const agent = await parseAgent(agentPath);
+      const agent = (rememberAgent && agentPath === found.session.agent.filePath)
+        ? rememberAgent
+        : await parseAgent(agentPath);
       const mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, path.dirname(agentPath));
 
       const result = await runAgent(
@@ -1418,6 +1422,16 @@ async function resumeSession(
         logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
       });
       throw err;
+    }
+
+    // Resume + run succeeded above; persist the optional manual rule now so a
+    // learnings-file write can't roll back an already-completed decision.
+    if (rememberTarget) {
+      try {
+        await saveManualLearning(rememberTarget);
+      } catch (persistErr) {
+        logger.warn(`Failed to save remembered learning: ${(persistErr as Error).message}`);
+      }
     }
     return;
   }
