@@ -421,6 +421,22 @@ export default function SessionDetail() {
   const reopenActionable = ended && approval?.sessionStatus === 'error'
     && Boolean(approval?.reopenable) && !live && !submittingReopen && !fatalError;
 
+  // Surface the actionable gate as the LAST card in the feed. Normally the pending
+  // await_human entry is already last, so this is a no-op. But after a reopen —
+  // which re-arms an earlier gate in place while the failed resume's later work
+  // stays logged below it — the gate and its Approve/Reject/Comment buttons would
+  // otherwise be buried mid-stream. Move it to the end so the reviewer finds the
+  // request where they look (and where auto-scroll lands): the bottom of the feed.
+  const feedLogs = useMemo(() => {
+    if (!actionable) return visibleLogs;
+    const activeToken = currentResumeTokenRef.current;
+    const idx = visibleLogs.findIndex((e) =>
+      e.status === 'pending' && Boolean(e.details)
+      && (!activeToken || e.details?.resumeToken === activeToken));
+    if (idx < 0 || idx === visibleLogs.length - 1) return visibleLogs;
+    return [...visibleLogs.slice(0, idx), ...visibleLogs.slice(idx + 1), visibleLogs[idx]];
+  }, [visibleLogs, actionable]);
+
   useEffect(() => {
     if (continueActionable) setSubmittingContinue(false);
     else setShowResume(false);
@@ -752,7 +768,7 @@ export default function SessionDetail() {
                   : `${debugCount} debug ${debugCount === 1 ? 'entry' : 'entries'} hidden. Enable the debug toggle to view.`}
               </li>
             )}
-            {visibleLogs.map((entry) => (
+            {feedLogs.map((entry) => (
               <LogEntry
                 key={entry.id}
                 entry={entry}
