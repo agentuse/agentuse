@@ -1384,9 +1384,6 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
   height: 14px;
   accent-color: var(--cyan);
 }
-.remember-rule {
-  min-height: 72px;
-}
 .remember-hint {
   margin: 0;
   color: var(--muted);

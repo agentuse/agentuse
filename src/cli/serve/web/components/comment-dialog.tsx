@@ -40,7 +40,6 @@ export function DecisionDialog(props: {
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const rememberRef = useRef<HTMLTextAreaElement>(null);
   const [rememberChecked, setRememberChecked] = useState(false);
   const copy = COPY[props.mode];
 
@@ -49,7 +48,6 @@ export function DecisionDialog(props: {
     if (!dialog) return;
     if (props.open && !dialog.open) {
       if (inputRef.current) inputRef.current.value = '';
-      if (rememberRef.current) rememberRef.current.value = '';
       setRememberChecked(false);
       if (typeof dialog.showModal === 'function') dialog.showModal();
       else dialog.setAttribute('open', '');
@@ -66,13 +64,11 @@ export function DecisionDialog(props: {
       inputRef.current?.focus();
       return;
     }
-    const remember = rememberChecked ? (rememberRef.current?.value ?? '').trim() : '';
-    if (rememberChecked && !remember) {
-      rememberRef.current?.focus();
-      return;
-    }
+    // Ticking the box saves the comment itself as a durable instruction; the
+    // server distills it into a grounded instruction. No separate field — comment
+    // mode already requires text, so a checked box always has a comment.
+    const remember = rememberChecked ? text : '';
     if (inputRef.current) inputRef.current.value = '';
-    if (rememberRef.current) rememberRef.current.value = '';
     setRememberChecked(false);
     props.onSubmit({
       ...(text && { comment: text }),
@@ -118,22 +114,8 @@ export function DecisionDialog(props: {
                   checked={rememberChecked}
                   onChange={(event) => setRememberChecked((event.currentTarget as HTMLInputElement).checked)}
                 />
-                <span>Remember this as a future instruction</span>
+                <span>Remember this comment as a future instruction</span>
               </label>
-              {rememberChecked && (
-                <textarea
-                  id="remember-learning-rule"
-                  ref={rememberRef}
-                  class="remember-rule"
-                  placeholder="write the instruction the agent should follow next time"
-                  onKeyDown={(event) => {
-                    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                      event.preventDefault();
-                      submit();
-                    }
-                  }}
-                />
-              )}
               {rememberChecked && !props.rememberApplies && (
                 <p class="remember-hint">
                   Saved as an instruction for this agent. It takes effect on future runs once <code>learning.apply</code> is enabled.
