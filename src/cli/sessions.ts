@@ -647,7 +647,7 @@ export function createSessionsCommand(): Command {
     .option("--approve [comment]", "Approve a suspended approval request")
     .option("--reject [comment]", "Reject a suspended approval request with an optional comment")
     .option("--comment <comment>", "Send a reviewer comment to a suspended approval request")
-    .option("--remember <rule>", "Save a future learning rule while sending --comment")
+    .option("--remember [instruction]", "Also save the comment (or a given instruction) as a future instruction")
     .option("--tool-result <json>", "JSON result for a suspended non-approval await_* tool")
     .option("--prompt <text>", "Instruction for continuing an ended session")
     .option("--project [path]", "Search a project path; defaults to the current project")
@@ -658,7 +658,7 @@ export function createSessionsCommand(): Command {
       approve?: string | boolean;
       reject?: string | boolean;
       comment?: string;
-      remember?: string;
+      remember?: string | boolean;
       toolResult?: string;
       prompt?: string;
       project?: string | boolean;
@@ -1250,7 +1250,7 @@ async function resumeSession(
     approve?: string | boolean;
     reject?: string | boolean;
     comment?: string;
-    remember?: string;
+    remember?: string | boolean;
     toolResult?: string;
     prompt?: string;
     project?: string | boolean;
@@ -1354,9 +1354,11 @@ async function resumeSession(
     let rememberTarget: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined } | undefined;
     let rememberAgent: Awaited<ReturnType<typeof parseAgent>> | undefined;
     if (options.remember !== undefined) {
-      const remember = options.remember.trim();
+      // Bare --remember defaults to the comment text (mirrors the web checkbox
+      // reusing the comment); an explicit value overrides it.
+      const remember = (typeof options.remember === 'string' ? options.remember : (options.comment ?? '')).trim();
       if (!remember) {
-        throw new Error("--remember must not be empty");
+        throw new Error("--remember must not be empty (pass a value, or a non-empty --comment)");
       }
       if (pendingKind !== "await_human" && pending.part.tool !== "await_human") {
         throw new Error("--remember only applies to approval comments");

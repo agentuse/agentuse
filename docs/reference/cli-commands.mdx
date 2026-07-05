@@ -312,12 +312,13 @@ agentuse sessions resume 01K... --approve
 agentuse sessions resume 01K... --approve "Looks good"
 agentuse sessions resume 01K... --reject "Not ready"
 agentuse sessions resume 01K... --comment "Please revise the CTA"
+agentuse sessions resume 01K... --comment "Keep intros factual, not salesy" --remember
 agentuse sessions resume 01K... --comment "Please revise with citations" --remember "Always include source links before publishing."
 ```
 
 The CLI uses local session access as the trust boundary, so approval resumes do not require a resume token.
 
-`--remember` saves a separate future learning rule and requires `--comment` (a non-empty one). Passing `--remember` is itself the opt-in, so saving needs no `learning` config on the agent. The comment is still the feedback for this revision; the remembered rule is stored as `src:manual` and is injected into future runs once the agent has `learning.apply` enabled.
+`--remember` saves the comment as a future instruction, and requires `--comment` (a non-empty one). Bare `--remember` reuses the comment text; passing a value (`--remember "..."`) overrides it. Passing `--remember` is itself the opt-in, so saving needs no `learning` config on the agent. The comment is still the feedback for this revision; the instruction is distilled from it, stored as `src:manual`, and injected into future runs once the agent has `learning.apply` enabled.
 
 For a suspended non-approval `await_*` tool:
 
