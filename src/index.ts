@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
-import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, reopenSuspendedGate, describeErrorPart, describeLogPart, type PreparedAgentExecution } from './runner';
+import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, reopenSuspendedGate, reconcileOrphanedSessions, describeErrorPart, describeLogPart, type PreparedAgentExecution } from './runner';
 import { describeLearningOutcome } from './learning';
 import { isApprovalEnabled } from './runner/approval';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
@@ -916,7 +916,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'sweep-expired' | 'list-approvals' | 'list-sessions' | 'stop-session' | 'reopen-gate';
+    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'stop-session' | 'reopen-gate';
     agentPath?: string;
     projectRoot: string;
     prompt?: string;
@@ -933,6 +933,9 @@ async function runInternalWorker() {
     approvalCreatedAfter?: number;
     sessionsCreatedAfter?: number;
     includeSubagents?: boolean;
+    /** reconcile-orphans: only sessions last touched before this timestamp (the
+     *  reconciling worker's ready time) are treated as orphans of a dead worker. */
+    reconcileCutoff?: number;
     // Trusted, server-set only: when the serve process has already authorized
     // the viewer (session token / api key / local), it asks for full approval
     // info regardless of the gate resumeToken. Never derived from client input.
@@ -2229,6 +2232,27 @@ async function runInternalWorker() {
     }
   }
 
+  // Thin IPC shell over reconcileOrphanedSessions (see runner/resume.ts): recover
+  // sessions a dead worker left stuck 'running' with no live process. Invoked when
+  // this worker (re)spawns; cutoff is the ready time so only pre-existing orphans
+  // are flipped to WORKER_INTERRUPTED, making the reopen path reachable.
+  async function reconcileOrphanSessions(req: ExecuteRequest) {
+    try {
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const cutoff = typeof req.reconcileCutoff === 'number' ? req.reconcileCutoff : Date.now();
+      const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff });
+      if (reconciled.length > 0) invalidateListCaches(req.projectRoot);
+      return { id: req.id, success: true as const, reconciled };
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false as const,
+        error: { code: 'RECONCILE_ERROR', message: (err as Error).message }
+      };
+    }
+  }
+
   function approvalPartCreatedAt(state: any, session: SessionInfo): number {
     const suspendedAt = typeof state?.suspendedAt === 'number' ? state.suspendedAt : undefined;
     const startedAt = typeof state?.time?.start === 'number' ? state.time.start : undefined;
@@ -3042,6 +3066,10 @@ async function runInternalWorker() {
         });
       } else if (request.type === 'sweep-expired') {
         sweepExpiredApprovals(request).then((response) => {
+          console.log(JSON.stringify(response));
+        });
+      } else if (request.type === 'reconcile-orphans') {
+        reconcileOrphanSessions(request).then((response) => {
           console.log(JSON.stringify(response));
         });
       } else if (request.type === 'list-approvals') {

@@ -188,3 +188,47 @@ export async function reopenSuspendedGate(options: {
 
   return { ok: true, agentId: found.agentId };
 }
+
+export interface ReconciledOrphan {
+  sessionId: string;
+  agentId: string;
+  agentName: string;
+}
+
+/**
+ * Recover sessions a dead worker left stuck as 'running' with no live process.
+ *
+ * A hard kill (daemon restart or crash — SIGINT/SIGTERM/SIGKILL) terminates the
+ * worker child without running any JS, so the run's own terminal-status write
+ * (and the resume preflight rollback) never fires and the session lies 'running'
+ * forever. In that state every recovery lever refuses it: reopenSuspendedGate,
+ * `sessions resume`, and the reopen endpoint all guard against 'running'.
+ *
+ * Call this the moment a project's worker (re)spawns. There is one worker per
+ * project, so a freshly (re)spawned worker owns no executions yet: any 'running'
+ * session last touched BEFORE it became ready (`time.updated < cutoff`) is
+ * provably orphaned by the worker that died. Flip each to a terminal
+ * WORKER_INTERRUPTED error so reopenSuspendedGate becomes reachable. It never
+ * auto-replays the run — a mutation agent could double-fire an external side
+ * effect — so recovery stays an explicit, human-reviewed reopen.
+ */
+export async function reconcileOrphanedSessions(options: {
+  sessionManager: SessionManager;
+  cutoff: number;
+  lookbackMs?: number;
+}): Promise<ReconciledOrphan[]> {
+  const { sessionManager, cutoff } = options;
+  const lookbackMs = options.lookbackMs ?? 30 * 24 * 60 * 60 * 1000;
+  const sessions = await sessionManager.listSessionsCreatedAfter(Date.now() - lookbackMs, { includeSubagents: true });
+  const reconciled: ReconciledOrphan[] = [];
+  for (const { session, agentId } of sessions) {
+    if (session.status !== 'running') continue;
+    if (session.time.updated >= cutoff) continue; // owned by the current live worker
+    await sessionManager.setSessionError(session.id, agentId, {
+      code: 'WORKER_INTERRUPTED',
+      message: 'Run was interrupted when its serve worker restarted, leaving no live process. If it was waiting on approval, reopen the gate to retry.'
+    }).catch(() => {});
+    reconciled.push({ sessionId: session.id, agentId, agentName: session.agent.name || session.agent.id });
+  }
+  return reconciled;
+}

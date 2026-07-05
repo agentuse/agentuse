@@ -64,6 +64,10 @@ export interface SessionInfo {
   //   - CONFIG_ERROR: Agent configuration error
   //   - TIMEOUT: Agent execution timed out
   //   - USER_INTERRUPT: User interrupted execution (Ctrl+C or SIGTERM)
+  //   - WORKER_INTERRUPTED: serve worker died mid-run/mid-resume (daemon restart or
+  //                         crash), leaving the session stuck 'running' with no live
+  //                         process; reconciled on the next worker (re)spawn so the
+  //                         reopen-gate recovery path becomes reachable
   //   - EXECUTION_ERROR: General execution error
   error?: {
     message: string;

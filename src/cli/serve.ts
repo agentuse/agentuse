@@ -291,6 +291,11 @@ interface WorkerReopenGateResult {
   agentId: string;
 }
 
+interface WorkerReconcileResult {
+  success: true;
+  reconciled: Array<{ sessionId: string; agentId: string; agentName: string }>;
+}
+
 interface ApprovalPageInfo {
   sessionId: string;
   sessionStatus: string;
@@ -418,6 +423,10 @@ class AgentWorker {
   private shuttingDown = false;
   private respawnTimer: NodeJS.Timeout | null = null;
   private respawnAttempts = 0;
+  /** Invoked whenever the worker becomes ready — the initial spawn AND every
+   *  respawn — with the ready timestamp. serve uses it to reconcile sessions the
+   *  dead worker left stuck as 'running'. Must never throw. */
+  onReady?: (readyAt: number) => void;
 
   constructor(private envOverrides: NodeJS.ProcessEnv = {}) {}
 
@@ -455,6 +464,9 @@ class AgentWorker {
         clearTimeout(startupTimeout);
         this.readyReject = null;
         originalResolve?.();
+        // Fire after resolve so a reconciliation kicked off here can't wedge the
+        // spawn promise. onReady must never throw, but guard anyway.
+        try { this.onReady?.(Date.now()); } catch {/* ignore */}
       };
     });
 
@@ -681,6 +693,15 @@ class AgentWorker {
     }) as Promise<WorkerSweepExpiredResult | WorkerExecuteError>;
   }
 
+  reconcileOrphans(projectRoot: string, cutoff: number): Promise<WorkerReconcileResult | WorkerExecuteError> {
+    return this.request({
+      type: "reconcile-orphans",
+      projectRoot,
+      reconcileCutoff: cutoff,
+      timeout: 30,
+    }) as Promise<WorkerReconcileResult | WorkerExecuteError>;
+  }
+
   listApprovals(
     projectRoot: string,
     options: { createdAfter?: number } = {}
@@ -812,6 +833,10 @@ class RequestBodyTooLargeError extends Error {
 
 const MAX_JSON_BODY_BYTES = 1_000_000;
 const LOGGED_APPROVAL_REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
+// How long shutdown waits for in-flight approval resumes / session continuations
+// to settle before killing workers, so a graceful restart mid-resume finishes (or
+// rolls back) cleanly instead of orphaning the session as a stuck 'running'.
+const SHUTDOWN_DRAIN_MS = 8_000;
 
 function shouldLogApprovalRequest(logged: Map<string, number>, key: string, now = Date.now()): boolean {
   for (const [existingKey, loggedAt] of logged) {
@@ -1818,6 +1843,17 @@ export function createServeCommand(): Command {
       // .env / .env.local on each execute request, so per-project env stays
       // isolated from the parent process and from sibling projects.
       const workers = new Map<string, AgentWorker>();
+      // Recover sessions a dead worker left stuck 'running' with no live process.
+      // cutoff = the reconciling worker's ready time, so only sessions last touched
+      // before this worker existed (provably orphaned) are flipped; work this live
+      // worker owns is newer and untouched. Best-effort; never blocks startup.
+      const reconcileWorkerOrphans = (worker: AgentWorker, projectId: string, projectRoot: string, readyAt: number): void => {
+        void worker.reconcileOrphans(projectRoot, readyAt).then((r) => {
+          if (r.success && r.reconciled.length > 0) {
+            logger.warn(`Recovered ${r.reconciled.length} interrupted session(s) in ${projectId} (stuck 'running' after a worker restart)`);
+          }
+        }).catch(() => {/* best-effort recovery */});
+      };
       for (const p of projectSeeds) {
         const w = new AgentWorker({
           AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
@@ -1831,6 +1867,9 @@ export function createServeCommand(): Command {
           process.exit(1);
         }
         workers.set(p.id, w);
+        // Sweep once for this fresh startup worker, and again on every respawn.
+        reconcileWorkerOrphans(w, p.id, p.root, Date.now());
+        w.onReady = (readyAt) => reconcileWorkerOrphans(w, p.id, p.root, readyAt);
       }
       logger.debug(`Spawned ${workers.size} agent worker(s)`);
 
@@ -4860,6 +4899,19 @@ export function createServeCommand(): Command {
         }
         if (slackApprovalSocket) {
           await slackApprovalSocket.stop().catch(() => {/* ignore */});
+        }
+        // Give in-flight approval resumes / continuations a bounded window to
+        // finish (or roll back) inside the still-alive worker before we kill it.
+        // A resume killed mid-flight is exactly what strands a session as a stuck
+        // 'running'; the startup reconciliation sweep is the backstop for whatever
+        // this window (or a raw SIGINT delivered straight to the child) misses.
+        const inflight = [...activeApprovalResumes.values(), ...activeSessionContinuations.values()];
+        if (inflight.length > 0) {
+          logger.info(`Draining ${inflight.length} in-flight resume/continuation(s) before shutdown (up to ${SHUTDOWN_DRAIN_MS}ms)...`);
+          await Promise.race([
+            Promise.allSettled(inflight),
+            new Promise<void>((resolve) => { const t = setTimeout(resolve, SHUTDOWN_DRAIN_MS); t.unref?.(); }),
+          ]);
         }
         for (const w of workers.values()) w.shutdown();
         for (const fw of fileWatchers) fw.close().catch(() => {/* ignore */});
