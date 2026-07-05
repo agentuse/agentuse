@@ -883,6 +883,35 @@ function parseJSONBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   });
 }
 
+// Compact transcript of what the agent did in a run — its text output, tool
+// calls (name + truncated input/output), and any reviewed draft — pulled from
+// the session log the daemon already holds in-process. Used to ground a manual
+// instruction in the run the reviewer was looking at.
+function buildRunTranscript(logs: ApprovalLogEntry[] | undefined, maxChars = 6000): string {
+  if (!logs || logs.length === 0) return '';
+  const clip = (s: string | undefined, n: number): string => {
+    if (!s) return '';
+    const t = s.trim();
+    return t.length > n ? t.slice(0, n) + '…' : t;
+  };
+  const lines: string[] = [];
+  for (const e of logs) {
+    if (e.type === 'text' && e.message?.trim()) {
+      lines.push(`Agent output:\n${e.message.trim()}`);
+    } else if (e.type === 'tool') {
+      const io = [
+        e.details?.input ? `input ${clip(e.details.input, 300)}` : '',
+        e.details?.output ? `output ${clip(e.details.output, 500)}` : '',
+      ].filter(Boolean).join(' → ');
+      lines.push(`Tool ${e.tool ?? e.title}${io ? `: ${io}` : ''}`);
+    } else if (e.details?.draft?.trim()) {
+      lines.push(`Reviewed work:\n${clip(e.details.draft, 1500)}`);
+    }
+  }
+  const out = lines.join('\n\n');
+  return out.length > maxChars ? out.slice(0, maxChars) + '\n…(truncated)' : out;
+}
+
 function sendJSON(res: ServerResponse, status: number, data: unknown) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
@@ -2293,7 +2322,7 @@ export function createServeCommand(): Command {
       const resolveRememberedLearning = async (
         info: WorkerApprovalInfoResult,
         remember?: string,
-      ): Promise<{ agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined } | null> => {
+      ): Promise<{ agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined } | null> => {
         const instruction = remember?.trim();
         if (!instruction) return null;
         const targetAgent = info.approval.originAgent ?? info.approval.agent;
@@ -2301,18 +2330,18 @@ export function createServeCommand(): Command {
           throw new Error("Cannot remember a learning because this approval does not record an agent file path");
         }
         // A manual "remember" is the reviewer's explicit opt-in, so it does not
-        // require learning.apply — the rule is stored regardless. Whether it is
-        // injected into future runs is still governed by learning.apply. Parse
-        // the agent to honor a custom learning.file path and to distill the note
-        // via the agent's model.
+        // require learning.apply — the instruction is stored regardless. Whether
+        // it is injected into future runs is still governed by learning.apply.
+        // Parse the agent to honor a custom learning.file path and to ground the
+        // note (via the agent's model + instructions + the work at the gate).
         const agent = await parseAgent(targetAgent.filePath);
-        return { agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions };
+        return { agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(info.approval.logs) };
       };
 
-      // Persist a resolved manual rule best-effort: a learnings-file write
+      // Persist a resolved manual instruction best-effort: a learnings-file write
       // failure is logged and never aborts the (already kicked-off) resume.
       const persistRememberedLearning = (
-        target: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined } | null,
+        target: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined } | null,
       ): void => {
         if (!target) return;
         void saveManualLearning(target).catch((err) => {
@@ -3962,7 +3991,7 @@ export function createServeCommand(): Command {
               return;
             }
             const agent = await parseAgent(targetAgent.filePath);
-            await saveManualLearning({ agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions });
+            await saveManualLearning({ agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(found.info.approval.logs) });
             const store = LearningStore.fromAgentFile(targetAgent.filePath, agent.config.learning?.file);
             sendJSON(res, 200, await learningListPayload(store));
           } catch (err) {

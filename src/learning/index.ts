@@ -98,26 +98,37 @@ export async function saveManualLearning(options: {
    *  is a human opt-in, so saving it needs no learning config. */
   config?: LearningConfig | undefined;
   instruction: string;
-  /** Agent model used to distill the note into a clean, general rule. Omit to
-   *  store the note verbatim. */
+  /** Agent model used to distill the note into a grounded additional
+   *  instruction. Omit to store the note verbatim. */
   model?: string | undefined;
-  /** Agent instructions passed to the refine pass as context (optional). */
+  /** Agent instructions — the note becomes an extension of these. */
   agentInstructions?: string | undefined;
+  /** A compact transcript of what the agent did this run (its output + tool
+   *  calls), so the instruction is grounded in the run the reviewer saw. */
+  sessionTranscript?: string | undefined;
 }): Promise<LearningOutcome> {
   const raw = options.instruction.trim();
   if (!raw) {
     return { status: 'none', source: 'manual', count: 0, titles: [] };
   }
 
-  // Distill the reviewer's note into a clean, general rule. Any model or parse
-  // failure falls back to storing the note verbatim — an explicit human rule
-  // must never be dropped because a helper LLM call hiccuped.
+  const store = LearningStore.fromAgentFile(options.agentFilePath, options.config?.file);
+
+  // Turn the note into a grounded additional instruction, using the agent's own
+  // instructions + what it did this run + the already-saved instructions. Any
+  // model or parse failure falls back to storing the note verbatim — an explicit
+  // human instruction must never be dropped because a helper LLM call hiccuped.
   let category: LearningCategory = 'tip';
   let title = manualLearningTitle(raw);
   let instruction = raw;
   if (options.model) {
     try {
-      const refined = await refineManualLearning(raw, options.model, options.agentInstructions);
+      const existing = await store.load();
+      const refined = await refineManualLearning(raw, options.model, {
+        agentInstructions: options.agentInstructions,
+        sessionTranscript: options.sessionTranscript,
+        existingInstructions: existing.map((l) => l.instruction),
+      });
       if (refined) {
         category = refined.category;
         title = manualLearningTitle(refined.title);
@@ -128,7 +139,6 @@ export async function saveManualLearning(options: {
     }
   }
 
-  const store = LearningStore.fromAgentFile(options.agentFilePath, options.config?.file);
   await store.upsertManual({
     id: '',
     category,

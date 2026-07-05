@@ -90,11 +90,11 @@ export function LearningsPanel(props: {
 
   return (
     <div class="learnings-panel">
-      <div class="learnings-label">learnings for this agent</div>
+      <div class="learnings-label">learned instructions</div>
       {error && <p class="learnings-error">{error}</p>}
       {learnings === null && !error && <p class="learnings-empty">Loading…</p>}
       {learnings !== null && items.length === 0 && (
-        <p class="learnings-empty">No learnings yet — add a rule to teach this agent for next time.</p>
+        <p class="learnings-empty">No instructions yet — add one to steer future runs.</p>
       )}
       {grouped.map((g) => (
         <div class="learnings-group" key={g.source}>
@@ -106,7 +106,7 @@ export function LearningsPanel(props: {
                 <button
                   type="button"
                   class="learnings-discard"
-                  aria-label="Discard this learning"
+                  aria-label="Discard this instruction"
                   title="Discard"
                   disabled={busyId === l.id}
                   onClick={() => void discard(l.id)}
@@ -122,7 +122,7 @@ export function LearningsPanel(props: {
         <textarea
           ref={inputRef}
           class="learnings-add-input"
-          placeholder="teach one more rule the agent should follow next time…"
+          placeholder="add an instruction for future runs…"
           disabled={adding}
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
@@ -132,7 +132,7 @@ export function LearningsPanel(props: {
           }}
         />
         <button type="button" class="primary" disabled={adding} onClick={() => void add()}>
-          Add rule
+          Add instruction
         </button>
       </div>
     </div>

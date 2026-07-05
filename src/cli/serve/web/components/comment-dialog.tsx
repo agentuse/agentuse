@@ -118,14 +118,14 @@ export function DecisionDialog(props: {
                   checked={rememberChecked}
                   onChange={(event) => setRememberChecked((event.currentTarget as HTMLInputElement).checked)}
                 />
-                <span>Remember this as a future rule</span>
+                <span>Remember this as a future instruction</span>
               </label>
               {rememberChecked && (
                 <textarea
                   id="remember-learning-rule"
                   ref={rememberRef}
                   class="remember-rule"
-                  placeholder="write the rule the agent should follow next time"
+                  placeholder="write the instruction the agent should follow next time"
                   onKeyDown={(event) => {
                     if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                       event.preventDefault();
@@ -136,7 +136,7 @@ export function DecisionDialog(props: {
               )}
               {rememberChecked && !props.rememberApplies && (
                 <p class="remember-hint">
-                  Saved to this agent’s learnings. It takes effect on future runs once <code>learning.apply</code> is enabled.
+                  Saved as an instruction for this agent. It takes effect on future runs once <code>learning.apply</code> is enabled.
                 </p>
               )}
             </div>

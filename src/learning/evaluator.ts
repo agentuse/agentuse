@@ -47,45 +47,61 @@ interface RawLearning {
 const LEARNING_CATEGORIES: LearningCategory[] = ['tip', 'warning', 'pattern', 'tool-usage', 'error-fix'];
 
 /**
- * Distill a human-written "remember this" note into ONE clean, general rule.
+ * Turn a human "remember this" note into ONE additional instruction to append to
+ * the agent's own instructions — the same thing a learning already is when
+ * {@link buildLearningPrompt} injects it under "## Learned Guidelines".
  *
- * Unlike {@link evaluateExecution}, this never JUDGES whether to keep the note —
- * the human explicitly asked to remember it — it only rewrites it into a
- * reusable instruction (fix grammar, drop run-specific references, generalize
- * "this X" to the underlying principle) and picks a category + title.
+ * This is grounded, not cosmetic: given the agent's current instructions and
+ * what it actually did this run (the session transcript the reviewer saw), it
+ * extracts the instruction that would close the gap the note points at — an
+ * output issue, a process issue, or how a tool was used. It also sees the
+ * already-saved instructions so it refines rather than duplicates.
  *
- * Returns null on any model or parse failure so the caller can store the note
- * verbatim; a model hiccup must never drop an explicit human rule.
+ * Unlike {@link evaluateExecution} it never JUDGES whether to keep the note (the
+ * human opted in) — it always produces an instruction. Returns null on any model
+ * or parse failure so the caller can store the note verbatim; a model hiccup
+ * must never drop an explicit human instruction.
  */
 export async function refineManualLearning(
-  instruction: string,
+  note: string,
   agentModel: string,
-  agentInstructions?: string,
+  context?: {
+    agentInstructions?: string | undefined;
+    sessionTranscript?: string | undefined;
+    existingInstructions?: string[] | undefined;
+  },
 ): Promise<{ category: LearningCategory; title: string; instruction: string } | null> {
-  const context = agentInstructions
-    ? `\n\n## What this agent does (context only — do not turn this into the rule)\n${
-        agentInstructions.length > 1500 ? agentInstructions.slice(0, 1500) + '\n...(truncated)' : agentInstructions
-      }`
+  const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '\n...(truncated)' : s);
+  const instructionsBlock = context?.agentInstructions
+    ? `\n\n## The agent's current instructions\n${trunc(context.agentInstructions, 2000)}`
+    : '';
+  const runBlock = context?.sessionTranscript
+    ? `\n\n## What the agent actually did this run (what the reviewer was looking at)\n${trunc(context.sessionTranscript, 6000)}`
+    : '';
+  const existing = (context?.existingInstructions ?? []).filter((i) => i && i.trim());
+  const existingBlock = existing.length > 0
+    ? `\n\n## Additional instructions already saved (do not duplicate; if the note is about the same thing, produce the improved version)\n${existing.map((i) => `- ${i}`).join('\n')}`
     : '';
 
-  const prompt = `A human reviewer is teaching this agent a durable rule to follow in future runs. Rewrite their note into ONE clear, general, reusable instruction.
-
-Requirements:
-- Preserve their intent EXACTLY. Do not add, weaken, or invent constraints.
-- Make it a clean standalone rule: fix grammar, remove references to this specific run ("this intro", "that file"), and state the underlying principle.
-- Keep it concise and directly actionable.
-- Do NOT decide whether it is worth keeping — always produce a rule.${context}
+  const prompt = `A human reviewer, after seeing this run, wants to teach the agent so future runs go better. Turn their note into ONE additional instruction to APPEND to the agent's instructions.${instructionsBlock}${runBlock}${existingBlock}
 
 ## Reviewer's note
-${instruction}
+${note}
+
+Write the additional instruction that, appended to the agent's instructions, would prevent the issue the note points at from happening again.
+Requirements:
+- Preserve the reviewer's intent EXACTLY. Do not add, weaken, or invent constraints.
+- It must read as a natural extension of the agent's instructions (same voice), complement them, and NOT contradict or duplicate them.
+- Ground it in what actually happened this run — target the real cause (the output, the process, or how a tool was used), not a surface reword of the note.
+- Be specific and directly actionable. Do NOT decide whether it is worth keeping — always produce an instruction.
 
 Pick the best category: tip | warning | pattern | tool-usage | error-fix.
 Respond with ONLY a JSON object, no other text:
-{"category": "tip", "title": "short title (max 6 words)", "instruction": "the clean, general rule"}`;
+{"category": "tip", "title": "short title (max 6 words)", "instruction": "the additional instruction"}`;
 
   const system = isAnthropicModel(agentModel)
     ? ANTHROPIC_IDENTITY_PROMPT
-    : 'You rewrite a human note into one concise, general agent rule and reply with a JSON object only.';
+    : 'You turn a human note into one concise additional agent instruction, grounded in the run, and reply with a JSON object only.';
 
   const responseText = await completeText(agentModel, { system, prompt });
   try {
@@ -100,7 +116,7 @@ Respond with ONLY a JSON object, no other text:
       : cleaned.split('\n')[0];
     return { category, title, instruction: cleaned };
   } catch {
-    logger.debug(`[Learning] Failed to parse refined manual rule: ${responseText.slice(0, 200)}`);
+    logger.debug(`[Learning] Failed to parse refined manual instruction: ${responseText.slice(0, 200)}`);
     return null;
   }
 }
