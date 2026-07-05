@@ -202,6 +202,20 @@ a, button, select, summary, label, input, textarea,
   color: var(--muted-2);
 }
 .settings-popover .theme-toggle { width: 100%; justify-content: space-between; }
+.settings-item {
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 13px;
+  cursor: pointer;
+}
+.settings-item:hover { border-color: var(--line-strong); background: var(--panel-hover); }
+.settings-item:disabled { opacity: 0.6; cursor: default; }
 
 /* approvals-tab pending-count badge. Inline inside the tab by default: on
    mobile the nav is a horizontal scroller (overflow-x:auto forces overflow-y

@@ -50,9 +50,11 @@ function RefreshButton() {
   );
 }
 
-/** Gear button that opens a small popover of app settings (currently theme). */
+/** Gear button that opens a small popover of app settings (theme + a
+ *  clear-cache-and-reload recovery action for stale installed PWAs). */
 function SettingsMenu() {
   const [open, setOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -70,6 +72,28 @@ function SettingsMenu() {
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
+
+  // Purge the service worker's Cache Storage, then reload. The reliable recovery
+  // path for an installed iOS PWA that keeps serving a stale build even across a
+  // normal reload. Push subscriptions live on the SW registration (not in Cache
+  // Storage), so notifications survive.
+  const clearCacheAndReload = async () => {
+    if (clearing) return;
+    setClearing(true);
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg) await reg.update();
+      }
+    } catch {
+      // best-effort — reload regardless
+    }
+    location.reload();
+  };
 
   return (
     <div class="settings-menu" ref={ref}>
@@ -91,6 +115,18 @@ function SettingsMenu() {
         <div class="settings-popover" role="menu">
           <div class="settings-section-label">Theme</div>
           <ThemeToggle />
+          <div class="settings-section-label">Maintenance</div>
+          <button
+            type="button"
+            class="settings-item"
+            role="menuitem"
+            onClick={clearCacheAndReload}
+            disabled={clearing}
+            aria-busy={clearing}
+            title="Clear the cached app and reload the latest build"
+          >
+            {clearing ? 'Clearing…' : 'Clear cache & reload'}
+          </button>
         </div>
       )}
     </div>
