@@ -147,6 +147,25 @@ Always wait for explicit approval before publishing.
     });
   });
 
+  it("saves a manual rule with no learning config (the reviewer's action is the opt-in)", async () => {
+    const agentFile = join(tempDir, "agent.md");
+
+    const outcome = await saveManualLearning({
+      agentFilePath: agentFile,
+      instruction: "Ask before deleting files.",
+    });
+
+    expect(outcome.status).toBe("captured");
+    expect(outcome.source).toBe("manual");
+    const loaded = await store.load();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]).toMatchObject({
+      source: "manual",
+      confidence: 1,
+      instruction: "Ask before deleting files.",
+    });
+  });
+
   it("upserts a manual rule by upgrading a similar existing learning instead of dropping it", async () => {
     const agentFile = join(tempDir, "agent.md");
     await store.save([

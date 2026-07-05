@@ -12,7 +12,7 @@ import { logger, LogLevel } from "../utils/logger";
 import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
 import { applyResumeToolResult, restoreResumeToolResult, runAgent, describeErrorPart } from "../runner";
-import { describeLearningOutcome, saveManualLearning, LEARNING_APPLY_REQUIRED_MESSAGE, type LearningSource, type LearningConfig } from "../learning";
+import { describeLearningOutcome, saveManualLearning, type LearningSource, type LearningConfig } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
 
 interface SessionSummary {
@@ -1351,7 +1351,7 @@ async function resumeSession(
       throw new Error(`Session ${summary.id} is waiting on ${pending.part.tool}. Use --tool-result <json>.`);
     }
 
-    let rememberTarget: { agentFilePath: string; config: LearningConfig; instruction: string } | undefined;
+    let rememberTarget: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string } | undefined;
     let rememberAgent: Awaited<ReturnType<typeof parseAgent>> | undefined;
     if (options.remember !== undefined) {
       const remember = options.remember.trim();
@@ -1361,10 +1361,10 @@ async function resumeSession(
       if (pendingKind !== "await_human" && pending.part.tool !== "await_human") {
         throw new Error("--remember only applies to approval comments");
       }
+      // --remember is the operator's explicit opt-in, so saving needs no
+      // learning config. Injection into future runs is still gated by
+      // learning.apply. Parse the agent to honor a custom learning.file path.
       rememberAgent = await parseAgent(found.session.agent.filePath);
-      if (!rememberAgent.config.learning?.apply) {
-        throw new Error(LEARNING_APPLY_REQUIRED_MESSAGE);
-      }
       rememberTarget = {
         agentFilePath: found.session.agent.filePath,
         config: rememberAgent.config.learning,

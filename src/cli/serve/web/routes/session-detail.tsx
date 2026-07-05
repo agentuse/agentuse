@@ -398,7 +398,12 @@ export default function SessionDetail() {
   const expired = approval?.expiresAt !== undefined && approval.expiresAt <= Date.now();
   const displayStatus = status === 'waiting' && expired ? 'expired' : displaySessionStatus(status, approval);
   const actionable = pendingActionable && !expired;
-  const canRememberLearning = approval?.learning?.apply === true;
+  // A manual "remember" rule can be saved for any agent (the reviewer's action
+  // is the opt-in), so the affordance shows whenever there's an agent file to
+  // attach it to. Whether the rule is injected into future runs is a separate
+  // question, governed by learning.apply — surfaced as a hint in the dialog.
+  const canRememberLearning = Boolean(approval?.agent.filePath);
+  const rememberApplies = approval?.learning?.apply === true;
   const continueActionable = ended && !live && Boolean(approval?.agent.filePath) && !fatalError;
   const stopActionable = approval !== null && !ended && !expired && !submittingStop && !fatalError;
   // An errored session whose resolved approval gate can be rolled back for a retry.
@@ -853,6 +858,7 @@ export default function SessionDetail() {
         open={decisionDialog !== null}
         mode={decisionDialog ?? 'comment'}
         allowRemember={canRememberLearning}
+        rememberApplies={rememberApplies}
         onClose={() => setDecisionDialog(null)}
         onSubmit={({ comment, remember }) => {
           const action = decisionDialog;

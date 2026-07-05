@@ -104,7 +104,7 @@ provider:model[:env]
 Where:
 - `provider`: A built-in provider (`anthropic`, `openai`, `openrouter`, `opencode-go`, `bedrock`) or a custom provider name
 - `model`: The specific model name (e.g., `claude-sonnet-4-6`, `gpt-5.5`, `glm-5-flash:q4_K_M`)
-- `env`: Optional environment suffix for API keys (e.g., `dev`, `prod`, or full env var name) — built-in providers only
+- `env`: Optional environment suffix for API keys (e.g., `dev`, `prod`, or full env var name), built-in providers only
 
 #### Examples
 
@@ -317,7 +317,7 @@ agentuse sessions resume 01K... --comment "Please revise with citations" --remem
 
 The CLI uses local session access as the trust boundary, so approval resumes do not require a resume token.
 
-`--remember` saves a separate future learning rule and requires `--comment` plus an agent with `learning.apply` enabled. The comment is still the feedback for this revision; the remembered rule is what gets injected into future runs.
+`--remember` saves a separate future learning rule and requires `--comment` (a non-empty one). Passing `--remember` is itself the opt-in, so saving needs no `learning` config on the agent. The comment is still the feedback for this revision; the remembered rule is stored as `src:manual` and is injected into future runs once the agent has `learning.apply` enabled.
 
 For a suspended non-approval `await_*` tool:
 
@@ -810,7 +810,7 @@ agentuse provider add myserver --url https://gpu.example.com/v1 --key sk-mykey
 Then use: `agentuse run agent.agentuse -m ollama:glm-5-flash:q4_K_M`
 
 <Info>
-  Colons in model names are supported — `ollama:qwen3.5:0.8b` parses as provider `ollama`, model `qwen3.5:0.8b`.
+  Colons in model names are supported, `ollama:qwen3.5:0.8b` parses as provider `ollama`, model `qwen3.5:0.8b`.
 </Info>
 
 ### provider remove / logout

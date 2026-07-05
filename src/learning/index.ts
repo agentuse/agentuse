@@ -10,9 +10,6 @@ import { evaluateExecution } from './evaluator';
 import { LearningStore } from './store';
 import { logger } from '../utils/logger';
 
-export const LEARNING_APPLY_REQUIRED_MESSAGE =
-  "Cannot remember a learning because this agent does not have learning.apply enabled";
-
 export interface ExtractLearningsOptions {
   event: AgentCompleteEvent;
   agentInstructions: string;
@@ -97,7 +94,9 @@ function manualLearningTitle(instruction: string): string {
 
 export async function saveManualLearning(options: {
   agentFilePath: string;
-  config: LearningConfig;
+  /** Optional: only used to resolve a custom learnings-file path. A manual rule
+   *  is a human opt-in, so saving it needs no learning config. */
+  config?: LearningConfig | undefined;
   instruction: string;
 }): Promise<LearningOutcome> {
   const instruction = options.instruction.trim();
@@ -105,7 +104,7 @@ export async function saveManualLearning(options: {
     return { status: 'none', source: 'manual', count: 0, titles: [] };
   }
 
-  const store = LearningStore.fromAgentFile(options.agentFilePath, options.config.file);
+  const store = LearningStore.fromAgentFile(options.agentFilePath, options.config?.file);
   const title = manualLearningTitle(instruction);
   await store.upsertManual({
     id: '',

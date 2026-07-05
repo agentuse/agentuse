@@ -31,6 +31,10 @@ export function DecisionDialog(props: {
   open: boolean;
   mode: DecisionDialogMode;
   allowRemember?: boolean;
+  /** Whether a saved rule will actually be injected into future runs
+   *  (learning.apply). When false, the dialog notes the rule is stored but
+   *  inert until learning.apply is enabled. */
+  rememberApplies?: boolean;
   onSubmit: (payload: { comment?: string; remember?: string }) => void;
   onClose: () => void;
 }) {
@@ -129,6 +133,11 @@ export function DecisionDialog(props: {
                     }
                   }}
                 />
+              )}
+              {rememberChecked && !props.rememberApplies && (
+                <p class="remember-hint">
+                  Saved to this agent’s learnings. It takes effect on future runs once <code>learning.apply</code> is enabled.
+                </p>
               )}
             </div>
           )}

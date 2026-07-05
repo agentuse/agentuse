@@ -1387,6 +1387,16 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
 .remember-rule {
   min-height: 72px;
 }
+.remember-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.remember-hint code {
+  font-family: var(--mono, ui-monospace, monospace);
+  color: var(--muted-3);
+}
 textarea {
   width: 100%;
   min-height: 96px;

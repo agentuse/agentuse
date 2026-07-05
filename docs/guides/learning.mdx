@@ -103,7 +103,7 @@ learning: true
 
 When you leave a note like "Going forward, always cite a source before publishing", a generalizability filter decides whether the comment is a **durable agent-wide rule** or a **one-off edit** to this run. Only durable rules are captured (as `src:approval`, confidence `0.95`); one-off edits (like "fix the typo in paragraph two" or "give me the source link") are ignored. Approval-sourced learnings rank ahead of auto-extracted ones when injected, so your corrections survive the per-run cap.
 
-For faster teaching, the approval comment dialog can also save an explicit future rule. Use the comment for the current revision, then check **Remember this as a future rule** and write the durable rule separately. Manual rules are stored as `src:manual`, confidence `1.00`, and rank ahead of approval-promoted and auto-extracted learnings. The CLI equivalent is:
+For faster teaching, the approval comment dialog can also save an explicit future rule. Use the comment for the current revision, then check **Remember this as a future rule** and write the durable rule separately. Checking the box is itself the opt-in, so it works on any agent, no `learning` config required to save. Manual rules are stored as `src:manual`, confidence `1.00`, and rank ahead of approval-promoted and auto-extracted learnings. They are only injected into future runs once the agent has `learning.apply` enabled (the dialog says so if it isn't). The CLI equivalent is:
 
 ```bash
 agentuse sessions resume 01K... \

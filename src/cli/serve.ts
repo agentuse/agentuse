@@ -26,7 +26,7 @@ import { registerServer, unregisterServer, updateServer, listServers, formatUpti
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
-import { saveManualLearning, LEARNING_APPLY_REQUIRED_MESSAGE, type LearningConfig } from "../learning";
+import { saveManualLearning, type LearningConfig } from "../learning";
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
@@ -2293,24 +2293,25 @@ export function createServeCommand(): Command {
       const resolveRememberedLearning = async (
         info: WorkerApprovalInfoResult,
         remember?: string,
-      ): Promise<{ agentFilePath: string; config: LearningConfig; instruction: string } | null> => {
+      ): Promise<{ agentFilePath: string; config?: LearningConfig | undefined; instruction: string } | null> => {
         const instruction = remember?.trim();
         if (!instruction) return null;
         const targetAgent = info.approval.originAgent ?? info.approval.agent;
         if (!targetAgent.filePath) {
           throw new Error("Cannot remember a learning because this approval does not record an agent file path");
         }
+        // A manual "remember" is the reviewer's explicit opt-in, so it does not
+        // require learning.apply — the rule is stored regardless. Whether it is
+        // injected into future runs is still governed by learning.apply. Parse
+        // the agent only to honor a custom learning.file path when one is set.
         const agent = await parseAgent(targetAgent.filePath);
-        if (!agent.config.learning?.apply) {
-          throw new Error(LEARNING_APPLY_REQUIRED_MESSAGE);
-        }
         return { agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction };
       };
 
       // Persist a resolved manual rule best-effort: a learnings-file write
       // failure is logged and never aborts the (already kicked-off) resume.
       const persistRememberedLearning = (
-        target: { agentFilePath: string; config: LearningConfig; instruction: string } | null,
+        target: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string } | null,
       ): void => {
         if (!target) return;
         void saveManualLearning(target).catch((err) => {
