@@ -150,6 +150,17 @@ export class LearningStore {
     });
   }
 
+  /** Remove a learning by id. Returns whether anything was removed. */
+  async remove(id: string): Promise<boolean> {
+    return withFileLock(this.filePath, async () => {
+      const learnings = await this.load();
+      const next = learnings.filter((l) => l.id !== id);
+      if (next.length === learnings.length) return false;
+      await this.save(next);
+      return true;
+    });
+  }
+
   private similar(a: string, b: string): boolean {
     // Extract words (letters only, >4 chars) for comparison
     const extractWords = (text: string) =>

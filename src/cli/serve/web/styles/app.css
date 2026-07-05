@@ -1459,6 +1459,57 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
   gap: 12px;
 }
 .continue-panel[hidden] { display: none; }
+.learnings-panel {
+  margin-top: 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  display: grid;
+  gap: 14px;
+}
+.learnings-label {
+  color: var(--muted-2);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.learnings-label::before { content: "✦ "; color: var(--cyan); opacity: 0.7; }
+.learnings-error { margin: 0; color: var(--danger, #f87171); font-size: 12px; }
+.learnings-empty { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.learnings-group { display: grid; gap: 6px; }
+.learnings-group-label {
+  color: var(--muted-2);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.learnings-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.learnings-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.learnings-text { flex: 1; font-size: 13px; line-height: 1.45; color: var(--fg); }
+.learnings-discard {
+  flex-shrink: 0;
+  width: 22px; height: 22px; padding: 0; min-height: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px; line-height: 1;
+  cursor: pointer;
+}
+.learnings-discard:hover { color: var(--fg); border-color: var(--line-strong); background: var(--panel-hover); }
+.learnings-discard:disabled { opacity: 0.5; cursor: default; }
+.learnings-add { display: flex; gap: 10px; align-items: flex-end; }
+.learnings-add-input { flex: 1; min-height: 56px; }
 .continue-label {
   color: var(--muted-2);
   font-size: 10px;
@@ -1508,6 +1559,8 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
   .log-actions-buttons button { flex: 1; }
   .continue-actions { flex-direction: column; align-items: stretch; }
   .continue-actions button { width: 100%; }
+  .learnings-add { flex-direction: column; align-items: stretch; }
+  .learnings-add button { width: 100%; }
 }
 
 /* ---------------- stores ---------------- */

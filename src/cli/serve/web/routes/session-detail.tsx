@@ -6,6 +6,7 @@ import { LogEntry } from '../components/log-entry';
 import { LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
 import { ContinuePanel } from '../components/continue-panel';
+import { LearningsPanel } from '../components/learnings-panel';
 import { DebugPromptButton } from '../components/debug-prompt-button';
 import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
 import { syncAppBadge } from '../lib/badge';
@@ -320,7 +321,14 @@ export default function SessionDetail() {
     [orderedLogs, nestedLogIds]
   );
   const visibleLogs = useMemo(
-    () => orderedLogs.filter((e) => !nestedLogIds.has(e.id) && (showDebug || !isDebugLog(e))),
+    // Routine learning captures (captured/none) live in the Learnings panel now,
+    // so keep them out of the work log; a failed capture (status 'error') still
+    // surfaces inline since it's a real problem worth seeing in the timeline.
+    () => orderedLogs.filter((e) =>
+      !nestedLogIds.has(e.id)
+      && (showDebug || !isDebugLog(e))
+      && !(e.type === 'learning' && e.status !== 'error')
+    ),
     [orderedLogs, showDebug, nestedLogIds]
   );
   const reviewerComment = useMemo(() => latestReviewerComment(orderedLogs), [orderedLogs]);
@@ -405,6 +413,9 @@ export default function SessionDetail() {
   const canRememberLearning = Boolean(approval?.agent.filePath);
   const rememberApplies = approval?.learning?.apply === true;
   const continueActionable = ended && !live && Boolean(approval?.agent.filePath) && !fatalError;
+  // The learnings panel shows on any ended session that has an agent file to
+  // read/write learnings for — independent of whether resume is available.
+  const learningsVisible = ended && Boolean(approval?.agent.filePath);
   const stopActionable = approval !== null && !ended && !expired && !submittingStop && !fatalError;
   // An errored session whose resolved approval gate can be rolled back for a retry.
   const reopenActionable = ended && approval?.sessionStatus === 'error'
@@ -845,6 +856,13 @@ export default function SessionDetail() {
           hidden={!continueActionable || !showResume}
           disabled={submittingContinue || !continueActionable}
           onSubmit={(prompt) => void submitContinue(prompt)}
+        />
+
+        <LearningsPanel
+          hidden={!learningsVisible}
+          sessionId={sessionId}
+          token={token}
+          {...(projectId ? { project: projectId } : {})}
         />
 
         <div class="inactive-banner" hidden={actionable || continueActionable || stopActionable || reopenActionable || live || busy}>

@@ -26,7 +26,7 @@ import { registerServer, unregisterServer, updateServer, listServers, formatUpti
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
-import { saveManualLearning, type LearningConfig } from "../learning";
+import { saveManualLearning, LearningStore, type LearningConfig } from "../learning";
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
@@ -3880,6 +3880,118 @@ export function createServeCommand(): Command {
             }
 
             startSessionContinue(res, { project, sessionId, prompt });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // Learnings for a session's agent. Reading and editing follow the same
+        // trust boundary as the session log (local, session token, or API key);
+        // adding a manual rule is the reviewer's explicit opt-in.
+        const resolveSessionLearningStore = async (info: WorkerApprovalInfoResult): Promise<LearningStore | null> => {
+          const targetAgent = info.approval.originAgent ?? info.approval.agent;
+          if (!targetAgent.filePath) return null;
+          const agent = await parseAgent(targetAgent.filePath);
+          return LearningStore.fromAgentFile(targetAgent.filePath, agent.config.learning?.file);
+        };
+        const learningListPayload = async (store: LearningStore) => ({
+          success: true,
+          learnings: (await store.load()).map((l) => ({
+            id: l.id,
+            category: l.category,
+            title: l.title,
+            instruction: l.instruction,
+            confidence: l.confidence,
+            source: l.source,
+            extractedAt: l.extractedAt,
+          })),
+        });
+
+        // GET /sessions/:id/learnings: list the agent's stored learnings.
+        const sessionLearningsMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/learnings$/) : null;
+        if (sessionLearningsMatch) {
+          try {
+            const sessionId = decodeURIComponent(sessionLearningsMatch[1]);
+            const token = requestUrl.searchParams.get('token') ?? undefined;
+            const projectId = requestUrl.searchParams.get('project') ?? undefined;
+            if (!sessionAuthorized(sessionId, token)) {
+              sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+              return;
+            }
+            const found = await findSessionInfo(sessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+            const store = await resolveSessionLearningStore(found.info);
+            sendJSON(res, 200, store ? await learningListPayload(store) : { success: true, learnings: [] });
+          } catch (err) {
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // POST /sessions/:id/learnings: add a manual rule (standalone, no resume).
+        const sessionAddLearningMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/learnings$/) : null;
+        if (sessionAddLearningMatch) {
+          try {
+            const sessionId = decodeURIComponent(sessionAddLearningMatch[1]);
+            const token = requestUrl.searchParams.get('token') ?? undefined;
+            const body = await parseJSONBody(req);
+            const instruction = typeof body.instruction === 'string' ? body.instruction.trim() : '';
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+            if (!sessionAuthorized(sessionId, token)) {
+              sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+              return;
+            }
+            if (!instruction) {
+              sendError(res, 400, "INSTRUCTION_REQUIRED", "A rule to remember is required");
+              return;
+            }
+            const found = await findSessionInfo(sessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+            const targetAgent = found.info.approval.originAgent ?? found.info.approval.agent;
+            if (!targetAgent.filePath) {
+              sendError(res, 400, "NO_AGENT_FILE", "This session does not record an agent file path");
+              return;
+            }
+            const agent = await parseAgent(targetAgent.filePath);
+            await saveManualLearning({ agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction });
+            const store = LearningStore.fromAgentFile(targetAgent.filePath, agent.config.learning?.file);
+            sendJSON(res, 200, await learningListPayload(store));
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // POST /sessions/:id/learnings/:lid/discard: drop a stored learning.
+        const sessionDiscardLearningMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/learnings\/([^/?#]+)\/discard$/) : null;
+        if (sessionDiscardLearningMatch) {
+          try {
+            const sessionId = decodeURIComponent(sessionDiscardLearningMatch[1]);
+            const learningId = decodeURIComponent(sessionDiscardLearningMatch[2]);
+            const token = requestUrl.searchParams.get('token') ?? undefined;
+            const body = await parseJSONBody(req);
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+            if (!sessionAuthorized(sessionId, token)) {
+              sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+              return;
+            }
+            const found = await findSessionInfo(sessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+            const store = await resolveSessionLearningStore(found.info);
+            if (store) await store.remove(learningId);
+            sendJSON(res, 200, store ? await learningListPayload(store) : { success: true, learnings: [] });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);

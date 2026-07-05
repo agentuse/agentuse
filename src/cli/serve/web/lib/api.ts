@@ -137,6 +137,40 @@ export function fetchSessionArtifacts(sessionId: string, token: string | undefin
   return getJson(`/sessions/${encodeURIComponent(sessionId)}/artifacts-list`, { token, project });
 }
 
+export type SessionLearningSource = 'auto' | 'approval' | 'manual';
+
+export interface SessionLearning {
+  id: string;
+  category: string;
+  title: string;
+  instruction: string;
+  confidence: number;
+  source: SessionLearningSource;
+  extractedAt: string;
+}
+
+export interface SessionLearningsPayload {
+  success: true;
+  learnings: SessionLearning[];
+}
+
+export function fetchSessionLearnings(sessionId: string, token: string | undefined, project?: string): Promise<SessionLearningsPayload> {
+  return getJson(`/sessions/${encodeURIComponent(sessionId)}/learnings`, { token, project });
+}
+
+export function addSessionLearning(sessionId: string, token: string | undefined, body: {
+  instruction: string;
+  project?: string;
+}): Promise<SessionLearningsPayload> {
+  return postJson(withToken(`/sessions/${encodeURIComponent(sessionId)}/learnings`, token), body);
+}
+
+export function discardSessionLearning(sessionId: string, learningId: string, token: string | undefined, body: {
+  project?: string;
+} = {}): Promise<SessionLearningsPayload> {
+  return postJson(withToken(`/sessions/${encodeURIComponent(sessionId)}/learnings/${encodeURIComponent(learningId)}/discard`, token), body);
+}
+
 export function postSessionDecision(sessionId: string, token: string | undefined, body: {
   status: string;
   comment?: string;
