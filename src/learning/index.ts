@@ -5,8 +5,8 @@
 
 import ora from 'ora';
 import type { AgentCompleteEvent } from '../plugin/types';
-import type { ApprovalReview, LearningConfig, LearningOutcome, LearningSource } from './types';
-import { evaluateExecution } from './evaluator';
+import type { ApprovalReview, LearningCategory, LearningConfig, LearningOutcome, LearningSource } from './types';
+import { evaluateExecution, refineManualLearning } from './evaluator';
 import { LearningStore } from './store';
 import { logger } from '../utils/logger';
 
@@ -98,17 +98,40 @@ export async function saveManualLearning(options: {
    *  is a human opt-in, so saving it needs no learning config. */
   config?: LearningConfig | undefined;
   instruction: string;
+  /** Agent model used to distill the note into a clean, general rule. Omit to
+   *  store the note verbatim. */
+  model?: string | undefined;
+  /** Agent instructions passed to the refine pass as context (optional). */
+  agentInstructions?: string | undefined;
 }): Promise<LearningOutcome> {
-  const instruction = options.instruction.trim();
-  if (!instruction) {
+  const raw = options.instruction.trim();
+  if (!raw) {
     return { status: 'none', source: 'manual', count: 0, titles: [] };
   }
 
+  // Distill the reviewer's note into a clean, general rule. Any model or parse
+  // failure falls back to storing the note verbatim — an explicit human rule
+  // must never be dropped because a helper LLM call hiccuped.
+  let category: LearningCategory = 'tip';
+  let title = manualLearningTitle(raw);
+  let instruction = raw;
+  if (options.model) {
+    try {
+      const refined = await refineManualLearning(raw, options.model, options.agentInstructions);
+      if (refined) {
+        category = refined.category;
+        title = manualLearningTitle(refined.title);
+        instruction = refined.instruction;
+      }
+    } catch (error) {
+      logger.debug(`[Learning] Manual refine failed, storing verbatim: ${(error as Error).message}`);
+    }
+  }
+
   const store = LearningStore.fromAgentFile(options.agentFilePath, options.config?.file);
-  const title = manualLearningTitle(instruction);
   await store.upsertManual({
     id: '',
-    category: 'tip',
+    category,
     title,
     instruction,
     confidence: 1,

@@ -44,6 +44,67 @@ interface RawLearning {
   source?: 'auto' | 'approval';
 }
 
+const LEARNING_CATEGORIES: LearningCategory[] = ['tip', 'warning', 'pattern', 'tool-usage', 'error-fix'];
+
+/**
+ * Distill a human-written "remember this" note into ONE clean, general rule.
+ *
+ * Unlike {@link evaluateExecution}, this never JUDGES whether to keep the note —
+ * the human explicitly asked to remember it — it only rewrites it into a
+ * reusable instruction (fix grammar, drop run-specific references, generalize
+ * "this X" to the underlying principle) and picks a category + title.
+ *
+ * Returns null on any model or parse failure so the caller can store the note
+ * verbatim; a model hiccup must never drop an explicit human rule.
+ */
+export async function refineManualLearning(
+  instruction: string,
+  agentModel: string,
+  agentInstructions?: string,
+): Promise<{ category: LearningCategory; title: string; instruction: string } | null> {
+  const context = agentInstructions
+    ? `\n\n## What this agent does (context only — do not turn this into the rule)\n${
+        agentInstructions.length > 1500 ? agentInstructions.slice(0, 1500) + '\n...(truncated)' : agentInstructions
+      }`
+    : '';
+
+  const prompt = `A human reviewer is teaching this agent a durable rule to follow in future runs. Rewrite their note into ONE clear, general, reusable instruction.
+
+Requirements:
+- Preserve their intent EXACTLY. Do not add, weaken, or invent constraints.
+- Make it a clean standalone rule: fix grammar, remove references to this specific run ("this intro", "that file"), and state the underlying principle.
+- Keep it concise and directly actionable.
+- Do NOT decide whether it is worth keeping — always produce a rule.${context}
+
+## Reviewer's note
+${instruction}
+
+Pick the best category: tip | warning | pattern | tool-usage | error-fix.
+Respond with ONLY a JSON object, no other text:
+{"category": "tip", "title": "short title (max 6 words)", "instruction": "the clean, general rule"}`;
+
+  const system = isAnthropicModel(agentModel)
+    ? ANTHROPIC_IDENTITY_PROMPT
+    : 'You rewrite a human note into one concise, general agent rule and reply with a JSON object only.';
+
+  const responseText = await completeText(agentModel, { system, prompt });
+  try {
+    const text = responseText.trim();
+    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || [null, text];
+    const parsed = JSON.parse(jsonMatch[1] || text);
+    const cleaned = typeof parsed?.instruction === 'string' ? parsed.instruction.trim() : '';
+    if (!cleaned) return null;
+    const category: LearningCategory = LEARNING_CATEGORIES.includes(parsed?.category) ? parsed.category : 'tip';
+    const title = typeof parsed?.title === 'string' && parsed.title.trim()
+      ? parsed.title.trim()
+      : cleaned.split('\n')[0];
+    return { category, title, instruction: cleaned };
+  } catch {
+    logger.debug(`[Learning] Failed to parse refined manual rule: ${responseText.slice(0, 200)}`);
+    return null;
+  }
+}
+
 /**
  * Render reviewer feedback (resolved approval-gate comments + the work shown at
  * each gate) for the prompt. Indents the work so the model can tell comment from

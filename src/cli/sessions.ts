@@ -1351,7 +1351,7 @@ async function resumeSession(
       throw new Error(`Session ${summary.id} is waiting on ${pending.part.tool}. Use --tool-result <json>.`);
     }
 
-    let rememberTarget: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string } | undefined;
+    let rememberTarget: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined } | undefined;
     let rememberAgent: Awaited<ReturnType<typeof parseAgent>> | undefined;
     if (options.remember !== undefined) {
       const remember = options.remember.trim();
@@ -1369,6 +1369,8 @@ async function resumeSession(
         agentFilePath: found.session.agent.filePath,
         config: rememberAgent.config.learning,
         instruction: remember,
+        model: rememberAgent.config.model,
+        agentInstructions: rememberAgent.instructions,
       };
     }
 

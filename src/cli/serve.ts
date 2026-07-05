@@ -2293,7 +2293,7 @@ export function createServeCommand(): Command {
       const resolveRememberedLearning = async (
         info: WorkerApprovalInfoResult,
         remember?: string,
-      ): Promise<{ agentFilePath: string; config?: LearningConfig | undefined; instruction: string } | null> => {
+      ): Promise<{ agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined } | null> => {
         const instruction = remember?.trim();
         if (!instruction) return null;
         const targetAgent = info.approval.originAgent ?? info.approval.agent;
@@ -2303,15 +2303,16 @@ export function createServeCommand(): Command {
         // A manual "remember" is the reviewer's explicit opt-in, so it does not
         // require learning.apply — the rule is stored regardless. Whether it is
         // injected into future runs is still governed by learning.apply. Parse
-        // the agent only to honor a custom learning.file path when one is set.
+        // the agent to honor a custom learning.file path and to distill the note
+        // via the agent's model.
         const agent = await parseAgent(targetAgent.filePath);
-        return { agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction };
+        return { agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions };
       };
 
       // Persist a resolved manual rule best-effort: a learnings-file write
       // failure is logged and never aborts the (already kicked-off) resume.
       const persistRememberedLearning = (
-        target: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string } | null,
+        target: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined } | null,
       ): void => {
         if (!target) return;
         void saveManualLearning(target).catch((err) => {
@@ -3961,7 +3962,7 @@ export function createServeCommand(): Command {
               return;
             }
             const agent = await parseAgent(targetAgent.filePath);
-            await saveManualLearning({ agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction });
+            await saveManualLearning({ agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions });
             const store = LearningStore.fromAgentFile(targetAgent.filePath, agent.config.learning?.file);
             sendJSON(res, 200, await learningListPayload(store));
           } catch (err) {
