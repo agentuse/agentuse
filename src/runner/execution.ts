@@ -19,6 +19,7 @@ import type { CompactionReason, ModelToolOutputArtifactRef, SessionManager, Tool
 import { clampToolResultForModel } from '../tools/tool-output-limits.js';
 import { stripInlineMediaData } from '../tools/media.js';
 import { messagesContainInlineMedia } from '../session/media-cache.js';
+import { stripToolBlocks } from '../session/message-utils';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -642,15 +643,25 @@ export async function* executeAgentCore(
   const currentLlmModel = agent.config.model;
   let stepCount = 0; // Track step count to detect when we're approaching limit
 
-  const buildContextSnapshot = () => {
+  // `suspendedToolCallId` is the gate call we are suspending on; its blocks are
+  // trimmed so the snapshot holds only settled context and the resolved part is
+  // the single source of truth on resume. A tool that throws SuspendSignal is
+  // recorded by the AI SDK as a synthetic "Agent execution suspended" tool-result
+  // that a racing prepareStep can fold into the active messages just before we
+  // suspend; persisting it makes the gate look resolved-with-a-stale-error and
+  // collides with the re-appended resolved part on resume (see stripToolBlocks).
+  const buildContextSnapshot = (suspendedToolCallId?: string) => {
     if (!contextManager) return undefined;
     const updatedAt = currentModelStepStartedAt ?? Date.now();
     const usage = { ...contextManager.getStats(), updatedAt };
+    const messages = suspendedToolCallId
+      ? stripToolBlocks(contextManager.getMessages(), new Set([suspendedToolCallId]))
+      : contextManager.getMessages();
     return {
       version: 1 as const,
       updatedAt,
       ...(options.messageID && { messageID: options.messageID }),
-      messages: contextManager.getMessages(),
+      messages,
       usage,
     };
   };
@@ -820,7 +831,7 @@ Error: ${errorMessage}`);
 
           if (isSuspendSignal(chunkError)) {
             await compactAtSuspensionBoundary();
-            const contextSnapshot = buildContextSnapshot();
+            const contextSnapshot = buildContextSnapshot(toolCallId);
             yield {
               type: 'suspended',
               ...(chunk.toolName && { toolName: chunk.toolName }),
@@ -1096,7 +1107,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
   } catch (error: any) {
     if (isSuspendSignal(error)) {
       await compactAtSuspensionBoundary();
-      const contextSnapshot = buildContextSnapshot();
+      const contextSnapshot = buildContextSnapshot(lastToolCall?.id);
       yield {
         type: 'suspended',
         ...(lastToolCall?.name && { toolName: lastToolCall.name }),

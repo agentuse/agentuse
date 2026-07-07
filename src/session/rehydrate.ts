@@ -1,6 +1,7 @@
 import type { ModelMessage } from 'ai';
 import type { SessionManager } from './manager';
 import type { Part, ToolPart } from './types';
+import { stripToolBlocks } from './message-utils';
 
 function getPartOrder(part: Part): number {
   if (part.type === 'text') return part.time?.start ?? Number.MAX_SAFE_INTEGER;
@@ -80,9 +81,26 @@ export async function rehydrateMessages(
 
   const snapshot = await sessionManager.readContextSnapshot(sessionID, agentId);
   if (snapshot?.version === 1 && Array.isArray(snapshot.messages)) {
-    const messages = snapshot.messages as ModelMessage[];
     const parts = await sessionManager.getMessageParts(sessionID, agentId, message.id);
-    for (const part of parts.filter((part) => getPartOrder(part) > snapshot.updatedAt)) {
+    const fresh = parts.filter((part) => getPartOrder(part) > snapshot.updatedAt);
+
+    // A suspended gate (e.g. `await_human`) is already captured in the snapshot:
+    // the AI SDK records the thrown SuspendSignal as a synthetic tool-result
+    // ("Agent execution suspended"), and the snapshot's `updatedAt` marks the
+    // model step's START — earlier than the gate part's own timestamp (its
+    // `suspendedAt`). So the resolved gate part below satisfies
+    // `getPartOrder > updatedAt` and gets re-appended, duplicating the tool-call.
+    // That leaves the snapshot's copy dangling on the provider (no result
+    // immediately after it) AND makes normalizeRehydratedMessages keep the STALE
+    // "suspended" result over the real approval decision. Purge any tool blocks
+    // from the snapshot whose part we are about to re-append, so the resolved
+    // part is the single source of truth for that call. Heals sessions already
+    // suspended before this fix, so they can resume on upgrade.
+    const reappendedToolIds = new Set(
+      fresh.filter((part): part is ToolPart => part.type === 'tool').map((part) => part.callID)
+    );
+    const messages = stripToolBlocks(snapshot.messages as ModelMessage[], reappendedToolIds);
+    for (const part of fresh) {
       appendPartMessages(messages, part);
     }
     return normalizeRehydratedMessages(messages);

@@ -369,4 +369,121 @@ describe('rehydrateMessages', () => {
       delete process.env.XDG_DATA_HOME;
     }
   });
+
+  it('does not duplicate a suspended gate the snapshot already captured, and prefers the resolved result', async () => {
+    // Reproduces the HTTP 400 that crashed resume with "tool_use ids were found
+    // without tool_result blocks immediately after" (session 01KWZ614...).
+    //
+    // On suspend, the AI SDK records the thrown SuspendSignal as a synthetic
+    // tool-result ("Agent execution suspended"), so the suspension snapshot
+    // already contains the await_human tool-call AND that stale result. But the
+    // snapshot's `updatedAt` marks the model step's START, which is EARLIER than
+    // the gate part's `suspendedAt`. So the resolved gate part satisfies
+    // getPartOrder > updatedAt and gets re-appended — duplicating the tool-call
+    // (the snapshot copy is then dangling on the provider) and, because the
+    // stale suspend result sorts first, normalizeRehydratedMessages would keep
+    // "Agent execution suspended" over the real approval decision.
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-rehydrate-gate-dupe-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+
+    try {
+      await initStorage(projectRoot);
+      const sessionManager = new SessionManager();
+      const sessionID = await sessionManager.createSession({
+        agent: { id: 'agents/review', name: 'review', isSubAgent: false },
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: { root: projectRoot, cwd: projectRoot }
+      });
+      const agentId = 'agents/review';
+      const messageID = await sessionManager.createMessage(sessionID, agentId, {
+        user: { prompt: { task: 'Long approval task' } },
+        assistant: {
+          system: ['system'],
+          modelID: 'test',
+          providerID: 'demo',
+          mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+        }
+      });
+
+      // Snapshot updatedAt (step start) is BEFORE the gate's suspendedAt.
+      await sessionManager.writeContextSnapshot(sessionID, agentId, {
+        version: 1,
+        updatedAt: 1_000,
+        messageID,
+        messages: [
+          { role: 'system', content: 'system' },
+          { role: 'user', content: 'Long approval task' },
+          { role: 'assistant', content: [
+            { type: 'text', text: 'Now the approval gate.' },
+            { type: 'tool-call', toolCallId: 'call-approval', toolName: 'await_human', input: { prompt: 'Approve?' } },
+          ] },
+          { role: 'tool', content: [
+            { type: 'tool-result', toolCallId: 'call-approval', toolName: 'await_human', output: { type: 'error-text', value: 'Agent execution suspended' } },
+          ] },
+        ] as any,
+        usage: {
+          activeTokens: 76_000,
+          contextLimit: 922_000,
+          usagePercentage: 8.243,
+          compacted: false,
+          compactions: 0,
+          updatedAt: 1_000,
+        }
+      });
+
+      // The gate resolved (approved). Its time.start is the former suspendedAt
+      // (1_002 > snapshot.updatedAt), matching applyResumeToolResult.
+      await sessionManager.addPart(sessionID, agentId, messageID, {
+        type: 'tool',
+        callID: 'call-approval',
+        tool: 'await_human',
+        state: {
+          status: 'completed',
+          input: { prompt: 'Approve?' },
+          output: { status: 'approve', reviewer: { username: 'web' } },
+          metadata: { resumePayload: { kind: 'await_human', resumeToken: 'token-1' } },
+          time: { start: 1_002, end: 5_000 }
+        }
+      } as any);
+
+      const messages = await rehydrateMessages(sessionManager, sessionID, agentId);
+
+      // Exactly one tool-call for the gate (no dangling duplicate).
+      const gateCalls = (messages as any[]).flatMap((m) =>
+        Array.isArray(m.content) ? m.content.filter((p: any) => p.type === 'tool-call' && p.toolCallId === 'call-approval') : []
+      );
+      expect(gateCalls).toHaveLength(1);
+
+      // Exactly one tool-result, and it is the REAL approval decision, not the
+      // stale "Agent execution suspended" placeholder.
+      const gateResults = (messages as any[]).flatMap((m) =>
+        Array.isArray(m.content) ? m.content.filter((p: any) => p.type === 'tool-result' && p.toolCallId === 'call-approval') : []
+      );
+      expect(gateResults).toHaveLength(1);
+      expect(gateResults[0].output).toEqual({ type: 'json', value: { status: 'approve', reviewer: { username: 'web' } } });
+      expect(JSON.stringify(messages)).not.toContain('Agent execution suspended');
+
+      // Every tool-call is immediately followed by a message carrying its result
+      // (the invariant the provider enforces).
+      for (let i = 0; i < messages.length; i++) {
+        const m = messages[i] as any;
+        if (!Array.isArray(m.content)) continue;
+        for (const p of m.content) {
+          if (p.type !== 'tool-call') continue;
+          const next = messages[i + 1] as any;
+          const hasResult = next && Array.isArray(next.content) &&
+            next.content.some((r: any) => r.type === 'tool-result' && r.toolCallId === p.toolCallId);
+          expect(hasResult).toBe(true);
+        }
+      }
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
 });
