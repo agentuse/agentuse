@@ -3,10 +3,6 @@ import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 
-function projectAnchor(projectId: string): string {
-  return `project-${projectId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-}
-
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
@@ -68,7 +64,7 @@ export default function Home() {
             {projects.length === 0
               ? <div class="empty">{loading ? 'Loading projects…' : 'No projects loaded.'}</div>
               : projects.map((p) => (
-                <a class="proj" href={`/agents#${projectAnchor(p.id)}`} key={p.id}>
+                <a class="proj" href={`/agents/${encodeURIComponent(p.id)}`} key={p.id}>
                   <div>
                     <div class="proj-id">{p.id}{p.id === data?.default && <span class="proj-default">default</span>}</div>
                     <div class="proj-path">{p.path}{p.scope && p.scope !== p.path ? ` · scope ${p.scope}` : ''}</div>

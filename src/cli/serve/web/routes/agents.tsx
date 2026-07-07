@@ -8,6 +8,7 @@ import { usePins } from '../hooks/use-pins';
 import { useAgentColumns } from '../hooks/use-agent-columns';
 import { useMediaQuery } from '../hooks/use-media-query';
 import { useRunAgent } from '../hooks/use-run-agent';
+import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
 import { RunInstructionDialog } from '../components/run-instruction-dialog';
 import { agentDetailHref } from './agent-detail';
@@ -192,6 +193,11 @@ function projectAnchor(projectId: string): string {
   return `project-${projectId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
 }
 
+/** Link to the focused single-project agents view (/agents/:project). */
+export function agentsProjectHref(projectId: string): string {
+  return `/agents/${encodeURIComponent(projectId)}`;
+}
+
 interface TreeNode {
   name: string;
   children: Map<string, TreeNode>;
@@ -373,8 +379,10 @@ function matchesFilter(agent: AgentRow, query: string): boolean {
   return query.split(/\s+/).filter(Boolean).every((term) => haystack.includes(term));
 }
 
-export default function Agents() {
-  useTitle('AgentUse / Agents');
+export default function Agents({ project }: { project?: string } = {}) {
+  const scoped = typeof project === 'string' && project.length > 0;
+  useTitle(scoped ? `AgentUse / ${project}` : 'AgentUse / Agents');
+  const goBack = useSmartBack('/agents');
   const { data, error, loading } = useFetch('agents', () => fetchAgents(), { refreshMs: 30_000 });
   const { isPinned, toggle, keys } = usePins();
   const pins: PinApi = { isPinned, toggle };
@@ -384,7 +392,13 @@ export default function Agents() {
   const [filter, setFilter] = useState('');
   const query = filter.trim().toLowerCase();
 
-  const loadedAgents = data?.agents ?? [];
+  // A scoped view (/agents/:project) narrows every downstream computation —
+  // columns, filter counts, pins, groups — to a single project. Distinguish
+  // "no such project" from "project loaded but empty" so the empty state reads
+  // correctly. The API always returns every agent; scoping is a client filter.
+  const allLoaded = data?.agents ?? [];
+  const projectMissing = scoped && Boolean(data) && !allLoaded.some((a) => a.projectId === project);
+  const loadedAgents = scoped ? allLoaded.filter((a) => a.projectId === project) : allLoaded;
   // Column model: built-ins + one per metadata key. `activeColumns` keeps the
   // user's saved order, dropping any metadata column whose key is no longer in
   // the payload. `renderColumns` is what actually renders (narrow screens keep
@@ -403,25 +417,43 @@ export default function Agents() {
     if (list) list.push(agent);
     else byProject.set(agent.projectId, [agent]);
   }
-  const errors = data?.errors ?? [];
+  const errors = (data?.errors ?? []).filter((e) => !scoped || e.projectId === project);
 
   // Pinned agents in the order they were pinned, skipping any that no longer
-  // exist in the served set.
+  // exist in the served set (scoped views only resolve pins in this project).
   const byKey = new Map<string, AgentRow>(allAgents.map((a) => [`${a.projectId}::${a.path}`, a]));
   const pinnedAgents = keys.map((k) => byKey.get(k)).filter((a): a is AgentRow => a !== undefined);
+
+  const trimmed = filter.trim();
+  const lede = !data
+    ? (loading ? 'Loading agents…' : '')
+    : projectMissing
+      ? `No project “${project}” is loaded by this serve daemon.`
+      : query
+        ? `${allAgents.length} of ${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} match “${trimmed}”.`
+        : scoped
+          ? `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} in this project.`
+          : `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} across ${byProject.size} project${byProject.size === 1 ? '' : 's'} in this serve daemon.`;
+  const emptyMsg = loading
+    ? 'Loading…'
+    : query
+      ? `No agents match “${trimmed}”.`
+      : projectMissing
+        ? `No project “${project}” is loaded by this serve daemon.`
+        : scoped
+          ? 'This project has no agents.'
+          : 'No agents loaded by this serve daemon.';
 
   return (
     <div class="page-agents">
       <Topbar currentPage="agents" />
       <main>
         <header>
-          <div class="eyebrow">loaded agents</div>
-          <h1>Agents</h1>
-          <p class="lede">{data
-            ? query
-              ? `${allAgents.length} of ${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} match “${filter.trim()}”.`
-              : `${data.agents.length} agent${data.agents.length === 1 ? '' : 's'} across ${byProject.size} project${byProject.size === 1 ? '' : 's'} in this serve daemon.`
-            : loading ? 'Loading agents…' : ''}</p>
+          {scoped
+            ? <a class="back" href="/agents" onClick={goBack}>← all agents</a>
+            : <div class="eyebrow">loaded agents</div>}
+          <h1>{scoped ? project : 'Agents'}</h1>
+          <p class="lede">{lede}</p>
           {loadedAgents.length > 0 && (
             <div class="agents-filter">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -496,10 +528,16 @@ export default function Agents() {
           </section>
         )}
         {byProject.size === 0
-          ? <div class="panel"><div class="empty">{loading ? 'Loading…' : query ? `No agents match “${filter.trim()}”.` : 'No agents loaded by this serve daemon.'}</div></div>
+          ? <div class="panel"><div class="empty">{emptyMsg}</div></div>
           : [...byProject.entries()].map(([projectId, agents]) => (
             <section class="group" id={projectAnchor(projectId)} key={projectId}>
-              <h2 class="group-title"><span>{projectId}</span><span class="count">{agents.length} agent{agents.length === 1 ? '' : 's'}</span><span class="rule"></span></h2>
+              {!scoped && (
+                <h2 class="group-title">
+                  <a class="group-link" href={agentsProjectHref(projectId)}><span>{projectId}</span></a>
+                  <span class="count">{agents.length} agent{agents.length === 1 ? '' : 's'}</span>
+                  <span class="rule"></span>
+                </h2>
+              )}
               <div class="panel">
                 <div class="tree" style={{ gridTemplateColumns: gridTemplate }}>
                   <div class="tree-head">

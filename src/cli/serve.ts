@@ -1541,8 +1541,10 @@ function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
 /**
  * GET routes that render a browser page and therefore serve the SPA shell
  * (the client routes by URL and fetches its own data). Mirrors the set of
- * server-rendered pages: home, agents, schedules, stores (+item/detail),
- * sessions, and the approvals list. `/approvals/:id` is excluded so it keeps
+ * server-rendered pages: home, agents (+single-project view), schedules,
+ * stores (+item/detail), sessions, and the approvals list. The single-project
+ * route `/agents/:project` is one segment; the detail hub `/agents/:project/:agent*`
+ * is two or more. `/approvals/:id` is excluded so it keeps
  * 302-redirecting; `/sessions/:id` is excluded too because it needs a dedicated
  * branch that converts a legacy gate token into a session-view token before
  * serving the shell (see sessionPageMatch).
@@ -1558,6 +1560,7 @@ function isSpaPageRoute(routePath: string): boolean {
       return true;
   }
   if (/^\/stores\/[^/?#]+(?:\/[^/?#]+)?$/.test(routePath)) return true; // /stores/:s and /stores/:s/:item
+  if (/^\/agents\/[^/?#]+$/.test(routePath)) return true; // /agents/:project (single-project view)
   if (/^\/agents\/[^/?#]+\/.+$/.test(routePath)) return true; // /agents/:project/:agent* (detail hub)
   return false;
 }

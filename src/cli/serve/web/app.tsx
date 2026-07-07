@@ -35,6 +35,7 @@ export function App() {
         <Router>
           <Route path="/" component={Home} />
           <Route path="/agents" component={Agents} />
+          <Route path="/agents/:project" component={Agents} />
           <Route path="/agents/:project/:agent*" component={AgentDetail} />
           <Route path="/schedules" component={Schedules} />
           <Route path="/sessions" component={SessionsList} />
