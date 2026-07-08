@@ -1637,8 +1637,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-stores .data-key { color: var(--cyan); font-size: 11px; letter-spacing: 0.08em; }
 .page-stores .data-value { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); padding: 10px 12px; color: var(--muted-3); white-space: pre-wrap; overflow-wrap: anywhere; }
 .page-stores .data-value pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; }
-.page-stores .tabs { display: inline-flex; gap: 4px; margin: 0 0 12px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
-.page-stores .tabs button {
+/* Shared pill tab bar (stores item view, agent detail). */
+.tabs { display: inline-flex; gap: 4px; margin: 0 0 12px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.tabs button {
   min-height: 0;
   padding: 6px 10px;
   border: 0;
@@ -1649,9 +1650,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-size: 12px;
   cursor: pointer;
 }
-.page-stores .tabs button:hover { background: var(--panel-hover); color: var(--muted-3); border: 0; }
-.page-stores .tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); border: 1px solid var(--line); }
-.page-stores .tab-panel[hidden] { display: none; }
+.tabs button:hover { background: var(--panel-hover); color: var(--muted-3); border: 0; }
+.tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); border: 1px solid var(--line); }
+.tab-panel[hidden] { display: none; }
 .page-stores .raw-json { margin: 0; padding: 14px 16px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; color: var(--muted-3); }
 .page-stores .back-link { display: inline-flex; margin-bottom: 18px; color: var(--muted-3); border-color: var(--line-strong); }
 .page-stores code { color: var(--muted-3); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
@@ -2167,6 +2168,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   display: flex; align-items: baseline; gap: 10px; margin: 30px 0 12px;
   font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg);
 }
+/* Tabbed sections: the tab bar owns the section name, so the group-title rows
+   inside panels are slim toolbars sitting right under it. */
+.page-agent-detail .tabs { margin: 28px 0 0; }
+.page-agent-detail .tab-panel .group-title { margin-top: 14px; }
 .page-agent-detail .group-title::before { content: "⋮"; color: var(--cyan); transform: translateY(1px); }
 .page-agent-detail .group-title .count { color: var(--muted-2); font-size: 12px; font-family: var(--mono); }
 .page-agent-detail .group-title .rule { flex: 1; height: 1px; background: var(--line); }

@@ -167,12 +167,11 @@ function RecentRuns(props: { agentId: string; project: string }) {
 
   return (
     <section class="group">
-      <h2 class="group-title">
-        <span>Recent runs</span>
-        {data && <span class="count">last 30 days</span>}
+      <div class="group-title">
+        <span class="count">last 30 days</span>
         <span class="rule" />
         <a class="see-all" href={seeAll}>view all →</a>
-      </h2>
+      </div>
       <div class="panel">
         {loading && <div class="empty">Loading runs…</div>}
         {error && <div class="empty err">Failed to load runs: {error.message}</div>}
@@ -187,11 +186,10 @@ function RecentRuns(props: { agentId: string; project: string }) {
 function LearningsGroup(props: { project: string; runPath: string }) {
   return (
     <section class="group">
-      <h2 class="group-title">
-        <span>Learned instructions</span>
+      <div class="group-title">
         <span class="count">all sessions</span>
         <span class="rule" />
-      </h2>
+      </div>
       <AgentLearningsPanel project={props.project} runPath={props.runPath} />
     </section>
   );
@@ -239,14 +237,13 @@ function SourcePanel(props: { source: string; runPath: string; project: string; 
   const { frontmatter, body } = splitFrontmatter(props.source);
   return (
     <section class="group">
-      <h2 class="group-title">
-        <span>Source</span>
+      <div class="group-title">
         <span class="count">{props.runPath}</span>
         <span class="rule" />
         <button type="button" class="source-view-btn" onClick={() => setRendered((v) => !v)}>{rendered ? 'raw' : 'rendered'}</button>
         <button type="button" class="send-agent-btn" onClick={() => setSendOpen(true)}>Send to Coding Agent…</button>
         <button type="button" class="copy-btn" onClick={copy}>{copied ? 'copied' : 'copy'}</button>
-      </h2>
+      </div>
       <div class="panel source-panel">
         {rendered ? (
           <div class="source-rendered">
@@ -268,10 +265,19 @@ function SourcePanel(props: { source: string; runPath: string; project: string; 
   );
 }
 
+type AgentTab = 'history' | 'learnings' | 'source';
+
+const AGENT_TABS: { id: AgentTab; label: string }[] = [
+  { id: 'history', label: 'History' },
+  { id: 'learnings', label: 'Learnings' },
+  { id: 'source', label: 'Source' },
+];
+
 export default function AgentDetail() {
   const { params } = useRoute();
   const project = decodeURIComponent(params.project ?? '');
   const runPath = (params.agent ?? '').split('/').map(decodeURIComponent).join('/');
+  const [tab, setTab] = useState<AgentTab>('history');
 
   const { data, error, loading } = useFetch(
     `agent-detail:${project}:${runPath}`,
@@ -312,11 +318,31 @@ export default function AgentDetail() {
 
             <Capabilities meta={data.meta} model={data.model} schedule={data.schedule} scheduleHuman={data.scheduleHuman} metadata={data.metadata} />
 
-            <RecentRuns agentId={agentIdFromPath(data.path)} project={data.projectId} />
+            <div class="tabs" role="tablist" aria-label="Agent views">
+              {AGENT_TABS.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="tab"
+                  id={`tab-${t.id}`}
+                  aria-controls={`panel-${t.id}`}
+                  aria-selected={tab === t.id}
+                  onClick={() => setTab(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
 
-            <LearningsGroup project={data.projectId} runPath={data.runPath} />
-
-            <SourcePanel source={data.source} runPath={data.runPath} project={data.projectId} path={data.path} />
+            <div id="panel-history" class="tab-panel" role="tabpanel" aria-labelledby="tab-history" hidden={tab !== 'history'}>
+              <RecentRuns agentId={agentIdFromPath(data.path)} project={data.projectId} />
+            </div>
+            <div id="panel-learnings" class="tab-panel" role="tabpanel" aria-labelledby="tab-learnings" hidden={tab !== 'learnings'}>
+              <LearningsGroup project={data.projectId} runPath={data.runPath} />
+            </div>
+            <div id="panel-source" class="tab-panel" role="tabpanel" aria-labelledby="tab-source" hidden={tab !== 'source'}>
+              <SourcePanel source={data.source} runPath={data.runPath} project={data.projectId} path={data.path} />
+            </div>
           </>
         )}
       </main>
