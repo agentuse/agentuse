@@ -1,5 +1,6 @@
 import { jsonSchema, type ToolSet } from 'ai';
 import type { ToolsSnapshot } from '../session/types';
+import { logger } from '../utils/logger';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -92,13 +93,32 @@ function serializeInputSchema(schema: unknown): unknown {
   }
 }
 
+function isUsableInputSchema(schema: unknown): boolean {
+  // The Anthropic API requires input_schema to be an object with a top-level
+  // "type"; anything else 400s the RESUMED request, i.e. after the human has
+  // already spent their approval. Catch it at suspend time instead.
+  return !!schema && typeof schema === 'object' && !Array.isArray(schema) &&
+    typeof (schema as { type?: unknown }).type === 'string';
+}
+
 export function createToolsSnapshot(tools: ToolSet): ToolsSnapshot {
   return {
-    tools: Object.entries(tools).map(([name, tool]: [string, any]) => ({
-      name,
-      ...(tool.description && { description: tool.description }),
-      inputSchema: serializeInputSchema(tool.inputSchema)
-    }))
+    tools: Object.entries(tools).map(([name, tool]: [string, any]) => {
+      let inputSchema = serializeInputSchema(tool.inputSchema);
+      if (!isUsableInputSchema(inputSchema)) {
+        logger.warn(
+          `Tool "${name}" snapshotted to an unusable input schema (no top-level "type"); ` +
+          `substituting a permissive object schema so the session can still resume. ` +
+          `serializeInputSchema does not understand this tool's schema shape.`
+        );
+        inputSchema = { type: 'object', additionalProperties: true };
+      }
+      return {
+        name,
+        ...(tool.description && { description: tool.description }),
+        inputSchema
+      };
+    })
   };
 }
 

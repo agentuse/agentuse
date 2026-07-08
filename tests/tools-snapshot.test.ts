@@ -79,6 +79,20 @@ describe('tools snapshot', () => {
     expect(asSchema(bound.mcp__slack__channels_list.inputSchema).jsonSchema).toEqual(mcpSchema as any);
   });
 
+  it('substitutes a permissive schema when serialization yields something the API would reject', () => {
+    const current = {
+      weird_tool: {
+        description: 'schema shape the serializer does not understand',
+        inputSchema: { foo: 'bar' } as any,
+        execute: async () => 'ok'
+      }
+    } as any;
+
+    const snapshot = createToolsSnapshot(current);
+    // Must be resumable: Anthropic requires a top-level "type" on input_schema.
+    expect(snapshot.tools[0].inputSchema).toEqual({ type: 'object', additionalProperties: true });
+  });
+
   it('resumes legacy snapshots that persisted the { jsonSchema } wrapper', () => {
     const mcpSchema = { type: 'object', properties: {}, additionalProperties: false };
     const current = {
