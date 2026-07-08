@@ -131,8 +131,21 @@ export function LearningsPanel(props: {
             }
           }}
         />
-        <button type="button" class="primary" disabled={adding} onClick={() => void add()}>
-          Add instruction
+        <button
+          type="button"
+          class="primary"
+          disabled={adding}
+          aria-busy={adding}
+          onClick={() => void add()}
+        >
+          {adding ? (
+            <>
+              <span class="btn-spinner" aria-hidden="true" />
+              Adding…
+            </>
+          ) : (
+            'Add instruction'
+          )}
         </button>
       </div>
     </div>

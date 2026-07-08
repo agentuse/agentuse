@@ -1507,6 +1507,16 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .learnings-discard:disabled { opacity: 0.5; cursor: default; }
 .learnings-add { display: flex; gap: 10px; align-items: flex-end; }
 .learnings-add-input { flex: 1; min-height: 56px; }
+.learnings-add button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+/* Inline spinner for buttons in a pending state; inherits the button's text colour. */
+.btn-spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: log-spin 700ms linear infinite;
+}
 .continue-label {
   color: var(--muted-2);
   font-size: 10px;
@@ -2776,6 +2786,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .log-working .log-title,
   .log-dots::after { animation: none !important; }
   .log-spinner,
+  .btn-spinner,
   .page-agents .run-btn-spinner { animation-duration: 1.6s; }
 }
 
