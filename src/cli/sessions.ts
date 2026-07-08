@@ -377,6 +377,7 @@ function resolveSessionScope(options?: { all?: boolean; project?: string | boole
 function statusLabel(status?: SessionStatus, errorCode?: string): string {
   if (status === 'error' && errorCode === 'USER_STOPPED') return 'stopped';
   if (status === 'error' && errorCode === 'TIMEOUT') return 'timeout';
+  if (status === 'error' && errorCode === 'INCOMPLETE') return 'incomplete';
   return status === 'completed'
     ? 'done'
     : status === 'error'
@@ -733,7 +734,7 @@ async function listSessionsCommand(
 
   // Calculate column widths
   const idWidth = 12; // First 12 chars of ULID
-  const statusWidth = 9; // "suspended"
+  const statusWidth = 10; // "incomplete"
   const projectWidth = scope.kind === "all"
     ? Math.min(28, Math.max(...sessions.map((s) => projectLabel(s.projectRoot).length)))
     : 0;
@@ -828,9 +829,11 @@ async function showSession(
   process.stdout.write(`Model:       ${s.model}\n`);
   process.stdout.write(`Started:     ${new Date(s.time.created).toLocaleString()}\n`);
 
-  // Display session status
-  const statusIcon = s.status === 'completed' ? '✓' : s.status === 'error' ? '✗' : s.status === 'suspended' ? '⏸' : '⋯';
-  process.stdout.write(`Status:      ${statusIcon} ${s.status || 'unknown'}\n`);
+  // Display session status. An agent-declared incomplete run is still
+  // status 'error' on disk, but reads as its own state here.
+  const isIncomplete = s.status === 'error' && s.error?.code === 'INCOMPLETE';
+  const statusIcon = s.status === 'completed' ? '✓' : isIncomplete ? '⚠' : s.status === 'error' ? '✗' : s.status === 'suspended' ? '⏸' : '⋯';
+  process.stdout.write(`Status:      ${statusIcon} ${isIncomplete ? 'incomplete' : s.status || 'unknown'}\n`);
 
   if (s.config.mcpServers && s.config.mcpServers.length > 0) {
     process.stdout.write(`MCP Servers: ${s.config.mcpServers.join(", ")}\n`);
@@ -843,7 +846,7 @@ async function showSession(
     process.stdout.write(`\nSubagents:\n`);
     for (const child of childSessions) {
       process.stdout.write(
-        `  - ${child.id.substring(0, 12)}  ${statusLabel(child.status, child.errorCode).padEnd(9)}  ${child.agentId}  ${formatDate(child.created)}\n`
+        `  - ${child.id.substring(0, 12)}  ${statusLabel(child.status, child.errorCode).padEnd(10)}  ${child.agentId}  ${formatDate(child.created)}\n`
       );
     }
     process.stdout.write(`    Inspect with: agentuse sessions show <subagent-id> --all-search\n`);
@@ -852,8 +855,8 @@ async function showSession(
   // Display session-level error (failures before LLM calls - auth, MCP, etc.)
   if (s.error) {
     process.stdout.write(`\n${"─".repeat(60)}\n`);
-    const icon = s.error.code === 'USER_INTERRUPT' ? '⚠' : '✗';
-    const label = s.error.code === 'USER_INTERRUPT' ? 'INTERRUPTED' : 'ERROR';
+    const icon = s.error.code === 'USER_INTERRUPT' || s.error.code === 'INCOMPLETE' ? '⚠' : '✗';
+    const label = s.error.code === 'USER_INTERRUPT' ? 'INTERRUPTED' : s.error.code === 'INCOMPLETE' ? 'INCOMPLETE' : 'ERROR';
     process.stdout.write(`${icon} ${label}: ${s.error.code}\n`);
     process.stdout.write(`  ${s.error.message}\n`);
     if (typeof s.error.statusCode === 'number') {

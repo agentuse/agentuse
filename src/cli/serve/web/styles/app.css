@@ -379,6 +379,7 @@ a, button, select, summary, label, input, textarea,
 .page-approval-detail .status.running::before, .page-approval-detail .status.streaming::before { animation: pulse 1.4s ease-in-out infinite; }
 .page-approval-detail .status.completed, .page-approval-detail .status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
 .page-approval-detail .status.expired, .page-approval-detail .status.error, .page-approval-detail .status.rejected { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+.page-approval-detail .status.incomplete { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 /* Session bar: a compact identity row pinned just under the topbar on every
    session view. Sub-agent runs show a breadcrumb back to their parent; normal
@@ -2325,7 +2326,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agent-detail .chip.status { color: var(--cyan); border-color: var(--cyan-border); }
 .page-agent-detail .chip.status.completed { color: var(--green); border-color: var(--green-border); }
-.page-agent-detail .chip.status.error { color: var(--red); border-color: var(--red-border); }
+.page-agent-detail .chip.status.error, .page-agent-detail .chip.status.timeout { color: var(--red); border-color: var(--red-border); }
+.page-agent-detail .chip.status.incomplete { color: var(--amber); border-color: var(--amber-border); }
 .page-agent-detail .chip.trigger { color: var(--amber); border-color: var(--amber-border); }
 
 @media (max-width: 640px) {
@@ -2631,7 +2633,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-sessions .chip.status.pending { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
 .page-sessions .chip.status.completed, .page-sessions .chip.status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
-.page-sessions .chip.status.error, .page-sessions .chip.status.rejected, .page-sessions .chip.status.expired { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+.page-sessions .chip.status.error, .page-sessions .chip.status.rejected, .page-sessions .chip.status.expired, .page-sessions .chip.status.timeout { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+/* Agent-declared non-delivery (error/INCOMPLETE): amber, distinct from a crash,
+   so a skim separates "blocked, needs a human" from "broke". */
+.page-sessions .chip.status.incomplete { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .page-sessions footer { color: var(--muted-2); font-size: 11px; margin-top: 32px; text-align: center; }
 @media (max-width: 560px) {
   .page-sessions .filters label { width: 100%; }

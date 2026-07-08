@@ -1439,6 +1439,7 @@ function childSessionLogMatchScore(child: ChildSessionSummary, entry: ApprovalLo
 function renderChildSessionStatus(child: ChildSessionSummary): string {
   if (child.status === 'error' && child.errorCode === 'USER_STOPPED') return 'stopped';
   if (child.status === 'error' && child.errorCode === 'TIMEOUT') return 'timeout';
+  if (child.status === 'error' && child.errorCode === 'INCOMPLETE') return 'incomplete';
   return child.status;
 }
 

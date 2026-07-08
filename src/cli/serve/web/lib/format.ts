@@ -131,18 +131,34 @@ export function latestReviewerComment(logs: ApprovalLogEntry[]): { comment: stri
   return undefined;
 }
 
+/**
+ * error + a self-describing errorCode (USER_STOPPED / TIMEOUT / INCOMPLETE)
+ * surface as their own label, matching the server's child-session rendering.
+ */
+export function displayStatusLabel(status: string, errorCode?: string | undefined): string {
+  if (status === 'error') {
+    if (errorCode === 'USER_STOPPED') return 'stopped';
+    if (errorCode === 'TIMEOUT') return 'timeout';
+    if (errorCode === 'INCOMPLETE') return 'incomplete';
+  }
+  return status;
+}
+
 export function isEndedStatus(status: string | undefined): boolean {
-  return status === 'completed' || status === 'error' || status === 'stopped' || status === 'timeout';
+  return status === 'completed' || status === 'error' || status === 'stopped' || status === 'timeout' || status === 'incomplete';
 }
 
 export function isLiveStatus(status: string, logs: ApprovalLogEntry[]): boolean {
-  if (status === 'completed' || status === 'error' || status === 'expired' || status === 'failed' || status === 'stopped' || status === 'timeout') return false;
+  if (status === 'completed' || status === 'error' || status === 'expired' || status === 'failed' || status === 'stopped' || status === 'timeout' || status === 'incomplete') return false;
   if (status === 'run' || status === 'running' || status === 'resuming' || status === 'continuing') return true;
   return logs.some((entry) => entry.status === 'streaming' || entry.status === 'running');
 }
 
 export function sessionErrorText(approval: Pick<ApprovalPageInfo, 'sessionStatus' | 'errorCode' | 'errorMessage'> | undefined): string {
   if (!approval || approval.sessionStatus !== 'error') return '';
+  if (approval.errorCode === 'INCOMPLETE') {
+    return `Agent reported the run incomplete${approval.errorMessage ? `: ${approval.errorMessage}` : '.'}`;
+  }
   if (!approval.errorCode && !approval.errorMessage) {
     return 'Session finished with an error. Check the session log for details.';
   }

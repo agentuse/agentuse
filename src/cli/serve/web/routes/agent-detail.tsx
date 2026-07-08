@@ -10,7 +10,7 @@ import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
 import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
 import { LogContent } from '../components/content';
-import { formatApprovalTime } from '../lib/format';
+import { formatApprovalTime, displayStatusLabel } from '../lib/format';
 
 /**
  * Split an `.agentuse` file into its YAML frontmatter and Markdown body.
@@ -144,9 +144,10 @@ function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: s
 function RunRow(props: { row: SessionRow }) {
   const { row } = props;
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
+  const status = displayStatusLabel(row.status, row.errorCode);
   return (
     <a class="run-row" href={href}>
-      <span class={`chip status ${row.status}`}>{row.status}</span>
+      <span class={`chip status ${status}`}>{status}</span>
       <span class="chip trigger">{row.trigger}</span>
       <span class="run-row-time">{formatApprovalTime(row.createdAt)}</span>
       <span class="run-row-id"><code>{row.sessionId.slice(0, 12)}</code></span>

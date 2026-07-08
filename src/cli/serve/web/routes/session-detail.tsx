@@ -98,11 +98,12 @@ function scrollToPageEnd(): void {
   });
 }
 
-// error + USER_STOPPED / TIMEOUT surface as their own pill, matching the server.
+// error + USER_STOPPED / TIMEOUT / INCOMPLETE surface as their own pill, matching the server.
 function displaySessionStatus(status: string, header: ApprovalHeader | null): string {
   if ((status === 'error' || header?.sessionStatus === 'error')) {
     if (header?.errorCode === 'USER_STOPPED') return 'stopped';
     if (header?.errorCode === 'TIMEOUT') return 'timeout';
+    if (header?.errorCode === 'INCOMPLETE') return 'incomplete';
   }
   return status;
 }

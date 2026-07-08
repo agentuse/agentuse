@@ -8,7 +8,7 @@ import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { PushBell } from '../components/push-bell';
 import { AgentFilterSelect } from '../components/agent-filter-select';
-import { formatApprovalTime, formatRelativeTime, errorText } from '../lib/format';
+import { formatApprovalTime, formatRelativeTime, errorText, displayStatusLabel } from '../lib/format';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
 const STATUSES = ['', 'running', 'suspended', 'completed', 'error'];
@@ -23,10 +23,14 @@ function SessionRowView(props: { row: SessionRow; multiProject: boolean }) {
   const { row, multiProject } = props;
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
   const title = row.agent.description || row.agent.name || row.agent.id;
+  // stopped / timeout / incomplete render as their own chips (still status
+  // 'error' on disk) so a skim distinguishes "crashed" from "agent declared
+  // non-delivery" from "operator stopped it".
+  const status = displayStatusLabel(row.status, row.errorCode);
   return (
     <a class="row" href={href}>
       <div class="row-head">
-        <span class={statusClass(row.status)}>{row.status}</span>
+        <span class={statusClass(status)}>{status}</span>
         {multiProject && <span class="chip project">{row.project}</span>}
         <span class="chip agent">{row.agent.name || row.agent.id}</span>
         <span class="chip trigger">{row.trigger}</span>
