@@ -18,6 +18,9 @@ export interface ExtractLearningsOptions {
   config: LearningConfig;
   /** Reviewer comments from this run's approval gates (paired with the work). */
   reviews?: ApprovalReview[];
+  /** Session the run belongs to; stamped on captured learnings so the session
+   *  view can show only the lessons that run produced. */
+  sessionId?: string | undefined;
 }
 
 /**
@@ -66,6 +69,9 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
       return { status: 'none', source: hadReviews ? 'approval' : 'auto', count: 0, titles: [] };
     }
 
+    if (options.sessionId) {
+      for (const l of learnings) l.sessionId = options.sessionId;
+    }
     await store.add(learnings);
     spinner.succeed(`Extracted ${learnings.length} learning(s) → ${store.filePath}`);
     // A run can yield both reviewer-sourced and execution-sourced learnings;
@@ -106,6 +112,8 @@ export async function saveManualLearning(options: {
   /** A compact transcript of what the agent did this run (its output + tool
    *  calls), so the instruction is grounded in the run the reviewer saw. */
   sessionTranscript?: string | undefined;
+  /** Session the rule was added from (absent for agent-level rules). */
+  sessionId?: string | undefined;
 }): Promise<LearningOutcome> {
   const raw = options.instruction.trim();
   if (!raw) {
@@ -148,6 +156,7 @@ export async function saveManualLearning(options: {
     appliedCount: 0,
     extractedAt: new Date().toISOString(),
     source: 'manual',
+    ...(options.sessionId ? { sessionId: options.sessionId } : {}),
   });
 
   return { status: 'captured', source: 'manual', count: 1, titles: [title] };

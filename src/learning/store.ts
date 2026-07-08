@@ -120,7 +120,9 @@ export class LearningStore {
           source: 'manual',
           confidence: 1,
           extractedAt: draft.extractedAt,
-          // keep prior.id and prior.appliedCount
+          // The re-asserting session owns the rule now (or none, for an
+          // agent-level rule); keep prior.id and prior.appliedCount.
+          ...(draft.sessionId ? { sessionId: draft.sessionId } : {}),
         };
         await this.save(existing);
         return { upgraded: true };
@@ -189,6 +191,7 @@ export class LearningStore {
         appliedCount: meta.applied ?? 0,
         extractedAt: meta.date ?? '',
         source: meta.source ?? 'auto',
+        ...(meta.sessionId && { sessionId: meta.sessionId }),
         instruction: match[4].trim(),
       });
     }
@@ -197,13 +200,14 @@ export class LearningStore {
 
   /**
    * Parse the metadata comment body, e.g.
-   * `id:AB12 | confidence:0.92 | applied:0 | src:approval | 2024-01-15`.
-   * `src:` is optional so learnings files written before provenance still load.
+   * `id:AB12 | confidence:0.92 | applied:0 | src:approval | sess:abc123 | 2024-01-15`.
+   * `src:` and `sess:` are optional so learnings files written before
+   * provenance still load.
    */
   private parseMeta(meta: string): {
-    id?: string; confidence?: number; applied?: number; source?: LearningSource; date?: string;
+    id?: string; confidence?: number; applied?: number; source?: LearningSource; sessionId?: string; date?: string;
   } {
-    const out: { id?: string; confidence?: number; applied?: number; source?: LearningSource; date?: string } = {};
+    const out: { id?: string; confidence?: number; applied?: number; source?: LearningSource; sessionId?: string; date?: string } = {};
     for (const token of meta.split('|').map(t => t.trim())) {
       if (token.startsWith('id:')) out.id = token.slice(3);
       else if (token.startsWith('confidence:')) out.confidence = parseFloat(token.slice(11));
@@ -212,6 +216,7 @@ export class LearningStore {
         const source = token.slice(4);
         out.source = source === 'manual' || source === 'approval' ? source : 'auto';
       }
+      else if (token.startsWith('sess:')) out.sessionId = token.slice(5);
       else if (/^\d{4}-\d{2}-\d{2}$/.test(token)) out.date = token;
     }
     return out;
@@ -223,7 +228,8 @@ export class LearningStore {
 
     for (const l of learnings) {
       md += `### [${l.category}] ${l.title}\n`;
-      md += `<!-- id:${l.id} | confidence:${l.confidence.toFixed(2)} | applied:${l.appliedCount} | src:${l.source} | ${toLocalDate(l.extractedAt)} -->\n`;
+      const sess = l.sessionId ? ` | sess:${l.sessionId}` : '';
+      md += `<!-- id:${l.id} | confidence:${l.confidence.toFixed(2)} | applied:${l.appliedCount} | src:${l.source}${sess} | ${toLocalDate(l.extractedAt)} -->\n`;
       md += `${l.instruction}\n\n`;
     }
     return md.trim() + '\n';

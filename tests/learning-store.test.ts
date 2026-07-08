@@ -79,6 +79,41 @@ describe("LearningStore", () => {
     expect(manual?.source).toBe("manual");
   });
 
+  it("round-trips session provenance and omits it when absent", async () => {
+    await store.save([
+      { ...baseLearning, id: "sess0001", title: "From a run", sessionId: "20260707-abc123" },
+      { ...baseLearning, id: "nosess01", title: "Agent-level rule" },
+    ]);
+    const loaded = await store.load();
+
+    expect(loaded.find(l => l.id === "sess0001")?.sessionId).toBe("20260707-abc123");
+    expect(loaded.find(l => l.id === "nosess01")?.sessionId).toBeUndefined();
+  });
+
+  it("stamps the originating session on manual rules and re-owns upgraded ones", async () => {
+    const agentFile = join(tempDir, "agent.md");
+
+    await saveManualLearning({
+      agentFilePath: agentFile,
+      instruction: "Always include source links before publishing.",
+      sessionId: "sess-one",
+    });
+    let loaded = await store.load();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].sessionId).toBe("sess-one");
+
+    // A similar rule re-asserted from another session upgrades in place and
+    // takes over the session provenance.
+    await saveManualLearning({
+      agentFilePath: agentFile,
+      instruction: "Always include source links when publishing.",
+      sessionId: "sess-two",
+    });
+    loaded = await store.load();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].sessionId).toBe("sess-two");
+  });
+
   it("reads legacy learnings files written without a src field", async () => {
     // Pre-provenance format: metadata comment has no `src:` token.
     const legacy = `# Learnings for agent

@@ -91,4 +91,5 @@ export interface Learning {
   appliedCount: number; // Times injected
   extractedAt: string;  // ISO date
   source: LearningSource; // Provenance (defaults to 'auto' for legacy files)
+  sessionId?: string;   // Session the learning was captured in (absent for legacy files and agent-level manual rules)
 }
