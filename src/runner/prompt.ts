@@ -17,7 +17,14 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
 
   const subAgentAddition = isSubAgent ? '\n- Provide only essential summary when complete' : '';
 
-  return `${basePrompt}${subAgentAddition}
+  const runOutcome = `
+
+Run outcome — every run ends in exactly one of two states; make it skimmable:
+- Objective achieved (a legitimately empty result counts, e.g. a sweep that found nothing to act on): begin your final output with "✅ Complete: <one-line outcome>".
+- Objective NOT achievable (blocked precondition, dead login/session, unrecoverable dependency failure): call the report_incomplete tool with a short reason BEFORE your final output, then begin the final output with "⚠️ Incomplete: <reason>". Still finish bookkeeping and produce your report as usual.
+Never open with Complete when the core objective was skipped or failed; never call report_incomplete for an honestly-empty success.`;
+
+  return `${basePrompt}${subAgentAddition}${runOutcome}
 
 Guidance precedence — when guidance from different sources conflicts, the higher source wins:
 1. Your agent instructions (the task below) — authoritative.

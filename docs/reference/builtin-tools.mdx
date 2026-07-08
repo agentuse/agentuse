@@ -283,6 +283,8 @@ Calling it does **not** stop the run: the agent continues (store writes, final r
 - Channel notifications fire the `failure` event, not `completion`
 - `agentuse sessions show` displays the reason under the error section
 
+The runtime system prompt instructs every agent to call this tool at a blocker and to open its final output with a skimmable status line: `✅ Complete: <one-line outcome>` or `⚠️ Incomplete: <reason>`. Agent files should not restate this mechanic; only add domain judgment about what counts as blocked vs. legitimately empty.
+
 <Note>
   Use it for "ran fine but delivered nothing because something is broken" (e.g. a scraper whose login session died). Do not use it for a legitimately empty result, a sweep that found nothing to act on is still `completed`.
 </Note>

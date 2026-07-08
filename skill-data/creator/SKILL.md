@@ -126,14 +126,15 @@ these. This shapes where a rule belongs:
   the store and continue/stop, or fire an approval/notification. The approval
   gate is the only human-in-the-loop path.
 
-- **A blocked run should declare itself incomplete.** The always-on
-  `report_incomplete` tool (no config) marks a clean-exiting run as
-  `incomplete` instead of `completed` and fires the `failure` channel event.
-  Tell the agent to call it with a reason at its "stop, report, do nothing"
-  branches (dead login, missing precondition), then finish bookkeeping and the
-  final report as usual. Without it, a blocked run reads as a green success in
-  the session list. Not for legitimately-empty results, finding nothing to do
-  is still `completed`.
+- **Blocked runs declare themselves incomplete automatically.** The runtime
+  system prompt already tells every agent to call the always-on
+  `report_incomplete` tool at a blocker (dead login, missing precondition) and
+  to open its final output with "✅ Complete:" / "⚠️ Incomplete:". Do NOT
+  restate that mechanic in the agent body. Only add the domain judgment the
+  runtime cannot know: which conditions count as blocked for THIS agent, and
+  which empty results are an honest `completed` (e.g. "a sweep that scored
+  notes but queued none is Complete; a sweep that never got to score because
+  the session was logged out is Incomplete").
 
 - **Validate models against `agentuse models`.** The catalog moves; check it
   before calling a name invalid. Don't infer limits from other providers'
