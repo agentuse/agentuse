@@ -608,6 +608,7 @@ export async function runPostLifecycle(options: {
         agentFilePath,
         config: agent.config.learning,
         reviews,
+        sessionId: options.sessionId,
       });
       // Surface the outcome (including a silent failure) in the session log.
       if (options.sessionManager && options.sessionId && options.agentId && options.messageId) {
