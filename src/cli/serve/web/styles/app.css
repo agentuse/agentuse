@@ -1508,7 +1508,27 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .learnings-discard:disabled { opacity: 0.5; cursor: default; }
 .learnings-add { display: flex; gap: 10px; align-items: flex-end; }
 .learnings-add-input { flex: 1; min-height: 56px; }
-.learnings-add button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+/* Self-contained primary styling: the panel renders on pages without the
+   session view's `.page-approval-detail button…` base rules (agent detail),
+   where the button would otherwise fall back to native browser chrome. */
+.learnings-add button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--primary-bg);
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  border-radius: 8px;
+  min-height: 40px;
+  padding: 0 16px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+.learnings-add button:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
+.learnings-add button:active { transform: translateY(1px); }
+.learnings-add button:disabled { opacity: 0.55; cursor: not-allowed; }
 /* Inline spinner for buttons in a pending state; inherits the button's text colour. */
 .btn-spinner {
   width: 12px;
