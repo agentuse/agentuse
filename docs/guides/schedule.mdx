@@ -79,6 +79,12 @@ Common patterns:
   Use [crontab.guru](https://crontab.guru) to build and validate cron expressions.
 </Tip>
 
+### Timezone
+
+Cron expressions and intervals are evaluated in the **local timezone of the machine running `agentuse serve`**, not UTC. The times you write are literal wall-clock times for that server. Daylight saving transitions are handled automatically, so `0 9 * * 1-5` stays at 9am local across the year.
+
+To pin a schedule to a specific zone, run the server with `TZ` set (for example `TZ=UTC agentuse serve` or `TZ=America/New_York agentuse serve`).
+
 ## Example
 
 A scheduled agent for daily reports:
