@@ -5,6 +5,7 @@ import { StoreTable, type StoreTableColumn } from '../src/cli/serve/web/componen
 import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
 import { DecisionDialog } from '../src/cli/serve/web/components/comment-dialog';
 import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/cli/serve/web/lib/content-html';
+import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
 import { hasActionableApproval, headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
@@ -430,6 +431,42 @@ describe('content-html', () => {
     expect(html).toContain('json-object-block');
     expect(html).toContain('json-field-key');
     expect(html).toContain('line one');
+  });
+
+  it('syntax-highlights compact JSON blocks', () => {
+    const html = renderLogContentValue(JSON.stringify({ name: 'x', count: 2, done: true, gone: null }));
+    expect(html).toContain('<span class="json-key">&quot;name&quot;</span>');
+    expect(html).toContain('<span class="json-string">&quot;x&quot;</span>');
+    expect(html).toContain('<span class="json-number">2</span>');
+    expect(html).toContain('<span class="json-literal">true</span>');
+    expect(html).toContain('<span class="json-literal">null</span>');
+  });
+
+  it('syntax-highlights fenced json code blocks only when they parse', () => {
+    const valid = renderMarkdownBlock('```json\n{"a": 1}\n```');
+    expect(valid).toContain('<span class="json-key">&quot;a&quot;</span>');
+    expect(valid).toContain('<span class="json-number">1</span>');
+    const invalid = renderMarkdownBlock('```json\n{a: 1,} // nope\n```');
+    expect(invalid).not.toContain('json-key');
+    const otherLang = renderMarkdownBlock('```js\nconst a = {"b": 1}\n```');
+    expect(otherLang).not.toContain('json-key');
+  });
+});
+
+describe('json-highlight', () => {
+  it('classifies keys, strings, numbers, and literals separately', () => {
+    const html = highlightJsonSource('{\n  "key": "true",\n  "n": -1.5e3,\n  "ok": false\n}');
+    expect(html).toContain('<span class="json-key">&quot;key&quot;</span>:');
+    expect(html).toContain('<span class="json-string">&quot;true&quot;</span>');
+    expect(html).toContain('<span class="json-number">-1.5e3</span>');
+    expect(html).toContain('<span class="json-literal">false</span>');
+  });
+
+  it('escapes html inside tokens and keeps escaped quotes in one string', () => {
+    const html = highlightJsonSource(JSON.stringify({ '<b>': 'say \\"<i>hi</i>\\"' }, null, 2));
+    expect(html).not.toContain('<b>');
+    expect(html).not.toContain('<i>');
+    expect(html.match(/json-string/g)?.length).toBe(1);
   });
 });
 

@@ -964,7 +964,13 @@ a, button, select, summary, label, input, textarea,
   border-radius: 0;
   background: transparent;
 }
-.content-code.json code { color: var(--fg); }
+/* JSON syntax tokens (spans emitted by lib/json-highlight). Base code color
+   carries the punctuation; tokens pick out keys/strings/numbers/literals. */
+.content-code.json code { color: var(--muted); }
+.content-code .json-key { color: var(--cyan); }
+.content-code .json-string { color: var(--green); }
+.content-code .json-number { color: var(--amber); }
+.content-code .json-literal { color: var(--amber); }
 .json-object-block {
   display: grid;
   gap: 10px;

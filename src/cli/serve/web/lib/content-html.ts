@@ -8,6 +8,7 @@
  * is allowed to build markup from strings.
  */
 import { isJsonLikeContent, looksLikeMarkdown } from "./format";
+import { highlightJson, highlightJsonSource } from "./json-highlight";
 
 export function escapeHtml(value: unknown): string {
   return String(value ?? '')
@@ -162,12 +163,23 @@ export function renderMarkdownBlock(value: string): string {
     const before = value.slice(cursor, match.index);
     if (before.trim()) html.push(renderMarkdownTextBlock(before));
     const language = match[1] ? ` data-language="${escapeHtml(match[1])}"` : '';
-    html.push(`<pre class="content-code"${language}><code>${escapeHtml(match[2].trim())}</code></pre>`);
+    html.push(`<pre class="content-code"${language}><code>${renderFencedCode(match[1], match[2].trim())}</code></pre>`);
     cursor = match.index + match[0].length;
   }
   const rest = value.slice(cursor);
   if (rest.trim()) html.push(renderMarkdownTextBlock(rest));
   return `<div class="content-markdown">${html.join('')}</div>`;
+}
+
+/** Fenced code bodies are plain-escaped except known-valid JSON, which gets token spans. */
+function renderFencedCode(language: string | undefined, code: string): string {
+  if (language && /^json[5c]?$/i.test(language)) {
+    try {
+      JSON.parse(code);
+      return highlightJsonSource(code);
+    } catch { /* not strict JSON (comments, trailing commas): render plain */ }
+  }
+  return escapeHtml(code);
 }
 
 function isReadableJsonString(value: string): boolean {
@@ -184,16 +196,16 @@ function renderJsonFieldValue(value: unknown): string {
   if (value === null || typeof value === 'number' || typeof value === 'boolean') {
     return `<code class="json-inline-literal">${escapeHtml(JSON.stringify(value))}</code>`;
   }
-  return `<pre class="content-code json"><code>${escapeHtml(JSON.stringify(value, null, 2))}</code></pre>`;
+  return `<pre class="content-code json"><code>${highlightJson(value)}</code></pre>`;
 }
 
 function renderSmartJsonBlock(parsed: unknown): string {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return `<pre class="content-code json"><code>${escapeHtml(JSON.stringify(parsed, null, 2))}</code></pre>`;
+    return `<pre class="content-code json"><code>${highlightJson(parsed)}</code></pre>`;
   }
   const entries = Object.entries(parsed as Record<string, unknown>);
   if (!entries.some(([, value]) => typeof value === 'string' && isReadableJsonString(value))) {
-    return `<pre class="content-code json"><code>${escapeHtml(JSON.stringify(parsed, null, 2))}</code></pre>`;
+    return `<pre class="content-code json"><code>${highlightJson(parsed)}</code></pre>`;
   }
   return `<div class="json-object-block" role="group" aria-label="JSON object">${entries.map(([key, fieldValue]) => `
     <div class="json-field">

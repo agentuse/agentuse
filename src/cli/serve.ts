@@ -1117,6 +1117,10 @@ body { margin: 0; padding: 20px; font-family: var(--sans); color: var(--fg); bac
 .content-markdown code { font-family: var(--mono); background: var(--panel-hover); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; }
 .content-markdown pre.content-code { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow: auto; }
 .content-markdown pre.content-code code { background: transparent; border: 0; padding: 0; }
+.content-code .json-key { color: var(--cyan); }
+.content-code .json-string { color: var(--green); }
+.content-code .json-number { color: var(--amber); }
+.content-code .json-literal { color: var(--amber); }
 .content-frontmatter { border-collapse: collapse; margin: 0 0 24px; width: 100%; font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .content-frontmatter th { text-align: left; vertical-align: top; padding: 7px 12px; color: var(--muted); font-weight: 600; white-space: nowrap; width: 1%; }
 .content-frontmatter td { padding: 7px 12px; color: var(--fg); overflow-wrap: anywhere; }
