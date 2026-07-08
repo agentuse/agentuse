@@ -2073,27 +2073,31 @@ export function createServeCommand(): Command {
           envFile: project.envFile,
 
           onAgentAdded: async (relativePath: string) => {
+            // agentFiles is the source of truth for the /agents listing
+            // (collectAgents iterates it) and the project's agent count.
+            // Membership follows *discovery*, not a successful parse: startup
+            // globs every .agentuse file (broken ones included), so hot-reload
+            // must too. A file that fails to parse then surfaces as an error row
+            // via collectAgents (which re-parses live per request) instead of
+            // vanishing, and it self-heals the moment it is fixed on disk - no
+            // restart needed. Gating membership on a clean parse was why a new
+            // agent with a bad frontmatter field stayed invisible until restart.
+            if (!project.agentFiles.includes(relativePath)) {
+              project.agentFiles.push(relativePath);
+              agentCounts.set(project.id, project.agentFiles.length);
+              updateRegistryCounts();
+            }
+
             try {
               const agentPath = resolveScopedAgentPath(project, relativePath);
               const agent = await parseAgent(agentPath);
-
-              // agentFiles is the source of truth for the /agents listing
-              // (collectAgents iterates it) and the project's agent count. Keep
-              // it in sync so a moved/renamed/added agent shows up without a
-              // restart, instead of leaving stale paths that 404 as "File not
-              // found" and hiding the new ones.
-              if (!project.agentFiles.includes(relativePath)) {
-                project.agentFiles.push(relativePath);
-              }
-
               const schedule = agent.config.schedule
                 ? scheduler.add(project.id, relativePath, agent.config.schedule)
                 : undefined;
               printHotReload(project.id, "added", relativePath, schedule);
-
-              agentCounts.set(project.id, project.agentFiles.length);
-              updateRegistryCounts();
             } catch (err) {
+              // Keep it in agentFiles so it shows as an error row and is retried
+              // on the next edit/scan; do not drop it.
               logger.warn(`Hot reload: Failed to parse new agent ${project.id}/${relativePath}: ${(err as Error).message}`);
             }
           },
@@ -2102,6 +2106,14 @@ export function createServeCommand(): Command {
             try {
               const agentPath = resolveScopedAgentPath(project, relativePath);
               const agent = await parseAgent(agentPath);
+
+              // Backfill membership: a file first discovered while unparseable is
+              // already in agentFiles (see onAgentAdded); stay self-sufficient in
+              // case a change is the first successful parse we see for it.
+              if (!project.agentFiles.includes(relativePath)) {
+                project.agentFiles.push(relativePath);
+                agentCounts.set(project.id, project.agentFiles.length);
+              }
 
               const schedule = scheduler.update(project.id, relativePath, agent.config.schedule);
               printHotReload(project.id, "changed", relativePath, schedule);
