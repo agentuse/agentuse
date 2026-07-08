@@ -420,7 +420,11 @@ export async function createSubAgentTool(
             });
           }
 
-          // Update session message with final token usage and mark session completed
+          // Update session message with final token usage and mark session completed.
+          // A sub-agent that declared itself incomplete (report_incomplete) is
+          // persisted as error/INCOMPLETE instead, so its child-session pill reads
+          // as a failure in the parent's log.
+          const subagentIncomplete = loadedTools.runOutcome.incomplete;
           if (subagentSessionManager && subagentSessionID && subagentMsgID && result.usage) {
             try {
               await subagentSessionManager.updateMessage(subagentSessionID, agentId, subagentMsgID, {
@@ -430,7 +434,14 @@ export async function createSubAgentTool(
                   ...(result.contextUsage && { context: result.contextUsage })
                 }
               });
-              await subagentSessionManager.setSessionCompleted(subagentSessionID, agentId);
+              if (subagentIncomplete) {
+                await subagentSessionManager.setSessionError(subagentSessionID, agentId, {
+                  code: 'INCOMPLETE',
+                  message: subagentIncomplete.reason
+                });
+              } else {
+                await subagentSessionManager.setSessionCompleted(subagentSessionID, agentId);
+              }
             } catch (error) {
               logger.debug(`[SubAgent] Failed to update message with token usage: ${(error as Error).message}`);
             }

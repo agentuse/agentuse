@@ -214,7 +214,7 @@ describe('prepareAgentExecution', () => {
   });
 
   describe('tools merging', () => {
-    it('should return empty tools when no MCP clients and no configured tools', async () => {
+    it('should only expose the always-on outcome tool when no MCP clients and no configured tools', async () => {
       const agent = createMockAgent();
 
       const result = await prepareAgentExecution({
@@ -222,7 +222,8 @@ describe('prepareAgentExecution', () => {
         mcpClients: []
       });
 
-      expect(Object.keys(result.tools).length).toBe(0);
+      // report_incomplete is always on (agent-declared non-delivery signal).
+      expect(Object.keys(result.tools)).toEqual(['report_incomplete']);
     });
 
     it('should include configured tools when project context is provided', async () => {
@@ -511,7 +512,8 @@ describe('prepareAgentExecution - Edge Cases', () => {
       mcpClients: []
     });
 
-    expect(Object.keys(result.tools).length).toBe(0);
+    // Only the always-on report_incomplete tool remains.
+    expect(Object.keys(result.tools)).toEqual(['report_incomplete']);
   });
 
   it('should handle special characters in instructions', async () => {

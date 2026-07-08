@@ -362,6 +362,12 @@ export async function runAgent(
       return suspendedResult;
     }
 
+    // The agent may have declared the run incomplete (ran clean but did not
+    // deliver — e.g. a dead login) via the report_incomplete tool. That verdict
+    // flips the terminal status to error/INCOMPLETE so the run is skimmable as
+    // a failure, while the run itself still finished without throwing.
+    const incomplete = preparation.runOutcome?.incomplete;
+
     // Display execution summary
     const mainTokens = result.usage?.totalTokens || 0;
     const subTokens = result.subAgentTokens || 0;
@@ -372,7 +378,7 @@ export async function runAgent(
     if (!quiet) {
       logger.separator();
       logger.summary({
-        success: true,
+        success: !incomplete,
         durationMs,
         ...(totalTokens > 0 && { tokensUsed: totalTokens }),
         ...(toolCallCount > 0 && { toolCallCount }),
@@ -398,14 +404,22 @@ export async function runAgent(
           completedAt: Date.now(),
           ...(priorTokens && { priorTokens })
         });
-        await sessionManager.setSessionCompleted(prepSessionID, prepAgentId);
+        if (incomplete) {
+          await sessionManager.setSessionError(prepSessionID, prepAgentId, {
+            code: 'INCOMPLETE',
+            message: incomplete.reason
+          });
+        } else {
+          await sessionManager.setSessionCompleted(prepSessionID, prepAgentId);
+        }
       } catch (error) {
-        logger.debug(`Failed to mark session completed: ${(error as Error).message}`);
+        logger.debug(`Failed to mark session ${incomplete ? 'incomplete' : 'completed'}: ${(error as Error).message}`);
       }
     }
 
     const runResult: RunAgentResult = {
       status: 'completed',
+      ...(incomplete && { incomplete }),
       text: result.text,
       ...(result.usage && { usage: result.usage }),
       ...(result.usageKind && { usageKind: result.usageKind }),
@@ -420,15 +434,19 @@ export async function runAgent(
 
     // Poke the serve daemon (if any) so subscribed devices get a Web Push.
     void announceSessionFinished({
-      status: 'completed',
+      status: incomplete ? 'failed' : 'completed',
       agentName: agent.name,
       ...(prepSessionID && { sessionId: prepSessionID }),
     });
 
     const consoleOutput = captureActive ? logger.stopCapture() : '';
     captureActive = false;
+    // A declared-incomplete run notifies as a failure — that is the whole point
+    // of the declaration: the completion card would read as a green "done".
     await sendRunChannelMessages({
-      event: 'completion',
+      ...(incomplete
+        ? { event: 'failure' as const, error: incomplete.reason }
+        : { event: 'completion' as const }),
       agent,
       result: runResult,
       ...(prepSessionID && { sessionId: prepSessionID }),

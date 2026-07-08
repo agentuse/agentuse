@@ -6,6 +6,7 @@ import type { DoomLoopDetector } from '../tools/index.js';
 import type { SessionManager } from '../session';
 import type { ActiveContextUsage, ContextSnapshot, SessionTrigger } from '../session/types';
 import type { AssistantTokens } from '../session/usage';
+import type { RunOutcome } from '../tools/report-incomplete.js';
 
 export type UsageKind = 'cumulative' | 'step';
 
@@ -51,6 +52,14 @@ export interface PreparedAgentExecution {
   priorTokens?: AssistantTokens | undefined;
   /** Agent ID (file-path-based identifier for session directory naming) */
   agentId?: string | undefined;
+  /**
+   * Per-run outcome written by the `report_incomplete` tool. Checked after a
+   * clean finish: when `incomplete` is set the session is marked
+   * error/INCOMPLETE and failure channels fire instead of completion.
+   * Optional so hand-built preparations (tests) stay valid; prepareAgentExecution
+   * always sets it.
+   */
+  runOutcome?: RunOutcome | undefined;
   doomLoopDetector: DoomLoopDetector;
   /** Cleanup function to release resources (store locks, etc.) - call when agent execution completes */
   cleanup: () => Promise<void>;
@@ -111,4 +120,10 @@ export interface RunAgentResult {
   sessionId?: string;
   approvalUrl?: string;
   contextUsage?: ActiveContextUsage;
+  /**
+   * Set when the agent declared the run incomplete via `report_incomplete`:
+   * the run finished cleanly but did not achieve its objective. The session is
+   * persisted as error/INCOMPLETE.
+   */
+  incomplete?: { reason: string };
 }

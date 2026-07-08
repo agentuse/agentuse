@@ -10,6 +10,7 @@ import {
   hasFullSkillGrant,
 } from '../skill/index.js';
 import { createStore, createStoreTools, type Store } from '../store/index.js';
+import { createReportIncompleteTool, type RunOutcome } from '../tools/report-incomplete.js';
 import { createSandbox, createSandboxTools, type SandboxInstance } from '../sandbox.js';
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
 import { getModelFromRegistry } from '../generated/models.js';
@@ -53,6 +54,12 @@ export interface LoadedAgentTools {
   sandboxTools: Record<string, Tool>;
   /** All tools merged together */
   all: Record<string, Tool>;
+  /**
+   * Per-run outcome the always-on `report_incomplete` tool writes into. The
+   * caller (runner/subagent) reads it after a clean finish to decide between
+   * marking the session completed or error/INCOMPLETE.
+   */
+  runOutcome: RunOutcome;
   /** Store instance (if configured) - caller must call store.releaseLock() when done */
   store?: Store | undefined;
   /** Sandbox instance (if configured) - caller must call sandboxInstance.kill() when done */
@@ -191,6 +198,15 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     }
   }
 
+  // Always-on run-outcome tool: lets any agent declare "ran clean but did not
+  // deliver" (blocked login, dead precondition) so the run ends error/INCOMPLETE
+  // instead of a misleading completed. The mutable ref is read by the caller
+  // after the stream finishes.
+  const runOutcome: RunOutcome = {};
+  const outcomeTools: Record<string, Tool> = {
+    report_incomplete: createReportIncompleteTool(runOutcome),
+  };
+
   // Single ordered merge point for every tool source. New sources (e.g. a future
   // plugin-contributed-tools capability) attach here — append the source's map to
   // this list — instead of threading another spread through the return. Order is
@@ -201,6 +217,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     skillTools,
     storeTools,
     sandboxTools,
+    outcomeTools,
   ];
 
   // In mock mode, replace every merged tool's execute with an LLM-backed mock so
@@ -217,6 +234,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     storeTools,
     sandboxTools,
     all,
+    runOutcome,
     store,
     sandboxInstance,
   };

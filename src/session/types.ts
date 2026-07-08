@@ -69,6 +69,10 @@ export interface SessionInfo {
   //                         process; reconciled on the next worker (re)spawn so the
   //                         reopen-gate recovery path becomes reachable
   //   - EXECUTION_ERROR: General execution error
+  //   - INCOMPLETE: The agent itself declared the run incomplete via the
+  //                 report_incomplete tool — it finished cleanly but did not
+  //                 achieve its objective (e.g. blocked on a dead login).
+  //                 Rendered as its own "incomplete" label, not a crash.
   error?: {
     message: string;
     code: string;

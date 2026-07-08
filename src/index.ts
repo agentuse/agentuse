@@ -651,6 +651,8 @@ program
         if (result.status === 'suspended') {
           const target = result.approvalUrl ?? preparedExecution.sessionID;
           logger.info(`Agent is waiting for approval${target ? ` ${target}` : ''}`);
+        } else if (result.incomplete) {
+          logger.warn(`Agent reported the run incomplete: ${result.incomplete.reason}`);
         } else if (!result.hasTextOutput) {
           logger.warn('Agent completed without producing a final response.');
         } else if (result.finishReason && result.finishReason !== 'stop') {

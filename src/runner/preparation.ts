@@ -297,6 +297,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     assistantMsgID,
     ...(priorTokens && { priorTokens }),
     agentId,
+    runOutcome: loadedTools.runOutcome,
     doomLoopDetector,
     cleanup,
     releaseStoreLock,
