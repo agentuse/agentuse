@@ -4457,8 +4457,11 @@ export function createServeCommand(): Command {
               // Same dedup guard as the log line: one push per unique approval.
               const label = multiProject ? `${found.project.id}/${agentLabel}` : agentLabel;
               const prompt = found.info.approval.prompt;
+              // A delegated child's page is view-only; the decision lives on the
+              // cascade root's page, so deep-link the push there.
+              const pushSessionId = approvalActionSessionId(found.info, sessionId);
               const approvalQuery = new URLSearchParams();
-              const viewToken = sessionViewToken(sessionId, apiKey);
+              const viewToken = sessionViewToken(pushSessionId, apiKey);
               if (viewToken) approvalQuery.set('token', viewToken);
               approvalQuery.set('project', found.project.id);
               // Badge the home-screen icon with the total pending count.
@@ -4477,8 +4480,8 @@ export function createServeCommand(): Command {
                 await pushService.notify('approvals', {
                   title: "Approval needed",
                   body: prompt ? `${label}: ${prompt.slice(0, 140)}` : label,
-                  url: `${effectivePublicUrl}/sessions/${encodeURIComponent(sessionId)}?${approvalQuery.toString()}`,
-                  tag: `approval-${sessionId}`,
+                  url: `${effectivePublicUrl}/sessions/${encodeURIComponent(pushSessionId)}?${approvalQuery.toString()}`,
+                  tag: `approval-${pushSessionId}`,
                   appBadge: Math.max(1, pendingCount),
                 });
               })();
