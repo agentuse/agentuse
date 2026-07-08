@@ -2376,8 +2376,9 @@ export function createServeCommand(): Command {
       // Returns null when no rule was requested. Does NOT write anything.
       const resolveRememberedLearning = async (
         info: WorkerApprovalInfoResult,
-        remember?: string,
-      ): Promise<{ agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined } | null> => {
+        remember: string | undefined,
+        sessionId: string,
+      ): Promise<{ agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined; sessionId?: string | undefined } | null> => {
         const instruction = remember?.trim();
         if (!instruction) return null;
         const targetAgent = info.approval.originAgent ?? info.approval.agent;
@@ -2390,13 +2391,13 @@ export function createServeCommand(): Command {
         // Parse the agent to honor a custom learning.file path and to ground the
         // note (via the agent's model + instructions + the work at the gate).
         const agent = await parseAgent(targetAgent.filePath);
-        return { agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(info.approval.logs) };
+        return { agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(info.approval.logs), sessionId };
       };
 
       // Persist a resolved manual instruction best-effort: a learnings-file write
       // failure is logged and never aborts the (already kicked-off) resume.
       const persistRememberedLearning = (
-        target: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined } | null,
+        target: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined; sessionId?: string | undefined } | null,
       ): void => {
         if (!target) return;
         void saveManualLearning(target).catch((err) => {
@@ -3907,7 +3908,7 @@ export function createServeCommand(): Command {
               return;
             }
 
-            const rememberTarget = await resolveRememberedLearning(info, remember);
+            const rememberTarget = await resolveRememberedLearning(info, remember, targetSessionId);
             startApprovalResume(res, { project, sessionId, info, resumeToken, status, comment });
             persistRememberedLearning(rememberTarget);
           } catch (err) {
@@ -3981,20 +3982,26 @@ export function createServeCommand(): Command {
           const agent = await parseAgent(targetAgent.filePath);
           return LearningStore.fromAgentFile(targetAgent.filePath, agent.config.learning?.file);
         };
-        const learningListPayload = async (store: LearningStore) => ({
+        // `forSessionId` narrows the list to learnings captured in that session
+        // (the session page shows only what the run produced); omit it for the
+        // agent-level view of the full store.
+        const learningListPayload = async (store: LearningStore, forSessionId?: string) => ({
           success: true,
-          learnings: (await store.load()).map((l) => ({
-            id: l.id,
-            category: l.category,
-            title: l.title,
-            instruction: l.instruction,
-            confidence: l.confidence,
-            source: l.source,
-            extractedAt: l.extractedAt,
-          })),
+          learnings: (await store.load())
+            .filter((l) => forSessionId === undefined || l.sessionId === forSessionId)
+            .map((l) => ({
+              id: l.id,
+              category: l.category,
+              title: l.title,
+              instruction: l.instruction,
+              confidence: l.confidence,
+              source: l.source,
+              extractedAt: l.extractedAt,
+              ...(l.sessionId && { sessionId: l.sessionId }),
+            })),
         });
 
-        // GET /sessions/:id/learnings: list the agent's stored learnings.
+        // GET /sessions/:id/learnings: list the learnings captured in this session.
         const sessionLearningsMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/learnings$/) : null;
         if (sessionLearningsMatch) {
           try {
@@ -4011,7 +4018,7 @@ export function createServeCommand(): Command {
               return;
             }
             const store = await resolveSessionLearningStore(found.info);
-            sendJSON(res, 200, store ? await learningListPayload(store) : { success: true, learnings: [] });
+            sendJSON(res, 200, store ? await learningListPayload(store, sessionId) : { success: true, learnings: [] });
           } catch (err) {
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
@@ -4046,9 +4053,9 @@ export function createServeCommand(): Command {
               return;
             }
             const agent = await parseAgent(targetAgent.filePath);
-            await saveManualLearning({ agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(found.info.approval.logs) });
+            await saveManualLearning({ agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(found.info.approval.logs), sessionId });
             const store = LearningStore.fromAgentFile(targetAgent.filePath, agent.config.learning?.file);
-            sendJSON(res, 200, await learningListPayload(store));
+            sendJSON(res, 200, await learningListPayload(store, sessionId));
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
@@ -4076,7 +4083,103 @@ export function createServeCommand(): Command {
             }
             const store = await resolveSessionLearningStore(found.info);
             if (store) await store.remove(learningId);
-            sendJSON(res, 200, store ? await learningListPayload(store) : { success: true, learnings: [] });
+            sendJSON(res, 200, store ? await learningListPayload(store, sessionId) : { success: true, learnings: [] });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // Agent-level learnings: the full store for one agent, unfiltered (the
+        // session endpoints above show only a single session's captures). Same
+        // operator-surface gate and path validation as /agents/detail.
+        const resolveAgentLearningTarget = async (
+          res: ServerResponse,
+          requestedProject: string | undefined,
+          requestedPath: string | undefined,
+        ): Promise<{ store: LearningStore; agent: Awaited<ReturnType<typeof parseAgent>>; absPath: string } | null> => {
+          if (!requestedProject || !requestedPath) {
+            sendError(res, 400, "MISSING_PARAMS", "Both project and path are required");
+            return null;
+          }
+          const project = projects.find((p) => p.id === requestedProject);
+          if (!project) {
+            sendError(res, 404, "PROJECT_NOT_FOUND", `Project not found: ${requestedProject}`);
+            return null;
+          }
+          if (!project.agentFiles.includes(requestedPath)) {
+            sendError(res, 404, "AGENT_NOT_FOUND", `Agent not loaded: ${requestedPath}`);
+            return null;
+          }
+          const absPath = resolveScopedAgentPath(project, requestedPath);
+          const agent = await parseAgent(absPath);
+          return { store: LearningStore.fromAgentFile(absPath, agent.config.learning?.file), agent, absPath };
+        };
+
+        // GET /agents/learnings?project=<id>&path=<runPath>: list all stored learnings.
+        if (req.method === "GET" && routePath === '/agents/learnings') {
+          try {
+            const target = await resolveAgentLearningTarget(
+              res,
+              requestUrl.searchParams.get('project') ?? undefined,
+              requestUrl.searchParams.get('path') ?? undefined,
+            );
+            if (!target) return;
+            sendJSON(res, 200, await learningListPayload(target.store));
+          } catch (err) {
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // POST /agents/learnings: add a manual rule for the agent (no session context).
+        if (req.method === "POST" && routePath === '/agents/learnings') {
+          try {
+            const body = await parseJSONBody(req);
+            const instruction = typeof body.instruction === 'string' ? body.instruction.trim() : '';
+            if (!instruction) {
+              sendError(res, 400, "INSTRUCTION_REQUIRED", "A rule to remember is required");
+              return;
+            }
+            const target = await resolveAgentLearningTarget(
+              res,
+              typeof body.project === 'string' ? body.project : undefined,
+              typeof body.path === 'string' ? body.path : undefined,
+            );
+            if (!target) return;
+            await saveManualLearning({
+              agentFilePath: target.absPath,
+              config: target.agent.config.learning,
+              instruction,
+              model: target.agent.config.model,
+              agentInstructions: target.agent.instructions,
+            });
+            sendJSON(res, 200, await learningListPayload(target.store));
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // POST /agents/learnings/discard: drop a stored learning by id.
+        if (req.method === "POST" && routePath === '/agents/learnings/discard') {
+          try {
+            const body = await parseJSONBody(req);
+            const learningId = typeof body.id === 'string' ? body.id : '';
+            if (!learningId) {
+              sendError(res, 400, "ID_REQUIRED", "A learning id is required");
+              return;
+            }
+            const target = await resolveAgentLearningTarget(
+              res,
+              typeof body.project === 'string' ? body.project : undefined,
+              typeof body.path === 'string' ? body.path : undefined,
+            );
+            if (!target) return;
+            await target.store.remove(learningId);
+            sendJSON(res, 200, await learningListPayload(target.store));
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
@@ -4490,7 +4593,7 @@ export function createServeCommand(): Command {
               return;
             }
 
-            const rememberTarget = await resolveRememberedLearning(info, remember);
+            const rememberTarget = await resolveRememberedLearning(info, remember, approvalActionSessionId(info, sessionId));
             startApprovalResume(res, { project, sessionId, info, resumeToken: token, status, comment });
             persistRememberedLearning(rememberTarget);
           } catch (err) {

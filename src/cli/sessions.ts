@@ -1354,7 +1354,7 @@ async function resumeSession(
       throw new Error(`Session ${summary.id} is waiting on ${pending.part.tool}. Use --tool-result <json>.`);
     }
 
-    let rememberTarget: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined } | undefined;
+    let rememberTarget: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionId?: string | undefined } | undefined;
     let rememberAgent: Awaited<ReturnType<typeof parseAgent>> | undefined;
     if (options.remember !== undefined) {
       // Bare --remember defaults to the comment text (mirrors the web checkbox
@@ -1376,6 +1376,7 @@ async function resumeSession(
         instruction: remember,
         model: rememberAgent.config.model,
         agentInstructions: rememberAgent.instructions,
+        sessionId: summary.id,
       };
     }
 
