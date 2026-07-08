@@ -147,6 +147,8 @@ export interface SessionLearning {
   confidence: number;
   source: SessionLearningSource;
   extractedAt: string;
+  /** Session the learning was captured in; absent for legacy entries and agent-level rules. */
+  sessionId?: string;
 }
 
 export interface SessionLearningsPayload {
@@ -169,6 +171,19 @@ export function discardSessionLearning(sessionId: string, learningId: string, to
   project?: string;
 } = {}): Promise<SessionLearningsPayload> {
   return postJson(withToken(`/sessions/${encodeURIComponent(sessionId)}/learnings/${encodeURIComponent(learningId)}/discard`, token), body);
+}
+
+/** Agent-level learnings: the agent's full store, unfiltered by session. */
+export function fetchAgentLearnings(project: string, runPath: string): Promise<SessionLearningsPayload> {
+  return getJson('/api/agents/learnings', { project, path: runPath });
+}
+
+export function addAgentLearning(project: string, runPath: string, instruction: string): Promise<SessionLearningsPayload> {
+  return postJson('/api/agents/learnings', { project, path: runPath, instruction });
+}
+
+export function discardAgentLearning(project: string, runPath: string, learningId: string): Promise<SessionLearningsPayload> {
+  return postJson('/api/agents/learnings/discard', { project, path: runPath, id: learningId });
 }
 
 export function postSessionDecision(sessionId: string, token: string | undefined, body: {

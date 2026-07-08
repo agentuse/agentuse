@@ -8,6 +8,7 @@ import { useTitle } from '../hooks/use-title';
 import { useRunAgent } from '../hooks/use-run-agent';
 import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
+import { AgentLearningsPanel } from '../components/learnings-panel';
 import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
 import { LogContent } from '../components/content';
 import { formatApprovalTime, displayStatusLabel } from '../lib/format';
@@ -182,6 +183,20 @@ function RecentRuns(props: { agentId: string; project: string }) {
   );
 }
 
+/** The agent's full learning store (every session), editable in place. */
+function LearningsGroup(props: { project: string; runPath: string }) {
+  return (
+    <section class="group">
+      <h2 class="group-title">
+        <span>Learned instructions</span>
+        <span class="count">all sessions</span>
+        <span class="rule" />
+      </h2>
+      <AgentLearningsPanel project={props.project} runPath={props.runPath} />
+    </section>
+  );
+}
+
 /**
  * Builds a self-contained prompt that hands this agent off to a coding agent
  * (Claude Code, etc.). The full source is embedded between heredoc-style markers
@@ -298,6 +313,8 @@ export default function AgentDetail() {
             <Capabilities meta={data.meta} model={data.model} schedule={data.schedule} scheduleHuman={data.scheduleHuman} metadata={data.metadata} />
 
             <RecentRuns agentId={agentIdFromPath(data.path)} project={data.projectId} />
+
+            <LearningsGroup project={data.projectId} runPath={data.runPath} />
 
             <SourcePanel source={data.source} runPath={data.runPath} project={data.projectId} path={data.path} />
           </>

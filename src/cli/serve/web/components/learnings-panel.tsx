@@ -3,7 +3,11 @@ import {
   fetchSessionLearnings,
   addSessionLearning,
   discardSessionLearning,
+  fetchAgentLearnings,
+  addAgentLearning,
+  discardAgentLearning,
   type SessionLearning,
+  type SessionLearningsPayload,
   type SessionLearningSource,
 } from '../lib/api';
 
@@ -16,15 +20,18 @@ const GROUPS: { source: SessionLearningSource; label: string }[] = [
 ];
 
 /**
- * Ended-session panel: shows the agent's stored learnings grouped by source and
- * lets a reviewer add one more rule (standalone — no resume) or discard any.
- * Reads/writes the agent's `.learnings.md` via the session learnings endpoints.
+ * Shared learnings list + add/discard editor. The two wrappers below bind it to
+ * the session-scoped endpoints (only that session's captures) and the
+ * agent-scoped endpoints (the full store).
  */
-export function LearningsPanel(props: {
-  hidden: boolean;
-  sessionId: string;
-  token: string | undefined;
-  project?: string;
+function LearningsSection(props: {
+  hidden?: boolean;
+  /** Panel heading; pass null when the surrounding page already labels the section. */
+  label: string | null;
+  emptyText: string;
+  fetchList: () => Promise<SessionLearningsPayload>;
+  addRule: (instruction: string) => Promise<SessionLearningsPayload>;
+  discardRule: (id: string) => Promise<SessionLearningsPayload>;
 }) {
   const [learnings, setLearnings] = useState<SessionLearning[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +41,7 @@ export function LearningsPanel(props: {
 
   useEffect(() => {
     if (props.hidden || learnings !== null) return;
-    fetchSessionLearnings(props.sessionId, props.token, props.project)
+    props.fetchList()
       .then((payload) => setLearnings(payload.learnings))
       .catch((err) => setError((err as Error).message));
   }, [props.hidden]);
@@ -49,10 +56,7 @@ export function LearningsPanel(props: {
     setAdding(true);
     setError(null);
     try {
-      const payload = await addSessionLearning(props.sessionId, props.token, {
-        instruction,
-        ...(props.project ? { project: props.project } : {}),
-      });
+      const payload = await props.addRule(instruction);
       setLearnings(payload.learnings);
       if (inputRef.current) inputRef.current.value = '';
     } catch (err) {
@@ -67,12 +71,7 @@ export function LearningsPanel(props: {
     setBusyId(id);
     setError(null);
     try {
-      const payload = await discardSessionLearning(
-        props.sessionId,
-        id,
-        props.token,
-        props.project ? { project: props.project } : {},
-      );
+      const payload = await props.discardRule(id);
       setLearnings(payload.learnings);
     } catch (err) {
       setError((err as Error).message);
@@ -90,11 +89,11 @@ export function LearningsPanel(props: {
 
   return (
     <div class="learnings-panel">
-      <div class="learnings-label">learned instructions</div>
+      {props.label !== null && <div class="learnings-label">{props.label}</div>}
       {error && <p class="learnings-error">{error}</p>}
       {learnings === null && !error && <p class="learnings-empty">Loading…</p>}
       {learnings !== null && items.length === 0 && (
-        <p class="learnings-empty">No instructions yet — add one to steer future runs.</p>
+        <p class="learnings-empty">{props.emptyText}</p>
       )}
       {grouped.map((g) => (
         <div class="learnings-group" key={g.source}>
@@ -149,5 +148,51 @@ export function LearningsPanel(props: {
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Ended-session panel: shows only the learnings captured in THIS session (the
+ * agent's full store lives on the agent detail page) and lets a reviewer add
+ * one more rule (standalone — no resume) or discard any.
+ */
+export function LearningsPanel(props: {
+  hidden: boolean;
+  sessionId: string;
+  token: string | undefined;
+  project?: string;
+}) {
+  return (
+    <LearningsSection
+      hidden={props.hidden}
+      label="learned instructions from this session"
+      emptyText="Nothing learned in this session — add an instruction to steer future runs."
+      fetchList={() => fetchSessionLearnings(props.sessionId, props.token, props.project)}
+      addRule={(instruction) =>
+        addSessionLearning(props.sessionId, props.token, {
+          instruction,
+          ...(props.project ? { project: props.project } : {}),
+        })
+      }
+      discardRule={(id) =>
+        discardSessionLearning(props.sessionId, id, props.token, props.project ? { project: props.project } : {})
+      }
+    />
+  );
+}
+
+/**
+ * Agent-detail panel: the agent's entire learning store across all sessions.
+ * Discarding removes the rule for all future runs.
+ */
+export function AgentLearningsPanel(props: { project: string; runPath: string }) {
+  return (
+    <LearningsSection
+      label={null}
+      emptyText="No instructions yet — add one to steer future runs."
+      fetchList={() => fetchAgentLearnings(props.project, props.runPath)}
+      addRule={(instruction) => addAgentLearning(props.project, props.runPath, instruction)}
+      discardRule={(id) => discardAgentLearning(props.project, props.runPath, id)}
+    />
   );
 }
