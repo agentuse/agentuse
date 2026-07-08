@@ -126,6 +126,15 @@ these. This shapes where a rule belongs:
   the store and continue/stop, or fire an approval/notification. The approval
   gate is the only human-in-the-loop path.
 
+- **A blocked run should declare itself incomplete.** The always-on
+  `report_incomplete` tool (no config) marks a clean-exiting run as
+  `incomplete` instead of `completed` and fires the `failure` channel event.
+  Tell the agent to call it with a reason at its "stop, report, do nothing"
+  branches (dead login, missing precondition), then finish bookkeeping and the
+  final report as usual. Without it, a blocked run reads as a green success in
+  the session list. Not for legitimately-empty results, finding nothing to do
+  is still `completed`.
+
 - **Validate models against `agentuse models`.** The catalog moves; check it
   before calling a name invalid. Don't infer limits from other providers'
   naming (e.g. "5.5 can't exist because provider Y stops at 5.2").

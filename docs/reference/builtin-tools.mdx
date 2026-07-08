@@ -267,6 +267,26 @@ Each filesystem path is mounted at its **real host path** with per-path mode der
 
 Paths inside the container mirror the host (no `/workspace/` alias). Changes made by the filesystem tool on the host are visible inside the container via the bind mount.
 
+## Run Outcome Tool
+
+The `report_incomplete` tool is always available, no configuration needed. It lets an agent declare that the run finished cleanly but **did not achieve its objective**, a blocked precondition, an expired login, a dead dependency.
+
+### `report_incomplete`
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `reason` | `string` | Required | What blocked the run and what a human must fix before the next attempt |
+
+Calling it does **not** stop the run: the agent continues (store writes, final report) and the tool call is just recorded. When the run ends, the session is persisted as `error` with code `INCOMPLETE` instead of `completed`:
+
+- Session list (CLI and web) shows an `incomplete` status instead of a green `completed`
+- Channel notifications fire the `failure` event, not `completion`
+- `agentuse sessions show` displays the reason under the error section
+
+<Note>
+  Use it for "ran fine but delivered nothing because something is broken" (e.g. a scraper whose login session died). Do not use it for a legitimately empty result, a sweep that found nothing to act on is still `completed`.
+</Note>
+
 ## Security Considerations
 
 ### Filesystem Tool
