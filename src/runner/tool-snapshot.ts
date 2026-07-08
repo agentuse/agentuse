@@ -67,12 +67,26 @@ function zodToJsonSchema(schema: any): JsonSchema | undefined {
   }
 }
 
+function unwrapJsonSchemaWrapper(schema: unknown): JsonSchema | undefined {
+  // AI SDK `jsonSchema()` wrapper (how MCP tool schemas arrive): the real
+  // JSON Schema lives under `.jsonSchema`. Serializing the wrapper itself
+  // stores { jsonSchema: {...} }, which the Anthropic API rejects on resume
+  // ("input_schema.type: Field required").
+  const inner = (schema as { jsonSchema?: unknown } | null | undefined)?.jsonSchema;
+  if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+    return inner as JsonSchema;
+  }
+  return undefined;
+}
+
 function serializeInputSchema(schema: unknown): unknown {
-  const converted = zodToJsonSchema(schema);
+  const target = unwrapJsonSchemaWrapper(schema) ?? schema;
+
+  const converted = zodToJsonSchema(target);
   if (converted) return converted;
 
   try {
-    return JSON.parse(JSON.stringify(schema));
+    return JSON.parse(JSON.stringify(target));
   } catch {
     return { type: 'object', additionalProperties: true };
   }
@@ -100,10 +114,14 @@ export function bindToolsToSnapshot(currentTools: ToolSet, snapshot: ToolsSnapsh
   const bound: ToolSet = {};
   for (const snap of snapshot.tools) {
     const current = (currentTools as Record<string, any>)[snap.name];
+    // Unwrap here too: snapshots written before the serializer unwrapped the
+    // AI SDK wrapper persisted { jsonSchema: {...} }; those sessions must
+    // still resume.
+    const snapSchema = unwrapJsonSchemaWrapper(snap.inputSchema) ?? snap.inputSchema;
     (bound as Record<string, any>)[snap.name] = {
       ...current,
       ...(snap.description !== undefined && { description: snap.description }),
-      ...(snap.inputSchema !== undefined && { inputSchema: jsonSchema(snap.inputSchema as any) })
+      ...(snapSchema !== undefined && { inputSchema: jsonSchema(snapSchema as any) })
     };
   }
 
