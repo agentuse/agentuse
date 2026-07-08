@@ -2,17 +2,18 @@ import { ErrorBoundary, LocationProvider, Router, Route, lazy } from 'preact-iso
 import { Topbar } from './components/topbar';
 import { AgentPalette } from './components/agent-palette';
 import { NavTracker } from './hooks/use-smart-back';
+import { reloadOnChunkError } from './lib/lazy-route';
 
-const Home = lazy(() => import('./routes/home'));
-const Agents = lazy(() => import('./routes/agents'));
-const AgentDetail = lazy(() => import('./routes/agent-detail'));
-const Schedules = lazy(() => import('./routes/schedules'));
-const SessionsList = lazy(() => import('./routes/sessions-list'));
-const SessionDetail = lazy(() => import('./routes/session-detail'));
-const ApprovalsList = lazy(() => import('./routes/approvals-list'));
-const StoresIndex = lazy(() => import('./routes/stores-index'));
-const StoreItems = lazy(() => import('./routes/store-items'));
-const StoreItemDetail = lazy(() => import('./routes/store-item-detail'));
+const Home = lazy(reloadOnChunkError(() => import('./routes/home')));
+const Agents = lazy(reloadOnChunkError(() => import('./routes/agents')));
+const AgentDetail = lazy(reloadOnChunkError(() => import('./routes/agent-detail')));
+const Schedules = lazy(reloadOnChunkError(() => import('./routes/schedules')));
+const SessionsList = lazy(reloadOnChunkError(() => import('./routes/sessions-list')));
+const SessionDetail = lazy(reloadOnChunkError(() => import('./routes/session-detail')));
+const ApprovalsList = lazy(reloadOnChunkError(() => import('./routes/approvals-list')));
+const StoresIndex = lazy(reloadOnChunkError(() => import('./routes/stores-index')));
+const StoreItems = lazy(reloadOnChunkError(() => import('./routes/store-items')));
+const StoreItemDetail = lazy(reloadOnChunkError(() => import('./routes/store-item-detail')));
 
 function NotFound() {
   return (
