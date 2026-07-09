@@ -314,6 +314,8 @@ interface ApprovalPageInfo {
   prompt?: string;
   summary?: string;
   draft?: string;
+  changes?: Array<{ label?: string; content: string }>;
+  reference?: { label?: string; author?: string; title?: string; url?: string; excerpt?: string };
   draftUrl?: string;
   artifactUrl?: string;
   context?: string;
@@ -386,6 +388,8 @@ interface ApprovalLogDetails {
   context?: string;
   risk?: string;
   draft?: string;
+  changes?: Array<{ label?: string; content: string }>;
+  reference?: { label?: string; author?: string; title?: string; url?: string; excerpt?: string };
   draftUrl?: string;
   artifactUrl?: string;
   /** Project-root-relative paths to local file artifacts, viewable via /sessions/:id/artifacts/*. */
@@ -1160,8 +1164,6 @@ async function serveResolvedArtifactFile(res: ServerResponse, resolved: string, 
       'Content-Type': rawMime,
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
-      // Block cross-origin framing of the token-bearing artifact URL.
-      'X-Frame-Options': 'SAMEORIGIN',
     };
     // The in-page preview iframe sandboxes the artifact (allow-scripts, no
     // same-origin), but the "open in tab" link loads this same URL as a
@@ -1169,8 +1171,19 @@ async function serveResolvedArtifactFile(res: ServerResponse, resolved: string, 
     // `sandbox` directive as an HTTP-header CSP (it is ignored via <meta>) so a
     // directly-opened HTML artifact still gets an opaque origin and cannot reach
     // the serve app's same-origin cookies/storage.
-    if (rawMime.startsWith('text/html')) headers['Content-Security-Policy'] = `${ARTIFACT_HTML_CSP}; sandbox allow-scripts`;
-    else if (rawMime === 'image/svg+xml') headers['Content-Security-Policy'] = ARTIFACT_SVG_CSP;
+    //
+    // Cross-origin framing of the token-bearing URL is blocked with CSP
+    // frame-ancestors, NOT X-Frame-Options: the `sandbox` directive gives the
+    // response an opaque origin, so XFO SAMEORIGIN can never match and would
+    // block the session page's own preview iframe too. frame-ancestors compares
+    // the ancestor's URL origin against this resource's URL origin instead.
+    if (rawMime.startsWith('text/html')) {
+      headers['Content-Security-Policy'] = `${ARTIFACT_HTML_CSP}; frame-ancestors 'self'; sandbox allow-scripts`;
+    } else if (rawMime === 'image/svg+xml') {
+      headers['Content-Security-Policy'] = `${ARTIFACT_SVG_CSP}; frame-ancestors 'self'`;
+    } else {
+      headers['X-Frame-Options'] = 'SAMEORIGIN';
+    }
     res.writeHead(200, headers);
     res.end(await readFile(resolved));
     return;
@@ -4457,6 +4470,9 @@ export function createServeCommand(): Command {
               // Same dedup guard as the log line: one push per unique approval.
               const label = multiProject ? `${found.project.id}/${agentLabel}` : agentLabel;
               const prompt = found.info.approval.prompt;
+              // The first change is the verbatim payload under review; showing it in
+              // the push lets the reviewer judge without opening the page.
+              const firstChange = found.info.approval.changes?.[0]?.content;
               // A delegated child's page is view-only; the decision lives on the
               // cascade root's page, so deep-link the push there.
               const pushSessionId = approvalActionSessionId(found.info, sessionId);
@@ -4479,7 +4495,10 @@ export function createServeCommand(): Command {
                 }
                 await pushService.notify('approvals', {
                   title: "Approval needed",
-                  body: prompt ? `${label}: ${prompt.slice(0, 140)}` : label,
+                  body: [
+                    prompt ? `${label}: ${prompt.slice(0, 140)}` : label,
+                    ...(firstChange ? [firstChange.slice(0, 160)] : []),
+                  ].join('\n'),
                   url: `${effectivePublicUrl}/sessions/${encodeURIComponent(pushSessionId)}?${approvalQuery.toString()}`,
                   tag: `approval-${pushSessionId}`,
                   appBadge: Math.max(1, pendingCount),

@@ -177,6 +177,64 @@ describe('LogEntry component', () => {
     expect(html).toContain('Comment');
   });
 
+  it('renders structured reference and changes with the draft demoted', () => {
+    const html = renderEntry({
+      id: 'log-structured',
+      type: 'approval',
+      title: 'Approval requested',
+      status: 'pending',
+      details: {
+        resumeToken: 'tok-2',
+        prompt: 'Post this comment?',
+        reference: {
+          label: 'Replying to',
+          author: 'Alexandra Griffon',
+          url: 'https://linkedin.com/feed/update/x',
+          excerpt: 'The economy did not contract, it reorganized.',
+        },
+        changes: [
+          { label: 'Comment to post', content: 'The electricity comparison is the right one.' },
+          { content: 'Like the post' },
+        ],
+        draft: 'Why this post: rationale lives here',
+        context: 'background detail',
+      },
+    }, { showActions: true });
+
+    expect(html).toContain('On approval');
+    expect(html).toContain('approval-change');
+    expect(html).toContain('Comment to post');
+    expect(html).toContain('The electricity comparison is the right one.');
+    expect(html).toContain('Action 2');
+    expect(html).toContain('Replying to');
+    expect(html).toContain('Alexandra Griffon');
+    expect(html).toContain('approval-reference-quote');
+    // Draft demotes to a collapsed details block when changes carry the payload.
+    expect(html).toContain('<summary>Draft</summary>');
+    // Context also starts collapsed so the change boxes stay the focal point.
+    expect(html).not.toContain('approval-context-open');
+  });
+
+  it('renders inline artifact previews for image, html, and pdf artifacts', () => {
+    const html = renderEntry({
+      id: 'log-artifacts',
+      type: 'approval',
+      title: 'Approval requested',
+      status: 'pending',
+      details: {
+        resumeToken: 'tok-3',
+        prompt: 'Approve?',
+        artifactPaths: ['shots/screen.png', 'reports/report.html', 'notes/notes.txt'],
+      },
+    }, { showActions: true });
+
+    expect(html).toContain('artifact-preview-img');
+    expect(html).toContain('artifact-preview-frame');
+    expect(html).toContain('sandbox');
+    // Non-previewable files keep only the open tile.
+    expect(html).toContain('notes.txt');
+  });
+
   it('renders resolved approval details after the resume token is removed', () => {
     const html = renderEntry({
       id: 'log-approved',
@@ -248,7 +306,7 @@ describe('StoreTable component', () => {
     const order = ['beta', 'gamma', 'alpha'];
     let cursor = -1;
     for (const name of order) {
-      const index = html.indexOf(`<td>${name}</td>`);
+      const index = html.indexOf(`>${name}</td>`);
       expect(index).toBeGreaterThan(cursor);
       cursor = index;
     }

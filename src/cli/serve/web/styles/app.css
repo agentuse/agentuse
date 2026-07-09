@@ -35,6 +35,7 @@
   --primary-fg: #000000; --primary-bg: #4ade80; --primary-bg-hover: #86efac;
   --bar-bg: rgba(0,0,0,0.85);
   --glow-1: rgba(34,211,238,0.06); --glow-2: rgba(74,222,128,0.04);
+  --artifact-page: #ffffff;
 }
 
 :root[data-theme="light"] {
@@ -50,6 +51,7 @@
   --primary-fg: #ffffff; --primary-bg: #047857; --primary-bg-hover: #065f46;
   --bar-bg: rgba(250,250,249,0.85);
   --glow-1: rgba(8,145,178,0.06); --glow-2: rgba(4,120,87,0.04);
+  --artifact-page: #ffffff;
 }
 
 * { box-sizing: border-box; }
@@ -1181,6 +1183,9 @@ a, button, select, summary, label, input, textarea,
   cursor: pointer;
   padding-bottom: 10px;
   list-style-position: inside;
+  /* Interactive control, not a passive eyebrow: needs the readable secondary
+     token, --muted-2 at 10px fails contrast for something clickable. */
+  color: var(--muted-3);
 }
 .approval-section-body {
   padding: 10px 12px 12px;
@@ -1215,6 +1220,97 @@ a, button, select, summary, label, input, textarea,
   border-bottom: 1px dashed var(--cyan-border);
 }
 .approval-link:hover { border-bottom-style: solid; }
+
+/* the quoted original an approval action responds to */
+.approval-reference-quote {
+  border-left: 3px solid var(--line-strong);
+  padding: 2px 0 2px 12px;
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+.approval-reference-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+.approval-reference-author { color: var(--fg); font-size: 13px; font-weight: 600; }
+.approval-reference-title { color: var(--muted-3); font-size: 12px; }
+.approval-reference-excerpt { color: var(--muted-3); font-style: italic; }
+.approval-reference-quote .approval-link { font-size: 12px; }
+
+/* verbatim on-approval actions: the skim target of the card */
+.approval-changes .approval-section-body {
+  display: grid;
+  gap: 10px;
+}
+.approval-change {
+  border: 1px solid var(--green-border);
+  border-radius: 10px;
+  background: var(--bg);
+  /* Solid green edge so "this executes on approval" still reads as green over
+     the row's cyan actionable wash, where a soft tint alone washes out. */
+  box-shadow: inset 3px 0 0 var(--green);
+  overflow: hidden;
+}
+.approval-change-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--green-soft);
+  border-bottom: 1px solid var(--line);
+}
+.approval-change-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.approval-change-meta {
+  color: var(--muted-2);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.approval-change-content {
+  padding: 10px 12px 12px;
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* inline artifact previews under the open tiles */
+.approval-artifact-body {
+  display: grid;
+  gap: 12px;
+}
+.artifact-preview {
+  display: block;
+  margin-top: 8px;
+  border-bottom: 0;
+}
+.artifact-preview-img {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+}
+.artifact-preview-frame {
+  display: block;
+  width: 100%;
+  height: 220px;
+  margin-top: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  /* Arbitrary HTML/PDF documents assume a paper-white page; a token (not the
+     theme bg) keeps the intent explicit while capping how loud the slab is. */
+  background: var(--artifact-page);
+}
 
 /* inline approval actions */
 .log-actions {
@@ -1264,6 +1360,23 @@ a, button, select, summary, label, input, textarea,
 }
 .page-approval-detail button:hover { background: var(--panel-hover); border-color: var(--line-strong); }
 .page-approval-detail button:active { transform: translateY(1px); }
+/* Compact copy chip inside a change box; placed after the broad button rule
+   above so the equal-specificity tie resolves to this size, not 40px. */
+.approval-copy,
+.page-approval-detail button:not(.icon-btn):not(.palette-trigger).approval-copy {
+  min-height: 24px;
+  min-width: 64px;
+  padding: 1px 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.approval-copy:hover { color: var(--fg); }
 .page-approval-detail button.primary {
   background: var(--primary-bg);
   border-color: var(--primary-bg);
@@ -1583,15 +1696,22 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 
 @media (max-width: 640px) {
   .page-approval-detail h1 { font-size: 26px; }
-  /* Stack the timestamp/marker above the log so content uses the full width. */
+  /* Stack the timestamp/marker above the log so content uses the full width.
+     Horizontal padding matters here: without the desktop time-column gutter,
+     content would sit flush on the card edge and the actionable accent bar. */
   .log-item {
     grid-template-columns: auto 1fr;
     column-gap: 8px;
     row-gap: 4px;
+    padding: 12px 10px;
   }
+  .log-item.is-actionable { padding-left: 14px; }
   .log-time { grid-column: 1; grid-row: 1; }
   .log-marker { grid-column: 2; grid-row: 1; justify-content: flex-start; }
   .log-main { grid-column: 1 / -1; grid-row: 2; }
+  .approval-question { font-size: 17px; }
+  /* Let the label / char count / copy chip wrap instead of crushing the label. */
+  .approval-change-head { flex-wrap: wrap; row-gap: 4px; }
   .log-actions { flex-direction: column; align-items: stretch; }
   .log-actions-hint { display: none; }
   .log-actions-buttons { justify-content: stretch; }
@@ -2837,6 +2957,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
    they are. Components with bespoke focus styles keep theirs. */
 .topbar .nav-item:focus-visible,
 .icon-btn:focus-visible,
+.approval-copy:focus-visible,
+.approval-card summary:focus-visible,
 .theme-toggle button:focus-visible,
 .page-home .card:focus-visible,
 .page-home a.proj:focus-visible,

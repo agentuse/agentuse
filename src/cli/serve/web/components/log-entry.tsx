@@ -1,5 +1,6 @@
 import { memo } from 'preact/compat';
-import type { ApprovalLogDetails, ApprovalLogEntry, LogSubagentSession } from '../../types';
+import { useState } from 'preact/hooks';
+import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalReference, LogSubagentSession } from '../../types';
 import { formatLogTime, isJsonLikeContent, logEntrySignature, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
 import type { StoreItem } from '../../../../store/types';
 import { LogContent, InlineMarkdown } from './content';
@@ -105,9 +106,98 @@ function SavedArtifactCard(props: { artifact: NonNullable<ApprovalLogDetails['sa
   );
 }
 
+function CopyButton(props: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      class="approval-copy"
+      type="button"
+      title="Copy to clipboard"
+      aria-live="polite"
+      onClick={() => {
+        navigator.clipboard?.writeText(props.text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }).catch(() => {});
+      }}
+    >{copied ? 'copied' : 'copy'}</button>
+  );
+}
+
+/** The original being responded to, quoted above the changes so the reviewer
+ *  reads original → reply in natural order. */
+function ReferenceBlock(props: { reference: ApprovalReference }) {
+  const ref = props.reference;
+  return (
+    <section class="approval-section approval-reference">
+      <div class="approval-section-title">{ref.label || 'In reply to'}</div>
+      <div class="approval-section-body">
+        <div class="approval-reference-quote">
+          {(ref.author || ref.title) && (
+            <div class="approval-reference-head">
+              {ref.author && <span class="approval-reference-author">{ref.author}</span>}
+              {ref.title && <span class="approval-reference-title">{ref.title}</span>}
+            </div>
+          )}
+          {ref.excerpt && <div class="approval-reference-excerpt"><LogContent value={ref.excerpt} forceMarkdown /></div>}
+          {ref.url && <a class="approval-link" href={ref.url} target="_blank" rel="noopener noreferrer">Open original</a>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** The verbatim actions taken on approval: the first thing a reviewer skims. */
+function ChangesBlock(props: { changes: ApprovalChange[] }) {
+  return (
+    <section class="approval-section approval-changes">
+      <div class="approval-section-title">On approval</div>
+      <div class="approval-section-body">
+        {props.changes.map((change, index) => (
+          <div class="approval-change" key={index}>
+            <div class="approval-change-head">
+              <span class="approval-change-label">{change.label || `Action ${index + 1}`}</span>
+              <span class="approval-change-meta">{change.content.length} chars</span>
+              <CopyButton text={change.content} />
+            </div>
+            <div class="approval-change-content"><LogContent value={change.content} forceMarkdown /></div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+const IMAGE_ARTIFACT_RE = /\.(png|jpe?g|gif|webp|svg|avif)$/i;
+const HTML_ARTIFACT_RE = /\.(html?)$/i;
+const PDF_ARTIFACT_RE = /\.pdf$/i;
+
+/** Inline preview widget under an artifact tile: images render directly, HTML
+ *  and PDF embed in a height-capped frame. Anything else keeps just the tile. */
+function ArtifactPreview(props: { path: string; href: string }) {
+  if (IMAGE_ARTIFACT_RE.test(props.path)) {
+    return (
+      <a class="artifact-preview" href={props.href} target="_blank" rel="noopener noreferrer">
+        <img class="artifact-preview-img" src={props.href} alt={artifactName(props.path)} loading="lazy" />
+      </a>
+    );
+  }
+  if (HTML_ARTIFACT_RE.test(props.path)) {
+    // No allow-same-origin: scripts run against an opaque origin, so the frame
+    // cannot read the session token or call the API with the viewer's cookies.
+    return <iframe class="artifact-preview-frame" src={props.href} title={artifactName(props.path)} loading="lazy" sandbox="allow-scripts" />;
+  }
+  if (PDF_ARTIFACT_RE.test(props.path)) {
+    // Chrome's built-in PDF viewer does not render inside a sandboxed frame.
+    return <iframe class="artifact-preview-frame" src={props.href} title={artifactName(props.path)} loading="lazy" />;
+  }
+  return null;
+}
+
 function ApprovalDetailCard(props: { details: ApprovalLogDetails; sessionId: string; token: string | undefined }) {
   const details = props.details;
   const artifactPaths = details.artifactPaths ?? [];
+  const changes = details.changes ?? [];
   const decisionLabel = details.decisionStatus
     ? `${details.decisionStatus}${details.decisionReviewer ? ` by ${details.decisionReviewer}` : ''}`
     : '';
@@ -117,53 +207,59 @@ function ApprovalDetailCard(props: { details: ApprovalLogDetails; sessionId: str
       ? { title: 'Artifact', body: <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">{details.artifactUrl}</a> }
       : details.draftUrl
         ? { title: 'Draft', body: <a class="approval-link" href={details.draftUrl} target="_blank" rel="noopener noreferrer">{details.draftUrl}</a> }
-        : details.summary
+        : details.summary && changes.length === 0
           ? { title: 'Review', body: <LogContent value={details.summary} forceMarkdown /> }
           : undefined;
   const showSummary = Boolean(details.summary) && primary?.title !== 'Review';
+  // With structured changes present, the draft is supporting detail, not the
+  // thing under review: collapse it so the change boxes stay the focal point.
+  const demotePrimary = changes.length > 0 && Boolean(primary);
   const links = [
     details.draftUrl ? <a class="approval-link" href={details.draftUrl} target="_blank" rel="noopener noreferrer">Open draft</a> : null,
     details.artifactUrl ? <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact</a> : null,
   ].filter(Boolean);
-  const hasContent = details.prompt || primary || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage;
+  const hasContent = details.prompt || primary || changes.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage;
   if (!hasContent) return null;
 
   return (
     <div class="approval-card">
       {details.prompt && <div class="approval-question"><InlineMarkdown value={details.prompt} /></div>}
+      {details.reference && <ReferenceBlock reference={details.reference} />}
+      {changes.length > 0 && <ChangesBlock changes={changes} />}
       {artifactPaths.length > 0 && (
         <section class="approval-section approval-artifact">
           <div class="approval-section-title">{artifactPaths.length > 1 ? 'Artifacts' : 'Artifact'}</div>
-          <div class="approval-section-body">
-            <div class="artifact-tiles">
-              {artifactPaths.map((path) => (
-                <a
-                  key={path}
-                  class="artifact-open"
-                  href={artifactHref(props.sessionId, path, props.token)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <span class="artifact-open-name">{artifactName(path)}</span>
-                  <span class="artifact-open-hint">open</span>
-                </a>
-              ))}
-            </div>
+          <div class="approval-section-body approval-artifact-body">
+            {artifactPaths.map((path) => {
+              const href = artifactHref(props.sessionId, path, props.token);
+              return (
+                <div class="artifact-item" key={path}>
+                  <div class="artifact-tiles">
+                    <a class="artifact-open" href={href} target="_blank" rel="noopener noreferrer">
+                      <span class="artifact-open-name">{artifactName(path)}</span>
+                      <span class="artifact-open-hint">open</span>
+                    </a>
+                  </div>
+                  <ArtifactPreview path={path} href={href} />
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
-      {details.context && (
-        <section class="approval-section approval-context">
-          <div class="approval-section-title">Source context</div>
-          <div class="approval-section-body"><LogContent value={details.context} forceMarkdown /></div>
-        </section>
-      )}
-      {primary && (
-        <section class="approval-section approval-primary">
-          <div class="approval-section-title">{primary.title}</div>
-          <div class="approval-section-body">{primary.body}</div>
-        </section>
-      )}
+      {primary && (demotePrimary
+        ? (
+          <details class="approval-section approval-context">
+            <summary>{primary.title}</summary>
+            <div class="approval-section-body">{primary.body}</div>
+          </details>
+        )
+        : (
+          <section class="approval-section approval-primary">
+            <div class="approval-section-title">{primary.title}</div>
+            <div class="approval-section-body">{primary.body}</div>
+          </section>
+        ))}
       {links.length > 0 && (
         <section class="approval-section approval-links">
           <div class="approval-section-title">Links</div>
@@ -175,6 +271,12 @@ function ApprovalDetailCard(props: { details: ApprovalLogDetails; sessionId: str
           <div class="approval-section-title">Why this request</div>
           <div class="approval-section-body"><LogContent value={details.summary!} forceMarkdown /></div>
         </section>
+      )}
+      {details.context && (
+        <details class={`approval-section approval-context${changes.length === 0 ? ' approval-context-open' : ''}`} open={changes.length === 0}>
+          <summary>Source context</summary>
+          <div class="approval-section-body"><LogContent value={details.context} forceMarkdown /></div>
+        </details>
       )}
       {details.risk && (
         <section class="approval-section approval-risk">
