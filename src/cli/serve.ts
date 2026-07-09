@@ -23,6 +23,7 @@ import { FileWatcher } from "../watcher";
 import { telemetry, parseModel } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
+import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
@@ -2035,6 +2036,34 @@ export function createServeCommand(): Command {
         onExecute: executeScheduledAgent,
       });
 
+      // Per-project scheduler lock (see utils/scheduler-lock.ts): the daemon
+      // registry above only sees daemons sharing this XDG data dir, so a
+      // daemon launched with a different one (isolated test daemons) would
+      // still double-fire real schedules. The lock lives in the project
+      // checkout itself, which every daemon resolves identically, so exactly
+      // one daemon arms schedules per project. Held locks are re-used, denials
+      // are re-checked on every attempt (the holder may have exited), and a
+      // denial disables scheduling for that project only, never serving.
+      const schedulerLocksHeld = new Set<string>();
+      const schedulerLockWarned = new Map<string, number>();
+      const canArmSchedules = (projectId: string, projectRoot: string): boolean => {
+        if (schedulerLocksHeld.has(projectId)) return true;
+        const result = acquireSchedulerLock(projectRoot);
+        if (result.acquired) {
+          schedulerLocksHeld.add(projectId);
+          schedulerLockWarned.delete(projectId);
+          return true;
+        }
+        if (schedulerLockWarned.get(projectId) !== result.holder.pid) {
+          schedulerLockWarned.set(projectId, result.holder.pid);
+          console.error(chalk.yellow(
+            `Warning: schedules for ${projectId} are owned by another serve daemon (PID ${result.holder.pid}). ` +
+            `Skipping scheduling here to prevent duplicate runs. Stop that daemon and touch an agent file (or restart) to take over.`
+          ));
+        }
+        return false;
+      };
+
       // Build projects with agent files and scan for schedules
       const projects: Project[] = [];
       for (const seed of projectSeeds) {
@@ -2048,7 +2077,7 @@ export function createServeCommand(): Command {
           try {
             const agentPath = resolveScopedAgentPath(seed, agentFile);
             const agent = await parseAgent(agentPath);
-            if (agent.config.schedule) {
+            if (agent.config.schedule && canArmSchedules(seed.id, seed.root)) {
               scheduler.add(seed.id, agentFile, agent.config.schedule);
               logger.debug(`Loaded schedule for ${seed.id}: ${agentFile}`);
             }
@@ -2122,7 +2151,7 @@ export function createServeCommand(): Command {
             try {
               const agentPath = resolveScopedAgentPath(project, relativePath);
               const agent = await parseAgent(agentPath);
-              const schedule = agent.config.schedule
+              const schedule = agent.config.schedule && canArmSchedules(project.id, project.root)
                 ? scheduler.add(project.id, relativePath, agent.config.schedule)
                 : undefined;
               printHotReload(project.id, "added", relativePath, schedule);
@@ -2146,7 +2175,13 @@ export function createServeCommand(): Command {
                 agentCounts.set(project.id, project.agentFiles.length);
               }
 
-              const schedule = scheduler.update(project.id, relativePath, agent.config.schedule);
+              // Without the scheduler lock, pass no schedule: update() then
+              // only clears any stale entry instead of arming a new one.
+              const schedule = scheduler.update(
+                project.id,
+                relativePath,
+                agent.config.schedule && canArmSchedules(project.id, project.root) ? agent.config.schedule : undefined
+              );
               printHotReload(project.id, "changed", relativePath, schedule);
 
               updateRegistryCounts();
@@ -5139,8 +5174,12 @@ export function createServeCommand(): Command {
       const shutdown = async () => {
         console.log("\nShutting down...");
 
-        // Unregister from process registry
+        // Unregister from process registry and release per-project scheduler locks
         unregisterServer();
+        for (const p of projects) {
+          if (schedulerLocksHeld.has(p.id)) releaseSchedulerLock(p.root);
+        }
+        schedulerLocksHeld.clear();
 
         scheduler.shutdown();
         approvalHub.shutdown();

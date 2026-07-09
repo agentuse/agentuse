@@ -69,3 +69,16 @@ export function getCurrentProcessStartTime(): string | null {
   }
   return currentProcessStartTime || null;
 }
+
+/**
+ * Whether a process with this PID currently exists. Signal 0 probes without
+ * killing; EPERM means it exists but belongs to another user.
+ */
+export function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
