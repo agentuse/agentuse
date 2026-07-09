@@ -855,7 +855,11 @@ function shouldLogApprovalRequest(logged: Map<string, number>, key: string, now 
 
 function readRequestBody(req: IncomingMessage, limitBytes = MAX_JSON_BODY_BYTES): Promise<string> {
   return new Promise((resolve, reject) => {
-    let body = "";
+    // Buffer raw chunks and decode once at the end. `body += chunk` implicitly
+    // utf8-decodes each Buffer separately, corrupting any multi-byte character
+    // (emoji/CJK) that straddles a chunk boundary and can make JSON.parse throw
+    // on an otherwise-valid body.
+    const chunks: Buffer[] = [];
     let bytes = 0;
     let done = false;
     const fail = (error: Error) => {
@@ -863,18 +867,18 @@ function readRequestBody(req: IncomingMessage, limitBytes = MAX_JSON_BODY_BYTES)
       done = true;
       reject(error);
     };
-    req.on("data", (chunk) => {
+    req.on("data", (chunk: Buffer) => {
       bytes += Buffer.byteLength(chunk);
       if (bytes > limitBytes) {
         fail(new RequestBodyTooLargeError(limitBytes));
       } else {
-        body += chunk;
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       }
     });
     req.on("end", () => {
       if (done) return;
       done = true;
-      resolve(body);
+      resolve(Buffer.concat(chunks).toString("utf8"));
     });
     req.on("error", (error) => {
       if (done && error.name === "AbortError") return;
@@ -3193,14 +3197,48 @@ export function createServeCommand(): Command {
         // `/sessions/:id` and `/sessions/:id/{decision,continue,status}` open up.
         const isCapabilityRoute = isHeaderGateExemptRoute(routePath, isApi);
 
+        // Origin-based CORS/CSRF hardening. A keyless local daemon has no auth
+        // gate (see the `if (apiKey && ...)` check below), so a wildcard ACAO
+        // would let any website the user visits read every endpoint and drive
+        // POST /run cross-origin. Compare the request Origin's host against the
+        // Host the browser used to reach us — same-origin UI requests match
+        // regardless of host alias (localhost/127.0.0.1/hostname) or scheme;
+        // a cross-site request does not.
+        const requestOrigin = req.headers.origin;
+        let crossOrigin = false;
+        if (requestOrigin && requestOrigin !== "null") {
+          try {
+            crossOrigin = new URL(requestOrigin).host !== req.headers.host;
+          } catch {
+            crossOrigin = true;
+          }
+        }
+
         // CORS headers
-        res.setHeader("Access-Control-Allow-Origin", "*");
+        if (apiKey) {
+          // Browsers can't forge the Bearer header and non-browser clients ignore
+          // CORS, so a wildcard is safe and keeps programmatic access simple.
+          res.setHeader("Access-Control-Allow-Origin", "*");
+        } else if (requestOrigin && !crossOrigin) {
+          // Keyless daemon: reflect only the caller's own origin, never wildcard.
+          res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+          res.setHeader("Vary", "Origin");
+        }
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization");
 
         if (req.method === "OPTIONS") {
           res.writeHead(204);
           res.end();
+          return;
+        }
+
+        // Reject cross-origin state-changing requests on the keyless daemon.
+        // The missing ACAO above already blocks a browser from reading responses;
+        // this also stops "simple" requests (e.g. a form POST) that skip preflight
+        // from reaching side-effecting handlers like /run.
+        if (!apiKey && crossOrigin && req.method !== "GET") {
+          sendError(res, 403, "FORBIDDEN", "Cross-origin request rejected on local daemon");
           return;
         }
 
@@ -4291,11 +4329,19 @@ export function createServeCommand(): Command {
               return;
             }
             notifiedFinishedSessions.set(sessionId, Date.now());
-            // Bound the dedup map; entries older than a day can't recur anyway.
+            // Bound the dedup map. First drop entries older than a day (can't
+            // recur anyway); if >1000 sessions finished within the window that
+            // frees nothing, so also hard-cap by evicting oldest-first (Map
+            // preserves insertion order, which is time order here).
             if (notifiedFinishedSessions.size > 1000) {
               const cutoff = Date.now() - 24 * 3600 * 1000;
               for (const [key, at] of notifiedFinishedSessions) {
                 if (at < cutoff) notifiedFinishedSessions.delete(key);
+              }
+              while (notifiedFinishedSessions.size > 1000) {
+                const oldest = notifiedFinishedSessions.keys().next().value;
+                if (oldest === undefined) break;
+                notifiedFinishedSessions.delete(oldest);
               }
             }
 
