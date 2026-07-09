@@ -60,6 +60,8 @@ import {
 
 const APPROVAL_LIST_SSE_INTERVAL_MS = 10_000;
 const SESSION_LIST_SSE_INTERVAL_MS = 10_000;
+/** Faster session-list cadence while any session is live, so the dashboard tracks runs in near-real-time. */
+const SESSION_LIST_SSE_LIVE_INTERVAL_MS = 2_000;
 
 interface RunRequest {
   agent: string;
@@ -1905,6 +1907,11 @@ export function createServeCommand(): Command {
       let failedExecutions = 0;
       let logHandle: LogFileHandle | null = null;
 
+      // Nudges the list SSE hubs to poll fast for a bounded window. Assigned
+      // once the hubs exist; a no-op indirection here because the scheduler
+      // (and its cron jobs) is armed before the hubs are constructed.
+      let wakeListHubs: () => void = () => {};
+
       // Helper function to execute an agent (used by scheduler)
       // Uses subprocess to work around EBADF issue when spawning from async callbacks
       const executeScheduledAgent = async (
@@ -1951,6 +1958,7 @@ export function createServeCommand(): Command {
         }
 
         // Execute via worker process to work around EBADF issue in async callbacks
+        wakeListHubs();
         const spawnResult = await projectWorker.execute({
           agentPath: toProjectRelativeAgentPath(project, schedule.agentPath),
           projectRoot: project.root,
@@ -1959,6 +1967,7 @@ export function createServeCommand(): Command {
           debug: options.debug,
           trigger: 'scheduled',
         });
+        wakeListHubs();
 
         const duration = Date.now() - startTime;
 
@@ -2534,8 +2543,10 @@ export function createServeCommand(): Command {
           if (activeApprovalResumes.get(activeKey) === resumePromise) {
             activeApprovalResumes.delete(activeKey);
           }
+          wakeListHubs();
         });
         activeApprovalResumes.set(activeKey, resumePromise);
+        wakeListHubs();
 
         res.writeHead(202, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ sessionId: targetSessionId, status: "resuming" }));
@@ -2571,8 +2582,10 @@ export function createServeCommand(): Command {
             if (activeSessionContinuations.get(activeKey) === continuePromise) {
               activeSessionContinuations.delete(activeKey);
             }
+            wakeListHubs();
           });
         activeSessionContinuations.set(activeKey, continuePromise);
+        wakeListHubs();
 
         res.writeHead(202, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ sessionId, status: "continuing" }));
@@ -2642,9 +2655,11 @@ export function createServeCommand(): Command {
           if (activeApprovalResumes.get(activeKey) === resumePromise) {
             activeApprovalResumes.delete(activeKey);
           }
+          wakeListHubs();
         });
 
         activeApprovalResumes.set(activeKey, resumePromise);
+        wakeListHubs();
         await resumePromise;
       };
 
@@ -2762,6 +2777,7 @@ export function createServeCommand(): Command {
         }
         if (!sessionId) return { handled: false };
 
+        wakeListHubs();
         const done = (async () => {
           for (const project of projects) {
             const projectWorker = workers.get(project.id);
@@ -2797,6 +2813,7 @@ export function createServeCommand(): Command {
 
           throw new Error(`Session ${sessionId} was not found in this serve daemon`);
         })();
+        void done.finally(wakeListHubs).catch(() => {});
 
         return { handled: true, done };
       };
@@ -2889,9 +2906,11 @@ export function createServeCommand(): Command {
               if (activeApprovalResumes.get(activeKey) === done) {
                 activeApprovalResumes.delete(activeKey);
               }
+              wakeListHubs();
             }
           });
           activeApprovalResumes.set(activeKey, done);
+          wakeListHubs();
           return { handled: true, done };
         }
 
@@ -2985,7 +3004,18 @@ export function createServeCommand(): Command {
       const sessionListHub = new ApprovalListEventHub<SessionsPayload>({
         eventName: 'sessions',
         intervalMs: SESSION_LIST_SSE_INTERVAL_MS,
+        liveIntervalMs: SESSION_LIST_SSE_LIVE_INTERVAL_MS,
+        isLive: (payload) => payload.sessions.some(
+          (s) => s.status === 'running' || s.status === 'resuming' || s.status === 'continuing'
+        ),
       });
+      // The list hubs poll on a slow steady cadence; nudge them the moment the
+      // daemon knows the lists are about to change (run triggered, decision
+      // made, runner announced a state change) so dashboards update in ~1s.
+      wakeListHubs = () => {
+        sessionListHub.wake();
+        approvalListHub.wake();
+      };
 
       const buildSessionsPayload = async (
         requestUrl: URL
@@ -4287,6 +4317,7 @@ export function createServeCommand(): Command {
               sendError(res, 500, result.error.code, result.error.message);
               return;
             }
+            wakeListHubs();
             sendJSON(res, 200, { success: true, sessionId, stopped: result.stopped });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
@@ -4320,6 +4351,9 @@ export function createServeCommand(): Command {
             }
 
             const status = found.session.sessionStatus;
+            // Regardless of push dedup below, a terminal-state poke means the
+            // session lists just changed; refresh dashboards promptly.
+            wakeListHubs();
             if (status !== 'completed' && status !== 'error') {
               sendJSON(res, 200, { success: true, status: "ignored", reason: `session is ${status}` });
               return;
@@ -4420,6 +4454,7 @@ export function createServeCommand(): Command {
               sendError(res, httpStatus, code, result.error.message);
               return;
             }
+            wakeListHubs();
             sendJSON(res, 200, { success: true, sessionId, status: "suspended" });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
@@ -4501,6 +4536,10 @@ export function createServeCommand(): Command {
               sendError(res, found.status, found.code, found.message);
               return;
             }
+
+            // A new pending approval changes both lists (session suspended +
+            // approvals bucket); surface it on dashboards without the 10s wait.
+            wakeListHubs();
 
             const logKey = `${found.project.id}:${sessionId}:${token}`;
             if (shouldLogApprovalRequest(loggedApprovalRequests, logKey)) {
@@ -4799,8 +4838,10 @@ export function createServeCommand(): Command {
               if (!result.success) {
                 logger.warn(`Resume ${sessionId} failed: ${result.error.message}`);
               }
+              wakeListHubs();
             });
 
+            wakeListHubs();
             res.writeHead(202, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ sessionId, status: "running" }));
           } catch (err) {
@@ -4893,8 +4934,9 @@ export function createServeCommand(): Command {
               totalExecutions++;
               failedExecutions++;
               logger.warn(`Detached run ${preassignedId} errored: ${(err as Error).message}`);
-            });
+            }).finally(wakeListHubs);
 
+            wakeListHubs();
             const sessionToken = apiKey ? sessionViewToken(preassignedId, apiKey) : undefined;
             res.writeHead(202, { "Content-Type": "application/json" });
             res.end(JSON.stringify({
@@ -4939,6 +4981,7 @@ export function createServeCommand(): Command {
 
           // Execute via worker process to work around EBADF issue in async callbacks
           // MCP server spawning fails in HTTP handlers due to bundler/Node.js fd issues
+          wakeListHubs();
           const spawnResult = await projectWorker.execute({
             agentPath: toProjectRelativeAgentPath(project, body.agent),
             projectRoot: project.root,
@@ -4952,6 +4995,7 @@ export function createServeCommand(): Command {
             trigger: 'api',
             signal: abortController.signal,
           });
+          wakeListHubs();
 
           const duration = Date.now() - startTime;
 

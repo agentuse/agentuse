@@ -193,4 +193,60 @@ describe('ApprovalListEventHub', () => {
     await new Promise((r) => setTimeout(r, 150));
     expect(hub.activeLoopCount()).toBe(0);
   });
+
+  it('wake() delivers a changed snapshot immediately instead of on the steady interval', async () => {
+    // Slow steady cadence: without wake() the change would take ~10s to land.
+    const slowHub = new ApprovalListEventHub<typeof snapshot>({ intervalMs: 10_000, heartbeatIntervalMs: 10_000 });
+    let slow = { pending: 0, label: 'idle' };
+    const poll: ApprovalListPoll<typeof slow> = async () => ({ ok: true, snapshot: slow });
+    const slowServer = createServer((req, res) => {
+      slowHub.subscribe({ key: 'approvals::', poll, req, res });
+    });
+    const slowPort = await listen(slowServer);
+    try {
+      const res = await fetch(`http://127.0.0.1:${slowPort}/api/approvals/events`);
+      // Change the list shortly after subscribing and wake the hub; the next
+      // snapshot must arrive within the read window, far under the 10s cadence.
+      setTimeout(() => {
+        slow = { pending: 1, label: 'run started' };
+        slowHub.wake();
+      }, 80);
+      const buf = await readUntil(res, (b) => b.includes('run started'), 1000);
+      expect(buf).toContain('"label":"idle"');
+      expect(buf).toContain('run started');
+    } finally {
+      slowHub.shutdown();
+      slowServer.close();
+    }
+  });
+
+  it('polls at the live cadence while isLive(snapshot) is true', async () => {
+    let polls = 0;
+    let live = { running: true, seq: 0 };
+    const liveHub = new ApprovalListEventHub<typeof live>({
+      intervalMs: 10_000,
+      liveIntervalMs: 30,
+      isLive: (s) => s.running,
+      heartbeatIntervalMs: 10_000,
+    });
+    const poll: ApprovalListPoll<typeof live> = async () => {
+      polls++;
+      live = { ...live, seq: live.seq + 1 };
+      return { ok: true, snapshot: live };
+    };
+    const liveServer = createServer((req, res) => {
+      liveHub.subscribe({ key: 'sessions::', poll, req, res });
+    });
+    const livePort = await listen(liveServer);
+    try {
+      const res = await fetch(`http://127.0.0.1:${livePort}/api/sessions/events`);
+      // At the 10s steady cadence only one poll would fit in this window; the
+      // 30ms live cadence yields many because every snapshot reports running.
+      await readUntil(res, () => polls >= 5, 2000);
+      expect(polls).toBeGreaterThanOrEqual(5);
+    } finally {
+      liveHub.shutdown();
+      liveServer.close();
+    }
+  });
 });

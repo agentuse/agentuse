@@ -56,6 +56,10 @@ interface ApprovalListLoop<TSnapshot> {
   ticking: boolean;
   stopped: boolean;
   lastSnapshotJson: string | null;
+  /** Poll at the wake cadence until this timestamp (see wake()). */
+  fastUntil: number;
+  /** Whether the last successful snapshot was "live" per options.isLive. */
+  lastLive: boolean;
 }
 
 export interface ApprovalEventHubOptions {
@@ -65,9 +69,13 @@ export interface ApprovalEventHubOptions {
   maxSubscribersPerSession?: number;
 }
 
-export interface ApprovalListEventHubOptions {
+export interface ApprovalListEventHubOptions<TSnapshot = unknown> {
   eventName?: string;
   intervalMs?: number;
+  /** Poll cadence while isLive(snapshot) is true; defaults to intervalMs. */
+  liveIntervalMs?: number;
+  /** Marks a snapshot as live (e.g. any session still running) to keep the faster cadence. */
+  isLive?: (snapshot: TSnapshot) => boolean;
   heartbeatIntervalMs?: number;
   maxSubscribersPerList?: number;
 }
@@ -82,6 +90,15 @@ export const SESSION_SSE_IDLE_INTERVAL_MS = 10_000;
  * ~1s instead of stalling on "Loading session…".
  */
 export const SESSION_SSE_PENDING_FAST_WINDOW_MS = 30_000;
+
+/**
+ * List hubs poll on a slow steady cadence, which reads as dead air on the
+ * dashboard right when it matters most: a run just started. wake() switches a
+ * hub to this fast cadence for a bounded window so a session-file write that
+ * lands a moment after the trigger is still picked up within ~1s.
+ */
+export const LIST_SSE_WAKE_INTERVAL_MS = 1_000;
+export const LIST_SSE_WAKE_WINDOW_MS = 10_000;
 
 function logSignature(entry: ApprovalLogEntry): string {
   return JSON.stringify([entry.status ?? null, entry.level ?? null, entry.message ?? null, entry.title, entry.details ?? null, entry.subagentSession ?? null]);
@@ -309,12 +326,16 @@ export class ApprovalListEventHub<TSnapshot> {
   private loops = new Map<string, ApprovalListLoop<TSnapshot>>();
   private readonly eventName: string;
   private readonly intervalMs: number;
+  private readonly liveIntervalMs: number;
+  private readonly isLive: ((snapshot: TSnapshot) => boolean) | undefined;
   private readonly heartbeatIntervalMs: number;
   private readonly maxSubscribersPerList: number;
 
-  constructor(options: ApprovalListEventHubOptions = {}) {
+  constructor(options: ApprovalListEventHubOptions<TSnapshot> = {}) {
     this.eventName = options.eventName ?? 'approvals';
     this.intervalMs = options.intervalMs ?? 1000;
+    this.liveIntervalMs = options.liveIntervalMs ?? options.intervalMs ?? 1000;
+    this.isLive = options.isLive;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 25_000;
     this.maxSubscribersPerList = options.maxSubscribersPerList ?? 50;
   }
@@ -340,6 +361,8 @@ export class ApprovalListEventHub<TSnapshot> {
         ticking: false,
         stopped: false,
         lastSnapshotJson: null,
+        fastUntil: 0,
+        lastLive: false,
       };
       this.loops.set(key, loop);
     }
@@ -368,6 +391,26 @@ export class ApprovalListEventHub<TSnapshot> {
       void this.tick(loop);
     }
     return true;
+  }
+
+  /**
+   * Kicks every active loop out of its steady cadence: tick immediately, then
+   * poll at the wake cadence for the next burstMs. Called by the daemon at the
+   * moments the list is about to change (a run was triggered, a decision was
+   * made, a runner announced completion) so subscribers see the transition in
+   * ~1s instead of waiting out the steady interval.
+   */
+  wake(burstMs = LIST_SSE_WAKE_WINDOW_MS): void {
+    const until = Date.now() + burstMs;
+    for (const loop of this.loops.values()) {
+      if (loop.stopped) continue;
+      loop.fastUntil = Math.max(loop.fastUntil, until);
+      if (loop.timer) {
+        clearTimeout(loop.timer);
+        loop.timer = null;
+      }
+      if (!loop.ticking) void this.tick(loop);
+    }
   }
 
   private unsubscribe(key: string, res: ServerResponse): void {
@@ -419,6 +462,7 @@ export class ApprovalListEventHub<TSnapshot> {
       if (loop.stopped) return;
 
       if (result.ok) {
+        loop.lastLive = this.isLive ? this.isLive(result.snapshot) : false;
         const snapshotJson = JSON.stringify(result.snapshot);
         if (snapshotJson !== loop.lastSnapshotJson) {
           loop.lastSnapshotJson = snapshotJson;
@@ -432,10 +476,13 @@ export class ApprovalListEventHub<TSnapshot> {
     } finally {
       loop.ticking = false;
       if (!loop.stopped) {
+        const interval = loop.fastUntil > Date.now()
+          ? LIST_SSE_WAKE_INTERVAL_MS
+          : loop.lastLive ? this.liveIntervalMs : this.intervalMs;
         loop.timer = setTimeout(() => {
           loop.timer = null;
           void this.tick(loop);
-        }, this.intervalMs);
+        }, interval);
       }
     }
   }

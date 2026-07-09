@@ -2379,6 +2379,12 @@ async function runInternalWorker() {
   // signature can't observe (e.g. the agent file's learning config).
   const APPROVAL_INFO_SIGNATURE_MAX_AGE_MS = 60_000;
   const LIST_CACHE_TTL_MS = 5 * 60 * 1000;
+  // While an execution is in flight the on-disk lists are actively changing
+  // (session created, status flips, approvals suspend). The invalidate at
+  // execute start can race the first session write: a scan landing in that gap
+  // would otherwise cache a "nothing running" list for the whole run, so live
+  // dashboards never see the session until it ends. Cap staleness hard here.
+  const LIST_CACHE_ACTIVE_TTL_MS = 1_000;
   type ApprovalInfoResponse = Awaited<ReturnType<typeof getApprovalInfoUncached>>;
   type ApprovalInfoCacheEntry = {
     expiresAt: number;
@@ -2395,6 +2401,10 @@ async function runInternalWorker() {
   };
   const approvalInfoResponseCache = new Map<string, ApprovalInfoCacheEntry>();
   const listResponseCache = new Map<string, ListCacheEntry<ListResponse>>();
+  // Execute requests currently in flight (covers the whole request, including
+  // the pre-session-write setup window that activeExecutionControllers misses
+  // for fresh runs). Drives the short list-cache TTL above.
+  let activeExecuteRequests = 0;
 
   function approvalPartCacheKey(projectRoot: string, session: SessionInfo, agentId: string): string {
     return `${projectRoot}\0${session.id}\0${agentId}`;
@@ -2521,8 +2531,11 @@ async function runInternalWorker() {
       const response = await promise;
       if (response.success) {
         const { id: _id, ...rest } = response;
+        // While an execution is in flight, this scan may have raced a session
+        // write; cap how long it can be served so live views track the run.
+        const ttlMs = activeExecuteRequests > 0 ? LIST_CACHE_ACTIVE_TTL_MS : LIST_CACHE_TTL_MS;
         listResponseCache.set(key, {
-          expiresAt: Date.now() + LIST_CACHE_TTL_MS,
+          expiresAt: Date.now() + ttlMs,
           response: rest as Omit<T, 'id'>
         } as ListCacheEntry<ListResponse>);
       } else {
@@ -2795,6 +2808,7 @@ async function runInternalWorker() {
       return response;
     };
 
+    activeExecuteRequests++;
     try {
       invalidateListCaches(req.projectRoot);
       let agentPath = req.agentPath ? resolve(req.projectRoot, req.agentPath) : '';
@@ -3095,6 +3109,7 @@ async function runInternalWorker() {
           // Ignore cleanup errors
         }
       }
+      activeExecuteRequests--;
       invalidateListCaches(req.projectRoot);
     }
   }
