@@ -143,6 +143,8 @@ export interface ApprovalPageInfo {
   additionalInstruction?: string;
   summary?: string;
   draft?: string;
+  changes?: ApprovalChange[];
+  reference?: ApprovalReference;
   draftUrl?: string;
   artifactUrl?: string;
   context?: string;
@@ -218,6 +220,21 @@ export interface LogSubagentSession extends ChildSessionSummary {
   displayStatus: string;
 }
 
+/** One discrete action executed on approval: verbatim content, no rationale. */
+export interface ApprovalChange {
+  label?: string;
+  content: string;
+}
+
+/** The original item an approval's action responds to (post, message, document). */
+export interface ApprovalReference {
+  label?: string;
+  author?: string;
+  title?: string;
+  url?: string;
+  excerpt?: string;
+}
+
 export interface ApprovalLogDetails {
   resumeToken?: string;
   prompt?: string;
@@ -227,6 +244,8 @@ export interface ApprovalLogDetails {
   context?: string;
   risk?: string;
   draft?: string;
+  changes?: ApprovalChange[];
+  reference?: ApprovalReference;
   draftUrl?: string;
   artifactUrl?: string;
   /** Project-root-relative paths to local file artifacts, viewable via /sessions/:id/artifacts/*. */

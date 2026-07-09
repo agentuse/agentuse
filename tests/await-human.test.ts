@@ -128,6 +128,37 @@ describe('await_human approval URL', () => {
     );
   });
 
+  it('accepts structured changes and reference in the input schema', () => {
+    const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
+    const schema = tool.inputSchema as { safeParse: (v: unknown) => { success: boolean } };
+
+    expect(schema.safeParse({
+      prompt: 'Post this comment?',
+      changes: [
+        { label: 'Comment to post', content: 'The exact comment text' },
+        { content: 'Like the post' },
+      ],
+      reference: {
+        label: 'Replying to',
+        author: 'Alexandra Griffon (CEO, BlueCargo)',
+        url: 'https://www.linkedin.com/feed/update/x/',
+        excerpt: 'The economy did not contract, it reorganized.',
+      },
+    }).success).toBe(true);
+
+    // content is required on each change entry
+    expect(schema.safeParse({
+      prompt: 'Post?',
+      changes: [{ label: 'missing content' }],
+    }).success).toBe(false);
+
+    // reference URLs must be http(s)
+    expect(schema.safeParse({
+      prompt: 'Post?',
+      reference: { url: 'javascript:alert(1)' },
+    }).success).toBe(false);
+  });
+
   it('does not set an approval expiration by default', async () => {
     delete process.env.AGENTUSE_API_KEY;
     const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });

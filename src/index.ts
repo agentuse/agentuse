@@ -6,6 +6,7 @@ import { describeLearningOutcome } from './learning';
 import { isApprovalEnabled } from './runner/approval';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
 import { contextUsageFromSnapshot } from './session/usage';
+import { repairEscapedText } from './utils/display-text';
 import { Command } from 'commander';
 import { createProviderCommand, createAuthCommand } from './cli/auth';
 import { AuthStorage } from './auth/storage';
@@ -969,6 +970,19 @@ async function runInternalWorker() {
 
   type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
 
+  interface ApprovalChange {
+    label?: string;
+    content: string;
+  }
+
+  interface ApprovalReference {
+    label?: string;
+    author?: string;
+    title?: string;
+    url?: string;
+    excerpt?: string;
+  }
+
   interface ApprovalLogDetails {
     resumeToken?: string;
     prompt?: string;
@@ -978,6 +992,8 @@ async function runInternalWorker() {
     context?: string;
     risk?: string;
     draft?: string;
+    changes?: ApprovalChange[];
+    reference?: ApprovalReference;
     draftUrl?: string;
     artifactUrl?: string;
     artifactPaths?: string[];
@@ -1265,6 +1281,39 @@ async function runInternalWorker() {
     return 'Approval';
   }
 
+  /** Untrusted tool-input `changes`: keep only entries with real content. */
+  function normalizeApprovalChanges(value: unknown): ApprovalChange[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    const changes = value.flatMap((entry): ApprovalChange[] => {
+      const rec = valueAsRecord(entry);
+      const content = typeof rec.content === 'string' ? repairEscapedText(rec.content) : '';
+      if (!content.trim()) return [];
+      const label = typeof rec.label === 'string' && rec.label.trim() ? rec.label.trim() : undefined;
+      return [{ ...(label && { label }), content }];
+    });
+    return changes.length > 0 ? changes : undefined;
+  }
+
+  /** Untrusted tool-input `reference`: string fields only, URL must be http(s). */
+  function normalizeApprovalReference(value: unknown): ApprovalReference | undefined {
+    const rec = valueAsRecord(value);
+    const text = (v: unknown): string | undefined =>
+      typeof v === 'string' && v.trim() ? repairEscapedText(v.trim()) : undefined;
+    const url = safeHttpUrl(rec.url);
+    const label = text(rec.label);
+    const author = text(rec.author);
+    const title = text(rec.title);
+    const excerpt = text(rec.excerpt);
+    const reference: ApprovalReference = {
+      ...(label && { label }),
+      ...(author && { author }),
+      ...(title && { title }),
+      ...(url && { url }),
+      ...(excerpt && { excerpt })
+    };
+    return Object.keys(reference).length > 0 ? reference : undefined;
+  }
+
   function buildAwaitHumanDetails(state: any): ApprovalLogDetails | undefined {
     const input = valueAsRecord(state?.input);
     const output = valueAsRecord(state?.output);
@@ -1276,11 +1325,15 @@ async function runInternalWorker() {
     if (typeof resumePayload.resumeToken === 'string' && resumePayload.resumeToken) {
       fields.resumeToken = resumePayload.resumeToken;
     }
-    if (typeof input.prompt === 'string' && input.prompt) fields.prompt = input.prompt;
-    if (typeof input.summary === 'string' && input.summary) fields.summary = input.summary;
-    if (typeof input.context === 'string' && input.context) fields.context = input.context;
-    if (typeof input.risk === 'string' && input.risk) fields.risk = input.risk;
-    if (typeof input.draft === 'string' && input.draft) fields.draft = input.draft;
+    if (typeof input.prompt === 'string' && input.prompt) fields.prompt = repairEscapedText(input.prompt);
+    if (typeof input.summary === 'string' && input.summary) fields.summary = repairEscapedText(input.summary);
+    if (typeof input.context === 'string' && input.context) fields.context = repairEscapedText(input.context);
+    if (typeof input.risk === 'string' && input.risk) fields.risk = repairEscapedText(input.risk);
+    if (typeof input.draft === 'string' && input.draft) fields.draft = repairEscapedText(input.draft);
+    const changes = normalizeApprovalChanges(input.changes);
+    if (changes) fields.changes = changes;
+    const reference = normalizeApprovalReference(input.reference);
+    if (reference) fields.reference = reference;
     const safeDraftUrl = safeHttpUrl(input.draft_url);
     if (safeDraftUrl) fields.draftUrl = safeDraftUrl;
     const safeArtifactUrl = safeHttpUrl(input.artifact_url);
@@ -2024,6 +2077,8 @@ async function runInternalWorker() {
       }
       const detailDraftUrl = safeHttpUrl(input.draft_url);
       const detailArtifactUrl = safeHttpUrl(input.artifact_url);
+      const payloadChanges = normalizeApprovalChanges(input.changes);
+      const payloadReference = normalizeApprovalReference(input.reference);
       return {
         id: req.id,
         success: true,
@@ -2045,13 +2100,15 @@ async function runInternalWorker() {
           ...originAgentFields,
           ...viewOnlyFields,
           ...(additionalInstruction && { additionalInstruction }),
-          ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
-          ...(typeof input.summary === 'string' && { summary: input.summary }),
-          ...(typeof input.draft === 'string' && { draft: input.draft }),
+          ...(typeof input.prompt === 'string' && { prompt: repairEscapedText(input.prompt) }),
+          ...(typeof input.summary === 'string' && { summary: repairEscapedText(input.summary) }),
+          ...(typeof input.draft === 'string' && { draft: repairEscapedText(input.draft) }),
+          ...(payloadChanges && { changes: payloadChanges }),
+          ...(payloadReference && { reference: payloadReference }),
           ...(detailDraftUrl && { draftUrl: detailDraftUrl }),
           ...(detailArtifactUrl && { artifactUrl: detailArtifactUrl }),
-          ...(typeof input.context === 'string' && { context: input.context }),
-          ...(typeof input.risk === 'string' && { risk: input.risk }),
+          ...(typeof input.context === 'string' && { context: repairEscapedText(input.context) }),
+          ...(typeof input.risk === 'string' && { risk: repairEscapedText(input.risk) }),
           ...(typeof resumePayload.surface === 'string' && { surface: resumePayload.surface }),
           ...(approvalUrl && { approvalUrl }),
           // Delegated children are view-only: never surface an actionable token; the

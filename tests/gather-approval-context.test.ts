@@ -80,6 +80,35 @@ describe('gatherApprovalContext', () => {
     });
   });
 
+  it('includes structured changes and the reference excerpt in the paired work', async () => {
+    await withSession('agentuse-approval-ctx-changes-', async ({ sessionManager, sessionID, messageID }) => {
+      await sessionManager.addPart(sessionID, AGENT_ID, messageID, {
+        type: 'tool',
+        callID: 'call-1',
+        tool: 'await_human',
+        state: {
+          status: 'completed',
+          input: {
+            prompt: 'Post this comment?',
+            reference: { label: 'Replying to', excerpt: 'The economy reorganized.' },
+            changes: [
+              { label: 'Comment to post', content: 'The electricity comparison is the right one.' },
+              { content: 'Like the post' },
+            ],
+          },
+          output: { status: 'comment', comment: 'soften the opener' },
+          time: { start: 1, end: 2 },
+        },
+      } as any);
+
+      const ctx = await gatherApprovalContext(sessionManager, sessionID, AGENT_ID);
+      expect(ctx.reviews).toHaveLength(1);
+      expect(ctx.reviews[0].work).toContain('The economy reorganized.');
+      expect(ctx.reviews[0].work).toContain('Comment to post: The electricity comparison is the right one.');
+      expect(ctx.reviews[0].work).toContain('Change 2: Like the post');
+    });
+  });
+
   it('collects comments from multiple gates and skips bare approvals', async () => {
     await withSession('agentuse-approval-ctx-multi-', async ({ sessionManager, sessionID, messageID }) => {
       await sessionManager.addPart(sessionID, AGENT_ID, messageID, {

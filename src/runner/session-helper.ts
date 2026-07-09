@@ -333,6 +333,15 @@ function formatReviewedWork(input: unknown): string | undefined {
     if (text) sections.push(`${label}: ${text}`);
   };
   add('Question', i.prompt, 500);
+  const reference = i.reference && typeof i.reference === 'object' ? i.reference as Record<string, unknown> : {};
+  add(`Original (${typeof reference.label === 'string' && reference.label ? reference.label : 'in reply to'})`, reference.excerpt, 1000);
+  if (Array.isArray(i.changes)) {
+    i.changes.forEach((entry, index) => {
+      const rec = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+      const label = typeof rec.label === 'string' && rec.label ? rec.label : `Change ${index + 1}`;
+      add(label, rec.content, 2000);
+    });
+  }
   add('Summary', i.summary, 1500);
   add('Draft', i.draft, 4000);
   add('Context', i.context, 1500);

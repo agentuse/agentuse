@@ -6,6 +6,7 @@ import type { AgentPart } from '../types/parts';
 import type { ToolStateCompleted, ToolStateError } from '../session/types';
 import type { ActiveContextUsage } from '../session/types';
 import { addLanguageModelUsage, usageToAssistantTokens, addAssistantTokens, type AssistantTokens } from '../session/usage';
+import { repairEscapedText } from '../utils/display-text';
 import { logger } from '../utils/logger';
 import { safeHttpUrl } from '../utils/url';
 import { formatToolResultForDisplay } from '../utils/format-tool-result';
@@ -83,6 +84,23 @@ async function sendPersistedSlackApproval(options: {
     : {};
   const draftUrl = safeHttpUrl(input.draft_url);
   const artifactUrl = safeHttpUrl(input.artifact_url);
+  // Slack has no dedicated slot for the structured `changes` field, so surface
+  // the verbatim actions at the top of the draft block the card already renders.
+  const changesText = Array.isArray(input.changes)
+    ? input.changes
+      .map((entry) => {
+        const rec = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+        const content = typeof rec.content === 'string' ? repairEscapedText(rec.content.trim()) : '';
+        if (!content) return '';
+        const label = typeof rec.label === 'string' && rec.label.trim() ? `**${rec.label.trim()}**\n` : '';
+        return `${label}${content}`;
+      })
+      .filter(Boolean)
+      .join('\n\n')
+    : '';
+  const slackDraft = [changesText, typeof input.draft === 'string' ? repairEscapedText(input.draft) : '']
+    .filter(Boolean)
+    .join('\n\n');
   try {
     const approvalRequest = {
       botToken,
@@ -91,12 +109,12 @@ async function sendPersistedSlackApproval(options: {
       ...(process.env.AGENTUSE_PROJECT_ID && { projectId: process.env.AGENTUSE_PROJECT_ID }),
       ...(options.agentName && { agentName: options.agentName }),
       prompt: options.prompt,
-      ...(typeof input.summary === 'string' && { summary: input.summary }),
-      ...(typeof input.draft === 'string' && { draft: input.draft }),
+      ...(typeof input.summary === 'string' && { summary: repairEscapedText(input.summary) }),
+      ...(slackDraft && { draft: slackDraft }),
       ...(draftUrl && { draftUrl }),
       ...(artifactUrl && { artifactUrl }),
-      ...(typeof input.context === 'string' && { context: input.context }),
-      ...(typeof input.risk === 'string' && { risk: input.risk }),
+      ...(typeof input.context === 'string' && { context: repairEscapedText(input.context) }),
+      ...(typeof input.risk === 'string' && { risk: repairEscapedText(input.risk) }),
       resumeToken: options.resumeToken,
       approvalUrl: options.approvalUrl,
       interactive: Boolean(process.env.SLACK_APP_TOKEN),

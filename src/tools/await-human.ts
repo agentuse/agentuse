@@ -99,18 +99,31 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
     inputSchema: z.object({
       prompt: z.string().describe('One short line: a direct yes/no question for the reviewer. Do not put the content, headings, or lists here; use draft for that.'),
       summary: z.string().optional().describe('A few sentences on what changed and what is being approved. Rendered as Markdown under "Why this request".'),
-      draft: z.string().optional().describe('The full reviewable work itself, written in Markdown (headings, bullet lists, tables, fenced code). This is the primary artifact the reviewer reads, so make it complete, not a one-line summary.'),
+      draft: z.string().optional().describe('The full reviewable work itself, written in Markdown (headings, bullet lists, tables, fenced code). This is the primary artifact the reviewer reads, so make it complete, not a one-line summary. When the approved action is a short submission (a comment, an email, a post), put the verbatim content in changes instead and use draft for the supporting detail.'),
+      changes: z.array(z.object({
+        label: z.string().optional().describe('Short name for this action, e.g. "Comment to post", "Then: Like the post", "Email body"'),
+        content: z.string().describe('The exact, final content or action, verbatim: what will literally be submitted on approval')
+      })).optional().describe('The exact actions executed on approval, one entry per discrete action, in order. Rendered as highlighted "On approval" boxes the reviewer skims first, so put ONLY final verbatim content here; rationale belongs in summary or context.'),
+      reference: z.object({
+        label: z.string().optional().describe('Relationship of the original to this action, e.g. "Replying to" or "In response to"'),
+        author: z.string().optional().describe('Who created the original, e.g. "Alexandra Griffon (CEO, BlueCargo)"'),
+        title: z.string().optional().describe('Title or one-line descriptor of the original'),
+        url: z.string().url().refine(isHttpUrl, 'must be an http(s) URL').optional().describe('Link to the original'),
+        excerpt: z.string().optional().describe('The quoted text of the original that the reviewer needs in order to judge the response')
+      }).optional().describe('The original item this action responds to (the post being commented on, the message being replied to, the document being amended). Rendered as a quoted card directly above the changes.'),
       draft_url: z.string().url().refine(isHttpUrl, 'must be an http(s) URL').optional().describe('URL to a non-primary draft artifact'),
       artifact_url: z.string().url().refine(isHttpUrl, 'must be an http(s) URL').optional().describe('External URL to the primary review artifact, such as a PR, hosted preview, or document'),
       artifact_path: z.string().optional().describe('Path, relative to the project root, to a local file artifact you created (e.g. .agentuse/artifacts/report.html). The reviewer can open it in a popup viewer. Prefer this over inlining long or HTML content into draft. For more than one file, use artifact_paths.'),
       artifact_paths: z.array(z.string()).optional().describe('Multiple local file artifacts to review, each a path relative to the project root. Each renders as its own openable tile in the popup viewer.'),
-      context: z.string().optional().describe('Real background, constraints, inputs used, and work completed so far. Rendered as Markdown.'),
+      context: z.string().optional().describe('Only background the other fields do not already carry: constraints, inputs used, process notes. Never repeat the reference, changes, or summary content (no restating the target, URL, or revision story). Omit entirely when nothing extra remains. Rendered as Markdown.'),
       risk: z.string().optional().describe('Concrete risks, unresolved questions, or areas needing reviewer attention. Rendered as Markdown.')
     }),
     execute: async ({ prompt }: {
       prompt: string;
       summary?: string;
       draft?: string;
+      changes?: Array<{ label?: string; content: string }>;
+      reference?: { label?: string; author?: string; title?: string; url?: string; excerpt?: string };
       draft_url?: string;
       artifact_url?: string;
       artifact_path?: string;
