@@ -44,19 +44,29 @@ export function headerTokenUsage(
   return approval?.tokenUsage;
 }
 
-export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] | undefined): Array<{ label: string; value: string; title?: string }> {
+export interface TokenMetaItem {
+  label: string;
+  value: string;
+  title?: string;
+  /** Numeric value for count-up animation; the renderer formats via `format`. */
+  num?: number;
+  format?: (n: number) => string;
+  /** Percent of context window remaining (0-100); renders the headroom gauge. */
+  gaugePctLeft?: number;
+}
+
+export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] | undefined): TokenMetaItem[] {
   if (!tokenUsage) return [];
 
-  const items: Array<{ label: string; value: string; title?: string }> = [];
+  const items: TokenMetaItem[] = [];
   const context = tokenUsage.context;
   if (context) {
     // Lead with "% context left" (like Codex): a stable 0-100 gauge of how much
     // working room remains, rather than a raw, ever-growing token count. The
     // absolute tokens/limit stay available on hover so the headline stays clean.
     const hasLimit = typeof context.contextLimit === 'number' && context.contextLimit > 0;
-    const leftPercent = hasLimit
-      ? formatUsagePercent(Math.max(0, 100 - context.usagePercentage))
-      : undefined;
+    const pctLeft = hasLimit ? Math.max(0, 100 - context.usagePercentage) : undefined;
+    const leftPercent = pctLeft !== undefined ? formatUsagePercent(pctLeft) : undefined;
     const detail = [
       formatTokenCount(context.activeTokens),
       hasLimit ? `/ ${formatTokenCount(context.contextLimit)}` : undefined,
@@ -65,6 +75,7 @@ export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] |
       label: 'context used',
       value: leftPercent ? `${leftPercent} left` : detail,
       ...(leftPercent ? { title: detail } : {}),
+      ...(pctLeft !== undefined ? { gaugePctLeft: pctLeft } : {}),
     });
   }
 
@@ -82,12 +93,48 @@ export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] |
   // are billed ~10x cheaper and re-counted on every step, so surfacing them as a
   // primary count made spend look far scarier than it is; we show them separately
   // with a leading '+' to signal they sit on top of (not inside) the input count.
-  items.push({ label: 'input', value: formatTokenCount(newInput) });
-  items.push({ label: 'output', value: formatTokenCount(output) });
+  const wholeTokens = (n: number): string => formatTokenCount(Math.round(n));
+  items.push({ label: 'input', value: formatTokenCount(newInput), num: newInput, format: wholeTokens });
+  items.push({ label: 'output', value: formatTokenCount(output), num: output, format: wholeTokens });
   if (cached > 0) {
-    items.push({ label: 'cached', value: `+${formatTokenCount(cached)}` });
+    items.push({ label: 'cached', value: `+${formatTokenCount(cached)}`, num: cached, format: (n) => `+${wholeTokens(n)}` });
   }
   return items;
+}
+
+/**
+ * Animates a stat toward its latest value so live sessions read as motion:
+ * counters visibly tick up on each SSE status update instead of snapping.
+ */
+function CountUpValue(props: { num: number; format: (n: number) => string }) {
+  const [display, setDisplay] = useState(props.num);
+  const fromRef = useRef(props.num);
+  useEffect(() => {
+    const from = fromRef.current;
+    if (from === props.num) return;
+    let raf = 0;
+    const start = performance.now();
+    const duration = 600;
+    const tick = (t: number) => {
+      const progress = Math.min(1, (t - start) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const value = from + (props.num - from) * eased;
+      setDisplay(value);
+      if (progress < 1) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        fromRef.current = props.num;
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [props.num]);
+  return <>{props.format(display)}</>;
+}
+
+/** Headroom tone for the context gauge: calm green until half, then amber, then red. */
+function gaugeTone(pctLeft: number): string {
+  return pctLeft > 50 ? '' : pctLeft > 20 ? ' warn' : ' crit';
 }
 
 function isNearPageEnd(): boolean {
@@ -159,6 +206,14 @@ export default function SessionDetail() {
   // True once the page is scrolled away from the top; reveals the session bar's
   // scroll-to-top control (the bar itself stays pinned for both view types).
   const [scrolled, setScrolled] = useState(false);
+  // The models.dev pricing registry is ~400 kB of generated data, so it loads as
+  // its own chunk after mount; the est. cost cell simply appears once it lands.
+  const [pricing, setPricing] = useState<typeof import('../lib/pricing') | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void import('../lib/pricing').then((mod) => { if (!cancelled) setPricing(mod); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // Logs accumulate monotonically across the session; the status payload can
   // briefly return fewer entries during approval handoffs, so merge by id.
@@ -292,6 +347,18 @@ export default function SessionDetail() {
     () => [...logsRef.current.values()].sort((a, b) => (a.time ?? 0) - (b.time ?? 0)),
     [logsVersion]
   );
+  // Entries present in the first snapshot render without motion; anything that
+  // arrives later over SSE gets the fade-in-up arrival animation. The set is
+  // captured after the first non-empty render so the initial history never
+  // animates as a wall of movement.
+  const initialLogIdsRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (initialLogIdsRef.current === null && orderedLogs.length > 0) {
+      initialLogIdsRef.current = new Set(orderedLogs.map((e) => e.id));
+    }
+  }, [orderedLogs]);
+  const isNewLog = (id: string): boolean =>
+    initialLogIdsRef.current !== null && !initialLogIdsRef.current.has(id);
   // Operational warnings emitted about a tool call (logger.warnWithTool carries
   // its toolId) are nested under the matching tool entry instead of floating in
   // the flat stream as a confusing standalone "failed" line. Orphans (no tool
@@ -630,6 +697,7 @@ export default function SessionDetail() {
     : undefined;
   const busy = status === 'resuming' || status === 'continuing';
   const tokenUsage = headerTokenUsage(approval);
+  const estimatedCost = pricing ? pricing.estimateSessionCostUsd(approval.model, tokenUsage) : undefined;
   // Resolved theme currently applied to the document (set by the theme toggle).
   // Threaded into artifact links so a new-tab markdown/text artifact renders in
   // the same theme as the app rather than the default.
@@ -733,9 +801,24 @@ export default function SessionDetail() {
             {tokenUsageMetaItems(tokenUsage).map((item) => (
               <div class="cell token-cell" key={item.label}>
                 <span class="label">{item.label}</span>
-                <span class="value" {...(item.title ? { title: item.title } : {})}>{item.value}</span>
+                <span class="value" {...(item.title ? { title: item.title } : {})}>
+                  {item.num !== undefined && item.format ? <CountUpValue num={item.num} format={item.format} /> : item.value}
+                </span>
+                {item.gaugePctLeft !== undefined && (
+                  <span class="token-gauge" role="img" aria-label={`${item.gaugePctLeft.toFixed(1)}% of the context window left`}>
+                    <span class={`token-gauge-fill${gaugeTone(item.gaugePctLeft)}`} style={{ width: `${item.gaugePctLeft}%` }}></span>
+                  </span>
+                )}
               </div>
             ))}
+            {estimatedCost !== undefined && pricing && (
+              <div class="cell token-cell" key="est-cost">
+                <span class="label">est. cost</span>
+                <span class="value" title="Estimated from models.dev per-token pricing; cached input billed at input/10">
+                  <CountUpValue num={estimatedCost} format={pricing.formatUsd} />
+                </span>
+              </div>
+            )}
           </div>
         </header>
 
@@ -815,6 +898,7 @@ export default function SessionDetail() {
               <LogEntry
                 key={entry.id}
                 entry={entry}
+                isNew={isNewLog(entry.id)}
                 repeatCount={entry.repeatCount}
                 warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
                 expanded={expandedIds.has(entry.id)}

@@ -398,6 +398,8 @@ export interface LogEntryProps {
   /** Operational warnings about this tool call, nested under it instead of
    *  shown as standalone "failed" lines in the flat stream. */
   warnings?: ApprovalLogEntry[] | undefined;
+  /** Entry arrived over the live stream after the initial snapshot; animates in. */
+  isNew?: boolean | undefined;
   /** Number of consecutive identical operational log lines collapsed into this
    *  row (>1 renders an xN badge). Undefined/1 renders no badge. */
   repeatCount?: number | undefined;
@@ -429,6 +431,17 @@ function LogWarnings(props: { warnings: ApprovalLogEntry[] }) {
   );
 }
 
+/**
+ * Human-readable chip text for a raw tool id: strip the `tools__` namespace and
+ * join the remaining segments ("tools__skill_load" → "skill_load",
+ * "sandbox__exec" → "sandbox · exec"). The raw id stays on the chip's tooltip.
+ */
+function toolChipLabel(tool: string): string {
+  const segments = tool.split('__').filter(Boolean);
+  if (segments.length > 1 && segments[0] === 'tools') segments.shift();
+  return segments.join(' · ');
+}
+
 function LogEntryImpl(props: LogEntryProps) {
   const { entry } = props;
   const warnings = props.warnings ?? [];
@@ -449,6 +462,7 @@ function LogEntryImpl(props: LogEntryProps) {
     props.showActions ? 'is-actionable' : '',
     expandable ? 'expandable' : '',
     expanded ? 'expanded' : '',
+    props.isNew ? 'is-new' : '',
   ].filter(Boolean).join(' ');
 
   const toggle = () => {
@@ -483,10 +497,12 @@ function LogEntryImpl(props: LogEntryProps) {
           : entry.type === 'log'
             ? { 'aria-label': `${entry.level ?? 'info'} log`, title: entry.level ?? 'info', role: 'img' }
             : { 'aria-hidden': 'true' })}
-      >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : failed ? '✗' : '⋮')}</span>
+      >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : failed ? '✗' : entry.type === 'tool' && entry.status === 'completed' ? '✓' : '⋮')}</span>
       <div class="log-main">
         <span class="log-title">
-          {entry.title}
+          {entry.type === 'tool' && entry.tool && !isApprovalEntry
+            ? <span class="tool-chip" title={entry.title} aria-label={entry.title}>{toolChipLabel(entry.tool)}</span>
+            : entry.title}
           {props.repeatCount !== undefined && props.repeatCount > 1 && (
             <span class="log-count-badge">x{props.repeatCount}</span>
           )}
@@ -543,6 +559,7 @@ const warningsSignature = (warnings: ApprovalLogEntry[] | undefined): string =>
 export const LogEntry = memo(LogEntryImpl, (prev, next) =>
   logEntrySignature(prev.entry) === logEntrySignature(next.entry) &&
   warningsSignature(prev.warnings) === warningsSignature(next.warnings) &&
+  prev.isNew === next.isNew &&
   prev.repeatCount === next.repeatCount &&
   prev.expanded === next.expanded &&
   prev.showActions === next.showActions &&

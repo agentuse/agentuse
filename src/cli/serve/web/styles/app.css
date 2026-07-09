@@ -694,10 +694,15 @@ a, button, select, summary, label, input, textarea,
 .logs { list-style: none; margin: 0; padding: 0; }
 .log-item {
   display: grid;
-  grid-template-columns: 96px 14px 1fr;
+  /* 84px fits a locale timestamp ("12:41:38 PM") at 11px on one line; the rail
+     is deliberately narrow and quiet so the type spine + content, not the
+     clock, carry the eye. */
+  grid-template-columns: 84px 14px 1fr;
   gap: 12px;
-  padding: 10px 0;
+  padding: 10px 0 10px 12px;
   border-bottom: 1px dashed var(--line);
+  /* Per-type accent spine, colored by the data-log-type rules below. */
+  border-left: 2px solid transparent;
   align-items: start;
 }
 .log-item:last-child { border-bottom: 0; }
@@ -706,7 +711,7 @@ a, button, select, summary, label, input, textarea,
    scrolling inside .content-table-scroll. min-width: 0 lets the column shrink
    to the grid track, giving the table scroller a bounded width to scroll in. */
 .log-main { min-width: 0; }
-.log-time { color: var(--muted); font-size: 12px; padding-top: 1px; }
+.log-time { color: var(--muted-2); font-size: 11px; padding-top: 2px; font-variant-numeric: tabular-nums; }
 .log-marker {
   display: inline-flex;
   justify-content: center;
@@ -735,8 +740,9 @@ a, button, select, summary, label, input, textarea,
 .log-item.expandable:hover .log-title { color: var(--cyan); }
 .log-item.expandable:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: -2px; border-radius: 6px; }
 .log-item.expandable:focus-visible .log-title { color: var(--cyan); }
-/* Pending approval gate: the row the user must act on stands out from log noise. */
-.log-item.is-actionable { background: var(--cyan-soft); box-shadow: inset 2px 0 0 var(--cyan); border-radius: 0 6px 6px 0; }
+/* Pending approval gate: the row the user must act on stands out from log noise.
+   The accent bar rides the shared type-spine border so it aligns with every row. */
+.log-item.is-actionable { background: var(--cyan-soft); border-left-color: var(--cyan); border-radius: 0 6px 6px 0; }
 .log-item.expandable .log-title::after {
   content: "show";
   display: inline-flex;
@@ -907,13 +913,15 @@ a, button, select, summary, label, input, textarea,
 /* Live heartbeat row: shown at the tail of the stream while the run is active
    but no single entry is streaming, so the page never looks frozen mid-run. */
 .log-working .log-marker { opacity: 1; }
+/* This row's whole job is proving the run is alive between entries, so it sits
+   on the active accent at a readable base — never on the muted ladder. */
 .log-working .log-title {
   font-weight: 400;
-  color: var(--muted-2);
+  color: var(--cyan);
   letter-spacing: 0.01em;
   animation: log-working-pulse 1.7s ease-in-out infinite;
 }
-@keyframes log-working-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+@keyframes log-working-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
 .log-dots::after {
   content: "";
   animation: log-working-dots 1.4s steps(1, end) infinite;
@@ -924,6 +932,88 @@ a, button, select, summary, label, input, textarea,
   50%  { content: ".."; }
   75%, 100% { content: "..."; }
 }
+
+/* --- live-stream treatment: spines, chips, motion ---------------------- */
+/* Per-type accent spine on the shared left border: the log reads as a
+   color-coded thinking → acting → answering narrative at a glance. Soft
+   -border tokens (35% alpha) keep it an accent, not a stripe. Operational
+   `log` rows stay spineless on purpose — they're background noise. */
+.log-item[data-log-type="text"] { border-left-color: var(--cyan-border); }
+.log-item[data-log-type="reasoning"] { border-left-color: var(--line-strong); }
+.log-item[data-log-type="tool"].completed,
+.log-item[data-log-type="tool"].approved { border-left-color: var(--green-border); }
+.log-item[data-log-type="tool"].running { border-left-color: var(--amber-border); }
+.log-item[data-log-type="tool"].error,
+.log-item[data-log-type="tool"].failed { border-left-color: var(--red-border); }
+.log-item[data-log-type="compaction"] { border-left-color: var(--amber-border); }
+.log-item[data-log-type="error"] { border-left-color: var(--red-border); }
+.log-item[data-log-type="learning"] { border-left-color: var(--cyan-border); }
+
+/* Tool calls render as humanized status chips ("skill_load", "sandbox · exec")
+   instead of raw `tools__*` ids; color tracks the call's lifecycle. The raw id
+   + status text stay on the tooltip/aria-label. */
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  padding: 2px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--fg);
+  vertical-align: 1px;
+}
+.log-item.completed .tool-chip, .log-item.approved .tool-chip { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
+.log-item.running .tool-chip { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
+.log-item.error .tool-chip, .log-item.failed .tool-chip { border-color: var(--red-border); background: var(--red-soft); color: var(--red); }
+/* An executing tool spins amber (acting); streaming text keeps the cyan spinner. */
+.log-item.running .log-spinner { border-color: var(--amber-border); border-top-color: var(--amber); }
+
+/* The actively-streaming entry is the live edge of the run: cyan spine, faint
+   wash, and a blinking cursor at the text tail. */
+.log-item.streaming { background: var(--cyan-soft); border-left-color: var(--cyan); border-radius: 0 6px 6px 0; }
+.log-item.streaming .log-content .content-markdown > :last-child::after {
+  content: "▍";
+  margin-left: 2px;
+  color: var(--cyan);
+  animation: cursor-blink 900ms steps(2, start) infinite;
+}
+@keyframes cursor-blink { 50% { opacity: 0; } }
+/* Live thinking gets a signature only while it streams: the ✻ breathes and the
+   monologue leans italic; finished reasoning stays as quiet as ever. */
+.log-item.streaming[data-log-type="reasoning"] .log-marker {
+  color: var(--cyan);
+  animation: reasoning-breathe 2.4s ease-in-out infinite;
+}
+@keyframes reasoning-breathe { 0%, 100% { transform: scale(1); opacity: 0.7; } 50% { transform: scale(1.25); opacity: 1; } }
+.log-item.streaming[data-log-type="reasoning"] .log-content .content-markdown { font-style: italic; }
+
+/* Entries that arrive over the live stream rise in; the initial snapshot never animates. */
+@keyframes log-in { from { opacity: 0; transform: translateY(6px); } }
+.log-item.is-new { animation: log-in 220ms ease-out both; }
+
+/* Context-headroom gauge under the "context used" stat: fills with what's left,
+   green → amber → red as the window tightens, animating on every status tick. */
+.token-gauge {
+  display: block;
+  margin-top: 7px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.token-gauge-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--green);
+  transition: width 600ms ease, background-color 600ms ease;
+}
+.token-gauge-fill.warn { background: var(--amber); }
+.token-gauge-fill.crit { background: var(--red); }
 
 .store-event {
   display: flex;
@@ -3121,6 +3211,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .page-home .feed-row.is-new,
   .page-home .card.attn,
   .page-home .proj-live,
+  .log-item.is-new,
+  .log-item.streaming .log-content .content-markdown > :last-child::after,
+  .log-item.streaming[data-log-type="reasoning"] .log-marker,
   .log-dots::after { animation: none !important; }
   .log-spinner,
   .btn-spinner,
