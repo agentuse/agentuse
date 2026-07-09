@@ -1835,7 +1835,31 @@ async function runInternalWorker() {
   }
 
   async function getApprovalInfo(req: ExecuteRequest) {
-    return withApprovalInfoCache(approvalInfoCacheKey(req), req.id, async () => getApprovalInfoUncached(req));
+    return withApprovalInfoCache(
+      approvalInfoCacheKey(req),
+      req.id,
+      async () => getApprovalInfoUncached(req),
+      req.sessionId ? () => approvalInfoChangeSignature(req.projectRoot, req.sessionId!) : undefined
+    );
+  }
+
+  /**
+   * Change probe backing the non-terminal approval-info cache: the max
+   * directory mtime across the session's subtree (see
+   * SessionManager.getSessionChangeSignature). Returns null when the session
+   * can't be resolved so the caller never caches against a blind signature.
+   */
+  async function approvalInfoChangeSignature(projectRoot: string, sessionId: string): Promise<string | null> {
+    try {
+      await initStorage(projectRoot);
+      const sessionManager = new SessionManager();
+      const found = await sessionManager.findSession(sessionId);
+      if (!found) return null;
+      return await sessionManager.getSessionChangeSignature(found.path);
+    } catch (error) {
+      logger.debug(`Approval-info change probe failed for ${sessionId}: ${(error as Error).message}`);
+      return null;
+    }
   }
 
   async function learningInfoForSession(session: SessionInfo): Promise<{ capture: boolean; apply: boolean } | undefined> {
@@ -2350,12 +2374,18 @@ async function runInternalWorker() {
     part: ToolPart | null;
   }>();
   const APPROVAL_INFO_CACHE_TTL_MS = 10_000;
+  // Non-terminal (running/suspended) responses are reused while their change
+  // signature is unchanged; this ceiling bounds staleness from inputs the
+  // signature can't observe (e.g. the agent file's learning config).
+  const APPROVAL_INFO_SIGNATURE_MAX_AGE_MS = 60_000;
   const LIST_CACHE_TTL_MS = 5 * 60 * 1000;
   type ApprovalInfoResponse = Awaited<ReturnType<typeof getApprovalInfoUncached>>;
   type ApprovalInfoCacheEntry = {
     expiresAt: number;
     response?: Omit<ApprovalInfoResponse, 'id'>;
     promise?: Promise<ApprovalInfoResponse>;
+    /** Change signature the response was computed against (non-terminal sessions only). */
+    signature?: string;
   };
   type ListResponse = { id: string; success: boolean; [key: string]: unknown };
   type ListCacheEntry<T extends ListResponse> = {
@@ -2417,11 +2447,23 @@ async function runInternalWorker() {
   async function withApprovalInfoCache(
     key: string,
     requestId: string,
-    loader: () => Promise<ApprovalInfoResponse>
+    loader: () => Promise<ApprovalInfoResponse>,
+    getSignature?: () => Promise<string | null>
   ): Promise<ApprovalInfoResponse> {
     const now = Date.now();
     const cached = approvalInfoResponseCache.get(key);
-    if (cached?.response && cached.expiresAt > now) {
+    if (cached?.response && cached.expiresAt > now && !cached.signature) {
+      return { ...cached.response, id: requestId } as ApprovalInfoResponse;
+    }
+
+    // Probe before any rebuild: a write that lands mid-rebuild bumps a
+    // directory mtime past this signature, so the next poll re-reads instead
+    // of reusing a torn snapshot.
+    const signature = getSignature ? await getSignature() : null;
+    if (
+      cached?.response && cached.expiresAt > now &&
+      cached.signature && signature !== null && signature === cached.signature
+    ) {
       return { ...cached.response, id: requestId } as ApprovalInfoResponse;
     }
     if (cached?.promise) {
@@ -2433,11 +2475,20 @@ async function runInternalWorker() {
     approvalInfoResponseCache.set(key, { expiresAt: now + APPROVAL_INFO_CACHE_TTL_MS, promise });
     try {
       const response = await promise;
+      const { id: _id, ...rest } = response;
       if (shouldCacheApprovalInfoResponse(response)) {
-        const { id: _id, ...rest } = response;
         approvalInfoResponseCache.set(key, {
           expiresAt: Date.now() + APPROVAL_INFO_CACHE_TTL_MS,
           response: rest as Omit<ApprovalInfoResponse, 'id'>
+        });
+      } else if (response.success && signature !== null) {
+        // Running/suspended sessions: reuse this snapshot until the on-disk
+        // state changes. The SSE loop polls at 500ms/10s; without this every
+        // tick re-reads and re-serializes the whole transcript.
+        approvalInfoResponseCache.set(key, {
+          expiresAt: Date.now() + APPROVAL_INFO_SIGNATURE_MAX_AGE_MS,
+          response: rest as Omit<ApprovalInfoResponse, 'id'>,
+          signature
         });
       } else {
         approvalInfoResponseCache.delete(key);

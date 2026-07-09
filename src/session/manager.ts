@@ -610,21 +610,26 @@ export class SessionManager {
     return { session, agentId, path: sessionPath };
   }
 
-  // A session's own message lives at `{sessionPath}/{messageID}/message`. Since
-  // `listKeys` walks recursively, a parent's listing also turns up nested subagent
-  // messages (`{sessionPath}/subagent/{child}/{messageID}/message`) — those carry a
-  // slash in the middle segment. Restrict to direct children so reads, and the
-  // token usage aggregated from them, stay scoped to this session, not its subtree.
-  private ownMessageKeys(sessionPath: string, keys: string[]): string[] {
-    const prefix = `${sessionPath}/`;
-    const suffix = '/message';
-    return keys
-      .filter((key) => {
-        if (!key.startsWith(prefix) || !key.endsWith(suffix)) return false;
-        const inner = key.slice(prefix.length, key.length - suffix.length);
-        return inner.length > 0 && !inner.includes('/');
-      })
-      .sort();
+  // A session's own message lives at `{sessionPath}/{messageID}/message`; each
+  // direct child directory except `subagent/` is a message directory. A recursive
+  // listing would also walk every part file and the entire nested subagent
+  // subtree just to find these few keys, so enumerate the direct children with
+  // one shallow readdir instead. This also keeps reads, and the token usage
+  // aggregated from them, scoped to this session, not its subtree.
+  private async listMessageKeysShallow(sessionPath: string): Promise<string[]> {
+    const state = await getStorageState();
+    const sessionDir = path.join(state.dir, sessionPath);
+
+    try {
+      const entries = await fs.readdir(sessionDir, { withFileTypes: true });
+      return entries
+        .filter((entry) => entry.isDirectory() && entry.name !== 'subagent')
+        .map((entry) => `${sessionPath}/${entry.name}/message`)
+        .sort();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
   }
 
   /**
@@ -633,13 +638,13 @@ export class SessionManager {
    */
   async getPrimaryMessage(sessionID: string, agentId: string): Promise<Message | null> {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
-    const messageKey = this.ownMessageKeys(sessionPath, await listKeys(sessionPath))[0];
+    const messageKey = (await this.listMessageKeysShallow(sessionPath))[0];
     return messageKey ? readJSON<Message>(messageKey) : null;
   }
 
   async getSessionMessages(sessionID: string, agentId: string): Promise<Message[]> {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
-    const messageKeys = this.ownMessageKeys(sessionPath, await listKeys(sessionPath));
+    const messageKeys = await this.listMessageKeysShallow(sessionPath);
     const messages = await Promise.all(messageKeys.map(key => readJSON<Message>(key)));
     return messages
       .filter((message): message is Message => message !== null)
@@ -647,18 +652,26 @@ export class SessionManager {
   }
 
   /**
-   * List all persisted parts for a message in creation order.
+   * List all persisted parts for a message in creation order. Part files sit
+   * flat in `{message}/part/`, so one non-recursive readdir is enough.
    */
   async getMessageParts(sessionID: string, agentId: string, messageID: string): Promise<Part[]> {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
-    const partPrefix = `${sessionPath}/${messageID}/part`;
-    const keys = await listKeys(partPrefix);
-    const parts = await Promise.all(
-      keys
-        .filter(key => key.startsWith(`${partPrefix}/`))
-        .sort()
-        .map(key => readJSON<Part>(key))
-    );
+    const state = await getStorageState();
+    const partDir = path.join(state.dir, sessionPath, messageID, 'part');
+
+    let partKeys: string[];
+    try {
+      const entries = await fs.readdir(partDir, { withFileTypes: true });
+      partKeys = entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+        .map((entry) => `${sessionPath}/${messageID}/part/${entry.name.replace(/\.json$/, '')}`)
+        .sort();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+    const parts = await Promise.all(partKeys.map(key => readJSON<Part>(key)));
     return parts
       .filter((part): part is Part => part !== null)
       .sort((a, b) => getPartOrder(a) - getPartOrder(b) || a.id.localeCompare(b.id));
@@ -742,6 +755,46 @@ export class SessionManager {
     }
 
     return null;
+  }
+
+  /**
+   * Cheap change probe over a session's subtree, statting directories only.
+   * Every persisted write goes through writeJSON's temp-file + rename
+   * (storage.ts), and both steps touch the containing directory's mtime, so
+   * adding, rewriting, or removing any session/message/part/context/subagent
+   * file changes the max directory mtime. One readdir + stat per directory,
+   * no file reads or JSON parses — pollers can skip rebuilding a session view
+   * whose signature is unchanged. Returns null when the session dir is gone
+   * (callers must not cache against an unprobeable signature).
+   */
+  async getSessionChangeSignature(sessionPath: string): Promise<string | null> {
+    const state = await getStorageState();
+    let dirCount = 0;
+    let maxMtimeMs = 0;
+
+    const walk = async (dir: string): Promise<void> => {
+      let subdirs: string[];
+      try {
+        const [stat, entries] = await Promise.all([
+          fs.stat(dir),
+          fs.readdir(dir, { withFileTypes: true })
+        ]);
+        dirCount += 1;
+        if (stat.mtimeMs > maxMtimeMs) maxMtimeMs = stat.mtimeMs;
+        subdirs = entries
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => path.join(dir, entry.name));
+      } catch (error) {
+        // A directory can vanish mid-walk (session cleanup); treat it as
+        // absent rather than failing the probe.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+      }
+      await Promise.all(subdirs.map((subdir) => walk(subdir)));
+    };
+
+    await walk(path.join(state.dir, sessionPath));
+    return dirCount === 0 ? null : `${dirCount}:${maxMtimeMs}`;
   }
 
   /**
