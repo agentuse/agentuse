@@ -145,12 +145,14 @@ See [Channels](/guides/channels) for Slack setup, channel ids, events, and compl
 The session page shows the best available review details from the agent:
 
 - `prompt`: the reviewer-facing decision prompt
+- `changes`: the exact actions taken on approval, one `{ label, content }` entry per discrete action. Each renders as a highlighted "On approval" box with a copy button and character count, so the reviewer skims the verbatim payload first
+- `reference`: the original item the action responds to (`{ label, author, title, url, excerpt }`), such as the post being commented on or the message being replied to. Renders as a quoted card directly above the changes
 - `summary`: what changed and what is being approved
-- `draft`: inline draft content
+- `draft`: inline draft content. When `changes` carries the verbatim payload, the draft renders collapsed as supporting detail
 - `draft_url`: URL to a draft artifact
 - `artifact_url`: URL to the primary review artifact, such as a PR, preview, document, or generated artifact
-- `artifact_path` / `artifact_paths`: project-relative local files the session page can open in the artifact viewer
-- `context`: relevant background, constraints, or work completed so far
+- `artifact_path` / `artifact_paths`: project-relative local files the session page can open in the artifact viewer. Images, HTML, and PDF artifacts also render as inline previews in the approval card
+- `context`: background the other fields do not already carry (constraints, inputs used, process notes); agents are steered to omit it rather than repeat the reference, changes, or summary
 - `risk`: known risks, unresolved questions, or reviewer attention areas
 - Session logs before and after the decision
 
@@ -209,9 +211,9 @@ This works for an interactive manager and for a scheduled/headless one: the run 
 
 **v1 behavior and limits:**
 
-- One approval at a time per manager run. To gate several items, have a single leaf loop and call the gate once per item (it re-suspends and re-surfaces at the root each time), rather than fanning out to many sub-agents that suspend simultaneously — concurrent multi-gate fan-out is not yet supported.
+- One approval at a time per manager run. To gate several items, have a single leaf loop and call the gate once per item (it re-suspends and re-surfaces at the root each time), rather than fanning out to many sub-agents that suspend simultaneously, concurrent multi-gate fan-out is not yet supported.
 - The human always decides outward/irreversible actions (human relay). Automatic, classifier-based approval of low-risk calls is a separate, later option.
-- Resolve a delegated gate from the manager's approval page, `/approvals` inbox, or Slack — not `agentuse sessions resume`, which handles only single-session gates.
+- Resolve a delegated gate from the manager's approval page, `/approvals` inbox, or Slack, not `agentuse sessions resume`, which handles only single-session gates.
 
 ## Configuration Fields
 
