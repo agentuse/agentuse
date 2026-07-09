@@ -147,17 +147,17 @@ export default function Home() {
   const pendingApprovals = liveHome.pendingApprovals;
   const now = useNow(running.length > 0 || nextSchedule !== null);
 
-  // When the countdown fires, the schedule's nextRun is stale until the next
-  // poll; nudge a refetch shortly after zero so the hero rolls forward.
+  // When the countdown fires, the schedule's nextRun is stale until the
+  // scheduler actually triggers (jitter can hold it past zero); keep
+  // refetching every few seconds until nextRun rolls forward so the hero
+  // never hangs on a fired schedule.
   const countdownMs = nextSchedule ? nextSchedule.at - now : null;
-  const firedRef = useRef<number | null>(null);
+  const countdownFired = countdownMs !== null && countdownMs <= 0;
   useEffect(() => {
-    if (!nextSchedule || countdownMs === null || countdownMs > 0) return;
-    if (firedRef.current === nextSchedule.at) return;
-    firedRef.current = nextSchedule.at;
-    const timer = setTimeout(() => schedules.refetch(), 4000);
-    return () => clearTimeout(timer);
-  }, [nextSchedule, countdownMs, schedules.refetch]);
+    if (!countdownFired) return;
+    const timer = setInterval(() => schedules.refetch(), 4000);
+    return () => clearInterval(timer);
+  }, [countdownFired, schedules.refetch]);
 
   const projects = data?.projects ?? [];
   const runningByProject = new Map<string, number>();
@@ -208,7 +208,10 @@ export default function Home() {
             )}
             {nextSchedule && countdownMs !== null && (
               <span class="hero-next">
-                next run <code>{nextSchedule.agentPath.replace(/\.agentuse$/, '')}</code> in <span class="hero-countdown">{formatCountdown(countdownMs)}</span>
+                next run <code>{nextSchedule.agentPath.replace(/\.agentuse$/, '')}</code>{' '}
+                {countdownFired
+                  ? <span class="hero-countdown">is starting…</span>
+                  : <>in <span class="hero-countdown">{formatCountdown(countdownMs)}</span></>}
               </span>
             )}
           </div>

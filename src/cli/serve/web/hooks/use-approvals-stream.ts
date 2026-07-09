@@ -28,37 +28,54 @@ export function useApprovalsStream(options: {
 
     let closed = false;
     let errorTimes: number[] = [];
-    const source = new EventSource(approvalsEventUrl({ days: options.days, project: options.project }));
+    let source: EventSource | null = null;
 
-    source.addEventListener('approvals', (event) => {
+    const connect = () => {
+      const es = new EventSource(approvalsEventUrl({ days: options.days, project: options.project }));
+      source = es;
+
+      es.addEventListener('approvals', (event) => {
+        errorTimes = [];
+        const payload = JSON.parse((event as MessageEvent).data) as ApprovalsListPayload;
+        handlersRef.current.onData(payload);
+      });
+
+      es.addEventListener('stream-error', (event) => {
+        const payload = JSON.parse((event as MessageEvent).data) as { code?: string; message?: string };
+        handlersRef.current.onError(new ApiRequestError(0, payload.code ?? 'STREAM_ERROR', payload.message ?? 'Approval stream failed'));
+      });
+
+      es.addEventListener('error', () => {
+        if (closed || source !== es) return;
+        if (es.readyState === EventSource.CLOSED) {
+          es.close();
+          handlersRef.current.onFallback();
+          return;
+        }
+        const now = Date.now();
+        errorTimes = [...errorTimes.filter((time) => now - time < SSE_FAILURE_WINDOW_MS), now];
+        if (errorTimes.length >= SSE_FAILURES_BEFORE_FALLBACK) {
+          es.close();
+          handlersRef.current.onFallback();
+        }
+      });
+    };
+
+    // See use-sessions-stream: iOS kills background connections silently, so
+    // reconnect (and thereby refresh) whenever the page becomes visible again.
+    const onVisible = () => {
+      if (closed || document.visibilityState !== 'visible') return;
+      source?.close();
       errorTimes = [];
-      const payload = JSON.parse((event as MessageEvent).data) as ApprovalsListPayload;
-      handlersRef.current.onData(payload);
-    });
-
-    source.addEventListener('stream-error', (event) => {
-      const payload = JSON.parse((event as MessageEvent).data) as { code?: string; message?: string };
-      handlersRef.current.onError(new ApiRequestError(0, payload.code ?? 'STREAM_ERROR', payload.message ?? 'Approval stream failed'));
-    });
-
-    source.addEventListener('error', () => {
-      if (closed) return;
-      if (source.readyState === EventSource.CLOSED) {
-        source.close();
-        handlersRef.current.onFallback();
-        return;
-      }
-      const now = Date.now();
-      errorTimes = [...errorTimes.filter((time) => now - time < SSE_FAILURE_WINDOW_MS), now];
-      if (errorTimes.length >= SSE_FAILURES_BEFORE_FALLBACK) {
-        source.close();
-        handlersRef.current.onFallback();
-      }
-    });
+      connect();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    connect();
 
     return () => {
       closed = true;
-      source.close();
+      document.removeEventListener('visibilitychange', onVisible);
+      source?.close();
     };
   }, [options.days, options.project, options.enabled]);
 }

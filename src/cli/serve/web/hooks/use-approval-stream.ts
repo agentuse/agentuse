@@ -187,6 +187,23 @@ export function useApprovalStream(options: {
       void fetchAndDispatch();
     };
 
+    // iOS (home-screen PWAs especially) kills background connections without
+    // firing an error. On return to the foreground, rebuild the stream and
+    // repaint from the API immediately so the page never sits stale.
+    const onVisible = () => {
+      if (closed || document.visibilityState !== 'visible') return;
+      if (polling) {
+        if (pollTimer) clearTimeout(pollTimer);
+        void poll();
+        return;
+      }
+      source?.close();
+      errorTimes = [];
+      connect();
+      void fetchAndDispatch();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
     // Paint from the API right away (in parallel with opening the stream) so the
     // page shows the session in one round-trip instead of waiting on the SSE
     // handshake — which, on a slow/buffered stream, may never deliver its first
@@ -204,6 +221,7 @@ export function useApprovalStream(options: {
 
     return () => {
       closed = true;
+      document.removeEventListener('visibilitychange', onVisible);
       source?.close();
       if (pollTimer) clearTimeout(pollTimer);
       if (sseRetryTimer) clearTimeout(sseRetryTimer);

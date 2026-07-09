@@ -31,43 +31,62 @@ export function useSessionsStream(options: {
 
     let closed = false;
     let errorTimes: number[] = [];
-    const source = new EventSource(sessionsEventUrl({
-      agent: options.agent,
-      status: options.status,
-      trigger: options.trigger,
-      approval: options.approval,
-      window: options.window,
-    }));
+    let source: EventSource | null = null;
 
-    source.addEventListener('sessions', (event) => {
+    const connect = () => {
+      const es = new EventSource(sessionsEventUrl({
+        agent: options.agent,
+        status: options.status,
+        trigger: options.trigger,
+        approval: options.approval,
+        window: options.window,
+      }));
+      source = es;
+
+      es.addEventListener('sessions', (event) => {
+        errorTimes = [];
+        const payload = JSON.parse((event as MessageEvent).data) as SessionsPayload;
+        handlersRef.current.onData(payload);
+      });
+
+      es.addEventListener('stream-error', (event) => {
+        const payload = JSON.parse((event as MessageEvent).data) as { code?: string; message?: string };
+        handlersRef.current.onError(new ApiRequestError(0, payload.code ?? 'STREAM_ERROR', payload.message ?? 'Session stream failed'));
+      });
+
+      es.addEventListener('error', () => {
+        if (closed || source !== es) return;
+        if (es.readyState === EventSource.CLOSED) {
+          es.close();
+          handlersRef.current.onFallback();
+          return;
+        }
+        const now = Date.now();
+        errorTimes = [...errorTimes.filter((time) => now - time < SSE_FAILURE_WINDOW_MS), now];
+        if (errorTimes.length >= SSE_FAILURES_BEFORE_FALLBACK) {
+          es.close();
+          handlersRef.current.onFallback();
+        }
+      });
+    };
+
+    // iOS (home-screen PWAs especially) kills background connections without
+    // firing an error, leaving a dead stream behind a healthy-looking page.
+    // Reconnect whenever the page returns to the foreground; the hub replays
+    // the current snapshot on subscribe, so this also refreshes instantly.
+    const onVisible = () => {
+      if (closed || document.visibilityState !== 'visible') return;
+      source?.close();
       errorTimes = [];
-      const payload = JSON.parse((event as MessageEvent).data) as SessionsPayload;
-      handlersRef.current.onData(payload);
-    });
-
-    source.addEventListener('stream-error', (event) => {
-      const payload = JSON.parse((event as MessageEvent).data) as { code?: string; message?: string };
-      handlersRef.current.onError(new ApiRequestError(0, payload.code ?? 'STREAM_ERROR', payload.message ?? 'Session stream failed'));
-    });
-
-    source.addEventListener('error', () => {
-      if (closed) return;
-      if (source.readyState === EventSource.CLOSED) {
-        source.close();
-        handlersRef.current.onFallback();
-        return;
-      }
-      const now = Date.now();
-      errorTimes = [...errorTimes.filter((time) => now - time < SSE_FAILURE_WINDOW_MS), now];
-      if (errorTimes.length >= SSE_FAILURES_BEFORE_FALLBACK) {
-        source.close();
-        handlersRef.current.onFallback();
-      }
-    });
+      connect();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    connect();
 
     return () => {
       closed = true;
-      source.close();
+      document.removeEventListener('visibilitychange', onVisible);
+      source?.close();
     };
   }, [options.agent, options.status, options.trigger, options.approval, options.window, options.enabled]);
 }
