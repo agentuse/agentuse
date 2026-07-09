@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { join, relative, resolve } from "path";
 import { getXdgDataDir } from "../storage/paths";
+import { getProcessStartTime, getCurrentProcessStartTime } from "./process-info";
 
 export interface ServerProjectEntry {
   id: string;
@@ -26,6 +27,11 @@ export interface ServerEntry {
   /** Deprecated mirror of projects[0].root; kept for older `ps` output and upgrades. */
   projectRoot: string;
   startTime: number;
+  /**
+   * OS process-start-time token for `pid`, used to reject a recycled PID as a
+   * live daemon. Optional so entries written by older versions still load.
+   */
+  procStartedAt?: string;
   /** Sum of projects[].agentCount. */
   agentCount: number;
   /** Sum of projects[].scheduleCount. */
@@ -74,6 +80,21 @@ function isProcessRunning(pid: number): boolean {
 }
 
 /**
+ * True when the registry entry still points at the same live daemon. A bare PID
+ * check treats a recycled PID (some unrelated process now holding the dead
+ * daemon's PID) as alive, mis-routing approval/resume links to it and leaving
+ * its log file un-swept. When both the stored and current start-time tokens are
+ * available, require them to match; otherwise fall back to the PID-only check.
+ */
+function isServerEntryAlive(entry: ServerEntry): boolean {
+  if (!isProcessRunning(entry.pid)) return false;
+  if (!entry.procStartedAt) return true;
+  const current = getProcessStartTime(entry.pid);
+  if (!current) return true;
+  return current === entry.procStartedAt;
+}
+
+/**
  * Get the file path for a server entry.
  */
 function getEntryPath(pid: number): string {
@@ -85,9 +106,11 @@ function getEntryPath(pid: number): string {
  */
 export function registerServer(entry: Omit<ServerEntry, "pid">): void {
   ensureRegistryDir();
+  const procStartedAt = getCurrentProcessStartTime();
   const fullEntry: ServerEntry = {
     ...entry,
     pid: process.pid,
+    ...(procStartedAt ? { procStartedAt } : {}),
   };
   writeFileSync(getEntryPath(process.pid), JSON.stringify(fullEntry, null, 2));
 }
@@ -138,7 +161,7 @@ export function listServers(): ServerEntry[] {
     try {
       const entry = JSON.parse(readFileSync(filePath, "utf-8")) as ServerEntry;
 
-      if (isProcessRunning(entry.pid)) {
+      if (isServerEntryAlive(entry)) {
         entries.push(entry);
       } else {
         // Clean up stale entry (and its log file, if any)

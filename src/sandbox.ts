@@ -5,8 +5,8 @@
 import type { Tool } from 'ai';
 import type Dockerode from 'dockerode';
 import { z } from 'zod';
-import { execFileSync } from 'child_process';
-import { mkdirSync, existsSync, readdirSync, rmdirSync, readFileSync } from 'fs';
+import { mkdirSync, existsSync, readdirSync, rmdirSync } from 'fs';
+import { getProcessStartTime, getCurrentProcessStartTime } from './utils/process-info';
 import { join, resolve, sep } from 'path';
 import { homedir } from 'os';
 import type { ResolvedMount } from './tools/path-validator.js';
@@ -64,9 +64,6 @@ const LABEL_SESSION = 'agentuse.session';
 const LABEL_PID = 'agentuse.pid';
 const LABEL_OWNER_STARTED_AT = 'agentuse.ownerStartedAt';
 
-let currentProcessStartTime: string | undefined;
-let linuxBootId: string | undefined;
-
 function parsePid(label: string | undefined): number | null {
   if (!label) return null;
   const pid = Number(label);
@@ -80,58 +77,6 @@ function isProcessAlive(pid: number): boolean {
   } catch (e) {
     return (e as NodeJS.ErrnoException).code === 'EPERM';
   }
-}
-
-function getLinuxBootId(): string | null {
-  if (linuxBootId === undefined) {
-    try {
-      linuxBootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
-    } catch {
-      linuxBootId = '';
-    }
-  }
-  return linuxBootId || null;
-}
-
-function getLinuxProcessStartTime(pid: number): string | null {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-    const endOfCommand = stat.lastIndexOf(')');
-    if (endOfCommand === -1) return null;
-
-    // /proc/<pid>/stat field 22 is starttime. After the command field,
-    // the remaining fields begin at field 3, so index 19 maps to field 22.
-    const fields = stat.slice(endOfCommand + 2).trim().split(/\s+/);
-    const startTicks = fields[19];
-    if (!startTicks) return null;
-
-    const bootId = getLinuxBootId();
-    return bootId ? `linux:${bootId}:${startTicks}` : `linux:${startTicks}`;
-  } catch {
-    return null;
-  }
-}
-
-function getProcessStartTime(pid: number): string | null {
-  const linuxStartTime = getLinuxProcessStartTime(pid);
-  if (linuxStartTime) return linuxStartTime;
-
-  try {
-    const startTime = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    return startTime ? `ps:${startTime}` : null;
-  } catch {
-    return null;
-  }
-}
-
-function getCurrentProcessStartTime(): string | null {
-  if (currentProcessStartTime === undefined) {
-    currentProcessStartTime = getProcessStartTime(process.pid) ?? '';
-  }
-  return currentProcessStartTime || null;
 }
 
 /**
@@ -213,6 +158,34 @@ async function stopAndRemoveContainer(container: Container): Promise<void> {
     await container.remove({ force: true });
   } catch {
     // Container may already be removed.
+  }
+}
+
+// All live containers share one SIGINT/SIGTERM handler. Per-sandbox handlers
+// would race each other: the first to finish would process.exit(1) and orphan
+// every sibling container still tearing down.
+const liveContainers = new Set<Container>();
+
+const sharedSignalHandler = () => {
+  const containers = [...liveContainers];
+  liveContainers.clear();
+  Promise.allSettled(containers.map((c) => stopAndRemoveContainer(c)))
+    .finally(() => process.exit(1));
+};
+
+function trackContainer(container: Container): void {
+  if (liveContainers.size === 0) {
+    process.on('SIGINT', sharedSignalHandler);
+    process.on('SIGTERM', sharedSignalHandler);
+  }
+  liveContainers.add(container);
+}
+
+function untrackContainer(container: Container): void {
+  liveContainers.delete(container);
+  if (liveContainers.size === 0) {
+    process.removeListener('SIGINT', sharedSignalHandler);
+    process.removeListener('SIGTERM', sharedSignalHandler);
   }
 }
 
@@ -345,17 +318,12 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
   // could leave the session running forever before the first model call.
   const timer = setTimeout(async () => {
     logger.warn(`[Sandbox] Container ${container.id} timed out after ${timeout}s, killing`);
+    untrackContainer(container);
     await stopAndRemoveContainer(container);
   }, timeout * 1000);
 
-  // Signal handlers for graceful cleanup on SIGINT/SIGTERM
-  const signalHandler = () => {
-    stopAndRemoveContainer(container)
-      .catch(() => {})
-      .finally(() => process.exit(1));
-  };
-  process.on('SIGINT', signalHandler);
-  process.on('SIGTERM', signalHandler);
+  // Register for graceful cleanup on SIGINT/SIGTERM
+  trackContainer(container);
 
   // Run setup commands if configured
   try {
@@ -376,8 +344,7 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
     }
   } catch (error) {
     clearTimeout(timer);
-    process.removeListener('SIGINT', signalHandler);
-    process.removeListener('SIGTERM', signalHandler);
+    untrackContainer(container);
     await stopAndRemoveContainer(container);
     throw error;
   }
@@ -386,8 +353,7 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
     container,
     kill: async () => {
       clearTimeout(timer);
-      process.removeListener('SIGINT', signalHandler);
-      process.removeListener('SIGTERM', signalHandler);
+      untrackContainer(container);
       try {
         await stopAndRemoveContainer(container);
         logger.debug(`[Sandbox] Container removed: ${container.id}`);
