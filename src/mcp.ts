@@ -186,14 +186,18 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
   
   // Create promises for all server connections in parallel
   const connectionPromises = Object.entries(servers).map(async ([name, config]) => {
+    // Track partially-created clients so a mid-connect failure doesn't orphan
+    // a live stdio subprocess.
+    let client: Awaited<ReturnType<typeof createMCPClient>> | undefined;
+    let rawClient: Client | undefined;
     try {
       logger.debug(`[MCP] Configuring server: ${name} - ${JSON.stringify(config)}`);
-      
+
       // Create transport based on config type
       const transport = createTransport(name, config, debug, basePath);
-      
+
       // Create MCP client using AI SDK's built-in method
-      const client = await createMCPClient({
+      client = await createMCPClient({
         name,
         transport: transport,
       });
@@ -218,7 +222,7 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       // We need a separate transport instance for the raw client
       const rawTransport = createTransport(name, config, debug, basePath);
 
-      const rawClient = new Client({
+      rawClient = new Client({
         name: `${name}-raw`,
         version: '1.0.0',
       }, {
@@ -240,6 +244,15 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
         ...(config.disallowedTools && { disallowedTools: config.disallowedTools })
       };
     } catch (error) {
+      // Close whatever was already established so a failed connect doesn't
+      // leave a live subprocess/transport behind.
+      if (client) {
+        try { await client.close(); } catch { /* ignore */ }
+      }
+      if (rawClient) {
+        try { await rawClient.close(); } catch { /* ignore */ }
+      }
+
       // Check if this is a fatal error (missing required env vars)
       if ((error as any).fatal) {
         logger.error(`[ERROR] ${error instanceof Error ? error.message : String(error)}`);
@@ -270,19 +283,31 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
   
   const connections: MCPConnection[] = [];
   const failedServers: string[] = [];
-  
+  let fatalError: unknown;
+
   for (const result of results) {
     if (result.status === 'fulfilled') {
       connections.push(result.value);
     } else {
       // Check if this is a fatal error (missing required env vars)
-      if (result.reason?.fatal) {
-        // Re-throw fatal errors immediately to exit the CLI
-        throw result.reason;
+      if (result.reason?.fatal && fatalError === undefined) {
+        fatalError = result.reason;
       }
-      
+
       failedServers.push(result.reason?.serverName ?? 'unknown');
     }
+  }
+
+  // On a fatal error the caller never receives the connections, so close the
+  // ones that did succeed before re-throwing to exit the CLI.
+  if (fatalError !== undefined) {
+    for (const conn of connections) {
+      try { await conn.client.close(); } catch { /* ignore */ }
+      if (conn.rawClient) {
+        try { await conn.rawClient.close(); } catch { /* ignore */ }
+      }
+    }
+    throw fatalError;
   }
   
   // If some servers failed, log a warning but continue with successful connections
@@ -497,18 +522,25 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
 
               // Apply timeout if configured (0 means no timeout)
               if (timeoutSeconds > 0) {
+                let timeoutId: ReturnType<typeof setTimeout> | undefined;
                 const timeoutPromise = new Promise((_, reject) => {
-                  setTimeout(() => {
+                  timeoutId = setTimeout(() => {
                     const error = new Error(`Tool timed out after ${timeoutSeconds}s`);
                     error.name = 'TimeoutError';
                     reject(error);
                   }, timeoutSeconds * 1000);
                 });
 
-                result = await Promise.race([
-                  originalExecute(args, opts),
-                  timeoutPromise
-                ]);
+                try {
+                  result = await Promise.race([
+                    originalExecute(args, opts),
+                    timeoutPromise
+                  ]);
+                } finally {
+                  // Otherwise the pending timer keeps the event loop alive
+                  // for up to timeoutSeconds after the tool finishes.
+                  clearTimeout(timeoutId);
+                }
               } else {
                 // No timeout - execute normally
                 result = await originalExecute(args, opts);
@@ -538,7 +570,10 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
                     const hasErrorObject = parsed.object === 'error' || parsed.error;
                     const hasErrorCode = typeof parsed.code === 'string' && parsed.code.includes('error');
 
-                    if (hasErrorStatus || (hasErrorObject && hasErrorCode)) {
+                    // Require an explicit error marker alongside the status:
+                    // a bare {status: 404, ...} may just be a tool reporting
+                    // the result of someone else's HTTP request.
+                    if (hasErrorObject && (hasErrorStatus || hasErrorCode)) {
                       const errorMsg = parsed.message || parsed.error?.message || output;
                       logger.error(`[MCP] Tool ${prefixedName} returned error JSON: ${errorMsg.substring(0, 200)}`);
                       throw new Error(errorMsg);
