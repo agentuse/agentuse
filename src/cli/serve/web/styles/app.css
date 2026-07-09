@@ -677,6 +677,11 @@ a, button, select, summary, label, input, textarea,
   align-items: start;
 }
 .log-item:last-child { border-bottom: 0; }
+/* Grid items default to min-width:auto, so a wide table (width: max-content)
+   inside .log-main widens the whole 1fr column past the panel instead of
+   scrolling inside .content-table-scroll. min-width: 0 lets the column shrink
+   to the grid track, giving the table scroller a bounded width to scroll in. */
+.log-main { min-width: 0; }
 .log-time { color: var(--muted-2); font-size: 12px; padding-top: 1px; }
 .log-marker {
   display: inline-flex;
