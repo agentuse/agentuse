@@ -180,7 +180,9 @@ export function categorizeError(error: unknown): ExecutionResult['errorType'] {
   if (message.includes('abort') || message.includes('cancel') || message.includes('interrupt')) {
     return 'user_abort';
   }
-  if (message.includes('api') || message.includes('rate limit') || message.includes('401') || message.includes('403')) {
+  // Match "api" as a whole word only; a substring test also caught "capital",
+  // "unavailable", and file paths containing "api", mislabeling error_type.
+  if (/\bapi\b/.test(message) || message.includes('rate limit') || message.includes('401') || message.includes('403')) {
     return 'api_error';
   }
   if (message.includes('tool') || message.includes('function')) {

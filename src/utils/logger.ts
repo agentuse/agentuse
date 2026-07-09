@@ -181,9 +181,11 @@ const TRUNCATION_BUDGET = {
     }
   },
 
-  // Important field names - never truncate
+  // Important field names - never truncate. Deliberately excludes 'key': a
+  // model-generated arg named exactly `key` can hold a secret, and never
+  // truncating it wrote the full value into persisted session logs.
   importantFields: new Set([
-    'id', 'key', 'page_id', 'parent_id', 'database_id',
+    'id', 'page_id', 'parent_id', 'database_id',
     'error', 'type', 'status', 'message', 'name', 'title'
   ])
 } as const;
@@ -204,8 +206,9 @@ function detectValueType(key: string, _value: string): 'filePath' | 'url' | 'id'
     return 'url';
   }
 
-  // ID detection
-  if (keyLower.endsWith('_id') || keyLower.endsWith('id') || key === 'key') {
+  // ID detection (note: a bare `key` field is intentionally not exempted here,
+  // so a secret-bearing `key` arg still gets truncated in logs)
+  if (keyLower.endsWith('_id') || keyLower.endsWith('id')) {
     return 'id';
   }
 

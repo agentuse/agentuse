@@ -606,8 +606,10 @@ export async function processAgentStream(
 
         // Check for failure conditions
         if (rawResult) {
-          // Check if tool explicitly returned success: false or has an error field
-          if (rawResult.success === false || rawResult.error !== undefined) {
+          // Check if tool explicitly returned success: false or has an error field.
+          // Use != null so a tool returning `{ error: null }` (no error) isn't
+          // mislabeled as failed in the trace/session log.
+          if (rawResult.success === false || rawResult.error != null) {
             toolSuccess = false;
           }
           if (rawResult.metadata && typeof rawResult.metadata === 'object') {

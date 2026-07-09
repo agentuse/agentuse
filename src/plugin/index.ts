@@ -4,7 +4,7 @@ import { join, dirname, extname } from 'path';
 import { pathToFileURL } from 'url';
 import { stat, writeFile, rm } from 'fs/promises';
 import * as esbuild from 'esbuild';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import type { AgentCompleteEvent, PluginHandlers } from './types';
 import { logger } from '../utils/logger';
 
@@ -44,12 +44,17 @@ export class PluginManager {
               });
 
               const code = result.outputFiles[0].text;
-              // Create a unique temp file name based on the original file path
+              // Unique per load: a random component (not just the path hash) so
+              // concurrent loads of the same plugin don't race on the same file
+              // (write vs rm → ENOENT) and the temp name isn't a predictable
+              // symlink target in the shared tmpdir.
               const hash = createHash('md5').update(file).digest('hex').substring(0, 8);
-              const tempFile = join(tmpdir(), `agentuse-plugin-${hash}.mjs`);
+              const nonce = randomBytes(6).toString('hex');
+              const tempFile = join(tmpdir(), `agentuse-plugin-${hash}-${nonce}.mjs`);
 
-              // Write the compiled code to temp file
-              await writeFile(tempFile, code);
+              // Write the compiled code to temp file (exclusive: never follow or
+              // clobber an existing path).
+              await writeFile(tempFile, code, { flag: 'wx' });
 
               try {
                 // Import from the temp file
