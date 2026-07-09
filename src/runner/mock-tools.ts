@@ -53,9 +53,17 @@ export function resolveMockModel(): string {
  * `AGENTUSE_MOCK_APPROVAL` opts into mocking it too for fully-unattended runs.
  */
 export function mockExclusions(): Set<string> {
-  return envFlag(process.env.AGENTUSE_MOCK_APPROVAL)
+  const exclusions = envFlag(process.env.AGENTUSE_MOCK_APPROVAL)
     ? new Set<string>()
     : new Set<string>(['await_human']);
+  // AGENTUSE_MOCK_EXCLUDE: comma-separated tool names whose real execute is kept
+  // under --mock. Meant for side-effect-free tools (e.g. tools__filesystem_read)
+  // so mock runs ground themselves in real project data instead of inventing it.
+  for (const name of (process.env.AGENTUSE_MOCK_EXCLUDE ?? '').split(',')) {
+    const trimmed = name.trim();
+    if (trimmed) exclusions.add(trimmed);
+  }
+  return exclusions;
 }
 
 const MOCK_SYSTEM_PROMPT = [

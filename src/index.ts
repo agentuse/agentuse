@@ -1889,7 +1889,7 @@ async function runInternalWorker() {
       await initStorage(req.projectRoot);
       const sessionManager = new SessionManager();
       const found = await sessionManager.findSession(req.sessionId);
-      if (!found) {
+      if (!found || !sessionBelongsToProject(found.session, req.projectRoot)) {
         return {
           id: req.id,
           success: false,
@@ -2207,7 +2207,7 @@ async function runInternalWorker() {
       await initStorage(req.projectRoot);
       const sessionManager = new SessionManager();
       const found = await sessionManager.findSession(req.sessionId);
-      if (!found) {
+      if (!found || !sessionBelongsToProject(found.session, req.projectRoot)) {
         return {
           id: req.id,
           success: false,
@@ -2535,6 +2535,17 @@ async function runInternalWorker() {
     }
   }
 
+  // Several served projects can share one session store: storage is keyed by
+  // git root, so multiple -C project dirs inside the same repository all land in
+  // the same store. Attribute a session to a project only when its recorded
+  // project.root matches the requesting project; records from older versions
+  // without the field stay visible to every project (previous behavior).
+  function sessionBelongsToProject(session: SessionInfo, projectRoot: string): boolean {
+    const recordedRoot = session.project?.root;
+    if (!recordedRoot) return true;
+    return resolve(recordedRoot) === resolve(projectRoot);
+  }
+
   async function listAllApprovals(req: ExecuteRequest) {
     return withListCache(listCacheKey(req, 'approvals'), req.id, async () => {
     try {
@@ -2551,6 +2562,9 @@ async function runInternalWorker() {
       const summarizeApproval = async (
         { session, agentId }: { session: SessionInfo; agentId: string }
       ): Promise<ApprovalSummary | null> => {
+        if (!sessionBelongsToProject(session, req.projectRoot)) {
+          return null;
+        }
         // Delegated children surface through their root manager's single cascade
         // entry, not as separate approvals. Skip them here to avoid double-counting.
         if (typeof session.parentSessionID === 'string' && session.parentSessionID.length > 0) {
@@ -2714,6 +2728,7 @@ async function runInternalWorker() {
       // Top-level runs by default; approval-filtered session views opt into
       // subagents so approval history links can land on the exact run.
       const summaries = sessions
+        .filter(({ session }) => sessionBelongsToProject(session, req.projectRoot))
         .filter(({ session }) => req.includeSubagents || (!session.parentSessionID && !session.agent.isSubAgent))
         .map(({ session }) => ({
           sessionId: session.id,
