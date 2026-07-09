@@ -258,6 +258,13 @@ export class PushService {
     // on-device 2026-07) only honors the explainer's top-level placement and
     // ignores the nested one from the WebKit launch blog; the nested copy
     // stays for implementations that follow the blog format.
+    // Apple endpoints get the exact declarative payload that is proven to
+    // deep-link correctly on iOS, with no extra members anywhere: iOS never
+    // renders SW action buttons, so the extras carry zero value there and any
+    // deviation from the known-good shape risks breaking native tap-through
+    // (adding `actions` inside `notification` demonstrably did). Only
+    // SW-rendering platforms (FCM/Mozilla/WNS endpoints) receive the extras.
+    const applePush = new URL(sub.endpoint).host.endsWith("push.apple.com");
     const message = {
       web_push: 8030,
       ...(payload.appBadge !== undefined && { app_badge: payload.appBadge }),
@@ -267,11 +274,9 @@ export class PushService {
         navigate: payload.url,
         ...(payload.tag && { tag: payload.tag }),
         ...(payload.appBadge !== undefined && { app_badge: payload.appBadge }),
-        // Non-standard extras for our own service worker's renderer; iOS's
-        // native declarative handling ignores unknown members.
-        ...(payload.actions && { actions: payload.actions }),
-        ...(payload.decision && { decision: payload.decision }),
       },
+      ...(!applePush && payload.actions && { actions: payload.actions }),
+      ...(!applePush && payload.decision && { decision: payload.decision }),
     };
     const body = encryptPayload(
       Buffer.from(JSON.stringify(message)),
@@ -403,6 +408,11 @@ self.addEventListener("push", (event) => {
     const n = raw && raw.web_push === 8030 ? raw.notification : raw;
     data = { ...data, ...n, url: (n && (n.navigate || n.url)) || "/" };
     if (raw && typeof raw.app_badge !== "undefined") data.app_badge = raw.app_badge;
+    // Action buttons + decision payload ride at the message's top level (kept
+    // out of the iOS-owned notification member); older payloads may still
+    // carry them nested, so accept both.
+    if (raw && Array.isArray(raw.actions)) data.actions = raw.actions;
+    if (raw && raw.decision) data.decision = raw.decision;
   } catch {}
   event.waitUntil((async () => {
     if (typeof data.app_badge !== "undefined" && self.navigator.setAppBadge) {
