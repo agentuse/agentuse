@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Regex for interval format: 5s, 10m, 2h (sub-daily only)
+ * Regex for interval format: 5s, 10m, 2h (sub-daily only; use cron for daily+)
  */
 export const INTERVAL_REGEX = /^(\d+)(s|m|h)$/;
 

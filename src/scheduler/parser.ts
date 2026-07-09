@@ -34,7 +34,7 @@ function intervalToCron(interval: string): string {
  * Parse schedule expression into normalized cron expression
  *
  * Supports two formats (auto-detected):
- * - Interval: "5s", "10m", "2h", "1d"
+ * - Interval: "5s", "10m", "2h" (sub-daily only; use cron for daily+)
  * - Cron: "0 9 * * *"
  */
 export function parseScheduleExpression(value: string): string {

@@ -46,34 +46,24 @@ function stableHash(value: string): number {
   return hash >>> 0;
 }
 
-function parseStep(field: string): number | null {
-  if (field === "*") {
-    return 1;
-  }
-
-  const match = field.match(/^(?:\*|\d+|\d+-\d+)\/(\d+)$/);
-  if (!match) {
+function estimateMinimumCadenceMs(expression: string): number | null {
+  // Ask croner for the actual gaps between upcoming runs and take the smallest.
+  // Parsing only fields[0] for `*`/`*/N` missed range/list expressions like
+  // "0-59 * * * *" (every minute) — they read as "unknown cadence", so the full
+  // jitter cap applied and jitter could exceed the interval, causing the next
+  // tick to be dropped by the in-flight guard.
+  try {
+    const runs = new Cron(expression).nextRuns(6);
+    if (runs.length < 2) return null;
+    let min = Infinity;
+    for (let i = 1; i < runs.length; i += 1) {
+      const delta = runs[i].getTime() - runs[i - 1].getTime();
+      if (delta > 0 && delta < min) min = delta;
+    }
+    return Number.isFinite(min) ? min : null;
+  } catch {
     return null;
   }
-
-  const step = Number.parseInt(match[1], 10);
-  return Number.isFinite(step) && step > 0 ? step : null;
-}
-
-function estimateMinimumCadenceMs(expression: string): number | null {
-  const fields = expression.trim().split(/\s+/);
-
-  if (fields.length === 6) {
-    const secondsStep = parseStep(fields[0]);
-    return secondsStep ? secondsStep * 1000 : null;
-  }
-
-  if (fields.length === 5) {
-    const minuteStep = parseStep(fields[0]);
-    return minuteStep ? minuteStep * 60_000 : null;
-  }
-
-  return null;
 }
 
 function effectiveJitterCapMs(expression: string, maxJitterMs: number): number {
@@ -259,6 +249,14 @@ export class Scheduler {
    * Trigger immediate execution of a schedule
    */
   async trigger(scheduleId: string): Promise<void> {
+    // Cancel any pending jitter-delayed run for this schedule first, otherwise
+    // that timer fires after this manual run and executes the agent a second
+    // time (duplicate side effects).
+    const pending = this.pendingRunTimers.get(scheduleId);
+    if (pending) {
+      clearTimeout(pending);
+      this.pendingRunTimers.delete(scheduleId);
+    }
     await this.runSchedule(scheduleId);
   }
 
