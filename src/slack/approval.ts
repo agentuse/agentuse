@@ -861,6 +861,10 @@ export class SlackApprovalSocket {
   private socket: SocketModeClient;
   private readonly web: WebClient;
   private readonly seenThreadComments = new Set<string>();
+  // resumeTokens with an onDecision dispatch in flight. Buttons stay live until
+  // Slack processes the message update, so a double-click or Approve-then-Reject
+  // can fire onDecision twice; this dedupes before dispatch.
+  private readonly inFlightDecisions = new Set<string>();
   private lastSocketErrorMessage: string | null = null;
   private lastSocketErrorAt = 0;
   private suppressedSocketErrorCount = 0;
@@ -986,6 +990,15 @@ export class SlackApprovalSocket {
         ]);
       } catch {
         // best-effort teardown of the wedged socket
+      }
+      // Detach handlers from the old socket before replacing it. If disconnect()
+      // exceeded its cap and the socket lingers, its still-bound listeners keep
+      // firing handleLifecycle (spurious watchdog restarts) and can deliver
+      // interactive/message events a second time (double decision/comment).
+      try {
+        this.socket.removeAllListeners();
+      } catch {
+        // best-effort
       }
       this.socket = this.buildSocket();
       await this.socket.start();
@@ -1259,6 +1272,15 @@ export class SlackApprovalSocket {
       return;
     }
 
+    // Idempotency: ignore a repeat click for a decision already being resumed.
+    if (value.resumeToken) {
+      if (this.inFlightDecisions.has(value.resumeToken)) {
+        logger.debug('Slack approval decision already in flight; ignoring duplicate click');
+        return;
+      }
+      this.inFlightDecisions.add(value.resumeToken);
+    }
+
     const reviewer = reviewerFromBody(body);
     const target = this.rootTarget(body, value);
     const rootUpdate = target
@@ -1295,6 +1317,8 @@ export class SlackApprovalSocket {
         });
       }
     }).catch(async (err) => {
+      // Failed resume: drop the in-flight guard so the reviewer can retry.
+      if (value.resumeToken) this.inFlightDecisions.delete(value.resumeToken);
       await rootUpdate;
       if (target) {
         void bestEffortClearSlackThreadStatus(this.web, target.channel, target.ts);
