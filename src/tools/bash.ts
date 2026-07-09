@@ -1,6 +1,7 @@
 import type { Tool } from 'ai';
 import { z } from 'zod';
 import { spawn } from 'child_process';
+import { StringDecoder } from 'string_decoder';
 import * as path from 'path';
 import * as os from 'os';
 import { CommandValidator, getBuiltinPayloadCommandInvocation } from './command-validator.js';
@@ -92,9 +93,11 @@ function createSafeEnvironment(projectRoot: string): NodeJS.ProcessEnv {
   env['SHELL'] = '/bin/sh';
   env['PWD'] = projectRoot;
 
-  // Ensure PATH doesn't start with current directory (PATH injection)
+  // Drop every non-absolute PATH entry (PATH injection). Filtering only '.'
+  // and '' left relative entries like 'bin' or './tools', which still let a
+  // binary planted in cwd shadow a real command.
   if (env['PATH']) {
-    const paths = env['PATH'].split(':').filter(p => p !== '.' && p !== '');
+    const paths = env['PATH'].split(':').filter(p => p.startsWith('/'));
     env['PATH'] = paths.join(':');
   }
 
@@ -361,23 +364,45 @@ Commands not matching these patterns will be rejected.`;
           }
         }, timeoutMs);
 
+        // Decode as UTF-8 across chunk boundaries. A bare data.toString() per
+        // ~64KB chunk corrupts any multi-byte character (emoji/CJK/accents)
+        // that straddles a boundary; StringDecoder buffers the partial bytes.
+        const stdoutDecoder = new StringDecoder('utf8');
+        const stderrDecoder = new StringDecoder('utf8');
+
         // Collect stdout (head+tail bounded; middle dropped if it overflows)
         child.stdout?.on('data', (data: Buffer) => {
-          const chunk = data.toString();
-          stdoutAcc.append(chunk);
-          writeArtifactChunk('stdout', chunk);
+          const chunk = stdoutDecoder.write(data);
+          if (chunk) {
+            stdoutAcc.append(chunk);
+            writeArtifactChunk('stdout', chunk);
+          }
         });
 
         // Collect stderr (head+tail bounded; middle dropped if it overflows)
         child.stderr?.on('data', (data: Buffer) => {
-          const chunk = data.toString();
-          stderrAcc.append(chunk);
-          writeArtifactChunk('stderr', chunk);
+          const chunk = stderrDecoder.write(data);
+          if (chunk) {
+            stderrAcc.append(chunk);
+            writeArtifactChunk('stderr', chunk);
+          }
         });
 
         // Handle process exit
         child.on('close', async (code) => {
           clearTimeout(timeoutHandle);
+
+          // Flush any bytes the decoders were holding for a split character.
+          const stdoutTail = stdoutDecoder.end();
+          if (stdoutTail) {
+            stdoutAcc.append(stdoutTail);
+            writeArtifactChunk('stdout', stdoutTail);
+          }
+          const stderrTail = stderrDecoder.end();
+          if (stderrTail) {
+            stderrAcc.append(stderrTail);
+            writeArtifactChunk('stderr', stderrTail);
+          }
 
           const stdout = stdoutAcc.finalize();
           const stderr = stderrAcc.finalize();

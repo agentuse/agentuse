@@ -18,6 +18,11 @@ import {
   type MediaToolOutput,
 } from './media.js';
 
+// Absolute ceiling for a single filesystem_read. Well above the largest media
+// cap (32MB PDF) and any realistic text read, so it only turns would-be OOM
+// crashes into a clean error and never rejects a normal file.
+const FILESYSTEM_READ_MAX_BYTES = 256 * 1024 * 1024;
+
 /**
  * Format file content with line numbers (cat -n style)
  */
@@ -133,6 +138,17 @@ Use absolute paths within these directories. Other paths will be rejected.`;
           const error: ToolErrorOutput = {
             success: false,
             error: `Not a file: ${validation.resolvedPath}`,
+          };
+          return { output: JSON.stringify(error) };
+        }
+
+        // Guard on size BEFORE reading. fs.readFile buffers the whole file, so a
+        // multi-hundred-MB file in an allowed directory would OOM the run (or
+        // throw ERR_FS_FILE_TOO_LARGE > 2GB) before any media/line cap applies.
+        if (stats.size > FILESYSTEM_READ_MAX_BYTES) {
+          const error: ToolErrorOutput = {
+            success: false,
+            error: `File too large to read (${humanBytes(stats.size)}, max ${humanBytes(FILESYSTEM_READ_MAX_BYTES)}): ${validation.resolvedPath}`,
           };
           return { output: JSON.stringify(error) };
         }
