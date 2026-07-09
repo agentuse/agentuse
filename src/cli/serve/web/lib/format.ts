@@ -82,6 +82,37 @@ export function storeItemTitle(item: StoreItem): string {
   return item.id;
 }
 
+/**
+ * One-line, human-readable summary of an arbitrary store value for a lede.
+ * Strings pass through (whitespace-collapsed and truncated); objects and arrays
+ * become a shape summary ("object · 4 keys: createdBy, publish, …", "array · 3
+ * items") rather than a wall of raw JSON, naming a couple of short scalar keys
+ * first since those read as real content. Raw JSON stays available elsewhere.
+ */
+export function humanizeStoreValue(value: unknown, max = 180): string {
+  if (value == null) return '';
+  if (typeof value === 'string') {
+    const compact = value.trim().replace(/\s+/g, ' ');
+    return compact.length > max ? `${compact.slice(0, max)}…` : compact;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return `array · ${value.length} item${value.length === 1 ? '' : 's'}`;
+  if (typeof value === 'object') {
+    const rec = value as Record<string, unknown>;
+    const keys = Object.keys(rec);
+    if (keys.length === 0) return 'object · empty';
+    const isShortScalar = (k: string): boolean => {
+      const v = rec[k];
+      return (typeof v === 'string' && v.length <= 40) || typeof v === 'number' || typeof v === 'boolean';
+    };
+    const ordered = [...keys].sort((a, b) => Number(isShortScalar(b)) - Number(isShortScalar(a)));
+    const shown = ordered.slice(0, 2);
+    const suffix = keys.length > shown.length ? ', …' : '';
+    return `object · ${keys.length} key${keys.length === 1 ? '' : 's'}: ${shown.join(', ')}${suffix}`;
+  }
+  return String(value);
+}
+
 export function storeItemPreview(item: StoreItem, max = 180): string {
   const data = valueAsRecord(item.data);
   const candidates = ['summary', 'description', 'note_excerpt', 'excerpt', 'draft', 'body', 'content', 'why_engage'];
@@ -93,8 +124,7 @@ export function storeItemPreview(item: StoreItem, max = 180): string {
     }
   }
   if (Object.keys(data).length === 0) return '';
-  const json = JSON.stringify(data);
-  return json.length > max ? `${json.slice(0, max)}…` : json;
+  return humanizeStoreValue(item.data, max);
 }
 
 export function detailsKey(details: ApprovalLogDetails | undefined): string {
