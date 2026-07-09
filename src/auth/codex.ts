@@ -169,7 +169,10 @@ export namespace CodexAuth {
         const accountId = extractAccountId(tokens) || info.accountId;
         const next = {
           type: "codex-oauth" as const,
-          refresh: tokens.refresh_token,
+          // Some providers only return a new refresh token when it rotates; keep
+          // the existing one otherwise, else we'd persist undefined and the next
+          // refresh 400s → permanent silent logout.
+          refresh: tokens.refresh_token ?? info.refresh,
           access: tokens.access_token,
           expires: Date.now() + (tokens.expires_in ?? 3600) * 1000,
           accountId,

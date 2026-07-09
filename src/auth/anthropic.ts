@@ -100,7 +100,9 @@ export namespace AnthropicAuth {
     if (!response.ok) return null;
     const json = await response.json();
     return {
-      refresh: json.refresh_token as string,
+      // Fall back to the existing refresh token when the response omits a new
+      // one, otherwise we'd persist undefined → next refresh 400s → silent logout.
+      refresh: (json.refresh_token as string) ?? refresh,
       access: json.access_token as string,
       expires: Date.now() + json.expires_in * 1000,
     };
