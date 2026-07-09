@@ -1,6 +1,7 @@
 import { ErrorBoundary, LocationProvider, Router, Route, lazy } from 'preact-iso';
 import { Topbar } from './components/topbar';
 import { AgentPalette } from './components/agent-palette';
+import { ApprovalToast } from './components/approval-toast';
 import { NavTracker } from './hooks/use-smart-back';
 import { reloadOnChunkError } from './lib/lazy-route';
 
@@ -33,6 +34,7 @@ export function App() {
       <NavTracker />
       <ErrorBoundary>
         <AgentPalette />
+        <ApprovalToast />
         <Router>
           <Route path="/" component={Home} />
           <Route path="/agents" component={Agents} />

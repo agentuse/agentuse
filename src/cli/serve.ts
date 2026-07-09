@@ -4539,6 +4539,12 @@ export function createServeCommand(): Command {
                 } catch {
                   // Badge is decoration; never block the notification on it.
                 }
+                // Approve/Reject buttons on the notification itself, where the
+                // platform renders them (Chrome/Android/desktop; iOS shows a
+                // plain tap-through). Only when the decision belongs to the
+                // pushed session: a delegated child's gate is decided on the
+                // cascade root, whose resume token this request doesn't carry.
+                const decidableInline = pushSessionId === sessionId;
                 await pushService.notify('approvals', {
                   title: "Approval needed",
                   body: [
@@ -4548,6 +4554,18 @@ export function createServeCommand(): Command {
                   url: `${effectivePublicUrl}/sessions/${encodeURIComponent(pushSessionId)}?${approvalQuery.toString()}`,
                   tag: `approval-${pushSessionId}`,
                   appBadge: Math.max(1, pendingCount),
+                  ...(decidableInline && {
+                    actions: [
+                      { action: 'approve', title: 'Approve' },
+                      { action: 'reject', title: 'Reject' },
+                    ],
+                    decision: {
+                      sessionId: pushSessionId,
+                      resumeToken: token,
+                      project: found.project.id,
+                      ...(viewToken && { token: viewToken }),
+                    },
+                  }),
                 });
               })();
             }

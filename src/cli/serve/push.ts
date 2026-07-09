@@ -51,6 +51,25 @@ export interface PushPayload {
   tag?: string;
   /** Sets the installed app's icon badge (iOS 16.4+/Android/desktop PWAs). */
   appBadge?: number;
+  /**
+   * Notification action buttons, rendered only where the service worker
+   * displays the push (Chrome/Android/desktop). iOS handles the declarative
+   * payload natively and ignores these — there the tap-through URL is the
+   * whole interaction.
+   */
+  actions?: Array<{ action: string; title: string }>;
+  /**
+   * Everything the service worker needs to decide an approval gate straight
+   * from a notification action button, without opening the app. Travels only
+   * inside the encrypted push payload.
+   */
+  decision?: {
+    sessionId: string;
+    resumeToken: string;
+    project?: string;
+    /** Per-session view token for token-gated daemons. */
+    token?: string;
+  };
 }
 
 interface VapidKeys {
@@ -248,6 +267,10 @@ export class PushService {
         navigate: payload.url,
         ...(payload.tag && { tag: payload.tag }),
         ...(payload.appBadge !== undefined && { app_badge: payload.appBadge }),
+        // Non-standard extras for our own service worker's renderer; iOS's
+        // native declarative handling ignores unknown members.
+        ...(payload.actions && { actions: payload.actions }),
+        ...(payload.decision && { decision: payload.decision }),
       },
     };
     const body = encryptPayload(
@@ -390,14 +413,58 @@ self.addEventListener("push", (event) => {
       tag: data.tag,
       icon: "/icon-192.png",
       badge: "/icon-192.png",
-      data: { url: data.url },
+      // Action buttons (e.g. Approve/Reject on approval gates) render on
+      // platforms where this handler displays the push; the decision payload
+      // rides along so the click handler can act without opening the app.
+      ...(Array.isArray(data.actions) && data.actions.length ? { actions: data.actions } : {}),
+      data: { url: data.url, decision: data.decision },
     });
   })());
 });
+// POST an approval decision straight from a notification action button.
+async function decideFromNotification(decision, status) {
+  const query = decision.token ? "?token=" + encodeURIComponent(decision.token) : "";
+  const res = await fetch(self.location.origin + "/sessions/" + encodeURIComponent(decision.sessionId) + "/decision" + query, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      status: status,
+      resumeToken: decision.resumeToken,
+      ...(decision.project ? { project: decision.project } : {}),
+      comment: "Decided from push notification",
+    }),
+  });
+  if (!res.ok) throw new Error("decision failed: " + res.status);
+}
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
   const url = new URL(data.url || "/", self.location.origin);
+  // Approve/Reject action buttons decide in place; the page never opens. A
+  // replacement notification (same tag) confirms the outcome, and any failure
+  // falls through to the normal open-the-page flow so the tap is never lost.
+  if ((event.action === "approve" || event.action === "reject") && data.decision) {
+    const status = event.action === "approve" ? "approved" : "rejected";
+    event.waitUntil((async () => {
+      try {
+        await decideFromNotification(data.decision, status);
+        await self.registration.showNotification(
+          status === "approved" ? "Approved" : "Rejected",
+          {
+            body: status === "approved" ? "The agent is resuming." : "The agent was told no.",
+            tag: event.notification.tag,
+            icon: "/icon-192.png",
+            badge: "/icon-192.png",
+            data: { url: data.url },
+          }
+        );
+        if (self.navigator.clearAppBadge) { try { await self.navigator.clearAppBadge(); } catch {} }
+      } catch (err) {
+        await clients.openWindow(url.href);
+      }
+    })());
+    return;
+  }
   event.waitUntil((async () => {
     try {
       const cache = await caches.open(NAV_CACHE);
