@@ -227,7 +227,9 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
 
       await rawClient.connect(rawTransport);
 
-      logger.info(`Connected to MCP server: ${name}`);
+      // Debug, not info: connection chatter repeats per server per run and drowns
+      // out real output in the session log view.
+      logger.debug(`Connected to MCP server: ${name}`);
 
       return {
         name,
@@ -462,7 +464,9 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
       // Log what tools were retrieved
       const toolNames = Object.keys(clientTools);
       const source = connection.preloadedTools ? '(preloaded)' : '(fetched)';
-      logger.info(`[MCP] Retrieved ${toolNames.length} tools from ${connection.name} ${source}${toolNames.length > 0 ? ': ' + toolNames.join(', ') : ''}`);
+      // Debug, not info: per-server tool inventories are setup chatter that
+      // buries assistant/tool output in the session log view.
+      logger.debug(`[MCP] Retrieved ${toolNames.length} tools from ${connection.name} ${source}${toolNames.length > 0 ? ': ' + toolNames.join(', ') : ''}`);
 
       // Add tools with prefixed names to avoid conflicts and wrap execution (like opencode)
       const disallowedTools: string[] = [];
