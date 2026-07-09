@@ -81,13 +81,30 @@ async function prompt(question: string): Promise<string> {
 }
 
 // Helper function to fetch remote agent
+function isLoopbackHost(url: string): boolean {
+  // Match on the parsed hostname exactly. A substring check on the whole URL
+  // would also disable TLS verification for hostile hosts like
+  // "https://localhost.attacker.com/x.agentuse".
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+}
+
 async function fetchRemoteAgent(url: string): Promise<string> {
   // For localhost testing, allow self-signed certificates
   const fetchOptions: RequestInit = {};
-  if (url.includes('localhost') || url.includes('127.0.0.1')) {
+  const loopback = isLoopbackHost(url);
+  // Save and restore the prior value rather than deleting unconditionally, so a
+  // user-set NODE_TLS_REJECT_UNAUTHORIZED survives this fetch.
+  const priorTlsSetting = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  if (loopback) {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
   }
-  
+
   try {
     const response = await fetch(url, fetchOptions);
     if (!response.ok) {
@@ -95,9 +112,13 @@ async function fetchRemoteAgent(url: string): Promise<string> {
     }
     return await response.text();
   } finally {
-    // Restore certificate validation
-    if (url.includes('localhost') || url.includes('127.0.0.1')) {
-      delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    // Restore certificate validation to its prior state.
+    if (loopback) {
+      if (priorTlsSetting === undefined) {
+        delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+      } else {
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = priorTlsSetting;
+      }
     }
   }
 }
@@ -286,8 +307,13 @@ program
         logger.info(`Starting AgentUse at ${new Date().toISOString()}`);
       }
 
-      // Parse CLI timeout value (will be used as override later)
-      const timeoutWasExplicit = process.argv.includes('--timeout');
+      // Parse CLI timeout value (will be used as override later).
+      // Commander accepts both "--timeout 600" (two tokens) and "--timeout=600"
+      // (one token); the equals form must count as explicit too, otherwise the
+      // user's value is silently dropped in favor of the YAML/300s default.
+      const timeoutWasExplicit = process.argv.some(
+        (a) => a === '--timeout' || a.startsWith('--timeout=')
+      );
       const cliTimeoutSeconds = parseInt(options.timeout);
       if (isNaN(cliTimeoutSeconds) || cliTimeoutSeconds <= 0) {
         throw new Error('Invalid timeout value. Must be a positive number of seconds.');

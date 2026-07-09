@@ -711,9 +711,14 @@ async function listSessionsCommand(
     sessions = sessions.filter((s) => !s.isSubAgent);
   }
 
-  // Apply limit
-  const limit = parseInt(options?.limit || "10");
-  if (limit > 0 && sessions.length > limit) {
+  // Apply limit. Reject non-numeric/non-positive values instead of silently
+  // treating them as "no limit" (parseInt("abc") is NaN, so `limit > 0` was
+  // false and every session printed).
+  const limit = parseInt(options?.limit ?? "10", 10);
+  if (options?.limit !== undefined && (Number.isNaN(limit) || limit <= 0)) {
+    throw new Error(`Invalid --limit value "${options.limit}". Must be a positive integer.`);
+  }
+  if (sessions.length > limit) {
     sessions = sessions.slice(0, limit);
   }
 

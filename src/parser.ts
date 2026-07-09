@@ -202,10 +202,26 @@ const AgentSchema = z.object({
   // configure optional external surfaces such as Slack.
   channels: ChannelsConfigSchema.optional()
 }).transform((data) => {
-  // Handle backward compatibility: support both mcp_servers and mcpServers
+  // Handle backward compatibility: support both mcp_servers and mcpServers.
+  // Use ConfigError (not a bare Error) so the outer catch treats it like every
+  // other config failure: sanitized field/issue for telemetry rather than an
+  // untracked raw Error.
   if (data.mcp_servers && data.mcpServers) {
-    throw new Error('Cannot specify both "mcp_servers" and "mcpServers". Use "mcpServers" (camelCase) only.');
+    throw new ConfigError(
+      'Cannot specify both "mcp_servers" and "mcpServers". Use "mcpServers" (camelCase) only.',
+      'mcpServers',
+      'conflict'
+    );
   }
+
+  // Experimental feature warnings (emit once per feature per process to avoid
+  // log spam when the same or many agents are parsed repeatedly, e.g. in serve).
+  // These run before the deprecated-key early return so a config using the old
+  // mcp_servers key still gets manager/store/learning/sandbox notices.
+  if (data.type === 'manager') warnExperimentalOnce('manager', 'Manager agents (type: manager)');
+  if (data.store) warnExperimentalOnce('store', 'Store feature');
+  if (data.learning) warnExperimentalOnce('learning', 'Learning feature');
+  if (data.sandbox) warnExperimentalOnce('sandbox', 'Sandbox feature');
 
   // Normalize to mcpServers and warn about deprecation
   if (data.mcp_servers && !data.mcpServers) {
@@ -217,13 +233,6 @@ const AgentSchema = z.object({
       skills: data.skills ?? defaultSkillsConfig(),
     };
   }
-
-  // Experimental feature warnings (emit once per feature per process to avoid
-  // log spam when the same or many agents are parsed repeatedly, e.g. in serve).
-  if (data.type === 'manager') warnExperimentalOnce('manager', 'Manager agents (type: manager)');
-  if (data.store) warnExperimentalOnce('store', 'Store feature');
-  if (data.learning) warnExperimentalOnce('learning', 'Learning feature');
-  if (data.sandbox) warnExperimentalOnce('sandbox', 'Sandbox feature');
 
   return {
     ...data,
