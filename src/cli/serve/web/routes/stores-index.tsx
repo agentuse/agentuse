@@ -12,7 +12,7 @@ export default function StoresIndex() {
   const location = useLocation();
   const project = location.query.project || undefined;
 
-  useTitle('AgentUse Stores');
+  useTitle('AgentUse / Stores');
 
   const { data, error, loading } = useFetch(
     `stores:${project ?? ''}`,

@@ -308,16 +308,22 @@ function ApprovalDetailCard(props: { details: ApprovalLogDetails; sessionId: str
 
 function SubagentCard(props: { session: LogSubagentSession }) {
   const s = props.session;
+  const name = s.agent.name || s.agent.id;
   const inner = (
     <>
       <span class={`chip status ${s.displayStatus}`}>{s.displayStatus}</span>
-      <span class="subagent-name">{s.agent.name || s.agent.id}</span>
+      <span class="subagent-name">{name}</span>
       <code class="subagent-id">{s.sessionId}</code>
       {s.command && <span class="subagent-command">{s.command}</span>}
     </>
   );
   return s.href
-    ? <a class="subagent-event" href={s.href}>{inner}</a>
+    ? (
+      <a class="subagent-event" href={s.href} aria-label={`Open subagent session ${name || s.sessionId}`}>
+        {inner}
+        <span class="subagent-open-cue" aria-hidden="true">open ›</span>
+      </a>
+    )
     : <div class="subagent-event">{inner}</div>;
 }
 
@@ -392,6 +398,9 @@ export interface LogEntryProps {
   /** Operational warnings about this tool call, nested under it instead of
    *  shown as standalone "failed" lines in the flat stream. */
   warnings?: ApprovalLogEntry[] | undefined;
+  /** Number of consecutive identical operational log lines collapsed into this
+   *  row (>1 renders an xN badge). Undefined/1 renders no badge. */
+  repeatCount?: number | undefined;
   expanded: boolean;
   showActions: boolean;
   actionsDisabled: boolean;
@@ -430,6 +439,8 @@ function LogEntryImpl(props: LogEntryProps) {
   const expanded = !expandable || entry.status === 'running' || props.expanded;
   const storeEvent = storeToolEvent(entry, props.projectId);
   const spinning = entry.status === 'streaming' || entry.status === 'running';
+  // A failed tool call must read as failure without relying on color alone.
+  const failed = entry.status === 'error' || entry.status === 'failed';
 
   const classes = [
     'log-item',
@@ -449,6 +460,7 @@ function LogEntryImpl(props: LogEntryProps) {
       class={classes}
       data-log-id={entry.id}
       data-log-type={entry.type}
+      role={expandable ? 'button' : undefined}
       aria-expanded={expandable ? expanded : undefined}
       tabIndex={expandable ? 0 : undefined}
       onClick={(event) => {
@@ -466,11 +478,18 @@ function LogEntryImpl(props: LogEntryProps) {
       <span class="log-time">{formatLogTime(entry.time)}</span>
       <span
         class="log-marker"
-        {...(entry.type === 'log' && !spinning ? { 'aria-label': `${entry.level ?? 'info'} log`, title: entry.level ?? 'info', role: 'img' } : {})}
-      >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : '⋮')}</span>
+        {...(spinning
+          ? {}
+          : entry.type === 'log'
+            ? { 'aria-label': `${entry.level ?? 'info'} log`, title: entry.level ?? 'info', role: 'img' }
+            : { 'aria-hidden': 'true' })}
+      >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : failed ? '✗' : '⋮')}</span>
       <div class="log-main">
         <span class="log-title">
           {entry.title}
+          {props.repeatCount !== undefined && props.repeatCount > 1 && (
+            <span class="log-count-badge">x{props.repeatCount}</span>
+          )}
           {warnings.length > 0 && (
             <span class="log-warn-badge" title={`${warnings.length} warning${warnings.length === 1 ? '' : 's'} about this tool call`}>⚠ {warnings.length}</span>
           )}
@@ -524,6 +543,7 @@ const warningsSignature = (warnings: ApprovalLogEntry[] | undefined): string =>
 export const LogEntry = memo(LogEntryImpl, (prev, next) =>
   logEntrySignature(prev.entry) === logEntrySignature(next.entry) &&
   warningsSignature(prev.warnings) === warningsSignature(next.warnings) &&
+  prev.repeatCount === next.repeatCount &&
   prev.expanded === next.expanded &&
   prev.showActions === next.showActions &&
   prev.actionsDisabled === next.actionsDisabled &&

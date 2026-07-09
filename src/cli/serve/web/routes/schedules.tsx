@@ -57,12 +57,16 @@ export default function Schedules() {
     else days.set(label, [schedule]);
   }
 
-  const renderDay = (label: string, list: SerializedSchedule[]) => (
+  const renderDay = (label: string, list: SerializedSchedule[], headingClass = '') => (
     <section class="day" key={label}>
-      <h2 class="day-title"><span>{label}</span><span class="count">{list.length}</span><span class="rule"></span></h2>
+      <h2 class={`day-title${headingClass ? ` ${headingClass}` : ''}`}><span>{label}</span><span class="count">{list.length}</span><span class="rule"></span></h2>
       <div class="timetable">{list.map((s) => <Slot key={s.id} schedule={s} multiProject={multiProject} />)}</div>
     </section>
   );
+
+  // Times render in the viewer's local zone; name it once so a run at "09:00"
+  // is not silently misread as the server's or the reader's other timezone.
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   const hasContent = days.size > 0 || disabled.length > 0;
 
@@ -73,13 +77,13 @@ export default function Schedules() {
         <header>
           <div class="eyebrow">scheduled agents</div>
           <h1>Schedules</h1>
-          <p class="lede">{data ? `${schedules.length} scheduled agent${schedules.length === 1 ? '' : 's'}, upcoming runs first.` : loading ? 'Loading…' : ''}</p>
-          {error && <div class="errors">Failed to load schedules: {error.message}</div>}
+          <p class="lede">{data ? `${schedules.length} scheduled agent${schedules.length === 1 ? '' : 's'}, upcoming runs first. Times in ${zone}` : loading ? 'Loading…' : ''}</p>
+          {error && <div class="errors" role="alert">Failed to load schedules: {error.message}</div>}
         </header>
         {hasContent
           ? <>
             {[...days.entries()].map(([label, list]) => renderDay(label, list))}
-            {disabled.length > 0 && renderDay('Disabled', disabled)}
+            {disabled.length > 0 && renderDay('Disabled', disabled, 'day-disabled')}
           </>
           : <div class="panel"><div class="empty">{loading ? 'Loading…' : 'No scheduled agents. Add a schedule: field to an agent file.'}</div></div>}
       </main>

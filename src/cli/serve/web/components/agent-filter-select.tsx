@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useMemo, useRef, useState } from 'preact/hooks';
 
 /**
  * Searchable single-select for the sessions agent filter. Click to open the
@@ -18,6 +18,9 @@ export function AgentFilterSelect(props: {
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // Stable ids so the input (role=combobox) can point at the listbox and the
+  // active option for screen readers via aria-controls / aria-activedescendant.
+  const listboxId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -54,6 +57,10 @@ export function AgentFilterSelect(props: {
     else if (e.key === 'Enter') { e.preventDefault(); const opt = filtered[active]; if (opt) choose(opt[0]); }
   };
 
+  // Points screen readers at the option under the arrow-key cursor; undefined
+  // when the list is closed or empty so nothing is announced as active.
+  const activeOptionId = open && active < filtered.length ? `${listboxId}-opt-${active}` : undefined;
+
   return (
     <div class="agent-select" ref={rootRef}>
       <input
@@ -63,8 +70,12 @@ export function AgentFilterSelect(props: {
         placeholder="any"
         spellcheck={false}
         autocomplete="off"
+        role="combobox"
         aria-label="Filter by agent"
         aria-expanded={open}
+        aria-controls={listboxId}
+        aria-autocomplete="list"
+        aria-activedescendant={activeOptionId}
         onFocus={openList}
         onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setActive(0); setOpen(true); }}
         onKeyDown={onKeyDown}
@@ -78,16 +89,17 @@ export function AgentFilterSelect(props: {
         >×</button>
       )}
       {open && (
-        <div class="agent-select-pop" ref={listRef} role="listbox">
+        <div class="agent-select-pop" id={listboxId} ref={listRef} role="listbox">
           {filtered.length === 0
             ? <div class="agent-select-empty">No agents match.</div>
             : filtered.map(([id, name], i) => (
               <button
                 type="button"
                 key={id}
+                id={`${listboxId}-opt-${i}`}
                 class={`agent-select-opt${i === active ? ' active' : ''}${id === props.value ? ' selected' : ''}`}
                 role="option"
-                aria-selected={id === props.value}
+                aria-selected={i === active}
                 onMouseMove={() => setActive(i)}
                 onMouseDown={(e) => { e.preventDefault(); choose(id); }}
               >

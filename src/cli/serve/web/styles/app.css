@@ -44,7 +44,8 @@
   --line: rgba(0,0,0,0.08); --line-strong: rgba(0,0,0,0.16);
   --panel: rgba(0,0,0,0.025); --panel-hover: rgba(0,0,0,0.05);
   --muted: rgba(0,0,0,0.55); --muted-2: rgba(0,0,0,0.35); --muted-3: rgba(0,0,0,0.75);
-  --cyan: #0891b2; --cyan-soft: rgba(8,145,178,0.08); --cyan-border: rgba(8,145,178,0.35);
+  /* #0e7490 (not #0891b2) so cyan text clears WCAG AA (~4.5:1) on the light bg. */
+  --cyan: #0e7490; --cyan-soft: rgba(8,145,178,0.08); --cyan-border: rgba(8,145,178,0.35);
   --green: #047857; --green-soft: rgba(4,120,87,0.08); --green-border: rgba(4,120,87,0.35);
   --amber: #b45309; --amber-soft: rgba(180,83,9,0.10); --amber-border: rgba(180,83,9,0.35);
   --red: #b91c1c; --red-soft: rgba(185,28,28,0.08); --red-border: rgba(185,28,28,0.35);
@@ -127,7 +128,9 @@ a, button, select, summary, label, input, textarea,
   padding: 0 10px;
   border: 0;
   border-radius: 999px;
-  color: var(--muted-2);
+  /* --muted, not --muted-2: inactive tabs are still navigation text a user must
+     read; the active tab keeps its --fg + background delta for state contrast. */
+  color: var(--muted);
   text-decoration: none;
   transition: color 120ms ease, background 120ms ease;
 }
@@ -201,7 +204,7 @@ a, button, select, summary, label, input, textarea,
 }
 .settings-section-label {
   font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--muted-2);
+  color: var(--muted);
 }
 .settings-popover .theme-toggle { width: 100%; justify-content: space-between; }
 .settings-item {
@@ -256,9 +259,18 @@ a, button, select, summary, label, input, textarea,
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
+    /* Safety cue for very narrow screens where the pill still overflows after
+       the tightening below: fade the right edge so a clipped tail reads as
+       "scroll for more" instead of a hard cut. When the pill fits, the faded
+       band falls over empty track and is invisible. */
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
   }
   .topbar .nav-wrap::-webkit-scrollbar { display: none; }
   .topbar .nav { flex: none; }
+  /* Tighten the five tabs so they fit a ~360px viewport without scrolling. */
+  .topbar .nav { gap: 2px; }
+  .topbar .nav-item { padding: 0 8px; font-size: 11px; }
 }
 
 /* ---------------- approvals list ---------------- */
@@ -276,13 +288,13 @@ a, button, select, summary, label, input, textarea,
   margin: 32px 0 12px;
   font-size: 11px;
   letter-spacing: 0.18em; text-transform: uppercase;
-  color: var(--muted-2);
+  color: var(--muted);
   font-weight: 500;
 }
 .page-approvals .section-title::before { content: "⋮"; color: var(--cyan); font-size: 14px; transform: translateY(1px); }
 .page-approvals .section-title .count { color: var(--muted-3); font-size: 12px; }
 .page-approvals .section-title .rule { flex: 1; height: 1px; background: var(--line); }
-.page-approvals .empty { color: var(--muted-2); font-style: italic; padding: 14px 0; }
+.page-approvals .empty { color: var(--muted); font-style: italic; padding: 14px 0; }
 .page-approvals .rows { display: flex; flex-direction: column; gap: 8px; }
 .page-approvals .row {
   display: block;
@@ -299,7 +311,7 @@ a, button, select, summary, label, input, textarea,
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   margin-bottom: 8px;
 }
-.page-approvals .row-time { color: var(--muted-2); font-size: 12px; margin-left: auto; }
+.page-approvals .row-time { color: var(--muted); font-size: 12px; margin-left: auto; }
 .page-approvals .row-title {
   font-family: var(--sans);
   font-size: 16px;
@@ -308,7 +320,7 @@ a, button, select, summary, label, input, textarea,
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .page-approvals .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
-.page-approvals .row-meta { margin-top: 8px; color: var(--muted-2); font-size: 11px; }
+.page-approvals .row-meta { margin-top: 8px; color: var(--muted); font-size: 11px; }
 .page-approvals .row-meta code { font-family: var(--mono); font-size: 11px; }
 .page-approvals .chip {
   display: inline-flex; align-items: center;
@@ -344,7 +356,7 @@ a, button, select, summary, label, input, textarea,
   font-size: 12.5px;
 }
 .page-approvals .errors ul { margin: 6px 0 0; padding-left: 20px; }
-.page-approvals footer { color: var(--muted-2); font-size: 11px; margin-top: 32px; text-align: center; }
+.page-approvals footer { color: var(--muted); font-size: 11px; margin-top: 32px; text-align: center; }
 
 /* ---------------- approval detail ---------------- */
 .page-approval-detail { padding-bottom: 140px; }
@@ -553,9 +565,17 @@ a, button, select, summary, label, input, textarea,
   background: var(--bg);
   padding: 14px 16px;
 }
+/* A meta field with no value renders an empty .cell. Collapse it so the grid's
+   line-colored track doesn't read as a faint shaded placeholder in a partial
+   last row; auto-fit reflows the remaining cells to fill the width. */
+.page-approval-detail .meta .cell:empty { display: none; }
+/* A partial last row would otherwise expose the grid's line-colored background
+   in the unfilled tracks (no cell element exists there, so :empty can't help);
+   stretching the final cell to the row end keeps every track painted. */
+.page-approval-detail .meta .cell:last-child { grid-column-end: -1; }
 .page-approval-detail .meta .label {
   display: block;
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 11px;
   letter-spacing: 0.06em;
   margin-bottom: 6px;
@@ -590,7 +610,7 @@ a, button, select, summary, label, input, textarea,
   margin: 36px 0 10px;
   font-size: 11px;
   letter-spacing: 0.18em; text-transform: uppercase;
-  color: var(--muted-2);
+  color: var(--muted);
 }
 .page-approval-detail .section-title::before { content: "⋮"; color: var(--cyan); font-size: 14px; transform: translateY(1px); }
 .page-approval-detail .section-title .rule { flex: 1; height: 1px; background: var(--line); }
@@ -684,7 +704,7 @@ a, button, select, summary, label, input, textarea,
    scrolling inside .content-table-scroll. min-width: 0 lets the column shrink
    to the grid track, giving the table scroller a bounded width to scroll in. */
 .log-main { min-width: 0; }
-.log-time { color: var(--muted-2); font-size: 12px; padding-top: 1px; }
+.log-time { color: var(--muted); font-size: 12px; padding-top: 1px; }
 .log-marker {
   display: inline-flex;
   justify-content: center;
@@ -704,7 +724,9 @@ a, button, select, summary, label, input, textarea,
 }
 @keyframes log-spin { to { transform: rotate(360deg); } }
 .log-item.streaming .log-marker, .log-item.running .log-marker { opacity: 1; }
-.log-item.error .log-marker, .log-item.failed .log-marker { color: var(--red); }
+.log-item.error .log-marker, .log-item.failed .log-marker { color: var(--red); opacity: 1; }
+/* Colour the title too so a failed row is skimmable, not just its marker. */
+.log-item.error .log-title, .log-item.failed .log-title { color: var(--red); }
 .log-item.completed .log-marker, .log-item.approved .log-marker { color: var(--green); }
 .log-item.resuming .log-marker { color: var(--amber); }
 .log-item.expandable { cursor: pointer; }
@@ -720,7 +742,9 @@ a, button, select, summary, label, input, textarea,
   padding: 1px 6px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  color: var(--muted-2);
+  /* The collapsed "show" invites the click, so it reads brighter than the
+     "hide" it toggles to (--muted-3 > --muted). */
+  color: var(--muted-3);
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.06em;
@@ -876,7 +900,7 @@ a, button, select, summary, label, input, textarea,
   overflow-wrap: anywhere;
 }
 .log-warning-detail { margin-top: 4px; }
-.log-empty { color: var(--muted-2); padding: 12px 0; font-style: italic; }
+.log-empty { color: var(--muted); padding: 12px 0; font-style: italic; }
 
 /* Live heartbeat row: shown at the tail of the stream while the run is active
    but no single entry is streaming, so the page never looks frozen mid-run. */
@@ -913,7 +937,7 @@ a, button, select, summary, label, input, textarea,
 .store-event-store,
 .store-event-meta,
 .store-event-preview {
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 12px;
 }
 .store-event-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
@@ -936,7 +960,7 @@ a, button, select, summary, label, input, textarea,
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--muted-2);
+  color: var(--muted);
 }
 .log-detail-label::before { content: "⋮ "; color: var(--cyan); opacity: 0.6; }
 .log-detail-value {
@@ -1173,7 +1197,7 @@ a, button, select, summary, label, input, textarea,
 }
 .approval-section-title,
 .approval-context > summary {
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -1271,7 +1295,7 @@ a, button, select, summary, label, input, textarea,
   letter-spacing: 0.02em;
 }
 .approval-change-meta {
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -1326,7 +1350,7 @@ a, button, select, summary, label, input, textarea,
 }
 .log-actions-hint {
   font-size: 12px;
-  color: var(--muted-2);
+  color: var(--muted);
   letter-spacing: 0.04em;
 }
 .log-actions-hint .kbd {
@@ -1461,7 +1485,7 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
   border-bottom: 1px solid var(--line);
   font-size: 11px;
   letter-spacing: 0.18em; text-transform: uppercase;
-  color: var(--muted-2);
+  color: var(--muted);
 }
 .dialog-head .title::before { content: "⋮ "; color: var(--cyan); }
 .dialog-head .title.reject::before { color: var(--red); }
@@ -1536,7 +1560,7 @@ textarea {
   transition: border-color 120ms ease;
 }
 textarea:focus { border-color: var(--cyan-border); }
-textarea::placeholder { color: var(--muted-2); }
+textarea::placeholder { color: var(--muted); }
 textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .dialog-foot {
   display: flex; align-items: center; justify-content: space-between;
@@ -1546,7 +1570,7 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 }
 .dialog-foot .hint {
   font-size: 11px;
-  color: var(--muted-2);
+  color: var(--muted);
   letter-spacing: 0.04em;
 }
 .dialog-foot .hint .kbd {
@@ -1591,7 +1615,7 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
   gap: 14px;
 }
 .learnings-label {
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -1601,7 +1625,7 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .learnings-empty { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
 .learnings-group { display: grid; gap: 6px; }
 .learnings-group-label {
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1619,7 +1643,8 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .learnings-text { flex: 1; font-size: 13px; line-height: 1.45; color: var(--fg); }
 .learnings-discard {
   flex-shrink: 0;
-  width: 22px; height: 22px; padding: 0; min-height: 0;
+  /* 24px meets the WCAG 2.2 minimum target size. */
+  width: 24px; height: 24px; padding: 0; min-height: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -1663,7 +1688,7 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
   animation: log-spin 700ms linear infinite;
 }
 .continue-label {
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -1679,7 +1704,7 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
   gap: 12px;
 }
 .continue-hint {
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 11px;
   letter-spacing: 0.04em;
 }
@@ -1736,7 +1761,7 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .store-table { width: 100%; min-width: 760px; border-collapse: collapse; }
 .store-table th, .store-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
 .store-table .title-cell, .store-table .preview { white-space: normal; }
-.store-table th { color: var(--muted-2); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 500; background: var(--panel); }
+.store-table th { color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 500; background: var(--panel); }
 .store-table th[aria-sort] { color: var(--muted-3); }
 .sort-header {
   display: inline-flex;
@@ -1764,8 +1789,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .store-table tbody tr.highlighted { background: var(--amber-soft); box-shadow: inset 3px 0 0 var(--amber); }
 .page-stores .title-cell { display: grid; gap: 4px; min-width: 260px; }
 .page-stores .title-cell a { width: fit-content; font-weight: 500; color: var(--fg); border-color: var(--line-strong); }
-.page-stores .preview { color: var(--muted-2); font-size: 12px; max-width: 520px; }
-.page-stores .muted { color: var(--muted-2); }
+.page-stores .preview { color: var(--muted); font-size: 12px; max-width: 520px; }
+.page-stores .muted { color: var(--muted); }
 .page-stores .chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .page-stores .chip {
   display: inline-flex; align-items: center;
@@ -1778,11 +1803,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   white-space: nowrap;
 }
 .page-stores .chip.status { color: var(--cyan); border-color: var(--cyan-border); }
-.page-stores .empty { padding: 18px; color: var(--muted-2); font-style: italic; }
+.page-stores .empty { padding: 18px; color: var(--muted); font-style: italic; }
 .page-stores .errors { margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--red-border); border-radius: 8px; color: var(--red); background: var(--red-soft); }
 .page-stores .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
 .page-stores .detail-cell { background: var(--bg); padding: 12px 14px; }
-.page-stores .detail-label { display: block; color: var(--muted-2); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px; }
+.page-stores .detail-label { display: block; color: var(--muted); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 5px; }
 .page-stores .data-grid { display: grid; gap: 10px; }
 .page-stores .data-field { display: grid; gap: 5px; }
 .page-stores .data-key { color: var(--cyan); font-size: 11px; letter-spacing: 0.08em; }
@@ -1835,7 +1860,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
     content: attr(data-label);
     display: block;
     margin-bottom: 3px;
-    color: var(--muted-2);
+    color: var(--muted);
     font-size: 10px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -1900,7 +1925,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-size: 14px;
   padding: 9px 0;
 }
-.page-agents .agents-filter input::placeholder { color: var(--muted-2); }
+.page-agents .agents-filter input::placeholder { color: var(--muted); }
 .page-agents .agents-filter input::-webkit-search-cancel-button { display: none; }
 .page-agents .agents-filter-clear {
   flex-shrink: 0;
@@ -1915,8 +1940,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .agents-filter-clear:hover { color: var(--fg); }
 .page-agents .agents-cols { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
-.page-agents .agents-cols-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted-2); }
-.page-agents .agents-cols-empty { font-size: 12px; color: var(--muted-2); }
+.page-agents .agents-cols-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.page-agents .agents-cols-empty { font-size: 12px; color: var(--muted); }
 .page-agents .col-pill {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 12px; color: var(--fg);
@@ -1945,7 +1970,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-home .empty,
 .page-agents .empty,
-.page-schedules .empty { padding: 18px; color: var(--muted-2); font-style: italic; }
+.page-schedules .empty { padding: 18px; color: var(--muted); font-style: italic; }
 .page-home .errors,
 .page-agents .errors,
 .page-schedules .errors { margin: 12px 0 0; padding: 12px 14px; border: 1px solid var(--red-border); border-radius: 8px; color: var(--red); background: var(--red-soft); font-size: 12.5px; }
@@ -1991,9 +2016,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .proj-counts .proj-go { color: var(--muted-2); margin-left: 8px; }
 .page-home .proj-id { font-family: var(--sans); font-size: 14px; color: var(--fg); display: inline-flex; align-items: center; gap: 8px; }
 .page-home .proj-default { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--cyan); border: 1px solid var(--cyan-border); border-radius: 999px; padding: 1px 7px; }
-.page-home .proj-path { font-family: var(--mono); font-size: 11.5px; color: var(--muted-2); overflow-wrap: anywhere; margin-top: 2px; }
+.page-home .proj-path { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; margin-top: 2px; }
 .page-home .proj-counts { font-family: var(--mono); font-size: 12px; color: var(--muted-3); white-space: nowrap; text-align: right; }
-.page-home .api-hint { margin-top: 28px; color: var(--muted-2); font-size: 12px; }
+.page-home .api-hint { margin-top: 28px; color: var(--muted); font-size: 12px; }
 .page-home .api-hint code { color: var(--muted-3); }
 /* On narrow screens the nowrap counts column crowds the wrapping path; stack the
    counts beneath the id/path so neither is squeezed or overlapped. */
@@ -2020,10 +2045,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .group-title::before,
 .page-agents .group-title::before,
 .page-schedules .day-title::before { content: "⋮"; color: var(--cyan); transform: translateY(1px); }
-.page-agents .group-title .path { color: var(--muted-2); font-size: 12px; font-family: var(--mono); }
+.page-agents .group-title .path { color: var(--muted); font-size: 12px; font-family: var(--mono); }
 .page-home .group-title .count,
 .page-agents .group-title .count,
-.page-schedules .day-title .count { color: var(--muted-2); font-size: 12px; font-family: var(--mono); }
+.page-schedules .day-title .count { color: var(--muted); font-size: 12px; font-family: var(--mono); }
 .page-home .group-title .rule,
 .page-agents .group-title .rule,
 .page-schedules .day-title .rule { flex: 1; height: 1px; background: var(--line); }
@@ -2054,7 +2079,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .tree-head {
   align-items: center;
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -2088,7 +2113,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   content: ""; position: absolute; left: 11px; top: 50%; width: 11px; height: 1px; background: var(--muted-2);
 }
 .page-agents .tree-row .tree-name { flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; font-family: var(--sans); color: var(--muted-3); font-size: 13px; overflow-wrap: anywhere; padding: 7px 0; }
-.page-agents .tree-desc { color: var(--muted-2); font-size: 11.5px; margin-top: 2px; }
+.page-agents .tree-desc { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
 .page-agents .tree-row .chip { white-space: nowrap; }
 .page-agents .tree-run { justify-content: flex-end; }
 .page-agents .run-btn {
@@ -2117,7 +2142,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   border-radius: 50%;
   animation: log-spin 700ms linear infinite;
 }
-.page-agents .muted { color: var(--muted-2); }
+.page-agents .muted { color: var(--muted); }
 .page-agents .chip {
   display: inline-flex; align-items: center;
   padding: 2px 7px;
@@ -2134,7 +2159,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .tree-menu { justify-content: flex-end; }
 .page-agents .tree-meta { justify-content: flex-start; min-width: 0; }
 .page-agents .tree-meta-val {
-  font-family: var(--mono); font-size: 12px; color: var(--muted-2);
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
   max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .page-agents .agent-menu { position: relative; display: inline-flex; }
@@ -2180,7 +2205,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-family: var(--sans);
   font-size: 12px;
   line-height: 1.4;
-  color: var(--muted-2);
+  color: var(--muted);
   overflow-wrap: anywhere;
 }
 .page-agents .menu-meta {
@@ -2190,13 +2215,13 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .menu-meta-label {
   flex: 0 0 58px;
   font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--muted-2);
+  color: var(--muted);
 }
 .page-agents .menu-sep { height: 1px; margin: 10px -14px 6px; background: var(--line); }
 .page-agents .menu-meta-block { margin: 8px 0 2px; }
 .page-agents .menu-kv { margin-top: 6px; display: flex; flex-direction: column; gap: 5px; }
 .page-agents .menu-kv-row { display: grid; grid-template-columns: minmax(0, 92px) minmax(0, 1fr); gap: 8px; align-items: baseline; }
-.page-agents .menu-kv-key { font-family: var(--mono); font-size: 11.5px; color: var(--muted-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-agents .menu-kv-key { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-agents .menu-kv-val { font-size: 12px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .page-agents .menu-item {
   appearance: none;
@@ -2265,7 +2290,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agent-detail .back:hover { color: var(--cyan); }
 .page-agent-detail .panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
-.page-agent-detail .empty { padding: 18px; color: var(--muted-2); font-style: italic; }
+.page-agent-detail .empty { padding: 18px; color: var(--muted); font-style: italic; }
 .page-agent-detail .empty.err { color: var(--red); font-style: normal; }
 
 /* hero */
@@ -2280,7 +2305,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agent-detail h1 { margin: 0 0 8px; font-family: var(--sans); font-size: 30px; line-height: 1.1; letter-spacing: -0.01em; font-weight: 500; }
 .page-agent-detail .lede { margin: 0; color: var(--muted-3); font-family: var(--sans); font-size: 15px; max-width: 62ch; }
-.page-agent-detail .lede .muted { color: var(--muted-2); font-style: italic; }
+.page-agent-detail .lede .muted { color: var(--muted); font-style: italic; }
 .page-agent-detail .hero-path { margin-top: 12px; }
 .page-agent-detail .hero-path code { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .page-agent-detail .hero-actions { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
@@ -2302,7 +2327,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agent-detail .cap-row:last-child { border-bottom: 0; }
 .page-agent-detail .cap-label {
-  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted-2);
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);
 }
 .page-agent-detail .cap-vals { display: flex; flex-wrap: wrap; gap: 6px; }
 .page-agent-detail .cap-chip {
@@ -2312,7 +2337,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agent-detail .cap-chip.cyan { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
 .page-agent-detail .cap-chip.amber { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
-.page-agent-detail .cap-chip.muted { color: var(--muted-2); }
+.page-agent-detail .cap-chip.muted { color: var(--muted); }
 
 /* section headers (mirror agents group-title) */
 .page-agent-detail .group-title {
@@ -2324,7 +2349,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agent-detail .tabs { margin: 28px 0 0; }
 .page-agent-detail .tab-panel .group-title { margin-top: 14px; }
 .page-agent-detail .group-title::before { content: "⋮"; color: var(--cyan); transform: translateY(1px); }
-.page-agent-detail .group-title .count { color: var(--muted-2); font-size: 12px; font-family: var(--mono); }
+.page-agent-detail .group-title .count { color: var(--muted); font-size: 12px; font-family: var(--mono); }
 .page-agent-detail .group-title .rule { flex: 1; height: 1px; background: var(--line); }
 .page-agent-detail .group-title .see-all,
 .page-agent-detail .group-title .copy-btn {
@@ -2344,7 +2369,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agent-detail .group-title .send-agent-btn:hover { background: color-mix(in srgb, var(--cyan) 16%, transparent); }
 .page-agent-detail .group-title .source-view-btn {
-  font-family: var(--mono); font-size: 11.5px; color: var(--muted-2);
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
   background: transparent; border: 1px solid var(--line-strong); cursor: pointer;
   padding: 3px 10px; border-radius: 6px;
   transition: color 120ms ease, border-color 120ms ease;
@@ -2411,7 +2436,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .cca-dialog .dialog-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 18px; border-bottom: 1px solid var(--line);
-  font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted-2);
+  font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
 }
 .cca-dialog .dialog-head .title::before { content: "⋮ "; color: var(--cyan); }
 .cca-dialog .dialog-close {
@@ -2454,7 +2479,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .cca-copy svg { width: 14px; height: 14px; }
 .cca-detail { display: flex; flex-direction: column; gap: 8px; }
 .cca-detail label { font-family: var(--sans); font-size: 13px; color: var(--fg); }
-.cca-detail label .opt { color: var(--muted-2); }
+.cca-detail label .opt { color: var(--muted); }
 .cca-detail textarea {
   width: 100%; box-sizing: border-box; min-height: 76px; resize: vertical;
   padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line-strong);
@@ -2462,7 +2487,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
 }
 .cca-detail textarea:focus { outline: none; border-color: var(--cyan-border); }
-.cca-detail textarea::placeholder { color: var(--muted-2); }
+.cca-detail textarea::placeholder { color: var(--muted); }
 
 /* recent runs */
 .page-agent-detail .run-list { display: flex; flex-direction: column; }
@@ -2473,7 +2498,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agent-detail .run-row:last-child { border-bottom: 0; }
 .page-agent-detail .run-row:hover { background: var(--panel-hover); }
-.page-agent-detail .run-row-time { margin-left: auto; color: var(--muted-2); font-size: 12px; font-family: var(--mono); }
+.page-agent-detail .run-row-time { margin-left: auto; color: var(--muted); font-size: 12px; font-family: var(--mono); }
 .page-agent-detail .run-row-id code { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .page-agent-detail .chip {
   display: inline-flex; align-items: center; padding: 2px 7px; border: 1px solid var(--line);
@@ -2533,7 +2558,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .pin-name:hover { color: var(--cyan); }
 .page-agents .pin-loc {
-  font-family: var(--mono); font-size: 11.5px; color: var(--muted-2);
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* Narrow screens: drop the Schedule column (still reachable in the ⋯ menu) so
@@ -2544,6 +2569,12 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
      only Run (set inline via JS); everything else stays in the ⋯ menu. */
   .page-agents .agents-cols { display: none; }
   .page-agents .tree, .page-agents .pin-list { column-gap: 10px; }
+  /* Reclaim width for the agent name: halve the per-level indent and pull the
+     thinned guide rails in to match, so deep names truncate far less. */
+  .page-agents .guide { flex-basis: 12px; }
+  .page-agents .guide.v::before,
+  .page-agents .guide.elbow::before { left: 6px; }
+  .page-agents .guide.elbow::after { left: 6px; width: 6px; }
   /* Touch targets: bump the run + overflow controls toward the 44px guideline
      on small (touch) screens, where the dense desktop 26px is hard to hit. */
   .page-agents .run-btn, .page-agents .menu-btn { width: 36px; height: 36px; }
@@ -2623,8 +2654,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-schedules .slot-agent code { color: var(--fg); font-family: var(--mono); font-size: 13px; }
 .page-schedules .slot-proj { color: var(--cyan); font-size: 11px; letter-spacing: 0.04em; }
 .page-schedules .slot-cadence { color: var(--muted-3); font-size: 12px; margin-top: 3px; }
-.page-schedules .slot-cadence code { color: var(--muted-2); font-size: 11.5px; }
-.page-schedules .slot-side { text-align: right; color: var(--muted-2); font-size: 11.5px; white-space: nowrap; }
+.page-schedules .slot-cadence code { color: var(--muted); font-size: 11.5px; }
+.page-schedules .slot-side { text-align: right; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 .page-schedules .slot-side .ok { color: var(--green); border-bottom-color: var(--green-border); }
 .page-schedules .slot-side .failed { color: var(--red); border-bottom-color: var(--red-border); }
 @media (max-width: 640px) {
@@ -2659,7 +2690,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   display: grid;
   gap: 4px;
   min-width: 0;
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -2682,7 +2713,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   cursor: text;
   width: 100%;
 }
-.page-sessions .filters input::placeholder { color: var(--muted-2); }
+.page-sessions .filters input::placeholder { color: var(--muted); }
 .page-sessions .filters input:focus-visible { outline: none; border-color: var(--cyan-border); }
 
 /* Searchable agent picker: type to search the list, choose to apply. */
@@ -2720,7 +2751,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .page-sessions .agent-select-name {
-  font-size: 11px; color: var(--muted-2);
+  font-size: 11px; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .page-sessions .filter-clear {
@@ -2741,7 +2772,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   border-bottom: 1px solid var(--line-strong);
 }
 .page-sessions .filter-clear:hover { background: var(--panel-hover); color: var(--fg); border-color: var(--line-strong); }
-.page-sessions .empty { color: var(--muted-2); font-style: italic; padding: 14px 0; }
+.page-sessions .empty { color: var(--muted); font-style: italic; padding: 14px 0; }
 .page-sessions .errors {
   margin: 16px 0 0;
   padding: 12px 14px;
@@ -2766,7 +2797,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   margin-bottom: 8px;
 }
-.page-sessions .row-time { color: var(--muted-2); font-size: 12px; margin-left: auto; }
+.page-sessions .row-time { color: var(--muted); font-size: 12px; margin-left: auto; }
 .page-sessions .row-title {
   font-family: var(--sans);
   font-size: 16px;
@@ -2775,7 +2806,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .page-sessions .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
-.page-sessions .row-meta { margin-top: 8px; color: var(--muted-2); font-size: 11px; }
+.page-sessions .row-meta { margin-top: 8px; color: var(--muted); font-size: 11px; }
 .page-sessions .row-meta code { font-family: var(--mono); font-size: 11px; }
 .page-sessions .chip {
   display: inline-flex; align-items: center;
@@ -2793,7 +2824,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 /* Agent-declared non-delivery (error/INCOMPLETE): amber, distinct from a crash,
    so a skim separates "blocked, needs a human" from "broke". */
 .page-sessions .chip.status.incomplete { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
-.page-sessions footer { color: var(--muted-2); font-size: 11px; margin-top: 32px; text-align: center; }
+.page-sessions footer { color: var(--muted); font-size: 11px; margin-top: 32px; text-align: center; }
 @media (max-width: 560px) {
   .page-sessions .filters label { width: 100%; }
   .page-sessions .filters select { width: 100%; }
@@ -2808,6 +2839,26 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .chip.trigger { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .chip.project { color: var(--cyan); }
 .chip.agent { color: var(--fg); }
+
+/* Live/paused run states on the sessions list + agent-detail chips. The colored
+   treatment previously lived only on the .page-approval-detail status pill, so
+   these chips read neutral gray elsewhere. Running mirrors the pill's pulsing
+   dot in green; suspended/pending are cyan. Scoped to the two list contexts so
+   the approvals-row status palette (approved/rejected/expired) is untouched. */
+.page-sessions .chip.status.running,
+.page-agent-detail .chip.status.running {
+  color: var(--green); border-color: var(--green-border); background: var(--green-soft);
+}
+.page-sessions .chip.status.running::before,
+.page-agent-detail .chip.status.running::before {
+  content: ""; width: 6px; height: 6px; margin-right: 6px; border-radius: 999px;
+  background: currentColor; box-shadow: 0 0 8px currentColor;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.page-sessions .chip.status.suspended,
+.page-agent-detail .chip.status.suspended {
+  color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft);
+}
 
 /* Mock-run marker: tool outputs were LLM-generated, no real tools ran. */
 .chip.mock {
@@ -2851,7 +2902,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-approval-detail a.subagent-event:hover { background: var(--panel-hover); border-color: var(--line-strong); }
 .page-approval-detail .subagent-name { color: var(--fg); font-weight: 500; overflow-wrap: anywhere; }
-.page-approval-detail .subagent-id { color: var(--muted-2); font-size: 11px; font-family: var(--mono); overflow-wrap: anywhere; }
+.page-approval-detail .subagent-id { color: var(--muted); font-size: 11px; font-family: var(--mono); overflow-wrap: anywhere; }
 .page-approval-detail .subagent-event code { color: var(--muted-3); overflow-wrap: anywhere; }
 /* The status chip shares the `.status` class with the page header pill, which
    carries margin-bottom: 18px. Inside the card that margin throws off the
@@ -2859,7 +2910,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-approval-detail .subagent-event .chip.status { margin: 0; }
 .page-approval-detail .subagent-command {
   grid-column: 2 / -1;
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 11px;
   font-family: var(--mono);
   overflow-wrap: anywhere;
@@ -2915,7 +2966,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-approval-detail .artifact-open-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-approval-detail .artifact-size {
   font-size: 11px;
-  color: var(--muted-2);
+  color: var(--muted);
   white-space: nowrap;
 }
 .page-approval-detail .artifact-open-hint {
@@ -2924,7 +2975,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--muted-2);
+  color: var(--muted);
 }
 
 /* iOS Safari auto-zooms when a focused field's font-size is < 16px. Lift the
@@ -2944,6 +2995,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
    but slow them so a load is still legible without spinning hard. */
 @media (prefers-reduced-motion: reduce) {
   .page-approval-detail .status::before,
+  .page-sessions .chip.status.running::before,
+  .page-agent-detail .chip.status.running::before,
   .log-working .log-title,
   .log-dots::after { animation: none !important; }
   .log-spinner,
@@ -3012,7 +3065,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-size: 16px;
   padding: 14px 0;
 }
-.palette-input input::placeholder { color: var(--muted-2); }
+.palette-input input::placeholder { color: var(--muted); }
 .palette-esc {
   flex-shrink: 0;
   font-family: var(--mono); font-size: 10px;
@@ -3078,4 +3131,97 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 @media (max-width: 640px) {
   .palette-trigger { padding: 7px; }
   .palette-trigger-label, .palette-trigger-kbd { display: none; }
+}
+/* Touch devices have no physical keyboard, so the palette's keyboard hints
+   (footer legend, trigger shortcut, esc pill) are noise. Hide them regardless
+   of viewport width, which also covers wide touch screens the 640px rule misses. */
+@media (pointer: coarse) {
+  .palette-foot,
+  .palette-trigger-kbd,
+  .palette-esc { display: none; }
+}
+
+/* ============================================================
+   Shared classes consumed by the TSX components (defined here so the
+   markup-owning files don't have to touch this stylesheet).
+   ============================================================ */
+
+/* Skip-to-content link: off-screen until keyboard focus, then a pill at the
+   top-left above the sticky topbar (z 50) and its popovers (z 60). Uses
+   transform (not display:none) so it stays focusable while hidden. */
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 200;
+  transform: translateY(-150%);
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: transform 120ms ease;
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+  outline: 2px solid var(--fg);
+  outline-offset: 2px;
+}
+
+/* Filters disclosure (sessions list): a compact toggle that collapses the
+   filter bar on narrow screens. Desktop always shows the filters, so the toggle
+   is hidden and .collapsed is a no-op above 700px. Mirrors .filter-clear. */
+.filters-toggle {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--muted-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+.filters-toggle:hover { color: var(--fg); background: var(--panel-hover); }
+@media (max-width: 700px) {
+  .filters-toggle { display: inline-flex; }
+  .filters.collapsed { display: none; }
+}
+
+/* Disabled schedules group header: reads as a status, not a date. Text stays at
+   the readable --muted; only the decorative ⋮ ornament drops to --muted-2. */
+.page-schedules .day-title.day-disabled { color: var(--muted); font-style: italic; }
+.page-schedules .day-title.day-disabled::before { color: var(--muted-2); }
+
+/* Trailing "open" affordance inside a subagent card link: quiet until the card
+   is hovered, then it brightens and nudges to signal it navigates. */
+.subagent-open-cue {
+  color: var(--muted);
+  transition: color 120ms ease, transform 120ms ease;
+}
+.page-approval-detail a.subagent-event:hover .subagent-open-cue {
+  color: var(--fg);
+  transform: translateX(2px);
+}
+
+/* Repeat-count pill for deduped consecutive log lines ("x3"). */
+.log-count-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  vertical-align: 1px;
 }

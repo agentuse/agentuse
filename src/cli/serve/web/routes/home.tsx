@@ -1,4 +1,4 @@
-import { fetchInfo, fetchApprovals } from '../lib/api';
+import { fetchInfo, fetchApprovals, fetchAgents } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
@@ -23,14 +23,35 @@ export default function Home() {
   const approvals = useFetch('home-approvals', () => fetchApprovals(), { refreshMs: 30_000 });
   const pendingApprovals = approvals.data?.buckets.pending.length ?? 0;
 
+  // The /api rollup counts every discovered .agentuse file, including ones that
+  // fail to parse; the Agents page counts only successfully-loaded agents, so
+  // the two disagree when a file is broken. Drive Home's agent counts off the
+  // same /api/agents payload the Agents page uses so they always match, and
+  // surface the parse failures rather than hiding them in the total.
+  const agents = useFetch('home-agents', () => fetchAgents(), { refreshMs: 30_000 });
+  const agentRows = agents.data?.agents;
+  const failedAgents = agents.data?.errors.length ?? 0;
+  const loadedByProject = new Map<string, number>();
+  for (const a of agentRows ?? []) loadedByProject.set(a.projectId, (loadedByProject.get(a.projectId) ?? 0) + 1);
+  const loadedFor = (p: { id: string; agentCount: number }): number =>
+    agentRows ? (loadedByProject.get(p.id) ?? 0) : p.agentCount;
+
   const projects = data?.projects ?? [];
-  const totalAgents = projects.reduce((sum, p) => sum + p.agentCount, 0);
+  // Prefer the parsed loaded count; fall back to the file count until the
+  // agents payload arrives so the lede does not flash a spurious "0 agents".
+  const totalAgents = agentRows ? agentRows.length : projects.reduce((sum, p) => sum + p.agentCount, 0);
   const totalSchedules = projects.reduce((sum, p) => sum + p.scheduleCount, 0);
   const multiProject = projects.length > 1;
+  const agentsPhrase = `${plural(totalAgents, 'agent')}${failedAgents > 0 ? ` (${failedAgents} failed to parse)` : ''}`;
   const lede = multiProject
-    ? `${plural(projects.length, 'project')} · ${plural(totalAgents, 'agent')} · ${plural(totalSchedules, 'scheduled run')}.`
-    : `${plural(totalAgents, 'agent')} · ${plural(totalSchedules, 'scheduled run')} in this serve daemon.`;
+    ? `${plural(projects.length, 'project')} · ${agentsPhrase} · ${plural(totalSchedules, 'scheduled run')}.`
+    : `${agentsPhrase} · ${plural(totalSchedules, 'scheduled run')} in this serve daemon.`;
 
+  // Counts appear only on cards backed by a cheap, stable total already in hand:
+  // agents and schedules come straight from /api, pending approvals from the
+  // approvals poll. Sessions and Stores stay countless on purpose - sessions are
+  // windowed (any number would need a time range to mean anything) and stores
+  // are per-project scans; neither has a single figure worth a second fetch here.
   const countFor = (title: string): string | undefined =>
     title === 'Agents' ? plural(totalAgents, 'agent')
       : title === 'Schedules' ? plural(totalSchedules, 'run')
@@ -45,7 +66,7 @@ export default function Home() {
           <div class="eyebrow">serve daemon</div>
           <h1>AgentUse</h1>
           <p class="lede">{data ? lede : loading ? 'Loading…' : ''}</p>
-          {error && <div class="errors">Failed to load: {error.message}</div>}
+          {error && <div class="errors" role="alert">Failed to load: {error.message}</div>}
         </header>
         <div class="cards">
           {CARDS.map((card) => {
@@ -69,7 +90,7 @@ export default function Home() {
                     <div class="proj-id">{p.id}{p.id === data?.default && <span class="proj-default">default</span>}</div>
                     <div class="proj-path">{p.path}{p.scope && p.scope !== p.path ? ` · scope ${p.scope}` : ''}</div>
                   </div>
-                  <div class="proj-counts">{plural(p.agentCount, 'agent')} · {plural(p.scheduleCount, 'schedule')}<span class="proj-go" aria-hidden="true">›</span></div>
+                  <div class="proj-counts">{plural(loadedFor(p), 'agent')} · {plural(p.scheduleCount, 'schedule')}<span class="proj-go" aria-hidden="true">›</span></div>
                 </a>
               ))}
           </div>

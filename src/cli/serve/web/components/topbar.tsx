@@ -163,8 +163,19 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
       </a>
     );
   };
+  // Keyboard/screen-reader users can jump past the nav straight to the page
+  // body. main is not focusable by default, so give it tabindex=-1 on demand.
+  const skipToContent = (event: Event) => {
+    event.preventDefault();
+    const main = document.querySelector('main');
+    if (!main) return;
+    if (!main.hasAttribute('tabindex')) main.setAttribute('tabindex', '-1');
+    (main as HTMLElement).focus();
+  };
+
   return (
     <div class="topbar">
+      <a class="skip-link" href="#" onClick={skipToContent}>Skip to content</a>
       <a
         class="brand"
         href="/"

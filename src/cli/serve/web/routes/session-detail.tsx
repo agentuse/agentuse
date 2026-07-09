@@ -25,6 +25,10 @@ import {
 
 type ApprovalHeader = Omit<ApprovalPageInfo, 'logs'>;
 
+// A render-time entry that may carry a collapsed repeat count. Produced only when
+// preparing entries for display; the underlying logsRef entries are never mutated.
+type PreparedLogEntry = ApprovalLogEntry & { repeatCount?: number };
+
 const tokenFmt = new Intl.NumberFormat('en-US');
 function formatTokenCount(value: number | undefined): string {
   return value === undefined ? '—' : tokenFmt.format(value);
@@ -332,6 +336,29 @@ export default function SessionDetail() {
     ),
     [orderedLogs, showDebug, nestedLogIds]
   );
+  // Operational log lines (type 'log') can repeat identically many times in a row
+  // (e.g. "Calling model: ..." or repeated MCP chatter). Collapse consecutive
+  // identical ones into a single row carrying a repeat count. This runs at
+  // render-preparation time on a fresh array; logsRef (the SSE merge source) is
+  // never touched, so the merge-by-id logic stays intact.
+  const collapsedLogs = useMemo<PreparedLogEntry[]>(() => {
+    const out: PreparedLogEntry[] = [];
+    for (const entry of visibleLogs) {
+      const prev = out[out.length - 1];
+      if (
+        prev
+        && entry.type === 'log' && prev.type === 'log'
+        && prev.level === entry.level
+        && prev.title === entry.title
+        && (prev.message ?? '') === (entry.message ?? '')
+      ) {
+        out[out.length - 1] = { ...prev, repeatCount: (prev.repeatCount ?? 1) + 1 };
+        continue;
+      }
+      out.push(entry);
+    }
+    return out;
+  }, [visibleLogs]);
   const reviewerComment = useMemo(() => latestReviewerComment(orderedLogs), [orderedLogs]);
 
   useEffect(() => {
@@ -341,10 +368,19 @@ export default function SessionDetail() {
   // Initial + follow scroll: stick to the page end while the user is near it.
   useLayoutEffect(() => {
     if (orderedLogs.length === 0) return;
-    if (!hasScrolledRef.current || followScrollRef.current) {
+    if (!hasScrolledRef.current) {
       hasScrolledRef.current = true;
-      scrollToPageEnd();
+      // First paint for this session: jump to the newest entry only when there's
+      // something live to follow or an actionable gate to act on. On an ended
+      // session leave the reader at the top so the header orients them.
+      if (isLiveStatus(status, orderedLogs) || hasActionableApproval(status, approval)) {
+        scrollToPageEnd();
+      }
+      return;
     }
+    // Past first paint: keep live-follow behavior — stick to the end while the
+    // reader is already near it (followScrollRef is set in commitLogs).
+    if (followScrollRef.current) scrollToPageEnd();
   }, [logsVersion, orderedLogs.length]);
 
   useEffect(() => {
@@ -429,14 +465,14 @@ export default function SessionDetail() {
   // otherwise be buried mid-stream. Move it to the end so the reviewer finds the
   // request where they look (and where auto-scroll lands): the bottom of the feed.
   const feedLogs = useMemo(() => {
-    if (!actionable) return visibleLogs;
+    if (!actionable) return collapsedLogs;
     const activeToken = currentResumeTokenRef.current;
-    const idx = visibleLogs.findIndex((e) =>
+    const idx = collapsedLogs.findIndex((e) =>
       e.status === 'pending' && Boolean(e.details)
       && (!activeToken || e.details?.resumeToken === activeToken));
-    if (idx < 0 || idx === visibleLogs.length - 1) return visibleLogs;
-    return [...visibleLogs.slice(0, idx), ...visibleLogs.slice(idx + 1), visibleLogs[idx]];
-  }, [visibleLogs, actionable]);
+    if (idx < 0 || idx === collapsedLogs.length - 1) return collapsedLogs;
+    return [...collapsedLogs.slice(0, idx), ...collapsedLogs.slice(idx + 1), collapsedLogs[idx]];
+  }, [collapsedLogs, actionable]);
 
   useEffect(() => {
     if (continueActionable) setSubmittingContinue(false);
@@ -545,6 +581,12 @@ export default function SessionDetail() {
       if (decisionDialog) return;
       const target = event.target as HTMLElement | null;
       const inField = target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT');
+      // Single-letter shortcuts must not steal keys from any interactive element
+      // (a focused link/button/select/summary/role=button/editable) or fire while
+      // any dialog is open, where the letter is likely meant for that surface.
+      const active = document.activeElement as HTMLElement | null;
+      const inInteractive = Boolean(active?.closest('a, button, select, summary, [role="button"], [contenteditable]'));
+      const anyDialogOpen = Boolean(document.querySelector('dialog[open], [role="dialog"]'));
       const canAct = actionable && !submittingDecision;
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         if (!canAct || inField) return;
@@ -553,7 +595,7 @@ export default function SessionDetail() {
       } else if (event.key === 'Escape' && !inField) {
         if (!canAct) return;
         setDecisionDialog('reject');
-      } else if ((event.key === 'c' || event.key === 'C') && !inField && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      } else if ((event.key === 'c' || event.key === 'C') && !inField && !inInteractive && !anyDialogOpen && !event.metaKey && !event.ctrlKey && !event.altKey) {
         if (!canAct) return;
         event.preventDefault();
         setDecisionDialog('comment');
@@ -761,7 +803,7 @@ export default function SessionDetail() {
           )}
         </div>
         <div class="panel">
-          <ul class="logs">
+          <ul class="logs" role="log">
             {visibleLogs.length === 0 && (
               <li class="log-empty">
                 {orderedLogs.length === 0
@@ -773,6 +815,7 @@ export default function SessionDetail() {
               <LogEntry
                 key={entry.id}
                 entry={entry}
+                repeatCount={entry.repeatCount}
                 warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
                 expanded={expandedIds.has(entry.id)}
                 showActions={actionable && entry.status === 'pending' && Boolean(entry.details) &&
@@ -795,7 +838,7 @@ export default function SessionDetail() {
               />
             ))}
             {showWorking && (
-              <li class="log-item log-working" aria-live="polite">
+              <li class="log-item log-working">
                 <span class="log-time" />
                 <span class="log-marker"><span class="log-spinner" aria-label="working" /></span>
                 <div class="log-main">
@@ -886,7 +929,7 @@ export default function SessionDetail() {
           This session is not accepting actions right now.
         </div>
 
-        <p class={`notice${result.error ? ' error' : ''}`}>{result.text}</p>
+        <p class={`notice${result.error ? ' error' : ''}`} role={result.error ? 'alert' : 'status'}>{result.text}</p>
       </main>
 
       <DecisionDialog

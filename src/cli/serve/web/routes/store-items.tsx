@@ -21,7 +21,7 @@ export default function StoreItems() {
   const project = location.query.project || undefined;
   const highlight = location.query.highlight || undefined;
 
-  useTitle(`AgentUse Store - ${storeName}`);
+  useTitle(`AgentUse / Stores / ${storeName}`);
 
   const { data, error, loading } = useFetch(
     `store-items:${storeName}:${project ?? ''}`,

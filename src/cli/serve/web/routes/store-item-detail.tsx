@@ -32,7 +32,7 @@ export default function StoreItemDetail() {
   );
 
   const item = data?.item;
-  useTitle(item ? `AgentUse Store Item - ${storeItemTitle(item)}` : 'AgentUse Store Item');
+  useTitle(item ? `AgentUse / Stores / ${storeName} / ${storeItemTitle(item)}` : `AgentUse / Stores / ${storeName}`);
 
   const backParams = new URLSearchParams();
   if (data?.project) backParams.set('project', data.project);

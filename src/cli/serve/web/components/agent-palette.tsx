@@ -1,5 +1,5 @@
 import type { VNode } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
 import type { AgentRow } from '../lib/api';
 import { fetchAgents } from '../lib/api';
@@ -105,6 +105,10 @@ export function AgentPalette() {
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // Stable ids wiring the input (role=combobox) to the listbox and the active
+  // option for screen readers via aria-controls / aria-activedescendant.
+  const listboxId = useId();
 
   // Open via ⌘K / Ctrl+K (capture phase so it fires even while a page input
   // holds focus) or via the topbar search button on touch devices, which has no
@@ -129,15 +133,21 @@ export function AgentPalette() {
   // focus the input on every open.
   useEffect(() => {
     if (!open) return;
+    // Remember what had focus so we can hand it back when the palette closes.
+    const returnFocusTo = document.activeElement as HTMLElement | null;
     setQuery('');
     setActive(0);
     inputRef.current?.focus();
-    if (agents || loadError) return;
     let live = true;
-    fetchAgents()
-      .then((payload) => { if (live) setAgents(payload.agents); })
-      .catch((err: Error) => { if (live) setLoadError(err.message); });
-    return () => { live = false; };
+    if (!agents && !loadError) {
+      fetchAgents()
+        .then((payload) => { if (live) setAgents(payload.agents); })
+        .catch((err: Error) => { if (live) setLoadError(err.message); });
+    }
+    return () => {
+      live = false;
+      if (returnFocusTo && document.contains(returnFocusTo)) returnFocusTo.focus();
+    };
   }, [open]);
 
   const results = useMemo(() => rank(agents ?? [], query.trim()), [agents, query]);
@@ -162,11 +172,35 @@ export function AgentPalette() {
     else if (e.key === 'Enter') { e.preventDefault(); go(results[active]); }
   };
 
+  // Manual focus trap: the palette is a plain role=dialog (not a native
+  // <dialog>), so Tab would otherwise escape into the page behind the backdrop.
+  // Keep Tab / Shift+Tab cycling among the palette's focusable elements.
+  const onDialogKeyDown = (e: KeyboardEvent) => {
+    if (e.key !== 'Tab') return;
+    const focusable = Array.from(
+      dialogRef.current?.querySelectorAll<HTMLElement>('input, button, a[href], [tabindex]:not([tabindex="-1"])') ?? [],
+    );
+    if (focusable.length === 0) { e.preventDefault(); return; }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const activeEl = document.activeElement;
+    if (e.shiftKey) {
+      if (activeEl === first || !dialogRef.current?.contains(activeEl)) { e.preventDefault(); last.focus(); }
+    } else if (activeEl === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  // Points screen readers at the option under the arrow-key cursor; undefined
+  // when there are no results so nothing is announced as active.
+  const activeOptionId = results.length > 0 && active < results.length ? `${listboxId}-opt-${active}` : undefined;
+
   if (!open) return null;
 
   return (
     <div class="palette-backdrop" onMouseDown={close}>
-      <div class="palette" role="dialog" aria-modal="true" aria-label="Go to agent" onMouseDown={(e) => e.stopPropagation()}>
+      <div class="palette" role="dialog" aria-modal="true" aria-label="Go to agent" ref={dialogRef} onKeyDown={onDialogKeyDown} onMouseDown={(e) => e.stopPropagation()}>
         <div class="palette-input">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="7" cy="7" r="4.5" /><path d="m11 11 3 3" />
@@ -178,13 +212,18 @@ export function AgentPalette() {
             onInput={(e) => { setQuery((e.target as HTMLInputElement).value); setActive(0); }}
             onKeyDown={onKeyDown}
             placeholder="Go to agent…"
+            role="combobox"
             aria-label="Go to agent"
+            aria-expanded={open}
+            aria-controls={listboxId}
+            aria-autocomplete="list"
+            aria-activedescendant={activeOptionId}
             spellcheck={false}
             autocomplete="off"
           />
           <kbd class="palette-esc">esc</kbd>
         </div>
-        <div class="palette-list" ref={listRef} role="listbox">
+        <div class="palette-list" id={listboxId} ref={listRef} role="listbox">
           {loadError
             ? <div class="palette-empty">Failed to load agents: {loadError}</div>
             : agents === null
@@ -195,6 +234,7 @@ export function AgentPalette() {
                   <button
                     type="button"
                     key={`${r.agent.projectId}::${r.agent.path}`}
+                    id={`${listboxId}-opt-${i}`}
                     class={i === active ? 'palette-row active' : 'palette-row'}
                     role="option"
                     aria-selected={i === active}

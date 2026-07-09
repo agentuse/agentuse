@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import type { SessionRow, SessionsPayload } from '../lib/api';
 import { fetchSessions, fetchAgents } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
+import { useMediaQuery } from '../hooks/use-media-query';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
@@ -54,9 +55,24 @@ export default function SessionsList() {
   // Default to 24h for the general feed, but widen to 30d when an agent or
   // approval filter is active: those runs are often days old, and a 24h default
   // would show "no sessions" for an agent that simply hasn't run today.
-  const win = q.window || (agentFilter || approvalFilter ? '30d' : '24h');
+  const defaultWin = agentFilter || approvalFilter ? '30d' : '24h';
+  const win = q.window || defaultWin;
 
   useTitle('AgentUse / Sessions');
+
+  // On phones the four-filter row fills the first screen before any session
+  // shows, so collapse it behind a toggle. Start expanded when a non-default
+  // filter is already applied - the operator is mid-narrowing and needs to see
+  // (and clear) it. Desktop keeps the row always visible.
+  const narrow = useMediaQuery('(max-width: 700px)');
+  const activeCount = [
+    win !== defaultWin,
+    statusFilter !== '',
+    triggerFilter !== '',
+    Boolean(agentFilter),
+    Boolean(approvalFilter),
+  ].filter(Boolean).length;
+  const [filtersOpen, setFiltersOpen] = useState(activeCount > 0);
 
   // Agent list powers the filter's type-ahead so operators pick a real agent id
   // instead of guessing a substring (which silently misses renamed/moved ids).
@@ -146,10 +162,21 @@ export default function SessionsList() {
 
   return (
     <div class="page-sessions">
-      <Topbar currentPage="sessions" right={<span class="pending-count">{rows.length} shown</span>} />
+      <Topbar currentPage="sessions" right={<span class="pending-count">{rows.length} in {win === 'all' ? 'all time' : win}</span>} />
       <main>
         <h1>Sessions <PushBell category="sessions" /></h1>
-        <div class="filters">
+        {narrow && (
+          <button
+            type="button"
+            class="filters-toggle"
+            aria-expanded={filtersOpen}
+            aria-controls="session-filters"
+            onClick={() => setFiltersOpen((o) => !o)}
+          >
+            filters{activeCount ? ` (${activeCount} active)` : ''}
+          </button>
+        )}
+        <div id="session-filters" class={`filters${narrow && !filtersOpen ? ' collapsed' : ''}`}>
           <label>window
             <select value={win} onChange={onSelect('window')}>
               {WINDOWS.map((w) => <option value={w} key={w}>{w}</option>)}
@@ -171,9 +198,9 @@ export default function SessionsList() {
           {approvalFilter && <a class="filter-clear" href={withParam('approval', '')}>approval: {approvalFilter} ✕</a>}
         </div>
 
-        {resolvedError && <div class="errors">Failed to load sessions: {resolvedError.message}</div>}
+        {resolvedError && <div class="errors" role="alert">Failed to load sessions: {resolvedError.message}</div>}
         {resolvedData && resolvedData.errors.length > 0 && (
-          <div class="errors">Some projects failed: <ul>{resolvedData.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul></div>
+          <div class="errors" role="alert">Some projects failed: <ul>{resolvedData.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul></div>
         )}
         {resolvedLoading && !resolvedData && <p class="empty">Loading sessions…</p>}
         {resolvedData && (rows.length === 0

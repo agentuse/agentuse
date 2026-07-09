@@ -112,6 +112,8 @@ export default function ApprovalsList() {
   const loading = fetched.loading && !data;
   const totalPending = data?.buckets.pending.length ?? 0;
   const multiProject = data?.multiProject ?? false;
+  const recentlyDecided = [...(data?.buckets.completed ?? []), ...(data?.buckets.expired ?? [])]
+    .sort((a, b) => (b.decisionAt ?? b.expiresAt ?? 0) - (a.decisionAt ?? a.expiresAt ?? 0));
 
   // The list is the source of truth for the app-icon badge: opening it (or
   // watching it live) corrects whatever count pushes left behind.
@@ -125,10 +127,10 @@ export default function ApprovalsList() {
       <main>
         <h1>Approvals <PushBell category="approvals" /></h1>
         {error && (
-          <div class="errors">Failed to load approvals: {error.message}</div>
+          <div class="errors" role="alert">Failed to load approvals: {error.message}</div>
         )}
         {data && data.errors.length > 0 && (
-          <div class="errors">
+          <div class="errors" role="alert">
             Some projects failed to load:
             <ul>{data.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul>
           </div>
@@ -137,6 +139,9 @@ export default function ApprovalsList() {
         {data && (
           <>
             <Bucket title="Pending" rows={data.buckets.pending} emptyText="No approvals waiting." multiProject={multiProject} />
+            {/* Decided and expired gates share one "Recently decided" list, most
+                recent first, so the operator can confirm a call was recorded. */}
+            <Bucket title="Recently decided" rows={recentlyDecided} emptyText="No recent decisions." multiProject={multiProject} />
             <footer>{streamFallback ? 'auto-refreshes every 10s' : 'live updates'}</footer>
           </>
         )}
