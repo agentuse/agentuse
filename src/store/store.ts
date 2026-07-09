@@ -2,7 +2,7 @@
  * Store class for persistent agent data storage
  */
 
-import { readFile, writeFile, mkdir, unlink, rename } from 'fs/promises';
+import { readFile, writeFile, mkdir, unlink, rename, open } from 'fs/promises';
 import { existsSync, lstatSync } from 'fs';
 import { join, dirname, resolve, relative, isAbsolute } from 'path';
 import process from 'node:process';
@@ -224,16 +224,29 @@ export class Store {
    */
   private async readItems(): Promise<StoreItem[]> {
     if (!existsSync(this.storePath)) return [];
+    let content: string;
     try {
-      const content = await readFile(this.storePath, 'utf-8');
+      content = await readFile(this.storePath, 'utf-8');
+    } catch (error) {
+      // A transient read failure (EMFILE/EIO/etc.) must NOT be mistaken for an
+      // empty store: mutate() would then write [] over a healthy file, wiping
+      // it. Surface the error so the enclosing write transaction aborts.
+      throw new Error(
+        `[Store] Failed to read store from ${this.storePath}: ${(error as Error).message}`
+      );
+    }
+    try {
       const data = JSON.parse(content);
       const validated = StoreFileSchema.parse(data);
       // Cast is safe because Zod schema matches our type structure
       return validated.items as StoreItem[];
     } catch (error) {
-      // If file is corrupted, start fresh but log warning
-      logger.warn(`[Store] Failed to load store from ${this.storePath}: ${(error as Error).message}`);
-      return [];
+      // Corrupt/truncated content is also not an empty store. Refuse rather
+      // than overwrite whatever is on disk with [].
+      logger.warn(`[Store] Store file is unreadable at ${this.storePath}: ${(error as Error).message}`);
+      throw new Error(
+        `[Store] Refusing to operate on a corrupt store at ${this.storePath}: ${(error as Error).message}`
+      );
     }
   }
 
@@ -249,7 +262,15 @@ export class Store {
 
     const storeFile: StoreFile = { version: 1, items };
     const tempPath = `${this.storePath}.${randomBytes(4).toString('hex')}.tmp`;
-    await writeFile(tempPath, JSON.stringify(storeFile, null, 2), 'utf-8');
+    // fsync the temp file before rename so a crash can't surface a truncated
+    // target (which readItems would then refuse to operate on).
+    const fh = await open(tempPath, 'w');
+    try {
+      await fh.writeFile(JSON.stringify(storeFile, null, 2), 'utf-8');
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
     await rename(tempPath, this.storePath);
   }
 
@@ -269,8 +290,12 @@ export class Store {
     for (;;) {
       const blocker = await this.inspectLock();
       if (!blocker) {
-        await this.writeLockFile();
-        return;
+        // Exclusive create (O_EXCL) is the actual mutual-exclusion primitive:
+        // an existsSync-then-write pair lets two processes both pass the check
+        // and clobber each other's lock. If another process raced us to create
+        // the file, re-inspect — steal only if it is genuinely abandoned.
+        if (await this.writeLockFile()) return;
+        continue;
       }
       if (Date.now() >= deadline) {
         throw new Error(
@@ -333,15 +358,37 @@ export class Store {
   }
 
   /**
-   * Write our identity into the lock file.
+   * Try to take the on-disk lock via exclusive create. Returns true when we
+   * won it, false when another process holds it and we should re-inspect.
+   * Caller must have just seen inspectLock() return null.
    */
-  private async writeLockFile(): Promise<void> {
-    const lockData = {
+  private async writeLockFile(): Promise<boolean> {
+    const payload = JSON.stringify({
       pid: process.pid,
       agent: this.agentName,
       timestamp: new Date().toISOString(),
-    };
-    await writeFile(this.lockPath, JSON.stringify(lockData, null, 2), 'utf-8');
+    }, null, 2);
+
+    try {
+      await writeFile(this.lockPath, payload, { encoding: 'utf-8', flag: 'wx' });
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+
+    // A file exists. Re-inspect: inspectLock() returning null means it is our
+    // own leftover / stale / dead-PID, so it is safe to remove and retry once.
+    // If it is now a live lock from another process, back off and let the
+    // caller wait — do NOT unlink a lock we don't own.
+    if ((await this.inspectLock()) !== null) return false;
+    await unlink(this.lockPath).catch(() => {});
+    try {
+      await writeFile(this.lockPath, payload, { encoding: 'utf-8', flag: 'wx' });
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw err;
+    }
   }
 
   /**
