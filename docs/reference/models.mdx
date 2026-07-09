@@ -15,7 +15,7 @@ This page lists recommended models for AgentUse, organized by provider.
 
 **Default models:**
 - **Anthropic**: `anthropic:claude-sonnet-5` (balanced performance)
-- **OpenAI**: `openai:gpt-5.5` (latest GPT)
+- **OpenAI**: `openai:gpt-5.6` (latest GPT)
 - **OpenRouter**: `openrouter:z-ai/glm-5.2` (open source)
 - **Amazon Bedrock**: `bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0`
 
@@ -35,7 +35,10 @@ This page lists recommended models for AgentUse, organized by provider.
 
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
-| `openai:gpt-5.5` | GPT-5.5 | 922,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.6` | GPT-5.6 | 922,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.6-sol` | GPT-5.6 Sol | 922,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.6-luna` | GPT-5.6 Luna | 922,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.6-terra` | GPT-5.6 Terra | 922,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.5-pro` | GPT-5.5 Pro | 922,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.4-nano` | GPT-5.4 nano | 272,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.4-mini` | GPT-5.4 mini | 272,000 | 128,000 | Reasoning, Vision, Tools |
@@ -49,11 +52,11 @@ This page lists recommended models for AgentUse, organized by provider.
 
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
-| `openrouter:z-ai/glm-5.2` | GLM-5.2 | 1,048,576 | 32,768 | Reasoning, Tools |
+| `openrouter:z-ai/glm-5.2` | GLM-5.2 | 101,376 | 101,376 | Reasoning, Tools |
 | `openrouter:z-ai/glm-5v-turbo` | GLM-5V-Turbo | 202,752 | 131,072 | Reasoning, Vision, Tools |
-| `openrouter:x-ai/grok-4.3` | Grok 4.3 | 1,000,000 | 1,000,000 | Reasoning, Vision, Tools |
+| `openrouter:x-ai/grok-4.5` | Grok 4.5 | 500,000 | 500,000 | Reasoning, Vision, Tools |
 | `openrouter:deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1,048,576 | 384,000 | Reasoning, Tools |
-| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,575 | 65,536 | Reasoning, Tools |
+| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,576 | 65,536 | Reasoning, Tools |
 | `openrouter:qwen/qwen3.7-max` | Qwen3.7 Max | 1,000,000 | 65,536 | Reasoning, Tools |
 | `openrouter:qwen/qwen3.7-plus` | Qwen3.7 Plus | 1,000,000 | 65,536 | Reasoning, Vision, Tools |
 | `openrouter:google/gemini-3.5-flash` | Gemini 3.5 Flash | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
@@ -114,6 +117,6 @@ model: anthropic:claude-sonnet-5
 Or override via CLI:
 
 ```bash
-agentuse run agent.agentuse -m openai:gpt-5.5
+agentuse run agent.agentuse -m openai:gpt-5.6
 agentuse run agent.agentuse -m ollama:glm-5-flash:q4_K_M
 ```

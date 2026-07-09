@@ -89,7 +89,7 @@ export OPENCODE_GO_API_KEY_TEAM=opencode-go-team-key
 
 # Then specify in model string
 agentuse run agent.md --model anthropic:claude-sonnet-5:dev
-agentuse run agent.md --model openai:gpt-5.5:OPENAI_API_KEY_PERSONAL
+agentuse run agent.md --model openai:gpt-5.6:OPENAI_API_KEY_PERSONAL
 agentuse run agent.md --model opencode-go:kimi-k2.7-code:OPENCODE_GO_API_KEY_TEAM
 ```
 
@@ -250,7 +250,7 @@ Output:
 
 Stored credentials:
   🔑 anthropic (oauth) → Use as: anthropic:claude-sonnet-5
-  🎫 openai (api) → Use as: openai:gpt-5.5
+  🎫 openai (api) → Use as: openai:gpt-5.6
 
 Environment variables:
   🌍 openrouter (OPENROUTER_API_KEY) → Use as: openrouter:z-ai/glm-5.2
@@ -328,7 +328,7 @@ model: anthropic:claude-haiku-4-5  # Uses Anthropic
 ```markdown
 ---
 name: powerful-agent
-model: openai:gpt-5.5  # Uses OpenAI GPT-5
+model: openai:gpt-5.6  # Uses OpenAI GPT-5
 openai:
   reasoningEffort: high    # More thorough reasoning
   textVerbosity: medium    # Balanced response length
@@ -366,7 +366,7 @@ For OpenAI models (especially GPT-5), you can control thinking effort and verbos
 
 ```yaml
 ---
-model: openai:gpt-5.5
+model: openai:gpt-5.6
 openai:
   reasoningEffort: high      # Options: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'
   reasoningSummary: auto     # Options: 'auto', 'detailed' — surface reasoning in the session trace

@@ -399,7 +399,7 @@ export interface ModelInfo {
     input?: number;
     output: number;
   };
-  /** Cost per token in USD (from models.dev) */
+  /** Cost in USD per MILLION tokens (models.dev convention). */
   cost: {
     input: number;
     output: number;
