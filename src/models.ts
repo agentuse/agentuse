@@ -153,8 +153,17 @@ export async function resolveMediaToolResultSupport(
         : { image: false, pdf: false };
     }
     default:
-      // openrouter (Chat-Completions-compatible), opencode-go, and custom
-      // providers cannot carry media in a tool result.
+      // opencode-go models on the Anthropic protocol route through
+      // createAnthropic().chat() (the Messages API) in createModel, which does
+      // carry image + pdf in tool results — so don't stringify media for them.
+      if (
+        config.provider === OPENCODE_GO_PROVIDER_ID &&
+        getOpenCodeGoProtocol(config.modelName) === 'anthropic'
+      ) {
+        return { image: true, pdf: true };
+      }
+      // openrouter (Chat-Completions-compatible), OpenAI-protocol opencode-go,
+      // and custom providers cannot carry media in a tool result.
       return { image: false, pdf: false };
   }
 }

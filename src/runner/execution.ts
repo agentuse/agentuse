@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import type { ParsedAgent } from '../parser';
 import { createModel } from '../models';
 import { getModelFromRegistry } from '../generated/models';
+import { toRegistryKey } from '../utils/model-utils';
 import { BUILTIN_PROVIDERS } from '../providers/registry-sources';
 import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
 import { CodexAuth } from '../auth/codex';
@@ -65,7 +66,7 @@ export function resolveMaxOutputTokens(agent: ParsedAgent): number | undefined {
   const override = agent.config.maxOutputTokens;
   if (isCustomProvider) return override ?? CUSTOM_PROVIDER_MAX_OUTPUT_TOKENS;
 
-  const registryOutput = getModelFromRegistry(agent.config.model)?.limit?.output;
+  const registryOutput = getModelFromRegistry(toRegistryKey(agent.config.model))?.limit?.output;
   if (override) return registryOutput ? Math.min(override, registryOutput) : override;
 
   if (provider === 'anthropic' && registryOutput && registryOutput > 0) {
@@ -98,7 +99,7 @@ export function openAIOptionsWithCacheDefaults(agent: ParsedAgent): Record<strin
   // Responses API rejects reasoningSummary on non-reasoning models (gpt-4o), and
   // an unknown model is treated as non-reasoning (a broken run is worse than an
   // opt-in-able missing summary). Explicit user config always wins.
-  const isReasoningModel = getModelFromRegistry(agent.config.model)?.reasoning === true;
+  const isReasoningModel = getModelFromRegistry(toRegistryKey(agent.config.model))?.reasoning === true;
   return {
     promptCacheKey: configured.promptCacheKey ?? defaultOpenAIPromptCacheKey(agent),
     ...(isReasoningModel && { reasoningSummary: 'auto' }),
@@ -120,7 +121,7 @@ export function resolveAnthropicThinking(
   const maxOutputTokens = Math.max(
     budgetTokens + 1,
     Math.min(
-      getModelFromRegistry(agent.config.model)?.limit?.output ?? Number.MAX_SAFE_INTEGER,
+      getModelFromRegistry(toRegistryKey(agent.config.model))?.limit?.output ?? Number.MAX_SAFE_INTEGER,
       budgetTokens + ANTHROPIC_THINKING_ANSWER_RESERVE
     )
   );

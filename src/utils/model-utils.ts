@@ -6,6 +6,27 @@ import fuzzysort from 'fuzzysort';
 import { getSuggestedModelIds, getModelFromRegistry, type ModelInfo } from '../generated/models';
 import { logger } from './logger';
 import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
+import { BUILTIN_PROVIDERS } from '../providers/registry-sources';
+
+/**
+ * Collapse the optional `:env` auth suffix so a model string can be looked up
+ * in the registry. `provider:model:env` (e.g. anthropic:claude-fable-5:dev)
+ * must resolve to the `provider:model` registry key; without this the suffix
+ * is treated as part of the model id and every lookup silently misses,
+ * defeating capability resolution (output-token clamp, reasoning summaries).
+ * Mirrors parseModelConfig: only built-in providers use the suffix syntax;
+ * bedrock and custom/opencode-go providers keep colons in their ids verbatim.
+ */
+export function toRegistryKey(modelString: string): string {
+  const firstColon = modelString.indexOf(':');
+  if (firstColon === -1) return modelString;
+  const provider = modelString.slice(0, firstColon);
+  if (provider === 'bedrock' || !BUILTIN_PROVIDERS.includes(provider)) return modelString;
+  const rest = modelString.slice(firstColon + 1);
+  const secondColon = rest.indexOf(':');
+  if (secondColon === -1) return modelString;
+  return `${provider}:${rest.slice(0, secondColon)}`;
+}
 
 export interface ValidationResult {
   valid: boolean;
@@ -22,8 +43,8 @@ export function validateModel(modelString: string): ValidationResult {
     return { valid: true };
   }
 
-  // Check if model exists in registry
-  const model = getModelFromRegistry(modelString);
+  // Check if model exists in registry (strip any :env auth suffix first)
+  const model = getModelFromRegistry(toRegistryKey(modelString));
   if (model) {
     return { valid: true, model };
   }
