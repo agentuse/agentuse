@@ -986,6 +986,9 @@ a, button, select, summary, label, input, textarea,
   animation: cursor-blink 900ms steps(2, start) infinite;
 }
 @keyframes cursor-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .log-item.streaming .log-content .content-markdown > :last-child::after { animation: none; }
+}
 /* Live thinking gets a signature only while it streams: the ✻ breathes and the
    monologue leans italic; finished reasoning stays as quiet as ever. */
 .log-item.streaming[data-log-type="reasoning"] .log-marker {

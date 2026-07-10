@@ -1,5 +1,6 @@
 import { memo } from 'preact/compat';
 import { useState } from 'preact/hooks';
+import { useSmoothText } from '../hooks/use-smooth-text';
 import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalReference, LogSubagentSession } from '../../types';
 import { formatLogTime, isJsonLikeContent, logEntrySignature, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
 import type { StoreItem } from '../../../../store/types';
@@ -454,6 +455,11 @@ function LogEntryImpl(props: LogEntryProps) {
   const spinning = entry.status === 'streaming' || entry.status === 'running';
   // A failed tool call must read as failure without relying on color alone.
   const failed = entry.status === 'error' || entry.status === 'failed';
+  // Streaming prose reveals progressively (typing effect); everything else
+  // renders its message as-is. The hook is a pass-through when not streaming.
+  const prose = entry.type === 'text' || entry.type === 'reasoning';
+  const typing = prose && entry.status === 'streaming' && Boolean(entry.message);
+  const message = useSmoothText(entry.message ?? '', typing);
 
   const classes = [
     'log-item',
@@ -520,7 +526,7 @@ function LogEntryImpl(props: LogEntryProps) {
           {entry.details && (isApprovalEntry
             ? <ApprovalDetailCard details={entry.details} sessionId={props.sessionId} token={props.token} />
             : <ToolDetails details={entry.details} sessionId={props.sessionId} token={props.token} />)}
-          {entry.message && !storeEvent && !entry.subagentSession && <LogContent value={entry.message} forceMarkdown={entry.type === 'text' || entry.type === 'reasoning'} />}
+          {message && !storeEvent && !entry.subagentSession && <LogContent value={message} forceMarkdown={prose} />}
           {warnings.length > 0 && <LogWarnings warnings={warnings} />}
         </div>
         {props.showActions && (

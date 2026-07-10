@@ -459,6 +459,23 @@ export default function SessionDetail() {
     } catch { /* ignore */ }
   }, []);
 
+  // The typing reveal grows the page a few pixels per frame between log
+  // commits, where the logsVersion follow effect never fires. Watch the feed's
+  // size while the session is live and stick to the end — but only when the
+  // reader is already near it, so scrolling up still escapes the follow.
+  useEffect(() => {
+    if (!isLiveStatus(status, orderedLogs) || typeof ResizeObserver === 'undefined') return;
+    const feed = document.querySelector('.logs');
+    if (!feed) return;
+    const ro = new ResizeObserver(() => {
+      if (isNearPageEnd()) {
+        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' });
+      }
+    });
+    ro.observe(feed);
+    return () => ro.disconnect();
+  }, [status, orderedLogs]);
+
   // The sub-agent breadcrumb sticks directly below the sticky topbar, whose
   // height changes when its nav wraps to a second row on narrow screens. Measure
   // it into --topbar-h so the trail's sticky offset tracks the real height
