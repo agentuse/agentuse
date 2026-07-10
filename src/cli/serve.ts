@@ -2078,7 +2078,7 @@ export function createServeCommand(): Command {
             const agentPath = resolveScopedAgentPath(seed, agentFile);
             const agent = await parseAgent(agentPath);
             if (agent.config.schedule && canArmSchedules(seed.id, seed.root)) {
-              scheduler.add(seed.id, agentFile, agent.config.schedule);
+              scheduler.add(seed.id, agentFile, agent.config.schedule, agent.config.name);
               logger.debug(`Loaded schedule for ${seed.id}: ${agentFile}`);
             }
           } catch (err) {
@@ -2152,7 +2152,7 @@ export function createServeCommand(): Command {
               const agentPath = resolveScopedAgentPath(project, relativePath);
               const agent = await parseAgent(agentPath);
               const schedule = agent.config.schedule && canArmSchedules(project.id, project.root)
-                ? scheduler.add(project.id, relativePath, agent.config.schedule)
+                ? scheduler.add(project.id, relativePath, agent.config.schedule, agent.config.name)
                 : undefined;
               printHotReload(project.id, "added", relativePath, schedule);
             } catch (err) {
@@ -2180,7 +2180,8 @@ export function createServeCommand(): Command {
               const schedule = scheduler.update(
                 project.id,
                 relativePath,
-                agent.config.schedule && canArmSchedules(project.id, project.root) ? agent.config.schedule : undefined
+                agent.config.schedule && canArmSchedules(project.id, project.root) ? agent.config.schedule : undefined,
+                agent.config.name
               );
               printHotReload(project.id, "changed", relativePath, schedule);
 

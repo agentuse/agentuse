@@ -29,6 +29,8 @@ export interface Schedule {
   id: string;
   projectId: string;
   agentPath: string;
+  /** Friendly agent name from the file's frontmatter, when known. */
+  agentName?: string;
   expression: string; // Normalized cron expression
   timezone: string;
   enabled: boolean;

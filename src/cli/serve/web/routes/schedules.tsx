@@ -32,8 +32,13 @@ function Slot(props: { schedule: SerializedSchedule; multiProject: boolean }) {
       <div class="slot-time">{time}</div>
       <div class="slot-main">
         {multiProject && <div class="slot-proj">{schedule.projectId}</div>}
-        <a class="slot-agent" href={agentDetailHref(schedule.projectId, schedule.agentPath)}><code>{schedule.agentPath}</code></a>
-        <div class="slot-cadence" title={`${schedule.expression}${staggerNote}`}>{schedule.human}</div>
+        <a class="slot-agent" href={agentDetailHref(schedule.projectId, schedule.agentPath)}>
+          {schedule.agentName || <code>{schedule.agentPath}</code>}
+        </a>
+        <div class="slot-cadence" title={`${schedule.expression}${staggerNote}`}>
+          {schedule.human}
+          {schedule.agentName && <> · <code>{schedule.agentPath}</code></>}
+        </div>
       </div>
       <div class="slot-side">{lastRun}</div>
     </div>

@@ -14,6 +14,8 @@ export interface SerializedSchedule {
   id: string;
   projectId: string;
   agentPath: string;
+  /** Friendly agent name from the file's frontmatter, when known. */
+  agentName?: string;
   expression: string;
   /** Human-readable description of the cron expression. */
   human: string;
@@ -117,7 +119,7 @@ export class Scheduler {
   /**
    * Add a schedule for an agent
    */
-  add(projectId: string, agentPath: string, config: ScheduleConfig): Schedule {
+  add(projectId: string, agentPath: string, config: ScheduleConfig, agentName?: string): Schedule {
     const id = randomUUID();
     const expression = parseScheduleExpression(config);
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -127,6 +129,7 @@ export class Scheduler {
       id,
       projectId,
       agentPath,
+      ...(agentName && { agentName }),
       expression,
       timezone,
       enabled: true,
@@ -287,6 +290,7 @@ export class Scheduler {
         id: s.id,
         projectId: s.projectId,
         agentPath: s.agentPath,
+        ...(s.agentName && { agentName: s.agentName }),
         expression: s.expression,
         human: this.cronToHuman(s.expression),
         timezone: s.timezone,
@@ -345,13 +349,13 @@ export class Scheduler {
    * Update a schedule for an agent (removes old, adds new)
    * @returns The new schedule, or undefined if no schedule config provided
    */
-  update(projectId: string, agentPath: string, config: ScheduleConfig | undefined): Schedule | undefined {
+  update(projectId: string, agentPath: string, config: ScheduleConfig | undefined, agentName?: string): Schedule | undefined {
     // Always remove existing schedule first
     this.removeByAgentPath(projectId, agentPath);
 
     // Add new schedule if config provided
     if (config) {
-      return this.add(projectId, agentPath, config);
+      return this.add(projectId, agentPath, config, agentName);
     }
 
     return undefined;

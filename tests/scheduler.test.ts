@@ -156,6 +156,15 @@ describe("Scheduler", () => {
       expect(schedule.expression).toBe("*/5 * * * *");
     });
 
+    it("carries the agent name through to the serialized payload", () => {
+      scheduler.add("test-project", "test.agentuse", "0 9 * * *", "Test Agent");
+      scheduler.add("test-project", "anon.agentuse", "0 10 * * *");
+
+      const serialized = scheduler.listSerialized();
+      expect(serialized.find((s) => s.agentPath === "test.agentuse")?.agentName).toBe("Test Agent");
+      expect(serialized.find((s) => s.agentPath === "anon.agentuse")?.agentName).toBeUndefined();
+    });
+
     it("uses system timezone", () => {
       const schedule = scheduler.add("test-project", "test.agentuse", "0 9 * * *");
 
