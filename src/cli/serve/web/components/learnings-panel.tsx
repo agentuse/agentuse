@@ -26,6 +26,8 @@ const GROUPS: { source: SessionLearningSource; label: string }[] = [
  */
 function LearningsSection(props: {
   hidden?: boolean;
+  /** DOM id for the panel root, so a toggle button can reference it via aria-controls. */
+  id?: string;
   /** Panel heading; pass null when the surrounding page already labels the section. */
   label: string | null;
   emptyText: string;
@@ -88,7 +90,7 @@ function LearningsSection(props: {
   );
 
   return (
-    <div class="learnings-panel">
+    <div class="learnings-panel" id={props.id}>
       {props.label !== null && <div class="learnings-label">{props.label}</div>}
       {error && <p class="learnings-error">{error}</p>}
       {learnings === null && !error && <p class="learnings-empty">Loading…</p>}
@@ -165,6 +167,7 @@ export function LearningsPanel(props: {
   return (
     <LearningsSection
       hidden={props.hidden}
+      id="learnings-panel"
       label="learned instructions from this session"
       emptyText="Nothing learned in this session — add an instruction to steer future runs."
       fetchList={() => fetchSessionLearnings(props.sessionId, props.token, props.project)}

@@ -189,6 +189,9 @@ export default function SessionDetail() {
   // The resume composer stays collapsed until the user clicks "Resume session";
   // clicking again collapses it.
   const [showResume, setShowResume] = useState(false);
+  // Learned instructions can be long, so they stay collapsed behind the
+  // "Learnings" action until toggled open.
+  const [showLearnings, setShowLearnings] = useState(false);
   const [result, setResult] = useState<{ text: string; error: boolean }>({ text: '', error: false });
   // Terminal load failures (unauthorized, not found, corrupted session data):
   // the page can't recover, so we render this instead of the live view.
@@ -964,6 +967,20 @@ export default function SessionDetail() {
               <span>Resume session</span>
             </button>
           )}
+          {learningsVisible && (
+            <button
+              type="button"
+              class={`session-action-button${showLearnings ? ' active' : ''}`}
+              aria-expanded={showLearnings}
+              aria-controls="learnings-panel"
+              onClick={() => setShowLearnings((v) => !v)}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3z" />
+              </svg>
+              <span>Learnings</span>
+            </button>
+          )}
           <DebugPromptButton
             context={{
               sessionId: approval.sessionId,
@@ -1003,7 +1020,7 @@ export default function SessionDetail() {
         />
 
         <LearningsPanel
-          hidden={!learningsVisible}
+          hidden={!learningsVisible || !showLearnings}
           sessionId={sessionId}
           token={token}
           {...(projectId ? { project: projectId } : {})}
