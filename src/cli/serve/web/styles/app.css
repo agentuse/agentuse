@@ -20,6 +20,10 @@
 :root {
   --mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  /* One size for every text field (inputs + textareas). Going under 16px on
+     iOS is safe: the SPA shell caps maximum-scale on iOS, which suppresses
+     Safari's focus auto-zoom (pinch zoom is unaffected there). */
+  --field-font-size: 13.5px;
 }
 
 :root[data-theme="dark"] {
@@ -1747,7 +1751,7 @@ textarea {
   padding: 10px 12px;
   font: inherit;
   font-family: var(--mono);
-  font-size: 13.5px;
+  font-size: var(--field-font-size);
   color: var(--fg);
   outline: none;
   transition: border-color 120ms ease;
@@ -2115,7 +2119,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   background: transparent;
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 14px;
+  font-size: var(--field-font-size);
   padding: 9px 0;
 }
 .page-agents .agents-filter input::placeholder { color: var(--muted); }
@@ -2789,7 +2793,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   width: 100%; box-sizing: border-box; min-height: 76px; resize: vertical;
   padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line-strong);
   background: var(--panel); color: var(--fg);
-  font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+  font-family: var(--mono); font-size: var(--field-font-size); line-height: 1.5;
 }
 .cca-detail textarea:focus { outline: none; border-color: var(--cyan-border); }
 .cca-detail textarea::placeholder { color: var(--muted); }
@@ -3017,6 +3021,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .filters input {
   cursor: text;
   width: 100%;
+  font-size: var(--field-font-size);
 }
 .page-sessions .filters input::placeholder { color: var(--muted); }
 .page-sessions .filters input:focus-visible { outline: none; border-color: var(--cyan-border); }
@@ -3133,8 +3138,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 @media (max-width: 560px) {
   .page-sessions .filters label { width: 100%; }
   .page-sessions .filters select { width: 100%; }
-  /* 16px keeps iOS Safari from zooming the viewport when the field is focused. */
-  .page-sessions .filters input { width: 100%; min-width: 0; font-size: 16px; }
+  .page-sessions .filters input { width: 100%; min-width: 0; }
   .page-sessions .agent-select { width: 100%; min-width: 0; }
   .page-sessions .agent-select-pop { width: 100%; }
   .page-sessions .filter-clear { width: 100%; }
@@ -3283,17 +3287,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   color: var(--muted);
 }
 
-/* iOS Safari auto-zooms when a focused field's font-size is < 16px. Lift the
-   agents filter input to 16px on small screens so focusing never triggers a
-   zoom; 16px is the mobile baseline, so it stays proportionate. Desktop sizing
-   (14px above) is untouched. */
-@media (max-width: 760px) {
-  .page-agents .agents-filter input { font-size: 16px; }
-  /* Same guard for the reply / comment / coding-agent textareas (13.5px and
-     12.5px on desktop): focusing them on iOS would otherwise zoom the viewport. */
-  textarea, .cca-detail textarea { font-size: 16px; }
-}
-
 /* --- reduced motion ---------------------------------------------------- */
 /* Calm the page for users who ask for less motion: drop the decorative status
    pulse, the "working" text pulse, and the animated dots; keep loading spinners
@@ -3380,8 +3373,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   border: 0; outline: 0; background: transparent;
   color: var(--fg);
   font-family: var(--sans);
-  /* 16px min keeps iOS Safari from auto-zooming the viewport on focus. */
-  font-size: 16px;
+  font-size: var(--field-font-size);
   padding: 14px 0;
 }
 .palette-input input::placeholder { color: var(--muted); }
