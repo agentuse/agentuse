@@ -320,10 +320,21 @@ a, button, select, summary, label, input, textarea,
 .page-approvals .row-time { color: var(--muted); font-size: 12px; margin-left: auto; }
 .page-approvals .row-title {
   font-family: var(--sans);
-  font-size: 16px;
+  font-size: 15px;
+  font-weight: 600;
   line-height: 1.35;
   color: var(--fg);
+  overflow-wrap: anywhere;
+}
+/* Approval prompt demoted to a supporting line under the agent name, mirroring
+   the sessions list; clamp so a long prompt can't dominate the row. */
+.page-approvals .row-sub {
+  margin-top: 3px;
+  color: var(--muted-3);
+  font-size: 12.5px;
+  line-height: 1.4;
   white-space: pre-wrap; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .page-approvals .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
 .page-approvals .row-meta { margin-top: 8px; color: var(--muted); font-size: 11px; }
@@ -339,8 +350,8 @@ a, button, select, summary, label, input, textarea,
   color: var(--muted-3);
 }
 /* State pills stay uppercase (a recognizable status convention); identifier
-   chips (project id, agent name) keep their natural case so names aren't shouted
-   and stay consistent with the value chips used elsewhere in the app. */
+   chips (project id) keep their natural case so names aren't shouted and stay
+   consistent with the value chips used elsewhere in the app. */
 .page-approvals .chip.status, .page-approvals .chip.trigger,
 .page-sessions .chip.status, .page-sessions .chip.trigger {
   text-transform: uppercase;
@@ -351,7 +362,6 @@ a, button, select, summary, label, input, textarea,
 .page-approvals .chip.status.rejected { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .page-approvals .chip.status.expired, .page-approvals .chip.status.errored { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
 .page-approvals .chip.project { color: var(--cyan); }
-.page-approvals .chip.agent { color: var(--fg); }
 .page-approvals .errors {
   margin: 16px 0 0;
   padding: 12px 14px;
@@ -3113,10 +3123,21 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .row-time { color: var(--muted); font-size: 12px; margin-left: auto; }
 .page-sessions .row-title {
   font-family: var(--sans);
-  font-size: 16px;
+  font-size: 15px;
+  font-weight: 600;
   line-height: 1.35;
   color: var(--fg);
-  white-space: pre-wrap; overflow-wrap: anywhere;
+  overflow-wrap: anywhere;
+}
+/* Agent description demoted to a supporting line: skimming the list is by agent
+   name (the title above); clamp so a long description can't dominate the row. */
+.page-sessions .row-sub {
+  margin-top: 3px;
+  color: var(--muted-3);
+  font-size: 12.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .page-sessions .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
 .page-sessions .row-meta { margin-top: 8px; color: var(--muted); font-size: 11px; }
@@ -3150,7 +3171,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 /* --- shared chip variants (sessions / approvals rows) --- */
 .chip.trigger { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .chip.project { color: var(--cyan); }
-.chip.agent { color: var(--fg); }
 
 /* Live/paused run states on the sessions list + agent-detail chips. The colored
    treatment previously lived only on the .page-approval-detail status pill, so

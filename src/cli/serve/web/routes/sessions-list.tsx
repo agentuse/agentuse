@@ -23,7 +23,6 @@ function statusClass(status: string): string {
 function SessionRowView(props: { row: SessionRow; multiProject: boolean }) {
   const { row, multiProject } = props;
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
-  const title = row.agent.description || row.agent.name || row.agent.id;
   // stopped / timeout / incomplete render as their own chips (still status
   // 'error' on disk) so a skim distinguishes "crashed" from "agent declared
   // non-delivery" from "operator stopped it".
@@ -33,12 +32,12 @@ function SessionRowView(props: { row: SessionRow; multiProject: boolean }) {
       <div class="row-head">
         <span class={statusClass(status)}>{status}</span>
         {multiProject && <span class="chip project">{row.project}</span>}
-        <span class="chip agent">{row.agent.name || row.agent.id}</span>
         <span class="chip trigger">{row.trigger}</span>
         {row.mock && <span class="chip mock">mock</span>}
         <span class="row-time" title={formatApprovalTime(row.createdAt)}>{formatRelativeTime(row.createdAt)}</span>
       </div>
-      <div class="row-title">{title}</div>
+      <div class="row-title">{row.agent.name || row.agent.id}</div>
+      {row.agent.description && <div class="row-sub">{row.agent.description}</div>}
       {row.errorMessage && <div class="row-decision">{errorText(row.errorMessage)}</div>}
       <div class="row-meta"><code>{row.sessionId}</code></div>
     </a>

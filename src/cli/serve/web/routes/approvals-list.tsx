@@ -18,8 +18,10 @@ function ApprovalRowView(props: { row: ApprovalRow; multiProject: boolean }) {
   if (multiProject) params.set('project', row.project);
   const href = linkable ? `/sessions/${encodeURIComponent(row.sessionId)}?${params.toString()}` : null;
 
-  const titleText = row.agentDescription || row.prompt || row.agentName || '(untitled approval)';
-  const truncated = titleText.length > 220 ? `${titleText.slice(0, 220)}…` : titleText;
+  // The agent name is the skim key; the approval prompt (what actually needs a
+  // decision) beats the agent's static description for the supporting line.
+  const subText = row.prompt || row.agentDescription || '';
+  const sub = subText.length > 220 ? `${subText.slice(0, 220)}…` : subText;
 
   const timeLabel = row.status === 'pending'
     ? (row.expiresAt
@@ -36,10 +38,10 @@ function ApprovalRowView(props: { row: ApprovalRow; multiProject: boolean }) {
       <div class="row-head">
         <span class={`chip status ${row.status}`}>{row.status}</span>
         {multiProject && <span class="chip project">{row.project}</span>}
-        <span class="chip agent">{row.agentName}</span>
         <span class="row-time">{timeLabel}</span>
       </div>
-      <div class="row-title">{truncated}</div>
+      <div class="row-title">{row.agentName || '(untitled approval)'}</div>
+      {sub && <div class="row-sub">{sub}</div>}
       {decisionLabel && <div class="row-decision">{decisionLabel}</div>}
       <div class="row-meta"><code>{row.sessionId}</code></div>
     </>
