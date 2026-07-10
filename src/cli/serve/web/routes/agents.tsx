@@ -1,9 +1,10 @@
 import type { VNode } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { AgentRow } from '../lib/api';
-import { fetchAgents } from '../lib/api';
+import type { AgentRow, SessionRow } from '../lib/api';
+import { fetchAgents, fetchSessions } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
+import { formatApprovalTime, formatRelativeTime, displayStatusLabel } from '../lib/format';
 import { usePins } from '../hooks/use-pins';
 import { useAgentColumns } from '../hooks/use-agent-columns';
 import { useMediaQuery } from '../hooks/use-media-query';
@@ -198,6 +199,72 @@ export function agentsProjectHref(projectId: string): string {
   return `/agents/${encodeURIComponent(projectId)}`;
 }
 
+const LIVE_RUN_STATUSES = new Set(['running', 'resuming', 'continuing']);
+
+/**
+ * Latest session per agent file, joined client-side: sessions carry an absolute
+ * `agent.filePath` while agents carry a project-relative `path`, so each
+ * session is assigned to the agent whose path is the LONGEST suffix of that
+ * file path within the same project — a root-level `deploy.agentuse` must not
+ * claim runs of a nested `staging/deploy.agentuse`.
+ */
+function lastRunFinder(agents: AgentRow[], sessions: SessionRow[]): (agent: AgentRow) => SessionRow | undefined {
+  const agentsByProject = new Map<string, AgentRow[]>();
+  for (const a of agents) {
+    const list = agentsByProject.get(a.projectId);
+    if (list) list.push(a);
+    else agentsByProject.set(a.projectId, [a]);
+  }
+  const best = new Map<string, SessionRow>();
+  for (const s of sessions) {
+    const filePath = s.agent.filePath;
+    if (!filePath) continue;
+    let owner: AgentRow | undefined;
+    for (const a of agentsByProject.get(s.project) ?? []) {
+      if (!filePath.endsWith(`/${a.path}`)) continue;
+      if (!owner || a.path.length > owner.path.length) owner = a;
+    }
+    if (!owner) continue;
+    const key = `${owner.projectId}::${owner.path}`;
+    const current = best.get(key);
+    if (!current || s.createdAt > current.createdAt) best.set(key, s);
+  }
+  return (agent) => best.get(`${agent.projectId}::${agent.path}`);
+}
+
+/**
+ * "Last run" health cell: status dot + relative time, linking to the session.
+ * A live session gets the pulsing dot; ended states carry their label so the
+ * signal never rides on color alone.
+ */
+function LastRunCell({ session }: { session: SessionRow | undefined }) {
+  if (!session) return <span class="muted">—</span>;
+  const live = LIVE_RUN_STATUSES.has(session.status);
+  const label = displayStatusLabel(session.status, session.errorCode);
+  const tone = live ? 'running'
+    : session.status === 'completed' ? 'ok'
+      : session.status === 'suspended' ? 'waiting'
+        : 'failed';
+  const at = session.updatedAt || session.createdAt;
+  const text = live ? 'running now'
+    : tone === 'ok' ? formatRelativeTime(at)
+      : tone === 'waiting' ? `waiting · ${formatRelativeTime(at)}`
+        : `${label} · ${formatRelativeTime(at)}`;
+  return (
+    <a
+      class={`lastrun ${tone}`}
+      href={`/sessions/${encodeURIComponent(session.sessionId)}?project=${encodeURIComponent(session.project)}`}
+      title={`${label} · ${formatApprovalTime(at)}`}
+      // Narrow screens hide the text and leave only the aria-hidden dot, so
+      // the name must not depend on the link's subtree.
+      aria-label={`Last run ${text}`}
+    >
+      <span class={`lastrun-dot ${tone}`} aria-hidden="true"></span>
+      <span class="lastrun-text">{text}</span>
+    </a>
+  );
+}
+
 interface TreeNode {
   name: string;
   children: Map<string, TreeNode>;
@@ -242,23 +309,42 @@ interface PinApi {
   toggle: (a: AgentRow) => void;
 }
 
-function walk(node: TreeNode, levels: boolean[], rows: VNode[], pins: PinApi, columns: string[]): void {
+/** Everything a rendered agent row needs beyond the agent itself. */
+interface RowCtx {
+  pins: PinApi;
+  columns: string[];
+  lastRunFor: (a: AgentRow) => SessionRow | undefined;
+}
+
+/** The file name is redundant when the friendly name is just its dashed form. */
+function fileLabelDiffers(name: string, fileName: string): boolean {
+  const base = fileName.replace(/\.agentuse$/, '');
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return norm(name) !== norm(base);
+}
+
+function walk(node: TreeNode, levels: boolean[], rows: VNode[], ctx: RowCtx): void {
   const children = sortChildren(node);
   children.forEach((child, idx) => {
     const last = idx === children.length - 1;
     const prefix = guides(levels, last);
     if (child.agent) {
       const a = child.agent;
-      const pinned = pins.isPinned(a);
+      const pinned = ctx.pins.isPinned(a);
+      const running = LIVE_RUN_STATUSES.has(ctx.lastRunFor(a)?.status ?? '');
       rows.push(
         <div class={pinned ? 'tree-row pinned' : 'tree-row'} key={a.path}>
           <span class="tree-path">
             {prefix}
             {pinned && <span class="tree-pin" title="Pinned" aria-label="Pinned"><PinIcon filled /></span>}
-            <a class="tree-label" href={agentDetailHref(a.projectId, a.runPath)}>{child.name}</a>
+            <a class="tree-label" href={agentDetailHref(a.projectId, a.runPath)}>
+              <span class="tree-agent">{a.name}</span>
+              {running && <span class="tree-live" title="Running now" aria-label="Running now"></span>}
+              {fileLabelDiffers(a.name, child.name) && <span class="tree-file">{child.name}</span>}
+            </a>
           </span>
-          {columns.map((id) => <span class={columnCellClass(id)} key={id}><ColumnCell id={id} agent={a} /></span>)}
-          <span class="tree-menu"><AgentMenu agent={a} pinned={pinned} onTogglePin={() => pins.toggle(a)} /></span>
+          {ctx.columns.map((id) => <span class={columnCellClass(id)} key={id}><ColumnCell id={id} agent={a} ctx={ctx} /></span>)}
+          <span class="tree-menu"><AgentMenu agent={a} pinned={pinned} onTogglePin={() => ctx.pins.toggle(a)} /></span>
         </div>
       );
     } else {
@@ -267,18 +353,18 @@ function walk(node: TreeNode, levels: boolean[], rows: VNode[], pins: PinApi, co
           <span class="tree-path">{prefix}<span class="tree-label">{child.name}/</span></span>
         </div>
       );
-      walk(child, [...levels, !last], rows, pins, columns);
+      walk(child, [...levels, !last], rows, ctx);
     }
   });
 }
 
-function AgentTree(props: { agents: AgentRow[]; pins: PinApi; columns: string[] }) {
+function AgentTree(props: { agents: AgentRow[]; ctx: RowCtx }) {
   const rows: VNode[] = [];
-  walk(buildTree(props.agents), [], rows, props.pins, props.columns);
+  walk(buildTree(props.agents), [], rows, props.ctx);
   return <>{rows}</>;
 }
 
-function PinnedRow(props: { agent: AgentRow; pins: PinApi; columns: string[] }) {
+function PinnedRow(props: { agent: AgentRow; ctx: RowCtx }) {
   const a = props.agent;
   const locLabel = a.path.replace(/\.agentuse$/, '');
   return (
@@ -288,8 +374,8 @@ function PinnedRow(props: { agent: AgentRow; pins: PinApi; columns: string[] }) 
         <a class="pin-name" href={agentDetailHref(a.projectId, a.runPath)}>{a.name}</a>
         <span class="pin-loc">{a.projectId} / {locLabel}</span>
       </span>
-      {props.columns.map((id) => <span class={columnCellClass(id)} key={id}><ColumnCell id={id} agent={a} /></span>)}
-      <span class="tree-menu"><AgentMenu agent={a} pinned onTogglePin={() => props.pins.toggle(a)} /></span>
+      {props.ctx.columns.map((id) => <span class={columnCellClass(id)} key={id}><ColumnCell id={id} agent={a} ctx={props.ctx} /></span>)}
+      <span class="tree-menu"><AgentMenu agent={a} pinned onTogglePin={() => props.ctx.pins.toggle(a)} /></span>
     </div>
   );
 }
@@ -333,9 +419,10 @@ const META_PREFIX = 'meta:';
 
 interface ColumnDef { id: string; label: string; }
 
-/** Every column that can be shown: the two built-ins, then one per metadata key. */
+/** Every column that can be shown: the three built-ins, then one per metadata key. */
 function availableColumns(metaKeys: string[]): ColumnDef[] {
   return [
+    { id: 'lastRun', label: 'Last run' },
     { id: 'schedule', label: 'Schedule' },
     { id: 'run', label: 'Run' },
     ...metaKeys.map((k) => ({ id: META_PREFIX + k, label: k })),
@@ -343,6 +430,7 @@ function availableColumns(metaKeys: string[]): ColumnDef[] {
 }
 
 function columnLabel(id: string): string {
+  if (id === 'lastRun') return 'Last run';
   if (id === 'schedule') return 'Schedule';
   if (id === 'run') return 'Run';
   return id.startsWith(META_PREFIX) ? id.slice(META_PREFIX.length) : id;
@@ -351,12 +439,14 @@ function columnLabel(id: string): string {
 /** Cell alignment class for a column (run + metadata get their own). */
 function columnCellClass(id: string): string {
   if (id === 'run') return 'tree-run';
+  if (id === 'lastRun') return 'tree-lastrun';
   if (id.startsWith(META_PREFIX)) return 'tree-meta';
   return '';
 }
 
 /** Render one column's cell for an agent row. */
-function ColumnCell({ id, agent }: { id: string; agent: AgentRow }): VNode {
+function ColumnCell({ id, agent, ctx }: { id: string; agent: AgentRow; ctx: RowCtx }): VNode {
+  if (id === 'lastRun') return <LastRunCell session={ctx.lastRunFor(agent)} />;
   if (id === 'schedule') {
     return agent.schedule
       ? <span class="chip status" title={agent.schedule}>{agent.scheduleHuman ?? agent.schedule}</span>
@@ -388,6 +478,10 @@ export default function Agents({ project }: { project?: string } = {}) {
   const pins: PinApi = { isPinned, toggle };
   const { columns, addColumn, removeColumn } = useAgentColumns();
   const narrow = useMediaQuery('(max-width: 700px)');
+  // Recent sessions power the "Last run" column (and the live pulse on rows).
+  // 30d keeps rarely-run agents from reading as "never ran"; a short refresh
+  // keeps the running/finished transition visible without a reload.
+  const sessions = useFetch('agents-last-runs', () => fetchSessions({ window: '30d' }), { refreshMs: 10_000 });
 
   const [filter, setFilter] = useState('');
   const query = filter.trim().toLowerCase();
@@ -408,8 +502,10 @@ export default function Agents({ project }: { project?: string } = {}) {
   const allColumnIds = new Set(allColumns.map((c) => c.id));
   const activeColumns = columns.filter((id) => allColumnIds.has(id));
   const inactiveColumns = allColumns.filter((c) => !activeColumns.includes(c.id));
-  const renderColumns = narrow ? activeColumns.filter((id) => id === 'run') : activeColumns;
+  const renderColumns = narrow ? activeColumns.filter((id) => id === 'run' || id === 'lastRun') : activeColumns;
   const gridTemplate = columnsGridTemplate(renderColumns);
+  const lastRunFor = lastRunFinder(allLoaded, sessions.data?.sessions ?? []);
+  const rowCtx: RowCtx = { pins, columns: renderColumns, lastRunFor };
   const allAgents = query ? loadedAgents.filter((a) => matchesFilter(a, query)) : loadedAgents;
   const byProject = new Map<string, AgentRow[]>();
   for (const agent of allAgents) {
@@ -522,7 +618,7 @@ export default function Agents({ project }: { project?: string } = {}) {
             <h2 class="group-title"><span>Pinned</span><span class="count">{pinnedAgents.length}</span><span class="rule"></span></h2>
             <div class="panel">
               <div class="pin-list" style={{ gridTemplateColumns: gridTemplate }}>
-                {pinnedAgents.map((a) => <PinnedRow key={`${a.projectId}::${a.path}`} agent={a} pins={pins} columns={renderColumns} />)}
+                {pinnedAgents.map((a) => <PinnedRow key={`${a.projectId}::${a.path}`} agent={a} ctx={rowCtx} />)}
               </div>
             </div>
           </section>
@@ -545,7 +641,7 @@ export default function Agents({ project }: { project?: string } = {}) {
                     {renderColumns.map((id) => <span key={id}>{columnLabel(id)}</span>)}
                     <span></span>
                   </div>
-                  <AgentTree agents={agents} pins={pins} columns={renderColumns} />
+                  <AgentTree agents={agents} ctx={rowCtx} />
                 </div>
               </div>
             </section>

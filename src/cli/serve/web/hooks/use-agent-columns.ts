@@ -9,15 +9,32 @@ import { useEffect, useState } from 'preact/hooks';
  * Absent storage means "never customized" -> the default set. An explicit empty
  * array is respected (the user removed every column).
  */
-const STORAGE_KEY = 'agentuse-agents-columns';
-const DEFAULT_COLUMNS = ['schedule', 'run'];
+const STORAGE_KEY = 'agentuse-agents-columns-v2';
+const LEGACY_STORAGE_KEY = 'agentuse-agents-columns';
+const DEFAULT_COLUMNS = ['lastRun', 'schedule', 'run'];
+
+function parseColumns(raw: string | null): string[] | null {
+  if (raw === null) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : null;
+  } catch {
+    return null;
+  }
+}
 
 function read(): string[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw === null) return [...DEFAULT_COLUMNS];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [...DEFAULT_COLUMNS];
+    const stored = parseColumns(localStorage.getItem(STORAGE_KEY));
+    if (stored !== null) return stored;
+    // One-time migration: a v1 customization keeps its set and gains the new
+    // default "Last run" column up front (removable like any other column).
+    // An explicit v1 empty array stays empty — the user removed every column.
+    const legacy = parseColumns(localStorage.getItem(LEGACY_STORAGE_KEY));
+    if (legacy !== null) {
+      return legacy.length === 0 || legacy.includes('lastRun') ? legacy : ['lastRun', ...legacy];
+    }
+    return [...DEFAULT_COLUMNS];
   } catch {
     return [...DEFAULT_COLUMNS];
   }

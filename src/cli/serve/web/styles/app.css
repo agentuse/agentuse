@@ -2424,6 +2424,35 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .tree-label { padding: 7px 0 7px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: inherit; border-bottom: 0; }
 .page-agents a.tree-label:hover { color: var(--cyan); }
 .page-agents .tree-row.dir .tree-label { color: var(--cyan); }
+/* Leaf rows lead with the friendly agent name; the file name is a mono aside
+   shown only when it isn't just the dashed form of the name. */
+.page-agents .tree-agent { font-family: var(--sans); font-size: 13.5px; font-weight: 500; color: var(--fg); }
+.page-agents a.tree-label:hover .tree-agent { color: var(--cyan); }
+.page-agents .tree-file { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: 8px; }
+.page-agents .tree-live {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 8px;
+  background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.4s ease-in-out infinite;
+}
+/* "Last run" health cell: status dot + relative time, linking to the session. */
+.page-agents .tree-lastrun { justify-content: flex-start; }
+.page-agents a.lastrun {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 12px; color: var(--muted-3);
+  text-decoration: none; border-bottom: 0; white-space: nowrap;
+}
+.page-agents a.lastrun:hover .lastrun-text { text-decoration: underline; }
+.page-agents .lastrun-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.page-agents .lastrun-dot.ok { background: var(--green); opacity: 0.75; }
+/* Failure is an ✕ mark (matching the session log's error marker), not another
+   colored dot: the shape still says "failed" when the text is hidden on
+   narrow screens or the red/green split is hard to see. */
+.page-agents .lastrun-dot.failed { background: none; border-radius: 0; width: auto; height: auto; }
+.page-agents .lastrun-dot.failed::before { content: "✕"; color: var(--red); font-size: 11px; font-weight: 600; line-height: 1; }
+.page-agents .lastrun-dot.waiting { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); animation: pulse 1.4s ease-in-out infinite; }
+.page-agents .lastrun-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.4s ease-in-out infinite; }
+.page-agents a.lastrun.running { color: var(--green); }
+.page-agents a.lastrun.failed { color: var(--red); }
+.page-agents a.lastrun.waiting { color: var(--cyan); }
 /* CSS-drawn tree guides: fixed-width, full-row-height segments so the vertical
    connectors stay continuous and aligned across padded rows. */
 .page-agents .guide { position: relative; flex: 0 0 22px; align-self: stretch; }
@@ -2902,6 +2931,13 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .page-agents .run-btn, .page-agents .menu-btn { width: 36px; height: 36px; }
   .page-agents .run-btn svg { width: 13px; height: 13px; }
   .page-agents .menu-btn svg { width: 18px; height: 18px; }
+  /* Give the agent name the width back: the file-name aside and the pinned
+     row's project/path live in the ⋯ menu on touch screens, and the Last run
+     cell collapses to its health dot (the exact time is one tap away on the
+     session it links to). The padded box keeps the dot tappable. */
+  .page-agents .tree-file, .page-agents .pin-loc { display: none; }
+  .page-agents .lastrun-text { display: none; }
+  .page-agents a.lastrun { padding: 12px 4px; margin: -12px 0; }
 }
 /* Parse-error badge + popover. A <details> disclosure anchors the panel
    directly under the badge. */
