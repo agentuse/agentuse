@@ -3,6 +3,7 @@ import type { SessionRow } from '../lib/api';
 import { fetchInfo, fetchAgents, fetchSchedules } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useLiveHome, type ActivityEvent } from '../hooks/use-live-home';
+import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { formatApprovalTime, formatRelativeTime, displayStatusLabel } from '../lib/format';
@@ -94,9 +95,13 @@ function FeedRow(props: { event: ActivityEvent }) {
   );
 }
 
-function RunningCard(props: { row: SessionRow; now: number }) {
+function RunningCard(props: { row: SessionRow; now: number; ticker: boolean }) {
   const { row, now } = props;
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
+  // Live one-line tail of what the agent is doing right now. Capped upstream
+  // (`ticker`) so a busy daemon doesn't exhaust the browser's per-host
+  // connection budget; capless cards keep the static description.
+  const tail = useSessionTail(row.sessionId, row.project, props.ticker);
   return (
     <a class="now-card" href={href}>
       <div class="now-card-head">
@@ -104,9 +109,88 @@ function RunningCard(props: { row: SessionRow; now: number }) {
         <span class="now-agent">{row.agent.name || row.agent.id}</span>
         <span class="now-elapsed">{formatElapsed(now - row.createdAt)}</span>
       </div>
-      <div class="now-desc">{row.agent.description || displayStatusLabel(row.status, row.errorCode)}</div>
+      {/* Purely visual preview of the session page it links to; hidden from AT
+          so the transient fragments never pollute the link's accessible name. */}
+      {tail
+        ? <div class={tail.tool ? 'now-ticker tool' : 'now-ticker'} aria-hidden="true">
+            <span class="now-ticker-line" key={`${tail.tool ?? ''}:${tail.text}`}>{tail.text}</span>
+          </div>
+        : <div class="now-desc">{row.agent.description || displayStatusLabel(row.status, row.errorCode)}</div>}
       <div class="now-meta">{row.project} · {row.trigger}</div>
     </a>
+  );
+}
+
+interface SparkBucket { ok: number; failed: number; live: number }
+
+/** Every terminal-failure status a session can report (error carries the
+ *  stopped/timeout/incomplete codes; failed/expired appear on approval-gated
+ *  runs). Everything else non-completed is still in flight or waiting. */
+const FAILED_STATUSES = new Set(['error', 'failed', 'expired']);
+
+/** Sessions folded into 24 hours-ago buckets, oldest first. */
+function bucketize(sessions: SessionRow[], now: number): SparkBucket[] {
+  const buckets: SparkBucket[] = Array.from({ length: 24 }, () => ({ ok: 0, failed: 0, live: 0 }));
+  for (const s of sessions) {
+    const hoursAgo = Math.floor((now - s.createdAt) / 3_600_000);
+    if (hoursAgo < 0 || hoursAgo > 23) continue;
+    const b = buckets[23 - hoursAgo]!;
+    if (s.status === 'completed') b.ok++;
+    else if (FAILED_STATUSES.has(s.status)) b.failed++;
+    else b.live++;
+  }
+  return buckets;
+}
+
+const SPARK_MAX_PX = 30;
+
+/**
+ * Runs-per-hour sparkline with outcome coloring. Failures always sit as the
+ * topmost segment above a gap (position, not just hue, separates them) and the
+ * stat line spells the counts out, so the red/green split never carries the
+ * message alone. Per-bar totals stay on native tooltips.
+ */
+function ActivitySpark(props: { sessions: SessionRow[] }) {
+  // Fresh on every render (the live stream re-renders Home continuously), so
+  // the hours-ago buckets roll forward without needing the shared 1s clock —
+  // which stops ticking on an idle daemon and would freeze the window.
+  const buckets = bucketize(props.sessions, Date.now());
+  const okTotal = buckets.reduce((n, b) => n + b.ok, 0);
+  const failedTotal = buckets.reduce((n, b) => n + b.failed, 0);
+  const total = okTotal + failedTotal + buckets.reduce((n, b) => n + b.live, 0);
+  const shownTotal = useCountUp(total);
+  if (total === 0) return null;
+  const max = Math.max(1, ...buckets.map((b) => b.ok + b.failed + b.live));
+  const px = (n: number) => (n === 0 ? 0 : Math.max(2, Math.round((n / max) * SPARK_MAX_PX)));
+  const ended = okTotal + failedTotal;
+  const pct = ended > 0 ? Math.round((okTotal / ended) * 100) : null;
+  return (
+    <div class="hero-spark">
+      <div
+        class="spark-bars"
+        role="img"
+        aria-label={`Runs per hour over the last 24 hours: ${plural(total, 'run')}, ${failedTotal} failed.`}
+      >
+        {buckets.map((b, i) => {
+          const runs = b.ok + b.failed + b.live;
+          const hoursAgo = 23 - i;
+          const when = hoursAgo === 0 ? 'past hour' : `${hoursAgo}–${hoursAgo + 1}h ago`;
+          return (
+            <span class="spark-col" key={i} title={`${when} · ${plural(runs, 'run')}${b.failed > 0 ? ` · ${b.failed} failed` : ''}`}>
+              {b.failed > 0 && <span class="spark-seg failed" style={{ height: `${px(b.failed)}px` }}></span>}
+              {b.live > 0 && <span class="spark-seg live" style={{ height: `${px(b.live)}px` }}></span>}
+              {b.ok > 0 && <span class="spark-seg ok" style={{ height: `${px(b.ok)}px` }}></span>}
+              {runs === 0 && <span class="spark-seg none"></span>}
+            </span>
+          );
+        })}
+      </div>
+      <div class="spark-stat">
+        <span class="spark-total">{shownTotal}</span> runs in 24h
+        {pct !== null && <span class="spark-rate"> · {pct}% succeeded</span>}
+        {failedTotal > 0 && <> · <a class="spark-failed" href="/sessions?status=error">{failedTotal} failed</a></>}
+      </div>
+    </div>
   );
 }
 
@@ -215,13 +299,14 @@ export default function Home() {
               </span>
             )}
           </div>
+          <ActivitySpark sessions={liveHome.sessions} />
         </section>
 
         {running.length > 0 && (
           <section class="group">
             <h2 class="group-title"><span>Running now</span><span class="count">{running.length}</span><span class="rule"></span></h2>
             <div class="now-grid">
-              {running.map((row) => <RunningCard key={`${row.project}:${row.sessionId}`} row={row} now={now} />)}
+              {running.map((row, i) => <RunningCard key={`${row.project}:${row.sessionId}`} row={row} now={now} ticker={i < 3} />)}
             </div>
           </section>
         )}

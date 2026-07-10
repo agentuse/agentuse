@@ -2286,6 +2286,26 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .hero-next code { font-size: 12px; }
 .page-home .hero-countdown { font-family: var(--mono); color: var(--fg); font-variant-numeric: tabular-nums; }
 
+/* 24h runs-per-hour sparkline under the hero: throughput at a glance.
+   Failures render as the topmost segment above a 2px gap so position (not only
+   hue) separates them; the stat line spells out the counts. */
+.page-home .hero-spark { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; margin-top: 18px; }
+.page-home .spark-bars { display: flex; align-items: flex-end; height: 34px; }
+.page-home .spark-col {
+  display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
+  width: 9px; padding: 0 1.5px; height: 100%; box-sizing: border-box;
+}
+.page-home .spark-seg { width: 100%; border-radius: 2px; flex-shrink: 0; }
+.page-home .spark-seg.ok { background: var(--green); opacity: 0.85; }
+.page-home .spark-seg.failed { background: var(--red); }
+.page-home .spark-seg.live { background: var(--cyan); }
+.page-home .spark-seg.none { height: 2px; background: var(--line-strong); }
+.page-home .spark-col:hover .spark-seg { filter: brightness(1.25); }
+.page-home .spark-stat { font-size: 12.5px; color: var(--muted); padding-bottom: 1px; }
+.page-home .spark-total { font-family: var(--mono); color: var(--fg); font-variant-numeric: tabular-nums; }
+.page-home .spark-rate { color: var(--muted-3); }
+.page-home a.spark-failed { color: var(--red); text-decoration: none; border-bottom: 1px dotted var(--red-border); }
+
 /* Running-now grid: one pulsing card per live session, elapsed timer ticking. */
 .page-home .now-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
 .page-home a.now-card {
@@ -2306,6 +2326,16 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .now-elapsed { font-family: var(--mono); font-size: 12px; color: var(--green); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .page-home .now-desc { font-size: 12.5px; color: var(--muted-3); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .page-home .now-meta { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+/* Live tail of the running session: the card "types" what the agent is doing. */
+@keyframes tick-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes tick-caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.page-home .now-ticker { font-family: var(--mono); font-size: 11.5px; color: var(--muted-3); line-height: 1.5; min-width: 0; }
+.page-home .now-ticker.tool { color: var(--cyan); }
+.page-home .now-ticker-line {
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  animation: tick-in 240ms ease both;
+}
+.page-home .now-ticker-line::after { content: "▍"; margin-left: 2px; color: var(--green); animation: tick-caret 1.1s step-end infinite; }
 
 /* Activity feed: transition rows slide in as sessions start/finish. */
 @keyframes feed-in { from { opacity: 0; transform: translateY(-8px); background: var(--cyan-soft); } }
@@ -3364,6 +3394,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .page-home .feed-row.is-new,
   .page-home .card.attn,
   .page-home .proj-live,
+  .page-home .now-ticker-line,
+  .page-home .now-ticker-line::after,
+  .page-agents .tree-live,
+  .page-agents .lastrun-dot.running,
+  .page-agents .lastrun-dot.waiting,
   .log-item.is-new,
   .log-item.streaming .log-content .content-markdown > :last-child::after,
   .log-item.streaming[data-log-type="reasoning"] .log-marker,
