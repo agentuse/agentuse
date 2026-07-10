@@ -69,7 +69,9 @@ export interface LiveHome {
  * list streams (falling back to polling like the sessions page does) and folds
  * consecutive session snapshots into an activity feed of status transitions.
  * The first snapshot seeds the feed with recent history so the page never
- * opens empty; every later diff prepends "fresh" rows that animate in.
+ * opens empty; every later diff prepends "fresh" rows that animate in. Each
+ * session keeps a single row: a new transition replaces the session's older
+ * row (e.g. "running" becomes "completed") instead of stacking a duplicate.
  */
 export function useLiveHome(): LiveHome {
   const [sessionsPayload, setSessionsPayload] = useState<SessionsPayload | null>(null);
@@ -148,7 +150,11 @@ export function useLiveHome(): LiveHome {
     }
     if (fresh.length > 0) {
       fresh.sort((a, b) => b.at - a.at);
-      setFeed((current) => [...fresh, ...current].slice(0, FEED_LIMIT));
+      const updated = new Set(fresh.map((event) => `${event.project}:${event.sessionId}`));
+      setFeed((current) => [
+        ...fresh,
+        ...current.filter((event) => !updated.has(`${event.project}:${event.sessionId}`)),
+      ].slice(0, FEED_LIMIT));
     }
   }, [sessionsData]);
 
