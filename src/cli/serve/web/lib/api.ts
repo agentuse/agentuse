@@ -62,10 +62,15 @@ export interface ApprovalsListPayload {
   };
   window: { days: number | 'all'; createdAfter?: number };
   errors: Array<{ projectId: string; message: string }>;
+  nextCursor?: string;
+  limit?: number;
 }
 
-export function fetchApprovals(options: { days?: string | undefined; project?: string | undefined } = {}): Promise<ApprovalsListPayload> {
-  return getJson('/api/approvals', { days: options.days, project: options.project });
+export function fetchApprovals(options: { days?: string | undefined; project?: string | undefined; limit?: number | undefined; cursor?: string | undefined } = {}): Promise<ApprovalsListPayload> {
+  return getJson('/api/approvals', {
+    days: options.days, project: options.project,
+    ...(options.limit !== undefined && { limit: String(options.limit) }), cursor: options.cursor,
+  });
 }
 
 export function approvalsEventUrl(options: { days?: string | undefined; project?: string | undefined } = {}): string {
@@ -371,6 +376,8 @@ export interface SessionsPayload {
   trigger?: string;
   approval?: string;
   errors: Array<{ projectId: string; message: string }>;
+  nextCursor?: string;
+  limit?: number;
 }
 
 export function fetchSessions(options: {
@@ -379,6 +386,8 @@ export function fetchSessions(options: {
   trigger?: string | undefined;
   approval?: string | undefined;
   window?: string | undefined;
+  limit?: number | undefined;
+  cursor?: string | undefined;
 } = {}): Promise<SessionsPayload> {
   return getJson('/api/sessions', {
     agent: options.agent,
@@ -386,6 +395,8 @@ export function fetchSessions(options: {
     trigger: options.trigger,
     approval: options.approval,
     window: options.window,
+    ...(options.limit !== undefined && { limit: String(options.limit) }),
+    cursor: options.cursor,
   });
 }
 
@@ -425,6 +436,7 @@ export function sessionsEventUrl(options: {
   trigger?: string | undefined;
   approval?: string | undefined;
   window?: string | undefined;
+  limit?: number | undefined;
 } = {}): string {
   const url = new URL('/sessions/events', location.origin);
   if (options.agent !== undefined) url.searchParams.set('agent', options.agent);
@@ -432,5 +444,6 @@ export function sessionsEventUrl(options: {
   if (options.trigger !== undefined) url.searchParams.set('trigger', options.trigger);
   if (options.approval !== undefined) url.searchParams.set('approval', options.approval);
   if (options.window !== undefined) url.searchParams.set('window', options.window);
+  if (options.limit !== undefined) url.searchParams.set('limit', String(options.limit));
   return url.toString();
 }

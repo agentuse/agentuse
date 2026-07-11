@@ -207,6 +207,9 @@ interface ApprovalListPayload {
   };
   window: { days: number | 'all'; createdAfter?: number };
   errors: Array<{ projectId: string; message: string }>;
+  /** Present only when the caller opted into cursor pagination. */
+  nextCursor?: string;
+  limit?: number;
 }
 
 interface SessionSummary {
@@ -238,6 +241,9 @@ interface SessionsPayload {
   trigger?: SessionTrigger;
   approval?: string;
   errors: Array<{ projectId: string; message: string }>;
+  /** Present only when the caller opted into cursor pagination. */
+  nextCursor?: string;
+  limit?: number;
 }
 
 interface SessionStatusInfo {
@@ -1054,6 +1060,52 @@ function parseApprovalSessionFilter(value: string | undefined): ApprovalSessionF
     : undefined;
 }
 
+const LIST_PAGE_DEFAULT_LIMIT = 50;
+const LIST_PAGE_MAX_LIMIT = 100;
+
+type CursorPage<T> = { items: T[]; nextCursor?: string; limit?: number };
+
+/**
+ * Cursor pagination is deliberately opt-in: integrations which omit `limit`
+ * keep receiving the historical complete arrays. Cursors carry the complete
+ * sort key plus a filter fingerprint, preventing a cursor for one filtered
+ * view from silently skipping rows in another.
+ */
+function cursorPage<T>(
+  requestUrl: URL,
+  fingerprint: string,
+  rows: T[],
+  key: (row: T) => string
+): CursorPage<T> {
+  const rawLimit = requestUrl.searchParams.get('limit');
+  if (rawLimit === null) return { items: rows };
+  const parsed = Number(rawLimit);
+  const limit = Number.isFinite(parsed) && parsed > 0
+    ? Math.min(Math.floor(parsed), LIST_PAGE_MAX_LIMIT)
+    : LIST_PAGE_DEFAULT_LIMIT;
+  const rawCursor = requestUrl.searchParams.get('cursor');
+  let start = 0;
+  if (rawCursor) {
+    try {
+      const decoded = JSON.parse(Buffer.from(rawCursor, 'base64url').toString('utf8')) as { f?: string; k?: string };
+      if (decoded.f !== fingerprint || typeof decoded.k !== 'string') throw new Error('mismatched cursor');
+      const index = rows.findIndex((row) => key(row) === decoded.k);
+      if (index < 0) throw new Error('cursor row no longer exists');
+      start = index + 1;
+    } catch {
+      // A stale cursor is safe to restart from the current first page. This is
+      // friendlier than failing a dashboard reload after retention cleanup.
+      start = 0;
+    }
+  }
+  const items = rows.slice(start, start + limit);
+  const last = items.at(-1);
+  const nextCursor = last && start + items.length < rows.length
+    ? Buffer.from(JSON.stringify({ f: fingerprint, k: key(last) })).toString('base64url')
+    : undefined;
+  return { items, ...(nextCursor && { nextCursor }), limit };
+}
+
 function approvalMatchesSessionFilter(status: ApprovalSummaryStatus, filter: ApprovalSessionFilter): boolean {
   if (filter === 'pending') return status === 'pending';
   if (filter === 'completed') return status === 'approved' || status === 'rejected' || status === 'commented';
@@ -1307,6 +1359,11 @@ interface CollectAgentsResult {
   errors: Array<{ projectId: string; path: string; message: string }>;
 }
 
+type CachedAgentSummary =
+  | { mtimeMs: number; size: number; summary: AgentSummary }
+  | { mtimeMs: number; size: number; error: string };
+const agentSummaryCache = new Map<string, CachedAgentSummary>();
+
 /**
  * Parse every loaded agent file and summarize it for the /agents endpoint.
  * Parse errors are collected per-agent rather than failing the whole request.
@@ -1317,24 +1374,30 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
   for (const project of projects) {
     for (const agentFile of project.agentFiles) {
       try {
-        const parsed = await parseAgent(resolveScopedAgentPath(project, agentFile));
-        agents.push({
+        const absPath = resolveScopedAgentPath(project, agentFile);
+        const fileStat = await stat(absPath);
+        const cached = agentSummaryCache.get(absPath);
+        if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) {
+          if ('error' in cached) errors.push({ projectId: project.id, path: agentFile, message: cached.error });
+          else agents.push({ ...cached.summary, projectId: project.id, path: toProjectRelativeAgentPath(project, agentFile), runPath: agentFile });
+          continue;
+        }
+        const parsed = await parseAgent(absPath);
+        const summary: AgentSummary = {
           projectId: project.id,
           path: toProjectRelativeAgentPath(project, agentFile),
-          // Scope-relative: the glob ran with cwd = scopeRoot, so agentFile is
-          // exactly the `agent` value POST /run resolves against scopeRoot.
           runPath: agentFile,
           name: parsed.name,
           ...(parsed.config.description && { description: parsed.config.description }),
           model: parsed.config.model,
-          ...(parsed.config.schedule && {
-            schedule: parsed.config.schedule,
-            scheduleHuman: formatScheduleHuman(parsed.config.schedule),
-          }),
+          ...(parsed.config.schedule && { schedule: parsed.config.schedule, scheduleHuman: formatScheduleHuman(parsed.config.schedule) }),
           ...(parsed.config.metadata && { metadata: parsed.config.metadata }),
-        });
+        };
+        agentSummaryCache.set(absPath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size, summary });
+        agents.push(summary);
       } catch (err) {
-        errors.push({ projectId: project.id, path: agentFile, message: (err as Error).message });
+        const message = (err as Error).message;
+        errors.push({ projectId: project.id, path: agentFile, message });
       }
     }
   }
@@ -3157,13 +3220,21 @@ export function createServeCommand(): Command {
           }
         }
 
-        rows.sort((a, b) => b.session.createdAt - a.session.createdAt);
+        rows.sort((a, b) =>
+          b.session.createdAt - a.session.createdAt ||
+          a.projectId.localeCompare(b.projectId) ||
+          a.session.sessionId.localeCompare(b.session.sessionId)
+        );
+        const fingerprint = ['sessions', createdAfter ?? 'all', agentFilter ?? '', statusFilter ?? '', triggerFilter ?? '', approvalFilter ?? ''].join('\0');
+        const page = cursorPage(requestUrl, fingerprint, rows, (row) =>
+          `${row.session.createdAt}\0${row.projectId}\0${row.session.sessionId}`
+        );
 
         return {
           success: true,
           payload: {
             success: true,
-            sessions: rows.map((row) => ({ project: row.projectId, ...row.session })),
+            sessions: page.items.map((row) => ({ project: row.projectId, ...row.session })),
             window: {
               value: daysFilter,
               ...(daysFilter === 'all'
@@ -3177,6 +3248,8 @@ export function createServeCommand(): Command {
             ...(statusFilter && { status: statusFilter }),
             ...(triggerFilter && { trigger: triggerFilter }),
             ...(approvalFilter && { approval: approvalFilter }),
+            ...(page.limit !== undefined && { limit: page.limit }),
+            ...(page.nextCursor && { nextCursor: page.nextCursor }),
             errors
           }
         };
@@ -3247,6 +3320,18 @@ export function createServeCommand(): Command {
           .filter((r) => r.approval.status === 'expired' || r.approval.status === 'errored')
           .sort((a, b) => (b.approval.decisionAt ?? b.approval.expiresAt ?? 0) - (a.approval.decisionAt ?? a.approval.expiresAt ?? 0))
           .map(serializeRow);
+        // The flat list is the cursor's canonical ordering. Buckets below are
+        // derived from its current page, while legacy callers still receive all
+        // rows and the historical full buckets.
+        const ordered = [...pending, ...completed, ...expired];
+        const fingerprint = ['approvals', createdAfter ?? 'all', requestedProject ?? ''].join('\0');
+        const page = cursorPage(requestUrl, fingerprint, ordered, (row) =>
+          `${row.decisionAt ?? row.suspendedAt ?? row.createdAt ?? 0}\0${row.project}\0${row.sessionId}\0${row.status}`
+        );
+        const paged = page.limit === undefined ? undefined : page.items;
+        const pagePending = (paged ?? pending).filter((row) => row.status === 'pending');
+        const pageCompleted = (paged ?? completed).filter((row) => row.status === 'approved' || row.status === 'rejected' || row.status === 'commented');
+        const pageExpired = (paged ?? expired).filter((row) => row.status === 'expired' || row.status === 'errored');
         const days = requestUrl.searchParams.get('days') === 'all'
           ? 'all' as const
           : Math.floor((Date.now() - createdAfter!) / (24 * 60 * 60 * 1000));
@@ -3256,12 +3341,14 @@ export function createServeCommand(): Command {
           payload: {
             success: true,
             multiProject: selectedProjects.length > 1,
-            approvals: rows.map(serializeRow),
-            buckets: { pending, completed, expired },
+            approvals: paged ?? rows.map(serializeRow),
+            buckets: { pending: pagePending, completed: pageCompleted, expired: pageExpired },
             window: {
               days,
               ...(createdAfter !== undefined && { createdAfter })
             },
+            ...(page.limit !== undefined && { limit: page.limit }),
+            ...(page.nextCursor && { nextCursor: page.nextCursor }),
             errors
           }
         };

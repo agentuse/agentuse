@@ -607,6 +607,18 @@ curl "http://127.0.0.1:12233/api/sessions?agent=daily&trigger=scheduled" \
 
 `trigger` is `scheduled`, `api`, `slack`, or `manual` (CLI runs and the default).
 
+For large histories, opt into cursor pagination with `limit` (maximum 100) and
+the opaque `nextCursor` returned by the prior response:
+
+```bash
+curl "http://127.0.0.1:12233/api/sessions?limit=50"
+```
+
+Supplying `limit` changes only the list length and adds `limit` and (when more
+records exist) `nextCursor`; requests without it retain the complete legacy
+response. Cursors are bound to the active filters and should be treated as
+opaque.
+
 #### GET /api/sessions/:id
 
 Returns one session including its run-log entries (`logs`). API-key gated. The

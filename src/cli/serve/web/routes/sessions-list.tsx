@@ -118,11 +118,14 @@ export default function SessionsList() {
   const [streamData, setStreamData] = useState<SessionsPayload | null>(null);
   const [streamError, setStreamError] = useState<Error | null>(null);
   const [streamFallback, setStreamFallback] = useState(false);
+  const [loadedMore, setLoadedMore] = useState<SessionRow[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
     setStreamData(null);
     setStreamError(null);
     setStreamFallback(false);
+    setLoadedMore([]);
   }, [key]);
 
   const fetched = useFetch(
@@ -133,6 +136,7 @@ export default function SessionsList() {
       trigger: triggerFilter || undefined,
       agent: agentFilter,
       approval: approvalFilter,
+      limit: 50,
     }),
     streamFallback ? { refreshMs: 10_000 } : {}
   );
@@ -147,6 +151,7 @@ export default function SessionsList() {
     trigger: triggerFilter || undefined,
     agent: agentFilter,
     approval: approvalFilter,
+    limit: 50,
     enabled: !streamFallback,
     onData: (payload) => {
       setStreamData(payload);
@@ -159,12 +164,25 @@ export default function SessionsList() {
   const resolvedData = streamFallback ? (fetched.data ?? streamData) : (streamData ?? fetched.data);
   const resolvedError = fetched.error ?? (!resolvedData ? streamError : null);
   const resolvedLoading = fetched.loading && !resolvedData;
-  const rows = resolvedData?.sessions ?? [];
+  const rows = [...(resolvedData?.sessions ?? []), ...loadedMore];
   const multiProject = new Set(rows.map((r) => r.project)).size > 1;
   // Empty-state escape hatch: the most common cause of "no sessions" is a
   // too-narrow window, so offer one jump to 30d (or all time from 30d/90d)
   // rather than making the operator walk the select.
   const widerWindow = WINDOWS.indexOf(win) < WINDOWS.indexOf('30d') ? '30d' : 'all';
+  const loadMore = async () => {
+    if (!resolvedData?.nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const next = await fetchSessions({ window: win, status: statusFilter || undefined, trigger: triggerFilter || undefined, agent: agentFilter, approval: approvalFilter, limit: 50, cursor: resolvedData.nextCursor });
+      setLoadedMore((current) => [...current, ...next.sessions]);
+      // Keep the cursor from the most recently loaded page available to the button.
+      const { nextCursor: _previousCursor, ...pageBase } = resolvedData;
+      setStreamData({ ...pageBase, ...(next.nextCursor && { nextCursor: next.nextCursor }) });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   // Build a URL that preserves the other active filters when one changes.
   // The window is carried only when the operator explicitly picked one: pinning
@@ -261,6 +279,7 @@ export default function SessionsList() {
               agentFilter={agentFilter ?? ''}
             />
           ))}</div>)}
+        {resolvedData?.nextCursor && <button type="button" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</button>}
         <footer>{streamFallback ? 'auto-refreshes every 10s' : 'live updates'}</footer>
       </main>
     </div>
