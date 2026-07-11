@@ -174,6 +174,17 @@ export function displayStatusLabel(status: string, errorCode?: string | undefine
   return status;
 }
 
+/** Color/tone bucket for a session's raw status, shared by every run-health
+ *  visual (last-run cells, sparklines): running beats waiting beats outcome.
+ *  Unknown statuses read as failures rather than silently passing as ok. */
+export type RunTone = 'running' | 'waiting' | 'ok' | 'failed';
+export function runTone(status: string): RunTone {
+  if (status === 'running' || status === 'resuming' || status === 'continuing') return 'running';
+  if (status === 'completed') return 'ok';
+  if (status === 'suspended') return 'waiting';
+  return 'failed';
+}
+
 export function isEndedStatus(status: string | undefined): boolean {
   return status === 'completed' || status === 'error' || status === 'stopped' || status === 'timeout' || status === 'incomplete';
 }

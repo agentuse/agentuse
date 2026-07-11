@@ -6,7 +6,7 @@ import { useLiveHome, type ActivityEvent } from '../hooks/use-live-home';
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
-import { formatApprovalTime, formatRelativeTime, displayStatusLabel } from '../lib/format';
+import { formatApprovalTime, formatRelativeTime, displayStatusLabel, runTone } from '../lib/format';
 
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -123,11 +123,6 @@ function RunningCard(props: { row: SessionRow; now: number; ticker: boolean }) {
 
 interface SparkBucket { ok: number; failed: number; live: number }
 
-/** Every terminal-failure status a session can report (error carries the
- *  stopped/timeout/incomplete codes; failed/expired appear on approval-gated
- *  runs). Everything else non-completed is still in flight or waiting. */
-const FAILED_STATUSES = new Set(['error', 'failed', 'expired']);
-
 /** Sessions folded into 24 hours-ago buckets, oldest first. */
 function bucketize(sessions: SessionRow[], now: number): SparkBucket[] {
   const buckets: SparkBucket[] = Array.from({ length: 24 }, () => ({ ok: 0, failed: 0, live: 0 }));
@@ -135,8 +130,9 @@ function bucketize(sessions: SessionRow[], now: number): SparkBucket[] {
     const hoursAgo = Math.floor((now - s.createdAt) / 3_600_000);
     if (hoursAgo < 0 || hoursAgo > 23) continue;
     const b = buckets[23 - hoursAgo]!;
-    if (s.status === 'completed') b.ok++;
-    else if (FAILED_STATUSES.has(s.status)) b.failed++;
+    const tone = runTone(s.status);
+    if (tone === 'ok') b.ok++;
+    else if (tone === 'failed') b.failed++;
     else b.live++;
   }
   return buckets;
