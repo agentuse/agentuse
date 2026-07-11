@@ -197,11 +197,23 @@ export class WebAssets {
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="AgentUse">
   <script>${approvalThemeBootScript()}</script>
+  <style>
+    /* Boot loader: visible from first paint until the first route commits
+       (app.tsx removes #boot). Inline and theme-neutral because it must render
+       before the app bundle — and possibly before app.css — arrives. The fade
+       is delayed so fast loads never flash it. */
+    #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; animation: boot-in 300ms ease 250ms forwards; }
+    #boot .boot-spinner { width: 22px; height: 22px; border-radius: 50%; border: 2px solid rgba(128, 128, 128, 0.3); border-top-color: rgba(128, 128, 128, 0.9); animation: boot-spin 700ms linear infinite; }
+    @keyframes boot-spin { to { transform: rotate(360deg); } }
+    @keyframes boot-in { to { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { #boot .boot-spinner { animation-duration: 1.6s; } }
+  </style>
   ${cssLinks}
   <link rel="modulepreload" href="/assets/${escapeHtml(manifest.entry)}">
   ${preloadLinks}
 </head>
 <body>
+  <div id="boot" aria-hidden="true"><div class="boot-spinner"></div></div>
   <div id="app"></div>
   <script type="module" src="/assets/${escapeHtml(manifest.entry)}"></script>
 </body>

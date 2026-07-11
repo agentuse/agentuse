@@ -3,6 +3,7 @@ import { fetchStores } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
+import { Loading } from '../components/loading';
 import { ErrorBanner } from '../components/error-banner';
 import { StoreTable, type StoreTableColumn } from '../components/store-table';
 import { formatApprovalTime } from '../lib/format';
@@ -89,7 +90,7 @@ export default function StoresIndex() {
         {error && <div class="errors">Failed to load stores: {error.message}</div>}
         {data && <ErrorBanner errors={data.errors} />}
         <div class="panel">
-          {loading && !data && <div class="empty">Loading stores…</div>}
+          {loading && !data && <Loading label="Loading stores…" />}
           {data && data.stores.length === 0 && <div class="empty">No stores found for this serve daemon.</div>}
           {data && data.stores.length > 0 && (
             <StoreTable

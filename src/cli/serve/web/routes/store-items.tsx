@@ -4,6 +4,7 @@ import { fetchStoreRows } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
+import { Loading } from '../components/loading';
 import { ErrorBanner } from '../components/error-banner';
 import { StoreTable, type StoreTableColumn } from '../components/store-table';
 import { formatApprovalTime, storeItemPreview, storeItemTitle } from '../lib/format';
@@ -104,12 +105,12 @@ export default function StoreItems() {
         <header>
           <div class="eyebrow">store table</div>
           <h1>{storeName}</h1>
-          <p class="lede">{allRows.length} item{allRows.length === 1 ? '' : 's'} visible in this serve daemon.</p>
+          <p class="lede">{data ? `${allRows.length} item${allRows.length === 1 ? '' : 's'} visible in this serve daemon.` : loading ? 'Loading items…' : ''}</p>
         </header>
         {error && <div class="errors">Failed to load store: {error.message}</div>}
         {data && <ErrorBanner errors={data.errors} />}
         <div class="panel">
-          {loading && !data && <div class="empty">Loading items…</div>}
+          {loading && !data && <Loading label="Loading items…" />}
           {data && allRows.length === 0 && <div class="empty">No items found in this store.</div>}
           {data && allRows.length > 0 && (
             <StoreTable

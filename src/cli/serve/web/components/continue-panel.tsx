@@ -3,6 +3,8 @@ import { useEffect, useRef } from 'preact/hooks';
 export function ContinuePanel(props: {
   hidden: boolean;
   disabled: boolean;
+  /** The submit is in flight: show a spinner on the button. */
+  busy?: boolean;
   onSubmit: (prompt: string) => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -40,7 +42,9 @@ export function ContinuePanel(props: {
       />
       <div class="continue-actions">
         <span class="continue-hint"><span class="kbd">⌘⏎</span> resume with this instruction</span>
-        <button type="button" class="primary" disabled={props.disabled} onClick={submit}>Resume session</button>
+        <button type="button" class={`primary${props.busy ? ' btn-busy' : ''}`} disabled={props.disabled} aria-busy={props.busy} onClick={submit}>
+          {props.busy ? <><span class="btn-spinner" aria-hidden="true" />Resuming…</> : 'Resume session'}
+        </button>
       </div>
     </div>
   );

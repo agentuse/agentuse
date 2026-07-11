@@ -3,6 +3,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
 import type { AgentRow } from '../lib/api';
 import { fetchAgents } from '../lib/api';
+import { Loading } from './loading';
 import { agentDetailHref } from '../routes/agent-detail';
 
 /** Window event the topbar dispatches to open the palette (touch devices have no ⌘K). */
@@ -227,7 +228,7 @@ export function AgentPalette() {
           {loadError
             ? <div class="palette-empty">Failed to load agents: {loadError}</div>
             : agents === null
-              ? <div class="palette-empty">Loading agents…</div>
+              ? <Loading wrapClass="palette-empty" label="Loading agents…" />
               : results.length === 0
                 ? <div class="palette-empty">{query.trim() ? `No agents match “${query.trim()}”.` : 'No agents loaded.'}</div>
                 : results.map((r, i) => (

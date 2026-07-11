@@ -6,6 +6,7 @@ import { useFetch } from '../hooks/use-fetch';
 import { useApprovalsStream } from '../hooks/use-approvals-stream';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
+import { Loading } from '../components/loading';
 import { PushBell } from '../components/push-bell';
 import { syncAppBadge } from '../lib/badge';
 import { formatApprovalTime, errorText } from '../lib/format';
@@ -137,7 +138,7 @@ export default function ApprovalsList() {
             <ul>{data.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul>
           </div>
         )}
-        {loading && !data && <p class="empty">Loading approvals…</p>}
+        {loading && !data && <Loading label="Loading approvals…" />}
         {data && (
           <>
             <Bucket title="Pending" rows={data.buckets.pending} emptyText="No approvals waiting." multiProject={multiProject} />

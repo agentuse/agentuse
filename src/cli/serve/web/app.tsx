@@ -1,4 +1,5 @@
 import { ErrorBoundary, LocationProvider, Router, Route, lazy } from 'preact-iso';
+import { useEffect } from 'preact/hooks';
 import { Topbar } from './components/topbar';
 import { AgentPalette } from './components/agent-palette';
 import { ApprovalToast } from './components/approval-toast';
@@ -16,7 +17,29 @@ const StoresIndex = lazy(reloadOnChunkError(() => import('./routes/stores-index'
 const StoreItems = lazy(reloadOnChunkError(() => import('./routes/store-items')));
 const StoreItemDetail = lazy(reloadOnChunkError(() => import('./routes/store-item-detail')));
 
+// The shell's #boot spinner (static.ts) covers bundle download AND the first
+// lazy route chunk: it lives outside #app so mounting the (route-less) app
+// shell doesn't clear it. Remove it once the first route actually commits.
+function dismissBootLoader() {
+  document.getElementById('boot')?.remove();
+}
+
+// Drives the thin top progress bar (app.css html[data-route-loading]) while a
+// lazy route chunk is in flight; preact-iso keeps the previous route on screen
+// during the load, so this is the only cue that navigation is happening.
+function setRouteLoading(on: boolean) {
+  document.documentElement.toggleAttribute('data-route-loading', on);
+}
+
 function NotFound() {
+  // The only non-lazy route: it commits synchronously, so neither Router
+  // onLoadEnd (never suspended) nor onRouteChange (first commit) fires on a
+  // direct load of an unmatched URL. Dismiss the boot loader here or the
+  // shell overlay would sit above the 404 page forever.
+  useEffect(() => {
+    setRouteLoading(false);
+    dismissBootLoader();
+  }, []);
   return (
     <div class="page-home">
       <Topbar />
@@ -35,7 +58,17 @@ export function App() {
       <ErrorBoundary>
         <AgentPalette />
         <ApprovalToast />
-        <Router>
+        <Router
+          onLoadStart={() => setRouteLoading(true)}
+          onLoadEnd={() => {
+            setRouteLoading(false);
+            dismissBootLoader();
+          }}
+          onRouteChange={() => {
+            setRouteLoading(false);
+            dismissBootLoader();
+          }}
+        >
           <Route path="/" component={Home} />
           <Route path="/agents" component={Agents} />
           <Route path="/agents/:project" component={Agents} />

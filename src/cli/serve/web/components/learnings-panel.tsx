@@ -10,6 +10,7 @@ import {
   type SessionLearningsPayload,
   type SessionLearningSource,
 } from '../lib/api';
+import { Loading } from './loading';
 
 // Grouped by provenance, manual first (highest-signal, human-authored), then
 // promoted comments, then auto-extracted — mirrors injection ranking.
@@ -93,7 +94,7 @@ function LearningsSection(props: {
     <div class="learnings-panel" id={props.id}>
       {props.label !== null && <div class="learnings-label">{props.label}</div>}
       {error && <p class="learnings-error">{error}</p>}
-      {learnings === null && !error && <p class="learnings-empty">Loading…</p>}
+      {learnings === null && !error && <Loading wrapClass="learnings-empty" label="Loading learnings…" />}
       {learnings !== null && items.length === 0 && (
         <p class="learnings-empty">{props.emptyText}</p>
       )}

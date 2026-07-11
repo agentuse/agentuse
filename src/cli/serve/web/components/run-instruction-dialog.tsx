@@ -74,8 +74,8 @@ export function RunInstructionDialog(props: {
           <span class="hint"><span class="kbd">⌘⏎</span> run <span class="kbd">esc</span> cancel</span>
           <span class="actions">
             <button type="button" onClick={props.onClose}>Cancel</button>
-            <button type="button" class="primary" disabled={props.busy} onClick={submit}>
-              {props.busy ? 'Starting…' : 'Run agent'}
+            <button type="button" class={`primary${props.busy ? ' btn-busy' : ''}`} disabled={props.busy} aria-busy={props.busy} onClick={submit}>
+              {props.busy ? <><span class="btn-spinner" aria-hidden="true" />Starting…</> : 'Run agent'}
             </button>
           </span>
         </div>

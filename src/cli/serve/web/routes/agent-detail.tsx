@@ -8,6 +8,7 @@ import { useTitle } from '../hooks/use-title';
 import { useRunAgent } from '../hooks/use-run-agent';
 import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
+import { Loading } from '../components/loading';
 import { AgentLearningsPanel } from '../components/learnings-panel';
 import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
 import { LogContent } from '../components/content';
@@ -173,7 +174,7 @@ function RecentRuns(props: { agentId: string; project: string }) {
         <a class="see-all" href={seeAll}>view all →</a>
       </div>
       <div class="panel">
-        {loading && <div class="empty">Loading runs…</div>}
+        {loading && !data && <Loading label="Loading runs…" />}
         {error && <div class="empty err">Failed to load runs: {error.message}</div>}
         {data && rows.length === 0 && <div class="empty">No runs in the last 30 days.</div>}
         {rows.length > 0 && <div class="run-list">{rows.map((r) => <RunRow key={r.sessionId} row={r} />)}</div>}
@@ -294,7 +295,7 @@ export default function AgentDetail() {
       <main>
         <a class="back" href="/agents" onClick={goBack}>← Back</a>
 
-        {loading && <div class="panel"><div class="empty">Loading agent…</div></div>}
+        {loading && !data && <div class="panel"><Loading label="Loading agent…" /></div>}
         {error && (
           <div class="panel"><div class="empty err">Failed to load agent: {error.message}</div></div>
         )}
@@ -309,8 +310,8 @@ export default function AgentDetail() {
                 <div class="hero-path"><code>{data.path}</code></div>
               </div>
               <div class="hero-actions">
-                <button type="button" class="run-cta" disabled={busy} onClick={() => void run()}>
-                  {busy ? 'Starting…' : '▶ Run agent'}
+                <button type="button" class={`run-cta${busy ? ' btn-busy' : ''}`} disabled={busy} aria-busy={busy} onClick={() => void run()}>
+                  {busy ? <><span class="btn-spinner" aria-hidden="true" />Starting…</> : '▶ Run agent'}
                 </button>
                 {runError && <span class="run-err">{runError}</span>}
               </div>

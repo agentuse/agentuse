@@ -6,6 +6,7 @@ import { useLiveHome, type ActivityEvent } from '../hooks/use-live-home';
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
+import { Loading } from '../components/loading';
 import { formatApprovalTime, formatRelativeTime, displayStatusLabel, runTone } from '../lib/format';
 
 function plural(n: number, word: string): string {
@@ -311,7 +312,9 @@ export default function Home() {
           <h2 class="group-title"><span>Activity</span><span class="rule"></span><span class="feed-live-tag">{liveHome.live ? 'live' : 'polling'}</span></h2>
           <div class="panel feed">
             {liveHome.feed.length === 0
-              ? <div class="empty">{liveHome.loading ? 'Loading activity…' : 'No runs in the last 24 hours.'}</div>
+              ? (liveHome.loading
+                ? <Loading label="Loading activity…" />
+                : <div class="empty">No runs in the last 24 hours.</div>)
               : liveHome.feed.map((event) => <FeedRow key={event.key} event={event} />)}
           </div>
         </section>
@@ -333,7 +336,9 @@ export default function Home() {
           <h2 class="group-title"><span>Projects</span><span class="count">{projects.length}</span><span class="rule"></span></h2>
           <div class="panel">
             {projects.length === 0
-              ? <div class="empty">{loading ? 'Loading projects…' : 'No projects loaded.'}</div>
+              ? (loading
+                ? <Loading label="Loading projects…" />
+                : <div class="empty">No projects loaded.</div>)
               : projects.map((p) => (
                 <a class="proj" href={`/agents/${encodeURIComponent(p.id)}`} key={p.id}>
                   <div>

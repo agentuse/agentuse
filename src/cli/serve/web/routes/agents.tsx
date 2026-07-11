@@ -13,6 +13,7 @@ import { useMediaQuery } from '../hooks/use-media-query';
 import { useRunAgent } from '../hooks/use-run-agent';
 import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
+import { Loading } from '../components/loading';
 import { RunInstructionDialog } from '../components/run-instruction-dialog';
 import { agentDetailHref } from './agent-detail';
 
@@ -41,7 +42,7 @@ function RunButton(props: { agentPath: string; projectId: string }) {
       title={error ?? 'Run this agent now and open its session'}
     >
       {busy ? (
-        <span class="run-btn-spinner" aria-hidden="true" />
+        <span class="btn-spinner" aria-hidden="true" />
       ) : (
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
           <path d="M5 3.5v9a.75.75 0 0 0 1.14.64l7.25-4.5a.75.75 0 0 0 0-1.28l-7.25-4.5A.75.75 0 0 0 5 3.5Z" />
@@ -637,15 +638,13 @@ export default function Agents({ project }: { project?: string } = {}) {
         : scoped
           ? `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} in this project.`
           : `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} across ${byProject.size} project${byProject.size === 1 ? '' : 's'} in this serve daemon.`;
-  const emptyMsg = loading
-    ? 'Loading…'
-    : query
-      ? `No agents match “${trimmed}”.`
-      : projectMissing
-        ? `No project “${project}” is loaded by this serve daemon.`
-        : scoped
-          ? 'This project has no agents.'
-          : 'No agents loaded by this serve daemon.';
+  const emptyMsg = query
+    ? `No agents match “${trimmed}”.`
+    : projectMissing
+      ? `No project “${project}” is loaded by this serve daemon.`
+      : scoped
+        ? 'This project has no agents.'
+        : 'No agents loaded by this serve daemon.';
 
   return (
     <div class="page-agents">
@@ -737,12 +736,14 @@ export default function Agents({ project }: { project?: string } = {}) {
           </section>
         )}
         {byProject.size === 0
-          ? <div class="panel"><div class="empty">
+          ? <div class="panel">{loading && !data
+            ? <Loading label="Loading agents…" />
+            : <div class="empty">
               {emptyMsg}
               {query && !projectMissing && (
                 <button type="button" class="empty-action" onClick={() => updateFilter('')}>Clear filter</button>
               )}
-            </div></div>
+            </div>}</div>
           : [...byProject.entries()].map(([projectId, agents]) => (
             <section class="group" id={projectAnchor(projectId)} key={projectId}>
               {!scoped && (

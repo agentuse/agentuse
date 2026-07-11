@@ -7,6 +7,7 @@ import { useMediaQuery } from '../hooks/use-media-query';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
+import { Loading } from '../components/loading';
 import { PushBell } from '../components/push-bell';
 import { AgentFilterSelect } from '../components/agent-filter-select';
 import { formatApprovalTime, formatRelativeTime, errorText, displayStatusLabel } from '../lib/format';
@@ -236,7 +237,7 @@ export default function SessionsList() {
         {resolvedData && resolvedData.errors.length > 0 && (
           <div class="errors" role="alert">Some projects failed: <ul>{resolvedData.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul></div>
         )}
-        {resolvedLoading && !resolvedData && <p class="empty">Loading sessions…</p>}
+        {resolvedLoading && !resolvedData && <Loading label="Loading sessions…" />}
         {resolvedData && (rows.length === 0
           ? (
             <p class="empty">

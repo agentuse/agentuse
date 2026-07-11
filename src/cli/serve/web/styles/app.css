@@ -1608,6 +1608,16 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
   text-decoration: none;
   transition: background 120ms ease, border-color 120ms ease;
 }
+/* Fixed min-width so the "Approving…"/"Rejecting…" busy labels don't shift
+   the button under the cursor mid-click. */
+.approval-toast-actions .approve,
+.approval-toast-actions .reject {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 96px;
+}
 .approval-toast-actions .approve {
   border: 1px solid var(--primary-bg);
   background: var(--primary-bg);
@@ -1888,8 +1898,10 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .learnings-add button:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
 .learnings-add button:active { transform: translateY(1px); }
 .learnings-add button:disabled { opacity: 0.55; cursor: not-allowed; }
-/* Inline spinner for buttons in a pending state; inherits the button's text colour. */
-.btn-spinner {
+/* Inline spinner for buttons in a pending state and for the shared Loading
+   component; inherits the surrounding text colour. */
+.btn-spinner,
+.loading-spinner {
   width: 12px;
   height: 12px;
   border: 1.5px solid currentColor;
@@ -1897,6 +1909,47 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
   border-radius: 50%;
   animation: log-spin 700ms linear infinite;
 }
+/* Shared loading indicator (components/loading.tsx): spinner beside a label,
+   layered onto each surface's own container class (.empty, .notice, …). */
+.loading { display: flex; align-items: center; gap: 8px; }
+.loading-spinner { flex: none; opacity: 0.8; }
+/* Buttons showing an inline spinner while their action is in flight. */
+.btn-busy { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+/* Replaces the keyboard hint beside Approve/Reject/Comment while a decision is
+   being submitted, so the feedback sits next to the buttons the user clicked. */
+.log-actions-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  /* muted-3, not muted: the user is actively watching this text, so it needs
+     the readable-secondary rung rather than the decorative-hint one. */
+  color: var(--muted-3);
+  letter-spacing: 0.04em;
+}
+/* Route-transition progress: a thin indeterminate bar under the top edge while
+   a lazy route chunk loads (app.tsx toggles the attribute). Fades in after a
+   short delay so instant chunk loads never flash it. */
+html[data-route-loading] body::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  z-index: 1000;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  opacity: 0;
+  animation: route-progress 1s linear infinite, route-progress-in 200ms ease 150ms forwards;
+}
+@keyframes route-progress {
+  from { background-position: -67% 0; }
+  to { background-position: 167% 0; }
+}
+@keyframes route-progress-in { to { opacity: 1; } }
 .continue-label {
   color: var(--muted);
   font-size: 10px;
@@ -2573,14 +2626,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .run-btn svg { width: 12px; height: 12px; margin-left: 1px; }
 .page-agents .run-btn:hover:not(:disabled) { background: var(--cyan); color: var(--bg); border-color: var(--cyan); }
 .page-agents .run-btn:disabled { cursor: default; opacity: 0.6; }
-.page-agents .run-btn-spinner {
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid currentColor;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: log-spin 700ms linear infinite;
-}
 .page-agents .muted { color: var(--muted); }
 .page-agents .chip {
   display: inline-flex; align-items: center;
@@ -3501,7 +3546,14 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .log-dots::after { animation: none !important; }
   .log-spinner,
   .btn-spinner,
-  .page-agents .run-btn-spinner { animation-duration: 1.6s; }
+  .loading-spinner { animation-duration: 1.6s; }
+  /* A gradient sweeping the full viewport width is the largest motion in the
+     app; reduce it to a static bar that only fades in. */
+  html[data-route-loading] body::after {
+    animation: route-progress-in 200ms ease 150ms forwards;
+    background: var(--cyan);
+    background-size: 100% 100%;
+  }
 }
 
 /* --- keyboard focus ---------------------------------------------------- */

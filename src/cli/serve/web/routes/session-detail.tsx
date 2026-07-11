@@ -8,6 +8,7 @@ import { DecisionDialog, type DecisionDialogMode } from '../components/comment-d
 import { ContinuePanel } from '../components/continue-panel';
 import { LearningsPanel } from '../components/learnings-panel';
 import { DebugPromptButton } from '../components/debug-prompt-button';
+import { Loading } from '../components/loading';
 import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
 import { syncAppBadge } from '../lib/badge';
 import { useApprovalStream } from '../hooks/use-approval-stream';
@@ -182,7 +183,8 @@ export default function SessionDetail() {
   const [logsVersion, setLogsVersion] = useState(0);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [pendingActionable, setPendingActionable] = useState(false);
-  const [submittingDecision, setSubmittingDecision] = useState(false);
+  const [submittingDecision, setSubmittingDecision] = useState<'approve' | 'reject' | 'comment' | null>(null);
+  const noticeRef = useRef<HTMLParagraphElement>(null);
   const [submittingContinue, setSubmittingContinue] = useState(false);
   const [submittingStop, setSubmittingStop] = useState(false);
   const [submittingReopen, setSubmittingReopen] = useState(false);
@@ -255,7 +257,7 @@ export default function SessionDetail() {
       // history, but the actionable surface resets for the new gate.
       currentResumeTokenRef.current = nextToken;
       setPendingActionable(true);
-      setSubmittingDecision(false);
+      setSubmittingDecision(null);
       setResult({ text: '', error: false });
       if (header.approvalUrl) {
         try { history.replaceState(null, '', header.approvalUrl); } catch { /* ignore */ }
@@ -566,9 +568,9 @@ export default function SessionDetail() {
     else setShowResume(false);
   }, [continueActionable]);
 
-  const submitDecision = useCallback(async (action: string, comment?: string, remember?: string) => {
+  const submitDecision = useCallback(async (action: 'approve' | 'reject' | 'comment', comment?: string, remember?: string) => {
     if (submittingDecision || !currentResumeTokenRef.current) return;
-    setSubmittingDecision(true);
+    setSubmittingDecision(action);
     setResult({ text: '⋮ submitting decision…', error: false });
     try {
       await postSessionDecision(sessionId, token, {
@@ -586,7 +588,10 @@ export default function SessionDetail() {
       void fetchApprovals().then((p) => syncAppBadge(p.buckets.pending.length)).catch(() => {});
     } catch (err) {
       setResult({ text: (err as Error).message || String(err), error: true });
-      setSubmittingDecision(false);
+      setSubmittingDecision(null);
+      // The error notice lives at the bottom of <main>, likely off-screen on a
+      // long session; bring it into view so the failure isn't silent.
+      noticeRef.current?.scrollIntoView({ block: 'nearest' });
     }
   }, [sessionId, token, projectId, submittingDecision]);
 
@@ -713,7 +718,7 @@ export default function SessionDetail() {
     return (
       <div class="page-approval-detail">
         <Topbar currentPage="sessions" />
-        <main><p class="notice">Loading session…</p></main>
+        <main><Loading wrapClass="notice" label="Loading session…" /></main>
       </div>
     );
   }
@@ -935,7 +940,8 @@ export default function SessionDetail() {
                   (!currentResumeTokenRef.current || entry.details?.resumeToken === currentResumeTokenRef.current)}
                 parentApproveHref={showParentApproveCta ? parentLink : undefined}
                 parentApproveLabel={parentLabel}
-                actionsDisabled={submittingDecision}
+                actionsDisabled={submittingDecision !== null}
+                pendingAction={submittingDecision}
                 projectId={projectId}
                 sessionId={sessionId}
                 token={token}
@@ -968,14 +974,19 @@ export default function SessionDetail() {
               type="button"
               class="debug-prompt-button"
               disabled={submittingReopen}
+              aria-busy={submittingReopen}
               onClick={() => void submitReopen()}
               title="Roll the approval gate back to pending so you can re-submit your decision and retry the resume that failed"
             >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-3-6.7" />
-                <path d="M21 4v5h-5" />
-              </svg>
-              <span>Retry</span>
+              {submittingReopen ? (
+                <span class="btn-spinner" aria-hidden="true" />
+              ) : (
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 12a9 9 0 1 1-3-6.7" />
+                  <path d="M21 4v5h-5" />
+                </svg>
+              )}
+              <span>{submittingReopen ? 'Reopening…' : 'Retry'}</span>
             </button>
           )}
           {continueActionable && (
@@ -1024,17 +1035,22 @@ export default function SessionDetail() {
               type="button"
               class="debug-prompt-button stop-session-button"
               disabled={submittingStop}
+              aria-busy={submittingStop}
               onClick={() => void submitStop()}
               title={live
                 ? 'Stop this session and any running subagents'
                 : 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending'}
             >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                {live
-                  ? <rect x="6" y="6" width="12" height="12" rx="2" />
-                  : <><path d="M18 6 6 18" /><path d="M6 6 18 18" /></>}
-              </svg>
-              <span>{live ? 'Stop session' : 'Discard'}</span>
+              {submittingStop ? (
+                <span class="btn-spinner" aria-hidden="true" />
+              ) : (
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  {live
+                    ? <rect x="6" y="6" width="12" height="12" rx="2" />
+                    : <><path d="M18 6 6 18" /><path d="M6 6 18 18" /></>}
+                </svg>
+              )}
+              <span>{submittingStop ? (live ? 'Stopping…' : 'Discarding…') : (live ? 'Stop session' : 'Discard')}</span>
             </button>
           )}
         </div>
@@ -1042,6 +1058,7 @@ export default function SessionDetail() {
         <ContinuePanel
           hidden={!continueActionable || !showResume}
           disabled={submittingContinue || !continueActionable}
+          busy={submittingContinue}
           onSubmit={(prompt) => void submitContinue(prompt)}
         />
 
@@ -1056,7 +1073,7 @@ export default function SessionDetail() {
           This session is not accepting actions right now.
         </div>
 
-        <p class={`notice${result.error ? ' error' : ''}`} role={result.error ? 'alert' : 'status'}>{result.text}</p>
+        <p ref={noticeRef} class={`notice${result.error ? ' error' : ''}`} role={result.error ? 'alert' : 'status'}>{result.text}</p>
       </main>
 
       <DecisionDialog

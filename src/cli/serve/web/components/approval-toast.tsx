@@ -22,7 +22,7 @@ export function ApprovalToast() {
   const location = useLocation();
   const [toast, setToast] = useState<ApprovalRow | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'approved' | 'rejected' | null>(null);
   const [outcome, setOutcome] = useState<'approved' | 'rejected' | null>(null);
   const [fallback, setFallback] = useState(false);
   const seenRef = useRef<Set<string> | null>(null);
@@ -69,7 +69,7 @@ export function ApprovalToast() {
 
   const decide = async (status: 'approved' | 'rejected') => {
     if (!toast?.resumeToken || busy) return;
-    setBusy(true);
+    setBusy(status);
     try {
       await postSessionDecision(toast.sessionId, undefined, {
         status,
@@ -84,7 +84,7 @@ export function ApprovalToast() {
       location.route(sessionHref(toast));
       setToast(null);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -114,8 +114,12 @@ export function ApprovalToast() {
         {excerpt && <div class="approval-toast-excerpt">{excerpt}</div>}
       </div>
       <div class="approval-toast-actions">
-        <button type="button" class="approve" disabled={busy} onClick={() => void decide('approved')}>Approve</button>
-        <button type="button" class="reject" disabled={busy} onClick={() => void decide('rejected')}>Reject</button>
+        <button type="button" class={`approve${busy === 'approved' ? ' btn-busy' : ''}`} disabled={busy !== null} aria-busy={busy === 'approved'} onClick={() => void decide('approved')}>
+          {busy === 'approved' ? <><span class="btn-spinner" aria-hidden="true" />Approving…</> : 'Approve'}
+        </button>
+        <button type="button" class={`reject${busy === 'rejected' ? ' btn-busy' : ''}`} disabled={busy !== null} aria-busy={busy === 'rejected'} onClick={() => void decide('rejected')}>
+          {busy === 'rejected' ? <><span class="btn-spinner" aria-hidden="true" />Rejecting…</> : 'Reject'}
+        </button>
         <a class="open" href={sessionHref(toast)} onClick={() => setToast(null)}>Open</a>
         <button type="button" class="dismiss" aria-label="Dismiss" onClick={() => setToast(null)}>✕</button>
       </div>

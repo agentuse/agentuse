@@ -407,6 +407,9 @@ export interface LogEntryProps {
   expanded: boolean;
   showActions: boolean;
   actionsDisabled: boolean;
+  /** The decision currently being submitted; renders a specific pending label
+   *  ("approving…") in place of the keyboard hint. */
+  pendingAction?: 'approve' | 'reject' | 'comment' | null;
   /** On a view-only sub-agent page, the pending gate has no local controls —
    *  this links to the parent run where the decision is actually made. */
   parentApproveHref?: string | undefined;
@@ -531,9 +534,19 @@ function LogEntryImpl(props: LogEntryProps) {
         </div>
         {props.showActions && (
           <div class="log-actions" data-actions-row>
-            <div class="log-actions-hint">
-              <span class="kbd">⌘⏎</span> approve <span class="kbd">esc</span> reject <span class="kbd">c</span> comment
-            </div>
+            {props.actionsDisabled ? (
+              // No role="status": this mounts inside the role="log" list and the
+              // page's persistent notice announces the same event; a third live
+              // region would make screen readers repeat it.
+              <span class="log-actions-pending">
+                <span class="btn-spinner" aria-hidden="true" />
+                {props.pendingAction === 'approve' ? 'approving…' : props.pendingAction === 'reject' ? 'rejecting…' : props.pendingAction === 'comment' ? 'sending comment…' : 'submitting decision…'}
+              </span>
+            ) : (
+              <div class="log-actions-hint">
+                <span class="kbd">⌘⏎</span> approve <span class="kbd">esc</span> reject <span class="kbd">c</span> comment
+              </div>
+            )}
             <div class="log-actions-buttons">
               <button class="primary" disabled={props.actionsDisabled} onClick={() => props.onAction('approve')}>Approve</button>
               <button class="danger" disabled={props.actionsDisabled} onClick={() => props.onAction('reject')}>Reject</button>
@@ -570,6 +583,7 @@ export const LogEntry = memo(LogEntryImpl, (prev, next) =>
   prev.expanded === next.expanded &&
   prev.showActions === next.showActions &&
   prev.actionsDisabled === next.actionsDisabled &&
+  prev.pendingAction === next.pendingAction &&
   prev.parentApproveHref === next.parentApproveHref &&
   prev.parentApproveLabel === next.parentApproveLabel &&
   prev.projectId === next.projectId &&

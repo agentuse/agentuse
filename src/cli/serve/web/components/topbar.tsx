@@ -118,14 +118,14 @@ function SettingsMenu() {
           <div class="settings-section-label">Maintenance</div>
           <button
             type="button"
-            class="settings-item"
+            class={`settings-item${clearing ? ' btn-busy' : ''}`}
             role="menuitem"
             onClick={clearCacheAndReload}
             disabled={clearing}
             aria-busy={clearing}
             title="Clear the cached app and reload the latest build"
           >
-            {clearing ? 'Clearing…' : 'Clear cache & reload'}
+            {clearing ? <><span class="btn-spinner" aria-hidden="true" />Clearing…</> : 'Clear cache & reload'}
           </button>
         </div>
       )}

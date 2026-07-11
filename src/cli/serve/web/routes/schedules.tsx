@@ -3,6 +3,7 @@ import { fetchSchedules } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
+import { Loading } from '../components/loading';
 import { formatApprovalTime } from '../lib/format';
 import { agentDetailHref } from './agent-detail';
 
@@ -90,7 +91,9 @@ export default function Schedules() {
             {[...days.entries()].map(([label, list]) => renderDay(label, list))}
             {disabled.length > 0 && renderDay('Disabled', disabled, 'day-disabled')}
           </>
-          : <div class="panel"><div class="empty">{loading ? 'Loading…' : 'No scheduled agents. Add a schedule: field to an agent file.'}</div></div>}
+          : <div class="panel">{loading && !data
+            ? <Loading label="Loading schedules…" />
+            : <div class="empty">No scheduled agents. Add a schedule: field to an agent file.</div>}</div>}
       </main>
     </div>
   );
