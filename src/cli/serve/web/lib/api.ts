@@ -212,15 +212,23 @@ export function postSessionReopen(sessionId: string, token: string | undefined, 
   return postJson(withToken(`/sessions/${encodeURIComponent(sessionId)}/reopen`, token), body);
 }
 
-export interface StopSessionResult {
-  success: true;
-  sessionId: string;
-  stopped: Array<{ sessionId: string; agentId: string; agentName: string; wasStatus: string; stopped: boolean }>;
-}
+// A stop on a session suspended on an approval gate is delivered as a REJECT
+// decision (202 { status: 'resuming', rejected: true }) so the agent can
+// record the rejection before ending; otherwise the tree is hard-stopped
+// (200 { success: true, stopped: [...] }).
+export type StopSessionResult =
+  | {
+    success: true;
+    sessionId: string;
+    stopped: Array<{ sessionId: string; agentId: string; agentName: string; wasStatus: string; stopped: boolean }>;
+    rejected?: undefined;
+  }
+  | { sessionId: string; status: string; rejected: true };
 
 export function postSessionStop(sessionId: string, token: string | undefined, body: {
   project?: string;
   reason?: string;
+  force?: boolean;
 }): Promise<StopSessionResult> {
   return postJson(withToken(`/sessions/${encodeURIComponent(sessionId)}/stop`, token), body);
 }

@@ -641,10 +641,19 @@ export default function SessionDetail() {
     setSubmittingStop(true);
     setResult({ text: '⋮ stopping session…', error: false });
     try {
-      await postSessionStop(sessionId, token, {
+      const payload = await postSessionStop(sessionId, token, {
         ...(projectId ? { project: projectId } : {}),
         reason: 'Stopped from session UI',
       });
+      if (payload.rejected) {
+        // A discard on a pending gate is delivered as a reject decision so the
+        // agent can record it before ending — mirror the decision flow.
+        setResult({ text: '✓ pending request rejected — agentuse is resuming the session so the agent records it before ending.', error: false });
+        setStatus('resuming');
+        setNudge((n) => n + 1);
+        void fetchApprovals().then((p) => syncAppBadge(p.buckets.pending.length)).catch(() => {});
+        return;
+      }
       setResult({ text: '✓ session stopped. Running subagents were stopped too.', error: false });
       setStatus('stopped');
       setNudge((n) => n + 1);
@@ -1018,7 +1027,7 @@ export default function SessionDetail() {
               onClick={() => void submitStop()}
               title={live
                 ? 'Stop this session and any running subagents'
-                : 'Discard this pending request without approving or rejecting (does not run the agent)'}
+                : 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending'}
             >
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 {live

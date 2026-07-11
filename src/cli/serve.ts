@@ -2484,7 +2484,21 @@ export function createServeCommand(): Command {
       // Slack thread, track the in-flight promise, and write the 202.
       const startApprovalResume = (
         res: ServerResponse,
-        params: { project: Project; sessionId: string; info: WorkerApprovalInfoResult; resumeToken: string; status: string; comment?: string | undefined }
+        params: {
+          project: Project;
+          sessionId: string;
+          info: WorkerApprovalInfoResult;
+          resumeToken: string;
+          status: string;
+          comment?: string | undefined;
+          // Extra fields merged into the 202 body, so alternate entry points
+          // (the stop endpoint's reject reroute) can mark how they resolved.
+          responseExtra?: Record<string, unknown> | undefined;
+          // Invoked when the resume fails for a reason other than the session
+          // having already completed. The stop endpoint uses this to fall back
+          // to a hard stop so "stop" always ends the session.
+          onResumeFailure?: (() => void) | undefined;
+        }
       ): void => {
         const { project, sessionId, info, resumeToken, status, comment } = params;
         const projectWorker = workers.get(project.id)!;
@@ -2539,6 +2553,11 @@ export function createServeCommand(): Command {
             }
             approvalLog.resumeFailed(targetSessionId, Date.now() - resumeStart, result.error.message);
             logger.warn(`Approval resume ${targetSessionId} failed: ${result.error.message}`);
+            try {
+              params.onResumeFailure?.();
+            } catch (hookErr) {
+              logger.warn(`Approval resume failure hook for ${targetSessionId} failed: ${(hookErr as Error).message}`);
+            }
             if (slackChannelMessage && info.approval.prompt) {
               void updateSlackApprovalRequestStatus({
                 botToken: slackBotToken!,
@@ -2585,7 +2604,7 @@ export function createServeCommand(): Command {
         wakeListHubs();
 
         res.writeHead(202, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ sessionId: targetSessionId, status: "resuming" }));
+        res.end(JSON.stringify({ sessionId: targetSessionId, status: "resuming", ...params.responseExtra }));
       };
 
       // Shared continue kickoff for both /approvals/:id/continue and
@@ -4308,9 +4327,16 @@ export function createServeCommand(): Command {
           return;
         }
 
-        // POST /sessions/:id/stop: abort a live session and mark it plus its
-        // subagent children as stopped. Authorized the same way as the session
-        // page: local, session token, or API key.
+        // POST /sessions/:id/stop: end a session and its subagent children.
+        // When the session (or the leaf of its delegation cascade) is suspended
+        // on a pending approval gate, a plain stop would orphan the gate: the
+        // agent never resumes, so any state it manages (store items, drafts)
+        // stays "awaiting approval" forever. Instead the stop is delivered as a
+        // REJECT decision through the normal approval-resume path, letting the
+        // agent record the rejection and end cleanly. If that resume fails, the
+        // tree is hard-stopped as a fallback. Pass { force: true } to skip the
+        // reject and hard-stop immediately. Authorized the same way as the
+        // session page: local, session token, or API key.
         const sessionStopMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/stop$/) : null;
         if (sessionStopMatch) {
           try {
@@ -4321,6 +4347,7 @@ export function createServeCommand(): Command {
             const reason = typeof body.reason === 'string' && body.reason.trim().length > 0
               ? body.reason.trim()
               : undefined;
+            const force = body.force === true;
 
             if (!sessionAuthorized(sessionId, token)) {
               sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
@@ -4337,6 +4364,39 @@ export function createServeCommand(): Command {
             const projectWorker = workers.get(project.id);
             if (!projectWorker) {
               sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
+              return;
+            }
+
+            const info = found.info;
+            const targetSessionId = approvalActionSessionId(info, sessionId);
+            const gateKey = `${project.id}:${targetSessionId}`;
+            const gateResumeToken = info.approval.currentResumeToken;
+            // currentResumeToken is only surfaced for an actionable await_human
+            // gate (own or cascade leaf), so its presence identifies a
+            // rejectable approval rather than a generic await_* suspension.
+            const rejectableGate = !force
+              && info.approval.sessionStatus === 'suspended'
+              && typeof gateResumeToken === 'string'
+              && (info.approval.expiresAt === undefined || info.approval.expiresAt > Date.now())
+              && !activeApprovalResumes.has(gateKey)
+              && !activeSessionContinuations.has(gateKey);
+
+            if (rejectableGate) {
+              const hardStop = (): void => {
+                void projectWorker.stopSession({ projectRoot: project.root, sessionId, reason })
+                  .then(() => wakeListHubs())
+                  .catch((err) => logger.warn(`Fallback stop after failed reject-resume of ${sessionId} failed: ${(err as Error).message}`));
+              };
+              startApprovalResume(res, {
+                project,
+                sessionId,
+                info,
+                resumeToken: gateResumeToken,
+                status: 'reject',
+                comment: reason ?? 'Discarded: session stopped by the reviewer',
+                responseExtra: { rejected: true },
+                onResumeFailure: hardStop,
+              });
               return;
             }
 

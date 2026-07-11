@@ -673,11 +673,12 @@ export function createSessionsCommand(): Command {
   sessionsCmd
     .command("stop <id>")
     .alias("cancel")
-    .description("Stop a running or suspended session and its subagent children")
-    .option("--reason <text>", "Reason recorded on the stopped session")
+    .description("Stop a running or suspended session and its subagent children. A session suspended on an approval gate is rejected instead (so the agent records the decision); pass --force to hard-stop without rejecting")
+    .option("--reason <text>", "Reason recorded on the stopped session (also used as the reject comment)")
+    .option("--force", "Hard-stop without delivering a reject decision to a pending approval gate")
     .option("--project [path]", "Search a project path; defaults to the current project")
     .option("--all-search", "Search all projects if the session is not in the selected project")
-    .action(async (id: string, options: { reason?: string; project?: string | boolean; allSearch?: boolean }) => runSessionsAction(async () => {
+    .action(async (id: string, options: { reason?: string; force?: boolean; project?: string | boolean; allSearch?: boolean }) => runSessionsAction(async () => {
       const scope = resolveSessionScope(options);
       await stopSession(scope, id, options);
     }));
@@ -1192,16 +1193,31 @@ async function resolveSessionByScope(
 async function stopSession(
   scope: SessionScope,
   sessionId: string,
-  options: { reason?: string; allSearch?: boolean } = {}
+  options: { reason?: string; force?: boolean; allSearch?: boolean } = {}
 ): Promise<void> {
   const match = await resolveSessionByScope(scope, sessionId, {
     ...(options.allSearch !== undefined && { allSearch: options.allSearch })
   });
   const summary = match.summary;
-  const serverStopped = await stopSessionViaServer(summary, options.reason);
+  const serverOutcome = await stopSessionViaServer(summary, options);
+
+  if (serverOutcome.handled && serverOutcome.mode === 'rejected') {
+    process.stdout.write(`Session ${summary.id} was suspended on an approval gate.\n`);
+    process.stdout.write(`Delivered a REJECT decision instead of a hard stop; the serve daemon is resuming the session so the agent records the rejection and finishes. Use --force to hard-stop without rejecting.\n`);
+    return;
+  }
 
   await initStorage(summary.projectRoot);
   const sessionManager = new SessionManager();
+
+  // No daemon owns this project: a hard stop on a suspended approval gate
+  // would orphan it (the agent never resumes, so state it manages stays
+  // "awaiting approval" forever). Deliver the rejection in-process instead.
+  if (!serverOutcome.handled && !options.force) {
+    const rerouted = await rejectGateLocally(sessionManager, summary, options.reason);
+    if (rerouted) return;
+  }
+
   const stopped = await sessionManager.stopSessionTree(summary.id, {
     message: options.reason ?? 'Session stopped by user'
   });
@@ -1217,7 +1233,7 @@ async function stopSession(
   }
 
   process.stdout.write(`Stopped ${changed.length} session(s):\n`);
-  if (serverStopped) {
+  if (serverOutcome.handled) {
     process.stdout.write(`  server: active worker was asked to abort\n`);
   }
   for (const entry of stopped) {
@@ -1227,9 +1243,16 @@ async function stopSession(
   }
 }
 
-async function stopSessionViaServer(summary: SessionSummary, reason?: string): Promise<boolean> {
+type ServerStopOutcome =
+  | { handled: false }
+  | { handled: true; mode: 'stopped' | 'rejected' };
+
+async function stopSessionViaServer(
+  summary: SessionSummary,
+  options: { reason?: string; force?: boolean } = {}
+): Promise<ServerStopOutcome> {
   const server = findServerForProject(summary.projectRoot);
-  if (!server) return false;
+  if (!server) return { handled: false };
 
   const project = server.projects?.find((entry) => path.resolve(entry.root) === path.resolve(summary.projectRoot))
     ?? server.projects?.find((entry) => path.resolve(summary.projectRoot).startsWith(path.resolve(entry.root) + path.sep))
@@ -1243,11 +1266,58 @@ async function stopSessionViaServer(summary: SessionSummary, reason?: string): P
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...(project?.id && { project: project.id }),
-        ...(reason && { reason }),
+        ...(options.reason && { reason: options.reason }),
+        ...(options.force && { force: true }),
       }),
     });
-    return response.ok;
+    if (!response.ok) return { handled: false };
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = await response.json() as Record<string, unknown>;
+    } catch {
+      // Older daemons may answer without a JSON body; treat as a plain stop.
+    }
+    return { handled: true, mode: payload.rejected === true ? 'rejected' : 'stopped' };
   } catch {
+    return { handled: false };
+  }
+}
+
+// A hard stop on a suspended approval gate orphans it: the agent never
+// resumes, so state it manages (store items, drafts) stays "awaiting
+// approval" forever. When no serve daemon owns the project, deliver the
+// rejection in-process for a session suspended on its OWN await_human gate.
+// Returns true when the reject-resume ran (the stop is then complete).
+// A session parked on a delegated child's gate (subagent_wait) needs the
+// serve worker's cascade; warn and let the hard stop proceed.
+async function rejectGateLocally(
+  sessionManager: SessionManager,
+  summary: SessionSummary,
+  reason: string | undefined
+): Promise<boolean> {
+  const found = await sessionManager.findSession(summary.id);
+  if (!found || found.session.status !== 'suspended') return false;
+  const pending = await sessionManager.findPendingTool(summary.id, found.agentId);
+  if (!pending || pending.part.state.status !== 'pending') return false;
+
+  const pendingKind = pending.part.state.resumePayload?.kind;
+  if (pendingKind === 'subagent_wait') {
+    process.stdout.write(`Warning: session ${summary.id} is parked on a delegated sub-agent's approval gate, and no serve daemon owns this project, so the reject cascade cannot run. Hard-stopping discards the gate WITHOUT informing the agent; state the leaf agent manages may be left dangling. Start \`agentuse serve\` and stop it there to deliver a rejection instead.\n`);
+    return false;
+  }
+  if (pendingKind !== 'await_human' && pending.part.tool !== 'await_human') {
+    return false;
+  }
+
+  process.stdout.write(`Session ${summary.id} is suspended on an approval gate; delivering a REJECT decision so the agent records it before ending (use --force to hard-stop instead).\n`);
+  try {
+    await resumeSession(summary.id, {
+      reject: reason ?? 'Discarded: session stopped by the reviewer',
+      project: summary.projectRoot,
+    });
+    return true;
+  } catch (err) {
+    process.stdout.write(`Reject-resume failed (${(err as Error).message}); falling back to a hard stop.\n`);
     return false;
   }
 }
