@@ -4,7 +4,8 @@ import type { AgentRow, SessionRow } from '../lib/api';
 import { fetchAgents, fetchSessions } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
-import { formatApprovalTime, formatRelativeTime, displayStatusLabel } from '../lib/format';
+import { useAgentsView } from '../hooks/use-agents-view';
+import { formatApprovalTime, formatRelativeTime, displayStatusLabel, runTone } from '../lib/format';
 import { usePins } from '../hooks/use-pins';
 import { useAgentColumns } from '../hooks/use-agent-columns';
 import { useMediaQuery } from '../hooks/use-media-query';
@@ -202,20 +203,20 @@ export function agentsProjectHref(projectId: string): string {
 const LIVE_RUN_STATUSES = new Set(['running', 'resuming', 'continuing']);
 
 /**
- * Latest session per agent file, joined client-side: sessions carry an absolute
- * `agent.filePath` while agents carry a project-relative `path`, so each
- * session is assigned to the agent whose path is the LONGEST suffix of that
- * file path within the same project — a root-level `deploy.agentuse` must not
- * claim runs of a nested `staging/deploy.agentuse`.
+ * Recent sessions per agent file (newest first), joined client-side: sessions
+ * carry an absolute `agent.filePath` while agents carry a project-relative
+ * `path`, so each session is assigned to the agent whose path is the LONGEST
+ * suffix of that file path within the same project — a root-level
+ * `deploy.agentuse` must not claim runs of a nested `staging/deploy.agentuse`.
  */
-function lastRunFinder(agents: AgentRow[], sessions: SessionRow[]): (agent: AgentRow) => SessionRow | undefined {
+function runHistoryFinder(agents: AgentRow[], sessions: SessionRow[]): (agent: AgentRow) => SessionRow[] {
   const agentsByProject = new Map<string, AgentRow[]>();
   for (const a of agents) {
     const list = agentsByProject.get(a.projectId);
     if (list) list.push(a);
     else agentsByProject.set(a.projectId, [a]);
   }
-  const best = new Map<string, SessionRow>();
+  const runs = new Map<string, SessionRow[]>();
   for (const s of sessions) {
     const filePath = s.agent.filePath;
     if (!filePath) continue;
@@ -226,10 +227,13 @@ function lastRunFinder(agents: AgentRow[], sessions: SessionRow[]): (agent: Agen
     }
     if (!owner) continue;
     const key = `${owner.projectId}::${owner.path}`;
-    const current = best.get(key);
-    if (!current || s.createdAt > current.createdAt) best.set(key, s);
+    const list = runs.get(key);
+    if (list) list.push(s);
+    else runs.set(key, [s]);
   }
-  return (agent) => best.get(`${agent.projectId}::${agent.path}`);
+  for (const list of runs.values()) list.sort((a, b) => b.createdAt - a.createdAt);
+  const empty: SessionRow[] = [];
+  return (agent) => runs.get(`${agent.projectId}::${agent.path}`) ?? empty;
 }
 
 /**
@@ -239,14 +243,10 @@ function lastRunFinder(agents: AgentRow[], sessions: SessionRow[]): (agent: Agen
  */
 function LastRunCell({ session }: { session: SessionRow | undefined }) {
   if (!session) return <span class="muted">—</span>;
-  const live = LIVE_RUN_STATUSES.has(session.status);
   const label = displayStatusLabel(session.status, session.errorCode);
-  const tone = live ? 'running'
-    : session.status === 'completed' ? 'ok'
-      : session.status === 'suspended' ? 'waiting'
-        : 'failed';
+  const tone = runTone(session.status);
   const at = session.updatedAt || session.createdAt;
-  const text = live ? 'running now'
+  const text = tone === 'running' ? 'running now'
     : tone === 'ok' ? formatRelativeTime(at)
       : tone === 'waiting' ? `waiting · ${formatRelativeTime(at)}`
         : `${label} · ${formatRelativeTime(at)}`;
@@ -262,6 +262,46 @@ function LastRunCell({ session }: { session: SessionRow | undefined }) {
       <span class={`lastrun-dot ${tone}`} aria-hidden="true"></span>
       <span class="lastrun-text">{text}</span>
     </a>
+  );
+}
+
+function formatDuration(ms: number): string {
+  const sec = Math.round(ms / 1000);
+  if (sec < 90) return `${sec}s`;
+  const min = Math.round(sec / 60);
+  if (min < 90) return `${min}m`;
+  return `${Math.round(min / 60)}h`;
+}
+
+const RUNSPARK_LIMIT = 12;
+const RUNSPARK_MAX_PX = 16;
+
+/**
+ * Per-agent run history strip: one bar per recent run, oldest first, height by
+ * duration and color by outcome. Supplementary to the last-run text beside it,
+ * so per-bar detail stays on hover; the aggregate lives in the aria-label.
+ */
+function RunHistorySpark({ runs }: { runs: SessionRow[] }) {
+  if (runs.length === 0) return null;
+  const shown = runs.slice(0, RUNSPARK_LIMIT).reverse();
+  const durations = shown.map((s) => Math.max(0, (s.updatedAt || s.createdAt) - s.createdAt));
+  const max = Math.max(1, ...durations);
+  const failed = shown.filter((s) => runTone(s.status) === 'failed').length;
+  return (
+    <span
+      class="runspark"
+      role="img"
+      aria-label={`Last ${shown.length} run${shown.length === 1 ? '' : 's'}${failed > 0 ? `, ${failed} failed` : ''}`}
+    >
+      {shown.map((s, i) => (
+        <span
+          key={s.sessionId}
+          class={`runspark-bar ${runTone(s.status)}`}
+          style={{ height: `${Math.max(3, Math.round((durations[i]! / max) * RUNSPARK_MAX_PX))}px` }}
+          title={`${displayStatusLabel(s.status, s.errorCode)} · ${formatRelativeTime(s.createdAt)} · ${formatDuration(durations[i]!)}`}
+        ></span>
+      ))}
+    </span>
   );
 }
 
@@ -309,10 +349,11 @@ interface PinApi {
   toggle: (a: AgentRow) => void;
 }
 
-/** Everything a rendered agent row needs beyond the agent itself. */
+/** Everything a rendered agent row or card needs beyond the agent itself. */
 interface RowCtx {
   pins: PinApi;
   columns: string[];
+  runsFor: (a: AgentRow) => SessionRow[];
   lastRunFor: (a: AgentRow) => SessionRow | undefined;
 }
 
@@ -362,6 +403,58 @@ function AgentTree(props: { agents: AgentRow[]; ctx: RowCtx }) {
   const rows: VNode[] = [];
   walk(buildTree(props.agents), [], rows, props.ctx);
   return <>{rows}</>;
+}
+
+/**
+ * One agent as a gallery tile: name and description do the talking, with the
+ * run-history strip + last-run health underneath and model/schedule chips in
+ * the footer. The card is a plain container (not one big link) because it
+ * holds its own interactive children (Run, ⋯ menu, last-run link).
+ */
+function AgentCard(props: { agent: AgentRow; ctx: RowCtx }) {
+  const a = props.agent;
+  const runs = props.ctx.runsFor(a);
+  const last = runs[0];
+  const running = last !== undefined && runTone(last.status) === 'running';
+  const pinned = props.ctx.pins.isPinned(a);
+  return (
+    <div class={running ? 'agent-card running' : 'agent-card'}>
+      <div class="agent-card-head">
+        {pinned && <span class="tree-pin" title="Pinned" aria-label="Pinned"><PinIcon filled /></span>}
+        <a class="agent-card-name" href={agentDetailHref(a.projectId, a.runPath)}>{a.name}</a>
+        {running && <span class="tree-live" title="Running now" aria-label="Running now"></span>}
+        <AgentMenu agent={a} pinned={pinned} onTogglePin={() => props.ctx.pins.toggle(a)} />
+      </div>
+      <div class="agent-card-desc">{a.description || <span class="agent-card-nodesc">{a.path.replace(/\.agentuse$/, '')}</span>}</div>
+      <div class="agent-card-runs">
+        <RunHistorySpark runs={runs} />
+        <LastRunCell session={last} />
+      </div>
+      <div class="agent-card-foot">
+        {a.schedule && <span class="chip status" title={a.schedule}>{a.scheduleHuman ?? a.schedule}</span>}
+        <span class="chip" title={a.model}>{a.model}</span>
+        <span class="agent-card-runbtn"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>
+      </div>
+    </div>
+  );
+}
+
+/** Gallery order: pinned first, then live runs, then most recently run, then name. */
+function cardOrder(ctx: RowCtx): (a: AgentRow, b: AgentRow) => number {
+  return (a, b) => {
+    const pa = ctx.pins.isPinned(a) ? 1 : 0;
+    const pb = ctx.pins.isPinned(b) ? 1 : 0;
+    if (pa !== pb) return pb - pa;
+    const ra = ctx.lastRunFor(a);
+    const rb = ctx.lastRunFor(b);
+    const la = ra !== undefined && runTone(ra.status) === 'running' ? 1 : 0;
+    const lb = rb !== undefined && runTone(rb.status) === 'running' ? 1 : 0;
+    if (la !== lb) return lb - la;
+    const ta = ra?.createdAt ?? 0;
+    const tb = rb?.createdAt ?? 0;
+    if (ta !== tb) return tb - ta;
+    return a.name.localeCompare(b.name);
+  };
 }
 
 function PinnedRow(props: { agent: AgentRow; ctx: RowCtx }) {
@@ -482,6 +575,7 @@ export default function Agents({ project }: { project?: string } = {}) {
   // 30d keeps rarely-run agents from reading as "never ran"; a short refresh
   // keeps the running/finished transition visible without a reload.
   const sessions = useFetch('agents-last-runs', () => fetchSessions({ window: '30d' }), { refreshMs: 10_000 });
+  const { view, setView } = useAgentsView();
 
   const [filter, setFilter] = useState('');
   const query = filter.trim().toLowerCase();
@@ -504,8 +598,9 @@ export default function Agents({ project }: { project?: string } = {}) {
   const inactiveColumns = allColumns.filter((c) => !activeColumns.includes(c.id));
   const renderColumns = narrow ? activeColumns.filter((id) => id === 'run' || id === 'lastRun') : activeColumns;
   const gridTemplate = columnsGridTemplate(renderColumns);
-  const lastRunFor = lastRunFinder(allLoaded, sessions.data?.sessions ?? []);
-  const rowCtx: RowCtx = { pins, columns: renderColumns, lastRunFor };
+  const runsFor = runHistoryFinder(allLoaded, sessions.data?.sessions ?? []);
+  const lastRunFor = (a: AgentRow) => runsFor(a)[0];
+  const rowCtx: RowCtx = { pins, columns: renderColumns, runsFor, lastRunFor };
   const allAgents = query ? loadedAgents.filter((a) => matchesFilter(a, query)) : loadedAgents;
   const byProject = new Map<string, AgentRow[]>();
   for (const agent of allAgents) {
@@ -551,25 +646,31 @@ export default function Agents({ project }: { project?: string } = {}) {
           <h1>{scoped ? project : 'Agents'}</h1>
           <p class="lede">{lede}</p>
           {loadedAgents.length > 0 && (
-            <div class="agents-filter">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="7" cy="7" r="4.5" /><path d="m11 11 3 3" />
-              </svg>
-              <input
-                type="search"
-                value={filter}
-                onInput={(e) => setFilter((e.target as HTMLInputElement).value)}
-                placeholder="Filter agents by name, path, model…"
-                aria-label="Filter agents"
-                spellcheck={false}
-                autocomplete="off"
-              />
-              {filter && (
-                <button type="button" class="agents-filter-clear" aria-label="Clear filter" onClick={() => setFilter('')}>×</button>
-              )}
+            <div class="agents-controls">
+              <div class="agents-filter">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="7" cy="7" r="4.5" /><path d="m11 11 3 3" />
+                </svg>
+                <input
+                  type="search"
+                  value={filter}
+                  onInput={(e) => setFilter((e.target as HTMLInputElement).value)}
+                  placeholder="Filter agents by name, path, model…"
+                  aria-label="Filter agents"
+                  spellcheck={false}
+                  autocomplete="off"
+                />
+                {filter && (
+                  <button type="button" class="agents-filter-clear" aria-label="Clear filter" onClick={() => setFilter('')}>×</button>
+                )}
+              </div>
+              <div class="view-toggle" role="group" aria-label="Layout">
+                <button type="button" class={view === 'tree' ? 'on' : ''} aria-pressed={view === 'tree'} onClick={() => setView('tree')}>Tree</button>
+                <button type="button" class={view === 'cards' ? 'on' : ''} aria-pressed={view === 'cards'} onClick={() => setView('cards')}>Cards</button>
+              </div>
             </div>
           )}
-          {loadedAgents.length > 0 && (
+          {view === 'tree' && loadedAgents.length > 0 && (
             <div class="agents-cols">
               <span class="agents-cols-label">Columns</span>
               {activeColumns.length === 0 && <span class="agents-cols-empty">none</span>}
@@ -613,7 +714,7 @@ export default function Agents({ project }: { project?: string } = {}) {
             </details>
           )}
         </header>
-        {pinnedAgents.length > 0 && (
+        {view === 'tree' && pinnedAgents.length > 0 && (
           <section class="group pinned-group">
             <h2 class="group-title"><span>Pinned</span><span class="count">{pinnedAgents.length}</span><span class="rule"></span></h2>
             <div class="panel">
@@ -634,16 +735,20 @@ export default function Agents({ project }: { project?: string } = {}) {
                   <span class="rule"></span>
                 </h2>
               )}
-              <div class="panel">
-                <div class="tree" style={{ gridTemplateColumns: gridTemplate }}>
-                  <div class="tree-head">
-                    <span>Tree</span>
-                    {renderColumns.map((id) => <span key={id}>{columnLabel(id)}</span>)}
-                    <span></span>
+              {view === 'cards'
+                ? <div class="agent-cards">
+                    {[...agents].sort(cardOrder(rowCtx)).map((a) => <AgentCard key={`${a.projectId}::${a.path}`} agent={a} ctx={rowCtx} />)}
                   </div>
-                  <AgentTree agents={agents} ctx={rowCtx} />
-                </div>
-              </div>
+                : <div class="panel">
+                    <div class="tree" style={{ gridTemplateColumns: gridTemplate }}>
+                      <div class="tree-head">
+                        <span>Tree</span>
+                        {renderColumns.map((id) => <span key={id}>{columnLabel(id)}</span>)}
+                        <span></span>
+                      </div>
+                      <AgentTree agents={agents} ctx={rowCtx} />
+                    </div>
+                  </div>}
             </section>
           ))}
       </main>
