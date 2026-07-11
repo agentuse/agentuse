@@ -2181,6 +2181,21 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .empty,
 .page-agents .empty,
 .page-schedules .empty { padding: 18px; color: var(--muted); font-style: italic; }
+/* "Clear filter" escape hatch in the agents empty state. */
+.page-agents .empty .empty-action {
+  margin-left: 12px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-style: normal;
+  font-size: 12.5px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.page-agents .empty .empty-action:hover { color: var(--cyan); }
 .page-home .errors,
 .page-agents .errors,
 .page-schedules .errors { margin: 12px 0 0; padding: 12px 14px; border: 1px solid var(--red-border); border-radius: 8px; color: var(--red); background: var(--red-soft); font-size: 12.5px; }
@@ -3208,6 +3223,16 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-sessions .filter-clear:hover { background: var(--panel-hover); color: var(--fg); border-color: var(--line-strong); }
 .page-sessions .empty { color: var(--muted); font-style: italic; padding: 14px 0; }
+/* One-click escape hatches in the empty state (widen window / clear filters). */
+.page-sessions .empty .empty-action {
+  margin-left: 12px;
+  color: var(--fg);
+  font-style: normal;
+  font-size: 12.5px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.page-sessions .empty .empty-action:hover { color: var(--cyan); }
 .page-sessions .errors {
   margin: 16px 0 0;
   padding: 12px 14px;
@@ -3218,7 +3243,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-size: 12.5px;
 }
 .page-sessions .rows { display: flex; flex-direction: column; gap: 8px; }
+/* The row is a div with a stretched link (.row-link::after) covering it, so
+   the whole card still navigates to the session while the status/trigger chips
+   stay real, un-nested anchors layered above the overlay. */
 .page-sessions .row {
+  position: relative;
   display: block;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -3226,8 +3255,17 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   padding: 14px 16px;
   transition: background 120ms ease, border-color 120ms ease;
 }
-.page-sessions a.row { cursor: pointer; }
-.page-sessions a.row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+.page-sessions .row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+.page-sessions .row-link { display: block; text-decoration: none; }
+.page-sessions .row-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.page-sessions .row-head a.chip { position: relative; z-index: 1; text-decoration: none; cursor: pointer; }
+.page-sessions .row-head a.chip:hover { border-color: currentColor; }
 .page-sessions .row-head {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   margin-bottom: 8px;

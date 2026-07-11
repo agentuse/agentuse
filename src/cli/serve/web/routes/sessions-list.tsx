@@ -20,27 +20,48 @@ function statusClass(status: string): string {
   return `chip status ${status}`;
 }
 
-function SessionRowView(props: { row: SessionRow; multiProject: boolean }) {
-  const { row, multiProject } = props;
+function SessionRowView(props: {
+  row: SessionRow;
+  multiProject: boolean;
+  filterHref: (key: string, value: string) => string;
+  statusFilter: string;
+  triggerFilter: string;
+}) {
+  const { row, multiProject, filterHref, statusFilter, triggerFilter } = props;
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
   // stopped / timeout / incomplete render as their own chips (still status
   // 'error' on disk) so a skim distinguishes "crashed" from "agent declared
   // non-delivery" from "operator stopped it".
   const status = displayStatusLabel(row.status, row.errorCode);
+  // Status/trigger chips double as filter shortcuts: click applies that filter,
+  // click again (when already applied) clears it. The status chip filters by the
+  // on-disk status (`error`), not the display label (`timeout`), because that is
+  // what the API accepts. The row itself is a div with a stretched link on the
+  // title so the chips are real anchors, not links nested inside a link.
+  const statusActive = statusFilter === row.status;
+  const triggerActive = triggerFilter === row.trigger;
   return (
-    <a class="row" href={href}>
+    <div class="row">
       <div class="row-head">
-        <span class={statusClass(status)}>{status}</span>
+        <a
+          class={statusClass(status)}
+          href={filterHref('status', statusActive ? '' : row.status)}
+          title={statusActive ? `Stop filtering by status: ${row.status}` : `Filter sessions by status: ${row.status}`}
+        >{status}</a>
         {multiProject && <span class="chip project">{row.project}</span>}
-        <span class="chip trigger">{row.trigger}</span>
+        <a
+          class="chip trigger"
+          href={filterHref('trigger', triggerActive ? '' : row.trigger)}
+          title={triggerActive ? `Stop filtering by trigger: ${row.trigger}` : `Filter sessions by trigger: ${row.trigger}`}
+        >{row.trigger}</a>
         {row.mock && <span class="chip mock">mock</span>}
         <span class="row-time" title={formatApprovalTime(row.createdAt)}>{formatRelativeTime(row.createdAt)}</span>
       </div>
-      <div class="row-title">{row.agent.name || row.agent.id}</div>
+      <a class="row-title row-link" href={href}>{row.agent.name || row.agent.id}</a>
       {row.agent.description && <div class="row-sub">{row.agent.description}</div>}
       {row.errorMessage && <div class="row-decision">{errorText(row.errorMessage)}</div>}
       <div class="row-meta"><code>{row.sessionId}</code></div>
-    </a>
+    </div>
   );
 }
 
@@ -132,6 +153,10 @@ export default function SessionsList() {
   const resolvedLoading = fetched.loading && !resolvedData;
   const rows = resolvedData?.sessions ?? [];
   const multiProject = new Set(rows.map((r) => r.project)).size > 1;
+  // Empty-state escape hatch: the most common cause of "no sessions" is a
+  // too-narrow window, so offer one jump to 30d (or all time from 30d/90d)
+  // rather than making the operator walk the select.
+  const widerWindow = WINDOWS.indexOf(win) < WINDOWS.indexOf('30d') ? '30d' : 'all';
 
   // Build a URL that preserves the other active filters when one changes.
   const withParam = (key: string, value: string): string => {
@@ -203,8 +228,27 @@ export default function SessionsList() {
         )}
         {resolvedLoading && !resolvedData && <p class="empty">Loading sessions…</p>}
         {resolvedData && (rows.length === 0
-          ? <p class="empty">No sessions in this window.</p>
-          : <div class="rows">{rows.map((row) => <SessionRowView key={`${row.project}:${row.sessionId}`} row={row} multiProject={multiProject} />)}</div>)}
+          ? (
+            <p class="empty">
+              {activeCount > 0 ? 'No sessions match the current filters.' : 'No sessions in this window.'}
+              {win !== 'all' && (
+                <a class="empty-action" href={withParam('window', widerWindow)}>
+                  {widerWindow === 'all' ? 'Search all time' : `Widen to ${widerWindow}`}
+                </a>
+              )}
+              {activeCount > 0 && <a class="empty-action" href="/sessions">Clear all filters</a>}
+            </p>
+          )
+          : <div class="rows">{rows.map((row) => (
+            <SessionRowView
+              key={`${row.project}:${row.sessionId}`}
+              row={row}
+              multiProject={multiProject}
+              filterHref={withParam}
+              statusFilter={statusFilter}
+              triggerFilter={triggerFilter}
+            />
+          ))}</div>)}
         <footer>{streamFallback ? 'auto-refreshes every 10s' : 'live updates'}</footer>
       </main>
     </div>

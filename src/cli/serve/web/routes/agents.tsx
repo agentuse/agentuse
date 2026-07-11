@@ -1,4 +1,5 @@
 import type { VNode } from 'preact';
+import { useLocation } from 'preact-iso';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { AgentRow, SessionRow } from '../lib/api';
 import { fetchAgents, fetchSessions } from '../lib/api';
@@ -564,6 +565,7 @@ function matchesFilter(agent: AgentRow, query: string): boolean {
 
 export default function Agents({ project }: { project?: string } = {}) {
   const scoped = typeof project === 'string' && project.length > 0;
+  const location = useLocation();
   useTitle(scoped ? `AgentUse / ${project}` : 'AgentUse / Agents');
   const goBack = useSmartBack('/agents');
   const { data, error, loading } = useFetch('agents', () => fetchAgents(), { refreshMs: 30_000 });
@@ -577,7 +579,17 @@ export default function Agents({ project }: { project?: string } = {}) {
   const sessions = useFetch('agents-last-runs', () => fetchSessions({ window: '30d' }), { refreshMs: 10_000 });
   const { view, setView } = useAgentsView();
 
-  const [filter, setFilter] = useState('');
+  // The filter lives in the URL (?q=) so a filtered view survives refresh and
+  // back-navigation and can be shared. Typing keeps local state for instant
+  // feedback and mirrors it into the URL with replaceState — no history entry
+  // per keystroke, and no router re-render that could steal input focus.
+  const [filter, setFilter] = useState(location.query.q ?? '');
+  const updateFilter = (value: string) => {
+    setFilter(value);
+    const base = scoped ? `/agents/${encodeURIComponent(project)}` : '/agents';
+    const q = value.trim();
+    history.replaceState(null, '', q ? `${base}?q=${encodeURIComponent(q)}` : base);
+  };
   const query = filter.trim().toLowerCase();
 
   // A scoped view (/agents/:project) narrows every downstream computation —
@@ -654,14 +666,14 @@ export default function Agents({ project }: { project?: string } = {}) {
                 <input
                   type="search"
                   value={filter}
-                  onInput={(e) => setFilter((e.target as HTMLInputElement).value)}
+                  onInput={(e) => updateFilter((e.target as HTMLInputElement).value)}
                   placeholder="Filter agents by name, path, model…"
                   aria-label="Filter agents"
                   spellcheck={false}
                   autocomplete="off"
                 />
                 {filter && (
-                  <button type="button" class="agents-filter-clear" aria-label="Clear filter" onClick={() => setFilter('')}>×</button>
+                  <button type="button" class="agents-filter-clear" aria-label="Clear filter" onClick={() => updateFilter('')}>×</button>
                 )}
               </div>
               <div class="view-toggle" role="group" aria-label="Layout">
@@ -725,7 +737,12 @@ export default function Agents({ project }: { project?: string } = {}) {
           </section>
         )}
         {byProject.size === 0
-          ? <div class="panel"><div class="empty">{emptyMsg}</div></div>
+          ? <div class="panel"><div class="empty">
+              {emptyMsg}
+              {query && !projectMissing && (
+                <button type="button" class="empty-action" onClick={() => updateFilter('')}>Clear filter</button>
+              )}
+            </div></div>
           : [...byProject.entries()].map(([projectId, agents]) => (
             <section class="group" id={projectAnchor(projectId)} key={projectId}>
               {!scoped && (
