@@ -42,6 +42,14 @@ export function useFetch<T>(key: string, fn: () => Promise<T>, options: { refres
   const loadedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (loadedKeyRef.current === key) return;
+    // A key change means a different resource (e.g. navigating between two
+    // agent-detail pages that reuse the mounted route component). Drop the
+    // previous key's data so consumers show their loading state instead of
+    // the stale resource under it.
+    if (loadedKeyRef.current !== null) {
+      setData(null);
+      setError(null);
+    }
     loadedKeyRef.current = key;
     void load(true);
   }, [key, load]);
