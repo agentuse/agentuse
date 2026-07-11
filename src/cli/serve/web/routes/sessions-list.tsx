@@ -26,8 +26,9 @@ function SessionRowView(props: {
   filterHref: (key: string, value: string) => string;
   statusFilter: string;
   triggerFilter: string;
+  agentFilter: string;
 }) {
-  const { row, multiProject, filterHref, statusFilter, triggerFilter } = props;
+  const { row, multiProject, filterHref, statusFilter, triggerFilter, agentFilter } = props;
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
   // stopped / timeout / incomplete render as their own chips (still status
   // 'error' on disk) so a skim distinguishes "crashed" from "agent declared
@@ -40,6 +41,7 @@ function SessionRowView(props: {
   // title so the chips are real anchors, not links nested inside a link.
   const statusActive = statusFilter === row.status;
   const triggerActive = triggerFilter === row.trigger;
+  const agentActive = agentFilter === row.agent.id;
   return (
     <div class="row">
       <div class="row-head">
@@ -54,6 +56,11 @@ function SessionRowView(props: {
           href={filterHref('trigger', triggerActive ? '' : row.trigger)}
           title={triggerActive ? `Stop filtering by trigger: ${row.trigger}` : `Filter sessions by trigger: ${row.trigger}`}
         >{row.trigger}</a>
+        <a
+          class="chip agent"
+          href={filterHref('agent', agentActive ? '' : row.agent.id)}
+          title={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
+        >{row.agent.id}</a>
         {row.mock && <span class="chip mock">mock</span>}
         <span class="row-time" title={formatApprovalTime(row.createdAt)}>{formatRelativeTime(row.createdAt)}</span>
       </div>
@@ -159,10 +166,13 @@ export default function SessionsList() {
   const widerWindow = WINDOWS.indexOf(win) < WINDOWS.indexOf('30d') ? '30d' : 'all';
 
   // Build a URL that preserves the other active filters when one changes.
+  // The window is carried only when the operator explicitly picked one: pinning
+  // the resolved default (24h) into chip-built URLs would defeat the adaptive
+  // 30d default that kicks in when an agent filter is applied.
   const withParam = (key: string, value: string): string => {
     const params = new URLSearchParams();
     const base: Record<string, string | undefined> = {
-      window: win, status: statusFilter, trigger: triggerFilter, agent: agentFilter, approval: approvalFilter,
+      window: q.window, status: statusFilter, trigger: triggerFilter, agent: agentFilter, approval: approvalFilter,
     };
     base[key] = value;
     for (const [k, v] of Object.entries(base)) {
@@ -247,6 +257,7 @@ export default function SessionsList() {
               filterHref={withParam}
               statusFilter={statusFilter}
               triggerFilter={triggerFilter}
+              agentFilter={agentFilter ?? ''}
             />
           ))}</div>)}
         <footer>{streamFallback ? 'auto-refreshes every 10s' : 'live updates'}</footer>

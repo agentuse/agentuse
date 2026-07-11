@@ -3266,6 +3266,16 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-sessions .row-head a.chip { position: relative; z-index: 1; text-decoration: none; cursor: pointer; }
 .page-sessions .row-head a.chip:hover { border-color: currentColor; }
+/* Agent-id chip: a filter shortcut like status/trigger. Mono + as-typed case
+   because it is an id (possibly a path), not a state label; ellipsize so a
+   deep path can't crowd out the other chips. */
+.page-sessions .chip.agent {
+  font-family: var(--mono);
+  letter-spacing: 0;
+  display: inline-block;
+  max-width: 220px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .page-sessions .row-head {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   margin-bottom: 8px;
