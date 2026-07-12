@@ -413,7 +413,7 @@ function AgentTree(props: { agents: AgentRow[]; ctx: RowCtx }) {
  * the footer. The card is a plain container (not one big link) because it
  * holds its own interactive children (Run, ⋯ menu, last-run link).
  */
-function AgentCard(props: { agent: AgentRow; ctx: RowCtx }) {
+function AgentCard(props: { agent: AgentRow; ctx: RowCtx; showProject?: boolean }) {
   const a = props.agent;
   const runs = props.ctx.runsFor(a);
   const last = runs[0];
@@ -427,6 +427,15 @@ function AgentCard(props: { agent: AgentRow; ctx: RowCtx }) {
         {running && <span class="tree-live" title="Running now" aria-label="Running now"></span>}
         <AgentMenu agent={a} pinned={pinned} onTogglePin={() => props.ctx.pins.toggle(a)} />
       </div>
+      {props.showProject && (
+        <a class="agent-card-project" href={agentsProjectHref(a.projectId)}>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M1.75 4.25h4l1.2 1.5h7.3v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1v-8Z" />
+            <path d="M1.75 5.75h12.5" />
+          </svg>
+          <span>{a.projectId}</span>
+        </a>
+      )}
       <div class="agent-card-desc">{a.description || <span class="agent-card-nodesc">{a.path.replace(/\.agentuse$/, '')}</span>}</div>
       <div class="agent-card-runs">
         <RunHistorySpark runs={runs} />
@@ -437,6 +446,111 @@ function AgentCard(props: { agent: AgentRow; ctx: RowCtx }) {
         <span class="chip" title={a.model}>{a.model}</span>
         <span class="agent-card-runbtn"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Card-view project header. Keeping the collection summary inside the same
+ * surface as its cards makes the project the primary visual unit, while live
+ * activity remains visible without turning every project into a dashboard.
+ */
+function ProjectCollectionHeader(props: { projectId: string; agents: AgentRow[]; ctx: RowCtx }) {
+  const liveCount = props.agents.filter((a) => runTone(props.ctx.lastRunFor(a)?.status ?? '') === 'running').length;
+  const countLabel = `${props.agents.length} agent${props.agents.length === 1 ? '' : 's'}`;
+  return (
+    <div class="project-collection-head">
+      <div class="project-collection-identity">
+        <span class="project-collection-mark" aria-hidden="true">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2.25 5.25h5l1.5 2h9v8a1.25 1.25 0 0 1-1.25 1.25h-13a1.25 1.25 0 0 1-1.25-1.25v-10Z" />
+            <path d="M2.25 7.25h15.5" />
+          </svg>
+        </span>
+        <div>
+          <span class="project-collection-label">Project</span>
+          <h2><a href={agentsProjectHref(props.projectId)}>{props.projectId}</a></h2>
+        </div>
+      </div>
+      <div class="project-collection-summary">
+        {liveCount > 0 && <span class="project-collection-live"><span aria-hidden="true"></span>{liveCount} running</span>}
+        <span class="project-collection-count">{countLabel}</span>
+        <a class="project-collection-open" href={agentsProjectHref(props.projectId)} aria-label={`Open ${props.projectId} project`}>
+          Open <span aria-hidden="true">→</span>
+        </a>
+      </div>
+    </div>
+  );
+}
+
+interface AgentDirectoryGroup {
+  directory: string;
+  agents: AgentRow[];
+}
+
+/** The full parent directory is the useful grouping boundary, not just its first segment. */
+function agentDirectory(path: string): string {
+  const slash = path.lastIndexOf('/');
+  return slash === -1 ? '' : path.slice(0, slash);
+}
+
+function groupAgentsByDirectory(agents: AgentRow[]): AgentDirectoryGroup[] {
+  const groups = new Map<string, AgentRow[]>();
+  for (const agent of agents) {
+    const directory = agentDirectory(agent.path);
+    const group = groups.get(directory);
+    if (group) group.push(agent);
+    else groups.set(directory, [agent]);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => {
+      if (a === '') return -1;
+      if (b === '') return 1;
+      return a.localeCompare(b, undefined, { numeric: true });
+    })
+    .map(([directory, groupedAgents]) => ({ directory, agents: groupedAgents }));
+}
+
+/**
+ * Split a project's card gallery into collapsible shelves using the agents'
+ * real parent directories. A lone root-level group stays unlabelled; every
+ * actual directory remains visible as useful location context.
+ */
+function AgentDirectoryGroups(props: { agents: AgentRow[]; ctx: RowCtx; projectId: string }) {
+  const groups = groupAgentsByDirectory(props.agents);
+  const showDirectoryHeaders = groups.length > 1 || groups[0]?.directory !== '';
+  if (!showDirectoryHeaders) {
+    return (
+      <div class="agent-cards">
+        {[...props.agents].sort(cardOrder(props.ctx)).map((a) => <AgentCard key={`${a.projectId}::${a.path}`} agent={a} ctx={props.ctx} />)}
+      </div>
+    );
+  }
+  return (
+    <div class="agent-directories">
+      {groups.map((group) => {
+        const label = group.directory || 'project root';
+        const id = `${projectAnchor(props.projectId)}-directory-${label.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+        return (
+          <details class="agent-directory" open key={group.directory || '__root'}>
+            <summary aria-labelledby={id}>
+              <svg class="agent-directory-folder" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M1.75 4.25h4l1.2 1.5h7.3v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1v-8Z" />
+                <path d="M1.75 5.75h12.5" />
+              </svg>
+              <h3 id={id}>{label}</h3>
+              <span class="agent-directory-count">{group.agents.length}</span>
+              <span class="agent-directory-rule"></span>
+              <svg class="agent-directory-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m5 6 3 3 3-3" />
+              </svg>
+            </summary>
+            <div class="agent-cards">
+              {[...group.agents].sort(cardOrder(props.ctx)).map((a) => <AgentCard key={`${a.projectId}::${a.path}`} agent={a} ctx={props.ctx} />)}
+            </div>
+          </details>
+        );
+      })}
     </div>
   );
 }
@@ -725,14 +839,18 @@ export default function Agents({ project }: { project?: string } = {}) {
             </details>
           )}
         </header>
-        {view === 'tree' && pinnedAgents.length > 0 && (
+        {pinnedAgents.length > 0 && (
           <section class="group pinned-group">
             <h2 class="group-title"><span>Pinned</span><span class="count">{pinnedAgents.length}</span><span class="rule"></span></h2>
-            <div class="panel">
-              <div class="pin-list" style={{ gridTemplateColumns: gridTemplate }}>
-                {pinnedAgents.map((a) => <PinnedRow key={`${a.projectId}::${a.path}`} agent={a} ctx={rowCtx} />)}
-              </div>
-            </div>
+            {view === 'cards'
+              ? <div class="agent-cards pinned-cards">
+                  {pinnedAgents.map((a) => <AgentCard key={`${a.projectId}::${a.path}`} agent={a} ctx={rowCtx} showProject={!scoped} />)}
+                </div>
+              : <div class="panel">
+                  <div class="pin-list" style={{ gridTemplateColumns: gridTemplate }}>
+                    {pinnedAgents.map((a) => <PinnedRow key={`${a.projectId}::${a.path}`} agent={a} ctx={rowCtx} />)}
+                  </div>
+                </div>}
           </section>
         )}
         {byProject.size === 0
@@ -745,8 +863,9 @@ export default function Agents({ project }: { project?: string } = {}) {
               )}
             </div>}</div>
           : [...byProject.entries()].map(([projectId, agents]) => (
-            <section class="group" id={projectAnchor(projectId)} key={projectId}>
-              {!scoped && (
+            <section class={view === 'cards' && !scoped ? 'group project-collection' : 'group'} id={projectAnchor(projectId)} key={projectId}>
+              {!scoped && view === 'cards' && <ProjectCollectionHeader projectId={projectId} agents={agents} ctx={rowCtx} />}
+              {!scoped && view === 'tree' && (
                 <h2 class="group-title">
                   <a class="group-link" href={agentsProjectHref(projectId)}><span>{projectId}</span></a>
                   <span class="count">{agents.length} agent{agents.length === 1 ? '' : 's'}</span>
@@ -754,9 +873,7 @@ export default function Agents({ project }: { project?: string } = {}) {
                 </h2>
               )}
               {view === 'cards'
-                ? <div class="agent-cards">
-                    {[...agents].sort(cardOrder(rowCtx)).map((a) => <AgentCard key={`${a.projectId}::${a.path}`} agent={a} ctx={rowCtx} />)}
-                  </div>
+                ? <AgentDirectoryGroups agents={agents} ctx={rowCtx} projectId={projectId} />
                 : <div class="panel">
                     <div class="tree" style={{ gridTemplateColumns: gridTemplate }}>
                       <div class="tree-head">

@@ -50,6 +50,48 @@ async function writeSession(
 }
 
 describe('session list scanning', () => {
+  it('serves Web UI summaries from a durable index and rebuilds it when missing', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-session-index-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+
+    try {
+      const state = await initStorage(projectRoot);
+      const manager = new SessionManager();
+      const id = await manager.createSession({
+        agent: { id: 'agents/indexed', name: 'Indexed', isSubAgent: false },
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+
+      const indexPath = join(state.dir, '.index', 'sessions.v1.json');
+      const first = await manager.listSessionSummaries();
+      expect(first).toHaveLength(1);
+      expect(first[0]?.sessionId).toBe(id);
+      expect(first[0]?.status).toBe('running');
+
+      await manager.setSessionCompleted(id, 'agents/indexed');
+      const updated = await manager.listSessionSummaries();
+      expect(updated[0]?.status).toBe('completed');
+
+      await rm(indexPath);
+      const rebuilt = await manager.listSessionSummaries();
+      expect(rebuilt).toHaveLength(1);
+      expect(rebuilt[0]?.status).toBe('completed');
+
+      // A left-behind marker represents a process that died between writing
+      // session.json and publishing the index. The next reader repairs it.
+      await mkdir(join(state.dir, '.index'), { recursive: true });
+      await writeFile(join(state.dir, '.index', 'dirty.json'), '{"startedAt":0}', 'utf-8');
+      const recovered = await manager.listSessionSummaries();
+      expect(recovered).toHaveLength(1);
+    } finally {
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it('can skip stale top-level session trees unless subagents are requested', async () => {
     const originalXdg = process.env.XDG_DATA_HOME;
     const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-session-scan-'));

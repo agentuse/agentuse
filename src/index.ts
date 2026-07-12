@@ -2553,8 +2553,10 @@ async function runInternalWorker() {
   // the same store. Attribute a session to a project only when its recorded
   // project.root matches the requesting project; records from older versions
   // without the field stay visible to every project (previous behavior).
-  function sessionBelongsToProject(session: SessionInfo, projectRoot: string): boolean {
-    const recordedRoot = session.project?.root;
+  function sessionBelongsToProject(session: Pick<SessionInfo, 'project'> | { projectRoot?: string }, projectRoot: string): boolean {
+    const recordedRoot = 'projectRoot' in session
+      ? session.projectRoot
+      : (session as Pick<SessionInfo, 'project'>).project?.root;
     if (!recordedRoot) return true;
     return resolve(recordedRoot) === resolve(projectRoot);
   }
@@ -2732,20 +2734,18 @@ async function runInternalWorker() {
     try {
       await initStorage(req.projectRoot);
       const sessionManager = new SessionManager();
-      const sessions = typeof req.sessionsCreatedAfter === 'number'
-        ? await sessionManager.listSessionsCreatedAfter(req.sessionsCreatedAfter, {
-            includeSubagents: req.includeSubagents ?? false
-          })
-        : await sessionManager.listAllSessions();
+      const sessions = await sessionManager.listSessionSummaries({
+        ...(typeof req.sessionsCreatedAfter === 'number' && { createdAfter: req.sessionsCreatedAfter }),
+        includeSubagents: req.includeSubagents ?? false,
+      });
 
       // Top-level runs by default; approval-filtered session views opt into
       // subagents so approval history links can land on the exact run.
       const summaries = sessions
-        .filter(({ session }) => sessionBelongsToProject(session, req.projectRoot))
-        .filter(({ session }) => req.includeSubagents || (!session.parentSessionID && !session.agent.isSubAgent))
-        .map(({ session }) => ({
-          sessionId: session.id,
-          ...(session.parentSessionID && { parentSessionId: session.parentSessionID }),
+        .filter((session) => sessionBelongsToProject(session, req.projectRoot))
+        .map((session) => ({
+          sessionId: session.sessionId,
+          ...(session.parentSessionId && { parentSessionId: session.parentSessionId }),
           agent: {
             id: session.agent.id,
             name: session.agent.name,
@@ -2754,8 +2754,8 @@ async function runInternalWorker() {
           },
           status: session.status,
           trigger: session.trigger ?? 'manual',
-          createdAt: session.time.created,
-          updatedAt: session.time.updated,
+          createdAt: session.createdAt,
+          updatedAt: session.updatedAt,
           ...sessionErrorFields(session),
           ...mockField(session),
         }))

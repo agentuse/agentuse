@@ -37,7 +37,7 @@ function RefreshButton() {
   return (
     <button
       type="button"
-      class="icon-btn"
+      class="icon-btn header-refresh"
       aria-label="Reload"
       title="Reload the app"
       onClick={() => location.reload()}
@@ -118,6 +118,14 @@ function SettingsMenu() {
           <div class="settings-section-label">Maintenance</div>
           <button
             type="button"
+            class="settings-item settings-reload-item"
+            role="menuitem"
+            onClick={() => location.reload()}
+          >
+            Reload app
+          </button>
+          <button
+            type="button"
             class={`settings-item${clearing ? ' btn-busy' : ''}`}
             role="menuitem"
             onClick={clearCacheAndReload}
@@ -136,6 +144,10 @@ function SettingsMenu() {
 export type TopbarPage = 'agents' | 'sessions' | 'schedules' | 'stores' | 'approvals';
 
 export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChildren }) {
+  const navWrapRef = useRef<HTMLDivElement>(null);
+  const activeNavRef = useRef<HTMLAnchorElement>(null);
+  const [navEdges, setNavEdges] = useState({ left: false, right: false });
+
   // Pending-approvals count for the approvals tab badge, visible on every page.
   // A capability-scoped session view (?token=) has no operator access to the
   // approvals endpoint, so skip the poll there — it would only 401.
@@ -147,6 +159,48 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
   );
   const pending = approvals.data?.buckets.pending.length ?? 0;
 
+  // Keep the current destination visible on narrow screens and expose overflow
+  // cues only on edges that actually have more navigation available.
+  useEffect(() => {
+    const wrap = navWrapRef.current;
+    if (!wrap) return;
+
+    const updateEdges = () => {
+      const maxScroll = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
+      const next = {
+        left: wrap.scrollLeft > 2,
+        right: wrap.scrollLeft < maxScroll - 2,
+      };
+      setNavEdges((current) => (
+        current.left === next.left && current.right === next.right ? current : next
+      ));
+    };
+
+    const revealActive = () => {
+      const active = activeNavRef.current;
+      if (active && window.matchMedia('(max-width: 640px)').matches) {
+        const target = active.offsetLeft - (wrap.clientWidth - active.offsetWidth) / 2;
+        wrap.scrollTo({ left: Math.max(0, target), behavior: 'auto' });
+      }
+      updateEdges();
+    };
+
+    const frame = requestAnimationFrame(revealActive);
+    wrap.addEventListener('scroll', updateEdges, { passive: true });
+    window.addEventListener('resize', revealActive);
+
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(revealActive);
+    observer?.observe(wrap);
+    if (wrap.firstElementChild) observer?.observe(wrap.firstElementChild);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      wrap.removeEventListener('scroll', updateEdges);
+      window.removeEventListener('resize', revealActive);
+      observer?.disconnect();
+    };
+  }, [props.currentPage, pending]);
+
   const navItem = (page: TopbarPage, label: string) => {
     const active = props.currentPage === page;
     const badge = page === 'approvals' && pending > 0 ? pending : null;
@@ -155,6 +209,9 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
         class={`nav-item${active ? ' active' : ''}`}
         href={`/${page}`}
         aria-current={active ? 'page' : undefined}
+        ref={(element) => {
+          if (active) activeNavRef.current = element;
+        }}
       >
         {label}
         {badge !== null && (
@@ -174,7 +231,7 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
   };
 
   return (
-    <div class="topbar">
+    <header class="topbar">
       <a class="skip-link" href="#" onClick={skipToContent}>Skip to content</a>
       <a
         class="brand"
@@ -183,21 +240,24 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
         dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }}
       />
 
-      <span class="nav-wrap">
-        <span class="nav" role="navigation" aria-label="AgentUse serve">
+      <div
+        class={`nav-wrap${navEdges.left ? ' has-overflow-left' : ''}${navEdges.right ? ' has-overflow-right' : ''}`}
+        ref={navWrapRef}
+      >
+        <nav class="nav" aria-label="AgentUse serve">
           {navItem('agents', 'agents')}
           {navItem('sessions', 'sessions')}
           {navItem('schedules', 'schedules')}
           {navItem('stores', 'stores')}
           {navItem('approvals', 'approvals')}
-        </span>
-      </span>
-      <span class="right">
-        {props.right}
+        </nav>
+      </div>
+      <div class="right">
+        {props.right && <span class="topbar-context">{props.right}</span>}
         <PaletteButton />
         <RefreshButton />
         <SettingsMenu />
-      </span>
-    </div>
+      </div>
+    </header>
   );
 }
