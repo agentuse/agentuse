@@ -127,6 +127,15 @@ describe('session list helpers', () => {
     expect(__testing.sessionMatchesAgentFilter(session, 'research')).toBe(false);
   });
 
+  it('matches the incomplete status filter by its error code', () => {
+    const incomplete = { ...rows[0]!.session, status: 'error', errorCode: 'INCOMPLETE' };
+    const ordinaryError = { ...rows[0]!.session, status: 'error', errorCode: 'EXECUTION_ERROR' };
+
+    expect(__testing.sessionMatchesStatusFilter(incomplete, 'incomplete')).toBe(true);
+    expect(__testing.sessionMatchesStatusFilter(ordinaryError, 'incomplete')).toBe(false);
+    expect(__testing.sessionMatchesStatusFilter(incomplete, 'error')).toBe(true);
+  });
+
   it('keeps the sessions SSE list refresh at the old page polling cadence', () => {
     expect(__testing.SESSION_LIST_SSE_INTERVAL_MS).toBe(10_000);
   });

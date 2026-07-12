@@ -13,7 +13,7 @@ import { AgentFilterSelect } from '../components/agent-filter-select';
 import { formatApprovalTime, formatRelativeTime, errorText, displayStatusLabel } from '../lib/format';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
-const STATUSES = ['', 'running', 'suspended', 'completed', 'error'];
+const STATUSES = ['', 'running', 'suspended', 'completed', 'error', 'incomplete'];
 const TRIGGERS = ['', 'manual', 'scheduled', 'slack', 'api'];
 
 // Map a raw session status to the status-chip class set used by the CSS.
@@ -36,11 +36,13 @@ function SessionRowView(props: {
   // non-delivery" from "operator stopped it".
   const status = displayStatusLabel(row.status, row.errorCode);
   // Status/trigger chips double as filter shortcuts: click applies that filter,
-  // click again (when already applied) clears it. The status chip filters by the
-  // on-disk status (`error`), not the display label (`timeout`), because that is
-  // what the API accepts. The row itself is a div with a stretched link on the
-  // title so the chips are real anchors, not links nested inside a link.
-  const statusActive = statusFilter === row.status;
+  // click again (when already applied) clears it. Incomplete is persisted as an
+  // error with code INCOMPLETE, but it has its own API filter so the displayed
+  // label remains a precise shortcut. The row itself is a div with a stretched
+  // link on the title so the chips are real anchors, not links nested inside a
+  // link.
+  const statusFilterValue = status === 'incomplete' ? 'incomplete' : row.status;
+  const statusActive = statusFilter === statusFilterValue;
   const triggerActive = triggerFilter === row.trigger;
   const agentActive = agentFilter === row.agent.id;
   return (
@@ -48,8 +50,8 @@ function SessionRowView(props: {
       <div class="row-head">
         <a
           class={statusClass(status)}
-          href={filterHref('status', statusActive ? '' : row.status)}
-          title={statusActive ? `Stop filtering by status: ${row.status}` : `Filter sessions by status: ${row.status}`}
+          href={filterHref('status', statusActive ? '' : statusFilterValue)}
+          title={statusActive ? `Stop filtering by status: ${statusFilterValue}` : `Filter sessions by status: ${statusFilterValue}`}
         >{status}</a>
         {multiProject && <span class="chip project">{row.project}</span>}
         <a

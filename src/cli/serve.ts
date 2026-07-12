@@ -157,7 +157,7 @@ interface WorkerSweepExpiredResult {
 
 type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
 type ApprovalSessionFilter = 'pending' | 'completed' | 'errored';
-type SessionStatusFilter = 'running' | 'suspended' | 'completed' | 'error';
+type SessionStatusFilter = 'running' | 'suspended' | 'completed' | 'error' | 'incomplete';
 type SessionWindowFilter = `${number}h` | `${number}d` | 'all';
 const APPROVAL_LIST_DEFAULT_DAYS = 30;
 const SESSION_LIST_DEFAULT_WINDOW: SessionWindowFilter = '24h';
@@ -1049,9 +1049,23 @@ function isSessionWindowFilter(value: string): value is SessionWindowFilter {
 }
 
 function parseSessionStatusFilter(value: string | undefined): SessionStatusFilter | undefined {
-  return value === 'running' || value === 'suspended' || value === 'completed' || value === 'error'
+  return value === 'running' || value === 'suspended' || value === 'completed' || value === 'error' || value === 'incomplete'
     ? value
     : undefined;
+}
+
+/**
+ * `incomplete` is a user-facing outcome label, persisted as an error with the
+ * INCOMPLETE code. Keep the API filter aligned with the label shown in the Web
+ * UI instead of treating it as a separate on-disk session status.
+ */
+function sessionMatchesStatusFilter(
+  session: Pick<SessionSummary, 'status' | 'errorCode'>,
+  filter: SessionStatusFilter | undefined
+): boolean {
+  if (!filter) return true;
+  if (filter === 'incomplete') return session.status === 'error' && session.errorCode === 'INCOMPLETE';
+  return session.status === filter;
 }
 
 function parseApprovalSessionFilter(value: string | undefined): ApprovalSessionFilter | undefined {
@@ -3212,7 +3226,7 @@ export function createServeCommand(): Command {
             continue;
           }
           for (const session of result.sessions ?? []) {
-            if (statusFilter && session.status !== statusFilter) continue;
+            if (!sessionMatchesStatusFilter(session, statusFilter)) continue;
             if (triggerFilter && session.trigger !== triggerFilter) continue;
             if (approvalFilter && !approvalSessionIdsByProject.get(result.project.id)?.has(session.sessionId)) continue;
             if (agentFilter && !sessionMatchesAgentFilter(session, agentFilter)) continue;
@@ -5815,4 +5829,5 @@ export const __testing = {
   sessionListCreatedAfter,
   SESSION_LIST_SSE_INTERVAL_MS,
   sessionMatchesAgentFilter,
+  sessionMatchesStatusFilter,
 };
