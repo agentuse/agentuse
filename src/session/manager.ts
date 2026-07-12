@@ -818,6 +818,26 @@ export class SessionManager {
       .sort((a, b) => getPartOrder(a) - getPartOrder(b) || a.id.localeCompare(b.id));
   }
 
+  /**
+   * Return the most recent visible assistant text for a session. Continuations
+   * append synthetic user text and another assistant part to the same durable
+   * transcript, so search messages and parts newest-first rather than assuming
+   * the first message contains the final answer.
+   */
+  async getLastAssistantText(sessionID: string, agentId: string): Promise<string | undefined> {
+    const messages = await this.getSessionMessages(sessionID, agentId);
+    for (const message of [...messages].reverse()) {
+      const parts = await this.getMessageParts(sessionID, agentId, message.id);
+      const text = [...parts].reverse().find((part): part is Extract<Part, { type: 'text' }> =>
+        part.type === 'text' &&
+        part.role !== 'user' &&
+        part.text.trim().length > 0
+      );
+      if (text) return text.text.trim();
+    }
+    return undefined;
+  }
+
   private async readApprovalToolPart(key: string): Promise<ToolPart | null> {
     const state = await getStorageState();
     const target = path.join(state.dir, `${key}.json`);

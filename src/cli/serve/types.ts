@@ -80,6 +80,8 @@ export interface SessionSummary {
   errorCode?: string;
   errorMessage?: string;
   mock?: boolean;
+  /** Present on session-list rows only when the caller requests feed detail. */
+  finalResponse?: string;
 }
 
 export interface SessionStatusInfo {

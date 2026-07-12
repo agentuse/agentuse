@@ -177,6 +177,54 @@ describe('session trigger persistence', () => {
   });
 });
 
+describe('session final response', () => {
+  it('returns the latest assistant text while ignoring continuation user text', async () => {
+    const originalXdgDataHome = process.env.XDG_DATA_HOME;
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-final-response-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+    try {
+      await initStorage(projectRoot);
+      const sessionManager = new SessionManager();
+      const agentId = 'agents/feed';
+      const sessionId = await sessionManager.createSession({
+        agent: { id: agentId, name: 'feed', isSubAgent: false },
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      const messageId = await sessionManager.createMessage(sessionId, agentId, {
+        user: { prompt: { task: 'prepare update' } },
+        assistant: {
+          system: [],
+          modelID: 'demo:test',
+          providerID: 'demo',
+          mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+
+      await sessionManager.addPart(sessionId, agentId, messageId, {
+        type: 'text', text: 'Initial response', time: { start: 1, end: 1 },
+      } as any);
+      await sessionManager.addPart(sessionId, agentId, messageId, {
+        type: 'text', role: 'user', synthetic: true, text: 'Make it shorter', time: { start: 2, end: 2 },
+      } as any);
+      await sessionManager.addPart(sessionId, agentId, messageId, {
+        type: 'text', text: 'Final concise response', time: { start: 3, end: 3 },
+      } as any);
+
+      expect(await sessionManager.getLastAssistantText(sessionId, agentId)).toBe('Final concise response');
+    } finally {
+      if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdgDataHome;
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('session tree stopping', () => {
   it('uses the latest initialized project when stopping sessions', async () => {
     const originalXdgDataHome = process.env.XDG_DATA_HOME;

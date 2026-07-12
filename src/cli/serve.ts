@@ -228,6 +228,7 @@ interface SessionSummary {
   errorCode?: string;
   errorMessage?: string;
   mock?: boolean;
+  finalResponse?: string;
 }
 
 type SessionRow = SessionSummary & { project: string };
@@ -282,6 +283,11 @@ interface ChildSessionSummary {
 interface WorkerListSessionsResult {
   success: true;
   sessions: SessionSummary[];
+}
+
+interface WorkerSessionFinalResponsesResult {
+  success: true;
+  responses: Record<string, string>;
 }
 
 interface WorkerStopSessionResult {
@@ -424,7 +430,7 @@ class AgentWorker {
   private readline: ReadlineInterface | null = null;
   private forceKillTimer: NodeJS.Timeout | null = null;
   private pendingRequests: Map<string, {
-    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerStopSessionResult) => void;
+    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerSessionFinalResponsesResult | WorkerStopSessionResult) => void;
     timeoutId?: NodeJS.Timeout;
   }> = new Map();
   private requestCounter = 0;
@@ -740,10 +746,22 @@ class AgentWorker {
     }) as Promise<WorkerListSessionsResult | WorkerExecuteError>;
   }
 
+  getSessionFinalResponses(
+    projectRoot: string,
+    sessions: Array<{ sessionId: string; agentId: string }>
+  ): Promise<WorkerSessionFinalResponsesResult | WorkerExecuteError> {
+    return this.request({
+      type: "session-final-responses",
+      projectRoot,
+      sessionRefs: sessions,
+      timeout: 30,
+    }) as Promise<WorkerSessionFinalResponsesResult | WorkerExecuteError>;
+  }
+
   private request(
     options: Record<string, unknown> & { timeout?: number | undefined },
     requestOptions: { signal?: AbortSignal | undefined } = {}
-  ): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerStopSessionResult> {
+  ): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerSessionFinalResponsesResult | WorkerStopSessionResult> {
     return new Promise((resolve) => {
       if (requestOptions.signal?.aborted) {
         resolve({
@@ -3141,6 +3159,14 @@ export function createServeCommand(): Command {
           (s) => s.status === 'running' || s.status === 'resuming' || s.status === 'continuing'
         ),
       });
+      // Feed mode reads final assistant text from the durable transcript. Cache
+      // non-running sessions by their list-index timestamp so SSE refreshes do
+      // not repeatedly walk 50 completed session directories. Running sessions
+      // intentionally bypass the cache so streamed text remains live.
+      const sessionFinalResponseCache = new Map<string, {
+        updatedAt: number;
+        finalResponse: string | undefined;
+      }>();
       // The list hubs poll on a slow steady cadence; nudge them the moment the
       // daemon knows the lists are about to change (run triggered, decision
       // made, runner announced a state change) so dashboards update in ~1s.
@@ -3244,11 +3270,75 @@ export function createServeCommand(): Command {
           `${row.session.createdAt}\0${row.projectId}\0${row.session.sessionId}`
         );
 
+        let pageItems = page.items;
+        if (requestUrl.searchParams.get('detail') === 'feed') {
+          const finalResponses = new Map<string, string | undefined>();
+          const missingByProject = new Map<string, ProjectSessionRow[]>();
+
+          for (const row of page.items) {
+            const cacheKey = `${row.projectId}\0${row.session.sessionId}`;
+            const cached = sessionFinalResponseCache.get(cacheKey);
+            const stable = row.session.status !== 'running';
+            if (stable && cached?.updatedAt === row.session.updatedAt) {
+              finalResponses.set(cacheKey, cached.finalResponse);
+              continue;
+            }
+            const projectRows = missingByProject.get(row.projectId) ?? [];
+            projectRows.push(row);
+            missingByProject.set(row.projectId, projectRows);
+          }
+
+          await Promise.all([...missingByProject.entries()].map(async ([projectId, projectRows]) => {
+            const projectWorker = workers.get(projectId);
+            const project = projects.find((candidate) => candidate.id === projectId);
+            if (!projectWorker || !project) return;
+            const result = await projectWorker.getSessionFinalResponses(
+              project.root,
+              projectRows.map((row) => ({
+                sessionId: row.session.sessionId,
+                agentId: row.session.agent.id,
+              }))
+            );
+            if (!result.success) {
+              if (!errors.some((error) => error.projectId === projectId)) {
+                errors.push({ projectId, message: `Final responses unavailable: ${result.error.message}` });
+              }
+              return;
+            }
+            for (const row of projectRows) {
+              const cacheKey = `${projectId}\0${row.session.sessionId}`;
+              const finalResponse = result.responses[row.session.sessionId];
+              finalResponses.set(cacheKey, finalResponse);
+              if (row.session.status !== 'running') {
+                sessionFinalResponseCache.set(cacheKey, {
+                  updatedAt: row.session.updatedAt,
+                  finalResponse,
+                });
+              }
+            }
+          }));
+
+          // Keep this process-local optimization bounded even when an operator
+          // pages through years of session history.
+          while (sessionFinalResponseCache.size > 1_000) {
+            const oldest = sessionFinalResponseCache.keys().next().value;
+            if (oldest === undefined) break;
+            sessionFinalResponseCache.delete(oldest);
+          }
+
+          pageItems = page.items.map((row) => {
+            const finalResponse = finalResponses.get(`${row.projectId}\0${row.session.sessionId}`);
+            return finalResponse === undefined
+              ? row
+              : { ...row, session: { ...row.session, finalResponse } };
+          });
+        }
+
         return {
           success: true,
           payload: {
             success: true,
-            sessions: page.items.map((row) => ({ project: row.projectId, ...row.session })),
+            sessions: pageItems.map((row) => ({ project: row.projectId, ...row.session })),
             window: {
               value: daysFilter,
               ...(daysFilter === 'all'
@@ -3787,7 +3877,8 @@ export function createServeCommand(): Command {
             requestUrl.searchParams.get('status') ?? '',
             requestUrl.searchParams.get('trigger') ?? '',
             requestUrl.searchParams.get('agent') ?? '',
-            requestUrl.searchParams.get('approval') ?? ''
+            requestUrl.searchParams.get('approval') ?? '',
+            requestUrl.searchParams.get('detail') ?? ''
           ].join(':');
           const poll: import("./serve/sse").ApprovalListPoll<SessionsPayload> = async () => {
             const result = await buildSessionsPayload(requestUrl);

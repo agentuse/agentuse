@@ -5,6 +5,7 @@ import { openAgentPalette } from './agent-palette';
 import { useFetch } from '../hooks/use-fetch';
 import { fetchApprovals } from '../lib/api';
 import { WORDMARK_SVG } from '../../brand';
+import { useSessionListView } from '../hooks/use-session-list-view';
 
 const IS_APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
@@ -56,6 +57,7 @@ function SettingsMenu() {
   const [open, setOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const sessionList = useSessionListView();
 
   useEffect(() => {
     if (!open) return;
@@ -115,6 +117,19 @@ function SettingsMenu() {
         <div class="settings-popover" role="menu">
           <div class="settings-section-label">Theme</div>
           <ThemeToggle />
+          <div class="settings-section-label">Session list</div>
+          <span class="session-view-toggle" role="group" aria-label="Session list view">
+            <button
+              type="button"
+              aria-pressed={sessionList.view === 'summary'}
+              onClick={() => sessionList.setView('summary')}
+            >Summary</button>
+            <button
+              type="button"
+              aria-pressed={sessionList.view === 'feed'}
+              onClick={() => sessionList.setView('feed')}
+            >Feed</button>
+          </span>
           <div class="settings-section-label">Maintenance</div>
           <button
             type="button"
@@ -141,7 +156,7 @@ function SettingsMenu() {
   );
 }
 
-export type TopbarPage = 'agents' | 'sessions' | 'schedules' | 'stores' | 'approvals';
+export type TopbarPage = 'home' | 'agents' | 'sessions' | 'schedules' | 'stores' | 'approvals';
 
 export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChildren }) {
   const navWrapRef = useRef<HTMLDivElement>(null);
@@ -204,10 +219,11 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
   const navItem = (page: TopbarPage, label: string) => {
     const active = props.currentPage === page;
     const badge = page === 'approvals' && pending > 0 ? pending : null;
+    const href = page === 'home' ? '/' : `/${page}`;
     return (
       <a
         class={`nav-item${active ? ' active' : ''}`}
-        href={`/${page}`}
+        href={href}
         aria-current={active ? 'page' : undefined}
         ref={(element) => {
           if (active) activeNavRef.current = element;
@@ -245,6 +261,7 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
         ref={navWrapRef}
       >
         <nav class="nav" aria-label="AgentUse serve">
+          {navItem('home', 'home')}
           {navItem('agents', 'agents')}
           {navItem('sessions', 'sessions')}
           {navItem('schedules', 'schedules')}

@@ -124,23 +124,19 @@ a, button, select, summary, label, input, textarea,
 .topbar .nav-wrap { justify-self: center; }
 .topbar .nav {
   display: inline-flex;
-  gap: 4px;
+  gap: 2px;
   align-items: center;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel);
 }
 .topbar .nav-item {
   display: inline-flex;
   position: relative;
   align-items: center;
-  min-height: 24px;
+  min-height: 28px;
   padding: 0 10px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 6px;
   /* --muted, not --muted-2: inactive tabs are still navigation text a user must
-     read; the active tab keeps its --fg + background delta for state contrast. */
+     read; the active tab keeps its --fg + underline for state contrast. */
   color: var(--muted);
   text-decoration: none;
   transition: color 120ms ease, background 120ms ease;
@@ -148,9 +144,17 @@ a, button, select, summary, label, input, textarea,
 .topbar .nav a.nav-item:hover { opacity: 1; color: var(--muted-3); background: var(--panel-hover); }
 .topbar .nav-item.active {
   color: var(--fg);
-  background: var(--bg);
-  border: 1px solid var(--line-strong);
   font-weight: 600;
+}
+.topbar .nav-item.active::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--cyan);
 }
 .topbar .right { display: inline-flex; gap: 18px; align-items: center; justify-self: end; }
 .session-pill { color: var(--muted); }
@@ -223,6 +227,33 @@ a, button, select, summary, label, input, textarea,
   color: var(--muted);
 }
 .settings-popover .theme-toggle { width: 100%; justify-content: space-between; }
+.session-view-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  width: 100%;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.session-view-toggle button {
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.session-view-toggle button:hover { color: var(--fg); background: var(--panel-hover); }
+.session-view-toggle button[aria-pressed="true"] {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
 .settings-item {
   width: 100%;
   text-align: left;
@@ -282,8 +313,8 @@ a, button, select, summary, label, input, textarea,
     padding: 0;
     justify-content: center;
   }
-  /* The 5-item pill can be wider than a phone viewport. Start-align the
-     scroll area so the tail item is reachable instead of clipped. */
+  /* The six primary destinations can be wider than a phone viewport. Start-align
+     the scroll area so the tail item is reachable instead of clipped. */
   .topbar .nav-wrap {
     grid-column: 1 / -1; grid-row: 2;
     justify-self: stretch;
@@ -3505,6 +3536,251 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
 .page-sessions .row-meta { margin-top: 8px; color: var(--muted); font-size: 11px; }
 .page-sessions .row-meta code { font-family: var(--mono); font-size: 11px; }
+.page-sessions .rows.session-feed {
+  width: min(760px, 100%);
+  margin-inline: auto;
+  gap: 16px;
+}
+.page-sessions .session-feed-card {
+  padding: 16px 18px;
+  background: var(--bg);
+}
+.page-sessions .session-feed-card:hover { background: var(--bg); }
+.page-sessions .session-feed-header {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+}
+.page-sessions .session-feed-avatar {
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--cyan-border);
+  border-radius: 12px;
+  background: var(--cyan-soft);
+  color: var(--cyan);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.page-sessions .session-feed-identity { min-width: 0; }
+.page-sessions .session-feed-card .row-title {
+  display: inline-block;
+  color: var(--fg);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  text-decoration: none;
+}
+.page-sessions .session-feed-card .row-title:hover { color: var(--cyan); }
+.page-sessions .session-feed-card .row-sub {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  -webkit-line-clamp: 1;
+}
+.page-sessions .session-feed-byline {
+  min-width: 0;
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+.page-sessions .session-feed-byline a {
+  color: var(--muted-2);
+  text-decoration: none;
+}
+.page-sessions .session-feed-byline a:hover { color: var(--cyan); }
+.page-sessions .session-feed-header > .chip.status {
+  margin-top: 1px;
+  background: transparent;
+  font-size: 9.5px;
+  text-decoration: none;
+}
+.page-sessions .session-feed-error {
+  margin-top: 14px;
+  padding: 9px 11px;
+  border: 1px solid var(--red-border);
+  border-radius: 8px;
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.page-sessions .session-feed-response {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.page-sessions .session-feed-response-label {
+  margin-bottom: 10px;
+  color: var(--muted-2);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.page-sessions .session-feed-content {
+  position: relative;
+  color: var(--muted-3);
+}
+.page-sessions .session-feed-content.is-collapsed {
+  max-height: 30rem;
+  overflow: hidden;
+}
+.page-sessions .session-feed-content.is-collapsed::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 72px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--bg));
+}
+.page-sessions .session-feed-content .content-markdown {
+  padding: 0;
+  color: var(--muted-3);
+  font-size: 14.5px;
+  line-height: 1.66;
+}
+/* Treat an opening paragraph as a lead, then step down into supporting prose.
+   This gives answer-only sessions a skimmable entry point even when the agent
+   did not write an explicit Markdown heading. */
+.page-sessions .session-feed-content .content-markdown > p:first-child {
+  color: var(--fg);
+  font-size: 16px;
+  line-height: 1.55;
+}
+.page-sessions .session-feed-content .content-markdown p { margin-bottom: 12px; }
+.page-sessions .session-feed-content .content-markdown h2,
+.page-sessions .session-feed-content .content-markdown h3,
+.page-sessions .session-feed-content .content-markdown h4,
+.page-sessions .session-feed-content .content-markdown h5,
+.page-sessions .session-feed-content .content-markdown h6 {
+  letter-spacing: -0.015em;
+}
+.page-sessions .session-feed-content .content-markdown h2 {
+  margin: 22px 0 9px;
+  font-size: 22px;
+  line-height: 1.2;
+}
+.page-sessions .session-feed-content .content-markdown h3 {
+  margin: 19px 0 8px;
+  font-size: 18px;
+  line-height: 1.25;
+}
+.page-sessions .session-feed-content .content-markdown h4 {
+  margin: 17px 0 7px;
+  font-size: 15.5px;
+  line-height: 1.3;
+}
+.page-sessions .session-feed-content .content-markdown h5,
+.page-sessions .session-feed-content .content-markdown h6 {
+  margin: 16px 0 6px;
+  color: var(--muted-2);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+.page-sessions .session-feed-content .content-markdown > :first-child { margin-top: 0; }
+.page-sessions .session-feed-content .content-markdown ul,
+.page-sessions .session-feed-content .content-markdown ol {
+  margin: 9px 0 14px;
+  padding-left: 24px;
+}
+.page-sessions .session-feed-content .content-markdown li {
+  margin: 5px 0;
+  padding-left: 2px;
+}
+.page-sessions .session-feed-content .content-markdown blockquote {
+  margin: 14px 0;
+  padding: 2px 0 2px 14px;
+  color: var(--muted-2);
+  font-size: 15px;
+  line-height: 1.6;
+}
+.page-sessions .session-feed-content .content-markdown strong {
+  color: var(--fg);
+  font-weight: 650;
+}
+.page-sessions .session-feed-content .content-markdown .content-code {
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.page-sessions .session-feed-content .content-markdown a {
+  position: relative;
+  z-index: 1;
+  color: var(--cyan);
+  text-decoration: underline;
+  text-decoration-color: var(--cyan-border);
+  text-underline-offset: 3px;
+}
+.page-sessions .session-feed-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.page-sessions .session-feed-empty a {
+  color: var(--cyan);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.page-sessions .session-feed-more {
+  position: relative;
+  z-index: 2;
+  min-height: 0;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cyan);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.page-sessions .session-feed-more:hover { text-decoration: underline; text-underline-offset: 3px; }
+.page-sessions .session-feed-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+.page-sessions .session-feed-footer code {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.page-sessions .session-feed-open {
+  flex: none;
+  color: var(--muted-2);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+}
+.page-sessions .session-feed-open:hover { color: var(--cyan); }
 .page-sessions .chip {
   display: inline-flex; align-items: center;
   padding: 2px 8px;
@@ -3522,6 +3798,27 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
    so a skim separates "blocked, needs a human" from "broke". */
 .page-sessions .chip.status.incomplete { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .page-sessions footer { color: var(--muted); font-size: 11px; margin-top: 32px; text-align: center; }
+@media (max-width: 640px) {
+  .page-sessions .session-feed-card { padding: 14px; }
+  .page-sessions .session-feed-header {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+  .page-sessions .session-feed-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    font-size: 12px;
+  }
+  .page-sessions .session-feed-header > .chip.status {
+    max-width: 84px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .page-sessions .session-feed-content.is-collapsed { max-height: 24rem; }
+  .page-sessions .session-feed-footer code { max-width: 58%; }
+}
 /* --- shared chip variants (sessions / approvals rows) --- */
 .chip.trigger { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .chip.project { color: var(--cyan); }

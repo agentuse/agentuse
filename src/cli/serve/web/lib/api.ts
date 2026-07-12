@@ -388,6 +388,7 @@ export function fetchSessions(options: {
   window?: string | undefined;
   limit?: number | undefined;
   cursor?: string | undefined;
+  detail?: 'feed' | undefined;
 } = {}): Promise<SessionsPayload> {
   return getJson('/api/sessions', {
     agent: options.agent,
@@ -397,6 +398,7 @@ export function fetchSessions(options: {
     window: options.window,
     ...(options.limit !== undefined && { limit: String(options.limit) }),
     cursor: options.cursor,
+    detail: options.detail,
   });
 }
 
@@ -437,6 +439,7 @@ export function sessionsEventUrl(options: {
   approval?: string | undefined;
   window?: string | undefined;
   limit?: number | undefined;
+  detail?: 'feed' | undefined;
 } = {}): string {
   const url = new URL('/sessions/events', location.origin);
   if (options.agent !== undefined) url.searchParams.set('agent', options.agent);
@@ -445,5 +448,6 @@ export function sessionsEventUrl(options: {
   if (options.approval !== undefined) url.searchParams.set('approval', options.approval);
   if (options.window !== undefined) url.searchParams.set('window', options.window);
   if (options.limit !== undefined) url.searchParams.set('limit', String(options.limit));
+  if (options.detail !== undefined) url.searchParams.set('detail', options.detail);
   return url.toString();
 }

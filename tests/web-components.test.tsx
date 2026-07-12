@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { renderToString } from 'preact-render-to-string';
 import { LogEntry } from '../src/cli/serve/web/components/log-entry';
+import { Topbar } from '../src/cli/serve/web/components/topbar';
 import { StoreTable, type StoreTableColumn } from '../src/cli/serve/web/components/store-table';
 import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
 import { DecisionDialog } from '../src/cli/serve/web/components/comment-dialog';
@@ -8,9 +9,104 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
 import { hasActionableApproval, headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
+import { FeedResponse, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 
 const noop = () => {};
+
+describe('Topbar navigation', () => {
+  it('exposes Home as the active primary destination on the home screen', () => {
+    const html = renderToString(<Topbar currentPage="home" />);
+
+    expect(html).toContain('<a href="/" aria-current="page" class="nav-item active">home</a>');
+    expect(html.indexOf('>home</a>')).toBeLessThan(html.indexOf('>agents</a>'));
+  });
+
+  it('keeps Home explicit while another primary destination is active', () => {
+    const html = renderToString(<Topbar currentPage="sessions" />);
+
+    expect(html).toContain('<a href="/" class="nav-item">home</a>');
+    expect(html).toContain('<a href="/sessions" aria-current="page" class="nav-item active">sessions</a>');
+  });
+});
+
+describe('Session feed response', () => {
+  it('separates agent identity, run metadata, response, and action into feed regions', () => {
+    const html = renderToString(
+      <SessionRowView
+        view="feed"
+        multiProject={false}
+        statusFilter=""
+        triggerFilter=""
+        agentFilter=""
+        filterHref={(key, value) => `/sessions?${key}=${value}`}
+        row={{
+          sessionId: 'session-1',
+          project: 'demo',
+          agent: { id: 'agents/weekly-research', name: 'Weekly Research', description: 'Finds important signals' },
+          status: 'completed',
+          trigger: 'scheduled',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          finalResponse: '## Key signal\n\nThe market changed.',
+        }}
+      />
+    );
+
+    expect(html).toContain('role="article"');
+    expect(html).toContain('session-feed-header');
+    expect(html).toContain('session-feed-avatar');
+    expect(html).toContain('>WR</div>');
+    expect(html).toContain('session-feed-byline');
+    expect(html).toContain('session-feed-response');
+    expect(html).toContain('session-feed-footer');
+    expect(html).not.toContain('class="row-head"');
+  });
+
+  it('renders the final agent response as safe Markdown', () => {
+    const html = renderToString(
+      <FeedResponse
+        status="completed"
+        href="/sessions/session-1?project=demo"
+        value={'**Shipped.**\n\n- First result\n- Second result\n\n<script>alert(1)</script>'}
+      />
+    );
+
+    expect(html).toContain('Final response');
+    expect(html).toContain('<strong>Shipped.</strong>');
+    expect(html).toContain('<li>First result</li>');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).not.toContain('<script>alert(1)</script>');
+  });
+
+  it('collapses very long responses behind an accessible show-more control', () => {
+    const html = renderToString(
+      <FeedResponse
+        status="completed"
+        href="/sessions/session-1?project=demo"
+        value={'A'.repeat(1_801)}
+      />
+    );
+
+    expect(html).toContain('session-feed-content is-collapsed');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('Show more');
+  });
+
+  it('explains when a running session has not produced an answer yet', () => {
+    const html = renderToString(
+      <FeedResponse
+        status="running"
+        href="/sessions/session-1?project=demo"
+        value={undefined}
+      />
+    );
+
+    expect(html).toContain('Latest response');
+    expect(html).toContain('Agent is working');
+    expect(html).toContain('View session details');
+  });
+});
 
 function renderEntry(entry: ApprovalLogEntry, overrides: Partial<Parameters<typeof LogEntry>[0]> = {}): string {
   return renderToString(

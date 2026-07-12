@@ -265,7 +265,7 @@ export default function Home() {
   return (
     <div class="page-home" data-ambient={ambient}>
       <div class="home-ambient" aria-hidden="true"></div>
-      <Topbar />
+      <Topbar currentPage="home" />
       <main class="home-boot">
         <header>
           <div class="eyebrow">serve daemon</div>

@@ -10,7 +10,9 @@ import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { PushBell } from '../components/push-bell';
 import { AgentFilterSelect } from '../components/agent-filter-select';
+import { LogContent } from '../components/content';
 import { formatApprovalTime, formatRelativeTime, errorText, displayStatusLabel } from '../lib/format';
+import { useSessionListView, type SessionListView } from '../hooks/use-session-list-view';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
 const STATUSES = ['', 'running', 'suspended', 'completed', 'error', 'incomplete'];
@@ -21,15 +23,16 @@ function statusClass(status: string): string {
   return `chip status ${status}`;
 }
 
-function SessionRowView(props: {
+export function SessionRowView(props: {
   row: SessionRow;
+  view: SessionListView;
   multiProject: boolean;
   filterHref: (key: string, value: string) => string;
   statusFilter: string;
   triggerFilter: string;
   agentFilter: string;
 }) {
-  const { row, multiProject, filterHref, statusFilter, triggerFilter, agentFilter } = props;
+  const { row, view, multiProject, filterHref, statusFilter, triggerFilter, agentFilter } = props;
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
   // stopped / timeout / incomplete render as their own chips (still status
   // 'error' on disk) so a skim distinguishes "crashed" from "agent declared
@@ -38,39 +41,129 @@ function SessionRowView(props: {
   // Status/trigger chips double as filter shortcuts: click applies that filter,
   // click again (when already applied) clears it. Incomplete is persisted as an
   // error with code INCOMPLETE, but it has its own API filter so the displayed
-  // label remains a precise shortcut. The row itself is a div with a stretched
-  // link on the title so the chips are real anchors, not links nested inside a
-  // link.
+  // label remains a precise shortcut. Summary rows use a stretched title link;
+  // feed cards keep links in the rendered response independently clickable.
   const statusFilterValue = status === 'incomplete' ? 'incomplete' : row.status;
   const statusActive = statusFilter === statusFilterValue;
   const triggerActive = triggerFilter === row.trigger;
   const agentActive = agentFilter === row.agent.id;
+  const avatar = (row.agent.name || row.agent.id)
+    .split(/[\s/_-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase();
   return (
-    <div class="row">
-      <div class="row-head">
-        <a
-          class={statusClass(status)}
-          href={filterHref('status', statusActive ? '' : statusFilterValue)}
-          title={statusActive ? `Stop filtering by status: ${statusFilterValue}` : `Filter sessions by status: ${statusFilterValue}`}
-        >{status}</a>
-        {multiProject && <span class="chip project">{row.project}</span>}
-        <a
-          class="chip trigger"
-          href={filterHref('trigger', triggerActive ? '' : row.trigger)}
-          title={triggerActive ? `Stop filtering by trigger: ${row.trigger}` : `Filter sessions by trigger: ${row.trigger}`}
-        >{row.trigger}</a>
-        <a
-          class="chip agent"
-          href={filterHref('agent', agentActive ? '' : row.agent.id)}
-          title={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
-        >{row.agent.id}</a>
-        {row.mock && <span class="chip mock">mock</span>}
-        <span class="row-time" title={formatApprovalTime(row.createdAt)}>{formatRelativeTime(row.createdAt)}</span>
-      </div>
-      <a class="row-title row-link" href={href}>{row.agent.name || row.agent.id}</a>
-      {row.agent.description && <div class="row-sub">{row.agent.description}</div>}
-      {row.errorMessage && <div class="row-decision">{errorText(row.errorMessage)}</div>}
-      <div class="row-meta"><code>{row.sessionId}</code></div>
+    <div
+      class={`row${view === 'feed' ? ' session-feed-card' : ''}`}
+      role={view === 'feed' ? 'article' : undefined}
+      aria-label={view === 'feed' ? `${row.agent.name || row.agent.id} session` : undefined}
+    >
+      {view === 'summary'
+        ? (
+          <>
+            <div class="row-head">
+              <a
+                class={statusClass(status)}
+                href={filterHref('status', statusActive ? '' : statusFilterValue)}
+                title={statusActive ? `Stop filtering by status: ${statusFilterValue}` : `Filter sessions by status: ${statusFilterValue}`}
+              >{status}</a>
+              {multiProject && <span class="chip project">{row.project}</span>}
+              <a
+                class="chip trigger"
+                href={filterHref('trigger', triggerActive ? '' : row.trigger)}
+                title={triggerActive ? `Stop filtering by trigger: ${row.trigger}` : `Filter sessions by trigger: ${row.trigger}`}
+              >{row.trigger}</a>
+              <a
+                class="chip agent"
+                href={filterHref('agent', agentActive ? '' : row.agent.id)}
+                title={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
+              >{row.agent.id}</a>
+              {row.mock && <span class="chip mock">mock</span>}
+              <span class="row-time" title={formatApprovalTime(row.createdAt)}>{formatRelativeTime(row.createdAt)}</span>
+            </div>
+            <a class="row-title row-link" href={href}>{row.agent.name || row.agent.id}</a>
+            {row.agent.description && <div class="row-sub">{row.agent.description}</div>}
+            {row.errorMessage && <div class="row-decision">{errorText(row.errorMessage)}</div>}
+          </>
+        )
+        : (
+          <div class="session-feed-header">
+            <div class="session-feed-avatar" aria-hidden="true">{avatar}</div>
+            <div class="session-feed-identity">
+              <a class="row-title" href={href}>{row.agent.name || row.agent.id}</a>
+              {row.agent.description && <div class="row-sub">{row.agent.description}</div>}
+              <div class="session-feed-byline">
+                <a
+                  href={filterHref('agent', agentActive ? '' : row.agent.id)}
+                  title={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
+                >{row.agent.id}</a>
+                <span aria-hidden="true">·</span>
+                <a
+                  href={filterHref('trigger', triggerActive ? '' : row.trigger)}
+                  title={triggerActive ? `Stop filtering by trigger: ${row.trigger}` : `Filter sessions by trigger: ${row.trigger}`}
+                >{row.trigger}</a>
+                {multiProject && <><span aria-hidden="true">·</span><span>{row.project}</span></>}
+                {row.mock && <><span aria-hidden="true">·</span><span>mock</span></>}
+                <span aria-hidden="true">·</span>
+                <span title={formatApprovalTime(row.createdAt)}>{formatRelativeTime(row.createdAt)}</span>
+              </div>
+            </div>
+            <a
+              class={statusClass(status)}
+              href={filterHref('status', statusActive ? '' : statusFilterValue)}
+              title={statusActive ? `Stop filtering by status: ${statusFilterValue}` : `Filter sessions by status: ${statusFilterValue}`}
+            >{status}</a>
+          </div>
+        )}
+      {view === 'feed' && row.errorMessage && <div class="session-feed-error">{errorText(row.errorMessage)}</div>}
+      {view === 'feed' && (
+        <FeedResponse
+          value={row.finalResponse}
+          status={status}
+          href={href}
+        />
+      )}
+      {view === 'summary'
+        ? <div class="row-meta"><code>{row.sessionId}</code></div>
+        : (
+          <div class="session-feed-footer">
+            <code>{row.sessionId}</code>
+            <a class="session-feed-open" href={href}>Open session <span aria-hidden="true">→</span></a>
+          </div>
+        )}
+    </div>
+  );
+}
+
+export function FeedResponse(props: { value: string | undefined; status: string; href: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = Boolean(props.value && (props.value.length > 1_800 || props.value.split(/\r?\n/).length > 18));
+  const emptyMessage = props.status === 'running'
+    ? 'Agent is working. Its response will appear here as it becomes available.'
+    : props.status === 'suspended'
+      ? 'Waiting for approval. No final response yet.'
+      : 'This session ended without a final response.';
+
+  return (
+    <div class="session-feed-response" aria-live={props.status === 'running' ? 'polite' : undefined}>
+      <div class="session-feed-response-label">{props.status === 'running' ? 'Latest response' : 'Final response'}</div>
+      {props.value
+        ? (
+          <div class={`session-feed-content${long && !expanded ? ' is-collapsed' : ''}`}>
+            <LogContent value={props.value} forceMarkdown />
+          </div>
+        )
+        : <p class="session-feed-empty">{emptyMessage} <a href={props.href}>View session details</a></p>}
+      {long && (
+        <button
+          type="button"
+          class="session-feed-more"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >{expanded ? 'Show less' : 'Show more'}</button>
+      )}
     </div>
   );
 }
@@ -82,6 +175,8 @@ export default function SessionsList() {
   const triggerFilter = q.trigger || '';
   const agentFilter = q.agent || undefined;
   const approvalFilter = q.approval || undefined;
+  const { view } = useSessionListView();
+  const feedDetail = view === 'feed' ? 'feed' as const : undefined;
   // Default to 24h for the general feed, but widen to 30d when an agent or
   // approval filter is active: those runs are often days old, and a 24h default
   // would show "no sessions" for an agent that simply hasn't run today.
@@ -129,7 +224,7 @@ export default function SessionsList() {
     return [...byId.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   })();
 
-  const key = `sessions:${win}:${statusFilter}:${triggerFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}`;
+  const key = `sessions:${win}:${statusFilter}:${triggerFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}:${view}`;
   const [streamData, setStreamData] = useState<SessionsPayload | null>(null);
   const [streamError, setStreamError] = useState<Error | null>(null);
   const [streamFallback, setStreamFallback] = useState(false);
@@ -152,6 +247,7 @@ export default function SessionsList() {
       agent: agentFilter,
       approval: approvalFilter,
       limit: 50,
+      detail: feedDetail,
     }),
     streamFallback ? { refreshMs: 10_000 } : {}
   );
@@ -167,6 +263,7 @@ export default function SessionsList() {
     agent: agentFilter,
     approval: approvalFilter,
     limit: 50,
+    detail: feedDetail,
     enabled: !streamFallback,
     onData: (payload) => {
       setStreamData(payload);
@@ -189,7 +286,7 @@ export default function SessionsList() {
     if (!resolvedData?.nextCursor || loadingMore) return;
     setLoadingMore(true);
     try {
-      const next = await fetchSessions({ window: win, status: statusFilter || undefined, trigger: triggerFilter || undefined, agent: agentFilter, approval: approvalFilter, limit: 50, cursor: resolvedData.nextCursor });
+      const next = await fetchSessions({ window: win, status: statusFilter || undefined, trigger: triggerFilter || undefined, agent: agentFilter, approval: approvalFilter, limit: 50, cursor: resolvedData.nextCursor, detail: feedDetail });
       setLoadedMore((current) => [...current, ...next.sessions]);
       // Keep the cursor from the most recently loaded page available to the button.
       const { nextCursor: _previousCursor, ...pageBase } = resolvedData;
@@ -312,10 +409,11 @@ export default function SessionsList() {
               {activeCount > 0 && <a class="empty-action" href="/sessions">Clear all filters</a>}
             </p>
           )
-          : <div class="rows">{rows.map((row) => (
+          : <div class={`rows${view === 'feed' ? ' session-feed' : ''}`}>{rows.map((row) => (
             <SessionRowView
               key={`${row.project}:${row.sessionId}`}
               row={row}
+              view={view}
               multiProject={multiProject}
               filterHref={withParam}
               statusFilter={statusFilter}

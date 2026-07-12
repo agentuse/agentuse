@@ -945,7 +945,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'stop-session' | 'reopen-gate';
+    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate';
     agentPath?: string;
     projectRoot: string;
     prompt?: string;
@@ -962,6 +962,7 @@ async function runInternalWorker() {
     approvalCreatedAfter?: number;
     sessionsCreatedAfter?: number;
     includeSubagents?: boolean;
+    sessionRefs?: Array<{ sessionId: string; agentId: string }>;
     /** reconcile-orphans: only sessions last touched before this timestamp (the
      *  reconciling worker's ready time) are treated as orphans of a dead worker. */
     reconcileCutoff?: number;
@@ -1121,21 +1122,6 @@ async function runInternalWorker() {
     return usage.input + usage.cachedInput + usage.output > 0 || usage.context ? usage : undefined;
   }
 
-  async function lastAssistantText(sessionManager: InstanceType<typeof SessionManager>, sessionId: string, agentId: string): Promise<string | undefined> {
-    const messages = await sessionManager.getSessionMessages(sessionId, agentId);
-    for (const message of [...messages].reverse()) {
-      const parts = await sessionManager.getMessageParts(sessionId, agentId, message.id);
-      const text = [...parts].reverse().find((part: any) =>
-        part?.type === 'text' &&
-        part?.role !== 'user' &&
-        typeof part.text === 'string' &&
-        part.text.trim().length > 0
-      ) as any;
-      if (text) return text.text.trim();
-    }
-    return undefined;
-  }
-
   async function buildContinuationPrompt(
     sessionManager: InstanceType<typeof SessionManager>,
     sessionId: string,
@@ -1143,7 +1129,7 @@ async function runInternalWorker() {
     session: { id: string; status: string },
     prompt?: string
   ): Promise<string> {
-    const previous = await lastAssistantText(sessionManager, sessionId, agentId);
+    const previous = await sessionManager.getLastAssistantText(sessionId, agentId);
     return [
       `Continue from previous AgentUse session ${session.id}.`,
       `Previous session status: ${session.status}.`,
@@ -2776,6 +2762,37 @@ async function runInternalWorker() {
     });
   }
 
+  async function getSessionFinalResponses(req: ExecuteRequest) {
+    try {
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const refs = (req.sessionRefs ?? []).slice(0, 100);
+      const responses: Record<string, string> = {};
+
+      // Bound concurrent filesystem walks: feed pages are normally 50 rows,
+      // and reading them all at once can overwhelm slower networked volumes.
+      const batchSize = 10;
+      for (let index = 0; index < refs.length; index += batchSize) {
+        const batch = refs.slice(index, index + batchSize);
+        const values = await Promise.all(batch.map(async (ref) => ({
+          sessionId: ref.sessionId,
+          text: await sessionManager.getLastAssistantText(ref.sessionId, ref.agentId),
+        })));
+        for (const value of values) {
+          if (value.text !== undefined) responses[value.sessionId] = value.text;
+        }
+      }
+
+      return { id: req.id, success: true as const, responses };
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false as const,
+        error: { code: 'SESSION_FINAL_RESPONSES_ERROR', message: (err as Error).message }
+      };
+    }
+  }
+
   async function executeAgent(req: ExecuteRequest) {
     const startTime = Date.now();
     let mcp: Awaited<ReturnType<typeof connectMCP>> = [];
@@ -3244,6 +3261,10 @@ async function runInternalWorker() {
         });
       } else if (request.type === 'list-sessions') {
         listSessions(request).then((response) => {
+          console.log(JSON.stringify(response));
+        });
+      } else if (request.type === 'session-final-responses') {
+        getSessionFinalResponses(request).then((response) => {
           console.log(JSON.stringify(response));
         });
       } else if (request.type === 'stop-session') {
