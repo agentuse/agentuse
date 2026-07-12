@@ -102,6 +102,19 @@ export default function SessionsList() {
     Boolean(agentFilter),
     Boolean(approvalFilter),
   ].filter(Boolean).length;
+  // The collapsed mobile control should still explain *which* sessions are in
+  // view. Native selects hide that context until the operator reopens the
+  // whole panel, so surface every non-default filter as a removable summary.
+  // Keeping the time window out when it is the contextual default (24h, or
+  // 30d for a selected agent) avoids presenting an implementation detail as an
+  // active constraint.
+  const activeFilters = [
+    ...(win !== defaultWin ? [{ key: 'window', label: 'Time', value: win }] : []),
+    ...(statusFilter ? [{ key: 'status', label: 'Status', value: statusFilter }] : []),
+    ...(triggerFilter ? [{ key: 'trigger', label: 'Trigger', value: triggerFilter }] : []),
+    ...(agentFilter ? [{ key: 'agent', label: 'Agent', value: agentFilter }] : []),
+    ...(approvalFilter ? [{ key: 'approval', label: 'Approval', value: approvalFilter }] : []),
+  ];
   const [filtersOpen, setFiltersOpen] = useState(activeCount > 0);
 
   // Agent list powers the filter's type-ahead so operators pick a real agent id
@@ -221,36 +234,65 @@ export default function SessionsList() {
       <main>
         <h1>Sessions <PushBell category="sessions" /></h1>
         {narrow && (
-          <button
-            type="button"
-            class="filters-toggle"
-            aria-expanded={filtersOpen}
-            aria-controls="session-filters"
-            onClick={() => setFiltersOpen((o) => !o)}
-          >
-            filters{activeCount ? ` (${activeCount} active)` : ''}
-          </button>
+          <div class="filters-summary">
+            <button
+              type="button"
+              class={`filters-toggle${filtersOpen ? ' is-open' : ''}`}
+              aria-expanded={filtersOpen}
+              aria-controls="session-filters"
+              onClick={() => setFiltersOpen((o) => !o)}
+            >
+              <span>filters</span>
+              {activeCount > 0 && <span class="filters-toggle-count">{activeCount}</span>}
+              <span class="filters-toggle-caret" aria-hidden="true">⌄</span>
+            </button>
+            <div class="active-filters" aria-live="polite">
+              {activeFilters.length > 0
+                ? activeFilters.map((filter) => (
+                  <a
+                    class="active-filter"
+                    href={withParam(filter.key, '')}
+                    key={filter.key}
+                    title={`Remove ${filter.label.toLowerCase()} filter: ${filter.value}`}
+                  >
+                    <span class="active-filter-label">{filter.label}</span>
+                    <span class="active-filter-value">{filter.value}</span>
+                    <span class="active-filter-remove" aria-hidden="true">×</span>
+                  </a>
+                ))
+                : <span class="filters-context">all sessions · {win}</span>}
+            </div>
+            {activeCount > 0 && <a class="filters-reset" href="/sessions">Clear</a>}
+          </div>
         )}
         <div id="session-filters" class={`filters${narrow && !filtersOpen ? ' collapsed' : ''}`}>
-          <label>window
-            <select value={win} onChange={onSelect('window')}>
-              {WINDOWS.map((w) => <option value={w} key={w}>{w}</option>)}
-            </select>
-          </label>
-          <label>status
-            <select value={statusFilter} onChange={onSelect('status')}>
-              {STATUSES.map((s) => <option value={s} key={s || 'any'}>{s || 'any'}</option>)}
-            </select>
-          </label>
-          <label>trigger
-            <select value={triggerFilter} onChange={onSelect('trigger')}>
-              {TRIGGERS.map((t) => <option value={t} key={t || 'any'}>{t || 'any'}</option>)}
-            </select>
-          </label>
-          <label>agent
-            <AgentFilterSelect options={agentOptions} value={agentFilter ?? ''} onChange={commitAgent} />
-          </label>
-          {approvalFilter && <a class="filter-clear" href={withParam('approval', '')}>approval: {approvalFilter} ✕</a>}
+          <div class="filters-heading">
+            <div>
+              <div class="filters-title">Filter sessions</div>
+              <div class="filters-description">Narrow the live feed by time, state, source, or agent.</div>
+            </div>
+            {activeCount > 0 && <a class="filters-reset" href="/sessions">Clear all</a>}
+          </div>
+          <div class="filter-grid">
+            <label class="filter-field filter-field-window">window
+              <select value={win} onChange={onSelect('window')}>
+                {WINDOWS.map((w) => <option value={w} key={w}>{w}</option>)}
+              </select>
+            </label>
+            <label class="filter-field filter-field-status">status
+              <select value={statusFilter} onChange={onSelect('status')}>
+                {STATUSES.map((s) => <option value={s} key={s || 'any'}>{s || 'any'}</option>)}
+              </select>
+            </label>
+            <label class="filter-field filter-field-trigger">trigger
+              <select value={triggerFilter} onChange={onSelect('trigger')}>
+                {TRIGGERS.map((t) => <option value={t} key={t || 'any'}>{t || 'any'}</option>)}
+              </select>
+            </label>
+            <label class="filter-field filter-field-agent">agent
+              <AgentFilterSelect options={agentOptions} value={agentFilter ?? ''} onChange={commitAgent} />
+            </label>
+          </div>
         </div>
 
         {resolvedError && <div class="errors" role="alert">Failed to load sessions: {resolvedError.message}</div>}

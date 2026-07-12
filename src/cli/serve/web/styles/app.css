@@ -3170,15 +3170,32 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-weight: 500;
 }
 .page-sessions .filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
+  display: grid;
   gap: 12px;
   margin: 0 0 20px;
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel);
+}
+.page-sessions .filters-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.page-sessions .filters-title {
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+}
+.page-sessions .filters-description { margin-top: 2px; color: var(--muted); font-size: 11.5px; }
+.page-sessions .filter-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
 }
 .page-sessions .filters label {
   display: grid;
@@ -3267,6 +3284,17 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   border-bottom: 1px solid var(--line-strong);
 }
 .page-sessions .filter-clear:hover { background: var(--panel-hover); color: var(--fg); border-color: var(--line-strong); }
+.page-sessions .filters-reset {
+  flex: none;
+  align-self: center;
+  color: var(--muted-3);
+  font-size: 11.5px;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+  transition: color 120ms ease, text-decoration-color 120ms ease;
+}
+.page-sessions .filters-reset:hover { color: var(--cyan); text-decoration-color: var(--cyan-border); }
 .page-sessions .empty { color: var(--muted); font-style: italic; padding: 14px 0; }
 /* One-click escape hatches in the empty state (widen window / clear filters). */
 .page-sessions .empty .empty-action {
@@ -3364,15 +3392,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
    so a skim separates "blocked, needs a human" from "broke". */
 .page-sessions .chip.status.incomplete { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .page-sessions footer { color: var(--muted); font-size: 11px; margin-top: 32px; text-align: center; }
-@media (max-width: 560px) {
-  .page-sessions .filters label { width: 100%; }
-  .page-sessions .filters select { width: 100%; }
-  .page-sessions .filters input { width: 100%; min-width: 0; }
-  .page-sessions .agent-select { width: 100%; min-width: 0; }
-  .page-sessions .agent-select-pop { width: 100%; }
-  .page-sessions .filter-clear { width: 100%; }
-}
-
 /* --- shared chip variants (sessions / approvals rows) --- */
 .chip.trigger { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .chip.project { color: var(--cyan); }
@@ -3723,13 +3742,15 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   outline-offset: 2px;
 }
 
-/* Filters disclosure (sessions list): a compact toggle that collapses the
-   filter bar on narrow screens. Desktop always shows the filters, so the toggle
-   is hidden and .collapsed is a no-op above 700px. Mirrors .filter-clear. */
-.filters-toggle {
+/* Filters disclosure (sessions list): on narrow screens the persistent summary
+   carries the active constraints, while the form opens only when refinement is
+   needed. This keeps the first session visible instead of making every filter
+   look equally important. */
+.page-sessions .filters-summary { display: none; }
+.page-sessions .filters-toggle {
   display: none;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   min-height: 34px;
   padding: 6px 11px;
   border: 1px solid var(--line-strong);
@@ -3738,13 +3759,92 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   color: var(--muted-3);
   font: inherit;
   font-size: 12px;
+  text-transform: lowercase;
   cursor: pointer;
   transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
 }
-.filters-toggle:hover { color: var(--fg); background: var(--panel-hover); }
+.page-sessions .filters-toggle:hover { color: var(--fg); background: var(--panel-hover); }
+.page-sessions .filters-toggle-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--cyan-soft);
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.page-sessions .filters-toggle-caret {
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1;
+  transform: translateY(-1px);
+  transition: transform 160ms ease;
+}
+.page-sessions .filters-toggle.is-open .filters-toggle-caret { transform: translateY(1px) rotate(180deg); }
 @media (max-width: 700px) {
-  .filters-toggle { display: inline-flex; }
-  .filters.collapsed { display: none; }
+  .page-sessions .filters-summary {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 8px;
+    margin: 0 0 12px;
+  }
+  .page-sessions .filters-toggle { display: inline-flex; flex: none; }
+  .page-sessions .active-filters {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex: 1;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .page-sessions .active-filters::-webkit-scrollbar { display: none; }
+  .page-sessions .active-filter {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    min-width: 0;
+    gap: 5px;
+    padding: 5px 7px;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.2;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .page-sessions .active-filter:hover { border-color: var(--cyan-border); background: var(--cyan-soft); color: var(--cyan); }
+  .page-sessions .active-filter-label { color: var(--muted); font-family: var(--sans); font-size: 10px; }
+  .page-sessions .active-filter-value { max-width: 20ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .page-sessions .active-filter-remove { color: var(--muted-2); font-family: var(--sans); font-size: 14px; line-height: 8px; }
+  .page-sessions .filters-context { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+  .page-sessions .filters-summary > .filters-reset {
+    display: inline-flex;
+    flex: none;
+    min-height: 30px;
+    align-items: center;
+  }
+  .page-sessions .filters.collapsed { display: none; }
+  .page-sessions .filters { padding: 14px; }
+  .page-sessions .filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 10px; }
+  .page-sessions .filters label { min-width: 0; }
+  .page-sessions .filters select { width: 100%; }
+  .page-sessions .filter-field-agent { grid-column: 1 / -1; }
+  .page-sessions .agent-select { width: 100%; min-width: 0; }
+  .page-sessions .agent-select-pop { width: 100%; }
+}
+@media (max-width: 380px) {
+  .page-sessions .filters-heading { gap: 8px; }
+  .page-sessions .filters-description { font-size: 11px; }
+  .page-sessions .filter-grid { grid-template-columns: 1fr; }
+  .page-sessions .filter-field-agent { grid-column: auto; }
 }
 
 /* Disabled schedules group header: reads as a status, not a date. Text stays at
