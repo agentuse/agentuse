@@ -5,6 +5,11 @@ import { parseBashCommand, extractPaths, extractPipeTargets, extractRedirectionT
 import { matchStructured, type StructuredCommand } from './wildcard.js';
 import { resolveRealPath, type PathResolverContext } from './path-validator.js';
 
+// Standard shell byte sinks/streams, always readable/writable regardless of
+// allowedPaths. Writing a *device* like /dev/sda stays gated (and dd of=/dev/*
+// is denylisted); these five are process streams, not storage.
+const DEV_STREAM_PATHS = new Set(['/dev/null', '/dev/stdin', '/dev/stdout', '/dev/stderr', '/dev/tty']);
+
 // Built-in denylist - always blocked, cannot be overridden
 const BUILTIN_DENYLIST: Record<string, boolean> = {
   // Destructive filesystem operations
@@ -333,6 +338,11 @@ export class CommandValidator {
   private isWithinAllowedPaths(filePath: string): boolean {
     // No project root = no restriction
     if (!this.projectRoot) return true;
+
+    // Standard byte sinks/streams (`2>/dev/null`, `>/dev/stdout`) are not
+    // filesystem access worth gating; without this, any command with a
+    // /dev/null redirect is blocked as "outside allowed directories".
+    if (DEV_STREAM_PATHS.has(filePath)) return true;
 
     // Check project root first
     if (this.isPathWithin(filePath, this.projectRoot)) {

