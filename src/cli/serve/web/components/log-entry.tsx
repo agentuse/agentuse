@@ -273,10 +273,11 @@ function ApprovalDetailCard(props: {
           ? { title: 'Review', body: <LogContent value={details.summary} forceMarkdown /> }
           : undefined;
   const showSummary = Boolean(details.summary) && primary?.title !== 'Review';
-  // With structured changes or an options menu present, the draft is supporting
-  // detail, not the thing under review: collapse it so the decision surface
-  // (change boxes / option cards) stays the focal point.
-  const demotePrimary = (changes.length > 0 || options.length > 0) && Boolean(primary);
+  // With structured changes present, the draft is supporting detail, not the
+  // thing under review: collapse it so the change boxes stay the focal point.
+  // An options menu does NOT demote the draft: on a pick gate the draft is the
+  // evidence the reviewer reads before choosing.
+  const demotePrimary = changes.length > 0 && Boolean(primary);
   const links = [
     details.draftUrl ? <a class="approval-link" href={details.draftUrl} target="_blank" rel="noopener noreferrer">Open draft</a> : null,
     details.artifactUrl ? <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact</a> : null,
@@ -288,14 +289,6 @@ function ApprovalDetailCard(props: {
     <div class="approval-card">
       {details.prompt && <div class="approval-question"><InlineMarkdown value={details.prompt} /></div>}
       {details.reference && <ReferenceBlock reference={details.reference} />}
-      {options.length > 0 && (
-        <OptionsBlock
-          options={options}
-          selected={props.selectedChoice}
-          decided={details.decisionChoice}
-          onSelect={props.onSelectChoice}
-        />
-      )}
       {changes.length > 0 && <ChangesBlock changes={changes} />}
       {artifactPaths.length > 0 && (
         <section class="approval-section approval-artifact">
@@ -354,6 +347,17 @@ function ApprovalDetailCard(props: {
           <div class="approval-section-title">Risk / consequence</div>
           <div class="approval-section-body"><LogContent value={details.risk} forceMarkdown /></div>
         </section>
+      )}
+      {options.length > 0 && (
+        // Last content section by design: the feed auto-scrolls to the end, so
+        // the reviewer lands here, and the pick sits directly above the
+        // Approve/Reject/Comment row it feeds. Evidence above, decision below.
+        <OptionsBlock
+          options={options}
+          selected={props.selectedChoice}
+          decided={details.decisionChoice}
+          onSelect={props.onSelectChoice}
+        />
       )}
       {decisionLabel && (
         <section class="approval-section approval-decision">

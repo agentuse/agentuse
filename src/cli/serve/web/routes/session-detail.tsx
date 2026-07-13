@@ -701,7 +701,14 @@ export default function SessionDetail() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (decisionDialog) return;
       const target = event.target as HTMLElement | null;
-      const inField = target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT');
+      // Text-entry fields own their keys; radios/checkboxes (the option picker)
+      // do not, so the approve/reject/comment shortcuts keep working right
+      // after the reviewer picks an option.
+      const targetType = target?.tagName === 'INPUT' ? (target as HTMLInputElement).type : undefined;
+      const inField = Boolean(target && (
+        target.tagName === 'TEXTAREA' ||
+        (target.tagName === 'INPUT' && targetType !== 'radio' && targetType !== 'checkbox')
+      ));
       // Single-letter shortcuts must not steal keys from any interactive element
       // (a focused link/button/select/summary/role=button/editable) or fire while
       // any dialog is open, where the letter is likely meant for that surface.

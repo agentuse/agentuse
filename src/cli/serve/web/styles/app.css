@@ -1499,12 +1499,26 @@ a, button, select, summary, label, input, textarea,
 }
 label.approval-option { cursor: pointer; }
 label.approval-option:hover { border-color: var(--cyan-border); }
+/* Card-level focus cue: the native radio ring alone is easy to lose on the
+   washed selected card, especially when arrowing through the group. */
+label.approval-option:focus-within {
+  border-color: var(--cyan-border);
+  outline: 2px solid var(--cyan-border);
+  outline-offset: -2px;
+}
 .approval-option.selected {
   border-color: var(--cyan-border);
   background: var(--cyan-soft);
   /* Solid cyan edge so the committed pick reads at a glance, matching the
      approval-change green-edge convention for "this is what happens". */
   box-shadow: inset 3px 0 0 var(--cyan);
+}
+/* A decided gate's picked card is a completed success, not an active selection:
+   green like the decision line and the approval-change convention, not cyan. */
+.approval-option.static.selected {
+  border-color: var(--green-border);
+  background: var(--green-soft);
+  box-shadow: inset 3px 0 0 var(--green);
 }
 .approval-option input[type='radio'] {
   margin-top: 3px;
@@ -1544,13 +1558,15 @@ label.approval-option:hover { border-color: var(--cyan-border); }
   color: var(--muted-3);
   font-size: 12.5px;
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
-/* the approve button names the pick so a click's commitment is explicit */
+/* the approve button names the pick so a click's commitment is explicit;
+   the vw cap keeps the label from blowing out the flex:1 button row on phones */
 .approve-choice-label {
   margin-left: 6px;
   font-weight: 500;
   opacity: 0.85;
-  max-width: 220px;
+  max-width: min(220px, 38vw);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1780,6 +1796,14 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
   align-items: center;
 }
 .approval-toast-actions a.open:hover { color: var(--fg); border-color: var(--fg); }
+/* On a pick gate "Pick option" is the ONLY forward action (one-tap approve is
+   suppressed), so it takes the primary weight the Approve button normally has. */
+.approval-toast-actions a.open.primary-open {
+  border-color: var(--primary-bg);
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+}
+.approval-toast-actions a.open.primary-open:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); color: var(--primary-fg); }
 .approval-toast-actions .dismiss {
   border: 0;
   background: transparent;
