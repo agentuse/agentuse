@@ -98,7 +98,24 @@ async function sendPersistedSlackApproval(options: {
       .filter(Boolean)
       .join('\n\n')
     : '';
-  const slackDraft = [changesText, typeof input.draft === 'string' ? repairEscapedText(input.draft) : '']
+  // Options gates need a pick, which Slack's Approve/Reject buttons can't
+  // express, so render the menu as text and route the decision to the web page.
+  const optionEntries = Array.isArray(input.options)
+    ? input.options
+      .map((entry) => {
+        const rec = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+        const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+        const label = typeof rec.label === 'string' ? repairEscapedText(rec.label.trim()) : '';
+        if (!id || !label) return '';
+        const marker = rec.recommended === true ? ' (recommended)' : '';
+        return `• ${label}${marker}`;
+      })
+      .filter(Boolean)
+    : [];
+  const optionsText = optionEntries.length >= 2
+    ? `**Pick one on the approval page:**\n${optionEntries.join('\n')}`
+    : '';
+  const slackDraft = [optionsText, changesText, typeof input.draft === 'string' ? repairEscapedText(input.draft) : '']
     .filter(Boolean)
     .join('\n\n');
   try {
@@ -117,7 +134,7 @@ async function sendPersistedSlackApproval(options: {
       ...(typeof input.risk === 'string' && { risk: repairEscapedText(input.risk) }),
       resumeToken: options.resumeToken,
       approvalUrl: options.approvalUrl,
-      interactive: Boolean(process.env.SLACK_APP_TOKEN),
+      interactive: Boolean(process.env.SLACK_APP_TOKEN) && optionEntries.length < 2,
       ...(options.expiresAt !== undefined && { expiresAt: new Date(options.expiresAt).toISOString() })
     };
     const root = options.slackRunChannelHandles?.find((handle) =>

@@ -95,7 +95,7 @@ export interface AwaitHumanDefaults {
 
 export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDefaults): Tool {
   return {
-    description: 'Suspend the current run while waiting for a reviewer decision or comment. The run resumes when a decision is submitted from the approval page or Approval API.',
+    description: 'Suspend the current run while waiting for a reviewer decision or comment. The run resumes when a decision is submitted from the approval page or Approval API. The tool result carries the decision: `status` (approved/rejected/commented), optional `comment`, and (when you supplied `options`) `choice`, the id of the option the reviewer selected. Always branch on `choice` when present instead of parsing the comment.',
     inputSchema: z.object({
       prompt: z.string().describe('One short line: a direct yes/no question for the reviewer. Do not put the content, headings, or lists here; use draft for that.'),
       summary: z.string().optional().describe('A few sentences on what changed and what is being approved. Rendered as Markdown under "Why this request".'),
@@ -115,6 +115,12 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       artifact_url: z.string().url().refine(isHttpUrl, 'must be an http(s) URL').optional().describe('External URL to the primary review artifact, such as a PR, hosted preview, or document'),
       artifact_path: z.string().optional().describe('Path, relative to the project root, to a local file artifact you created (e.g. .agentuse/artifacts/report.html). The reviewer can open it in a popup viewer. Prefer this over inlining long or HTML content into draft. For more than one file, use artifact_paths.'),
       artifact_paths: z.array(z.string()).optional().describe('Multiple local file artifacts to review, each a path relative to the project root. Each renders as its own openable tile in the popup viewer.'),
+      options: z.array(z.object({
+        id: z.string().min(1).describe('Stable key you will branch on when the decision comes back, e.g. "candidate-1". Unique within this request.'),
+        label: z.string().min(1).describe('Short human-readable name of this alternative, shown on the option card and on the approve button'),
+        description: z.string().optional().describe('One or two sentences on what picking this option means. Rendered as Markdown on the option card. Keep the full detail in draft; this is the skim line.'),
+        recommended: z.boolean().optional().describe('Mark exactly one option as your recommendation; it is preselected for the reviewer')
+      })).min(2).optional().describe('When the decision is a pick among alternatives (candidates, variants, strategies) rather than a plain yes/no, list them here: the reviewer gets a single-select menu instead of having to type the pick into a comment. On approval the tool result carries the selected id as `choice`. Reject and comment stay available as escape hatches, so do not add "reject all" or "other" as options.'),
       context: z.string().optional().describe('Only background the other fields do not already carry: constraints, inputs used, process notes. Never repeat the reference, changes, or summary content (no restating the target, URL, or revision story). Omit entirely when nothing extra remains. Rendered as Markdown.'),
       risk: z.string().optional().describe('Concrete risks, unresolved questions, or areas needing reviewer attention. Rendered as Markdown.')
     }),
@@ -128,6 +134,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       artifact_url?: string;
       artifact_path?: string;
       artifact_paths?: string[];
+      options?: Array<{ id: string; label: string; description?: string; recommended?: boolean }>;
       context?: string;
       risk?: string;
     }) => {

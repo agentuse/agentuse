@@ -1010,6 +1010,13 @@ async function runInternalWorker() {
     excerpt?: string;
   }
 
+  interface ApprovalOption {
+    id: string;
+    label: string;
+    description?: string;
+    recommended?: boolean;
+  }
+
   interface ApprovalLogDetails {
     resumeToken?: string;
     prompt?: string;
@@ -1021,6 +1028,7 @@ async function runInternalWorker() {
     draft?: string;
     changes?: ApprovalChange[];
     reference?: ApprovalReference;
+    options?: ApprovalOption[];
     draftUrl?: string;
     artifactUrl?: string;
     artifactPaths?: string[];
@@ -1038,6 +1046,7 @@ async function runInternalWorker() {
     };
     decisionStatus?: string;
     decisionComment?: string;
+    decisionChoice?: string;
     decisionReviewer?: string;
     errorMessage?: string;
   }
@@ -1053,6 +1062,8 @@ async function runInternalWorker() {
     prompt?: string;
     summary?: string;
     risk?: string;
+    /** The gate offers a pick-among-options menu; one-tap approve is not enough. */
+    hasOptions?: boolean;
     suspendedAt?: number;
     expiresAt?: number;
     createdAt?: number;
@@ -1306,6 +1317,33 @@ async function runInternalWorker() {
     return changes.length > 0 ? changes : undefined;
   }
 
+  /**
+   * Untrusted tool-input `options`: keep only entries with a real id and label,
+   * drop duplicate ids (first wins), and require at least two survivors, since
+   * a one-entry "menu" degrades to the plain approve flow.
+   */
+  function normalizeApprovalOptions(value: unknown): ApprovalOption[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    const seen = new Set<string>();
+    const options = value.flatMap((entry): ApprovalOption[] => {
+      const rec = valueAsRecord(entry);
+      const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+      const label = typeof rec.label === 'string' ? repairEscapedText(rec.label.trim()) : '';
+      if (!id || !label || seen.has(id)) return [];
+      seen.add(id);
+      const description = typeof rec.description === 'string' && rec.description.trim()
+        ? repairEscapedText(rec.description.trim())
+        : undefined;
+      return [{
+        id,
+        label,
+        ...(description && { description }),
+        ...(rec.recommended === true && { recommended: true })
+      }];
+    });
+    return options.length >= 2 ? options : undefined;
+  }
+
   /** Untrusted tool-input `reference`: string fields only, URL must be http(s). */
   function normalizeApprovalReference(value: unknown): ApprovalReference | undefined {
     const rec = valueAsRecord(value);
@@ -1346,6 +1384,8 @@ async function runInternalWorker() {
     if (changes) fields.changes = changes;
     const reference = normalizeApprovalReference(input.reference);
     if (reference) fields.reference = reference;
+    const options = normalizeApprovalOptions(input.options);
+    if (options) fields.options = options;
     const safeDraftUrl = safeHttpUrl(input.draft_url);
     if (safeDraftUrl) fields.draftUrl = safeDraftUrl;
     const safeArtifactUrl = safeHttpUrl(input.artifact_url);
@@ -1363,6 +1403,8 @@ async function runInternalWorker() {
     if (state?.status === 'completed') {
       const decisionStatus = typeof output.status === 'string' ? output.status : undefined;
       const decisionComment = typeof output.comment === 'string' ? output.comment : undefined;
+      const decisionChoice = typeof output.choice === 'string' && output.choice ? output.choice : undefined;
+      if (decisionChoice) fields.decisionChoice = decisionChoice;
       const reviewer = valueAsRecord(output.reviewer);
       const reviewerLabel = typeof reviewer.name === 'string'
         ? reviewer.name
@@ -2115,6 +2157,7 @@ async function runInternalWorker() {
       const detailArtifactUrl = safeHttpUrl(input.artifact_url);
       const payloadChanges = normalizeApprovalChanges(input.changes);
       const payloadReference = normalizeApprovalReference(input.reference);
+      const payloadOptions = normalizeApprovalOptions(input.options);
       return {
         id: req.id,
         success: true,
@@ -2141,6 +2184,7 @@ async function runInternalWorker() {
           ...(typeof input.draft === 'string' && { draft: repairEscapedText(input.draft) }),
           ...(payloadChanges && { changes: payloadChanges }),
           ...(payloadReference && { reference: payloadReference }),
+          ...(payloadOptions && { options: payloadOptions }),
           ...(detailDraftUrl && { draftUrl: detailDraftUrl }),
           ...(detailArtifactUrl && { artifactUrl: detailArtifactUrl }),
           ...(typeof input.context === 'string' && { context: repairEscapedText(input.context) }),
@@ -2671,6 +2715,7 @@ async function runInternalWorker() {
           ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
           ...(typeof input.summary === 'string' && { summary: input.summary }),
           ...(typeof input.risk === 'string' && { risk: input.risk }),
+          ...(normalizeApprovalOptions(input.options) && { hasOptions: true }),
           ...(suspendedAt !== undefined && { suspendedAt }),
           ...(typeof resumePayload.expiresAt === 'number' && { expiresAt: resumePayload.expiresAt }),
           ...(typeof session.time?.created === 'number' && { createdAt: session.time.created }),

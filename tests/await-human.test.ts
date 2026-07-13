@@ -159,6 +159,36 @@ describe('await_human approval URL', () => {
     }).success).toBe(false);
   });
 
+  it('accepts a pick-among-options menu in the input schema', () => {
+    const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
+    const schema = tool.inputSchema as { safeParse: (v: unknown) => { success: boolean } };
+
+    expect(schema.safeParse({
+      prompt: 'Pick one of the newsletter ideas to draft?',
+      options: [
+        { id: 'candidate-0', label: 'the rebuild nobody chose', description: 'Gray-divorce cluster', recommended: true },
+        { id: 'candidate-1', label: 'the domain nobody bills you for' },
+        { id: 'candidate-2', label: 'the deadline someone else set' },
+      ],
+    }).success).toBe(true);
+
+    // a menu needs at least two options
+    expect(schema.safeParse({
+      prompt: 'Pick?',
+      options: [{ id: 'only', label: 'Only option' }],
+    }).success).toBe(false);
+
+    // id and label are required and non-empty
+    expect(schema.safeParse({
+      prompt: 'Pick?',
+      options: [{ id: '', label: 'A' }, { id: 'b', label: 'B' }],
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      prompt: 'Pick?',
+      options: [{ id: 'a' }, { id: 'b', label: 'B' }],
+    }).success).toBe(false);
+  });
+
   it('does not set an approval expiration by default', async () => {
     delete process.env.AGENTUSE_API_KEY;
     const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });

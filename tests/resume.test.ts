@@ -69,6 +69,58 @@ describe('resume tool result', () => {
     expect(updates[2][4].state).toBe(pendingState);
     expect(updates[3]).toEqual(['suspended', 'session-1', 'agent']);
   });
+
+  it('stores the toolResult verbatim, so a decision choice reaches the agent untouched', async () => {
+    const pendingState = {
+      status: 'pending' as const,
+      input: {
+        prompt: 'Pick one?',
+        options: [
+          { id: 'candidate-0', label: 'A', recommended: true },
+          { id: 'candidate-1', label: 'B' }
+        ]
+      },
+      suspendedAt: 123,
+      resumePayload: {
+        kind: 'await_human' as const,
+        resumeToken: 'token-1'
+      }
+    };
+    const updates: any[] = [];
+    const sessionManager = {
+      findSession: async () => ({
+        session: {
+          status: 'suspended',
+          agent: { filePath: '/project/agent.agentuse' }
+        },
+        agentId: 'agent'
+      }),
+      findPendingTool: async () => ({
+        message: { id: 'message-1' },
+        part: { id: 'part-1', state: pendingState }
+      }),
+      updatePart: async (...args: any[]) => { updates.push(args); },
+      setSessionRunning: async () => {},
+      setSessionSuspended: async () => {}
+    };
+
+    const toolResult = {
+      status: 'approve',
+      choice: 'candidate-1',
+      comment: 'go with the sandwich angle',
+      reviewer: { username: 'web' }
+    };
+    await applyResumeToolResult({
+      sessionManager: sessionManager as any,
+      sessionId: 'session-1',
+      toolResult,
+      resumeToken: 'token-1'
+    });
+
+    const completedState = updates[0][4].state;
+    expect(completedState.status).toBe('completed');
+    expect(completedState.output).toEqual(toolResult);
+  });
 });
 
 describe('resume execution context', () => {
