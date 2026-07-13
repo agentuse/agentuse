@@ -96,6 +96,8 @@ export function fetchApprovalStatus(sessionId: string, token: string, project?: 
 export function postApprovalDecision(sessionId: string, body: {
   status: string;
   comment?: string;
+  /** Option id picked on a pick-among-options gate; required with approve there. */
+  choice?: string;
   remember?: string;
   resumeToken: string;
   project?: string;
@@ -194,6 +196,8 @@ export function discardAgentLearning(project: string, runPath: string, learningI
 export function postSessionDecision(sessionId: string, token: string | undefined, body: {
   status: string;
   comment?: string;
+  /** Option id picked on a pick-among-options gate; required with approve there. */
+  choice?: string;
   remember?: string;
   resumeToken: string;
   project?: string;

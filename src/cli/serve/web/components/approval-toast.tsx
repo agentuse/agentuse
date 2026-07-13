@@ -101,6 +101,9 @@ export function ApprovalToast() {
 
   const title = toast.agentName || toast.agentId;
   const excerpt = (toast.summary || toast.prompt || '').slice(0, 180);
+  // A pick-among-options gate can't be one-tap approved (the decision needs a
+  // choice); route the reviewer to the session page's option picker instead.
+  const needsPick = Boolean(toast.hasOptions);
 
   return (
     <div class="approval-toast" role="alert" aria-live="assertive">
@@ -108,19 +111,21 @@ export function ApprovalToast() {
       <div class="approval-toast-body">
         <div class="approval-toast-head">
           <span class="approval-toast-agent">{title}</span>
-          <span class="approval-toast-label">wants approval</span>
+          <span class="approval-toast-label">{needsPick ? 'wants you to pick an option' : 'wants approval'}</span>
           {pendingCount > 1 && <a class="approval-toast-more" href="/approvals">+{pendingCount - 1} more</a>}
         </div>
         {excerpt && <div class="approval-toast-excerpt">{excerpt}</div>}
       </div>
       <div class="approval-toast-actions">
-        <button type="button" class={`approve${busy === 'approved' ? ' btn-busy' : ''}`} disabled={busy !== null} aria-busy={busy === 'approved'} onClick={() => void decide('approved')}>
-          {busy === 'approved' ? <><span class="btn-spinner" aria-hidden="true" />Approving…</> : 'Approve'}
-        </button>
+        {!needsPick && (
+          <button type="button" class={`approve${busy === 'approved' ? ' btn-busy' : ''}`} disabled={busy !== null} aria-busy={busy === 'approved'} onClick={() => void decide('approved')}>
+            {busy === 'approved' ? <><span class="btn-spinner" aria-hidden="true" />Approving…</> : 'Approve'}
+          </button>
+        )}
         <button type="button" class={`reject${busy === 'rejected' ? ' btn-busy' : ''}`} disabled={busy !== null} aria-busy={busy === 'rejected'} onClick={() => void decide('rejected')}>
           {busy === 'rejected' ? <><span class="btn-spinner" aria-hidden="true" />Rejecting…</> : 'Reject'}
         </button>
-        <a class="open" href={sessionHref(toast)} onClick={() => setToast(null)}>Open</a>
+        <a class={needsPick ? 'open primary-open' : 'open'} href={sessionHref(toast)} onClick={() => setToast(null)}>{needsPick ? 'Pick option' : 'Open'}</a>
         <button type="button" class="dismiss" aria-label="Dismiss" onClick={() => setToast(null)}>✕</button>
       </div>
     </div>

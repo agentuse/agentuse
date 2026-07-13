@@ -48,6 +48,8 @@ export interface ApprovalSummary {
   prompt?: string;
   summary?: string;
   risk?: string;
+  /** The gate offers a pick-among-options menu; one-tap approve is not enough. */
+  hasOptions?: boolean;
   suspendedAt?: number;
   expiresAt?: number;
   createdAt?: number;
@@ -147,6 +149,7 @@ export interface ApprovalPageInfo {
   draft?: string;
   changes?: ApprovalChange[];
   reference?: ApprovalReference;
+  options?: ApprovalOption[];
   draftUrl?: string;
   artifactUrl?: string;
   context?: string;
@@ -237,6 +240,14 @@ export interface ApprovalReference {
   excerpt?: string;
 }
 
+/** One selectable alternative on a pick-among-options approval gate. */
+export interface ApprovalOption {
+  id: string;
+  label: string;
+  description?: string;
+  recommended?: boolean;
+}
+
 export interface ApprovalLogDetails {
   resumeToken?: string;
   prompt?: string;
@@ -248,6 +259,7 @@ export interface ApprovalLogDetails {
   draft?: string;
   changes?: ApprovalChange[];
   reference?: ApprovalReference;
+  options?: ApprovalOption[];
   draftUrl?: string;
   artifactUrl?: string;
   /** Project-root-relative paths to local file artifacts, viewable via /sessions/:id/artifacts/*. */
@@ -268,6 +280,8 @@ export interface ApprovalLogDetails {
   };
   decisionStatus?: string;
   decisionComment?: string;
+  /** Option id the reviewer selected, when the gate offered options. */
+  decisionChoice?: string;
   decisionReviewer?: string;
   errorMessage?: string;
 }

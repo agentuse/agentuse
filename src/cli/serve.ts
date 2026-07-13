@@ -173,6 +173,8 @@ interface ApprovalSummary {
   prompt?: string;
   summary?: string;
   risk?: string;
+  /** The gate offers a pick-among-options menu; one-tap approve is not enough. */
+  hasOptions?: boolean;
   suspendedAt?: number;
   expiresAt?: number;
   createdAt?: number;
@@ -331,6 +333,7 @@ interface ApprovalPageInfo {
   draft?: string;
   changes?: Array<{ label?: string; content: string }>;
   reference?: { label?: string; author?: string; title?: string; url?: string; excerpt?: string };
+  options?: Array<{ id: string; label: string; description?: string; recommended?: boolean }>;
   draftUrl?: string;
   artifactUrl?: string;
   context?: string;
@@ -405,12 +408,14 @@ interface ApprovalLogDetails {
   draft?: string;
   changes?: Array<{ label?: string; content: string }>;
   reference?: { label?: string; author?: string; title?: string; url?: string; excerpt?: string };
+  options?: Array<{ id: string; label: string; description?: string; recommended?: boolean }>;
   draftUrl?: string;
   artifactUrl?: string;
   /** Project-root-relative paths to local file artifacts, viewable via /sessions/:id/artifacts/*. */
   artifactPaths?: string[];
   decisionStatus?: string;
   decisionComment?: string;
+  decisionChoice?: string;
   decisionReviewer?: string;
   errorMessage?: string;
 }
@@ -2573,6 +2578,32 @@ export function createServeCommand(): Command {
           ? body.remember.trim()
           : undefined;
 
+      // Shared choice validation for both decision routes. A gate that published
+      // options requires an approve decision to name one of them, so the agent can
+      // trust `approved ⇒ choice is a known id`; gates without options reject any
+      // choice to catch client bugs early. Returns an error to send, or null when
+      // the (status, choice) pair is acceptable.
+      const validateDecisionChoice = (
+        info: WorkerApprovalInfoResult,
+        status: string,
+        choice: string | undefined
+      ): { code: string; message: string } | null => {
+        const gateOptions = info.approval.options;
+        if (choice !== undefined) {
+          if (status !== 'approve') {
+            return { code: 'CHOICE_REQUIRES_APPROVE', message: 'A choice can only be submitted with an approve decision' };
+          }
+          if (!gateOptions?.some((o) => o.id === choice)) {
+            return { code: 'CHOICE_INVALID', message: `Choice "${choice}" is not one of this gate's options` };
+          }
+          return null;
+        }
+        if (status === 'approve' && gateOptions && gateOptions.length > 0) {
+          return { code: 'CHOICE_REQUIRED', message: 'This gate offers options; approve decisions must include a choice (option id)' };
+        }
+        return null;
+      };
+
       // Shared resume kickoff for both /approvals/:id/decision and the unified
       // /sessions/:id/decision. The caller validates auth + state, then hands us
       // the resolved gate resumeToken; we run the worker resume, update any
@@ -2586,6 +2617,9 @@ export function createServeCommand(): Command {
           resumeToken: string;
           status: string;
           comment?: string | undefined;
+          // Option id selected on a pick-among-options gate; validated by the
+          // route handler against the gate's published options.
+          choice?: string | undefined;
           // Extra fields merged into the 202 body, so alternate entry points
           // (the stop endpoint's reject reroute) can mark how they resolved.
           responseExtra?: Record<string, unknown> | undefined;
@@ -2595,7 +2629,7 @@ export function createServeCommand(): Command {
           onResumeFailure?: (() => void) | undefined;
         }
       ): void => {
-        const { project, sessionId, info, resumeToken, status, comment } = params;
+        const { project, sessionId, info, resumeToken, status, comment, choice } = params;
         const projectWorker = workers.get(project.id)!;
         const targetSessionId = approvalActionSessionId(info, sessionId);
         const activeKey = `${project.id}:${targetSessionId}`;
@@ -2635,6 +2669,7 @@ export function createServeCommand(): Command {
           toolResult: {
             status,
             ...(comment && { comment }),
+            ...(choice && { choice }),
             reviewer: { username: 'web' }
           },
           resumeToken,
@@ -4196,6 +4231,7 @@ export function createServeCommand(): Command {
             const body = await parseJSONBody(req);
             const status = typeof body.status === 'string' ? body.status : undefined;
             const comment = typeof body.comment === 'string' && body.comment.length > 0 ? body.comment : undefined;
+            const choice = typeof body.choice === 'string' && body.choice.length > 0 ? body.choice : undefined;
             const remember = readRememberField(body);
             const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
 
@@ -4215,6 +4251,11 @@ export function createServeCommand(): Command {
             const found = await findSessionInfo(sessionId, projectId);
             if (!found.success) {
               sendError(res, found.status, found.code, found.message);
+              return;
+            }
+            const choiceError = validateDecisionChoice(found.info, status, choice);
+            if (choiceError) {
+              sendError(res, 400, choiceError.code, choiceError.message);
               return;
             }
 
@@ -4241,7 +4282,7 @@ export function createServeCommand(): Command {
             }
 
             const rememberTarget = await resolveRememberedLearning(info, remember, targetSessionId);
-            startApprovalResume(res, { project, sessionId, info, resumeToken, status, comment });
+            startApprovalResume(res, { project, sessionId, info, resumeToken, status, comment, choice });
             persistRememberedLearning(rememberTarget);
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
@@ -4871,7 +4912,10 @@ export function createServeCommand(): Command {
                 // plain tap-through). Only when the decision belongs to the
                 // pushed session: a delegated child's gate is decided on the
                 // cascade root, whose resume token this request doesn't carry.
-                const decidableInline = pushSessionId === sessionId;
+                // Gates that offer options can't be one-tap approved (approve
+                // requires a choice), so those always tap through to the page.
+                const hasOptions = (found.info.approval.options?.length ?? 0) > 0;
+                const decidableInline = pushSessionId === sessionId && !hasOptions;
                 await pushService.notify('approvals', {
                   title: "Approval needed",
                   body: [
@@ -4954,6 +4998,7 @@ export function createServeCommand(): Command {
             const token = typeof body.resumeToken === 'string' ? body.resumeToken : undefined;
             const status = typeof body.status === 'string' ? body.status : undefined;
             const comment = typeof body.comment === 'string' && body.comment.length > 0 ? body.comment : undefined;
+            const choice = typeof body.choice === 'string' && body.choice.length > 0 ? body.choice : undefined;
             const remember = readRememberField(body);
             const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
 
@@ -4977,6 +5022,11 @@ export function createServeCommand(): Command {
             });
             if (!found.success) {
               sendError(res, found.status, found.code, found.message);
+              return;
+            }
+            const choiceError = validateDecisionChoice(found.info, status, choice);
+            if (choiceError) {
+              sendError(res, 400, choiceError.code, choiceError.message);
               return;
             }
             if (
@@ -5011,7 +5061,7 @@ export function createServeCommand(): Command {
             }
 
             const rememberTarget = await resolveRememberedLearning(info, remember, approvalActionSessionId(info, sessionId));
-            startApprovalResume(res, { project, sessionId, info, resumeToken: token, status, comment });
+            startApprovalResume(res, { project, sessionId, info, resumeToken: token, status, comment, choice });
             persistRememberedLearning(rememberTarget);
           } catch (err) {
             if (sendRequestParseError(res, err)) return;

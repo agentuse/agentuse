@@ -1482,6 +1482,82 @@ a, button, select, summary, label, input, textarea,
   overflow-wrap: anywhere;
 }
 
+/* pick-among-options menu: the decision surface of an options gate */
+.approval-options .approval-options-list {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+.approval-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg);
+}
+label.approval-option { cursor: pointer; }
+label.approval-option:hover { border-color: var(--cyan-border); }
+.approval-option.selected {
+  border-color: var(--cyan-border);
+  background: var(--cyan-soft);
+  /* Solid cyan edge so the committed pick reads at a glance, matching the
+     approval-change green-edge convention for "this is what happens". */
+  box-shadow: inset 3px 0 0 var(--cyan);
+}
+.approval-option input[type='radio'] {
+  margin-top: 3px;
+  accent-color: var(--cyan);
+  flex-shrink: 0;
+}
+.approval-option-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.approval-option-label {
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.approval-option-badge {
+  color: var(--cyan);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid var(--cyan-border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.approval-option-badge.picked {
+  color: var(--green);
+  border-color: var(--green-border);
+}
+.approval-option-desc {
+  color: var(--muted-3);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+/* the approve button names the pick so a click's commitment is explicit */
+.approve-choice-label {
+  margin-left: 6px;
+  font-weight: 500;
+  opacity: 0.85;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
 /* inline artifact previews under the open tiles */
 .approval-artifact-body {
   display: grid;

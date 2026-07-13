@@ -1,7 +1,7 @@
 import { memo } from 'preact/compat';
 import { useState } from 'preact/hooks';
 import { useSmoothText } from '../hooks/use-smooth-text';
-import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalReference, LogSubagentSession } from '../../types';
+import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalOption, ApprovalReference, LogSubagentSession } from '../../types';
 import { formatLogTime, isJsonLikeContent, logEntrySignature, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
 import type { StoreItem } from '../../../../store/types';
 import { LogContent, InlineMarkdown } from './content';
@@ -195,12 +195,73 @@ function ArtifactPreview(props: { path: string; href: string }) {
   return null;
 }
 
-function ApprovalDetailCard(props: { details: ApprovalLogDetails; sessionId: string; token: string | undefined }) {
+/**
+ * Pick-among-options menu on an approval gate. Interactive (radio cards) while
+ * the gate is pending and actionable; a static list afterwards, with the
+ * decided option marked. The recommended option is preselected by the page.
+ */
+function OptionsBlock(props: {
+  options: ApprovalOption[];
+  selected?: string | undefined;
+  decided?: string | undefined;
+  onSelect?: ((id: string) => void) | undefined;
+}) {
+  const interactive = Boolean(props.onSelect);
+  return (
+    <section class="approval-section approval-options">
+      <div class="approval-section-title">Pick one</div>
+      <div class="approval-options-list" role={interactive ? 'radiogroup' : 'list'} aria-label="Options to pick from">
+        {props.options.map((opt) => {
+          const isDecided = props.decided === opt.id;
+          const isSelected = interactive ? props.selected === opt.id : isDecided;
+          const body = (
+            <span class="approval-option-main">
+              <span class="approval-option-label">
+                {opt.label}
+                {opt.recommended && <span class="approval-option-badge">recommended</span>}
+                {isDecided && <span class="approval-option-badge picked">picked</span>}
+              </span>
+              {opt.description && <span class="approval-option-desc"><InlineMarkdown value={opt.description} /></span>}
+            </span>
+          );
+          return interactive ? (
+            <label class={`approval-option${isSelected ? ' selected' : ''}`} key={opt.id}>
+              <input
+                type="radio"
+                name="approval-option-pick"
+                value={opt.id}
+                checked={isSelected}
+                onChange={() => props.onSelect!(opt.id)}
+              />
+              {body}
+            </label>
+          ) : (
+            <div class={`approval-option static${isSelected ? ' selected' : ''}`} role="listitem" key={opt.id}>
+              {body}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ApprovalDetailCard(props: {
+  details: ApprovalLogDetails;
+  sessionId: string;
+  token: string | undefined;
+  selectedChoice?: string | undefined;
+  onSelectChoice?: ((id: string) => void) | undefined;
+}) {
   const details = props.details;
   const artifactPaths = details.artifactPaths ?? [];
   const changes = details.changes ?? [];
+  const options = details.options ?? [];
+  const decidedOptionLabel = details.decisionChoice
+    ? options.find((o) => o.id === details.decisionChoice)?.label ?? details.decisionChoice
+    : undefined;
   const decisionLabel = details.decisionStatus
-    ? `${details.decisionStatus}${details.decisionReviewer ? ` by ${details.decisionReviewer}` : ''}`
+    ? `${details.decisionStatus}${decidedOptionLabel ? `: picked "${decidedOptionLabel}"` : ''}${details.decisionReviewer ? ` by ${details.decisionReviewer}` : ''}`
     : '';
   const primary = details.draft
     ? { title: 'Draft', body: <LogContent value={details.draft} forceMarkdown /> }
@@ -212,20 +273,29 @@ function ApprovalDetailCard(props: { details: ApprovalLogDetails; sessionId: str
           ? { title: 'Review', body: <LogContent value={details.summary} forceMarkdown /> }
           : undefined;
   const showSummary = Boolean(details.summary) && primary?.title !== 'Review';
-  // With structured changes present, the draft is supporting detail, not the
-  // thing under review: collapse it so the change boxes stay the focal point.
-  const demotePrimary = changes.length > 0 && Boolean(primary);
+  // With structured changes or an options menu present, the draft is supporting
+  // detail, not the thing under review: collapse it so the decision surface
+  // (change boxes / option cards) stays the focal point.
+  const demotePrimary = (changes.length > 0 || options.length > 0) && Boolean(primary);
   const links = [
     details.draftUrl ? <a class="approval-link" href={details.draftUrl} target="_blank" rel="noopener noreferrer">Open draft</a> : null,
     details.artifactUrl ? <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact</a> : null,
   ].filter(Boolean);
-  const hasContent = details.prompt || primary || changes.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage;
+  const hasContent = details.prompt || primary || changes.length > 0 || options.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage;
   if (!hasContent) return null;
 
   return (
     <div class="approval-card">
       {details.prompt && <div class="approval-question"><InlineMarkdown value={details.prompt} /></div>}
       {details.reference && <ReferenceBlock reference={details.reference} />}
+      {options.length > 0 && (
+        <OptionsBlock
+          options={options}
+          selected={props.selectedChoice}
+          decided={details.decisionChoice}
+          onSelect={props.onSelectChoice}
+        />
+      )}
       {changes.length > 0 && <ChangesBlock changes={changes} />}
       {artifactPaths.length > 0 && (
         <section class="approval-section approval-artifact">
@@ -417,6 +487,10 @@ export interface LogEntryProps {
   projectId: string | undefined;
   sessionId: string;
   token: string | undefined;
+  /** Currently selected option id on an actionable pick-among-options gate.
+   *  Only passed to the entry that owns the pending gate. */
+  selectedChoice?: string | undefined;
+  onSelectChoice?: ((id: string) => void) | undefined;
   onToggle: (id: string) => void;
   onAction: (action: 'approve' | 'reject' | 'comment') => void;
 }
@@ -463,6 +537,11 @@ function LogEntryImpl(props: LogEntryProps) {
   const prose = entry.type === 'text' || entry.type === 'reasoning';
   const typing = prose && entry.status === 'streaming' && Boolean(entry.message);
   const message = useSmoothText(entry.message ?? '', typing);
+  // On a pick-among-options gate the approve button names the selection, so the
+  // reviewer sees exactly what a click commits to.
+  const selectedOptionLabel = props.showActions && props.selectedChoice
+    ? entry.details?.options?.find((o) => o.id === props.selectedChoice)?.label
+    : undefined;
 
   const classes = [
     'log-item',
@@ -527,7 +606,13 @@ function LogEntryImpl(props: LogEntryProps) {
         <div class="log-content">
           {storeEvent && <StoreEventBlock event={storeEvent} />}
           {entry.details && (isApprovalEntry
-            ? <ApprovalDetailCard details={entry.details} sessionId={props.sessionId} token={props.token} />
+            ? <ApprovalDetailCard
+                details={entry.details}
+                sessionId={props.sessionId}
+                token={props.token}
+                selectedChoice={props.selectedChoice}
+                onSelectChoice={props.showActions ? props.onSelectChoice : undefined}
+              />
             : <ToolDetails details={entry.details} sessionId={props.sessionId} token={props.token} />)}
           {message && !storeEvent && !entry.subagentSession && <LogContent value={message} forceMarkdown={prose} />}
           {warnings.length > 0 && <LogWarnings warnings={warnings} />}
@@ -548,7 +633,9 @@ function LogEntryImpl(props: LogEntryProps) {
               </div>
             )}
             <div class="log-actions-buttons">
-              <button class="primary" disabled={props.actionsDisabled} onClick={() => props.onAction('approve')}>Approve</button>
+              <button class="primary" disabled={props.actionsDisabled} onClick={() => props.onAction('approve')}>
+                {selectedOptionLabel ? <>Approve<span class="approve-choice-label">“{selectedOptionLabel}”</span></> : 'Approve'}
+              </button>
               <button class="danger" disabled={props.actionsDisabled} onClick={() => props.onAction('reject')}>Reject</button>
               <button disabled={props.actionsDisabled} onClick={() => props.onAction('comment')}>Comment</button>
             </div>
@@ -588,5 +675,6 @@ export const LogEntry = memo(LogEntryImpl, (prev, next) =>
   prev.parentApproveLabel === next.parentApproveLabel &&
   prev.projectId === next.projectId &&
   prev.sessionId === next.sessionId &&
-  prev.token === next.token
+  prev.token === next.token &&
+  prev.selectedChoice === next.selectedChoice
 );

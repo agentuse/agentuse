@@ -184,6 +184,10 @@ export default function SessionDetail() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [pendingActionable, setPendingActionable] = useState(false);
   const [submittingDecision, setSubmittingDecision] = useState<'approve' | 'reject' | 'comment' | null>(null);
+  // Reviewer's pick on a pick-among-options gate. null = no explicit pick yet;
+  // the effective selection then falls back to the recommended (or first)
+  // option, so approve is always well-defined on an options gate.
+  const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
   const noticeRef = useRef<HTMLParagraphElement>(null);
   const [submittingContinue, setSubmittingContinue] = useState(false);
   const [submittingStop, setSubmittingStop] = useState(false);
@@ -258,6 +262,7 @@ export default function SessionDetail() {
       currentResumeTokenRef.current = nextToken;
       setPendingActionable(true);
       setSubmittingDecision(null);
+      setSelectedChoice(null);
       setResult({ text: '', error: false });
       if (header.approvalUrl) {
         try { history.replaceState(null, '', header.approvalUrl); } catch { /* ignore */ }
@@ -296,6 +301,7 @@ export default function SessionDetail() {
     setApproval(null);
     setStatus('loading');
     setPendingActionable(false);
+    setSelectedChoice(null);
     setExpandedIds(new Set());
     setResult({ text: '', error: false });
     setFatalError(null);
@@ -568,6 +574,19 @@ export default function SessionDetail() {
     else setShowResume(false);
   }, [continueActionable]);
 
+  // Effective pick on an options gate: the reviewer's explicit selection when it
+  // still names a live option, otherwise the recommended (or first) option. A
+  // ref mirrors it so submitDecision reads the latest value without re-creating
+  // the callback on every radio click.
+  const gateOptions = approval?.options;
+  const effectiveChoice = gateOptions && gateOptions.length > 0
+    ? (selectedChoice && gateOptions.some((o) => o.id === selectedChoice)
+      ? selectedChoice
+      : gateOptions.find((o) => o.recommended)?.id ?? gateOptions[0].id)
+    : undefined;
+  const effectiveChoiceRef = useRef<string | undefined>(undefined);
+  effectiveChoiceRef.current = effectiveChoice;
+
   const submitDecision = useCallback(async (action: 'approve' | 'reject' | 'comment', comment?: string, remember?: string) => {
     if (submittingDecision || !currentResumeTokenRef.current) return;
     setSubmittingDecision(action);
@@ -576,6 +595,7 @@ export default function SessionDetail() {
       await postSessionDecision(sessionId, token, {
         status: action,
         ...(comment ? { comment } : {}),
+        ...(action === 'approve' && effectiveChoiceRef.current ? { choice: effectiveChoiceRef.current } : {}),
         ...(remember ? { remember } : {}),
         resumeToken: currentResumeTokenRef.current,
         ...(projectId ? { project: projectId } : {}),
@@ -928,34 +948,39 @@ export default function SessionDetail() {
                   : `${debugCount} debug ${debugCount === 1 ? 'entry' : 'entries'} hidden. Enable the debug toggle to view.`}
               </li>
             )}
-            {feedLogs.map((entry) => (
-              <LogEntry
-                key={entry.id}
-                entry={entry}
-                isNew={isNewLog(entry.id)}
-                repeatCount={entry.repeatCount}
-                warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
-                expanded={expandedIds.has(entry.id)}
-                showActions={actionable && entry.status === 'pending' && Boolean(entry.details) &&
-                  (!currentResumeTokenRef.current || entry.details?.resumeToken === currentResumeTokenRef.current)}
-                parentApproveHref={showParentApproveCta ? parentLink : undefined}
-                parentApproveLabel={parentLabel}
-                actionsDisabled={submittingDecision !== null}
-                pendingAction={submittingDecision}
-                projectId={projectId}
-                sessionId={sessionId}
-                token={token}
-                onToggle={(id) => {
-                  setExpandedIds((current) => {
-                    const next = new Set(current);
-                    if (next.has(id)) next.delete(id);
-                    else next.add(id);
-                    return next;
-                  });
-                }}
-                onAction={onAction}
-              />
-            ))}
+            {feedLogs.map((entry) => {
+              const entryActionable = actionable && entry.status === 'pending' && Boolean(entry.details) &&
+                (!currentResumeTokenRef.current || entry.details?.resumeToken === currentResumeTokenRef.current);
+              return (
+                <LogEntry
+                  key={entry.id}
+                  entry={entry}
+                  isNew={isNewLog(entry.id)}
+                  repeatCount={entry.repeatCount}
+                  warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
+                  expanded={expandedIds.has(entry.id)}
+                  showActions={entryActionable}
+                  parentApproveHref={showParentApproveCta ? parentLink : undefined}
+                  parentApproveLabel={parentLabel}
+                  actionsDisabled={submittingDecision !== null}
+                  pendingAction={submittingDecision}
+                  projectId={projectId}
+                  sessionId={sessionId}
+                  token={token}
+                  selectedChoice={entryActionable ? effectiveChoice : undefined}
+                  onSelectChoice={entryActionable ? setSelectedChoice : undefined}
+                  onToggle={(id) => {
+                    setExpandedIds((current) => {
+                      const next = new Set(current);
+                      if (next.has(id)) next.delete(id);
+                      else next.add(id);
+                      return next;
+                    });
+                  }}
+                  onAction={onAction}
+                />
+              );
+            })}
             {showWorking && (
               <li class="log-item log-working">
                 <span class="log-time" />
