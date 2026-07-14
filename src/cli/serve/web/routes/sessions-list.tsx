@@ -10,6 +10,7 @@ import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { PushBell } from '../components/push-bell';
 import { AgentFilterSelect } from '../components/agent-filter-select';
+import { GroupRail } from '../components/group-rail';
 import { LogContent } from '../components/content';
 import { formatApprovalTime, formatRelativeTime, errorText, displayStatusLabel } from '../lib/format';
 import { useSessionListView, type SessionListView } from '../hooks/use-session-list-view';
@@ -17,6 +18,27 @@ import { useSessionListView, type SessionListView } from '../hooks/use-session-l
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
 const STATUSES = ['', 'running', 'suspended', 'completed', 'error', 'incomplete'];
 const TRIGGERS = ['', 'manual', 'scheduled', 'slack', 'api'];
+const LIVE_SESSION_STATUSES = new Set(['running', 'resuming', 'continuing']);
+
+interface AgentGroup { agentId: string; agentName: string; rows: SessionRow[] }
+
+function agentGroupAnchor(agentId: string): string {
+  return `session-agent-${agentId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
+/** Rows folded into per-agent buckets, in first-seen order (rows already arrive newest first). */
+function groupRowsByAgent(rows: SessionRow[]): AgentGroup[] {
+  const groups = new Map<string, AgentGroup>();
+  for (const row of rows) {
+    let group = groups.get(row.agent.id);
+    if (!group) {
+      group = { agentId: row.agent.id, agentName: row.agent.name || row.agent.id, rows: [] };
+      groups.set(row.agent.id, group);
+    }
+    group.rows.push(row);
+  }
+  return [...groups.values()];
+}
 
 // Map a raw session status to the status-chip class set used by the CSS.
 function statusClass(status: string): string {
@@ -211,6 +233,7 @@ export default function SessionsList() {
     ...(approvalFilter ? [{ key: 'approval', label: 'Approval', value: approvalFilter }] : []),
   ];
   const [filtersOpen, setFiltersOpen] = useState(activeCount > 0);
+  const [groupByAgent, setGroupByAgent] = useState(false);
 
   // Agent list powers the filter's type-ahead so operators pick a real agent id
   // instead of guessing a substring (which silently misses renamed/moved ids).
@@ -278,6 +301,8 @@ export default function SessionsList() {
   const resolvedLoading = fetched.loading && !resolvedData;
   const rows = [...(resolvedData?.sessions ?? []), ...loadedMore];
   const multiProject = new Set(rows.map((r) => r.project)).size > 1;
+  const agentGroups = groupByAgent ? groupRowsByAgent(rows) : [];
+  const railItems = agentGroups.map((g) => ({ id: agentGroupAnchor(g.agentId), label: g.agentName, count: g.rows.length }));
   // Empty-state escape hatch: the most common cause of "no sessions" is a
   // too-narrow window, so offer one jump to 30d (or all time from 30d/90d)
   // rather than making the operator walk the select.
@@ -328,6 +353,7 @@ export default function SessionsList() {
   return (
     <div class="page-sessions">
       <Topbar currentPage="sessions" right={<span class="pending-count">{rows.length} in {win === 'all' ? 'all time' : win}</span>} />
+      <GroupRail items={railItems} />
       <main>
         <h1>Sessions <PushBell category="sessions" /></h1>
         {narrow && (
@@ -368,7 +394,16 @@ export default function SessionsList() {
               <div class="filters-title">Filter sessions</div>
               <div class="filters-description">Narrow the live feed by time, state, source, or agent.</div>
             </div>
-            {activeCount > 0 && <a class="filters-reset" href="/sessions">Clear all</a>}
+            <div class="filters-heading-actions">
+              <button
+                type="button"
+                class={groupByAgent ? 'group-toggle on' : 'group-toggle'}
+                aria-pressed={groupByAgent}
+                onClick={() => setGroupByAgent((v) => !v)}
+                title={groupByAgent ? 'Show a flat list' : 'Collapse concurrent sessions under their agent'}
+              >group by agent</button>
+              {activeCount > 0 && <a class="filters-reset" href="/sessions">Clear all</a>}
+            </div>
           </div>
           <div class="filter-grid">
             <label class="filter-field filter-field-window">window
@@ -409,19 +444,51 @@ export default function SessionsList() {
               {activeCount > 0 && <a class="empty-action" href="/sessions">Clear all filters</a>}
             </p>
           )
-          : <div class={`rows${view === 'feed' ? ' session-feed' : ''}`}>{rows.map((row) => (
-            <SessionRowView
-              key={`${row.project}:${row.sessionId}`}
-              row={row}
-              view={view}
-              multiProject={multiProject}
-              filterHref={withParam}
-              statusFilter={statusFilter}
-              triggerFilter={triggerFilter}
-              agentFilter={agentFilter ?? ''}
-            />
-          ))}</div>)}
-        {resolvedData?.nextCursor && <button type="button" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</button>}
+          : groupByAgent
+            ? <div class="agent-groups">{agentGroups.map((group) => {
+                const liveCount = group.rows.filter((r) => LIVE_SESSION_STATUSES.has(r.status)).length;
+                return (
+                  <details class="agent-group" open id={agentGroupAnchor(group.agentId)} key={group.agentId}>
+                    <summary>
+                      <span class="agent-group-name">{group.agentName}</span>
+                      {liveCount > 0 && <span class="agent-group-live">{liveCount} running</span>}
+                      <span class="agent-group-count">{group.rows.length}</span>
+                      <span class="agent-group-rule"></span>
+                    </summary>
+                    <div class={`rows${view === 'feed' ? ' session-feed' : ''}`}>
+                      {group.rows.map((row) => (
+                        <SessionRowView
+                          key={`${row.project}:${row.sessionId}`}
+                          row={row}
+                          view={view}
+                          multiProject={multiProject}
+                          filterHref={withParam}
+                          statusFilter={statusFilter}
+                          triggerFilter={triggerFilter}
+                          agentFilter={agentFilter ?? ''}
+                        />
+                      ))}
+                    </div>
+                  </details>
+                );
+              })}</div>
+            : <div class={`rows${view === 'feed' ? ' session-feed' : ''}`}>{rows.map((row) => (
+              <SessionRowView
+                key={`${row.project}:${row.sessionId}`}
+                row={row}
+                view={view}
+                multiProject={multiProject}
+                filterHref={withParam}
+                statusFilter={statusFilter}
+                triggerFilter={triggerFilter}
+                agentFilter={agentFilter ?? ''}
+              />
+            ))}</div>)}
+        {resolvedData?.nextCursor && (
+          <button type="button" class={loadingMore ? 'load-more btn-busy' : 'load-more'} onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? <><span class="btn-spinner" aria-hidden="true" />Loading…</> : 'Load more'}
+          </button>
+        )}
         <footer>{streamFallback ? 'auto-refreshes every 10s' : 'live updates'}</footer>
       </main>
     </div>

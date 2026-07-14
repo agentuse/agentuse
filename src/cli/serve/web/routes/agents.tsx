@@ -15,6 +15,7 @@ import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { RunInstructionDialog } from '../components/run-instruction-dialog';
+import { GroupRail } from '../components/group-rail';
 import { agentDetailHref } from './agent-detail';
 
 /**
@@ -699,11 +700,31 @@ export default function Agents({ project }: { project?: string } = {}) {
   // feedback and mirrors it into the URL with replaceState — no history entry
   // per keystroke, and no router re-render that could steal input focus.
   const [filter, setFilter] = useState(location.query.q ?? '');
+  const [runningOnly, setRunningOnly] = useState(location.query.running === '1');
+  const syncUrl = (nextFilter: string, nextRunning: boolean) => {
+    const base = scoped ? `/agents/${encodeURIComponent(project)}` : '/agents';
+    const params = new URLSearchParams();
+    const q = nextFilter.trim();
+    if (q) params.set('q', q);
+    if (nextRunning) params.set('running', '1');
+    const qs = params.toString();
+    history.replaceState(null, '', qs ? `${base}?${qs}` : base);
+  };
   const updateFilter = (value: string) => {
     setFilter(value);
-    const base = scoped ? `/agents/${encodeURIComponent(project)}` : '/agents';
-    const q = value.trim();
-    history.replaceState(null, '', q ? `${base}?q=${encodeURIComponent(q)}` : base);
+    syncUrl(value, runningOnly);
+  };
+  const toggleRunningOnly = () => {
+    setRunningOnly((prev) => {
+      const next = !prev;
+      syncUrl(filter, next);
+      return next;
+    });
+  };
+  const clearAllFilters = () => {
+    setFilter('');
+    setRunningOnly(false);
+    syncUrl('', false);
   };
   const query = filter.trim().toLowerCase();
 
@@ -728,7 +749,10 @@ export default function Agents({ project }: { project?: string } = {}) {
   const runsFor = runHistoryFinder(allLoaded, sessions.data?.sessions ?? []);
   const lastRunFor = (a: AgentRow) => runsFor(a)[0];
   const rowCtx: RowCtx = { pins, columns: renderColumns, runsFor, lastRunFor };
-  const allAgents = query ? loadedAgents.filter((a) => matchesFilter(a, query)) : loadedAgents;
+  const isRunning = (a: AgentRow) => LIVE_RUN_STATUSES.has(lastRunFor(a)?.status ?? '');
+  const runningCount = loadedAgents.filter(isRunning).length;
+  const textFiltered = query ? loadedAgents.filter((a) => matchesFilter(a, query)) : loadedAgents;
+  const allAgents = runningOnly ? textFiltered.filter(isRunning) : textFiltered;
   const byProject = new Map<string, AgentRow[]>();
   for (const agent of allAgents) {
     const list = byProject.get(agent.projectId);
@@ -736,6 +760,9 @@ export default function Agents({ project }: { project?: string } = {}) {
     else byProject.set(agent.projectId, [agent]);
   }
   const errors = (data?.errors ?? []).filter((e) => !scoped || e.projectId === project);
+  const railItems = !scoped
+    ? [...byProject.entries()].map(([projectId, agents]) => ({ id: projectAnchor(projectId), label: projectId, count: agents.length }))
+    : [];
 
   // Pinned agents in the order they were pinned, skipping any that no longer
   // exist in the served set (scoped views only resolve pins in this project).
@@ -743,17 +770,19 @@ export default function Agents({ project }: { project?: string } = {}) {
   const pinnedAgents = keys.map((k) => byKey.get(k)).filter((a): a is AgentRow => a !== undefined);
 
   const trimmed = filter.trim();
+  const filterActive = query.length > 0 || runningOnly;
+  const filterLabel = [query && `“${trimmed}”`, runningOnly && 'running now'].filter(Boolean).join(' + ');
   const lede = !data
     ? (loading ? 'Loading agents…' : '')
     : projectMissing
       ? `No project “${project}” is loaded by this serve daemon.`
-      : query
-        ? `${allAgents.length} of ${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} match “${trimmed}”.`
+      : filterActive
+        ? `${allAgents.length} of ${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} match ${filterLabel}.`
         : scoped
           ? `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} in this project.`
           : `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} across ${byProject.size} project${byProject.size === 1 ? '' : 's'} in this serve daemon.`;
-  const emptyMsg = query
-    ? `No agents match “${trimmed}”.`
+  const emptyMsg = filterActive
+    ? `No agents match ${filterLabel}.`
     : projectMissing
       ? `No project “${project}” is loaded by this serve daemon.`
       : scoped
@@ -763,6 +792,7 @@ export default function Agents({ project }: { project?: string } = {}) {
   return (
     <div class="page-agents">
       <Topbar currentPage="agents" />
+      <GroupRail items={railItems} />
       <main>
         <header>
           {scoped
@@ -789,6 +819,18 @@ export default function Agents({ project }: { project?: string } = {}) {
                   <button type="button" class="agents-filter-clear" aria-label="Clear filter" onClick={() => updateFilter('')}>×</button>
                 )}
               </div>
+              <button
+                type="button"
+                class={runningOnly ? 'agents-running-toggle on' : 'agents-running-toggle'}
+                aria-pressed={runningOnly}
+                disabled={runningCount === 0 && !runningOnly}
+                onClick={toggleRunningOnly}
+                title={runningOnly ? 'Show all agents' : 'Show only agents running now'}
+              >
+                <span class="tree-live" aria-hidden="true"></span>
+                <span>running now</span>
+                {runningCount > 0 && <span class="agents-running-count">{runningCount}</span>}
+              </button>
               <div class="view-toggle" role="group" aria-label="Layout">
                 <button type="button" class={view === 'tree' ? 'on' : ''} aria-pressed={view === 'tree'} onClick={() => setView('tree')}>Tree</button>
                 <button type="button" class={view === 'cards' ? 'on' : ''} aria-pressed={view === 'cards'} onClick={() => setView('cards')}>Cards</button>
@@ -858,8 +900,8 @@ export default function Agents({ project }: { project?: string } = {}) {
             ? <Loading label="Loading agents…" />
             : <div class="empty">
               {emptyMsg}
-              {query && !projectMissing && (
-                <button type="button" class="empty-action" onClick={() => updateFilter('')}>Clear filter</button>
+              {filterActive && !projectMissing && (
+                <button type="button" class="empty-action" onClick={clearAllFilters}>Clear filter</button>
               )}
             </div>}</div>
           : [...byProject.entries()].map(([projectId, agents]) => (

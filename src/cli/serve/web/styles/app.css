@@ -96,6 +96,64 @@ a, button, select, summary, label, input, textarea,
   -webkit-touch-callout: none;
 }
 
+/* ---------------- group rail (jump-to-section nav on /agents, /sessions) --- */
+.group-rail {
+  position: fixed;
+  top: 50%;
+  right: 20px;
+  transform: translateY(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+.group-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  max-width: 200px;
+}
+/* Out-specifies the page-wide `.page-agents a { border-bottom: dotted }` link
+   underline (a class+element selector beats this component's bare class). */
+.page-agents .group-rail-item,
+.page-home .group-rail-item,
+.page-schedules .group-rail-item,
+.page-sessions .group-rail-item { border-bottom: 0; }
+.group-rail-tick {
+  flex-shrink: 0;
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--line-strong);
+  transition: background 120ms ease, width 120ms ease, height 120ms ease, border-radius 120ms ease, box-shadow 120ms ease;
+}
+.group-rail-label {
+  overflow: hidden;
+  max-width: 0;
+  opacity: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  transition: max-width 160ms ease, opacity 120ms ease, color 120ms ease;
+}
+.group-rail-item:hover .group-rail-label,
+.group-rail-item.active .group-rail-label { max-width: 180px; opacity: 1; }
+.group-rail-item:hover .group-rail-tick { background: var(--muted-3); }
+/* A dot, not a line flush with the text baseline — an elongated bar there
+   reads as an underline on the label rather than a distinct marker. */
+.group-rail-item.active .group-rail-tick {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan);
+}
+.group-rail-item.active .group-rail-label { color: var(--cyan); }
+
 /* ---------------- topbar ---------------- */
 .topbar {
   position: sticky;
@@ -2734,6 +2792,21 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .view-toggle button.on { background: var(--panel-hover); color: var(--fg); }
 .page-agents .view-toggle button:hover:not(.on) { color: var(--muted-3); }
+.page-agents .agents-running-toggle {
+  display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0;
+  appearance: none; border: 1px solid var(--line); border-radius: 999px; background: var(--panel);
+  cursor: pointer; font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  padding: 6px 12px; transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.page-agents .agents-running-toggle:hover:not(:disabled) { color: var(--muted-3); }
+.page-agents .agents-running-toggle.on { background: var(--panel-hover); color: var(--fg); border-color: var(--line-strong); }
+.page-agents .agents-running-toggle:disabled { opacity: 0.45; cursor: default; }
+.page-agents .agents-running-toggle .tree-live { margin-left: 0; }
+.page-agents .agents-running-count {
+  display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 999px; background: var(--cyan-soft); color: var(--cyan);
+  font-family: var(--mono); font-size: 10px; font-variant-numeric: tabular-nums;
+}
 .page-agents .agent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
 .page-agents .project-collection {
   overflow: hidden;
@@ -3445,6 +3518,14 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   justify-content: space-between;
   gap: 16px;
 }
+.page-sessions .filters-heading-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.page-sessions .group-toggle {
+  appearance: none; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--bg);
+  cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--muted-3);
+  padding: 6px 12px; transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.page-sessions .group-toggle:hover { color: var(--fg); background: var(--panel-hover); }
+.page-sessions .group-toggle.on { background: var(--cyan-soft); color: var(--cyan); border-color: var(--cyan-border); }
 .page-sessions .filters-title {
   color: var(--fg);
   font-family: var(--sans);
@@ -3556,6 +3637,22 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   transition: color 120ms ease, text-decoration-color 120ms ease;
 }
 .page-sessions .filters-reset:hover { color: var(--cyan); text-decoration-color: var(--cyan-border); }
+.page-sessions .load-more {
+  display: flex;
+  margin: 18px auto 0;
+  min-height: 34px;
+  padding: 6px 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.page-sessions .load-more:hover:not(:disabled) { background: var(--panel-hover); color: var(--fg); border-color: var(--line-strong); }
+.page-sessions .load-more:disabled { opacity: 0.7; cursor: default; }
 .page-sessions .empty { color: var(--muted); font-style: italic; padding: 14px 0; }
 /* One-click escape hatches in the empty state (widen window / clear filters). */
 .page-sessions .empty .empty-action {
@@ -3577,6 +3674,31 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-size: 12.5px;
 }
 .page-sessions .rows { display: flex; flex-direction: column; gap: 8px; }
+.page-sessions .agent-groups { display: flex; flex-direction: column; gap: 18px; }
+.page-sessions .agent-group { min-width: 0; scroll-margin-top: 80px; }
+.page-sessions .agent-group > summary {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 2px 9px;
+  color: var(--muted); cursor: pointer; list-style: none; user-select: none;
+}
+.page-sessions .agent-group > summary::-webkit-details-marker { display: none; }
+.page-sessions .agent-group > summary::marker { content: ""; }
+.page-sessions .agent-group > summary:hover .agent-group-name { color: var(--cyan); }
+.page-sessions .agent-group-name {
+  font-family: var(--sans); font-size: 13px; font-weight: 500; color: var(--fg);
+  transition: color 120ms ease;
+}
+.page-sessions .agent-group-live {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 10.5px; color: var(--green);
+}
+.page-sessions .agent-group-live::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.4s ease-in-out infinite;
+}
+.page-sessions .agent-group-count { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.page-sessions .agent-group-rule { flex: 1; height: 1px; background: var(--line); }
+.page-sessions .agent-group:not([open]) > summary { padding-bottom: 7px; }
 /* The row is a div with a stretched link (.row-link::after) covering it, so
    the whole card still navigates to the session while the status/trigger chips
    stay real, un-nested anchors layered above the overlay. */
