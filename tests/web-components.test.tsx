@@ -6,6 +6,7 @@ import { StoreTable, type StoreTableColumn } from '../src/cli/serve/web/componen
 import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
 import { DecisionDialog } from '../src/cli/serve/web/components/comment-dialog';
 import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/cli/serve/web/lib/content-html';
+import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
 import { hasActionableApproval, headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
@@ -578,6 +579,114 @@ describe('content-html', () => {
     expect(html).toContain('<strong>Stripe unavailable:</strong>');
     expect(html).toContain('<code>STRIPE_SECRET_KEY</code>');
     expect(html).toContain('<code>.env</code>');
+  });
+
+  it('renders agentuse:chart fences as inline SVG charts', () => {
+    const block = [
+      'Here is the funnel:',
+      '',
+      '```agentuse:chart',
+      JSON.stringify({
+        type: 'bar',
+        title: 'Signups by day',
+        categories: ['Mon', 'Tue'],
+        series: [{ name: 'Trials', values: [12, 18] }, { name: 'Paid', values: [3, 5] }],
+        unit: '',
+      }),
+      '```',
+    ].join('\n');
+    const html = renderMarkdownBlock(block);
+    expect(html).toContain('<figure class="au-chart" data-chart-type="bar">');
+    expect(html).toContain('Signups by day');
+    expect(html).toContain('au-chart-legend');
+    expect(html).toContain('--series-color: var(--chart-2)');
+    expect(html).toContain('<title>Tue · Paid: 5</title>');
+    expect(html).toContain('au-chart-data');
+    expect(html).not.toContain('content-code');
+  });
+
+  it('renders line charts with per-point markers and end labels', () => {
+    const html = renderMarkdownBlock([
+      '```agentuse:chart',
+      JSON.stringify({
+        type: 'line',
+        title: 'Latency',
+        unit: 'ms',
+        categories: ['a', 'b', 'c'],
+        series: [{ name: 'p50', values: [10, 12, 11] }, { name: 'p95', values: [40, 55, 43] }],
+      }),
+      '```',
+    ].join('\n'));
+    expect(html).toContain('data-chart-type="line"');
+    expect(html).toContain('au-chart-line');
+    expect(html).toContain('<title>b · p95: 55ms</title>');
+    expect(html).toContain('au-chart-series-label');
+  });
+
+  it('renders LLM near-miss payloads: data alias for values, missing title', () => {
+    // Verbatim shape from session 01KXF536PEBAP40M9Z1E67NBV7, where sonnet
+    // guessed the chart.js convention and the chart silently degraded.
+    const html = renderMarkdownBlock([
+      '```agentuse:chart',
+      '{"type":"bar","categories":["Subscribed","Onboarded","Northstar","Active"],"series":[{"name":"Users","data":[2,2,1,1]}]}',
+      '```',
+    ].join('\n'));
+    expect(html).toContain('<figure class="au-chart" data-chart-type="bar">');
+    expect(html).toContain('<title>Northstar · Users: 1</title>');
+    expect(html).not.toContain('au-chart-title');
+    // No title, so the legend must carry the series identity even for one series.
+    expect(html).toContain('au-chart-legend');
+  });
+
+  it('falls back to a code block for invalid chart payloads', () => {
+    const invalid = [
+      '```agentuse:chart',
+      '{"type": "pie", "title": "Nope", "categories": ["a"], "series": [{"name": "x", "values": [1]}]}',
+      '```',
+    ].join('\n');
+    const html = renderMarkdownBlock(invalid);
+    expect(html).not.toContain('au-chart');
+    expect(html).toContain('content-code');
+    expect(html).toContain('data-language="agentuse:chart"');
+
+    const malformed = renderMarkdownBlock('```agentuse:chart\nnot json\n```');
+    expect(malformed).toContain('content-code');
+    expect(malformed).toContain('not json');
+  });
+
+  it('escapes chart labels and rejects oversized specs', () => {
+    const html = renderMarkdownBlock([
+      '```agentuse:chart',
+      JSON.stringify({
+        type: 'bar',
+        title: '<img src=x onerror=alert(1)>',
+        categories: ['<b>day</b>'],
+        series: [{ name: '<script>', values: [1] }],
+      }),
+      '```',
+    ].join('\n'));
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('<script>');
+
+    expect(parseChartSpec(JSON.stringify({
+      type: 'bar',
+      title: 'too many series',
+      categories: ['a'],
+      series: Array.from({ length: 7 }, (_, i) => ({ name: `s${i}`, values: [1] })),
+    }))).toBeNull();
+    expect(parseChartSpec(JSON.stringify({
+      type: 'bar',
+      title: 'length mismatch',
+      categories: ['a', 'b'],
+      series: [{ name: 's', values: [1] }],
+    }))).toBeNull();
+    expect(parseChartSpec(JSON.stringify({
+      type: 'bar',
+      title: 'non-finite',
+      categories: ['a'],
+      series: [{ name: 's', values: ['1'] }],
+    }))).toBeNull();
   });
 
   it('renders smart JSON blocks for readable strings', () => {

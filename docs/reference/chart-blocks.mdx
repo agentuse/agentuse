@@ -1,0 +1,61 @@
+---
+title: "Chart Blocks"
+description: "Emit inline charts from agent responses with agentuse:chart fenced blocks"
+---
+
+Agents can embed small charts directly in their responses by writing a fenced
+code block tagged `agentuse:chart`. The serve web UI renders the block as an
+inline SVG chart in the session log; every other surface (CLI, plain text,
+push) sees the raw JSON block, so sessions stay portable and greppable.
+
+The block carries **data, not presentation**. Layout, colors, and theming are
+owned by the renderer, so old sessions keep improving as the renderer does.
+
+## Format
+
+````markdown
+```agentuse:chart
+{
+  "type": "bar",
+  "title": "New subscribers by day",
+  "categories": ["Jul 7", "Jul 8", "Jul 9", "Jul 10", "Jul 11"],
+  "series": [
+    { "name": "Trials", "values": [12, 18, 9, 22, 17] },
+    { "name": "Paid", "values": [3, 5, 2, 7, 6] }
+  ]
+}
+```
+````
+
+## Fields
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `type` | `"bar"` \| `"line"` | yes | Grouped bars, or one line per series |
+| `title` | string | no | Names the chart; shown as the figure caption. Always set it, without one the legend is the only label |
+| `categories` | string[] | yes | Ordinal x-axis values, max 60 |
+| `series` | `{ name, values }[]` | yes | 1 to 6 series; each `values` array must match `categories` in length; numbers only. `data` is accepted as an alias for `values`, but emit `values` |
+| `yLabel` | string | no | Y-axis label shown beside the title |
+| `unit` | string | no | e.g. `"%"`, `"ms"`; shown in the caption, tooltips, and the data table |
+
+## Constraints and fallback
+
+- Max 6 series and 60 categories; labels are capped at 120 characters. More
+  series than that should be folded into an "Other" series by the agent.
+- Values must be finite JSON numbers. Negative values are supported (bars
+  extend below the zero line).
+- Unknown fields are ignored. Anything that fails validation, including
+  malformed JSON, renders as a plain code block instead of a chart: the
+  content is never lost, it just isn't drawn.
+- Pick `bar` for magnitude comparisons and funnels, `line` for
+  change-over-time. One chart, one y-scale: for two measures of different
+  scale, emit two chart blocks.
+
+## Rendering guarantees
+
+- Chart colors follow the app theme (light and dark) from a fixed,
+  colorblind-validated palette. Series are colored by position, so keep the
+  most important series first.
+- Every chart includes hover tooltips per mark, a legend when there are two
+  or more series, and a collapsible **Data** table for accessibility and
+  copy-paste.

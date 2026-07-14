@@ -83,7 +83,38 @@ Skills are instructions, not tool grants: declare an agent's tools in
 frontmatter even when a skill documents them with `allowed-tools`. Put reusable
 instructions in `.agentuse/skills/<name>/SKILL.md` or install with `agentuse add`.
 
-## Source Precedence: Skills Are Defaults, Learnings Override Them
+## Inline Charts in Agent Output
+
+Agents that report numeric trends, comparisons, or funnels can embed charts by
+emitting an `agentuse:chart` fenced block. The serve web session view renders
+it as an inline SVG chart; every other surface (CLI, Slack, logs) sees the raw
+JSON block, so only opt an agent in when its output is primarily viewed in the
+web UI.
+
+````markdown
+```agentuse:chart
+{
+  "type": "bar",
+  "title": "New subscribers by day",
+  "categories": ["Jul 7", "Jul 8", "Jul 9"],
+  "series": [{ "name": "Trials", "values": [12, 18, 9] }]
+}
+```
+````
+
+Rules: `type` is `bar` or `line`; `title` and `categories` (max 60) required;
+1-6 `series`, each `values` array matching `categories` length, numbers only;
+optional `yLabel` and `unit` (e.g. `"ms"`). Invalid payloads degrade to a plain
+code block. Emit data, never styling; keep the most important series first; one
+y-scale per chart (two measures of different scale → two blocks). Full spec:
+`reference/chart-blocks` in the docs.
+
+In the agent body, always pin the exact shape (the output schema is an
+invariant, a bare "emit an agentuse:chart block" makes the model guess field
+names like `data` instead of `values`):
+
+> Include an agentuse:chart bar block for the funnel, exact shape:
+> `{"type":"bar","title":"...","categories":["..."],"series":[{"name":"...","values":[1,2]}]}`
 
 The runtime composes one prompt from layered sources, in this precedence
 (highest first): **agent instructions → Learned Guidelines → Skills → other

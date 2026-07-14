@@ -7,6 +7,7 @@
  * result via dangerouslySetInnerHTML, so this module is the only place that
  * is allowed to build markup from strings.
  */
+import { CHART_FENCE_LANGUAGE, renderChartBlock } from "./chart-svg";
 import { isJsonLikeContent, looksLikeMarkdown } from "./format";
 import { highlightJson, highlightJsonSource } from "./json-highlight";
 
@@ -157,13 +158,19 @@ function markdownTableCells(line: string): string[] {
 export function renderMarkdownBlock(value: string): string {
   const html: string[] = [];
   let cursor = 0;
-  const fencePattern = /```([A-Za-z0-9_-]+)?\s*\n([\s\S]*?)```/g;
+  const fencePattern = /```([A-Za-z0-9_:-]+)?\s*\n([\s\S]*?)```/g;
   let match: RegExpExecArray | null;
   while ((match = fencePattern.exec(value)) !== null) {
     const before = value.slice(cursor, match.index);
     if (before.trim()) html.push(renderMarkdownTextBlock(before));
-    const language = match[1] ? ` data-language="${escapeHtml(match[1])}"` : '';
-    html.push(`<pre class="content-code"${language}><code>${renderFencedCode(match[1], match[2].trim())}</code></pre>`);
+    const code = match[2].trim();
+    const chart = match[1]?.toLowerCase() === CHART_FENCE_LANGUAGE ? renderChartBlock(code) : null;
+    if (chart) {
+      html.push(chart);
+    } else {
+      const language = match[1] ? ` data-language="${escapeHtml(match[1])}"` : '';
+      html.push(`<pre class="content-code"${language}><code>${renderFencedCode(match[1], code)}</code></pre>`);
+    }
     cursor = match.index + match[0].length;
   }
   const rest = value.slice(cursor);

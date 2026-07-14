@@ -42,6 +42,10 @@
      nebula is what reads as "live control room" instead of a blank page. */
   --glow-1: rgba(34,211,238,0.12); --glow-2: rgba(74,222,128,0.09);
   --artifact-page: #ffffff;
+  /* Categorical chart palette, fixed slot order (CVD-validated against #000).
+     The two greens sit in slots 2 and 6 so they never co-occur in small charts. */
+  --chart-1: #3987e5; --chart-2: #199e70; --chart-3: #c98500;
+  --chart-4: #e66767; --chart-5: #9085e9; --chart-6: #008300;
 }
 
 :root[data-theme="light"] {
@@ -59,6 +63,9 @@
   --bar-bg: rgba(250,250,249,0.85);
   --glow-1: rgba(8,145,178,0.08); --glow-2: rgba(4,120,87,0.06);
   --artifact-page: #ffffff;
+  /* Same hues as dark, stepped for the light surface (CVD-validated vs #fafaf9). */
+  --chart-1: #2a78d6; --chart-2: #1baf7a; --chart-3: #eda100;
+  --chart-4: #e34948; --chart-5: #4a3aa7; --chart-6: #008300;
 }
 
 * { box-sizing: border-box; }
@@ -1228,6 +1235,69 @@ a, button, select, summary, label, input, textarea,
   border-radius: 0;
   background: transparent;
 }
+/* Inline chart figures rendered from ```agentuse:chart blocks (lib/chart-svg). */
+.au-chart {
+  margin: 10px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  max-width: 680px;
+}
+/* The SVG scales text with the viewBox, so on narrow viewports it scrolls
+   (matching .content-table-scroll) instead of shrinking ticks to mush. */
+.au-chart-scroll { overflow-x: auto; }
+.au-chart svg { display: block; width: 100%; height: auto; min-width: 480px; }
+/* Charts always arrive inside the .content-markdown card; drop the inner
+   chrome so they don't render as a panel within a panel. */
+.content-markdown .au-chart {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+/* Reasoning entries are deliberately de-emphasized; keep their charts quiet. */
+.log-item[data-log-type="reasoning"] .au-chart-title { color: var(--muted-3); }
+.au-chart-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 8px;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+}
+.au-chart-ylabel { color: var(--muted); font-size: 11.5px; font-weight: 400; }
+.au-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0 0 8px;
+  color: var(--muted-3);
+  font-size: 11.5px;
+}
+.au-chart-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.au-chart-swatch { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.au-chart-grid { stroke: var(--line); stroke-width: 1; }
+.au-chart-tick { fill: var(--muted); font-size: 10px; font-family: var(--mono); }
+.au-chart-value { fill: var(--muted-3); font-size: 10px; font-family: var(--mono); }
+.au-chart-series-label { fill: var(--muted-3); font-size: 10.5px; }
+.au-chart-fill { fill: var(--series-color); }
+.au-chart-line { stroke: var(--series-color); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.au-chart-dot { fill: var(--series-color); stroke: var(--bg); stroke-width: 2; }
+.au-chart-hit { fill: transparent; }
+.au-chart-mark:hover .au-chart-fill { filter: brightness(1.15); }
+.au-chart-mark:hover .au-chart-dot { r: 4.5; }
+.au-chart-data { margin-top: 8px; }
+.au-chart-data > summary {
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  width: fit-content;
+}
+.au-chart-data > summary:hover { color: var(--muted-3); }
+.au-chart-data table { font-size: 11.5px; }
 /* JSON syntax tokens (spans emitted by lib/json-highlight). Base code color
    carries the punctuation; tokens pick out keys/strings/numbers/literals. */
 .content-code.json code { color: var(--muted); }
