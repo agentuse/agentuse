@@ -8,6 +8,7 @@ import { DecisionDialog, type DecisionDialogMode } from '../components/comment-d
 import { ContinuePanel } from '../components/continue-panel';
 import { LearningsPanel } from '../components/learnings-panel';
 import { DebugPromptButton } from '../components/debug-prompt-button';
+import { SessionMenu } from '../components/session-menu';
 import { Loading } from '../components/loading';
 import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
 import { syncAppBadge } from '../lib/badge';
@@ -826,6 +827,13 @@ export default function SessionDetail() {
             {approval?.mock && <span class="mock-badge" title="Tool outputs were LLM-generated; no real tools ran">mock</span>}
             <span class="session-bar-name">{agentLabel}</span>
           </div>
+          {!isSubagentView && approval.agent.filePath && (
+            <SessionMenu
+              agentName={agentLabel}
+              agentFilePath={approval.agent.filePath}
+              {...(projectId ? { projectId } : {})}
+            />
+          )}
           <button
             type="button"
             class="session-bar-top"
