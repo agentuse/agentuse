@@ -850,7 +850,10 @@ export default function SessionDetail() {
               <SessionMenu
                 agentName={agentLabel}
                 agentFilePath={approval.agent.filePath}
-                {...(projectId ? { projectId } : {})}
+                // The URL's ?project= wins, but push links and direct session
+                // URLs often omit it; the header's stamped project id keeps
+                // "Run new session" working on multi-project daemons.
+                {...(projectId ?? approval.project ? { projectId: projectId ?? approval.project } : {})}
               />
             )}
           </div>
@@ -858,7 +861,7 @@ export default function SessionDetail() {
           <p class="prompt">{promptText}</p>
           <div class="meta">
             <div class="cell"><span class="label">session</span><code>{approval.sessionId}</code></div>
-            <div class="cell"><span class="label">project</span><code>{projectId ?? 'default'}</code></div>
+            <div class="cell"><span class="label">project</span><code>{projectId ?? approval.project ?? 'default'}</code></div>
             <div class="cell"><span class="label">agent</span><span class="value">{agentLabel}</span></div>
             {approval.createdAt !== undefined && (
               <div class="cell"><span class="label">started</span><span class="value">{formatApprovalTime(approval.createdAt)}</span></div>

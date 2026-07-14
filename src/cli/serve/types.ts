@@ -129,6 +129,10 @@ export interface SessionTokenUsage {
 export interface ApprovalPageInfo {
   sessionId: string;
   sessionStatus: string;
+  /** Resolved project id, stamped by the serve daemon on session lookups so
+   *  clients without ?project= in the URL can address project-scoped
+   *  endpoints (e.g. "Run new session" on a multi-project daemon). */
+  project?: string;
   createdAt?: number;
   model?: string;
   agent: {

@@ -316,6 +316,8 @@ interface WorkerReconcileResult {
 interface ApprovalPageInfo {
   sessionId: string;
   sessionStatus: string;
+  /** Resolved project id, stamped by the serve daemon (see findApprovalInfo). */
+  project?: string;
   createdAt?: number;
   model?: string;
   agent: {
@@ -2400,6 +2402,11 @@ export function createServeCommand(): Command {
             allowHistorical: options.allowHistorical ?? false,
           });
           if (info.success) {
+            // Stamp the resolved project id so clients that landed on a
+            // session URL without ?project= (push links, multi-project
+            // daemons) can still address project-scoped endpoints like
+            // POST /api/run.
+            info.approval.project = project.id;
             return { success: true, project, info };
           }
 
@@ -2461,6 +2468,11 @@ export function createServeCommand(): Command {
             trusted: true,
           });
           if (info.success) {
+            // Stamp the resolved project id so clients that landed on a
+            // session URL without ?project= (push links, multi-project
+            // daemons) can still address project-scoped endpoints like
+            // POST /api/run.
+            info.approval.project = project.id;
             return { success: true, project, info };
           }
           if (info.error.code !== 'SESSION_NOT_FOUND') {
