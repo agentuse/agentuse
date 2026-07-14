@@ -651,6 +651,70 @@ a, button, select, summary, label, input, textarea,
 @media (prefers-reduced-motion: reduce) {
   .page-approval-detail a.session-bar-back:hover { transform: none; }
 }
+/* --- ⋯ session overflow menu (agent-level actions, e.g. run a new session) ---
+   The trigger carries .icon-btn so the page's broad `button` rule skips it
+   (same escape as the topbar chrome); .menu-btn re-skins the pill to 26px.
+   The item selectors go through .session-bar so they outrank that broad rule
+   (0,4,0 vs its 0,3,1) — plain 3-class selectors here would lose to it. */
+.page-approval-detail .session-menu { flex: none; margin-left: auto; display: inline-flex; }
+.page-approval-detail .session-menu ~ .session-bar-top { margin-left: 0; }
+.page-approval-detail .session-menu .menu-btn {
+  width: 26px;
+  height: 26px;
+  background: var(--bg);
+}
+.page-approval-detail .session-menu .menu-btn svg { width: 16px; height: 16px; }
+.page-approval-detail .session-menu .menu-btn:hover,
+.page-approval-detail .session-menu .menu-btn.open {
+  color: var(--fg); border-color: var(--line-strong); background: var(--panel-hover);
+}
+.page-approval-detail .session-menu .menu-popover {
+  position: fixed;
+  z-index: 60;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 12px 14px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+}
+.page-approval-detail .session-menu .menu-name {
+  font-family: var(--sans);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .session-menu .menu-sep { height: 1px; margin: 10px -14px 6px; background: var(--line); }
+.page-approval-detail .session-bar .session-menu .menu-item {
+  appearance: none;
+  cursor: pointer;
+  width: calc(100% + 28px);
+  margin: 0 -14px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-align: left;
+}
+.page-approval-detail .session-bar .session-menu .menu-item:hover { background: var(--panel-hover); border-color: transparent; }
+.page-approval-detail .session-bar .session-menu .menu-item:disabled { cursor: default; color: var(--muted); }
+.page-approval-detail .session-bar .session-menu .menu-item .menu-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--cyan); }
+.page-approval-detail .session-menu .menu-error {
+  margin: 4px 0 6px;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--red);
+  overflow-wrap: anywhere;
+}
 .page-approval-detail .eyebrow {
   font-size: 11px;
   color: var(--cyan);
