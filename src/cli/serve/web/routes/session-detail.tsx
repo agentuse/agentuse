@@ -827,13 +827,6 @@ export default function SessionDetail() {
             {approval?.mock && <span class="mock-badge" title="Tool outputs were LLM-generated; no real tools ran">mock</span>}
             <span class="session-bar-name">{agentLabel}</span>
           </div>
-          {!isSubagentView && approval.agent.filePath && (
-            <SessionMenu
-              agentName={agentLabel}
-              agentFilePath={approval.agent.filePath}
-              {...(projectId ? { projectId } : {})}
-            />
-          )}
           <button
             type="button"
             class="session-bar-top"
@@ -851,7 +844,16 @@ export default function SessionDetail() {
         </div>
         <header>
           <div class="eyebrow">{eyebrow}</div>
-          <h1>{agentLabel}</h1>
+          <div class="header-title-row">
+            <h1>{agentLabel}</h1>
+            {!isSubagentView && approval.agent.filePath && (
+              <SessionMenu
+                agentName={agentLabel}
+                agentFilePath={approval.agent.filePath}
+                {...(projectId ? { projectId } : {})}
+              />
+            )}
+          </div>
           {agentDescription && <p class="agent-tagline">{agentDescription}</p>}
           <p class="prompt">{promptText}</p>
           <div class="meta">

@@ -652,15 +652,23 @@ a, button, select, summary, label, input, textarea,
   .page-approval-detail a.session-bar-back:hover { transform: none; }
 }
 /* --- ⋯ session overflow menu (agent-level actions, e.g. run a new session) ---
-   The trigger carries .icon-btn so the page's broad `button` rule skips it
-   (same escape as the topbar chrome); .menu-btn re-skins the pill to 26px.
-   The item selectors go through .session-bar so they outrank that broad rule
-   (0,4,0 vs its 0,3,1) — plain 3-class selectors here would lose to it. */
-.page-approval-detail .session-menu { flex: none; margin-left: auto; display: inline-flex; }
-.page-approval-detail .session-menu ~ .session-bar-top { margin-left: 0; }
+   Sits beside the H1 agent name in the page header. The trigger carries
+   .icon-btn so the page's broad `button` rule skips it (same escape as the
+   topbar chrome); .menu-btn re-skins the pill. The item selectors go through
+   .header-title-row so they outrank that broad rule (0,4,0 vs its 0,3,1) —
+   plain 3-class selectors here would lose to it. */
+.page-approval-detail .header-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.page-approval-detail .header-title-row h1 { margin-bottom: 0; min-width: 0; }
+.page-approval-detail .session-menu { flex: none; display: inline-flex; }
 .page-approval-detail .session-menu .menu-btn {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   background: var(--bg);
 }
 .page-approval-detail .session-menu .menu-btn svg { width: 16px; height: 16px; }
@@ -687,7 +695,7 @@ a, button, select, summary, label, input, textarea,
   overflow-wrap: anywhere;
 }
 .page-approval-detail .session-menu .menu-sep { height: 1px; margin: 10px -14px 6px; background: var(--line); }
-.page-approval-detail .session-bar .session-menu .menu-item {
+.page-approval-detail .header-title-row .session-menu .menu-item {
   appearance: none;
   cursor: pointer;
   width: calc(100% + 28px);
@@ -705,9 +713,9 @@ a, button, select, summary, label, input, textarea,
   letter-spacing: normal;
   text-align: left;
 }
-.page-approval-detail .session-bar .session-menu .menu-item:hover { background: var(--panel-hover); border-color: transparent; }
-.page-approval-detail .session-bar .session-menu .menu-item:disabled { cursor: default; color: var(--muted); }
-.page-approval-detail .session-bar .session-menu .menu-item .menu-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--cyan); }
+.page-approval-detail .header-title-row .session-menu .menu-item:hover { background: var(--panel-hover); border-color: transparent; }
+.page-approval-detail .header-title-row .session-menu .menu-item:disabled { cursor: default; color: var(--muted); }
+.page-approval-detail .header-title-row .session-menu .menu-item .menu-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--cyan); }
 .page-approval-detail .session-menu .menu-error {
   margin: 4px 0 6px;
   font-family: var(--sans);
