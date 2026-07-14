@@ -11,7 +11,7 @@ import { runAgentDetached } from '../lib/api';
  * produces anything, so the redirect can carry it (plus a view token on
  * token-gated daemons) and the session page streams the run as it happens.
  */
-export function useRunAgent(agentPath: string, projectId: string) {
+export function useRunAgent(agentPath: string, projectId: string | undefined) {
   const location = useLocation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +22,8 @@ export function useRunAgent(agentPath: string, projectId: string) {
     setError(null);
     try {
       const res = await runAgentDetached(agentPath, projectId, prompt);
-      const params = new URLSearchParams({ project: projectId, pending: '1' });
+      const params = new URLSearchParams({ pending: '1' });
+      if (projectId) params.set('project', projectId);
       if (res.token) params.set('token', res.token);
       location.route(`/sessions/${encodeURIComponent(res.sessionId)}?${params.toString()}`);
     } catch (err) {
