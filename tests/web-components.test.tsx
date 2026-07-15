@@ -11,6 +11,8 @@ import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
 import { hasActionableApproval, headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
 import { FeedResponse, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
+import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
+import type { ApprovalsListPayload, SessionRow } from '../src/cli/serve/web/lib/api';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 
 const noop = () => {};
@@ -761,5 +763,58 @@ describe('format helpers', () => {
     expect(isDebugLog({ id: '1', type: 'log', level: 'debug', title: 'x' })).toBe(true);
     expect(isDebugLog({ id: '2', type: 'log', level: 'info', title: 'x' })).toBe(false);
     expect(isDebugLog({ id: '3', type: 'tool', title: 'x' })).toBe(false);
+  });
+});
+
+describe('Home activity feed labels', () => {
+  const row = (overrides: Partial<SessionRow> = {}): SessionRow => ({
+    sessionId: 'root-1',
+    project: 'demo',
+    agent: { id: 'agents/manager', name: 'Manager' },
+    status: 'suspended',
+    trigger: 'manual',
+    createdAt: 1,
+    updatedAt: 2,
+    ...overrides,
+  });
+  const approvalRow = (sessionId: string) => ({ sessionId, project: 'demo' }) as ApprovalsListPayload['buckets']['pending'][number];
+  const payload = (buckets: { pending?: string[]; expired?: string[] }): ApprovalsListPayload => ({
+    success: true,
+    multiProject: false,
+    approvals: [],
+    buckets: {
+      pending: (buckets.pending ?? []).map(approvalRow),
+      completed: [],
+      expired: (buckets.expired ?? []).map(approvalRow),
+    },
+    window: { days: 30 },
+    errors: [],
+  });
+
+  it('labels a suspended session awaiting approval only while its gate is pending', () => {
+    const gates = suspendedGateKinds(payload({ pending: ['root-1'] }));
+    expect(labelFor(row(), false, gates)).toBe('awaiting approval');
+  });
+
+  it('labels a suspended root with a decided cascade gate as resuming, not awaiting approval', () => {
+    // A manager parked on subagent_wait after its leaf gate was approved has no
+    // pending approval: the leaf is running the work forward.
+    const gates = suspendedGateKinds(payload({ pending: [] }));
+    expect(labelFor(row(), false, gates)).toBe('resuming');
+  });
+
+  it('labels an expired gate distinctly', () => {
+    const gates = suspendedGateKinds(payload({ expired: ['root-1'] }));
+    expect(labelFor(row(), false, gates)).toBe('approval expired');
+  });
+
+  it('keeps the awaiting-approval default until the approvals snapshot loads', () => {
+    expect(labelFor(row(), false, suspendedGateKinds(null))).toBe('awaiting approval');
+  });
+
+  it('leaves non-suspended labels untouched', () => {
+    const gates = suspendedGateKinds(payload({}));
+    expect(labelFor(row({ status: 'running' }), true, gates)).toBe('started');
+    expect(labelFor(row({ status: 'completed' }), false, gates)).toBe('completed');
   });
 });

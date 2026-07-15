@@ -165,7 +165,7 @@ export function FeedResponse(props: { value: string | undefined; status: string;
   const emptyMessage = props.status === 'running'
     ? 'Agent is working. Its response will appear here as it becomes available.'
     : props.status === 'suspended'
-      ? 'Waiting for approval. No final response yet.'
+      ? 'Waiting on an approval or a delegated sub-agent. No final response yet.'
       : 'This session ended without a final response.';
 
   return (

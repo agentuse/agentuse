@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { SessionRow, StoreRowsPayload } from '../lib/api';
 import { fetchInfo, fetchAgents, fetchSchedules, fetchStoreRows } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
-import { useLiveHome, type ActivityEvent } from '../hooks/use-live-home';
+import { useLiveHome, sessionRowKey, type ActivityEvent } from '../hooks/use-live-home';
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
@@ -318,6 +318,11 @@ export default function Home() {
   const running = liveHome.sessions.filter(isLiveRow);
   const waiting = liveHome.sessions.filter((s) => s.status === 'suspended');
   const pendingApprovals = liveHome.pendingApprovals;
+  // Suspended rows with no live or expired gate are mid-flight (a delegated
+  // leaf running under a decided cascade approval, or a resume in progress),
+  // so don't advertise them as blocked on a human.
+  const allWaitingResuming = liveHome.suspendedGates.loaded && waiting.every((s) =>
+    !liveHome.suspendedGates.pending.has(sessionRowKey(s)) && !liveHome.suspendedGates.expired.has(sessionRowKey(s)));
   const now = useNow(running.length > 0 || nextSchedule !== null);
 
   // When the countdown fires, the schedule's nextRun is stale until the
@@ -377,7 +382,9 @@ export default function Home() {
               <a class="hero-pending" href="/approvals">{plural(pendingApprovals, 'approval')} waiting</a>
             )}
             {waiting.length > 0 && pendingApprovals === 0 && (
-              <a class="hero-pending" href="/sessions?status=suspended">{plural(waiting.length, 'session')} awaiting approval</a>
+              <a class="hero-pending" href="/sessions?status=suspended">
+                {plural(waiting.length, 'session')} {allWaitingResuming ? 'resuming' : 'suspended'}
+              </a>
             )}
             {nextSchedule && countdownMs !== null && (
               <span class="hero-next">

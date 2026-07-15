@@ -27,20 +27,47 @@ const SEED_LIMIT = 8;
 
 function toneFor(label: string): ActivityEvent['tone'] {
   if (label === 'started' || label === 'running' || label === 'resuming' || label === 'continuing') return 'running';
-  if (label === 'awaiting approval' || label === 'suspended') return 'waiting';
+  if (label === 'awaiting approval' || label === 'approval expired' || label === 'suspended') return 'waiting';
   if (label === 'completed') return 'done';
   return 'failed';
 }
 
-function labelFor(row: SessionRow, isNew: boolean): string {
+/** Suspended sessions bucketed by why they wait, keyed `${project}:${sessionId}`.
+ *  A suspended session with no live pending gate is mid-flight, not blocked: its
+ *  gate was decided and the run is being carried forward (a delegated leaf
+ *  running under a cascaded approval, or a resume worker picking it back up). */
+export interface SuspendedGateKinds {
+  loaded: boolean;
+  pending: Set<string>;
+  expired: Set<string>;
+}
+
+export function sessionRowKey(row: Pick<SessionRow, 'project' | 'sessionId'>): string {
+  return `${row.project}:${row.sessionId}`;
+}
+
+export function suspendedGateKinds(approvals: ApprovalsListPayload | null): SuspendedGateKinds {
+  return {
+    loaded: approvals !== null,
+    pending: new Set((approvals?.buckets.pending ?? []).map(sessionRowKey)),
+    expired: new Set((approvals?.buckets.expired ?? []).map(sessionRowKey)),
+  };
+}
+
+export function labelFor(row: SessionRow, isNew: boolean, gates: SuspendedGateKinds): string {
   const status = displayStatusLabel(row.status, row.errorCode);
-  if (status === 'suspended') return 'awaiting approval';
+  if (status === 'suspended') {
+    // Until the approvals snapshot arrives, keep the historical default.
+    if (!gates.loaded || gates.pending.has(sessionRowKey(row))) return 'awaiting approval';
+    if (gates.expired.has(sessionRowKey(row))) return 'approval expired';
+    return 'resuming';
+  }
   if (isNew && (status === 'running' || status === 'resuming' || status === 'continuing')) return 'started';
   return status;
 }
 
-function eventFor(row: SessionRow, opts: { isNew: boolean; fresh: boolean; seq: number }): ActivityEvent {
-  const label = labelFor(row, opts.isNew);
+function eventFor(row: SessionRow, opts: { isNew: boolean; fresh: boolean; seq: number; gates: SuspendedGateKinds }): ActivityEvent {
+  const label = labelFor(row, opts.isNew, opts.gates);
   return {
     key: `${row.project}:${row.sessionId}:${label}:${opts.seq}`,
     sessionId: row.sessionId,
@@ -58,6 +85,8 @@ export interface LiveHome {
   sessions: SessionRow[];
   feed: ActivityEvent[];
   pendingApprovals: number;
+  /** Why each suspended session waits (pending gate vs. mid-flight resume). */
+  suspendedGates: SuspendedGateKinds;
   /** True while the SSE stream is healthy (footer copy + demo confidence). */
   live: boolean;
   error: ApiRequestError | null;
@@ -123,30 +152,34 @@ export function useLiveHome(): LiveHome {
     : (approvalsPayload ?? fetchedApprovals.data);
 
   const [feed, setFeed] = useState<ActivityEvent[]>([]);
-  const prevStatuses = useRef<Map<string, string> | null>(null);
+  const prevLabels = useRef<Map<string, string> | null>(null);
   const seq = useRef(0);
+  const gates = suspendedGateKinds(approvalsData);
 
   useEffect(() => {
     if (!sessionsData) return;
+    // Diff by rendered label, not raw status: an approval decision flips a
+    // suspended row from "awaiting approval" to "resuming" without a status
+    // change, and the feed should surface that transition.
     const next = new Map<string, string>();
-    for (const row of sessionsData.sessions) next.set(`${row.project}:${row.sessionId}`, row.status);
-    const prev = prevStatuses.current;
-    prevStatuses.current = next;
+    for (const row of sessionsData.sessions) next.set(sessionRowKey(row), labelFor(row, false, gates));
+    const prev = prevLabels.current;
+    prevLabels.current = next;
 
     if (!prev) {
       const seeded = [...sessionsData.sessions]
         .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
         .slice(0, SEED_LIMIT)
-        .map((row) => eventFor(row, { isNew: false, fresh: false, seq: seq.current++ }));
+        .map((row) => eventFor(row, { isNew: false, fresh: false, seq: seq.current++, gates }));
       setFeed(seeded);
       return;
     }
 
     const fresh: ActivityEvent[] = [];
     for (const row of sessionsData.sessions) {
-      const before = prev.get(`${row.project}:${row.sessionId}`);
-      if (before === row.status) continue;
-      fresh.push(eventFor(row, { isNew: before === undefined, fresh: true, seq: seq.current++ }));
+      const before = prev.get(sessionRowKey(row));
+      if (before === next.get(sessionRowKey(row))) continue;
+      fresh.push(eventFor(row, { isNew: before === undefined, fresh: true, seq: seq.current++, gates }));
     }
     if (fresh.length > 0) {
       fresh.sort((a, b) => b.at - a.at);
@@ -156,12 +189,13 @@ export function useLiveHome(): LiveHome {
         ...current.filter((event) => !updated.has(`${event.project}:${event.sessionId}`)),
       ].slice(0, FEED_LIMIT));
     }
-  }, [sessionsData]);
+  }, [sessionsData, approvalsData]);
 
   return {
     sessions: sessionsData?.sessions ?? [],
     feed,
     pendingApprovals: approvalsData?.buckets.pending.length ?? 0,
+    suspendedGates: gates,
     live: !sessionsFallback,
     error: fetchedSessions.error ?? (!sessionsData ? streamError : null),
     loading: fetchedSessions.loading && !sessionsData,
