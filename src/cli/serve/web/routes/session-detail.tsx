@@ -139,6 +139,15 @@ function gaugeTone(pctLeft: number): string {
   return pctLeft > 50 ? '' : pctLeft > 20 ? ' warn' : ' crit';
 }
 
+/** Coarse human duration for the result verdict line ("42s", "12 min", "1h 05m"). */
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const totalMinutes = Math.round(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes} min`;
+  return `${Math.floor(totalMinutes / 60)}h ${String(totalMinutes % 60).padStart(2, '0')}m`;
+}
+
 function isNearPageEnd(): boolean {
   const page = document.documentElement;
   return window.innerHeight + window.scrollY >= page.scrollHeight - 240;
@@ -237,6 +246,11 @@ export default function SessionDetail() {
   const hasScrolledRef = useRef(false);
   const resultRef = useRef(result);
   resultRef.current = result;
+  // Whether the session was ALREADY over the first time this page saw it.
+  // Summary-first layout applies only then: a run watched live keeps its
+  // feed-first layout after it ends, so the transcript never snaps closed
+  // under the reader. Latched per session (reset in the [sessionId] effect).
+  const firstViewEndedRef = useRef<boolean | null>(null);
 
   const mergeLog = useCallback((entry: ApprovalLogEntry): boolean => {
     if (entry?.id == null) return false;
@@ -308,6 +322,9 @@ export default function SessionDetail() {
     setFatalError(null);
     setLogsVersion((v) => v + 1);
     setArtifacts([]);
+    // Re-latch the summary-first decision, and the keyed uncontrolled
+    // <details> transcript remounts closed for the new session.
+    firstViewEndedRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -439,6 +456,23 @@ export default function SessionDetail() {
     return out;
   }, [visibleLogs]);
   const reviewerComment = useMemo(() => latestReviewerComment(orderedLogs), [orderedLogs]);
+  // The outcome for the summary-first ended layout: the last completed
+  // assistant text in the log is the run's final response. Derived client-side
+  // from the entries already loaded (same idea as the server's feed-detail
+  // finalResponse, which reads the durable transcript).
+  const finalText = useMemo(() => {
+    for (let i = orderedLogs.length - 1; i >= 0; i--) {
+      const entry = orderedLogs[i];
+      if (entry.type === 'text' && entry.status !== 'streaming' && (entry.message ?? '').trim()) {
+        return entry.message as string;
+      }
+    }
+    return undefined;
+  }, [orderedLogs]);
+  const toolCallCount = useMemo(
+    () => orderedLogs.reduce((n, e) => n + (e.type === 'tool' ? 1 : 0), 0),
+    [orderedLogs]
+  );
 
   useEffect(() => {
     try { localStorage.setItem('agentuse:session:showDebug', showDebug ? '1' : '0'); } catch { /* ignore */ }
@@ -536,6 +570,13 @@ export default function SessionDetail() {
   const showWorking = live && !tailTyping;
   const workingLabel = 'Agent is running';
   const ended = isEndedStatus(approval?.sessionStatus);
+  if (approval !== null && firstViewEndedRef.current === null) {
+    firstViewEndedRef.current = ended;
+  }
+  // Summary-first (issue #150): outcome + artifacts lead, transcript collapses.
+  // Only for sessions that arrived already ended; live views keep feed-first
+  // behavior for their whole lifetime (see firstViewEndedRef).
+  const summaryFirst = ended && firstViewEndedRef.current === true;
   const expired = approval?.expiresAt !== undefined && approval.expiresAt <= Date.now();
   const displayStatus = status === 'waiting' && expired ? 'expired' : displaySessionStatus(status, approval);
   const actionable = pendingActionable && !expired;
@@ -803,6 +844,121 @@ export default function SessionDetail() {
             ? 'This approval request has expired. The session log remains available for review.'
             : 'Live view of this run. The session log updates as new work arrives.';
 
+  // Verdict line for the summary-first result card: wall-clock duration
+  // (createdAt → last log entry, so approval wait time counts) + tool calls.
+  const lastLogTime = orderedLogs.length > 0 ? orderedLogs[orderedLogs.length - 1].time : undefined;
+  const resultMeta = [
+    approval.createdAt !== undefined && lastLogTime !== undefined && lastLogTime > approval.createdAt
+      ? `finished in ${formatDuration(lastLogTime - approval.createdAt)}`
+      : undefined,
+    toolCallCount > 0 ? `${toolCallCount} tool call${toolCallCount === 1 ? '' : 's'}` : undefined,
+  ].filter(Boolean).join(' · ');
+  // '' unless the session ended in error; leads the result card so a failed
+  // run's outcome is the failure, not a mid-thought final message.
+  const resultErrorText = sessionErrorText(approval);
+
+  // Shared between the feed-first artifacts panel and the summary-first result
+  // card, so the tile markup stays single-sourced.
+  const artifactTiles = artifacts.length > 0 ? (
+    <div class="artifact-tiles">
+      {[...artifacts]
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+        .map((a) => {
+          const encoded = a.name.split('/').map(encodeURIComponent).join('/');
+          const base = `/sessions/${encodeURIComponent(sessionId)}/artifacts/${encoded}`;
+          const params = new URLSearchParams();
+          if (token) params.set('token', token);
+          if (resolvedTheme) params.set('theme', resolvedTheme);
+          const qs = params.toString();
+          const href = qs ? `${base}?${qs}` : base;
+          const label = a.title || a.name.split('/').pop() || a.name;
+          return (
+            <a
+              key={a.name}
+              class="artifact-open"
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`Open artifact ${label} (new tab)`}
+            >
+              <span class="artifact-open-name">{label}</span>
+              <span class="artifact-open-hint">open</span>
+            </a>
+          );
+        })}
+    </div>
+  ) : null;
+
+  const debugToggle = debugCount > 0 ? (
+    <label class="log-debug-toggle" title="Show debug-level operational logs">
+      <input
+        type="checkbox"
+        checked={showDebug}
+        onChange={(e) => setShowDebug((e.target as HTMLInputElement).checked)}
+      />
+      <span>debug</span>
+      <span class="log-debug-count">{debugCount}</span>
+    </label>
+  ) : null;
+
+  // The transcript feed, shared by both layouts: inline under its section
+  // title (live/feed-first) or inside the collapsed <details> (summary-first).
+  const logsFeed = (
+    <div class="panel">
+      <ul class="logs" role="log">
+        {visibleLogs.length === 0 && (
+          <li class="log-empty">
+            {orderedLogs.length === 0
+              ? 'No session events yet.'
+              : `${debugCount} debug ${debugCount === 1 ? 'entry' : 'entries'} hidden. Enable the debug toggle to view.`}
+          </li>
+        )}
+        {feedLogs.map((entry) => {
+          const entryActionable = actionable && entry.status === 'pending' && Boolean(entry.details) &&
+            (!currentResumeTokenRef.current || entry.details?.resumeToken === currentResumeTokenRef.current);
+          return (
+            <LogEntry
+              key={entry.id}
+              entry={entry}
+              isNew={isNewLog(entry.id)}
+              repeatCount={entry.repeatCount}
+              warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
+              expanded={expandedIds.has(entry.id)}
+              showActions={entryActionable}
+              parentApproveHref={showParentApproveCta ? parentLink : undefined}
+              parentApproveLabel={parentLabel}
+              actionsDisabled={submittingDecision !== null}
+              pendingAction={submittingDecision}
+              projectId={projectId}
+              sessionId={sessionId}
+              token={token}
+              selectedChoice={entryActionable ? effectiveChoice : undefined}
+              onSelectChoice={entryActionable ? setSelectedChoice : undefined}
+              onToggle={(id) => {
+                setExpandedIds((current) => {
+                  const next = new Set(current);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                });
+              }}
+              onAction={onAction}
+            />
+          );
+        })}
+        {showWorking && (
+          <li class="log-item log-working">
+            <span class="log-time" />
+            <span class="log-marker"><span class="log-spinner" aria-label="working" /></span>
+            <div class="log-main">
+              <span class="log-title">{workingLabel}<span class="log-dots" aria-hidden="true" /></span>
+            </div>
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+
   return (
     <div class="page-approval-detail">
       <Topbar currentPage="sessions" />
@@ -903,6 +1059,33 @@ export default function SessionDetail() {
           </div>
         )}
 
+        {summaryFirst && (
+          <>
+            <div class="section-title result-title">
+              <span>result</span>
+              <span class="rule"></span>
+            </div>
+            <section class="panel session-result">
+              <div class="result-verdict">
+                <span class={`status ${displayStatus}`}>{displayStatus}</span>
+                {resultMeta && <span class="result-meta">{resultMeta}</span>}
+              </div>
+              {resultErrorText && <div class="result-error">{resultErrorText}</div>}
+              {finalText ? (
+                <div class="result-body"><LogContent value={finalText} forceMarkdown /></div>
+              ) : !resultErrorText ? (
+                <div class="result-empty">This run ended without a final response; the session log below has the details.</div>
+              ) : null}
+              {artifactTiles && (
+                <div class="result-artifacts">
+                  <div class="label">artifacts</div>
+                  {artifactTiles}
+                </div>
+              )}
+            </section>
+          </>
+        )}
+
         {reviewerComment && (
           <div class="panel reviewer-comment">
             <div class="label">latest reviewer comment</div>
@@ -911,107 +1094,34 @@ export default function SessionDetail() {
           </div>
         )}
 
-        {artifacts.length > 0 && (
+        {!summaryFirst && artifactTiles && (
           <div class="panel session-artifacts">
             <div class="label">artifacts</div>
-            <div class="artifact-tiles">
-              {[...artifacts]
-                .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
-                .map((a) => {
-                  const encoded = a.name.split('/').map(encodeURIComponent).join('/');
-                  const base = `/sessions/${encodeURIComponent(sessionId)}/artifacts/${encoded}`;
-                  const params = new URLSearchParams();
-                  if (token) params.set('token', token);
-                  if (resolvedTheme) params.set('theme', resolvedTheme);
-                  const qs = params.toString();
-                  const href = qs ? `${base}?${qs}` : base;
-                  const label = a.title || a.name.split('/').pop() || a.name;
-                  return (
-                    <a
-                      key={a.name}
-                      class="artifact-open"
-                      href={href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label={`Open artifact ${label} (new tab)`}
-                    >
-                      <span class="artifact-open-name">{label}</span>
-                      <span class="artifact-open-hint">open</span>
-                    </a>
-                  );
-                })}
-            </div>
+            {artifactTiles}
           </div>
         )}
-
-        <div class="section-title">
-          <span>session log</span>
-          <span class="rule"></span>
-          {debugCount > 0 && (
-            <label class="log-debug-toggle" title="Show debug-level operational logs">
-              <input
-                type="checkbox"
-                checked={showDebug}
-                onChange={(e) => setShowDebug((e.target as HTMLInputElement).checked)}
-              />
-              <span>debug</span>
-              <span class="log-debug-count">{debugCount}</span>
-            </label>
-          )}
-        </div>
-        <div class="panel">
-          <ul class="logs" role="log">
-            {visibleLogs.length === 0 && (
-              <li class="log-empty">
-                {orderedLogs.length === 0
-                  ? 'No session events yet.'
-                  : `${debugCount} debug ${debugCount === 1 ? 'entry' : 'entries'} hidden. Enable the debug toggle to view.`}
-              </li>
-            )}
-            {feedLogs.map((entry) => {
-              const entryActionable = actionable && entry.status === 'pending' && Boolean(entry.details) &&
-                (!currentResumeTokenRef.current || entry.details?.resumeToken === currentResumeTokenRef.current);
-              return (
-                <LogEntry
-                  key={entry.id}
-                  entry={entry}
-                  isNew={isNewLog(entry.id)}
-                  repeatCount={entry.repeatCount}
-                  warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
-                  expanded={expandedIds.has(entry.id)}
-                  showActions={entryActionable}
-                  parentApproveHref={showParentApproveCta ? parentLink : undefined}
-                  parentApproveLabel={parentLabel}
-                  actionsDisabled={submittingDecision !== null}
-                  pendingAction={submittingDecision}
-                  projectId={projectId}
-                  sessionId={sessionId}
-                  token={token}
-                  selectedChoice={entryActionable ? effectiveChoice : undefined}
-                  onSelectChoice={entryActionable ? setSelectedChoice : undefined}
-                  onToggle={(id) => {
-                    setExpandedIds((current) => {
-                      const next = new Set(current);
-                      if (next.has(id)) next.delete(id);
-                      else next.add(id);
-                      return next;
-                    });
-                  }}
-                  onAction={onAction}
-                />
-              );
-            })}
-            {showWorking && (
-              <li class="log-item log-working">
-                <span class="log-time" />
-                <span class="log-marker"><span class="log-spinner" aria-label="working" /></span>
-                <div class="log-main">
-                  <span class="log-title">{workingLabel}<span class="log-dots" aria-hidden="true" /></span>
-                </div>
-              </li>
-            )}
-          </ul>
-        </div>
+        {summaryFirst ? (
+          <details class="session-transcript" key={`transcript-${sessionId}`}>
+            <summary>
+              <span>session log</span>
+              {visibleLogs.length > 0 && (
+                <span class="count">{visibleLogs.length} {visibleLogs.length === 1 ? 'entry' : 'entries'}</span>
+              )}
+              <span class="rule"></span>
+            </summary>
+            {debugToggle && <div class="transcript-tools">{debugToggle}</div>}
+            {logsFeed}
+          </details>
+        ) : (
+          <>
+            <div class="section-title">
+              <span>session log</span>
+              <span class="rule"></span>
+              {debugToggle}
+            </div>
+            {logsFeed}
+          </>
+        )}
 
         <div class="session-actions">
           {reopenActionable && (

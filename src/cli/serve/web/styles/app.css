@@ -907,6 +907,92 @@ a, button, select, summary, label, input, textarea,
   margin-bottom: 10px;
 }
 
+/* Summary-first layout for ended sessions (issue #150): the result card leads,
+   the transcript collapses behind a native <details>. */
+.page-approval-detail .section-title.result-title { margin-top: 0; }
+.page-approval-detail .session-result {
+  margin: 0 0 18px;
+  border-color: var(--line-strong);
+}
+.page-approval-detail .result-verdict {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.page-approval-detail .result-verdict .result-meta { color: var(--muted); font-size: 12px; }
+.page-approval-detail .result-error {
+  color: var(--red);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .result-error + .result-body { margin-top: 12px; }
+.page-approval-detail .result-body {
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .result-empty { color: var(--muted-3); font-size: 13px; }
+.page-approval-detail .session-result .content-markdown,
+.page-approval-detail .session-result .content-code {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.page-approval-detail .session-result .content-code { color: inherit; white-space: pre-wrap; }
+.page-approval-detail .result-artifacts {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+.page-approval-detail .result-artifacts .label {
+  color: var(--green);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.page-approval-detail .session-transcript { margin-top: 36px; }
+.page-approval-detail .session-transcript > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 10px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+}
+.page-approval-detail .session-transcript > summary::-webkit-details-marker { display: none; }
+.page-approval-detail .session-transcript > summary::before {
+  content: "▸";
+  color: var(--cyan);
+  font-size: 12px;
+}
+.page-approval-detail .session-transcript[open] > summary::before { content: "▾"; }
+.page-approval-detail .session-transcript > summary:hover { color: var(--fg); }
+.page-approval-detail .session-transcript > summary:focus-visible {
+  outline: 2px solid var(--cyan-border);
+  outline-offset: 2px;
+}
+.page-approval-detail .session-transcript > summary .count {
+  color: var(--muted-3);
+  font-size: 11px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.page-approval-detail .session-transcript > summary .rule { flex: 1; height: 1px; background: var(--line); }
+.page-approval-detail .transcript-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 8px;
+}
+
 /* logs */
 .logs { list-style: none; margin: 0; padding: 0; }
 .log-item {
