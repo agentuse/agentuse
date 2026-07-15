@@ -2650,6 +2650,43 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   transition: background 120ms ease, border-color 120ms ease;
 }
 .page-home .card:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+
+/* Agent-recorded metric rollups (Results section) */
+.page-home .metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+.page-home .metric-tile {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  text-decoration: none;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.page-home .metric-tile:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+.page-home .metric-num {
+  font-family: var(--sans);
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.page-home .metric-name { font-family: var(--sans); font-size: 13px; color: var(--fg); opacity: 0.85; }
+.page-home .metric-sub {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .page-home .card-top { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; gap: 2px; }
 .page-home .card-title { font-family: var(--sans); font-size: 16px; font-weight: 500; color: var(--fg); }
 .page-home .card-count {

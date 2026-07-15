@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { SessionRow } from '../lib/api';
-import { fetchInfo, fetchAgents, fetchSchedules } from '../lib/api';
+import type { SessionRow, StoreRowsPayload } from '../lib/api';
+import { fetchInfo, fetchAgents, fetchSchedules, fetchStoreRows } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useLiveHome, type ActivityEvent } from '../hooks/use-live-home';
 import { useSessionTail } from '../hooks/use-session-tail';
@@ -122,6 +122,93 @@ function RunningCard(props: { row: SessionRow; now: number; ticker: boolean }) {
   );
 }
 
+/** One record_metric name rolled up across projects for the results window. */
+interface MetricAgg {
+  metric: string;
+  count: number;
+  hasCount: boolean;
+  value: number;
+  hasValue: boolean;
+  unit: string | null;
+  mixedUnits: boolean;
+  latestAt: number;
+  note?: string | undefined;
+}
+
+const METRICS_WINDOW_MS = 7 * 24 * 3_600_000;
+
+/**
+ * Fold reserved-store metric records (tools__record_metric) from every project
+ * into one rollup per metric name. Sums are plain code over runtime-stamped
+ * records - no model output is ever in the math path of a displayed number.
+ */
+function aggregateMetrics(payload: StoreRowsPayload | null | undefined): MetricAgg[] {
+  if (!payload) return [];
+  const cutoff = Date.now() - METRICS_WINDOW_MS;
+  const byMetric = new Map<string, MetricAgg>();
+  for (const row of payload.rows) {
+    for (const item of row.items) {
+      if (item.type !== 'metric') continue;
+      const metric = item.data.metric;
+      if (typeof metric !== 'string') continue;
+      const at = Date.parse(item.updatedAt);
+      if (!Number.isFinite(at) || at < cutoff) continue;
+
+      let agg = byMetric.get(metric);
+      if (!agg) {
+        agg = { metric, count: 0, hasCount: false, value: 0, hasValue: false, unit: null, mixedUnits: false, latestAt: 0 };
+        byMetric.set(metric, agg);
+      }
+      const { count, value, unit, note } = item.data;
+      if (typeof count === 'number' && Number.isFinite(count)) {
+        agg.count += count;
+        agg.hasCount = true;
+      }
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        agg.value += value;
+        agg.hasValue = true;
+        // A metric name owns one unit; on a mismatch show the count only
+        // rather than summing dollars into minutes.
+        if (typeof unit === 'string') {
+          if (agg.unit === null) agg.unit = unit;
+          else if (agg.unit !== unit) agg.mixedUnits = true;
+        }
+      }
+      if (at > agg.latestAt) {
+        agg.latestAt = at;
+        agg.note = typeof note === 'string' ? note : undefined;
+      }
+    }
+  }
+  return [...byMetric.values()].sort((a, b) => b.latestAt - a.latestAt);
+}
+
+function humanizeMetric(name: string): string {
+  const spaced = name.replace(/_/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+function MetricTile(props: { agg: MetricAgg }) {
+  const { agg } = props;
+  const showValue = agg.hasValue && !agg.mixedUnits;
+  const big = useCountUp(Math.round(showValue ? agg.value : agg.count));
+  const bigLabel = showValue
+    ? (agg.unit === 'usd' ? `$${big.toLocaleString()}` : `${big.toLocaleString()}${agg.unit ? ` ${agg.unit}` : ''}`)
+    : big.toLocaleString();
+  const sub = [
+    showValue && agg.hasCount ? plural(agg.count, 'item') : null,
+    agg.mixedUnits ? 'mixed units - showing count' : null,
+    agg.note ?? null,
+  ].filter(Boolean).join(' · ');
+  return (
+    <a class="metric-tile" href="/stores/metrics" title={agg.metric}>
+      <div class="metric-num">{bigLabel}</div>
+      <div class="metric-name">{humanizeMetric(agg.metric)}</div>
+      {sub && <div class="metric-sub">{sub}</div>}
+    </a>
+  );
+}
+
 interface SparkBucket { ok: number; failed: number; live: number }
 
 /** Sessions folded into 24 hours-ago buckets, oldest first. */
@@ -223,6 +310,11 @@ export default function Home() {
     return best;
   })();
 
+  // Agent-recorded business metrics (reserved "metrics" store). Missing store
+  // is normal and returns empty rows, so the section simply doesn't render.
+  const metricRows = useFetch('home-metrics', () => fetchStoreRows('metrics'), { refreshMs: 60_000 });
+  const metricAggs = aggregateMetrics(metricRows.data);
+
   const running = liveHome.sessions.filter(isLiveRow);
   const waiting = liveHome.sessions.filter((s) => s.status === 'suspended');
   const pendingApprovals = liveHome.pendingApprovals;
@@ -298,6 +390,15 @@ export default function Home() {
           </div>
           <ActivitySpark sessions={liveHome.sessions} />
         </section>
+
+        {metricAggs.length > 0 && (
+          <section class="group">
+            <h2 class="group-title"><span>Results</span><span class="rule"></span><span class="feed-live-tag">7 days</span></h2>
+            <div class="metric-grid">
+              {metricAggs.map((agg) => <MetricTile key={agg.metric} agg={agg} />)}
+            </div>
+          </section>
+        )}
 
         {running.length > 0 && (
           <section class="group">
