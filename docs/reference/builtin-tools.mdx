@@ -151,6 +151,41 @@ When enabled, the agent receives:
 
 `artifact_save` writes under `.agentuse/artifacts/` by default, records metadata in a manifest, and returns a viewable session URL when a session is active. Markdown artifacts can include `title` and `tags`, which are merged into frontmatter. To read an artifact's content later, use `filesystem_read` on the returned path.
 
+## Metrics Tool
+
+The metrics tool lets an agent record business-metric facts (counts and amounts) about work it just completed, e.g. "chased 4 invoices totaling $11,200". Records land in the reserved shared `metrics` store and roll up on the serve Home page and over the JSON API, so the numbers a dashboard shows are deterministic tool writes, never model-computed sums.
+
+### Configuration
+
+```yaml
+tools:
+  metrics: true
+```
+
+When enabled, the agent receives:
+
+| Tool | Description |
+|------|-------------|
+| `record_metric` | Record a metric fact `{ metric, value?, unit?, count?, note? }` into the shared `metrics` store |
+
+### Fields
+
+| Field | Type | Description |
+|-----------|------|-------------|
+| `metric` | `string` | Stable snake_case name in verb_object form (e.g. `invoices_chased`). The grouping key: keep it identical across runs |
+| `value` | `number` | Numeric magnitude, e.g. total amount in whole currency units |
+| `unit` | `string` | Unit of `value` (e.g. `usd`, `minutes`). A metric name should always use the same unit |
+| `count` | `number` | Number of items handled |
+| `note` | `string` | Short human context shown alongside the number |
+
+At least one of `value` or `count` is required.
+
+### Idempotency
+
+Records are upserted keyed on `(sessionId, metric)`: a retried or resumed run overwrites its own earlier record instead of double-counting, and recording the same metric twice in one run is last-write-wins. This is what makes the numbers trustworthy enough to display. Runs without a session id (rare) cannot be deduplicated and always create a new record.
+
+The runtime stamps `sessionId` and the agent id onto every record; the model cannot spoof provenance. Each record is a regular store item (`type: "metric"`, tagged with the metric name) in `.agentuse/store/metrics/`, browsable at `/stores/metrics` and readable programmatically via `GET /api/stores/metrics`. In mock mode tool execution is simulated, so no metric records are persisted.
+
 ## Bash Tool
 
 Controls which shell commands can be executed and in which directories.

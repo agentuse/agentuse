@@ -36,6 +36,9 @@ export const ToolsConfigSchema = z.object({
   // set, the agent can save viewable, session-linked deliverables under
   // `.agentuse/artifacts/` without a broad filesystem-write grant.
   artifacts: ArtifactsConfigSchema.optional(),
+  // record_metric: idempotent business-metric records into the reserved shared
+  // "metrics" store, independent of the agent's own `store` config.
+  metrics: z.boolean().optional(),
 });
 
 // Derive types from Zod schemas

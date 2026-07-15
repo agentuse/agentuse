@@ -3,6 +3,7 @@ import { createReadTool, createWriteTool, createEditTool } from './filesystem.js
 import { createBashTool } from './bash.js';
 import { createAwaitHumanTool } from './await-human.js';
 import { createArtifactTool, createListArtifactsTool, type ArtifactToolContext } from './artifacts.js';
+import { createRecordMetricTool } from './metrics.js';
 import type { ToolsConfig } from './types.js';
 import type { PathResolverContext } from './path-validator.js';
 
@@ -66,6 +67,16 @@ export function getTools(
     };
     tools['tools__artifact_save'] = createArtifactTool(artifactCtx);
     tools['tools__artifact_list'] = createListArtifactsTool(artifactCtx);
+  }
+
+  // Metric recording writes to the reserved "metrics" store; like artifacts it
+  // owns its write path and needs no filesystem or store grant.
+  if (config.metrics) {
+    tools['tools__record_metric'] = createRecordMetricTool({
+      projectRoot: context.projectRoot,
+      sessionId: context.sessionId,
+      agentId: context.agentId,
+    });
   }
 
   const extraContext = context as PathResolverContext & {

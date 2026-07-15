@@ -483,6 +483,62 @@ export class Store {
   }
 
   /**
+   * Create-or-update keyed on exact-match `where` filters against item data,
+   * as a single locked transaction (a separate query-then-write pair would let
+   * a concurrent writer create a duplicate between the two ops). When multiple
+   * items match, the newest one is updated. Update semantics mirror update():
+   * provided fields replace, `data` merges into the existing payload.
+   */
+  async upsertWhere(
+    where: Record<string, string | number | boolean>,
+    options: StoreCreateOptions
+  ): Promise<{ item: StoreItem; created: boolean }> {
+    const now = new Date().toISOString();
+    const normalizedData = normalizeStoreData(options.data);
+    const entries = Object.entries(where);
+
+    return this.withWriteLock<{ item: StoreItem; created: boolean }>((items) => {
+      let index = -1;
+      for (let i = 0; i < items.length; i++) {
+        const candidate = items[i]!;
+        if (!entries.every(([key, value]) => looseEquals(candidate.data[key], value))) continue;
+        if (index === -1 || candidate.createdAt.localeCompare(items[index]!.createdAt) > 0) index = i;
+      }
+
+      if (index === -1) {
+        const item: StoreItem = {
+          id: ulid(),
+          createdAt: now,
+          updatedAt: now,
+          data: normalizedData,
+          ...(options.type && { type: options.type }),
+          ...(options.title && { title: options.title }),
+          ...(options.status && { status: options.status }),
+          ...(options.parentId && { parentId: options.parentId }),
+          ...(options.tags && { tags: options.tags }),
+          ...(this.agentName && { createdBy: this.agentName }),
+        };
+        items.push(item);
+        return { items, result: { item, created: true } };
+      }
+
+      const existing = items[index]!;
+      const updated: StoreItem = {
+        ...existing,
+        updatedAt: now,
+        ...(options.type !== undefined && { type: options.type }),
+        ...(options.title !== undefined && { title: options.title }),
+        ...(options.status !== undefined && { status: options.status }),
+        ...(options.parentId !== undefined && { parentId: options.parentId }),
+        ...(options.tags !== undefined && { tags: options.tags }),
+        data: { ...existing.data, ...normalizedData },
+      };
+      items[index] = updated;
+      return { items, result: { item: updated, created: false } };
+    });
+  }
+
+  /**
    * Delete an item by ID
    */
   async delete(id: string): Promise<boolean> {
