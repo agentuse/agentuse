@@ -3486,8 +3486,25 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .project-collection > .agent-cards,
 .page-agents .project-collection > .agent-directories { padding: 10px 14px 14px; }
 .page-agents .project-collection .agent-card { background: var(--bg); }
-.page-agents .agent-directories { display: flex; flex-direction: column; gap: 18px; }
-.page-agents .agent-directory { min-width: 0; }
+/* Shelves flow side by side: --shelf-span (set per shelf from its agent count,
+   capped) scales both basis and grow, so single-agent folders share a row while
+   larger folders keep claiming a full one. */
+.page-agents .agent-directories { display: flex; flex-wrap: wrap; gap: 16px 14px; align-items: flex-start; }
+.page-agents .agent-directory {
+  min-width: min(280px, 100%);
+  flex-grow: var(--shelf-span, 1);
+  flex-shrink: 1;
+  flex-basis: calc(var(--shelf-span, 1) * 300px);
+  container-type: inline-size;
+}
+/* Narrow shelves keep their label whole: the ABOUT description is the first
+   thing to go, the label never ellipsizes before it does. */
+.page-agents .agent-directory h3 { flex-shrink: 0; }
+@container (max-width: 520px) {
+  .page-agents .agent-directory-desc { display: none; }
+  /* Long untranslated paths still must not push the count/chevron out. */
+  .page-agents .agent-directory h3 { max-width: calc(100cqw - 96px); }
+}
 .page-agents .agent-directory > summary {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 2px 9px;

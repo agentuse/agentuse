@@ -521,7 +521,9 @@ function groupAgentsByDirectory(agents: AgentRow[]): AgentDirectoryGroup[] {
 /**
  * Split a project's card gallery into collapsible shelves using the agents'
  * real parent directories. A lone root-level group stays unlabelled; every
- * actual directory remains visible as useful location context.
+ * actual directory remains visible as useful location context. Shelves order
+ * by their displayed label (numeric-aware), so ABOUT names like "1 · Intake"
+ * define the walk order even when directory names sort differently.
  */
 function AgentDirectoryGroups(props: { agents: AgentRow[]; ctx: RowCtx; projectId: string; aboutFor: (dir: string) => AboutInfo | undefined }) {
   const groups = groupAgentsByDirectory(props.agents);
@@ -533,16 +535,26 @@ function AgentDirectoryGroups(props: { agents: AgentRow[]; ctx: RowCtx; projectI
       </div>
     );
   }
+  // A folder's ABOUT.md names the shelf (#156); the raw directory path
+  // stays reachable as the heading tooltip. Translate, don't disguise.
+  const labeled = groups.map((group) => ({
+    ...group,
+    about: group.directory ? props.aboutFor(group.directory) : undefined,
+  })).map((group) => ({
+    ...group,
+    label: group.about?.name ?? (group.directory || `${term('project')} root`),
+  })).sort((a, b) => {
+    if (a.directory === '') return -1;
+    if (b.directory === '') return 1;
+    return a.label.localeCompare(b.label, undefined, { numeric: true });
+  });
   return (
     <div class="agent-directories">
-      {groups.map((group) => {
-        // A folder's ABOUT.md names the shelf (#156); the raw directory path
-        // stays reachable as the heading tooltip. Translate, don't disguise.
-        const about = group.directory ? props.aboutFor(group.directory) : undefined;
-        const label = about?.name ?? (group.directory || `${term('project')} root`);
+      {labeled.map((group) => {
+        const { about, label } = group;
         const id = `${projectAnchor(props.projectId)}-directory-${(group.directory || 'root').replace(/[^a-zA-Z0-9_-]/g, '-')}`;
         return (
-          <details class="agent-directory" open key={group.directory || '__root'}>
+          <details class="agent-directory" open key={group.directory || '__root'} style={`--shelf-span: ${Math.min(group.agents.length, 3)}`}>
             <summary aria-labelledby={id}>
               <svg class="agent-directory-folder" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M1.75 4.25h4l1.2 1.5h7.3v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1v-8Z" />
