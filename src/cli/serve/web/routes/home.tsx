@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useCountUp } from '../hooks/use-count-up';
 import type { ApprovalRow, SerializedSchedule, SessionRow, StoreRowsPayload } from '../lib/api';
-import { fetchInfo, fetchAgents, fetchSchedules, fetchStoreRows } from '../lib/api';
+import { fetchInfo, fetchAgents, fetchSchedules, fetchStoreRows, postSessionStop } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useHomeSections } from '../hooks/use-home-sections';
 import { useMetricPrefs, type MetricDisplay } from '../hooks/use-metric-prefs';
@@ -132,7 +132,7 @@ function ApprovalCard(props: { row: ApprovalRow }) {
   );
 }
 
-function FailedRow(props: { row: SessionRow }) {
+function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => void }) {
   const { row } = props;
   const at = row.updatedAt || row.createdAt;
   return (
@@ -141,6 +141,22 @@ function FailedRow(props: { row: SessionRow }) {
       <span class="attn-agent">{row.agent.name || row.agent.id}</span>
       <span class="attn-fail">{displayStatusLabel(row.status, row.errorCode)} · needs a look</span>
       <span class="feed-time" title={formatApprovalTime(at)}>{formatRelativeTime(at)}</span>
+      <button
+        type="button"
+        class="attn-dismiss"
+        title="Dismiss: mark this run reviewed and clear it from the list (its status is kept)"
+        aria-label={`Dismiss ${row.agent.name || row.agent.id}`}
+        onClick={(event) => {
+          // The button lives inside the row link; keep the click from navigating.
+          event.preventDefault();
+          event.stopPropagation();
+          props.onDismiss(row);
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 6 6 18" /><path d="M6 6 18 18" />
+        </svg>
+      </button>
     </a>
   );
 }
@@ -148,7 +164,7 @@ function FailedRow(props: { row: SessionRow }) {
 /** What's blocked on a human: pending gates first, then recent failed runs.
  *  Renders even when empty — "nothing waiting on you" is the answer the
  *  section exists to give. */
-function AttentionSection(props: { pending: ApprovalRow[]; failed: SessionRow[] }) {
+function AttentionSection(props: { pending: ApprovalRow[]; failed: SessionRow[]; onDismissFailed: (row: SessionRow) => void }) {
   const { pending, failed } = props;
   const total = pending.length + failed.length;
   return (
@@ -163,7 +179,7 @@ function AttentionSection(props: { pending: ApprovalRow[]; failed: SessionRow[] 
         : (
           <div class="attn-list">
             {pending.map((row) => <ApprovalCard key={`${row.project}:${row.sessionId}`} row={row} />)}
-            {failed.map((row) => <FailedRow key={`${row.project}:${row.sessionId}`} row={row} />)}
+            {failed.map((row) => <FailedRow key={`${row.project}:${row.sessionId}`} row={row} onDismiss={props.onDismissFailed} />)}
           </div>
         )}
     </section>
@@ -646,9 +662,26 @@ export default function Home() {
   // Recent failures surface in "Needs your attention" alongside pending gates.
   // Not every failed-tone run is waiting on a human: runs the reviewer stopped
   // themselves (USER_STOPPED) or already reviewed and discarded (dismissedAt,
-  // via the session page's Discard button) are acknowledged, so they stay out.
+  // via the session page's Discard button or the row's hover ✕) are
+  // acknowledged, so they stay out. dismissedLocal hides a just-dismissed row
+  // instantly, ahead of the list stream's next snapshot.
+  const [dismissedLocal, setDismissedLocal] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const dismissFailed = useCallback((row: SessionRow) => {
+    const key = sessionRowKey(row);
+    setDismissedLocal((current) => new Set(current).add(key));
+    postSessionStop(row.sessionId, undefined, { project: row.project, reason: 'Discarded from home' })
+      .catch(() => {
+        // Dismissal did not land; put the row back so it isn't silently lost.
+        setDismissedLocal((current) => {
+          const next = new Set(current);
+          next.delete(key);
+          return next;
+        });
+      });
+  }, []);
   const failedRecent = liveHome.sessions
-    .filter((s) => runTone(s.status) === 'failed' && s.errorCode !== 'USER_STOPPED' && s.dismissedAt === undefined)
+    .filter((s) => runTone(s.status) === 'failed' && s.errorCode !== 'USER_STOPPED' && s.dismissedAt === undefined
+      && !dismissedLocal.has(sessionRowKey(s)))
     .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
     .slice(0, 3);
   const pendingApprovals = liveHome.pendingApprovals;
@@ -733,7 +766,7 @@ export default function Home() {
         </section>
 
         {sections.isVisible('attention') && (
-          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} />
+          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} onDismissFailed={dismissFailed} />
         )}
 
         {sections.isVisible('results') && hasAnyMetrics && (

@@ -3033,6 +3033,22 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home a.attn-run:hover { background: var(--panel-hover); border-color: var(--line-strong); }
 .page-home .attn-fail { font-size: 12px; color: var(--red); white-space: nowrap; }
 .page-home .attn-run .feed-time { margin-left: auto; }
+/* Hover ✕ on a failed row: dismiss (mark reviewed) without leaving Home. */
+.page-home .attn-dismiss {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px;
+  border: 1px solid transparent; border-radius: 7px;
+  background: none; color: var(--muted-2);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.page-home a.attn-run:hover .attn-dismiss,
+.page-home a.attn-run:focus-within .attn-dismiss { opacity: 1; }
+.page-home .attn-dismiss:hover { color: var(--red); border-color: var(--line-strong); background: var(--panel-hover); }
+/* Touch screens have no hover: keep the control faintly visible. */
+@media (hover: none) { .page-home .attn-dismiss { opacity: 0.55; } }
 
 /* Latest results: completed runs' final responses as one-liners, per project. */
 .page-home .latest-groups { display: flex; flex-direction: column; gap: 14px; }
