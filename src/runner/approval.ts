@@ -52,9 +52,7 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
   const approvalInstructions = [
     '## Approval Gate',
     '',
-    'Approval is enabled in frontmatter. Before you take an irreversible publish/ship/finalize action, or before delivering prepared work as your final answer, call the `await_human` tool.',
-    '',
-    'Your instructions take precedence over this default. If they define their own approval boundary (what needs approval, or that every run must be approved), follow that boundary exactly, in either direction. Only when your instructions are silent and the run ends with nothing to review (no gated action taken, no deliverable prepared, for example a scheduled run that found no work to do), finish directly with your normal report instead of requesting approval.',
+    'Approval is enabled in frontmatter. Before you take an irreversible publish/ship/finalize action, or before delivering prepared work as your final answer, call the `await_human` tool. If your instructions define their own approval boundary, follow it.',
     '',
     'Fill the fields so a reviewer can decide without asking you follow-up questions. Put the substance in the body fields, NOT in `prompt`:',
     '- prompt: ONE short line, a direct yes/no question (e.g. "Approve this newsletter draft for send?"). Do not put the content, headings, or bullet lists here.',
