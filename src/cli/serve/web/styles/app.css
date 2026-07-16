@@ -733,7 +733,10 @@ a, button, select, summary, label, input, textarea,
    own, so its log-actions row links to the parent run where the decision is made. */
 .page-approval-detail .log-parent-approve {
   display: inline-flex; align-items: center; gap: 8px; flex: none;
-  padding: 8px 14px;
+  /* The only actionable control on a suspended leaf page: match the decision
+     buttons' touch height, not the copy-chip scale. */
+  min-height: 42px;
+  padding: 8px 16px;
   border-radius: 8px;
   background: var(--primary-bg);
   color: var(--primary-fg);
@@ -1927,9 +1930,11 @@ label.approval-option:focus-within {
 /* inline approval actions */
 /* Sticky: a long gate (many options, big diffs) pushes the decision below the
    fold; pinning the bar to the viewport bottom keeps Approve/Reject reachable
-   while the reviewer scrolls the evidence. It needs the opaque bar treatment
-   (same recipe as the topbar), not the translucent panel, because it floats
-   over log text mid-scroll. */
+   while the reviewer scrolls the evidence. Sticky is bounded by the gate's own
+   .log-item, which is fine because a pending gate is the run's last entry.
+   Deliberately frosted (--bar-bg + blur), unlike the opaque topbar/session-bar:
+   it floats OVER log text mid-scroll, and the see-through hint tells the
+   reviewer there's more evidence beneath. */
 .log-actions {
   position: sticky;
   bottom: 12px;
@@ -1997,8 +2002,8 @@ label.approval-option:focus-within {
 }
 .page-approval-detail button:hover { background: var(--panel-hover); border-color: var(--line-strong); }
 .page-approval-detail button:active { transform: translateY(1px); }
-/* Compact copy chip inside a change box; placed after the broad button rule
-   above so the equal-specificity tie resolves to this size, not 40px. */
+/* Compact copy chip inside a change box; the compound selector out-specifies
+   the :where()-weakened base rule above, so this size wins over 40px. */
 .approval-copy,
 .page-approval-detail button:not(.icon-btn):not(.palette-trigger).approval-copy {
   min-height: 24px;
@@ -2521,7 +2526,9 @@ html[data-route-loading] body::after {
     bottom: calc(8px + env(safe-area-inset-bottom, 0px));
     padding: 10px;
   }
-  .log-actions-hint { display: none; }
+  /* Only the keyboard shortcuts are useless on touch; the parent-approve
+     variant's hint is an explanation and must survive. */
+  .log-actions-hint-kbd { display: none; }
   .log-actions-buttons {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -2529,6 +2536,7 @@ html[data-route-loading] body::after {
   }
   .log-actions-buttons button { min-height: 48px; min-width: 0; padding: 0 12px; }
   .log-actions-buttons button.primary { grid-column: 1 / -1; }
+  .page-approval-detail .log-parent-approve { min-height: 48px; justify-content: center; }
   /* Full-width button row: the button itself bounds the label now. */
   .approve-choice-label { max-width: 100%; margin-left: 0; }
   .continue-actions { flex-direction: column; align-items: stretch; }
@@ -4573,6 +4581,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .approval-copy:focus-visible,
 .approval-card summary:focus-visible,
 .theme-toggle button:focus-visible,
+.log-actions-buttons button:focus-visible,
+.log-parent-approve:focus-visible,
 .page-home .card:focus-visible,
 .page-home a.proj:focus-visible,
 .page-sessions a.row:focus-visible,

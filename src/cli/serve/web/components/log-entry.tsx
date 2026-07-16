@@ -632,7 +632,7 @@ function LogEntryImpl(props: LogEntryProps) {
                 {props.pendingAction === 'approve' ? 'approving…' : props.pendingAction === 'reject' ? 'rejecting…' : props.pendingAction === 'comment' ? 'sending comment…' : 'submitting decision…'}
               </span>
             ) : (
-              <div class="log-actions-hint">
+              <div class="log-actions-hint log-actions-hint-kbd">
                 <span class="kbd">⌘⏎</span> approve <span class="kbd">esc</span> reject <span class="kbd">c</span> comment
               </div>
             )}
