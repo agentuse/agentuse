@@ -47,10 +47,13 @@ export class WebAssets {
   private shellCache: { html: string; key: string } | null = null;
   /** Configured deployment brand (serve.brand.name); undefined = plain AgentUse. */
   private readonly brandName: string | undefined;
+  /** Configured display nouns (serve.terms); undefined = technical terms. */
+  private readonly terms: Record<string, string> | undefined;
 
-  constructor(rootOverride?: string, brandName?: string) {
+  constructor(rootOverride?: string, brandName?: string, terms?: Record<string, string>) {
     this.root = rootOverride ?? WebAssets.resolveRoot();
     this.brandName = brandName?.trim() || undefined;
+    this.terms = terms && Object.keys(terms).length > 0 ? terms : undefined;
   }
 
   private static resolveRoot(): string | null {
@@ -171,15 +174,17 @@ export class WebAssets {
     const preloadLinks = preload
       .map((href) => `<link rel="modulepreload" href="/assets/${escapeHtml(href)}">`)
       .join("\n  ");
-    // Configured deployment brand, injected for the client bundle
-    // (web/lib/brand.ts) so the very first render already knows it: no
-    // fetch, no title flash. Brand is static per server process, so the
-    // cached shell stays valid. JSON-escaping `<` keeps the name from ever
-    // closing the script tag.
+    // Configured deployment brand and display nouns, injected for the client
+    // bundle (web/lib/brand.ts, web/lib/terms.ts) so the very first render
+    // already knows them: no fetch, no title flash. Both are static per
+    // server process, so the cached shell stays valid. JSON-escaping `<`
+    // keeps the values from ever closing the script tag.
+    const injectJson = (value: unknown): string => JSON.stringify(value).replace(/</g, "\\u003c");
     const brand = this.brandName;
-    const brandTag = brand
-      ? `\n  <script>window.__AGENTUSE_BRAND__ = ${JSON.stringify({ name: brand }).replace(/</g, "\\u003c")};</script>`
-      : "";
+    const globals: string[] = [];
+    if (brand) globals.push(`window.__AGENTUSE_BRAND__ = ${injectJson({ name: brand })};`);
+    if (this.terms) globals.push(`window.__AGENTUSE_TERMS__ = ${injectJson(this.terms)};`);
+    const brandTag = globals.length > 0 ? `\n  <script>${globals.join(" ")}</script>` : "";
     const html = `<!doctype html>
 <html lang="en">
 <head>

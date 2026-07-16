@@ -3,7 +3,7 @@ import { createServer, IncomingMessage, ServerResponse } from "http";
 import { WebClient } from "@slack/web-api";
 import { timingSafeEqual } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
-import { join, resolve, basename, relative, extname } from "path";
+import { join, resolve, basename, relative, extname, dirname } from "path";
 import { existsSync, realpathSync } from "fs";
 import { readFile, stat } from "fs/promises";
 import { glob } from "glob";
@@ -48,6 +48,7 @@ const TOUCH_ICON_180_PNG = Buffer.from(TOUCH_ICON_180_PNG_BASE64, "base64");
 const ICON_192_PNG = Buffer.from(ICON_192_PNG_BASE64, "base64");
 const ICON_512_PNG = Buffer.from(ICON_512_PNG_BASE64, "base64");
 import { WebAssets, renderWebAssetsMissingPage } from "./serve/static";
+import { readAbout, type AboutInfo } from "./serve/about";
 import { PushService, SERVICE_WORKER_JS } from "./serve/push";
 import { ApprovalEventHub, ApprovalListEventHub } from "./serve/sse";
 import {
@@ -1442,6 +1443,43 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
   }
   agents.sort((a, b) => a.projectId.localeCompare(b.projectId) || a.path.localeCompare(b.path));
   return { agents, errors };
+}
+
+/**
+ * ABOUT.md files describing the directories the agents page renders (#156):
+ * every project root (as path '.') plus each project-relative folder that
+ * groups agents, ancestors included so nested groups can carry names too.
+ * Only directories that actually have the file get an entry; the rest keep
+ * rendering as ids and paths. Display identity only, never behavior.
+ */
+async function collectDirAbouts(
+  projects: Project[],
+  agents: AgentSummary[]
+): Promise<Array<{ projectId: string; path: string; about: AboutInfo }>> {
+  // NOTE: keys use dirname() output, matched client-side against
+  // agent.path.lastIndexOf('/'): both derive from the same relative() paths,
+  // which are POSIX-separated everywhere serve runs today (mirrors the
+  // pre-existing '/' assumption in agents.tsx agentDirectory()).
+  const dirsByProject = new Map<string, Set<string>>(projects.map((p) => [p.id, new Set(['.'])]));
+  for (const agent of agents) {
+    let dir = dirname(agent.path);
+    const dirs = dirsByProject.get(agent.projectId);
+    if (!dirs) continue;
+    while (dir && dir !== '.' && dir !== '/' && !dir.startsWith('..')) {
+      dirs.add(dir);
+      dir = dirname(dir);
+    }
+  }
+  const out: Array<{ projectId: string; path: string; about: AboutInfo }> = [];
+  await Promise.all(projects.map(async (project) => {
+    const dirs = dirsByProject.get(project.id) ?? new Set<string>();
+    await Promise.all([...dirs].map(async (dir) => {
+      const about = await readAbout(resolve(project.root, dir));
+      if (about) out.push({ projectId: project.id, path: dir, about });
+    }));
+  }));
+  out.sort((a, b) => a.projectId.localeCompare(b.projectId) || a.path.localeCompare(b.path));
+  return out;
 }
 
 /**
@@ -3192,7 +3230,7 @@ export function createServeCommand(): Command {
       // Serve the built SPA (dist/web): hashed immutable assets at /assets/*,
       // and the tiny no-store HTML shell at every page route. All page data is
       // fetched client-side from the existing /api/* and /sessions/:id/* JSON.
-      const staticAssets = new WebAssets(undefined, brandNameCfg);
+      const staticAssets = new WebAssets(undefined, brandNameCfg, serveCfg?.terms);
       // Web Push to home-screen-installed clients: VAPID keys + device
       // subscriptions persist in the data dir; notifications fire on pending
       // approvals and session completions (see pushService.notify call sites).
@@ -3723,13 +3761,17 @@ export function createServeCommand(): Command {
         // Both share the same project rollup so the two surfaces never drift.
         if (req.method === "GET" && routePath === "/") {
           const defaultProject = effectiveDefault ?? (multiProject ? null : projects[0].id);
-          const projectInfo = projects.map((p) => ({
+          // ABOUT.md at the project root names the project for the UI (#156):
+          // display identity only, read per request (mtime-cached) so edits
+          // show up without a restart.
+          const projectInfo = await Promise.all(projects.map(async (p) => ({
             id: p.id,
             path: p.root,
             ...(p.scopeRoot !== p.root && { scope: p.scopeRoot }),
             agentCount: agentCounts.get(p.id) ?? 0,
             scheduleCount: scheduler.list().filter((s) => s.projectId === p.id).length,
-          }));
+            ...await readAbout(p.root).then((about) => (about ? { about } : {})),
+          })));
 
           if (isApi) {
             res.writeHead(200, { "Content-Type": "application/json" });
@@ -3741,7 +3783,8 @@ export function createServeCommand(): Command {
         if (req.method === "GET" && routePath === '/agents') {
           const { agents, errors } = await collectAgents(projects);
           if (isApi) {
-            sendJSON(res, 200, { success: true, agents, errors });
+            const dirs = await collectDirAbouts(projects, agents);
+            sendJSON(res, 200, { success: true, agents, errors, ...(dirs.length > 0 && { dirs }) });
             return;
           }
         }

@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { termTitle } from '../lib/terms';
 
 /** Every toggleable Home section, in page order. The hero is not listed: it is
- *  the page's identity and always renders. */
+ *  the page's identity and always renders. The projects label honors
+ *  serve.terms; the map is injected before any module runs, so this is safe
+ *  at module scope. */
 export const HOME_SECTIONS = [
   { id: 'attention', label: 'Needs attention' },
   { id: 'results', label: 'Results' },
@@ -10,7 +13,7 @@ export const HOME_SECTIONS = [
   { id: 'coming-up', label: 'Coming up' },
   { id: 'feed', label: 'Activity feed' },
   { id: 'cards', label: 'Navigation cards' },
-  { id: 'projects', label: 'Projects' },
+  { id: 'projects', label: termTitle('project', 2) },
 ] as const;
 
 export type HomeSectionId = (typeof HOME_SECTIONS)[number]['id'];

@@ -27,6 +27,7 @@ import {
   sessionErrorText,
 } from '../lib/format';
 import { brandName, pageTitle } from '../lib/brand';
+import { term } from '../lib/terms';
 
 type ApprovalHeader = Omit<ApprovalPageInfo, 'logs'>;
 
@@ -1039,7 +1040,7 @@ export default function SessionDetail() {
           <p class="prompt">{promptText}</p>
           <div class="meta">
             <div class="cell"><span class="label">session</span><code>{approval.sessionId}</code></div>
-            <div class="cell"><span class="label">project</span><code>{projectId ?? approval.project ?? 'default'}</code></div>
+            <div class="cell"><span class="label">{term('project')}</span><code>{projectId ?? approval.project ?? 'default'}</code></div>
             <div class="cell"><span class="label">agent</span><span class="value">{agentLabel}</span></div>
             {approval.createdAt !== undefined && (
               <div class="cell"><span class="label">started</span><span class="value">{formatApprovalTime(approval.createdAt)}</span></div>

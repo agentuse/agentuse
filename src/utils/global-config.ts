@@ -23,6 +23,15 @@ export interface GlobalServeConfig {
    * custom logos/wordmarks are out of scope (#152).
    */
   brand?: { name?: string };
+  /**
+   * Display nouns for the serve web UI, render layer only. Keys are the fixed
+   * technical terms; values are what this deployment calls them (e.g.
+   * `{ "project": "department", "folder": "team" }`). A value may carry an
+   * explicit plural as "singular|plural" for irregulars. API routes, payload
+   * fields, and the CLI always keep the technical terms; the `agent` noun is
+   * not renameable by design (#156).
+   */
+  terms?: { project?: string; folder?: string };
 }
 
 export interface GlobalConfig {
@@ -212,6 +221,26 @@ function validate(input: unknown, configPath: string): GlobalConfig {
       b.name = brand.name.trim();
     }
     srv.brand = b;
+  }
+  if (serve.terms !== undefined) {
+    if (serve.terms === null || typeof serve.terms !== 'object' || Array.isArray(serve.terms)) {
+      fail(configPath, '`serve.terms` must be an object');
+    }
+    const TERM_KEYS = ['project', 'folder'] as const;
+    const terms: { project?: string; folder?: string } = {};
+    for (const [key, value] of Object.entries(serve.terms as Record<string, unknown>)) {
+      if (!(TERM_KEYS as readonly string[]).includes(key)) {
+        fail(configPath, `\`serve.terms.${key}\` is not a customizable term (expected: ${TERM_KEYS.join(', ')})`);
+      }
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        fail(configPath, `\`serve.terms.${key}\` must be a non-empty string`);
+      }
+      if (value.trim().length > 40) {
+        fail(configPath, `\`serve.terms.${key}\` must be 40 characters or fewer`);
+      }
+      terms[key as (typeof TERM_KEYS)[number]] = value.trim();
+    }
+    srv.terms = terms;
   }
   out.serve = srv;
   return out;

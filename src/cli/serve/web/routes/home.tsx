@@ -12,6 +12,7 @@ import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone } from '../lib/format';
 import { brandName, pageTitle } from '../lib/brand';
+import { term, termTitle } from '../lib/terms';
 
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -835,23 +836,26 @@ export default function Home() {
         </div>}
 
         {sections.isVisible('projects') && <section class="group">
-          <h2 class="group-title"><span>Projects</span><span class="count">{projects.length}</span><span class="rule"></span></h2>
+          <h2 class="group-title"><span>{termTitle('project', 2)}</span><span class="count">{projects.length}</span><span class="rule"></span></h2>
           <div class="panel">
             {projects.length === 0
               ? (loading
-                ? <Loading label="Loading projects…" />
-                : <div class="empty">No projects loaded.</div>)
+                ? <Loading label={`Loading ${term('project', 2)}…`} />
+                : <div class="empty">No {term('project', 2)} loaded.</div>)
               : projects.map((p) => (
-                <a class="proj" href={`/agents/${encodeURIComponent(p.id)}`} key={p.id}>
+                // ABOUT.md identity (#156): the name replaces the directory id
+                // and the description replaces the absolute path, which stays
+                // reachable in the row tooltip. No file, current behavior.
+                <a class="proj" href={`/agents/${encodeURIComponent(p.id)}`} key={p.id} {...(p.about?.name || p.about?.description ? { title: `${p.id} · ${p.path}` } : {})}>
                   <div>
                     <div class="proj-id">
-                      {p.id}
+                      {p.about?.name ?? p.id}
                       {(runningByProject.get(p.id) ?? 0) > 0 && <span class="proj-live" title={`${runningByProject.get(p.id)} running`} aria-label={`${runningByProject.get(p.id)} running`}></span>}
                       {p.id === data?.default && <span class="proj-default">default</span>}
                     </div>
-                    <div class="proj-path">{p.path}{p.scope && p.scope !== p.path ? ` · scope ${p.scope}` : ''}</div>
+                    <div class={p.about?.description ? 'proj-path proj-desc' : 'proj-path'}>{p.about?.description ?? `${p.path}${p.scope && p.scope !== p.path ? ` · scope ${p.scope}` : ''}`}</div>
                   </div>
-                  <div class="proj-counts">{plural(loadedFor(p), 'agent')} · {plural(p.scheduleCount, 'schedule')}<span class="proj-go" aria-hidden="true">›</span></div>
+                  <div class="proj-counts">{p.about?.owner && <span class="proj-owner">{p.about.owner} · </span>}{plural(loadedFor(p), 'agent')} · {plural(p.scheduleCount, 'schedule')}<span class="proj-go" aria-hidden="true">›</span></div>
                 </a>
               ))}
           </div>

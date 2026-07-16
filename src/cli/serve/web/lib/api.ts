@@ -278,12 +278,26 @@ export function fetchStoreItem(storeName: string, itemId: string, project?: stri
   return getJson(`/api/stores/${encodeURIComponent(storeName)}/${encodeURIComponent(itemId)}`, { project });
 }
 
+/**
+ * Display identity from an `ABOUT.md` sitting in the directory it describes
+ * (#156). Labels only, never behavior: `name` replaces the directory name,
+ * `description` replaces the absolute path, `body` renders on the detail
+ * surface. Absent file means absent field, and the UI falls back to paths.
+ */
+export interface AboutInfo {
+  name?: string;
+  description?: string;
+  owner?: string;
+  body?: string;
+}
+
 export interface ProjectInfo {
   id: string;
   path: string;
   scope?: string;
   agentCount: number;
   scheduleCount: number;
+  about?: AboutInfo;
 }
 
 export interface InfoPayload {
@@ -298,10 +312,20 @@ export function fetchInfo(): Promise<InfoPayload> {
 
 export type AgentRow = AgentSummary;
 
+/** Folder-level `ABOUT.md`: names a directory that groups agents (#156). */
+export interface DirAbout {
+  projectId: string;
+  /** Project-relative directory path, the same notation agent `path` uses. */
+  path: string;
+  about: AboutInfo;
+}
+
 export interface AgentsPayload {
   success: true;
   agents: AgentRow[];
   errors: Array<{ projectId: string; path: string; message: string }>;
+  /** Only directories that actually have an ABOUT.md; often absent. */
+  dirs?: DirAbout[];
 }
 
 export function fetchAgents(): Promise<AgentsPayload> {

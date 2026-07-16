@@ -172,6 +172,26 @@ describe('WebAssets static serving', () => {
     expect(shell).not.toContain('<script>alert(1)</script>');
   });
 
+  it('injects configured display terms alongside the brand', () => {
+    const configured = new WebAssets(webDir, 'Kettlebase', { project: 'department', folder: 'team' });
+    const shell = configured.renderShell()!;
+    expect(shell).toContain('window.__AGENTUSE_BRAND__ = {"name":"Kettlebase"};');
+    expect(shell).toContain('window.__AGENTUSE_TERMS__ = {"project":"department","folder":"team"};');
+  });
+
+  it('injects terms without a brand and omits the global when empty', () => {
+    const termsOnly = new WebAssets(webDir, undefined, { project: 'client' });
+    expect(termsOnly.renderShell()!).toContain('window.__AGENTUSE_TERMS__ = {"project":"client"};');
+    const empty = new WebAssets(webDir, undefined, {});
+    expect(empty.renderShell()!).not.toContain('__AGENTUSE_TERMS__');
+    expect(assets.renderShell()!).not.toContain('__AGENTUSE_TERMS__');
+  });
+
+  it('never lets a term value break out of the shell markup', () => {
+    const hostile = new WebAssets(webDir, undefined, { project: '</script><script>alert(1)</script>' });
+    expect(hostile.renderShell()!).not.toContain('<script>alert(1)</script>');
+  });
+
   it('re-reads the manifest when it changes on disk', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-web-reload-'));
     try {

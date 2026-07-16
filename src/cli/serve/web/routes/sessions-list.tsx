@@ -14,6 +14,7 @@ import { GroupRail } from '../components/group-rail';
 import { LogContent } from '../components/content';
 import { formatApprovalTime, formatRelativeTime, errorText, displayStatusLabel } from '../lib/format';
 import { pageTitle } from '../lib/brand';
+import { term } from '../lib/terms';
 import { useSessionListView, type SessionListView } from '../hooks/use-session-list-view';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
@@ -430,7 +431,7 @@ export default function SessionsList() {
 
         {resolvedError && <div class="errors" role="alert">Failed to load sessions: {resolvedError.message}</div>}
         {resolvedData && resolvedData.errors.length > 0 && (
-          <div class="errors" role="alert">Some projects failed: <ul>{resolvedData.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul></div>
+          <div class="errors" role="alert">Some {term('project', 2)} failed: <ul>{resolvedData.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul></div>
         )}
         {resolvedLoading && !resolvedData && <Loading label="Loading sessions…" />}
         {resolvedData && (rows.length === 0

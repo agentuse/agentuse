@@ -1,8 +1,10 @@
 import type { VNode } from 'preact';
 import { useLocation } from 'preact-iso';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { AgentRow, SessionRow } from '../lib/api';
+import type { AboutInfo, AgentRow, SessionRow } from '../lib/api';
 import { fetchAgents, fetchSessions } from '../lib/api';
+import { term, termTitle } from '../lib/terms';
+import { LogContent } from '../components/content';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { useAgentsView } from '../hooks/use-agents-view';
@@ -457,9 +459,10 @@ function AgentCard(props: { agent: AgentRow; ctx: RowCtx; showProject?: boolean 
  * surface as its cards makes the project the primary visual unit, while live
  * activity remains visible without turning every project into a dashboard.
  */
-function ProjectCollectionHeader(props: { projectId: string; agents: AgentRow[]; ctx: RowCtx }) {
+function ProjectCollectionHeader(props: { projectId: string; agents: AgentRow[]; ctx: RowCtx; about?: AboutInfo | undefined }) {
   const liveCount = props.agents.filter((a) => runTone(props.ctx.lastRunFor(a)?.status ?? '') === 'running').length;
   const countLabel = `${props.agents.length} agent${props.agents.length === 1 ? '' : 's'}`;
+  const name = props.about?.name ?? props.projectId;
   return (
     <div class="project-collection-head">
       <div class="project-collection-identity">
@@ -470,14 +473,16 @@ function ProjectCollectionHeader(props: { projectId: string; agents: AgentRow[];
           </svg>
         </span>
         <div>
-          <span class="project-collection-label">Project</span>
-          <h2><a href={agentsProjectHref(props.projectId)}>{props.projectId}</a></h2>
+          <span class="project-collection-label">{termTitle('project')}</span>
+          <h2><a href={agentsProjectHref(props.projectId)} {...(props.about?.name ? { title: props.projectId } : {})}>{name}</a></h2>
+          {props.about?.description && <p class="project-collection-desc">{props.about.description}</p>}
         </div>
       </div>
       <div class="project-collection-summary">
+        {props.about?.owner && <span class="project-collection-owner">{props.about.owner}</span>}
         {liveCount > 0 && <span class="project-collection-live"><span aria-hidden="true"></span>{liveCount} running</span>}
         <span class="project-collection-count">{countLabel}</span>
-        <a class="project-collection-open" href={agentsProjectHref(props.projectId)} aria-label={`Open ${props.projectId} project`}>
+        <a class="project-collection-open" href={agentsProjectHref(props.projectId)} aria-label={`Open ${name} ${term('project')}`}>
           Open <span aria-hidden="true">→</span>
         </a>
       </div>
@@ -518,7 +523,7 @@ function groupAgentsByDirectory(agents: AgentRow[]): AgentDirectoryGroup[] {
  * real parent directories. A lone root-level group stays unlabelled; every
  * actual directory remains visible as useful location context.
  */
-function AgentDirectoryGroups(props: { agents: AgentRow[]; ctx: RowCtx; projectId: string }) {
+function AgentDirectoryGroups(props: { agents: AgentRow[]; ctx: RowCtx; projectId: string; aboutFor: (dir: string) => AboutInfo | undefined }) {
   const groups = groupAgentsByDirectory(props.agents);
   const showDirectoryHeaders = groups.length > 1 || groups[0]?.directory !== '';
   if (!showDirectoryHeaders) {
@@ -531,8 +536,11 @@ function AgentDirectoryGroups(props: { agents: AgentRow[]; ctx: RowCtx; projectI
   return (
     <div class="agent-directories">
       {groups.map((group) => {
-        const label = group.directory || 'project root';
-        const id = `${projectAnchor(props.projectId)}-directory-${label.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+        // A folder's ABOUT.md names the shelf (#156); the raw directory path
+        // stays reachable as the heading tooltip. Translate, don't disguise.
+        const about = group.directory ? props.aboutFor(group.directory) : undefined;
+        const label = about?.name ?? (group.directory || `${term('project')} root`);
+        const id = `${projectAnchor(props.projectId)}-directory-${(group.directory || 'root').replace(/[^a-zA-Z0-9_-]/g, '-')}`;
         return (
           <details class="agent-directory" open key={group.directory || '__root'}>
             <summary aria-labelledby={id}>
@@ -540,7 +548,8 @@ function AgentDirectoryGroups(props: { agents: AgentRow[]; ctx: RowCtx; projectI
                 <path d="M1.75 4.25h4l1.2 1.5h7.3v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1v-8Z" />
                 <path d="M1.75 5.75h12.5" />
               </svg>
-              <h3 id={id}>{label}</h3>
+              <h3 id={id} {...(about?.name ? { title: group.directory } : {})}>{label}</h3>
+              {about?.description && <span class="agent-directory-desc">{about.description}</span>}
               <span class="agent-directory-count">{group.agents.length}</span>
               <span class="agent-directory-rule"></span>
               <svg class="agent-directory-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -683,9 +692,16 @@ function matchesFilter(agent: AgentRow, query: string): boolean {
 export default function Agents({ project }: { project?: string } = {}) {
   const scoped = typeof project === 'string' && project.length > 0;
   const location = useLocation();
-  useTitle(pageTitle(scoped ? project : 'Agents'));
   const goBack = useSmartBack('/agents');
   const { data, error, loading } = useFetch('agents', () => fetchAgents(), { refreshMs: 30_000 });
+  // ABOUT.md identity (#156): directory path -> display info, keyed
+  // `projectId::dir` with '.' for the project root. Missing entries fall back
+  // to raw ids and paths, so an about-less deployment renders unchanged.
+  const aboutIndex = new Map<string, AboutInfo>();
+  for (const d of data?.dirs ?? []) aboutIndex.set(`${d.projectId}::${d.path}`, d.about);
+  const aboutOf = (projectId: string, dir: string) => aboutIndex.get(`${projectId}::${dir || '.'}`);
+  const projectLabel = (projectId: string) => aboutOf(projectId, '.')?.name ?? projectId;
+  useTitle(pageTitle(scoped ? projectLabel(project) : 'Agents'));
   const { isPinned, toggle, keys } = usePins();
   const pins: PinApi = { isPinned, toggle };
   const { columns, addColumn, removeColumn } = useAgentColumns();
@@ -762,7 +778,7 @@ export default function Agents({ project }: { project?: string } = {}) {
   }
   const errors = (data?.errors ?? []).filter((e) => !scoped || e.projectId === project);
   const railItems = !scoped
-    ? [...byProject.entries()].map(([projectId, agents]) => ({ id: projectAnchor(projectId), label: projectId, count: agents.length }))
+    ? [...byProject.entries()].map(([projectId, agents]) => ({ id: projectAnchor(projectId), label: projectLabel(projectId), count: agents.length }))
     : [];
 
   // Pinned agents in the order they were pinned, skipping any that no longer
@@ -776,18 +792,18 @@ export default function Agents({ project }: { project?: string } = {}) {
   const lede = !data
     ? (loading ? 'Loading agents…' : '')
     : projectMissing
-      ? `No project “${project}” is loaded here.`
+      ? `No ${term('project')} “${project}” is loaded here.`
       : filterActive
         ? `${allAgents.length} of ${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} match ${filterLabel}.`
         : scoped
-          ? `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} in this project.`
-          : `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} across ${byProject.size} project${byProject.size === 1 ? '' : 's'}.`;
+          ? `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} in this ${term('project')}.`
+          : `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} across ${byProject.size} ${term('project', byProject.size)}.`;
   const emptyMsg = filterActive
     ? `No agents match ${filterLabel}.`
     : projectMissing
-      ? `No project “${project}” is loaded here.`
+      ? `No ${term('project')} “${project}” is loaded here.`
       : scoped
-        ? 'This project has no agents.'
+        ? `This ${term('project')} has no agents.`
         : 'No agents loaded yet.';
 
   return (
@@ -799,8 +815,30 @@ export default function Agents({ project }: { project?: string } = {}) {
           {scoped
             ? <a class="back" href="/agents" onClick={goBack}>← all agents</a>
             : <div class="eyebrow">loaded agents</div>}
-          <h1>{scoped ? project : 'Agents'}</h1>
+          <h1 {...(scoped && aboutOf(project, '.')?.name ? { title: project } : {})}>{scoped ? projectLabel(project) : 'Agents'}</h1>
           <p class="lede">{lede}</p>
+          {scoped && (() => {
+            // The scoped view is the project's detail surface: the ABOUT.md
+            // description, owner, and body render here (#156).
+            const about = aboutOf(project, '.');
+            if (!about || (!about.description && !about.owner && !about.body)) return null;
+            return (
+              <div class="project-about">
+                {(about.description || about.owner) && (
+                  <p class="project-about-line">
+                    {about.description}
+                    {about.owner && <span class="project-about-owner">{about.description ? ' · ' : ''}{about.owner}</span>}
+                  </p>
+                )}
+                {about.body && (
+                  <details class="project-about-more">
+                    <summary>About this {term('project')}</summary>
+                    <LogContent value={about.body} forceMarkdown />
+                  </details>
+                )}
+              </div>
+            );
+          })()}
           {loadedAgents.length > 0 && (
             <div class="agents-controls">
               <div class="agents-filter">
@@ -907,16 +945,16 @@ export default function Agents({ project }: { project?: string } = {}) {
             </div>}</div>
           : [...byProject.entries()].map(([projectId, agents]) => (
             <section class={view === 'cards' && !scoped ? 'group project-collection' : 'group'} id={projectAnchor(projectId)} key={projectId}>
-              {!scoped && view === 'cards' && <ProjectCollectionHeader projectId={projectId} agents={agents} ctx={rowCtx} />}
+              {!scoped && view === 'cards' && <ProjectCollectionHeader projectId={projectId} agents={agents} ctx={rowCtx} about={aboutOf(projectId, '.')} />}
               {!scoped && view === 'tree' && (
                 <h2 class="group-title">
-                  <a class="group-link" href={agentsProjectHref(projectId)}><span>{projectId}</span></a>
+                  <a class="group-link" href={agentsProjectHref(projectId)} {...(aboutOf(projectId, '.')?.name ? { title: projectId } : {})}><span>{projectLabel(projectId)}</span></a>
                   <span class="count">{agents.length} agent{agents.length === 1 ? '' : 's'}</span>
                   <span class="rule"></span>
                 </h2>
               )}
               {view === 'cards'
-                ? <AgentDirectoryGroups agents={agents} ctx={rowCtx} projectId={projectId} />
+                ? <AgentDirectoryGroups agents={agents} ctx={rowCtx} projectId={projectId} aboutFor={(dir) => aboutOf(projectId, dir)} />
                 : <div class="panel">
                     <div class="tree" style={{ gridTemplateColumns: gridTemplate }}>
                       <div class="tree-head">

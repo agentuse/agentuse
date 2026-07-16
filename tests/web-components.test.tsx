@@ -14,8 +14,49 @@ import { FeedResponse, SessionRowView } from '../src/cli/serve/web/routes/sessio
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
 import type { ApprovalsListPayload, SessionRow } from '../src/cli/serve/web/lib/api';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
+import { term, termTitle } from '../src/cli/serve/web/lib/terms';
 
 const noop = () => {};
+
+describe('serve.terms display nouns', () => {
+  const withTerms = (terms: Record<string, string>, fn: () => void) => {
+    (globalThis as Record<string, unknown>).window = { __AGENTUSE_TERMS__: terms };
+    try {
+      fn();
+    } finally {
+      delete (globalThis as Record<string, unknown>).window;
+    }
+  };
+
+  it('falls back to technical nouns without config (and without window)', () => {
+    expect(term('project')).toBe('project');
+    expect(term('project', 2)).toBe('projects');
+    expect(termTitle('folder', 2)).toBe('Folders');
+  });
+
+  it('renders configured nouns with naive pluralization', () => {
+    withTerms({ project: 'department' }, () => {
+      expect(term('project')).toBe('department');
+      expect(term('project', 6)).toBe('departments');
+      expect(termTitle('project', 2)).toBe('Departments');
+      expect(term('folder')).toBe('folder');
+    });
+  });
+
+  it('honors an explicit singular|plural escape', () => {
+    withTerms({ project: 'company|companies' }, () => {
+      expect(term('project')).toBe('company');
+      expect(term('project', 3)).toBe('companies');
+      expect(termTitle('project', 3)).toBe('Companies');
+    });
+  });
+
+  it('ignores blank configured values', () => {
+    withTerms({ project: '   ' }, () => {
+      expect(term('project', 2)).toBe('projects');
+    });
+  });
+});
 
 describe('Topbar navigation', () => {
   it('exposes Home as the active primary destination on the home screen', () => {

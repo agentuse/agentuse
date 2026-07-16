@@ -11,6 +11,7 @@ import { PushBell } from '../components/push-bell';
 import { syncAppBadge } from '../lib/badge';
 import { formatApprovalTime, errorText } from '../lib/format';
 import { pageTitle } from '../lib/brand';
+import { term } from '../lib/terms';
 
 function ApprovalRowView(props: { row: ApprovalRow; multiProject: boolean }) {
   const { row, multiProject } = props;
@@ -135,7 +136,7 @@ export default function ApprovalsList() {
         )}
         {data && data.errors.length > 0 && (
           <div class="errors" role="alert">
-            Some projects failed to load:
+            Some {term('project', 2)} failed to load:
             <ul>{data.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul>
           </div>
         )}

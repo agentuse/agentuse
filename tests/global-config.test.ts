@@ -160,6 +160,32 @@ describe('loadGlobalConfig', () => {
     expect(() => loadGlobalConfig(file)).toThrow(/60 characters/);
   });
 
+  it('loads and trims serve.terms values', () => {
+    const file = makeTmpConfig({ serve: { terms: { project: ' department ', folder: 'team' } } });
+    const cfg = loadGlobalConfig(file);
+    expect(cfg?.serve?.terms).toEqual({ project: 'department', folder: 'team' });
+  });
+
+  it('accepts an explicit singular|plural term value', () => {
+    const file = makeTmpConfig({ serve: { terms: { project: 'company|companies' } } });
+    expect(loadGlobalConfig(file)?.serve?.terms?.project).toBe('company|companies');
+  });
+
+  it('throws when serve.terms is not an object', () => {
+    const file = makeTmpConfig({ serve: { terms: 'department' } });
+    expect(() => loadGlobalConfig(file)).toThrow(/`serve.terms` must be an object/);
+  });
+
+  it('throws on an unknown serve.terms key', () => {
+    const file = makeTmpConfig({ serve: { terms: { agent: 'teammate' } } });
+    expect(() => loadGlobalConfig(file)).toThrow(/serve.terms.agent/);
+  });
+
+  it('throws on empty or overlong serve.terms values', () => {
+    expect(() => loadGlobalConfig(makeTmpConfig({ serve: { terms: { project: '  ' } } }))).toThrow(/serve.terms.project/);
+    expect(() => loadGlobalConfig(makeTmpConfig({ serve: { terms: { project: 'x'.repeat(41) } } }))).toThrow(/40 characters/);
+  });
+
   it('returns empty object when file has no serve section', () => {
     const file = makeTmpConfig({});
     expect(loadGlobalConfig(file)).toEqual({});

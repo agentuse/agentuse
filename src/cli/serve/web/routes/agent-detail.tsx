@@ -94,6 +94,38 @@ function CapRow(props: { label: string; chips: VNode[] }) {
   );
 }
 
+/** "a, b and c" for short capability lists. */
+function joinNames(items: string[]): string {
+  return items.length === 1 ? items[0] : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/**
+ * Capability meta as plain sentences (#156): what a non-technical operator
+ * reads first. Deliberately exhaustive over the access-granting fields so the
+ * closing "Nothing else." is true; the raw chip grid stays one expand away.
+ * Translate, don't hide.
+ */
+function capabilitySentences(meta: AgentDetailMeta, scheduleHuman: string | undefined): string[] {
+  const sentences: string[] = [];
+  if (meta.filesystem && meta.filesystem.length > 0) {
+    sentences.push(`Can ${joinNames(meta.filesystem)} files in its allowed folders.`);
+  }
+  if (typeof meta.bashCommands === 'number') {
+    sentences.push(`Can run ${meta.bashCommands} approved command pattern${meta.bashCommands === 1 ? '' : 's'}.`);
+  }
+  if (meta.mcpServers.length > 0) sentences.push(`Connects to ${joinNames(meta.mcpServers)}.`);
+  if (meta.subagents.length > 0) sentences.push(`Delegates to ${joinNames(meta.subagents)}.`);
+  if (meta.channels.length > 0) sentences.push(`Reports to ${joinNames(meta.channels)}.`);
+  if (meta.approval) sentences.push('Risky actions wait for human approval.');
+  else if (meta.awaitHuman) sentences.push('Can pause to ask a human.');
+  if (scheduleHuman) {
+    sentences.push(`Runs on a schedule: ${scheduleHuman.charAt(0).toLowerCase()}${scheduleHuman.slice(1)}.`);
+  }
+  if (sentences.length === 0) return ['No tools beyond the model.'];
+  sentences.push('Nothing else.');
+  return sentences;
+}
+
 function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: string | undefined; scheduleHuman: string | undefined; metadata: Record<string, unknown> | undefined }) {
   const { meta } = props;
   const skillChips: VNode[] = [];
@@ -132,14 +164,20 @@ function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: s
   }
 
   return (
-    <div class="cap-grid">
-      <CapRow label="Runtime" chips={runtimeChips} />
-      <CapRow label="Skills" chips={skillChips} />
-      <CapRow label="Tools" chips={toolChips} />
-      <CapRow label="MCP" chips={mcpChips} />
-      <CapRow label="Subagents" chips={subChips} />
-      <CapRow label="Surfaces" chips={chanChips} />
-      <CapRow label="Metadata" chips={metaChips} />
+    <div class="cap-panel">
+      <p class="cap-summary">{capabilitySentences(meta, props.scheduleHuman ?? props.schedule).join(' ')}</p>
+      <details class="cap-raw">
+        <summary>Full capability list</summary>
+        <div class="cap-grid">
+          <CapRow label="Runtime" chips={runtimeChips} />
+          <CapRow label="Skills" chips={skillChips} />
+          <CapRow label="Tools" chips={toolChips} />
+          <CapRow label="MCP" chips={mcpChips} />
+          <CapRow label="Subagents" chips={subChips} />
+          <CapRow label="Surfaces" chips={chanChips} />
+          <CapRow label="Metadata" chips={metaChips} />
+        </div>
+      </details>
     </div>
   );
 }
