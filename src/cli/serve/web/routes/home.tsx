@@ -4,6 +4,7 @@ import type { ApprovalRow, SerializedSchedule, SessionRow, StoreRowsPayload } fr
 import { fetchInfo, fetchAgents, fetchSchedules, fetchStoreRows } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useHomeSections } from '../hooks/use-home-sections';
+import { useMetricPrefs, type MetricDisplay } from '../hooks/use-metric-prefs';
 import { useLiveHome, sessionRowKey, type ActivityEvent } from '../hooks/use-live-home';
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
@@ -276,6 +277,13 @@ function ComingUp(props: { schedules: SerializedSchedule[] }) {
   );
 }
 
+/** One raw metric record's contribution, kept for the tile charts. */
+interface MetricEvent {
+  at: number;
+  value: number | null;
+  count: number | null;
+}
+
 /** One record_metric name rolled up across projects for the results window. */
 interface MetricAgg {
   metric: string;
@@ -287,6 +295,7 @@ interface MetricAgg {
   mixedUnits: boolean;
   latestAt: number;
   note?: string | undefined;
+  events: MetricEvent[];
 }
 
 /** Selectable Results rollup windows; 30 is also the section-visibility probe. */
@@ -321,10 +330,15 @@ function aggregateMetrics(payload: StoreRowsPayload | null | undefined, windowDa
 
       let agg = byMetric.get(metric);
       if (!agg) {
-        agg = { metric, count: 0, hasCount: false, value: 0, hasValue: false, unit: null, mixedUnits: false, latestAt: 0 };
+        agg = { metric, count: 0, hasCount: false, value: 0, hasValue: false, unit: null, mixedUnits: false, latestAt: 0, events: [] };
         byMetric.set(metric, agg);
       }
       const { count, value, unit, note } = item.data;
+      agg.events.push({
+        at,
+        value: typeof value === 'number' && Number.isFinite(value) ? value : null,
+        count: typeof count === 'number' && Number.isFinite(count) ? count : null,
+      });
       if (typeof count === 'number' && Number.isFinite(count)) {
         agg.count += count;
         agg.hasCount = true;
@@ -348,8 +362,84 @@ function aggregateMetrics(payload: StoreRowsPayload | null | undefined, windowDa
   return [...byMetric.values()].sort((a, b) => b.latestAt - a.latestAt);
 }
 
-function MetricTile(props: { agg: MetricAgg }) {
-  const { agg } = props;
+/** Apply the viewer's manual tile order; unlisted metrics keep freshest-first. */
+function orderMetrics(aggs: MetricAgg[], order: string[]): MetricAgg[] {
+  if (order.length === 0) return aggs;
+  const rank = new Map(order.map((metric, i) => [metric, i]));
+  return [...aggs].sort((a, b) => {
+    const ra = rank.get(a.metric);
+    const rb = rank.get(b.metric);
+    if (ra !== undefined && rb !== undefined) return ra - rb;
+    if (ra !== undefined) return -1;
+    if (rb !== undefined) return 1;
+    return b.latestAt - a.latestAt;
+  });
+}
+
+/** Metric events folded into per-day buckets (per-hour on the 1-day window),
+ *  oldest first. Same plain-code-only rule as the sums above. */
+function bucketMetricSeries(events: MetricEvent[], windowDays: number, useValue: boolean, now: number): number[] {
+  const bucketCount = windowDays === 1 ? 24 : windowDays;
+  const bucketMs = windowDays === 1 ? 3_600_000 : 86_400_000;
+  const buckets = new Array<number>(bucketCount).fill(0);
+  for (const event of events) {
+    const idx = bucketCount - 1 - Math.floor((now - event.at) / bucketMs);
+    if (idx < 0 || idx >= bucketCount) continue;
+    buckets[idx] += useValue ? (event.value ?? 0) : (event.count ?? 1);
+  }
+  return buckets;
+}
+
+const SPARK_W = 120;
+const SPARK_H = 30;
+
+/** Inline tile chart: bars = per-bucket totals, line = cumulative running
+ *  total across the window. Decorative next to the number, so aria-hidden. */
+function MetricSpark(props: { series: number[]; kind: 'bars' | 'line' }) {
+  const { series, kind } = props;
+  if (kind === 'bars') {
+    const max = Math.max(1, ...series);
+    const slot = SPARK_W / series.length;
+    const barW = Math.max(1, slot - 1.5);
+    return (
+      <svg class="metric-spark" viewBox={`0 0 ${SPARK_W} ${SPARK_H}`} preserveAspectRatio="none" aria-hidden="true">
+        {series.map((v, i) => {
+          const h = v === 0 ? 1 : Math.max(2, (v / max) * (SPARK_H - 2));
+          return <rect key={i} class={v === 0 ? 'none' : 'bar'} x={i * slot} y={SPARK_H - h} width={barW} height={h} rx="1" />;
+        })}
+      </svg>
+    );
+  }
+  let total = 0;
+  const cumulative = series.map((v) => (total += v));
+  const max = Math.max(1, total);
+  const step = SPARK_W / Math.max(1, series.length - 1);
+  const points = cumulative.map((v, i) => `${(i * step).toFixed(1)},${(SPARK_H - 1.5 - (v / max) * (SPARK_H - 3)).toFixed(1)}`);
+  return (
+    <svg class="metric-spark" viewBox={`0 0 ${SPARK_W} ${SPARK_H}`} preserveAspectRatio="none" aria-hidden="true">
+      <polygon class="area" points={`0,${SPARK_H} ${points.join(' ')} ${SPARK_W},${SPARK_H}`} />
+      <polyline class="line" points={points.join(' ')} />
+    </svg>
+  );
+}
+
+const METRIC_DISPLAYS: Array<{ id: MetricDisplay; label: string; glyph: string }> = [
+  { id: 'number', label: 'Number only', glyph: '#' },
+  { id: 'bars', label: 'Bar chart', glyph: '▮▮' },
+  { id: 'line', label: 'Trend line', glyph: '⟋' },
+];
+
+interface MetricTileEdit {
+  hidden: boolean;
+  canLeft: boolean;
+  canRight: boolean;
+  onMove: (dir: -1 | 1) => void;
+  onToggleHidden: () => void;
+  onDisplay: (display: MetricDisplay) => void;
+}
+
+function MetricTile(props: { agg: MetricAgg; windowDays: number; display: MetricDisplay; edit?: MetricTileEdit | undefined }) {
+  const { agg, display, edit } = props;
   const showValue = agg.hasValue && !agg.mixedUnits;
   const big = useCountUp(Math.round(showValue ? agg.value : agg.count));
   const bigLabel = showValue
@@ -360,12 +450,51 @@ function MetricTile(props: { agg: MetricAgg }) {
     agg.mixedUnits ? 'mixed units - showing count' : null,
     agg.note ?? null,
   ].filter(Boolean).join(' · ');
-  return (
-    <a class="metric-tile" href="/stores/metrics" title={agg.metric}>
+  const name = humanizeMetric(agg.metric);
+  const body = (
+    <>
       <div class="metric-num">{bigLabel}</div>
-      <div class="metric-name">{humanizeMetric(agg.metric)}</div>
+      <div class="metric-name">{name}</div>
+      {display !== 'number' && (
+        <MetricSpark series={bucketMetricSeries(agg.events, props.windowDays, showValue, Date.now())} kind={display} />
+      )}
       {sub && <div class="metric-sub">{sub}</div>}
-    </a>
+    </>
+  );
+  if (!edit) {
+    return <a class="metric-tile" href="/stores/metrics" title={agg.metric}>{body}</a>;
+  }
+  // Edit mode swaps the link for a still tile with its own controls; hidden
+  // tiles stay on the board (dimmed) so they can be turned back on.
+  return (
+    <div class={`metric-tile is-editing${edit.hidden ? ' is-hidden' : ''}`} title={agg.metric}>
+      {body}
+      <div class="metric-tools">
+        <button type="button" aria-label={`Move ${name} earlier`} title="Move earlier" disabled={!edit.canLeft} onClick={() => edit.onMove(-1)}>←</button>
+        <button type="button" aria-label={`Move ${name} later`} title="Move later" disabled={!edit.canRight} onClick={() => edit.onMove(1)}>→</button>
+        <span class="metric-tools-gap"></span>
+        {METRIC_DISPLAYS.map((option) => (
+          <button
+            type="button"
+            key={option.id}
+            class={display === option.id ? 'on' : ''}
+            aria-label={`${option.label} for ${name}`}
+            aria-pressed={display === option.id}
+            title={option.label}
+            onClick={() => edit.onDisplay(option.id)}
+          >{option.glyph}</button>
+        ))}
+        <span class="metric-tools-gap"></span>
+        <button
+          type="button"
+          class={edit.hidden ? '' : 'on'}
+          aria-label={edit.hidden ? `Show ${name}` : `Hide ${name}`}
+          aria-pressed={!edit.hidden}
+          title={edit.hidden ? 'Show this metric' : 'Hide this metric'}
+          onClick={edit.onToggleHidden}
+        >{edit.hidden ? 'hidden' : 'shown'}</button>
+      </div>
+    </div>
   );
 }
 
@@ -490,6 +619,26 @@ export default function Home() {
     ? metricAggs.length > 0
     : aggregateMetrics(metricRows.data, 30).length > 0;
 
+  // Per-viewer tile customization: manual order, hidden metrics, and per-metric
+  // display. Edit mode keeps hidden tiles on the board so they can come back.
+  const metricPrefs = useMetricPrefs();
+  const [editMetrics, setEditMetrics] = useState(false);
+  const orderedAggs = orderMetrics(metricAggs, metricPrefs.prefs.order);
+  const shownAggs = editMetrics
+    ? orderedAggs
+    : orderedAggs.filter((agg) => !metricPrefs.prefs.hidden.includes(agg.metric));
+  const moveMetric = (metric: string, dir: -1 | 1) => {
+    // Persist the full on-screen order so one nudge pins every tile's slot.
+    const names = orderedAggs.map((agg) => agg.metric);
+    const from = names.indexOf(metric);
+    const to = from + dir;
+    if (from < 0 || to < 0 || to >= names.length) return;
+    const swapped = names[to]!;
+    names[to] = metric;
+    names[from] = swapped;
+    metricPrefs.setOrder(names);
+  };
+
   const sections = useHomeSections();
   const running = liveHome.sessions.filter(isLiveRow);
   const waiting = liveHome.sessions.filter((s) => s.status === 'suspended');
@@ -587,6 +736,14 @@ export default function Home() {
           <section class="group">
             <h2 class="group-title">
               <span>Results</span><span class="rule"></span>
+              <button
+                type="button"
+                class={`metric-edit-btn${editMetrics ? ' on' : ''}`}
+                aria-pressed={editMetrics}
+                onClick={() => setEditMetrics((on) => !on)}
+              >
+                {editMetrics ? 'done' : 'customize'}
+              </button>
               <div class="metric-window" role="group" aria-label="Results window">
                 {METRIC_WINDOW_DAYS.map((days) => (
                   <button
@@ -601,13 +758,36 @@ export default function Home() {
                 ))}
               </div>
             </h2>
-            {metricAggs.length > 0
+            {shownAggs.length > 0
               ? (
                 <div class="metric-grid">
-                  {metricAggs.map((agg) => <MetricTile key={agg.metric} agg={agg} />)}
+                  {shownAggs.map((agg, i) => (
+                    <MetricTile
+                      key={agg.metric}
+                      agg={agg}
+                      windowDays={metricsWindow}
+                      display={metricPrefs.prefs.display[agg.metric] ?? 'number'}
+                      edit={editMetrics
+                        ? {
+                          hidden: metricPrefs.prefs.hidden.includes(agg.metric),
+                          canLeft: i > 0,
+                          canRight: i < shownAggs.length - 1,
+                          onMove: (dir) => moveMetric(agg.metric, dir),
+                          onToggleHidden: () => metricPrefs.toggleHidden(agg.metric),
+                          onDisplay: (display) => metricPrefs.setDisplay(agg.metric, display),
+                        }
+                        : undefined}
+                    />
+                  ))}
                 </div>
               )
-              : <div class="metric-empty">No results in the last {metricsWindow === 1 ? 'day' : `${metricsWindow} days`}.</div>}
+              : (
+                <div class="metric-empty">
+                  {metricAggs.length > 0
+                    ? <>All metrics are hidden. <button type="button" class="metric-empty-link" onClick={() => setEditMetrics(true)}>Customize</button> to bring them back.</>
+                    : <>No results in the last {metricsWindow === 1 ? 'day' : `${metricsWindow} days`}.</>}
+                </div>
+              )}
           </section>
         )}
 
