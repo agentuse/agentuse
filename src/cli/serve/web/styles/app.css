@@ -411,7 +411,6 @@ a, button, select, summary, label, input, textarea,
     display: flex;
     justify-content: flex-start;
     overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     scroll-behavior: auto;
   }
@@ -428,10 +427,9 @@ a, button, select, summary, label, input, textarea,
     mask-image: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 22px), transparent);
   }
   .topbar .nav-wrap::-webkit-scrollbar { display: none; }
-  .topbar .nav { flex: none; }
   /* Preserve readable labels and generous touch height; overflow is handled by
      the scroller and the active item is automatically revealed. */
-  .topbar .nav { gap: 2px; }
+  .topbar .nav { flex: none; gap: 2px; }
   .topbar .nav-item { min-height: 40px; padding: 0 8px; font-size: 12px; }
 }
 
@@ -748,12 +746,7 @@ a, button, select, summary, label, input, textarea,
   color: var(--red);
   overflow-wrap: anywhere;
 }
-.page-approval-detail .eyebrow {
-  font-size: 11px;
-  color: var(--cyan);
-  letter-spacing: 0.18em; text-transform: uppercase;
-  margin-bottom: 8px;
-}
+/* .eyebrow comes from the shared page-shell group. */
 /* Sub-agent approval CTA: a paused child's pending gate has no controls of its
    own, so its log-actions row links to the parent run where the decision is made. */
 .page-approval-detail .log-parent-approve {
@@ -845,8 +838,6 @@ a, button, select, summary, label, input, textarea,
 .debug-prompt-button svg, .session-action-button svg { color: var(--cyan); flex: none; }
 .debug-prompt-button:hover, .session-action-button:hover { border-color: var(--cyan-border); color: var(--fg); background: var(--cyan-soft); }
 .debug-prompt-button:focus-visible, .session-action-button:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 1px; }
-.debug-prompt-button.copied { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
-.debug-prompt-button.copied svg { color: var(--green); }
 .stop-session-button svg { color: var(--red); }
 .stop-session-button:hover { border-color: var(--red-border); color: var(--fg); background: var(--red-soft); }
 .stop-session-button:focus-visible { outline-color: var(--red-border); }
@@ -1144,7 +1135,6 @@ a, button, select, summary, label, input, textarea,
    visible answer it precedes, present but never competing for attention. */
 .log-item[data-log-type="reasoning"] .log-marker { color: var(--muted); opacity: 0.7; }
 .log-item[data-log-type="reasoning"] .log-title { color: var(--muted-3); font-weight: 500; }
-.log-item.streaming[data-log-type="reasoning"] .log-marker { opacity: 1; }
 /* Strip the bordered/filled markdown card and swap in a subordinate left rule
    so reasoning is visually distinct from a real assistant answer. */
 .log-item[data-log-type="reasoning"] .log-content > .content-render > .content-markdown,
@@ -1355,6 +1345,7 @@ a, button, select, summary, label, input, textarea,
    monologue leans italic; finished reasoning stays as quiet as ever. */
 .log-item.streaming[data-log-type="reasoning"] .log-marker {
   color: var(--cyan);
+  opacity: 1;
   animation: reasoning-breathe 2.4s ease-in-out infinite;
 }
 @keyframes reasoning-breathe { 0%, 100% { transform: scale(1); opacity: 0.7; } 50% { transform: scale(1.25); opacity: 1; } }
@@ -1431,12 +1422,6 @@ a, button, select, summary, label, input, textarea,
   color: var(--muted-3);
   overflow: hidden;
 }
-.log-detail-link {
-  color: var(--cyan);
-  text-decoration: none;
-  border-bottom: 1px dashed var(--cyan-border);
-}
-.log-detail-link:hover { border-bottom-style: solid; }
 .content-code {
   margin: 0;
   padding: 10px 12px;
@@ -1637,7 +1622,6 @@ a, button, select, summary, label, input, textarea,
 .content-markdown .content-table-scroll {
   margin: 10px 0;
   overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
 }
 .content-markdown .content-table-scroll:focus-visible {
   outline: 2px solid var(--cyan-border);
@@ -1713,7 +1697,6 @@ a, button, select, summary, label, input, textarea,
 .approval-primary {
   border: 1px solid var(--line-strong);
   border-radius: 10px;
-  border-color: var(--line-strong);
   background: var(--bg);
 }
 .approval-risk {
@@ -2071,12 +2054,24 @@ dialog#decision-dialog {
   color: var(--fg);
   box-shadow: 0 20px 60px rgba(0,0,0,0.45);
 }
-dialog#decision-dialog::backdrop {
+/* One backdrop recipe for every modal overlay (dialogs' ::backdrop and the
+   palette's own scrim div). Literal colors, not a var: ::backdrop only
+   inherits custom properties in Baseline-2024 browsers, and the UI's floor
+   is lower (color-mix-era Safari). */
+dialog#decision-dialog::backdrop,
+.push-bell-dialog::backdrop,
+.page-agents .run-dialog::backdrop,
+.cca-dialog::backdrop,
+.palette-backdrop {
   background: rgba(0,0,0,0.55);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
 }
-:root[data-theme="light"] dialog#decision-dialog::backdrop {
+:root[data-theme="light"] dialog#decision-dialog::backdrop,
+:root[data-theme="light"] .push-bell-dialog::backdrop,
+:root[data-theme="light"] .page-agents .run-dialog::backdrop,
+:root[data-theme="light"] .cca-dialog::backdrop,
+:root[data-theme="light"] .palette-backdrop {
   background: rgba(0,0,0,0.30);
 }
 dialog#decision-dialog form { margin: 0; padding: 0; }
@@ -2228,19 +2223,23 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
   color: var(--fg);
   box-shadow: 0 20px 60px rgba(0,0,0,0.45);
 }
-.push-bell-dialog::backdrop {
-  background: rgba(0,0,0,0.55);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-}
-:root[data-theme="light"] .push-bell-dialog::backdrop { background: rgba(0,0,0,0.30); }
-.push-bell-dialog .dialog-close {
+/* Close button shared by every dialog, like .dialog-head/.dialog-foot below.
+   Kept scoped per dialog (not a bare .dialog-close) so page-level button
+   rules can't out-compete it. The hover's border: 0 guards against page
+   button:hover rules that set border-color. */
+.push-bell-dialog .dialog-close,
+.page-approval-detail .dialog-close,
+.page-agents .run-dialog .dialog-close,
+.cca-dialog .dialog-close {
   min-height: 0; padding: 4px 8px;
   background: transparent; border: 0;
   color: var(--muted-2); font-size: 16px; line-height: 1;
   cursor: pointer; border-radius: 6px;
 }
-.push-bell-dialog .dialog-close:hover { background: var(--panel-hover); color: var(--fg); border: 0; }
+.push-bell-dialog .dialog-close:hover,
+.page-approval-detail .dialog-close:hover,
+.page-agents .run-dialog .dialog-close:hover,
+.cca-dialog .dialog-close:hover { background: var(--panel-hover); color: var(--fg); border: 0; }
 .dialog-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 18px;
@@ -2251,13 +2250,6 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
 }
 .dialog-head .title::before { content: "⋮ "; color: var(--cyan); }
 .dialog-head .title.reject::before { color: var(--red); }
-.page-approval-detail .dialog-close {
-  min-height: 0; padding: 4px 8px;
-  background: transparent; border: 0;
-  color: var(--muted-2); font-size: 16px; line-height: 1;
-  cursor: pointer; border-radius: 6px;
-}
-.page-approval-detail .dialog-close:hover { background: var(--panel-hover); color: var(--fg); border: 0; }
 .dialog-description {
   margin: 0;
   padding: 14px 18px 0;
@@ -2570,17 +2562,10 @@ html[data-route-loading] body::after {
   .learnings-add button { width: 100%; }
 }
 
-/* ---------------- stores ---------------- */
-.page-stores { font-size: 14px; line-height: 1.5; }
-.page-stores a { color: var(--cyan); text-decoration: none; border-bottom: 1px dotted var(--cyan-border); }
-.page-stores .topbar a { border-bottom: 0; color: inherit; }
-.page-stores main { width: min(1120px, calc(100vw - 32px)); margin: 0 auto; padding: 36px 0 80px; }
-.page-stores header:not(.topbar) { margin-bottom: 24px; }
-.page-stores .eyebrow { font-size: 11px; color: var(--cyan); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px; }
-.page-stores h1 { margin: 0 0 8px; font-family: var(--sans); font-size: 34px; line-height: 1.12; font-weight: 500; }
-.page-stores .lede { margin: 0; color: var(--muted-3); font-family: var(--sans); font-size: 15px; }
-.page-stores .panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
-.store-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* ---------------- stores ----------------
+   Page shell (root font, links, main, header, eyebrow/h1/lede, panel, empty,
+   code) comes from the shared page-shell groups below. */
+.store-table-scroll { overflow-x: auto; }
 .store-table { width: 100%; min-width: 760px; border-collapse: collapse; }
 .store-table th, .store-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
 .store-table .title-cell, .store-table .preview { white-space: normal; }
@@ -2626,7 +2611,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   white-space: nowrap;
 }
 .page-stores .chip.status { color: var(--cyan); border-color: var(--cyan-border); }
-.page-stores .empty { padding: 18px; color: var(--muted); font-style: italic; }
 .page-stores .errors { margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--red-border); border-radius: 8px; color: var(--red); background: var(--red-soft); }
 .page-stores .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
 .page-stores .detail-cell { background: var(--bg); padding: 12px 14px; }
@@ -2654,10 +2638,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .tab-panel[hidden] { display: none; }
 .page-stores .raw-json { margin: 0; padding: 14px 16px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; color: var(--muted-3); }
 .page-stores .back-link { display: inline-flex; margin-bottom: 18px; color: var(--muted-3); border-color: var(--line-strong); }
-.page-stores code { color: var(--muted-3); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
-@media (max-width: 760px) {
-  .page-stores h1 { font-size: 28px; }
-}
 /* On phones the wide min-width table forced a horizontal scroll and left rows
    inflated to the height of off-screen wrapped chips. Re-flow each row into a
    self-contained card with label:value stacks so every column is visible without
@@ -2693,36 +2673,48 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .page-stores .title-cell { min-width: 0; }
 }
 
-/* --- shared page shell (home / agents / schedules) --- */
-/* These three SPA pages share the same outer layout the server rendered via
+/* --- shared page shell (home / agents / schedules / stores) --- */
+/* These SPA pages share the same outer layout the server rendered via
    renderStoreStyles' body/main/header rules. Scoped here so they don't leak. */
 .page-home,
 .page-agents,
-.page-schedules { font-size: 14px; line-height: 1.5; }
+.page-schedules,
+.page-stores { font-size: 14px; line-height: 1.5; }
 .page-home a,
 .page-agents a,
-.page-schedules a { color: var(--cyan); text-decoration: none; border-bottom: 1px dotted var(--cyan-border); }
+.page-schedules a,
+.page-stores a { color: var(--cyan); text-decoration: none; border-bottom: 1px dotted var(--cyan-border); }
 .page-home .topbar a,
 .page-agents .topbar a,
-.page-schedules .topbar a { border-bottom: 0; color: inherit; }
-.page-home main { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; padding: 36px 0 80px; }
+.page-schedules .topbar a,
+.page-stores .topbar a { border-bottom: 0; color: inherit; }
+/* relative + z-index lift home content above .home-ambient's fixed tint. */
+.page-home main { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; padding: 36px 0 80px; position: relative; z-index: 1; }
 .page-agents main,
-.page-schedules main { width: min(1120px, calc(100vw - 32px)); margin: 0 auto; padding: 36px 0 80px; }
+.page-schedules main,
+.page-stores main { width: min(1120px, calc(100vw - 32px)); margin: 0 auto; padding: 36px 0 80px; }
 .page-home header:not(.topbar),
 .page-agents header:not(.topbar),
-.page-schedules header:not(.topbar) { margin-bottom: 24px; }
+.page-schedules header:not(.topbar),
+.page-stores header:not(.topbar) { margin-bottom: 24px; }
 .page-home .eyebrow,
 .page-agents .eyebrow,
-.page-schedules .eyebrow { font-size: 11px; color: var(--cyan); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px; }
+.page-schedules .eyebrow,
+.page-stores .eyebrow,
+.page-approval-detail .eyebrow { font-size: 11px; color: var(--cyan); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px; }
 .page-home h1,
 .page-agents h1,
-.page-schedules h1 { margin: 0 0 8px; font-family: var(--sans); font-size: 34px; line-height: 1.12; font-weight: 500; }
+.page-schedules h1,
+.page-stores h1 { margin: 0 0 8px; font-family: var(--sans); font-size: 34px; line-height: 1.12; font-weight: 500; }
 .page-home .lede,
 .page-agents .lede,
-.page-schedules .lede { margin: 0; color: var(--muted-3); font-family: var(--sans); font-size: 15px; }
+.page-schedules .lede,
+.page-stores .lede { margin: 0; color: var(--muted-3); font-family: var(--sans); font-size: 15px; }
 .page-home .panel,
 .page-agents .panel,
-.page-schedules .panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.page-schedules .panel,
+.page-stores .panel,
+.page-agent-detail .panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
 /* Scoped project view: ABOUT.md identity under the heading (#156). */
 .page-agents .project-about { margin-top: 10px; max-width: 72ch; }
 .page-agents .project-about-line { margin: 0; font-family: var(--sans); font-size: 13.5px; line-height: 1.5; color: var(--muted-3); }
@@ -2791,7 +2783,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .col-pill-x:hover { color: var(--fg); background: var(--panel-hover); }
 .page-agents .agents-cols-select { position: relative; display: inline-flex; }
 .page-agents .agents-cols-select select {
-  appearance: none; -webkit-appearance: none;
+  appearance: none;
   font: inherit; font-size: 13px; color: var(--fg);
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
   padding: 5px 26px 5px 10px; cursor: pointer;
@@ -2804,7 +2796,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-home .empty,
 .page-agents .empty,
-.page-schedules .empty { padding: 18px; color: var(--muted); font-style: italic; }
+.page-schedules .empty,
+.page-stores .empty,
+.page-agent-detail .empty { padding: 18px; color: var(--muted); font-style: italic; }
 /* "Clear filter" escape hatch in the agents empty state. */
 .page-agents .empty .empty-action {
   margin-left: 12px;
@@ -2825,11 +2819,13 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-schedules .errors { margin: 12px 0 0; padding: 12px 14px; border: 1px solid var(--red-border); border-radius: 8px; color: var(--red); background: var(--red-soft); font-size: 12.5px; }
 .page-home code,
 .page-agents code,
-.page-schedules code { color: var(--muted-3); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.page-schedules code,
+.page-stores code { color: var(--muted-3); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
 @media (max-width: 760px) {
   .page-home h1,
   .page-agents h1,
-  .page-schedules h1 { font-size: 28px; }
+  .page-schedules h1,
+  .page-stores h1 { font-size: 28px; }
 }
 
 /* --- home --- */
@@ -3144,7 +3140,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   opacity: 1;
   background: radial-gradient(900px 480px at 50% -120px, var(--cyan-soft), transparent 65%);
 }
-.page-home main { position: relative; z-index: 1; }
 
 /* Boot-up: header, hero, and sections rise in sequence on mount only. */
 @keyframes home-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
@@ -3287,7 +3282,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .group-title::before,
 .page-agents .group-title::before,
 .page-schedules .day-title::before { content: "⋮"; color: var(--cyan); transform: translateY(1px); }
-.page-agents .group-title .path { color: var(--muted); font-size: 12px; font-family: var(--mono); }
 .page-home .group-title .count,
 .page-agents .group-title .count,
 .page-schedules .day-title .count { color: var(--muted); font-size: 12px; font-family: var(--mono); }
@@ -3543,8 +3537,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .guide.elbow::after {
   content: ""; position: absolute; left: 11px; top: 50%; width: 11px; height: 1px; background: var(--muted-2);
 }
-.page-agents .tree-row .tree-name { flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; font-family: var(--sans); color: var(--muted-3); font-size: 13px; overflow-wrap: anywhere; padding: 7px 0; }
-.page-agents .tree-desc { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
 .page-agents .tree-row .chip { white-space: nowrap; }
 .page-agents .tree-run { justify-content: flex-end; }
 .page-agents .run-btn {
@@ -3676,20 +3668,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   color: var(--fg);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
 }
-.page-agents .run-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-}
-:root[data-theme="light"] .page-agents .run-dialog::backdrop { background: rgba(0, 0, 0, 0.30); }
 .page-agents .run-dialog form { margin: 0; padding: 0; }
-.page-agents .run-dialog .dialog-close {
-  min-height: 0; padding: 4px 8px;
-  background: transparent; border: 0;
-  color: var(--muted-2); font-size: 16px; line-height: 1;
-  cursor: pointer; border-radius: 6px;
-}
-.page-agents .run-dialog .dialog-close:hover { background: var(--panel-hover); color: var(--fg); }
 .page-agents .run-dialog .dialog-description strong { color: var(--fg); font-weight: 600; }
 .page-agents .run-dialog .dialog-error { margin: 0; padding: 0 18px 4px; color: var(--red); font-size: 12.5px; }
 .page-agents .run-dialog .dialog-foot .actions { display: inline-flex; gap: 8px; }
@@ -3712,8 +3691,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   transition: color 120ms ease;
 }
 .page-agent-detail .back:hover { color: var(--cyan); }
-.page-agent-detail .panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
-.page-agent-detail .empty { padding: 18px; color: var(--muted); font-style: italic; }
+/* .panel/.empty come from the shared page-shell groups. */
 .page-agent-detail .empty.err { color: var(--red); font-style: normal; }
 
 /* hero */
@@ -3800,6 +3778,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-family: var(--mono); font-size: 11.5px; color: var(--cyan);
   background: var(--cyan-soft); border: 1px solid var(--cyan-border); cursor: pointer;
   padding: 3px 10px; border-radius: 6px;
+  white-space: nowrap;
   transition: background 120ms ease;
 }
 .page-agent-detail .group-title .send-agent-btn:hover { background: color-mix(in srgb, var(--cyan) 16%, transparent); }
@@ -3810,7 +3789,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   transition: color 120ms ease, border-color 120ms ease;
 }
 .page-agent-detail .group-title .source-view-btn:hover { color: var(--fg); border-color: var(--fg); }
-.page-agent-detail .group-title .send-agent-btn { white-space: nowrap; }
 
 /* Source/Recent-runs headers cram on narrow screens: let the row wrap, give
    the path its own line, and drop the flex spacer so buttons sit left-aligned. */
@@ -3866,19 +3844,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   padding: 0; border: 1px solid var(--line-strong); border-radius: 12px;
   background: var(--bg); color: var(--fg); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); overflow: hidden;
 }
-.cca-dialog::backdrop { background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
-:root[data-theme="light"] .cca-dialog::backdrop { background: rgba(0, 0, 0, 0.30); }
-.cca-dialog .dialog-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 18px; border-bottom: 1px solid var(--line);
-  font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
-}
-.cca-dialog .dialog-head .title::before { content: "⋮ "; color: var(--cyan); }
-.cca-dialog .dialog-close {
-  min-height: 0; padding: 4px 8px; background: transparent; border: 0;
-  color: var(--muted-2); font-size: 16px; line-height: 1; cursor: pointer; border-radius: 6px;
-}
-.cca-dialog .dialog-close:hover { background: var(--panel-hover); color: var(--fg); }
+/* Head + close chrome comes from the shared dialog rules (push-bell section). */
 .cca-body { padding: 18px; display: flex; flex-direction: column; gap: 14px; overflow: auto; max-height: calc(100vh - 64px - 50px); }
 
 /* terminal preview (kept dark in both themes, like a real terminal) */
@@ -4225,24 +4191,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-size: 11px; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.page-sessions .filter-clear {
-  display: inline-flex;
-  align-items: center;
-  min-height: 34px;
-  max-width: 100%;
-  padding: 6px 11px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--muted-3);
-  font-size: 12px;
-  /* Long agent ids must wrap rather than push the page wider than the viewport
-     (which broke the topbar nav and added a horizontal scrollbar on mobile). */
-  overflow-wrap: anywhere;
-  text-decoration: none;
-  border-bottom: 1px solid var(--line-strong);
-}
-.page-sessions .filter-clear:hover { background: var(--panel-hover); color: var(--fg); border-color: var(--line-strong); }
 .page-sessions .filters-reset {
   flex: none;
   align-self: center;
@@ -4861,7 +4809,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agent-detail .run-row:focus-visible,
 .page-agent-detail .back:focus-visible,
 .page-sessions .filters select:focus-visible,
-.page-sessions .filter-clear:focus-visible,
 .store-table .sort-header:focus-visible {
   outline: 2px solid var(--cyan-border);
   outline-offset: 2px;
@@ -4869,15 +4816,12 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 
 /* --- Cmd+K agent palette (global "go to agent") --- */
+/* Scrim + blur come from the shared modal-backdrop rule (decision dialog). */
 .palette-backdrop {
   position: fixed; inset: 0; z-index: 1000;
   display: flex; align-items: flex-start; justify-content: center;
   padding: 12vh 16px 16px;
-  background: rgba(0,0,0,0.55);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
 }
-:root[data-theme="light"] .palette-backdrop { background: rgba(0,0,0,0.30); }
 .palette {
   width: 100%; max-width: 560px;
   max-height: 70vh;
