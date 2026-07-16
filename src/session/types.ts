@@ -84,6 +84,12 @@ export interface SessionInfo {
     detail?: string;                 // Provider response body (truncated)
   };
 
+  // Reviewer acknowledgment of an ended failed run: set when the reviewer
+  // discards it (web Discard button / `sessions stop` on an ended session).
+  // Clears the run from needs-attention surfaces without rewriting the true
+  // outcome in status/error.
+  dismissedAt?: number;
+
   // Durable channel anchors. These let resume/follow-up paths update the same
   // external thread even when they run in a different serve worker.
   channels?: {

@@ -81,6 +81,8 @@ export interface SessionSummary {
   updatedAt: number;
   errorCode?: string;
   errorMessage?: string;
+  /** Reviewer discarded this ended failed run; needs-attention surfaces skip it. */
+  dismissedAt?: number;
   mock?: boolean;
   /** Present on session-list rows only when the caller requests feed detail. */
   finalResponse?: string;
@@ -173,6 +175,8 @@ export interface ApprovalPageInfo {
   decision?: unknown;
   errorCode?: string;
   errorMessage?: string;
+  /** Reviewer discarded this ended failed run (see SessionSummary.dismissedAt). */
+  dismissedAt?: number;
   /** True when an ended (error/completed) session can be rolled back to its
    *  suspended approval gate for a manual retry (POST /sessions/:id/reopen). */
   reopenable?: boolean;

@@ -385,6 +385,85 @@ describe('session tree stopping', () => {
       await rm(projectRoot, { recursive: true, force: true });
     }
   });
+
+  it('dismisses an already-failed session with dismissEnded instead of rewriting its outcome', async () => {
+    const originalXdgDataHome = process.env.XDG_DATA_HOME;
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-stop-dismiss-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+    try {
+      await initStorage(projectRoot);
+      const manager = new SessionManager();
+      const agent = { id: 'agents/incomplete', name: 'incomplete', isSubAgent: false };
+      const sessionId = await manager.createSession({
+        agent,
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      await manager.setSessionError(sessionId, agent.id, {
+        code: 'INCOMPLETE',
+        message: 'Agent reported the run incomplete',
+      });
+
+      // Automatic stops (no dismissEnded) must never acknowledge the failure.
+      const plain = await manager.stopSessionTree(sessionId);
+      expect(plain[0]?.stopped).toBe(false);
+      expect(plain[0]?.dismissed).toBeUndefined();
+      expect((await manager.findSession(sessionId))?.session.dismissedAt).toBeUndefined();
+
+      // Reviewer-initiated stop stamps dismissedAt but keeps the true outcome.
+      const dismissed = await manager.stopSessionTree(sessionId, { dismissEnded: true });
+      expect(dismissed[0]?.stopped).toBe(false);
+      expect(dismissed[0]?.dismissed).toBe(true);
+      const after = await manager.findSession(sessionId);
+      expect(after?.session.status).toBe('error');
+      expect(after?.session.error?.code).toBe('INCOMPLETE');
+      expect(after?.session.error?.message).toBe('Agent reported the run incomplete');
+      const stamp = after?.session.dismissedAt;
+      expect(typeof stamp).toBe('number');
+
+      // The dismissal is idempotent and surfaces on list summaries.
+      const again = await manager.stopSessionTree(sessionId, { dismissEnded: true });
+      expect(again[0]?.dismissed).toBeUndefined();
+      const summaries = await manager.listSessionSummaries();
+      expect(summaries.find((row) => row.sessionId === sessionId)?.dismissedAt).toBe(stamp as number);
+    } finally {
+      if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdgDataHome;
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not re-dismiss sessions the reviewer already stopped (USER_STOPPED)', async () => {
+    const originalXdgDataHome = process.env.XDG_DATA_HOME;
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-stop-nostamp-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+    try {
+      await initStorage(projectRoot);
+      const manager = new SessionManager();
+      const sessionId = await manager.createSession({
+        agent: { id: 'agents/runner', name: 'runner', isSubAgent: false },
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+
+      // First stop kills the running session (USER_STOPPED); the CLI then runs
+      // a second local pass after a daemon-handled stop — it must not stamp
+      // dismissedAt on a run the reviewer just stopped on purpose.
+      await manager.stopSessionTree(sessionId, { dismissEnded: true });
+      const second = await manager.stopSessionTree(sessionId, { dismissEnded: true });
+      expect(second[0]?.stopped).toBe(false);
+      expect(second[0]?.dismissed).toBeUndefined();
+      expect((await manager.findSession(sessionId))?.session.dismissedAt).toBeUndefined();
+    } finally {
+      if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdgDataHome;
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('reading nested subagent sessions from a fresh manager', () => {

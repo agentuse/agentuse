@@ -301,6 +301,8 @@ interface WorkerStopSessionResult {
     agentName: string;
     wasStatus: string;
     stopped: boolean;
+    /** Already-ended failed session acknowledged (dismissedAt stamped) instead of stopped. */
+    dismissed?: boolean;
   }>;
 }
 
@@ -638,12 +640,18 @@ class AgentWorker {
     projectRoot: string;
     sessionId: string;
     reason?: string | undefined;
+    /** Reviewer-initiated stop: an already-ended failed session is stamped
+     *  dismissedAt (reviewed) instead of being a no-op. Never set on automatic
+     *  stops (client-disconnect, timeouts) — those must not acknowledge
+     *  failures no human has seen. */
+    dismissEnded?: boolean | undefined;
   }): Promise<WorkerStopSessionResult | WorkerExecuteError> {
     return this.request({
       type: "stop-session",
       projectRoot: options.projectRoot,
       sessionId: options.sessionId,
       reason: options.reason,
+      ...(options.dismissEnded && { dismissEnded: true }),
       timeout: 30,
     }) as Promise<WorkerStopSessionResult | WorkerExecuteError>;
   }
@@ -4676,7 +4684,7 @@ export function createServeCommand(): Command {
 
             if (rejectableGate) {
               const hardStop = (): void => {
-                void projectWorker.stopSession({ projectRoot: project.root, sessionId, reason })
+                void projectWorker.stopSession({ projectRoot: project.root, sessionId, reason, dismissEnded: true })
                   .then(() => wakeListHubs())
                   .catch((err) => logger.warn(`Fallback stop after failed reject-resume of ${sessionId} failed: ${(err as Error).message}`));
               };
@@ -4697,10 +4705,13 @@ export function createServeCommand(): Command {
             activeApprovalResumes.delete(activeKey);
             activeSessionContinuations.delete(activeKey);
 
+            // This route is always human-initiated (web Discard / CLI stop), so
+            // an already-ended failed session gets dismissed instead of no-op'd.
             const result = await projectWorker.stopSession({
               projectRoot: project.root,
               sessionId,
               reason,
+              dismissEnded: true,
             });
             if (!result.success) {
               sendError(res, 500, result.error.code, result.error.message);

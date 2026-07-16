@@ -973,6 +973,9 @@ async function runInternalWorker() {
     trigger?: SessionTrigger;
     runChannelHandles?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
     reason?: string;
+    /** stop-session: reviewer-initiated, so an already-ended failed session is
+     *  stamped dismissedAt (reviewed) instead of being a no-op. */
+    dismissEnded?: boolean;
   }
 
   interface ExpiredApproval {
@@ -1099,6 +1102,12 @@ async function runInternalWorker() {
       ...(typeof session.error.code === 'string' && session.error.code ? { errorCode: session.error.code } : {}),
       ...(typeof session.error.message === 'string' && session.error.message ? { errorMessage: session.error.message } : {})
     };
+  }
+
+  // Reviewer's "reviewed, wave it off" stamp on an ended failed run; surfaced
+  // so needs-attention lists drop the row and the UI hides the Discard action.
+  function dismissedAtField(session: { dismissedAt?: number }) {
+    return typeof session.dismissedAt === 'number' ? { dismissedAt: session.dismissedAt } : {};
   }
 
   // Showcase mode: mock runs stay fully functional (cheap, no real side effects)
@@ -2027,6 +2036,7 @@ async function runInternalWorker() {
             model: found.session.model,
             ...mockField(found.session),
             ...sessionErrorFields(found.session),
+            ...dismissedAtField(found.session),
             ...(reopenable && { reopenable }),
             agent: {
               id: found.session.agent.id,
@@ -2097,6 +2107,7 @@ async function runInternalWorker() {
             model: found.session.model,
             ...mockField(found.session),
             ...sessionErrorFields(found.session),
+            ...dismissedAtField(found.session),
             ...(reopenable && { reopenable }),
             agent: {
               id: found.session.agent.id,
@@ -2168,6 +2179,7 @@ async function runInternalWorker() {
           model: found.session.model,
           ...mockField(found.session),
           ...sessionErrorFields(found.session),
+          ...dismissedAtField(found.session),
           ...(reopenable && { reopenable }),
           agent: {
             id: found.session.agent.id,
@@ -2788,6 +2800,7 @@ async function runInternalWorker() {
           createdAt: session.createdAt,
           updatedAt: session.updatedAt,
           ...sessionErrorFields(session),
+          ...dismissedAtField(session),
           ...mockField(session),
         }))
         .sort((a, b) => b.createdAt - a.createdAt);
@@ -3197,7 +3210,8 @@ async function runInternalWorker() {
       const sessionManager = new SessionManager();
       const stopped = await sessionManager.stopSessionTree(req.sessionId, {
         code: 'USER_STOPPED',
-        message: req.reason || 'Session stopped by user'
+        message: req.reason || 'Session stopped by user',
+        ...(req.dismissEnded === true && { dismissEnded: true })
       });
       if (stopped.length === 0) {
         return {

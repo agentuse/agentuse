@@ -1207,6 +1207,11 @@ async function stopSession(
     return;
   }
 
+  if (serverOutcome.handled && serverOutcome.dismissed) {
+    process.stdout.write(`Session ${summary.id} had already ended with a failure. Marked it as reviewed (dismissed from needs-attention); its status and error are unchanged.\n`);
+    return;
+  }
+
   await initStorage(summary.projectRoot);
   const sessionManager = new SessionManager();
 
@@ -1219,7 +1224,10 @@ async function stopSession(
   }
 
   const stopped = await sessionManager.stopSessionTree(summary.id, {
-    message: options.reason ?? 'Session stopped by user'
+    message: options.reason ?? 'Session stopped by user',
+    // `sessions stop` is a human at the keyboard: stopping an already-failed
+    // run means "reviewed, dismiss it from needs-attention".
+    dismissEnded: true
   });
 
   if (stopped.length === 0) {
@@ -1228,7 +1236,13 @@ async function stopSession(
 
   const changed = stopped.filter((entry) => entry.stopped);
   if (changed.length === 0) {
-    process.stdout.write(`Session ${summary.id} and its subagents were already ended.\n`);
+    const dismissed = stopped.filter((entry) => entry.dismissed);
+    if (dismissed.length > 0) {
+      // Nothing was running; the failed run(s) were stamped as reviewed instead.
+      process.stdout.write(`Session ${summary.id} had already ended. Marked ${dismissed.length} failed session(s) as reviewed (dismissed from needs-attention).\n`);
+    } else {
+      process.stdout.write(`Session ${summary.id} and its subagents were already ended.\n`);
+    }
     return;
   }
 
@@ -1238,14 +1252,14 @@ async function stopSession(
   }
   for (const entry of stopped) {
     const marker = entry.stopped ? '✓' : '-';
-    const suffix = entry.stopped ? '' : ` (already ${entry.wasStatus})`;
+    const suffix = entry.stopped ? '' : entry.dismissed ? ' (already ended; dismissed)' : ` (already ${entry.wasStatus})`;
     process.stdout.write(`  ${marker} ${entry.sessionId.substring(0, 12)}  ${entry.agentId}  was ${entry.wasStatus}${suffix}\n`);
   }
 }
 
 type ServerStopOutcome =
   | { handled: false }
-  | { handled: true; mode: 'stopped' | 'rejected' };
+  | { handled: true; mode: 'stopped' | 'rejected'; dismissed?: boolean };
 
 async function stopSessionViaServer(
   summary: SessionSummary,
@@ -1277,7 +1291,15 @@ async function stopSessionViaServer(
     } catch {
       // Older daemons may answer without a JSON body; treat as a plain stop.
     }
-    return { handled: true, mode: payload.rejected === true ? 'rejected' : 'stopped' };
+    // Nothing was running and the daemon stamped the failed run(s) as
+    // reviewed instead — surface that so the caller reports it accurately.
+    const stoppedEntries = Array.isArray(payload.stopped)
+      ? payload.stopped as Array<{ stopped?: boolean; dismissed?: boolean }>
+      : [];
+    const dismissed = stoppedEntries.length > 0
+      && stoppedEntries.some((entry) => entry.dismissed === true)
+      && stoppedEntries.every((entry) => entry.stopped !== true);
+    return { handled: true, mode: payload.rejected === true ? 'rejected' : 'stopped', ...(dismissed && { dismissed: true }) };
   } catch {
     return { handled: false };
   }

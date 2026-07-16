@@ -201,6 +201,9 @@ export default function SessionDetail() {
   const noticeRef = useRef<HTMLParagraphElement>(null);
   const [submittingContinue, setSubmittingContinue] = useState(false);
   const [submittingStop, setSubmittingStop] = useState(false);
+  // Discard on an ended failed run just happened: hides the button immediately,
+  // before the refetched header carries dismissedAt.
+  const [justDismissed, setJustDismissed] = useState(false);
   const [submittingReopen, setSubmittingReopen] = useState(false);
   // The resume composer stays collapsed until the user clicks "Resume session";
   // clicking again collapses it.
@@ -614,6 +617,12 @@ export default function SessionDetail() {
   // read/write learnings for — independent of whether resume is available.
   const learningsVisible = ended && Boolean(approval?.agent.filePath);
   const stopActionable = approval !== null && !ended && !expired && !submittingStop && !fatalError;
+  // Same Discard button on an ended failed run: stamps the run as reviewed
+  // (dismissedAt) so it clears from Home's "Needs your attention". Stopped-by-
+  // user runs never re-enter that list, so they get no discard affordance.
+  const dismissActionable = approval !== null && ended && approval.sessionStatus === 'error'
+    && approval.errorCode !== 'USER_STOPPED'
+    && approval.dismissedAt === undefined && !justDismissed && !submittingStop && !fatalError;
   // An errored session whose resolved approval gate can be rolled back for a retry.
   const reopenActionable = ended && approval?.sessionStatus === 'error'
     && Boolean(approval?.reopenable) && !live && !submittingReopen && !fatalError;
@@ -742,6 +751,16 @@ export default function SessionDetail() {
         setStatus('resuming');
         setNudge((n) => n + 1);
         void fetchApprovals().then((p) => syncAppBadge(p.buckets.pending.length)).catch(() => {});
+        return;
+      }
+      // Discard on an already-ended failed run: nothing was stopped, the run
+      // was stamped reviewed. Status/error stay untouched.
+      const dismissedOnly = payload.stopped.some((entry) => entry.dismissed) && payload.stopped.every((entry) => !entry.stopped);
+      if (dismissedOnly) {
+        setResult({ text: '✓ discarded — this run no longer shows under "Needs your attention".', error: false });
+        setJustDismissed(true);
+        setSubmittingStop(false);
+        setNudge((n) => n + 1);
         return;
       }
       setResult({ text: '✓ session stopped. Running subagents were stopped too.', error: false });
@@ -1227,7 +1246,7 @@ export default function SessionDetail() {
               errorMessage: approval.errorMessage,
             }}
           />
-          {stopActionable && (
+          {(stopActionable || dismissActionable) && (
             <button
               type="button"
               class="debug-prompt-button stop-session-button"
@@ -1236,7 +1255,9 @@ export default function SessionDetail() {
               onClick={() => void submitStop()}
               title={live
                 ? 'Stop this session and any running subagents'
-                : 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending'}
+                : dismissActionable
+                  ? 'Discard this failed run: marks it reviewed and clears it from "Needs your attention" (the run keeps its status)'
+                  : 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending'}
             >
               {submittingStop ? (
                 <span class="btn-spinner" aria-hidden="true" />
@@ -1266,7 +1287,7 @@ export default function SessionDetail() {
           {...(projectId ? { project: projectId } : {})}
         />
 
-        <div class="inactive-banner" hidden={actionable || continueActionable || stopActionable || reopenActionable || live || busy}>
+        <div class="inactive-banner" hidden={actionable || continueActionable || stopActionable || dismissActionable || reopenActionable || live || busy}>
           This session is not accepting actions right now.
         </div>
 

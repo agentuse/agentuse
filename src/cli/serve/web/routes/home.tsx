@@ -644,8 +644,11 @@ export default function Home() {
   const running = liveHome.sessions.filter(isLiveRow);
   const waiting = liveHome.sessions.filter((s) => s.status === 'suspended');
   // Recent failures surface in "Needs your attention" alongside pending gates.
+  // Not every failed-tone run is waiting on a human: runs the reviewer stopped
+  // themselves (USER_STOPPED) or already reviewed and discarded (dismissedAt,
+  // via the session page's Discard button) are acknowledged, so they stay out.
   const failedRecent = liveHome.sessions
-    .filter((s) => runTone(s.status) === 'failed')
+    .filter((s) => runTone(s.status) === 'failed' && s.errorCode !== 'USER_STOPPED' && s.dismissedAt === undefined)
     .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
     .slice(0, 3);
   const pendingApprovals = liveHome.pendingApprovals;

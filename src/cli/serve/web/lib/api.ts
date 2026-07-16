@@ -231,7 +231,7 @@ export type StopSessionResult =
   | {
     success: true;
     sessionId: string;
-    stopped: Array<{ sessionId: string; agentId: string; agentName: string; wasStatus: string; stopped: boolean }>;
+    stopped: Array<{ sessionId: string; agentId: string; agentName: string; wasStatus: string; stopped: boolean; dismissed?: boolean }>;
     rejected?: undefined;
   }
   | { sessionId: string; status: string; rejected: true };

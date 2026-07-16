@@ -30,6 +30,8 @@ export interface StoppedSession {
   agentName: string;
   wasStatus: SessionInfo['status'];
   stopped: boolean;
+  /** Already-ended failed session acknowledged (dismissedAt stamped) instead of stopped. */
+  dismissed?: boolean;
 }
 
 /** Compact, list-view-only record kept in the durable session index. */
@@ -49,6 +51,7 @@ export interface SessionListSummary {
   createdAt: number;
   updatedAt: number;
   error?: { code?: string; message?: string };
+  dismissedAt?: number;
   mock?: boolean;
   path: string;
 }
@@ -130,6 +133,7 @@ function toSessionListSummary(session: SessionInfo, sessionPath: string): Sessio
     createdAt: session.time.created,
     updatedAt: session.time.updated,
     ...(session.error && { error: { code: session.error.code, message: session.error.message } }),
+    ...(session.dismissedAt !== undefined && { dismissedAt: session.dismissedAt }),
     ...(session.mock && { mock: true }),
     path: sessionPath,
   };
@@ -1018,7 +1022,7 @@ export class SessionManager {
 
   async stopSessionTree(
     sessionID: string,
-    options: { message?: string; code?: string } = {}
+    options: { message?: string; code?: string; dismissEnded?: boolean } = {}
   ): Promise<StoppedSession[]> {
     const entries = await this.readSessionEntries();
     const byParent = new Map<string, SessionEntry[]>();
@@ -1049,6 +1053,17 @@ export class SessionManager {
     for (const entry of ordered) {
       const wasStatus = entry.session.status;
       const shouldStop = wasStatus === 'running' || wasStatus === 'suspended';
+      // dismissEnded (reviewer-initiated stops only): stopping an already-
+      // failed run is the reviewer's "reviewed, wave it off" — stamp
+      // dismissedAt so needs-attention surfaces drop it, but keep status/error
+      // intact so the true outcome stays diagnosable. Sessions the reviewer
+      // stopped themselves are excluded (never re-enter needs-attention), which
+      // also keeps the CLI's post-daemon-stop local pass from re-stamping them.
+      const shouldDismiss = options.dismissEnded === true
+        && !shouldStop
+        && wasStatus === 'error'
+        && entry.session.error?.code !== 'USER_STOPPED'
+        && entry.session.dismissedAt === undefined;
       const shouldStopPendingParts = shouldStop || entry.session.error?.code === code;
       if (shouldStop) {
         await this.updateSessionAtPath(entry.path, {
@@ -1059,6 +1074,8 @@ export class SessionManager {
             time: now
           }
         });
+      } else if (shouldDismiss) {
+        await this.updateSessionAtPath(entry.path, { dismissedAt: now });
       }
       if (shouldStopPendingParts) {
         await this.stopPendingPartsAtPath(entry.path, { message, time: now });
@@ -1068,7 +1085,8 @@ export class SessionManager {
         agentId: entry.agentId,
         agentName: entry.session.agent.name || entry.session.agent.id,
         wasStatus,
-        stopped: shouldStop
+        stopped: shouldStop,
+        ...(shouldDismiss && { dismissed: true })
       });
     }
 
