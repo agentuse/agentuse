@@ -920,6 +920,9 @@ a, button, select, summary, label, input, textarea,
   gap: 10px;
   margin-bottom: 12px;
 }
+/* The status pill's global 18px bottom margin (header placement) breaks the
+   flex centering inside the verdict strip; the strip spaces itself instead. */
+.page-approval-detail .result-verdict .status { margin-bottom: 0; }
 .page-approval-detail .result-verdict .result-meta { color: var(--muted); font-size: 12px; }
 /* Facts the run recorded via record_metric: green = verified write, matching
    the artifacts/completed semantics elsewhere on this page. */
@@ -1884,7 +1887,7 @@ label.approval-option:focus-within {
   margin-left: 6px;
   font-weight: 500;
   opacity: 0.85;
-  max-width: min(300px, 38vw);
+  max-width: min(300px, 30vw);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1948,7 +1951,6 @@ label.approval-option:focus-within {
   font-size: 12px;
   color: var(--muted);
   letter-spacing: 0.04em;
-  white-space: nowrap;
 }
 .log-actions-hint .kbd {
   display: inline-block;
@@ -1976,8 +1978,10 @@ label.approval-option:focus-within {
    class-less dialog buttons pick them up. Exclude the topbar's chrome buttons
    (search palette, reload, settings) — the fixed-width .icon-btn otherwise gets
    this rule's `padding: 0 16px` on top of `width: 30px`, crushing its content
-   box (and SVG) to zero. */
-.page-approval-detail button:not(.icon-btn):not(.palette-trigger) {
+   box (and SVG) to zero. The exclusions sit in :where() so they add no
+   specificity: bare :not() classes would outweigh `button.primary` /
+   `button.danger` below and flatten Approve/Reject to the transparent base. */
+.page-approval-detail button:where(:not(.icon-btn):not(.palette-trigger)) {
   font-family: var(--mono);
   font-size: 13px;
   font-weight: 500;
@@ -2525,8 +2529,8 @@ html[data-route-loading] body::after {
   }
   .log-actions-buttons button { min-height: 48px; min-width: 0; padding: 0 12px; }
   .log-actions-buttons button.primary { grid-column: 1 / -1; }
-  /* Full-width button row: let the picked-option label use most of it. */
-  .approve-choice-label { max-width: 60vw; }
+  /* Full-width button row: the button itself bounds the label now. */
+  .approve-choice-label { max-width: 100%; margin-left: 0; }
   .continue-actions { flex-direction: column; align-items: stretch; }
   .continue-actions button { width: 100%; }
   .learnings-add { flex-direction: column; align-items: stretch; }
