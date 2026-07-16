@@ -2834,6 +2834,33 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .card:hover { background: var(--panel-hover); border-color: var(--line-strong); }
 
 /* Agent-recorded metric rollups (Results section) */
+.page-home .metric-window {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px;
+}
+.page-home .metric-window button {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.page-home .metric-window button:hover { color: var(--fg); }
+.page-home .metric-window button.on { color: var(--green); background: var(--green-soft); }
+.page-home .metric-empty {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted-2);
+  padding: 4px 2px;
+}
 .page-home .metric-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));

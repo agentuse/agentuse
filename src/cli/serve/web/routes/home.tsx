@@ -136,16 +136,27 @@ interface MetricAgg {
   note?: string | undefined;
 }
 
-const METRICS_WINDOW_MS = 7 * 24 * 3_600_000;
+/** Selectable Results rollup windows; 30 is also the section-visibility probe. */
+const METRIC_WINDOW_DAYS = [1, 7, 14, 30] as const;
+const METRICS_WINDOW_KEY = 'agentuse-home-results-window';
+
+function readMetricsWindow(): number {
+  try {
+    const stored = Number(localStorage.getItem(METRICS_WINDOW_KEY));
+    return (METRIC_WINDOW_DAYS as readonly number[]).includes(stored) ? stored : 7;
+  } catch {
+    return 7;
+  }
+}
 
 /**
  * Fold reserved-store metric records (tools__record_metric) from every project
  * into one rollup per metric name. Sums are plain code over runtime-stamped
  * records - no model output is ever in the math path of a displayed number.
  */
-function aggregateMetrics(payload: StoreRowsPayload | null | undefined): MetricAgg[] {
+function aggregateMetrics(payload: StoreRowsPayload | null | undefined, windowDays: number): MetricAgg[] {
   if (!payload) return [];
-  const cutoff = Date.now() - METRICS_WINDOW_MS;
+  const cutoff = Date.now() - windowDays * 24 * 3_600_000;
   const byMetric = new Map<string, MetricAgg>();
   for (const row of payload.rows) {
     for (const item of row.items) {
@@ -308,8 +319,23 @@ export default function Home() {
 
   // Agent-recorded business metrics (reserved "metrics" store). Missing store
   // is normal and returns empty rows, so the section simply doesn't render.
+  // Visibility probes the widest window so picking a quiet 1-day view leaves
+  // the section (and its window toggle) on screen instead of stranding you.
   const metricRows = useFetch('home-metrics', () => fetchStoreRows('metrics'), { refreshMs: 60_000 });
-  const metricAggs = aggregateMetrics(metricRows.data);
+  const [metricsWindow, setMetricsWindowState] = useState(() => readMetricsWindow());
+  const setMetricsWindow = (days: number) => {
+    try {
+      if (days === 7) localStorage.removeItem(METRICS_WINDOW_KEY);
+      else localStorage.setItem(METRICS_WINDOW_KEY, String(days));
+    } catch {
+      // Private/restricted contexts may deny localStorage; the tab still switches.
+    }
+    setMetricsWindowState(days);
+  };
+  const metricAggs = aggregateMetrics(metricRows.data, metricsWindow);
+  const hasAnyMetrics = metricsWindow === 30
+    ? metricAggs.length > 0
+    : aggregateMetrics(metricRows.data, 30).length > 0;
 
   const running = liveHome.sessions.filter(isLiveRow);
   const waiting = liveHome.sessions.filter((s) => s.status === 'suspended');
@@ -394,12 +420,31 @@ export default function Home() {
           <ActivitySpark sessions={liveHome.sessions} />
         </section>
 
-        {metricAggs.length > 0 && (
+        {hasAnyMetrics && (
           <section class="group">
-            <h2 class="group-title"><span>Results</span><span class="rule"></span><span class="feed-live-tag">7 days</span></h2>
-            <div class="metric-grid">
-              {metricAggs.map((agg) => <MetricTile key={agg.metric} agg={agg} />)}
-            </div>
+            <h2 class="group-title">
+              <span>Results</span><span class="rule"></span>
+              <div class="metric-window" role="group" aria-label="Results window">
+                {METRIC_WINDOW_DAYS.map((days) => (
+                  <button
+                    key={days}
+                    type="button"
+                    class={days === metricsWindow ? 'on' : ''}
+                    aria-pressed={days === metricsWindow}
+                    onClick={() => setMetricsWindow(days)}
+                  >
+                    {days}d
+                  </button>
+                ))}
+              </div>
+            </h2>
+            {metricAggs.length > 0
+              ? (
+                <div class="metric-grid">
+                  {metricAggs.map((agg) => <MetricTile key={agg.metric} agg={agg} />)}
+                </div>
+              )
+              : <div class="metric-empty">No results in the last {metricsWindow === 1 ? 'day' : `${metricsWindow} days`}.</div>}
           </section>
         )}
 
