@@ -5,7 +5,7 @@ import { openAgentPalette } from './agent-palette';
 import { useFetch } from '../hooks/use-fetch';
 import { fetchApprovals } from '../lib/api';
 import { WORDMARK_SVG } from '../../brand';
-import { brandName } from '../lib/brand';
+import { brandName, hasCustomBrand } from '../lib/brand';
 import { useSessionListView } from '../hooks/use-session-list-view';
 
 const IS_APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
@@ -250,12 +250,15 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
   return (
     <header class="topbar">
       <a class="skip-link" href="#" onClick={skipToContent}>Skip to content</a>
-      <a
-        class="brand"
-        href="/"
-        aria-label={`${brandName()} home`}
-        dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }}
-      />
+      <a class="brand" href="/" aria-label={`${brandName()} home`}>
+        {hasCustomBrand() && (
+          <>
+            <span class="brand-name">{brandName()}</span>
+            <span class="brand-sep" aria-hidden="true">·</span>
+          </>
+        )}
+        <span class="brand-wordmark" dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }} />
+      </a>
 
       <div
         class={`nav-wrap${navEdges.left ? ' has-overflow-left' : ''}${navEdges.right ? ' has-overflow-right' : ''}`}

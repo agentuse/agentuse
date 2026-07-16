@@ -33,19 +33,25 @@ export const ICON_512_PNG_BASE64 =
 
 // Web app manifest: enables Add to Home Screen with a standalone window on
 // iOS (Safari honors `display` since 11.3) and installability on Android.
-// Colors mirror the app's dark theme (--bg / icon background).
-export const WEB_MANIFEST_JSON = JSON.stringify({
-  name: "AgentUse",
-  short_name: "AgentUse",
-  description: "AgentUse agent dashboard",
-  start_url: "/",
-  scope: "/",
-  display: "standalone",
-  background_color: "#0a0a0a",
-  theme_color: "#000000",
-  icons: [
-    { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
-    { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
-    { src: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
-  ],
-});
+// Colors mirror the app's dark theme (--bg / icon background). A configured
+// deployment brand (serve.brand.name) becomes the installed app's name.
+export function webManifestJson(brandName?: string): string {
+  const name = brandName?.trim() || "AgentUse";
+  return JSON.stringify({
+    name,
+    short_name: name,
+    description: `${name} agent dashboard`,
+    start_url: "/",
+    scope: "/",
+    display: "standalone",
+    background_color: "#0a0a0a",
+    theme_color: "#000000",
+    icons: [
+      { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { src: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+  });
+}
+
+export const WEB_MANIFEST_JSON = webManifestJson();

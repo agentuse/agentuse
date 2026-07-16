@@ -183,6 +183,19 @@ a, button, select, summary, label, input, textarea,
 }
 .topbar .brand .brand-mark { display: inline-flex; align-items: center; }
 .topbar .brand .brand-mark svg { height: 18px; width: auto; display: block; }
+.topbar .brand .brand-wordmark { display: inline-flex; align-items: center; }
+/* Configured deployment brand (serve.brand.name): "Kettlebase · <wordmark>". */
+.topbar .brand .brand-name {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  white-space: nowrap;
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topbar .brand .brand-sep { color: var(--muted); margin: 0 8px; }
 .topbar .brand .brand-mark-dark { display: none; }
 :root[data-theme="dark"] .topbar .brand .brand-mark-light { display: none; }
 :root[data-theme="dark"] .topbar .brand .brand-mark-dark { display: inline-flex; }

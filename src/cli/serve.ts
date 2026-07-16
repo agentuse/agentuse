@@ -40,7 +40,7 @@ import {
   renderMarkdownArtifact,
   normalizeApiPath
 } from "./serve/ui";
-import { FAVICON_SVG, TOUCH_ICON_180_PNG_BASE64, ICON_192_PNG_BASE64, ICON_512_PNG_BASE64, WEB_MANIFEST_JSON } from "./serve/brand";
+import { FAVICON_SVG, TOUCH_ICON_180_PNG_BASE64, ICON_192_PNG_BASE64, ICON_512_PNG_BASE64, webManifestJson } from "./serve/brand";
 
 // Decoded once; brand.ts itself stays Buffer-free because the web bundle
 // shares it (see the note in brand.ts).
@@ -3184,10 +3184,15 @@ export function createServeCommand(): Command {
         }
       };
 
+      // Deployment brand (config.json serve.brand.name): baked into the HTML
+      // shell, the topbar, document titles, and the install manifest so the
+      // daemon reads as the company's own operating layer.
+      const brandNameCfg = serveCfg?.brand?.name;
+      const manifestJson = webManifestJson(brandNameCfg);
       // Serve the built SPA (dist/web): hashed immutable assets at /assets/*,
       // and the tiny no-store HTML shell at every page route. All page data is
       // fetched client-side from the existing /api/* and /sessions/:id/* JSON.
-      const staticAssets = new WebAssets();
+      const staticAssets = new WebAssets(undefined, brandNameCfg);
       // Web Push to home-screen-installed clients: VAPID keys + device
       // subscriptions persist in the data dir; notifications fire on pending
       // approvals and session completions (see pushService.notify call sites).
@@ -3579,7 +3584,7 @@ export function createServeCommand(): Command {
         // Home Screen works from capability (token-only) session links too.
         if (req.method === "GET" && routePath === "/manifest.webmanifest") {
           res.writeHead(200, { "Content-Type": "application/manifest+json", "Cache-Control": "public, max-age=86400" });
-          res.end(WEB_MANIFEST_JSON);
+          res.end(manifestJson);
           return;
         }
         if (req.method === "GET") {
@@ -3728,7 +3733,7 @@ export function createServeCommand(): Command {
 
           if (isApi) {
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ version: packageVersion, default: defaultProject, projects: projectInfo }));
+            res.end(JSON.stringify({ version: packageVersion, brand: { name: brandNameCfg ?? "AgentUse" }, default: defaultProject, projects: projectInfo }));
             return;
           }
         }

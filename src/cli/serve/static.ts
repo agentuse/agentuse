@@ -45,9 +45,12 @@ export class WebAssets {
   private manifestMtimeMs = 0;
   private lastCheck = 0;
   private shellCache: { html: string; key: string } | null = null;
+  /** Configured deployment brand (serve.brand.name); undefined = plain AgentUse. */
+  private readonly brandName: string | undefined;
 
-  constructor(rootOverride?: string) {
+  constructor(rootOverride?: string, brandName?: string) {
     this.root = rootOverride ?? WebAssets.resolveRoot();
+    this.brandName = brandName?.trim() || undefined;
   }
 
   private static resolveRoot(): string | null {
@@ -168,6 +171,15 @@ export class WebAssets {
     const preloadLinks = preload
       .map((href) => `<link rel="modulepreload" href="/assets/${escapeHtml(href)}">`)
       .join("\n  ");
+    // Configured deployment brand, injected for the client bundle
+    // (web/lib/brand.ts) so the very first render already knows it: no
+    // fetch, no title flash. Brand is static per server process, so the
+    // cached shell stays valid. JSON-escaping `<` keeps the name from ever
+    // closing the script tag.
+    const brand = this.brandName;
+    const brandTag = brand
+      ? `\n  <script>window.__AGENTUSE_BRAND__ = ${JSON.stringify({ name: brand }).replace(/</g, "\\u003c")};</script>`
+      : "";
     const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -186,7 +198,7 @@ export class WebAssets {
     }
   </script>
   <meta name="color-scheme" content="dark light">
-  <title>AgentUse</title>
+  <title>${escapeHtml(brand ? `${brand} · AgentUse` : "AgentUse")}</title>
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fafaf9">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -195,7 +207,7 @@ export class WebAssets {
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="AgentUse">
+  <meta name="apple-mobile-web-app-title" content="${escapeHtml(brand ?? "AgentUse")}">${brandTag}
   <script>${approvalThemeBootScript()}</script>
   <style>
     /* Boot loader: visible from first paint until the first route commits

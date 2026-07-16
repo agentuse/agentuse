@@ -16,6 +16,13 @@ export interface GlobalServeConfig {
   publicUrl?: string;
   auth?: boolean;
   logFile?: boolean;
+  /**
+   * Deployment branding for the serve web UI. `name` renders beside the
+   * AgentUse wordmark in the topbar and prefixes document titles and the
+   * web-app manifest ("Kettlebase · AgentUse"). Name only by design:
+   * custom logos/wordmarks are out of scope (#152).
+   */
+  brand?: { name?: string };
 }
 
 export interface GlobalConfig {
@@ -188,6 +195,23 @@ function validate(input: unknown, configPath: string): GlobalConfig {
   if (serve.logFile !== undefined) {
     if (typeof serve.logFile !== 'boolean') fail(configPath, '`serve.logFile` must be a boolean');
     srv.logFile = serve.logFile;
+  }
+  if (serve.brand !== undefined) {
+    if (serve.brand === null || typeof serve.brand !== 'object' || Array.isArray(serve.brand)) {
+      fail(configPath, '`serve.brand` must be an object');
+    }
+    const brand = serve.brand as Record<string, unknown>;
+    const b: { name?: string } = {};
+    if (brand.name !== undefined) {
+      if (typeof brand.name !== 'string' || brand.name.trim().length === 0) {
+        fail(configPath, '`serve.brand.name` must be a non-empty string');
+      }
+      if (brand.name.trim().length > 60) {
+        fail(configPath, '`serve.brand.name` must be 60 characters or fewer');
+      }
+      b.name = brand.name.trim();
+    }
+    srv.brand = b;
   }
   out.serve = srv;
   return out;

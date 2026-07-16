@@ -152,6 +152,26 @@ describe('WebAssets static serving', () => {
     expect(shell).toContain('name="theme-color" media="(prefers-color-scheme: light)" content="#fafaf9"');
   });
 
+  it('brands the shell when a deployment name is configured', () => {
+    const branded = new WebAssets(webDir, 'Kettlebase');
+    const shell = branded.renderShell()!;
+    expect(shell).toContain('<title>Kettlebase · AgentUse</title>');
+    expect(shell).toContain('<meta name="apple-mobile-web-app-title" content="Kettlebase">');
+    expect(shell).toContain('window.__AGENTUSE_BRAND__ = {"name":"Kettlebase"};');
+  });
+
+  it('omits the brand global and keeps default titles when unconfigured', () => {
+    const shell = assets.renderShell()!;
+    expect(shell).toContain('<title>AgentUse</title>');
+    expect(shell).not.toContain('__AGENTUSE_BRAND__');
+  });
+
+  it('never lets a brand name break out of the shell markup', () => {
+    const branded = new WebAssets(webDir, '</script><script>alert(1)</script>');
+    const shell = branded.renderShell()!;
+    expect(shell).not.toContain('<script>alert(1)</script>');
+  });
+
   it('re-reads the manifest when it changes on disk', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'serve-web-reload-'));
     try {

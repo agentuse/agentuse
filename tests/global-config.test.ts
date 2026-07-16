@@ -140,6 +140,26 @@ describe('loadGlobalConfig', () => {
     expect(cfg?.serve?.logFile).toBe(false);
   });
 
+  it('loads and trims serve.brand.name', () => {
+    const file = makeTmpConfig({ serve: { brand: { name: '  Kettlebase  ' } } });
+    expect(loadGlobalConfig(file)?.serve?.brand?.name).toBe('Kettlebase');
+  });
+
+  it('throws when serve.brand is not an object', () => {
+    const file = makeTmpConfig({ serve: { brand: 'Kettlebase' } });
+    expect(() => loadGlobalConfig(file)).toThrow(/`serve.brand` must be an object/);
+  });
+
+  it('throws on empty serve.brand.name', () => {
+    const file = makeTmpConfig({ serve: { brand: { name: '   ' } } });
+    expect(() => loadGlobalConfig(file)).toThrow(/serve.brand.name/);
+  });
+
+  it('throws on overlong serve.brand.name', () => {
+    const file = makeTmpConfig({ serve: { brand: { name: 'x'.repeat(61) } } });
+    expect(() => loadGlobalConfig(file)).toThrow(/60 characters/);
+  });
+
   it('returns empty object when file has no serve section', () => {
     const file = makeTmpConfig({});
     expect(loadGlobalConfig(file)).toEqual({});

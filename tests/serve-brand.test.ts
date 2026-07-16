@@ -5,6 +5,7 @@ import {
   ICON_192_PNG_BASE64,
   ICON_512_PNG_BASE64,
   WEB_MANIFEST_JSON,
+  webManifestJson,
 } from '../src/cli/serve/brand';
 
 const TOUCH_ICON_180_PNG = Buffer.from(TOUCH_ICON_180_PNG_BASE64, 'base64');
@@ -39,6 +40,14 @@ describe('brand install assets', () => {
     expect(srcs).toContain('/icon-192.png');
     expect(srcs).toContain('/icon-512.png');
     expect(srcs).toContain('/apple-touch-icon.png');
+  });
+
+  it('web manifest carries a configured brand name', () => {
+    const manifest = JSON.parse(webManifestJson('Kettlebase'));
+    expect(manifest.name).toBe('Kettlebase');
+    expect(manifest.short_name).toBe('Kettlebase');
+    expect(manifest.description).toBe('Kettlebase agent dashboard');
+    expect(JSON.parse(webManifestJson()).name).toBe('AgentUse');
   });
 
   it('favicon remains theme-aware SVG', () => {
