@@ -69,6 +69,7 @@ function NotificationsGroup() {
                   <span class="settings-check-text">
                     <span>{row.label}</span>
                     <span class="settings-row-hint">{row.hint}</span>
+                    {row.bell.error && <span class="settings-check-error" role="alert">{row.bell.error}</span>}
                   </span>
                 </label>
               ))}

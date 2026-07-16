@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'preact/hooks';
-import { fetchPushPrefs, fetchPushPublicKey, postPushSubscription, type PushPrefs } from '../lib/api';
+import { ApiRequestError, fetchPushPrefs, fetchPushPublicKey, postPushSubscription, type PushPrefs } from '../lib/api';
 
 export type PushCategory = keyof PushPrefs;
 
@@ -40,13 +40,24 @@ function base64UrlToUint8Array(value: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+/** One line a human can act on; authorization failures name the real cause
+ *  instead of a generic "failed". */
+function toggleErrorMessage(err: unknown): string {
+  if (err instanceof ApiRequestError && (err.status === 401 || err.status === 403)) {
+    return 'The server refused: this browser has no operator access (API key required).';
+  }
+  return 'Could not update the setting on the server. Is the daemon reachable?';
+}
+
 /**
  * State machine behind a notification bell scoped to one category. First
  * enable does the whole chain (SW registration, permission prompt, push
  * subscribe, server registration) in the click's user gesture; subsequent
- * toggles just flip the server-side category pref.
+ * toggles just flip the server-side category pref. A failed toggle reverts
+ * the state and reports why through `error` (cleared on the next attempt).
  */
-export function usePushBell(category: PushCategory): { state: PushBellState; toggle: () => void } {
+export function usePushBell(category: PushCategory): { state: PushBellState; toggle: () => void; error: string | null } {
+  const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<PushBellState>(() => {
     const support = detectSupport();
     return support === 'ok' ? 'busy' : support;
@@ -76,6 +87,7 @@ export function usePushBell(category: PushCategory): { state: PushBellState; tog
     if (state !== 'on' && state !== 'off') return;
     const wasOn = state === 'on';
     setState('busy');
+    setError(null);
     (async () => {
       if (wasOn) {
         const sub = await currentSubscription();
@@ -102,8 +114,11 @@ export function usePushBell(category: PushCategory): { state: PushBellState; tog
       return 'on' as const;
     })()
       .then(setState)
-      .catch(() => setState(wasOn ? 'on' : 'off'));
+      .catch((err: unknown) => {
+        setState(wasOn ? 'on' : 'off');
+        setError(toggleErrorMessage(err));
+      });
   }, [state, category]);
 
-  return { state, toggle };
+  return { state, toggle, error };
 }
