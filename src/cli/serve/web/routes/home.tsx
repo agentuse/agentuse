@@ -361,7 +361,7 @@ export default function Home() {
       <Topbar currentPage="home" />
       <main class="home-boot">
         <header>
-          <div class="eyebrow">serve daemon</div>
+          <div class="eyebrow">agent operations</div>
           <h1>{brandName()}</h1>
           {error && <div class="errors" role="alert">Failed to load: {error.message}</div>}
           {liveHome.error && <div class="errors" role="alert">Failed to load sessions: {liveHome.error.message}</div>}
