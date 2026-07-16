@@ -208,3 +208,10 @@ export function sessionErrorText(approval: Pick<ApprovalPageInfo, 'sessionStatus
     approval.errorMessage
   ].filter(Boolean).join(': ')}`;
 }
+
+/** "substack_notes_published" -> "Substack notes published". Shared by the
+ *  Home metric tiles and the session result card's recorded-metric chips. */
+export function humanizeMetric(name: string): string {
+  const spaced = name.replace(/_/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}

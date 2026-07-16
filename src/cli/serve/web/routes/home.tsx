@@ -7,7 +7,7 @@ import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
-import { formatApprovalTime, formatRelativeTime, displayStatusLabel, runTone } from '../lib/format';
+import { formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone } from '../lib/format';
 
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -181,11 +181,6 @@ function aggregateMetrics(payload: StoreRowsPayload | null | undefined): MetricA
     }
   }
   return [...byMetric.values()].sort((a, b) => b.latestAt - a.latestAt);
-}
-
-function humanizeMetric(name: string): string {
-  const spaced = name.replace(/_/g, ' ');
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
 function MetricTile(props: { agg: MetricAgg }) {

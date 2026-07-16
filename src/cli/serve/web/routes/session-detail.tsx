@@ -17,6 +17,7 @@ import { useTitle } from '../hooks/use-title';
 import { useSmartBack } from '../hooks/use-smart-back';
 import {
   formatApprovalTime,
+  humanizeMetric,
   isDebugLog,
   isEndedStatus,
   isLiveStatus,
@@ -137,6 +138,23 @@ function CountUpValue(props: { num: number; format: (n: number) => string }) {
 /** Headroom tone for the context gauge: calm green until half, then amber, then red. */
 function gaugeTone(pctLeft: number): string {
   return pctLeft > 50 ? '' : pctLeft > 20 ? ' warn' : ' crit';
+}
+
+/** One business fact the run recorded via the record_metric tool. */
+interface RecordedMetric {
+  metric: string;
+  count?: number;
+  value?: number;
+  unit?: string;
+}
+
+/** "$12,400" / "3,200 words" / "+2" — the amount half of a recorded-metric chip. */
+function recordedMetricAmount(m: RecordedMetric): string {
+  if (typeof m.value === 'number') {
+    const num = m.value.toLocaleString();
+    return m.unit === 'usd' ? `$${num}` : m.unit ? `${num} ${m.unit}` : num;
+  }
+  return typeof m.count === 'number' ? `+${m.count.toLocaleString()}` : '';
 }
 
 /** Coarse human duration for the result verdict line ("42s", "12 min", "1h 05m"). */
@@ -473,6 +491,29 @@ export default function SessionDetail() {
     () => orderedLogs.reduce((n, e) => n + (e.type === 'tool' ? 1 : 0), 0),
     [orderedLogs]
   );
+  // Business facts the run recorded via record_metric, for the result card's
+  // "recorded" chips. The tool's OUTPUT (details.output JSON) confirms the
+  // write and names the metric; the call INPUT carries the recorded amounts.
+  // Last write per metric wins, mirroring the tool's per-session upsert.
+  const recordedMetrics = useMemo<RecordedMetric[]>(() => {
+    const byMetric = new Map<string, RecordedMetric>();
+    for (const entry of orderedLogs) {
+      if (entry.type !== 'tool' || !entry.tool?.endsWith('record_metric')) continue;
+      if (entry.status === 'error' || entry.status === 'failed' || entry.status === 'running') continue;
+      let out: Record<string, unknown>;
+      try { out = JSON.parse(entry.details?.output ?? entry.message ?? '') as Record<string, unknown>; } catch { continue; }
+      if (out.success !== true || typeof out.metric !== 'string') continue;
+      let input: Record<string, unknown> = {};
+      try { input = JSON.parse(entry.details?.input ?? '') as Record<string, unknown>; } catch { /* name-only chip */ }
+      byMetric.set(out.metric, {
+        metric: out.metric,
+        ...(typeof input.count === 'number' ? { count: input.count } : {}),
+        ...(typeof input.value === 'number' ? { value: input.value } : {}),
+        ...(typeof input.unit === 'string' && input.unit ? { unit: input.unit } : {}),
+      });
+    }
+    return [...byMetric.values()];
+  }, [orderedLogs]);
 
   useEffect(() => {
     try { localStorage.setItem('agentuse:session:showDebug', showDebug ? '1' : '0'); } catch { /* ignore */ }
@@ -1070,6 +1111,25 @@ export default function SessionDetail() {
                 <span class={`status ${displayStatus}`}>{displayStatus}</span>
                 {resultMeta && <span class="result-meta">{resultMeta}</span>}
               </div>
+              {recordedMetrics.length > 0 && (
+                <div class="result-recorded">
+                  <span class="label">recorded</span>
+                  {recordedMetrics.map((m) => {
+                    const amount = recordedMetricAmount(m);
+                    return (
+                      <a
+                        key={m.metric}
+                        class="metric-chip"
+                        href={`/stores/metrics${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`}
+                        title={m.metric}
+                      >
+                        <span class="metric-chip-name">{humanizeMetric(m.metric)}</span>
+                        {amount && <span class="metric-chip-amount">{amount}</span>}
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
               {resultErrorText && <div class="result-error">{resultErrorText}</div>}
               {finalText ? (
                 <div class="result-body"><LogContent value={finalText} forceMarkdown /></div>

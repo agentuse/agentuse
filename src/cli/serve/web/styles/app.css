@@ -921,6 +921,38 @@ a, button, select, summary, label, input, textarea,
   margin-bottom: 12px;
 }
 .page-approval-detail .result-verdict .result-meta { color: var(--muted); font-size: 12px; }
+/* Facts the run recorded via record_metric: green = verified write, matching
+   the artifacts/completed semantics elsewhere on this page. */
+.page-approval-detail .result-recorded {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.page-approval-detail .result-recorded > .label {
+  color: var(--muted-3);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.page-approval-detail a.metric-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 3px 11px;
+  border: 1px solid var(--green-border);
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--fg);
+  font-size: 12px;
+}
+.page-approval-detail a.metric-chip:hover { opacity: 0.85; }
+.page-approval-detail .metric-chip-amount {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--green);
+}
 .page-approval-detail .result-error {
   color: var(--red);
   font-size: 13px;
@@ -1852,7 +1884,7 @@ label.approval-option:focus-within {
   margin-left: 6px;
   font-weight: 500;
   opacity: 0.85;
-  max-width: min(220px, 38vw);
+  max-width: min(300px, 38vw);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1890,14 +1922,25 @@ label.approval-option:focus-within {
 }
 
 /* inline approval actions */
+/* Sticky: a long gate (many options, big diffs) pushes the decision below the
+   fold; pinning the bar to the viewport bottom keeps Approve/Reject reachable
+   while the reviewer scrolls the evidence. It needs the opaque bar treatment
+   (same recipe as the topbar), not the translucent panel, because it floats
+   over log text mid-scroll. */
 .log-actions {
+  position: sticky;
+  bottom: 12px;
+  z-index: 5;
   margin-top: 12px;
   padding: 12px 14px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 10px;
-  background: var(--panel);
+  background: var(--bar-bg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
   display: flex; flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px 16px;
   align-items: center;
   justify-content: space-between;
 }
@@ -1905,6 +1948,7 @@ label.approval-option:focus-within {
   font-size: 12px;
   color: var(--muted);
   letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 .log-actions-hint .kbd {
   display: inline-block;
@@ -1915,7 +1959,19 @@ label.approval-option:focus-within {
   color: var(--muted-3);
   background: var(--bg);
 }
-.log-actions-buttons { display: inline-flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+/* flex: 1 keeps the buttons right-aligned even after a long approve label
+   wraps them onto their own line under the keyboard hint. */
+.log-actions-buttons {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+/* The decision buttons are the whole point of the page; give them more
+   presence than the generic 40px approval-flow buttons. */
+.log-actions-buttons button { min-height: 42px; padding: 0 18px; }
+.log-actions-buttons button.primary { font-weight: 600; }
 /* These approval-flow button styles are intentionally broad (`button`) so the
    class-less dialog buttons pick them up. Exclude the topbar's chrome buttons
    (search palette, reload, settings) — the fixed-width .icon-btn otherwise gets
@@ -2452,10 +2508,25 @@ html[data-route-loading] body::after {
   .approval-question { font-size: 17px; }
   /* Let the label / char count / copy chip wrap instead of crushing the label. */
   .approval-change-head { flex-wrap: wrap; row-gap: 4px; }
-  .log-actions { flex-direction: column; align-items: stretch; }
+  /* Touch-first decision bar: Approve gets a full-width row (it carries the
+     picked-option label), Reject/Comment split the second row. 48px rows meet
+     the touch-target guideline. Safe-area keeps it clear of the home bar. */
+  .log-actions {
+    flex-direction: column;
+    align-items: stretch;
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    padding: 10px;
+  }
   .log-actions-hint { display: none; }
-  .log-actions-buttons { justify-content: stretch; }
-  .log-actions-buttons button { flex: 1; }
+  .log-actions-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .log-actions-buttons button { min-height: 48px; min-width: 0; padding: 0 12px; }
+  .log-actions-buttons button.primary { grid-column: 1 / -1; }
+  /* Full-width button row: let the picked-option label use most of it. */
+  .approve-choice-label { max-width: 60vw; }
   .continue-actions { flex-direction: column; align-items: stretch; }
   .continue-actions button { width: 100%; }
   .learnings-add { flex-direction: column; align-items: stretch; }
