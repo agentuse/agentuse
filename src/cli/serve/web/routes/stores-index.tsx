@@ -92,7 +92,7 @@ export default function StoresIndex() {
         {data && <ErrorBanner errors={data.errors} />}
         <div class="panel">
           {loading && !data && <Loading label="Loading stores…" />}
-          {data && data.stores.length === 0 && <div class="empty">No stores found for this serve daemon.</div>}
+          {data && data.stores.length === 0 && <div class="empty">No stores yet. Agents create them the first time they save data.</div>}
           {data && data.stores.length > 0 && (
             <StoreTable
               columns={columns}

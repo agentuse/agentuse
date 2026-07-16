@@ -776,19 +776,19 @@ export default function Agents({ project }: { project?: string } = {}) {
   const lede = !data
     ? (loading ? 'Loading agents…' : '')
     : projectMissing
-      ? `No project “${project}” is loaded by this serve daemon.`
+      ? `No project “${project}” is loaded here.`
       : filterActive
         ? `${allAgents.length} of ${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} match ${filterLabel}.`
         : scoped
           ? `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} in this project.`
-          : `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} across ${byProject.size} project${byProject.size === 1 ? '' : 's'} in this serve daemon.`;
+          : `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} across ${byProject.size} project${byProject.size === 1 ? '' : 's'}.`;
   const emptyMsg = filterActive
     ? `No agents match ${filterLabel}.`
     : projectMissing
-      ? `No project “${project}” is loaded by this serve daemon.`
+      ? `No project “${project}” is loaded here.`
       : scoped
         ? 'This project has no agents.'
-        : 'No agents loaded by this serve daemon.';
+        : 'No agents loaded yet.';
 
   return (
     <div class="page-agents">

@@ -106,7 +106,7 @@ export default function StoreItems() {
         <header>
           <div class="eyebrow">store table</div>
           <h1>{storeName}</h1>
-          <p class="lede">{data ? `${allRows.length} item${allRows.length === 1 ? '' : 's'} visible in this serve daemon.` : loading ? 'Loading items…' : ''}</p>
+          <p class="lede">{data ? `${allRows.length} item${allRows.length === 1 ? '' : 's'} in this store.` : loading ? 'Loading items…' : ''}</p>
         </header>
         {error && <div class="errors">Failed to load store: {error.message}</div>}
         {data && <ErrorBanner errors={data.errors} />}
