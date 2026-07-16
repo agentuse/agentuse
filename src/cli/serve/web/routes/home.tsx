@@ -504,7 +504,7 @@ export default function Home() {
           </div>
         </section>
 
-        {data && <p class="api-hint">Programmatic clients: server info JSON at <code>/api</code>, JSON twins at <code>/api/agents</code>, <code>/api/sessions</code>, <code>/api/schedules</code>. v{data.version}</p>}
+        {data && <p class="api-hint">AgentUse v{data.version}</p>}
       </main>
     </div>
   );
