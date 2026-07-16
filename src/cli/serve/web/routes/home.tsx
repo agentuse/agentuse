@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
-import type { SessionRow, StoreRowsPayload } from '../lib/api';
+import { useEffect, useState } from 'preact/hooks';
+import { useCountUp } from '../hooks/use-count-up';
+import type { ApprovalRow, SerializedSchedule, SessionRow, StoreRowsPayload } from '../lib/api';
 import { fetchInfo, fetchAgents, fetchSchedules, fetchStoreRows } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
+import { useHomeSections } from '../hooks/use-home-sections';
 import { useLiveHome, sessionRowKey, type ActivityEvent } from '../hooks/use-live-home';
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
@@ -31,31 +33,6 @@ function useNow(enabled: boolean): number {
     return () => clearInterval(timer);
   }, [enabled]);
   return now;
-}
-
-/** Animate a stat toward its target so counts visibly count up on load. */
-function useCountUp(target: number, duration = 700): number {
-  const [display, setDisplay] = useState(0);
-  const fromRef = useRef(0);
-  useEffect(() => {
-    const from = fromRef.current;
-    if (from === target) return;
-    let raf = 0;
-    const start = performance.now();
-    const tick = (t: number) => {
-      const progress = Math.min(1, (t - start) / duration);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setDisplay(Math.round(from + (target - from) * eased));
-      if (progress < 1) {
-        raf = requestAnimationFrame(tick);
-      } else {
-        fromRef.current = target;
-      }
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [target, duration]);
-  return display;
 }
 
 function formatCountdown(ms: number): string {
@@ -120,6 +97,182 @@ function RunningCard(props: { row: SessionRow; now: number; ticker: boolean }) {
         : <div class="now-desc">{row.agent.description || displayStatusLabel(row.status, row.errorCode)}</div>}
       <div class="now-meta">{row.project} · {row.trigger}</div>
     </a>
+  );
+}
+
+/** Time a gate has been waiting on a human, as a compact "waiting 26m". */
+function formatWaiting(ms: number): string {
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return 'waiting now';
+  if (min < 60) return `waiting ${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `waiting ${hr}h`;
+  return `waiting ${Math.floor(hr / 24)}d`;
+}
+
+function ApprovalCard(props: { row: ApprovalRow }) {
+  const { row } = props;
+  const since = row.suspendedAt ?? row.createdAt;
+  return (
+    <a class="attn-card" href="/approvals">
+      <div class="attn-head">
+        <span class="attn-kind">approval</span>
+        <span class="attn-agent">{row.agentName || row.agentId}</span>
+        {since !== undefined && <span class="attn-wait" title={formatApprovalTime(since)}>{formatWaiting(Date.now() - since)}</span>}
+      </div>
+      {(row.summary || row.prompt) && <div class="attn-summary">{row.summary || row.prompt}</div>}
+      <div class="attn-meta">
+        {row.project}
+        {row.risk && <> · <span class="attn-risk">{row.risk}</span></>}
+        <span class="attn-go"> · approve or reject →</span>
+      </div>
+    </a>
+  );
+}
+
+function FailedRow(props: { row: SessionRow }) {
+  const { row } = props;
+  const at = row.updatedAt || row.createdAt;
+  return (
+    <a class="attn-run" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
+      <span class="feed-dot failed" aria-hidden="true"></span>
+      <span class="attn-agent">{row.agent.name || row.agent.id}</span>
+      <span class="attn-fail">{displayStatusLabel(row.status, row.errorCode)} · needs a look</span>
+      <span class="feed-time" title={formatApprovalTime(at)}>{formatRelativeTime(at)}</span>
+    </a>
+  );
+}
+
+/** What's blocked on a human: pending gates first, then recent failed runs.
+ *  Renders even when empty — "nothing waiting on you" is the answer the
+ *  section exists to give. */
+function AttentionSection(props: { pending: ApprovalRow[]; failed: SessionRow[] }) {
+  const { pending, failed } = props;
+  const total = pending.length + failed.length;
+  return (
+    <section class="group">
+      <h2 class="group-title">
+        <span>Needs your attention</span>
+        {total > 0 && <span class="count">{total}</span>}
+        <span class="rule"></span>
+      </h2>
+      {total === 0
+        ? <div class="attn-empty">Nothing waiting on you.</div>
+        : (
+          <div class="attn-list">
+            {pending.map((row) => <ApprovalCard key={`${row.project}:${row.sessionId}`} row={row} />)}
+            {failed.map((row) => <FailedRow key={`${row.project}:${row.sessionId}`} row={row} />)}
+          </div>
+        )}
+    </section>
+  );
+}
+
+/** First meaningful line of a final response, stripped of markdown dressing. */
+function responseOneLiner(text: string): string {
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/^[\s#>*-]+/, '').replace(/\*\*/g, '').trim();
+    if (line && !line.startsWith('|') && !/^[-=:|\s]+$/.test(line)) return line;
+  }
+  return '';
+}
+
+const LATEST_PER_PROJECT = 3;
+
+/** Completed runs' final responses as one-liners, grouped by project with the
+ *  freshest project first. The qualitative half of outcome-first Home (the
+ *  Results tiles above it are the quantitative half). */
+function LatestResults(props: { sessions: SessionRow[]; showProject: boolean; loading: boolean }) {
+  const done = props.sessions
+    .filter((s) => s.status === 'completed' && s.finalResponse && responseOneLiner(s.finalResponse))
+    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+  const byProject = new Map<string, SessionRow[]>();
+  for (const s of done) {
+    const rows = byProject.get(s.project) ?? [];
+    if (rows.length < LATEST_PER_PROJECT) byProject.set(s.project, [...rows, s]);
+  }
+  const groups = [...byProject.entries()];
+  return (
+    <section class="group">
+      <h2 class="group-title">
+        <span>Latest results</span><span class="rule"></span>
+        <a class="group-link" href="/sessions">view all →</a>
+      </h2>
+      {groups.length === 0
+        ? (props.loading
+          ? <Loading label="Loading results…" />
+          : <div class="metric-empty">No completed runs in the last 24 hours.</div>)
+        : (
+          <div class="latest-groups">
+            {groups.map(([project, rows]) => (
+              <div class="latest-group" key={project}>
+                {props.showProject && <div class="latest-project">{project}</div>}
+                <div class="panel">
+                  {rows.map((row) => {
+                    const at = row.updatedAt || row.createdAt;
+                    return (
+                      <a
+                        class="latest-row"
+                        key={`${row.project}:${row.sessionId}`}
+                        href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}
+                      >
+                        <span class="latest-agent">{row.agent.name || row.agent.id}</span>
+                        <span class="latest-text">{responseOneLiner(row.finalResponse!)}</span>
+                        <span class="feed-time" title={formatApprovalTime(at)}>{formatRelativeTime(at)}</span>
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+    </section>
+  );
+}
+
+/** "today 2:30 PM", "tomorrow 7:30 AM", then "Monday 9:00 AM". */
+function formatUpcoming(at: number, now: number): string {
+  const date = new Date(at);
+  const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const dayStart = (t: number) => {
+    const d = new Date(t);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  };
+  const dayDiff = Math.round((dayStart(at) - dayStart(now)) / 86_400_000);
+  if (dayDiff <= 0) return `today ${time}`;
+  if (dayDiff === 1) return `tomorrow ${time}`;
+  return `${date.toLocaleDateString([], { weekday: 'long' })} ${time}`;
+}
+
+const COMING_UP_LIMIT = 5;
+
+/** The next few scheduled runs in plain terms; hidden when nothing is scheduled. */
+function ComingUp(props: { schedules: SerializedSchedule[] }) {
+  const now = Date.now();
+  const upcoming = props.schedules
+    .filter((s) => s.enabled && s.nextRun)
+    .map((s) => ({ s, at: Date.parse(s.nextRun!) }))
+    .filter((x) => Number.isFinite(x.at))
+    .sort((a, b) => a.at - b.at)
+    .slice(0, COMING_UP_LIMIT);
+  if (upcoming.length === 0) return null;
+  return (
+    <section class="group">
+      <h2 class="group-title">
+        <span>Coming up</span><span class="rule"></span>
+        <a class="group-link" href="/schedules">all schedules →</a>
+      </h2>
+      <div class="panel">
+        {upcoming.map(({ s, at }) => (
+          <a class="up-row" key={s.id} href="/schedules">
+            <span class="up-when" title={formatApprovalTime(at)}>{formatUpcoming(at, now)}</span>
+            <span class="up-agent">{s.agentName || s.agentPath.replace(/\.agentuse$/, '')}</span>
+            <span class="up-cadence">{s.human}</span>
+          </a>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -337,8 +490,14 @@ export default function Home() {
     ? metricAggs.length > 0
     : aggregateMetrics(metricRows.data, 30).length > 0;
 
+  const sections = useHomeSections();
   const running = liveHome.sessions.filter(isLiveRow);
   const waiting = liveHome.sessions.filter((s) => s.status === 'suspended');
+  // Recent failures surface in "Needs your attention" alongside pending gates.
+  const failedRecent = liveHome.sessions
+    .filter((s) => runTone(s.status) === 'failed')
+    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
+    .slice(0, 3);
   const pendingApprovals = liveHome.pendingApprovals;
   // Suspended rows with no live or expired gate are mid-flight (a delegated
   // leaf running under a decided cascade approval, or a resume in progress),
@@ -366,7 +525,7 @@ export default function Home() {
   const totalAgents = agentRows ? agentRows.length : projects.reduce((sum, p) => sum + p.agentCount, 0);
   const totalSchedules = projects.reduce((sum, p) => sum + p.scheduleCount, 0);
 
-  const heroCount = useCountUp(running.length, 500);
+  const heroCount = useCountUp(running.length, { duration: 500 });
   const statAgents = useCountUp(totalAgents);
   const statSessions = useCountUp(liveHome.sessions.length);
   const statSchedules = useCountUp(totalSchedules);
@@ -420,7 +579,11 @@ export default function Home() {
           <ActivitySpark sessions={liveHome.sessions} />
         </section>
 
-        {hasAnyMetrics && (
+        {sections.isVisible('attention') && (
+          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} />
+        )}
+
+        {sections.isVisible('results') && hasAnyMetrics && (
           <section class="group">
             <h2 class="group-title">
               <span>Results</span><span class="rule"></span>
@@ -448,7 +611,11 @@ export default function Home() {
           </section>
         )}
 
-        {running.length > 0 && (
+        {sections.isVisible('latest') && (
+          <LatestResults sessions={liveHome.sessions} showProject={projects.length > 1} loading={liveHome.loading} />
+        )}
+
+        {sections.isVisible('running') && running.length > 0 && (
           <section class="group">
             <h2 class="group-title"><span>Running now</span><span class="count">{running.length}</span><span class="rule"></span></h2>
             <div class="now-grid">
@@ -457,18 +624,24 @@ export default function Home() {
           </section>
         )}
 
-        <section class="group">
-          <h2 class="group-title"><span>Activity</span><span class="rule"></span><span class="feed-live-tag">{liveHome.live ? 'live' : 'polling'}</span></h2>
-          <div class="panel feed">
-            {liveHome.feed.length === 0
-              ? (liveHome.loading
-                ? <Loading label="Loading activity…" />
-                : <div class="empty">No runs in the last 24 hours.</div>)
-              : liveHome.feed.map((event) => <FeedRow key={event.key} event={event} />)}
-          </div>
-        </section>
+        {sections.isVisible('coming-up') && (
+          <ComingUp schedules={schedules.data?.schedules ?? []} />
+        )}
 
-        <div class="cards">
+        {sections.isVisible('feed') && (
+          <section class="group">
+            <h2 class="group-title"><span>Activity</span><span class="rule"></span><span class="feed-live-tag">{liveHome.live ? 'live' : 'polling'}</span></h2>
+            <div class="panel feed">
+              {liveHome.feed.length === 0
+                ? (liveHome.loading
+                  ? <Loading label="Loading activity…" />
+                  : <div class="empty">No runs in the last 24 hours.</div>)
+                : liveHome.feed.map((event) => <FeedRow key={event.key} event={event} />)}
+            </div>
+          </section>
+        )}
+
+        {sections.isVisible('cards') && <div class="cards">
           {CARDS.map((card) => {
             const count = countFor(card.title);
             const attn = card.title === 'Approvals' && pendingApprovals > 0;
@@ -479,9 +652,9 @@ export default function Home() {
               </a>
             );
           })}
-        </div>
+        </div>}
 
-        <section class="group">
+        {sections.isVisible('projects') && <section class="group">
           <h2 class="group-title"><span>Projects</span><span class="count">{projects.length}</span><span class="rule"></span></h2>
           <div class="panel">
             {projects.length === 0
@@ -502,7 +675,7 @@ export default function Home() {
                 </a>
               ))}
           </div>
-        </section>
+        </section>}
 
         {data && <p class="api-hint">AgentUse v{data.version}</p>}
       </main>

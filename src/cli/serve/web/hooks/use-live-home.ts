@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { ApiRequestError, SessionRow, SessionsPayload, ApprovalsListPayload } from '../lib/api';
+import type { ApiRequestError, ApprovalRow, SessionRow, SessionsPayload, ApprovalsListPayload } from '../lib/api';
 import { fetchSessions, fetchApprovals } from '../lib/api';
 import { useFetch } from './use-fetch';
 import { useSessionsStream } from './use-sessions-stream';
@@ -85,6 +85,8 @@ export interface LiveHome {
   sessions: SessionRow[];
   feed: ActivityEvent[];
   pendingApprovals: number;
+  /** Pending approval gates, newest first (drives "Needs your attention"). */
+  pendingRows: ApprovalRow[];
   /** Why each suspended session waits (pending gate vs. mid-flight resume). */
   suspendedGates: SuspendedGateKinds;
   /** True while the SSE stream is healthy (footer copy + demo confidence). */
@@ -109,9 +111,11 @@ export function useLiveHome(): LiveHome {
   const [approvalsPayload, setApprovalsPayload] = useState<ApprovalsListPayload | null>(null);
   const [approvalsFallback, setApprovalsFallback] = useState(false);
 
+  // detail: 'feed' attaches each ended session's cached finalResponse, which
+  // powers the outcome-first "Latest results" section on Home.
   const fetchedSessions = useFetch(
     'home-sessions',
-    () => fetchSessions({ window: '24h' }),
+    () => fetchSessions({ window: '24h', detail: 'feed' }),
     sessionsFallback ? { refreshMs: 10_000 } : {}
   );
   const fetchedApprovals = useFetch(
@@ -126,6 +130,7 @@ export function useLiveHome(): LiveHome {
     status: undefined,
     trigger: undefined,
     approval: undefined,
+    detail: 'feed',
     enabled: !sessionsFallback,
     onData: (payload) => {
       setSessionsPayload(payload);
@@ -195,6 +200,8 @@ export function useLiveHome(): LiveHome {
     sessions: sessionsData?.sessions ?? [],
     feed,
     pendingApprovals: approvalsData?.buckets.pending.length ?? 0,
+    pendingRows: [...(approvalsData?.buckets.pending ?? [])]
+      .sort((a, b) => (b.suspendedAt ?? b.createdAt ?? 0) - (a.suspendedAt ?? a.createdAt ?? 0)),
     suspendedGates: gates,
     live: !sessionsFallback,
     error: fetchedSessions.error ?? (!sessionsData ? streamError : null),

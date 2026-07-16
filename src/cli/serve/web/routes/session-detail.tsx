@@ -13,6 +13,7 @@ import { Loading } from '../components/loading';
 import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
 import { syncAppBadge } from '../lib/badge';
 import { useApprovalStream } from '../hooks/use-approval-stream';
+import { useCountUp } from '../hooks/use-count-up';
 import { useTitle } from '../hooks/use-title';
 import { useSmartBack } from '../hooks/use-smart-back';
 import {
@@ -111,28 +112,7 @@ export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] |
  * counters visibly tick up on each SSE status update instead of snapping.
  */
 function CountUpValue(props: { num: number; format: (n: number) => string }) {
-  const [display, setDisplay] = useState(props.num);
-  const fromRef = useRef(props.num);
-  useEffect(() => {
-    const from = fromRef.current;
-    if (from === props.num) return;
-    let raf = 0;
-    const start = performance.now();
-    const duration = 600;
-    const tick = (t: number) => {
-      const progress = Math.min(1, (t - start) / duration);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      const value = from + (props.num - from) * eased;
-      setDisplay(value);
-      if (progress < 1) {
-        raf = requestAnimationFrame(tick);
-      } else {
-        fromRef.current = props.num;
-      }
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [props.num]);
+  const display = useCountUp(props.num, { duration: 600, startAtTarget: true, round: false });
   return <>{props.format(display)}</>;
 }
 

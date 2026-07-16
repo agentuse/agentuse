@@ -7,6 +7,7 @@ import { fetchApprovals } from '../lib/api';
 import { WORDMARK_SVG } from '../../brand';
 import { brandName, hasCustomBrand } from '../lib/brand';
 import { useSessionListView } from '../hooks/use-session-list-view';
+import { HOME_SECTIONS, useHomeSections } from '../hooks/use-home-sections';
 
 const IS_APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
@@ -59,6 +60,7 @@ function SettingsMenu() {
   const [clearing, setClearing] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const sessionList = useSessionListView();
+  const homeSections = useHomeSections();
 
   useEffect(() => {
     if (!open) return;
@@ -131,6 +133,19 @@ function SettingsMenu() {
               onClick={() => sessionList.setView('feed')}
             >Feed</button>
           </span>
+          <div class="settings-section-label">Home sections</div>
+          <div class="settings-checks" role="group" aria-label="Home sections">
+            {HOME_SECTIONS.map((section) => (
+              <label class="settings-check" key={section.id}>
+                <input
+                  type="checkbox"
+                  checked={homeSections.isVisible(section.id)}
+                  onChange={() => homeSections.toggle(section.id)}
+                />
+                {section.label}
+              </label>
+            ))}
+          </div>
           <div class="settings-section-label">Maintenance</div>
           <button
             type="button"

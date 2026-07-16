@@ -3,6 +3,8 @@ import type { StoreBrowserRows, StoreBrowserSummary } from "../../stores";
 import type { StoreItem } from "../../../../store/types";
 import type { SerializedSchedule } from "../../../../scheduler";
 
+export type { SerializedSchedule };
+
 export interface ApiError {
   status: number;
   code: string;

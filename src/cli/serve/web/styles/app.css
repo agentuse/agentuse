@@ -347,6 +347,18 @@ a, button, select, summary, label, input, textarea,
 .settings-item:hover { border-color: var(--line-strong); background: var(--panel-hover); }
 .settings-item:disabled { opacity: 0.6; cursor: default; }
 .settings-reload-item { display: none; }
+/* Home-section visibility checkboxes (per-viewer, persisted in localStorage). */
+.settings-checks { display: flex; flex-direction: column; gap: 2px; }
+.settings-check {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 2px;
+  font-size: 13px;
+  color: var(--fg);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.settings-check:hover { background: var(--panel-hover); }
+.settings-check input { accent-color: var(--green); margin: 0; cursor: pointer; }
 
 /* approvals-tab pending-count badge. Inline inside the tab by default: on
    mobile the nav is a horizontal scroller (overflow-x:auto forces overflow-y
@@ -2894,6 +2906,127 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* "View all →" drill-in on outcome section headers. */
+.page-home .group-title .group-link {
+  font-family: var(--mono); font-size: 11px; font-weight: 400;
+  color: var(--muted-3); text-decoration: none;
+  transition: color 120ms ease;
+}
+.page-home .group-title .group-link:hover { color: var(--cyan); }
+
+/* Needs your attention: pending gates as cards, failed runs as rows. */
+.page-home .attn-empty {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted-2);
+  padding: 4px 2px;
+}
+.page-home .attn-list { display: flex; flex-direction: column; gap: 10px; }
+.page-home a.attn-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 13px 16px;
+  border: 1px solid var(--cyan-border);
+  border-radius: 12px;
+  background: var(--cyan-soft);
+  text-decoration: none;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.page-home a.attn-card:hover { background: var(--panel-hover); }
+.page-home .attn-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.page-home .attn-kind {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--cyan); border: 1px solid var(--cyan-border); border-radius: 999px; padding: 1px 8px;
+  flex-shrink: 0; align-self: center;
+}
+.page-home .attn-agent {
+  font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.page-home .attn-wait { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--cyan); white-space: nowrap; }
+.page-home .attn-summary {
+  font-size: 13px; color: var(--fg); opacity: 0.9; line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.page-home .attn-meta {
+  font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.page-home .attn-risk { color: var(--cyan); }
+.page-home a.attn-run {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  text-decoration: none;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.page-home a.attn-run:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+.page-home .attn-fail { font-size: 12px; color: var(--red); white-space: nowrap; }
+.page-home .attn-run .feed-time { margin-left: auto; }
+
+/* Latest results: completed runs' final responses as one-liners, per project. */
+.page-home .latest-groups { display: flex; flex-direction: column; gap: 14px; }
+.page-home .latest-project {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted-3); margin-bottom: 6px;
+}
+.page-home a.latest-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  text-decoration: none;
+  color: inherit;
+  transition: background 120ms ease;
+}
+.page-home a.latest-row:last-child { border-bottom: 0; }
+.page-home a.latest-row:hover { background: var(--panel-hover); }
+.page-home .latest-agent {
+  font-family: var(--sans); font-size: 13.5px; color: var(--fg);
+  flex-shrink: 0; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.page-home .latest-text {
+  flex: 1; min-width: 0;
+  font-size: 12.5px; color: var(--muted-3); line-height: 1.45;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Coming up: the next few scheduled runs in plain terms. */
+.page-home a.up-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  text-decoration: none;
+  color: inherit;
+  transition: background 120ms ease;
+}
+.page-home a.up-row:last-child { border-bottom: 0; }
+.page-home a.up-row:hover { background: var(--panel-hover); }
+.page-home .up-when {
+  font-family: var(--mono); font-size: 12px; color: var(--fg); font-variant-numeric: tabular-nums;
+  flex-shrink: 0; min-width: 132px;
+}
+.page-home .up-agent {
+  font-family: var(--sans); font-size: 13.5px; color: var(--fg);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.page-home .up-cadence {
+  margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%;
+}
+
+@media (max-width: 560px) {
+  .page-home .latest-agent { max-width: 45%; }
+  .page-home .up-cadence { display: none; }
+  .page-home .up-when { min-width: 108px; }
 }
 
 .page-home .card-top { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; gap: 2px; }
