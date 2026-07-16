@@ -359,7 +359,7 @@ export default function AgentDetail() {
             <Capabilities meta={data.meta} model={data.model} schedule={data.schedule} scheduleHuman={data.scheduleHuman} metadata={data.metadata} />
 
             <div class="tabs" role="tablist" aria-label="Agent views">
-              {AGENT_TABS.map((t) => (
+              {AGENT_TABS.filter((t) => t.id !== 'source' || data.source !== undefined).map((t) => (
                 <button
                   key={t.id}
                   type="button"
@@ -380,9 +380,11 @@ export default function AgentDetail() {
             <div id="panel-learnings" class="tab-panel" role="tabpanel" aria-labelledby="tab-learnings" hidden={tab !== 'learnings'}>
               <LearningsGroup project={data.projectId} runPath={data.runPath} />
             </div>
-            <div id="panel-source" class="tab-panel" role="tabpanel" aria-labelledby="tab-source" hidden={tab !== 'source'}>
-              <SourcePanel source={data.source} runPath={data.runPath} project={data.projectId} path={data.path} />
-            </div>
+            {data.source !== undefined && (
+              <div id="panel-source" class="tab-panel" role="tabpanel" aria-labelledby="tab-source" hidden={tab !== 'source'}>
+                <SourcePanel source={data.source} runPath={data.runPath} project={data.projectId} path={data.path} />
+              </div>
+            )}
           </>
         )}
       </main>

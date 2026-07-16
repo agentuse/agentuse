@@ -110,6 +110,7 @@ AgentUse runs one serve daemon at a time. Put every project that should accept `
 | `serve.host` | string | Host to bind to |
 | `serve.auth` | boolean | Require API key authentication for exposed hosts |
 | `serve.logFile` | boolean | Write serve logs to a file |
+| `serve.hideAgentSource` | boolean | Hide raw `.agentuse` source in the dashboard and `/api/agents/detail`; capability summaries (model, tools, schedule) stay visible. For deployments where visitors may run and observe agents but should not read their instructions (demos, client sandboxes) |
 | `serve.brand.name` | string | Your company name, shown beside the AgentUse wordmark, in page titles, and as the installed app name (max 60 chars) |
 
 CLI flags override config values:
@@ -122,6 +123,7 @@ CLI flags override config values:
 | `serve.host` | `--host <string>` |
 | `serve.auth` | `--no-auth` sets auth to `false` |
 | `serve.logFile` | `--no-log-file` sets log files to `false` |
+| `serve.hideAgentSource` | `--hide-agent-source` sets it to `true` (the flag can only hide, never re-expose a config that hides) |
 
 `AGENTUSE_API_KEY` remains env-only and is not read from config.
 

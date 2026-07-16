@@ -357,7 +357,9 @@ export interface AgentDetailPayload {
   schedule?: string;
   scheduleHuman?: string;
   metadata?: Record<string, unknown>;
-  source: string;
+  /** Raw `.agentuse` text; absent when the deployment hides agent source (serve.hideAgentSource). */
+  source?: string;
+  sourceHidden?: true;
   meta: AgentDetailMeta;
 }
 

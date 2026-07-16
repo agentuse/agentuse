@@ -130,6 +130,7 @@ describe('loadGlobalConfig', () => {
         publicUrl: 'https://agentuse.example.com',
         auth: false,
         logFile: false,
+        hideAgentSource: true,
       },
     });
     const cfg = loadGlobalConfig(file);
@@ -138,6 +139,7 @@ describe('loadGlobalConfig', () => {
     expect(cfg?.serve?.publicUrl).toBe('https://agentuse.example.com');
     expect(cfg?.serve?.auth).toBe(false);
     expect(cfg?.serve?.logFile).toBe(false);
+    expect(cfg?.serve?.hideAgentSource).toBe(true);
   });
 
   it('loads and trims serve.brand.name', () => {
@@ -234,6 +236,11 @@ describe('loadGlobalConfig', () => {
   it('throws on non-boolean auth', () => {
     const file = makeTmpConfig({ serve: { auth: 'yes' } });
     expect(() => loadGlobalConfig(file)).toThrow(/serve.auth/);
+  });
+
+  it('throws on non-boolean hideAgentSource', () => {
+    const file = makeTmpConfig({ serve: { hideAgentSource: 'yes' } });
+    expect(() => loadGlobalConfig(file)).toThrow(/serve.hideAgentSource/);
   });
 
   it('throws on invalid publicUrl', () => {

@@ -181,3 +181,35 @@ describe('CLI table formatters', () => {
     expect(__testing.formatSchedulesTable([])).toContain('No scheduled agents');
   });
 });
+
+describe('redactAgentDetailSource', () => {
+  const detail = {
+    projectId: 'demo',
+    path: 'daily.agentuse',
+    runPath: 'daily.agentuse',
+    name: 'Daily Report',
+    model: 'anthropic:claude-sonnet-4-6',
+    schedule: '0 9 * * *',
+    source: '---\nname: Daily Report\n---\nGenerate the daily report.\n',
+    meta: {
+      skills: { auto: true, trusted: false, explicit: [] },
+      mcpServers: [],
+      subagents: [],
+      channels: [],
+    },
+  };
+
+  it('strips the raw source and flags the hiding', () => {
+    const redacted = __testing.redactAgentDetailSource(detail);
+    expect('source' in redacted).toBe(false);
+    expect(redacted.sourceHidden).toBe(true);
+  });
+
+  it('keeps the capability summary intact', () => {
+    const redacted = __testing.redactAgentDetailSource(detail);
+    expect(redacted.name).toBe('Daily Report');
+    expect(redacted.model).toBe('anthropic:claude-sonnet-4-6');
+    expect(redacted.schedule).toBe('0 9 * * *');
+    expect(redacted.meta).toEqual(detail.meta);
+  });
+});

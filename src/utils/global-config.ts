@@ -17,6 +17,14 @@ export interface GlobalServeConfig {
   auth?: boolean;
   logFile?: boolean;
   /**
+   * Hide raw agent source in the operator surface: `/api/agents/detail` omits
+   * the `.agentuse` body (`sourceHidden: true` instead) and the dashboard drops
+   * the Source tab. For deployments shared with people who may run and observe
+   * agents but should not read their instructions (demos, client sandboxes).
+   * Capability summaries (model, tools, schedule) stay visible.
+   */
+  hideAgentSource?: boolean;
+  /**
    * Deployment branding for the serve web UI. `name` renders beside the
    * AgentUse wordmark in the topbar and prefixes document titles and the
    * web-app manifest ("Kettlebase · AgentUse"). Name only by design:
@@ -204,6 +212,10 @@ function validate(input: unknown, configPath: string): GlobalConfig {
   if (serve.logFile !== undefined) {
     if (typeof serve.logFile !== 'boolean') fail(configPath, '`serve.logFile` must be a boolean');
     srv.logFile = serve.logFile;
+  }
+  if (serve.hideAgentSource !== undefined) {
+    if (typeof serve.hideAgentSource !== 'boolean') fail(configPath, '`serve.hideAgentSource` must be a boolean');
+    srv.hideAgentSource = serve.hideAgentSource;
   }
   if (serve.brand !== undefined) {
     if (serve.brand === null || typeof serve.brand !== 'object' || Array.isArray(serve.brand)) {

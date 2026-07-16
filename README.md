@@ -117,7 +117,8 @@ JSON endpoints live under the `/api/*` prefix (`/api`, `/api/agents`, `/api/sche
     "port": 12233,
     "host": "127.0.0.1",
     "auth": true,
-    "logFile": true
+    "logFile": true,
+    "hideAgentSource": false // true: dashboard/API stop exposing raw .agentuse source (demos, client-facing sandboxes)
   }
 }
 ```

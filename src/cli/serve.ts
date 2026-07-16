@@ -1566,6 +1566,16 @@ async function collectAgentDetail(project: Project, runPath: string): Promise<Ag
   };
 }
 
+/**
+ * Strip the raw `.agentuse` body from a detail payload (serve.hideAgentSource):
+ * the capabilities summary stays, `source` is replaced by `sourceHidden: true`
+ * so the web UI knows to drop the Source tab rather than render an empty one.
+ */
+function redactAgentDetailSource(detail: AgentDetail): Omit<AgentDetail, 'source'> & { sourceHidden: true } {
+  const { source: _source, ...rest } = detail;
+  return { ...rest, sourceHidden: true };
+}
+
 function normalizeSubagentName(value: string): string {
   const fileBase = value.split('/').pop() || value;
   return fileBase
@@ -1837,7 +1847,8 @@ export function createServeCommand(): Command {
     .option("-d, --debug", "Enable debug mode")
     .option("--no-auth", "Disable API key requirement for exposed hosts (dangerous)")
     .option("--no-log-file", "Disable the per-server log file (stdout/stderr tee)")
-    .action(async (options: { port?: string; host?: string; publicUrl?: string; directory: string[]; default?: string; debug?: boolean; auth: boolean; logFile: boolean }) => {
+    .option("--hide-agent-source", "Hide raw agent source in the dashboard and /api/agents/detail; capability summaries stay visible (or config.serve.hideAgentSource)")
+    .action(async (options: { port?: string; host?: string; publicUrl?: string; directory: string[]; default?: string; debug?: boolean; auth: boolean; logFile: boolean; hideAgentSource?: boolean }) => {
       // Load global config once; hard-fail on malformed config so users don't silently get defaults.
       let globalConfig: GlobalConfig | null = null;
       try {
@@ -1887,6 +1898,9 @@ export function createServeCommand(): Command {
       // CLI --no-auth forces false; otherwise config value wins if set; default true.
       const effectiveAuth = options.auth === false ? false : (serveCfg?.auth ?? true);
       const effectiveLogFile = options.logFile === false ? false : (serveCfg?.logFile ?? true);
+      // Flag can only turn hiding ON (no --no variant): a deployment that hides
+      // source in config should not be re-exposable by a forgotten CLI flag.
+      const effectiveHideAgentSource = options.hideAgentSource === true || (serveCfg?.hideAgentSource ?? false);
 
       // Check API key requirement for exposed hosts
       const apiKey = process.env.AGENTUSE_API_KEY;
@@ -3802,7 +3816,9 @@ export function createServeCommand(): Command {
         // GET /api/agents/detail?project=<id>&path=<runPath>: capabilities
         // summary + raw `.agentuse` source for the agent hub page. Behind the
         // same header gate as the rest of the operator surface (not a capability
-        // route), so anyone who can list/run agents can read them. The file is
+        // route), so anyone who can list/run agents can read them, UNLESS
+        // serve.hideAgentSource / --hide-agent-source strips the source from
+        // the payload (capabilities summary still served). The file is
         // matched against the project's already-loaded `agentFiles` set, so an
         // arbitrary `path` cannot escape the served scope.
         if (req.method === "GET" && routePath === '/agents/detail') {
@@ -3823,7 +3839,7 @@ export function createServeCommand(): Command {
           }
           try {
             const detail = await collectAgentDetail(project, requestedPath);
-            sendJSON(res, 200, { success: true, ...detail });
+            sendJSON(res, 200, { success: true, ...(effectiveHideAgentSource ? redactAgentDetailSource(detail) : detail) });
           } catch (err) {
             sendError(res, 500, "AGENT_READ_FAILED", (err as Error).message);
           }
@@ -6031,6 +6047,7 @@ function createSchedulesSubcommand(): Command {
 export const __testing = {
   serveSessionArtifact,
   serveSessionToolOutputArtifact,
+  redactAgentDetailSource,
   isHeaderGateExemptRoute,
   isSpaPageRoute,
   collectAgents,
