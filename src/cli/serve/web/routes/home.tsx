@@ -116,7 +116,7 @@ function ApprovalCard(props: { row: ApprovalRow }) {
   const { row } = props;
   const since = row.suspendedAt ?? row.createdAt;
   return (
-    <a class="attn-card" href="/approvals">
+    <a class="attn-card" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
       <div class="attn-head">
         <span class="attn-kind">approval</span>
         <span class="attn-agent">{row.agentName || row.agentId}</span>
