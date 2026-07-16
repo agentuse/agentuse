@@ -16,6 +16,7 @@ const ApprovalsList = lazy(reloadOnChunkError(() => import('./routes/approvals-l
 const StoresIndex = lazy(reloadOnChunkError(() => import('./routes/stores-index')));
 const StoreItems = lazy(reloadOnChunkError(() => import('./routes/store-items')));
 const StoreItemDetail = lazy(reloadOnChunkError(() => import('./routes/store-item-detail')));
+const Settings = lazy(reloadOnChunkError(() => import('./routes/settings')));
 
 // The shell's #boot spinner (static.ts) covers bundle download AND the first
 // lazy route chunk: it lives outside #app so mounting the (route-less) app
@@ -80,6 +81,7 @@ export function App() {
           <Route path="/stores" component={StoresIndex} />
           <Route path="/stores/:store" component={StoreItems} />
           <Route path="/stores/:store/:item" component={StoreItemDetail} />
+          <Route path="/settings" component={Settings} />
           <Route default component={NotFound} />
         </Router>
       </ErrorBoundary>

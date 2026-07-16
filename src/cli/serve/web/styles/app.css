@@ -276,7 +276,7 @@ a, button, select, summary, label, input, textarea,
 }
 .theme-toggle svg { width: 12px; height: 12px; display: block; }
 
-/* header icon buttons (reload, settings gear) — same pill as the push bell */
+/* header icon buttons (reload, settings gear link) — same pill as the push bell */
 .icon-btn {
   min-height: 0;
   width: 30px; height: 30px; padding: 0;
@@ -286,43 +286,62 @@ a, button, select, summary, label, input, textarea,
   background: var(--panel);
   color: var(--muted-2);
   cursor: pointer;
+  text-decoration: none;
   transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 .icon-btn:hover { color: var(--muted-3); border-color: var(--line-strong); background: var(--panel-hover); }
 .icon-btn svg { width: 15px; height: 15px; display: block; }
 .icon-btn[aria-expanded="true"] { color: var(--fg); border-color: var(--line-strong); background: var(--panel-hover); }
 
-/* settings dropdown */
-.settings-menu { position: relative; display: inline-flex; }
-.settings-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 60;
-  min-width: 184px;
-  padding: 12px;
-  display: flex; flex-direction: column; gap: 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--bg);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+/* --- settings page (/settings) — client-local preferences ------------------ */
+.page-settings main { width: min(680px, calc(100vw - 32px)); margin: 0 auto; padding: 36px 0 80px; }
+.page-settings header:not(.topbar) { margin-bottom: 24px; }
+.page-settings .eyebrow {
+  font-family: var(--mono); font-size: 11px; color: var(--cyan);
+  letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;
 }
-.settings-section-label {
-  font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+.page-settings h1 { margin: 0 0 8px; font-family: var(--sans); font-size: 34px; line-height: 1.12; font-weight: 500; }
+.page-settings .lede { margin: 0; color: var(--muted-3); font-family: var(--sans); font-size: 15px; }
+.settings-group {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 16px 18px;
+}
+.settings-group + .settings-group { margin-top: 14px; }
+.settings-group-title {
+  margin: 0 0 10px;
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  letter-spacing: 0.12em; text-transform: uppercase;
   color: var(--muted);
 }
-.settings-popover .theme-toggle { width: 100%; justify-content: space-between; }
+.settings-group-hint { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--muted-2); }
+.settings-group-hint:last-child { margin-bottom: 0; }
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 8px 0;
+}
+.settings-row:first-of-type { padding-top: 0; }
+.settings-row:last-of-type { padding-bottom: 0; }
+.settings-row + .settings-row { border-top: 1px solid var(--line); padding-top: 10px; }
+.settings-row-label { font-size: 14px; color: var(--fg); }
+.settings-row-hint { margin-top: 2px; font-size: 12.5px; line-height: 1.45; color: var(--muted-2); }
+.settings-row-control { flex: none; }
+.settings-check-text { display: flex; flex-direction: column; }
+@media (max-width: 480px) {
+  .settings-row { flex-direction: column; align-items: flex-start; gap: 8px; }
+}
 .session-view-toggle {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 3px;
-  width: 100%;
   padding: 3px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
 }
 .session-view-toggle button {
+  min-width: 76px;
   min-height: 28px;
   padding: 4px 8px;
   border: 0;
@@ -340,20 +359,17 @@ a, button, select, summary, label, input, textarea,
   box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 .settings-item {
-  width: 100%;
-  text-align: left;
-  padding: 7px 9px;
+  padding: 7px 12px;
   min-height: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel);
+  background: var(--bg);
   color: var(--fg);
   font-size: 13px;
   cursor: pointer;
 }
 .settings-item:hover { border-color: var(--line-strong); background: var(--panel-hover); }
 .settings-item:disabled { opacity: 0.6; cursor: default; }
-.settings-reload-item { display: none; }
 /* Home-section visibility checkboxes (per-viewer, persisted in localStorage). */
 .settings-checks { display: flex; flex-direction: column; gap: 2px; }
 .settings-check {
@@ -402,7 +418,6 @@ a, button, select, summary, label, input, textarea,
   .topbar .right { gap: 8px; }
   .topbar-context,
   .header-refresh { display: none; }
-  .settings-reload-item { display: block; }
   .topbar .icon-btn,
   .topbar .palette-trigger {
     width: 40px;
