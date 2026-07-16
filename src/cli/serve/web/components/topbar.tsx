@@ -251,13 +251,13 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
     <header class="topbar">
       <a class="skip-link" href="#" onClick={skipToContent}>Skip to content</a>
       <a class="brand" href="/" aria-label={`${brandName()} home`}>
+        <span class="brand-wordmark" dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }} />
         {hasCustomBrand() && (
           <>
-            <span class="brand-name">{brandName()}</span>
             <span class="brand-sep" aria-hidden="true">·</span>
+            <span class="brand-name">{brandName()}</span>
           </>
         )}
-        <span class="brand-wordmark" dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }} />
       </a>
 
       <div
