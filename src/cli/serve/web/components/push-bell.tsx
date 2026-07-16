@@ -1,5 +1,6 @@
 import { useRef } from 'preact/hooks';
 import { usePushBell, type PushCategory } from '../hooks/use-push';
+import { brandName } from '../lib/brand';
 
 const CATEGORY_LABEL: Record<PushCategory, string> = {
   approvals: 'pending approvals',
@@ -66,12 +67,12 @@ export function PushBell({ category }: { category: PushCategory }) {
         {state === 'denied' ? (
           <p class="dialog-description">
             This site's notifications were blocked, so the browser won't ask again.
-            Re-enable them in your browser's site settings (on iOS: Settings → Notifications → AgentUse), then reload this page.
+            Re-enable them in your browser's site settings (on iOS: Settings → Notifications → {brandName()}), then reload this page.
           </p>
         ) : (
           <p class="dialog-description">
             iOS only delivers notifications to web apps installed on the home screen.
-            In Safari, tap <strong>Share</strong> → <strong>Add to Home Screen</strong>, open AgentUse from the new icon, and tap this bell again.
+            In Safari, tap <strong>Share</strong> → <strong>Add to Home Screen</strong>, open {brandName()} from the new icon, and tap this bell again.
           </p>
         )}
       </dialog>

@@ -7,6 +7,7 @@ import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { formatApprovalTime, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
+import { pageTitle } from '../lib/brand';
 
 function StoreDataValue(props: { value: unknown }) {
   const { value } = props;
@@ -33,7 +34,7 @@ export default function StoreItemDetail() {
   );
 
   const item = data?.item;
-  useTitle(item ? `AgentUse / Stores / ${storeName} / ${storeItemTitle(item)}` : `AgentUse / Stores / ${storeName}`);
+  useTitle(item ? pageTitle('Stores', storeName, storeItemTitle(item)) : pageTitle('Stores', storeName));
 
   const backParams = new URLSearchParams();
   if (data?.project) backParams.set('project', data.project);

@@ -10,6 +10,7 @@ import { Loading } from '../components/loading';
 import { PushBell } from '../components/push-bell';
 import { syncAppBadge } from '../lib/badge';
 import { formatApprovalTime, errorText } from '../lib/format';
+import { pageTitle } from '../lib/brand';
 
 function ApprovalRowView(props: { row: ApprovalRow; multiProject: boolean }) {
   const { row, multiProject } = props;
@@ -75,7 +76,7 @@ export default function ApprovalsList() {
   const days = location.query.days || undefined;
   const project = location.query.project || undefined;
 
-  useTitle('AgentUse / Approvals');
+  useTitle(pageTitle('Approvals'));
 
   const key = `approvals:${days ?? ''}:${project ?? ''}`;
   const [streamData, setStreamData] = useState<ApprovalsListPayload | null>(null);

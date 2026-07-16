@@ -7,13 +7,14 @@ import { Loading } from '../components/loading';
 import { ErrorBanner } from '../components/error-banner';
 import { StoreTable, type StoreTableColumn } from '../components/store-table';
 import { formatApprovalTime } from '../lib/format';
+import { pageTitle } from '../lib/brand';
 import type { StoreBrowserSummary } from '../../stores';
 
 export default function StoresIndex() {
   const location = useLocation();
   const project = location.query.project || undefined;
 
-  useTitle('AgentUse / Stores');
+  useTitle(pageTitle('Stores'));
 
   const { data, error, loading } = useFetch(
     `stores:${project ?? ''}`,

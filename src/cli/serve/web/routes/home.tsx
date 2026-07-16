@@ -8,6 +8,7 @@ import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone } from '../lib/format';
+import { brandName, pageTitle } from '../lib/brand';
 
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -274,7 +275,7 @@ function ActivitySpark(props: { sessions: SessionRow[] }) {
 }
 
 export default function Home() {
-  useTitle('AgentUse');
+  useTitle(pageTitle());
   const { data, error, loading } = useFetch('home', () => fetchInfo(), { refreshMs: 30_000 });
   const liveHome = useLiveHome();
 
@@ -361,7 +362,7 @@ export default function Home() {
       <main class="home-boot">
         <header>
           <div class="eyebrow">serve daemon</div>
-          <h1>AgentUse</h1>
+          <h1>{brandName()}</h1>
           {error && <div class="errors" role="alert">Failed to load: {error.message}</div>}
           {liveHome.error && <div class="errors" role="alert">Failed to load sessions: {liveHome.error.message}</div>}
         </header>

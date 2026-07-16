@@ -5,6 +5,7 @@ import { openAgentPalette } from './agent-palette';
 import { useFetch } from '../hooks/use-fetch';
 import { fetchApprovals } from '../lib/api';
 import { WORDMARK_SVG } from '../../brand';
+import { brandName } from '../lib/brand';
 import { useSessionListView } from '../hooks/use-session-list-view';
 
 const IS_APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
@@ -252,7 +253,7 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
       <a
         class="brand"
         href="/"
-        aria-label="AgentUse home"
+        aria-label={`${brandName()} home`}
         dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }}
       />
 

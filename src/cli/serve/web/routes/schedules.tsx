@@ -5,6 +5,7 @@ import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { formatApprovalTime } from '../lib/format';
+import { pageTitle } from '../lib/brand';
 import { agentDetailHref } from './agent-detail';
 
 function dayLabel(ms: number): string {
@@ -47,7 +48,7 @@ function Slot(props: { schedule: SerializedSchedule; multiProject: boolean }) {
 }
 
 export default function Schedules() {
-  useTitle('AgentUse / Schedules');
+  useTitle(pageTitle('Schedules'));
   const { data, error, loading } = useFetch('schedules', () => fetchSchedules(), { refreshMs: 30_000 });
 
   const schedules = data?.schedules ?? [];

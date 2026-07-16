@@ -13,6 +13,7 @@ import { AgentFilterSelect } from '../components/agent-filter-select';
 import { GroupRail } from '../components/group-rail';
 import { LogContent } from '../components/content';
 import { formatApprovalTime, formatRelativeTime, errorText, displayStatusLabel } from '../lib/format';
+import { pageTitle } from '../lib/brand';
 import { useSessionListView, type SessionListView } from '../hooks/use-session-list-view';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
@@ -205,7 +206,7 @@ export default function SessionsList() {
   const defaultWin = agentFilter || approvalFilter ? '30d' : '24h';
   const win = q.window || defaultWin;
 
-  useTitle('AgentUse / Sessions');
+  useTitle(pageTitle('Sessions'));
 
   // On phones the four-filter row fills the first screen before any session
   // shows, so collapse it behind a toggle. Start expanded when a non-default

@@ -25,6 +25,7 @@ import {
   logEntrySignature,
   sessionErrorText,
 } from '../lib/format';
+import { brandName, pageTitle } from '../lib/brand';
 
 type ApprovalHeader = Omit<ApprovalPageInfo, 'logs'>;
 
@@ -204,7 +205,7 @@ export default function SessionDetail() {
   // the worker is still writing the session to disk.
   const pending = location.query.pending === '1';
 
-  useTitle('AgentUse / Session');
+  useTitle(pageTitle('Session'));
 
   const [approval, setApproval] = useState<ApprovalHeader | null>(null);
   const [status, setStatus] = useState<string>('loading');
@@ -880,7 +881,7 @@ export default function SessionDetail() {
           ? 'This run stopped with an error. Review the session log, then send a follow-up instruction to continue the same session with its existing context.'
           : 'This run has finished. Send a follow-up instruction to continue the same session with its existing context.'
         : busy
-          ? 'AgentUse is working on this session. The session log updates as new work arrives.'
+          ? `${brandName()} is working on this session. The session log updates as new work arrives.`
           : expired
             ? 'This approval request has expired. The session log remains available for review.'
             : 'Live view of this run. The session log updates as new work arrives.';

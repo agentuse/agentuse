@@ -13,6 +13,7 @@ import { AgentLearningsPanel } from '../components/learnings-panel';
 import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
 import { LogContent } from '../components/content';
 import { formatApprovalTime, displayStatusLabel } from '../lib/format';
+import { pageTitle } from '../lib/brand';
 
 /**
  * Split an `.agentuse` file into its YAML frontmatter and Markdown body.
@@ -285,7 +286,7 @@ export default function AgentDetail() {
     () => fetchAgentDetail(project, runPath)
   );
 
-  useTitle(data ? `AgentUse / ${data.name}` : 'AgentUse / Agent');
+  useTitle(pageTitle(data ? data.name : 'Agent'));
   const { run, busy, error: runError } = useRunAgent(runPath, project);
   const goBack = useSmartBack('/agents');
 

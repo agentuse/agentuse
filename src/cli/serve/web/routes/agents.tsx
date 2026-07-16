@@ -7,6 +7,7 @@ import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { useAgentsView } from '../hooks/use-agents-view';
 import { formatApprovalTime, formatRelativeTime, displayStatusLabel, runTone } from '../lib/format';
+import { pageTitle } from '../lib/brand';
 import { usePins } from '../hooks/use-pins';
 import { useAgentColumns } from '../hooks/use-agent-columns';
 import { useMediaQuery } from '../hooks/use-media-query';
@@ -682,7 +683,7 @@ function matchesFilter(agent: AgentRow, query: string): boolean {
 export default function Agents({ project }: { project?: string } = {}) {
   const scoped = typeof project === 'string' && project.length > 0;
   const location = useLocation();
-  useTitle(scoped ? `AgentUse / ${project}` : 'AgentUse / Agents');
+  useTitle(pageTitle(scoped ? project : 'Agents'));
   const goBack = useSmartBack('/agents');
   const { data, error, loading } = useFetch('agents', () => fetchAgents(), { refreshMs: 30_000 });
   const { isPinned, toggle, keys } = usePins();

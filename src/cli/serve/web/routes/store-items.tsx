@@ -8,6 +8,7 @@ import { Loading } from '../components/loading';
 import { ErrorBanner } from '../components/error-banner';
 import { StoreTable, type StoreTableColumn } from '../components/store-table';
 import { formatApprovalTime, storeItemPreview, storeItemTitle } from '../lib/format';
+import { pageTitle } from '../lib/brand';
 import type { StoreItem } from '../../../../store/types';
 
 interface ItemRow {
@@ -22,7 +23,7 @@ export default function StoreItems() {
   const project = location.query.project || undefined;
   const highlight = location.query.highlight || undefined;
 
-  useTitle(`AgentUse / Stores / ${storeName}`);
+  useTitle(pageTitle('Stores', storeName));
 
   const { data, error, loading } = useFetch(
     `store-items:${storeName}:${project ?? ''}`,
