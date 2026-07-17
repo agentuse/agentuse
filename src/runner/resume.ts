@@ -1,6 +1,8 @@
 import type { SessionManager } from '../session';
 import type { ToolState } from '../session/types';
 import { isProcessRefAlive } from '../utils/process-info';
+import { LeaseStore, deriveLeaseEntries } from './approval-lease';
+import { logger } from '../utils/logger';
 
 export interface ResumeToolRollback {
   sessionId: string;
@@ -74,6 +76,33 @@ export async function applyResumeToolResult(options: {
       }
     }
   } as any);
+
+  // Lease lifecycle (agentuse-lab#165, Phase 2): an APPROVE derives a
+  // machine-readable lease from the gate's changes[] - the only grant that
+  // lets `effects:`-declared commands run. Any other decision (reject,
+  // comment) revokes: nothing effectful may run until a fresh plan is
+  // approved. Best-effort: a lease failure must not block the resume, it just
+  // means effectful commands stay denied.
+  try {
+    const sessionDir = await sessionManager.getSessionDirectory(sessionId, found.agentId);
+    const leaseStore = new LeaseStore(sessionDir);
+    const decisionStatus = toolResult && typeof toolResult === 'object'
+      ? (toolResult as { status?: unknown }).status
+      : undefined;
+    if (decisionStatus === 'approved') {
+      const entries = deriveLeaseEntries(input);
+      if (entries.length > 0) {
+        leaseStore.grant({ version: 1, grantedAt: now, entries });
+      } else {
+        leaseStore.revoke();
+      }
+    } else {
+      leaseStore.revoke();
+    }
+  } catch (error) {
+    logger.debug(`[Lease] resume lease update failed: ${(error as Error).message}`);
+  }
+
   await sessionManager.setSessionRunning(sessionId, found.agentId);
 
   return {

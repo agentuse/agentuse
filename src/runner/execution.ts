@@ -13,8 +13,9 @@ import { compactMessages } from '../compactor';
 import { addLanguageModelUsage } from '../session/usage';
 import type { AgentChunk } from './types';
 import { isSuspendSignal } from './suspend';
-import { isApprovalEnabled } from './approval';
 import { wrapToolsWithWAL, sanitizeWALInput, type EffectWAL } from './effect-wal';
+import { LeaseStore, isEffectful } from './approval-lease';
+import { registerSDKTelemetryOnce } from '../telemetry/sdk-telemetry';
 import { recordErrorMarker } from './session-helper';
 import { extractApiErrorDetail } from './api-error';
 import { toErrorMessage } from '../utils/error-message';
@@ -118,41 +119,6 @@ export function openAIOptionsWithCacheDefaults(agent: ParsedAgent): Record<strin
     ...(isReasoningModel && { reasoningSummary: 'auto' }),
     ...configured,
   };
-}
-
-/**
- * Interim ghost-post gate (agentuse-lab#165): for gate-capable agents, tell the
- * provider to emit at most one tool call per assistant turn, so `await_human`
- * can never arrive with an effect-tool sibling that the SDK executes while the
- * gate suspends. Supported natively by Anthropic and OpenAI; other providers
- * fall back to the drain+abort guard alone. Pure + exported for testing.
- */
-export function applyApprovalSerialToolCalls(
-  provider: string,
-  gateCapable: boolean,
-  providerOptions: any
-): any {
-  if (!gateCapable) return providerOptions;
-  if (provider === 'anthropic') {
-    return {
-      ...(providerOptions ?? {}),
-      anthropic: {
-        ...(providerOptions?.anthropic ?? {}),
-        disableParallelToolUse: true,
-      },
-    };
-  }
-  if (provider === 'openai') {
-    return {
-      ...(providerOptions ?? {}),
-      openai: {
-        ...(providerOptions?.openai ?? {}),
-        parallelToolCalls: false,
-      },
-    };
-  }
-  logger.debug(`[Approval] Provider "${provider}" has no serial-tool-calls flag; relying on suspend drain+abort guard.`);
-  return providerOptions;
 }
 
 /**
@@ -407,6 +373,10 @@ export async function* executeAgentCore(
     effectWal?: EffectWAL;
   }
 ): AsyncGenerator<AgentChunk> {
+  // SDK-layer execution witness (debug trace of every tool execute via the
+  // v7 telemetry integration). Idempotent; complements the effect WAL.
+  registerSDKTelemetryOnce();
+
   const model = await createModel(agent.config.model);
 
   // Internal abort: tripped the instant a suspension begins so the AI SDK stops
@@ -418,6 +388,20 @@ export async function* executeAgentCore(
   const effectiveAbortSignal = options.abortSignal
     ? AbortSignal.any([options.abortSignal, runAbort.signal])
     : runAbort.signal;
+
+  // Approval leases (agentuse-lab#165, Phase 2): effectful commands declared in
+  // `effects:` frontmatter only run when covered by the latest approved
+  // await_human changes[]. The store is file-based in the session directory
+  // (granted at resume time, possibly by another process) and read per call.
+  const effectPatterns = agent.config.effects ?? [];
+  const leaseStore = new LeaseStore();
+  if (effectPatterns.length > 0 && options.sessionManager && options.sessionID && options.agentId) {
+    try {
+      leaseStore.bind(await options.sessionManager.getSessionDirectory(options.sessionID, options.agentId));
+    } catch (error) {
+      logger.debug(`[Lease] failed to bind lease store: ${(error as Error).message}`);
+    }
+  }
 
   // Initialize context manager if enabled
   let contextManager: ContextManager | null = null;
@@ -583,11 +567,6 @@ export async function* executeAgentCore(
     return used > 0 && used >= contextManager.compactionThresholdTokens();
   };
 
-  // Gate-capable: this agent can raise an approval gate, so a sibling tool call
-  // beside the gate is a live ghost-post risk (covers both `approval:` config
-  // and an injected/explicit await_human tool).
-  const gateCapable = isApprovalEnabled(agent.config) || 'await_human' in tools;
-
   // Function to create stream with current messages
   const createStream = async () => {
     // Check if we need to compact before creating stream
@@ -651,12 +630,6 @@ export async function* executeAgentCore(
       providerOptions = { anthropic: { thinking: { type: 'enabled', budgetTokens: anthropicThinkingBudget } } };
     }
 
-    // Interim ghost-post gate (agentuse-lab#165): a gate-owning agent must never
-    // get a chance to emit an effect tool call in the same turn as `await_human`,
-    // so parallel tool use is disabled for approval-enabled agents. Remove once
-    // the lease-based per-call approval (Phase 2) enforces this structurally.
-    providerOptions = applyApprovalSerialToolCalls(provider, gateCapable, providerOptions);
-
     // Cap each segment to the remaining step budget so compaction restarts do
     // not multiply the effective step limit (each streamText call counts steps
     // from zero).
@@ -702,6 +675,40 @@ export async function* executeAgentCore(
     // Only add tools if there are any
     if (Object.keys(modelFacingTools).length > 0) {
       streamConfig.tools = modelFacingTools;
+    }
+
+    // Lease enforcement (agentuse-lab#165, Phase 2): the SDK consults this
+    // BEFORE dispatching execute, so an uncovered effectful command can never
+    // run - not even eagerly beside a pending gate. Denials carry a redirect
+    // reason so the model re-gates via await_human instead of retrying; the
+    // human still sees exactly one rich gate per operation.
+    if (effectPatterns.length > 0 && (modelFacingTools as any).tools__bash) {
+      streamConfig.toolApproval = {
+        tools__bash: (input: any, approvalOptions?: { toolCallId?: string }) => {
+          const command = typeof input?.command === 'string' ? input.command : '';
+          const callId = approvalOptions?.toolCallId;
+          if (!command || !isEffectful(command, effectPatterns)) return undefined;
+          if (leaseStore.isCovered(command)) {
+            options.effectWal?.append({
+              event: 'lease-approved',
+              ...(callId && { callId }),
+              tool: 'tools__bash',
+              command: sanitizeWALInput(command),
+            });
+            return 'approved';
+          }
+          options.effectWal?.append({
+            event: 'lease-denied',
+            ...(callId && { callId }),
+            tool: 'tools__bash',
+            command: sanitizeWALInput(command),
+          });
+          return {
+            type: 'denied' as const,
+            reason: 'This command is declared effectful and is not covered by an approved plan. Do NOT retry or reword it. Call await_human with the full plan, putting the exact final content/command in changes[] (verbatim), and run the command only after the reviewer approves. If a reviewer already approved a different version, re-gate with this exact version.',
+          };
+        },
+      };
     }
 
     return streamText(streamConfig);
@@ -1206,15 +1213,54 @@ Current step: ${stepCount}/${options.maxSteps}`);
           }
           break;
         }
+        case 'tool-approval-response':
+        case 'tool-output-denied': {
+          // Lease enforcement blocked an effectful call before execute ran
+          // (agentuse-lab#165, Phase 2). The v7 stream carries the outcome as a
+          // 'tool-approval-response' with approved:false (plus the redirect
+          // reason); journal it as a failed tool result so the session shows
+          // what was attempted. Approved responses need no journaling - the
+          // normal tool-call/-result path covers the execution itself.
+          if (chunk.type === 'tool-approval-response' && (chunk as any).approved !== false) break;
+          const toolCall = (chunk as any).toolCall ?? chunk;
+          const toolCallId = toolCall.toolCallId || (chunk as any).toolCallId || 'unknown';
+          const toolName = toolCall.toolName || (chunk as any).toolName;
+          const reason = typeof (chunk as any).reason === 'string'
+            ? (chunk as any).reason
+            : 'Execution denied: effectful command not covered by an approved plan (await_human re-gate required).';
+          const startTime = toolStartTimes.get(toolCallId);
+          const duration = startTime ? Date.now() - startTime : undefined;
+          const deniedCall = segmentToolCalls.get(toolCallId);
+          if (deniedCall) deniedCall.resolved = true;
+          yield {
+            type: 'tool-result',
+            toolName,
+            toolCallId,
+            toolResult: JSON.stringify({ success: false, denied: true, error: reason }),
+            toolResultRaw: { denied: true, reason },
+            ...(startTime && { toolStartTime: startTime }),
+            ...(duration !== undefined && { toolDuration: duration }),
+            ...(suspendState && { postSuspend: true })
+          };
+          if (startTime) {
+            toolStartTimes.delete(toolCallId);
+          }
+          break;
+        }
+
+        case 'start':
         case 'start-step':
         case 'tool-input-start':
         case 'tool-input-delta':
         case 'tool-input-end':
+        case 'tool-approval-request':
         case 'text-start':
         case 'text-end':
           // AI SDK streaming events for text generation boundaries (not tool-related)
-          // These indicate when the LLM starts/stops generating text content
-          // Safe to ignore as they don't require processing
+          // These indicate when the LLM starts/stops generating text content.
+          // tool-approval-request precedes the lease toolApproval decision; the
+          // outcome is journaled via the denied tool-approval-response above or
+          // the normal tool-call/-result path. Safe to ignore.
           break;
 
         default:
@@ -1247,6 +1293,9 @@ Current step: ${stepCount}/${options.maxSteps}`);
         ...(unresolvedCallIds.length > 0 && { unresolvedCallIds }),
         ...(accumulatedText && { text: accumulatedText.slice(0, 8000) }),
       });
+      // A new gate supersedes any previously approved plan: revoke the active
+      // lease so nothing effectful can run until this gate is approved.
+      leaseStore.revoke();
       await compactAtSuspensionBoundary();
       const contextSnapshot = buildContextSnapshot(suspendState.toolCallId);
       yield {
@@ -1310,6 +1359,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
       // Thrown through the iteration itself (no chance to drain): still abort
       // so in-flight sibling executes get the signal, and leave a WAL record.
       runAbort.abort();
+      leaseStore.revoke();
       options.effectWal?.append({
         event: 'suspended',
         via: 'thrown',
