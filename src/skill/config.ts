@@ -5,7 +5,9 @@ export interface SkillGrantConfig {
   // `allowed-tools`. Default (no trust) grants nothing: the skill loads but its
   // commands must be listed in `tools.bash.commands` to run. Trust is a real
   // decision (like installing an editor extension) - see the trust expansion in
-  // capabilities.ts, which auto-gates the irreversible-looking granted commands.
+  // capabilities.ts. Trust only grants; it never invents gates. To require
+  // approval for a subset of what a skill grants, the author lists that pattern
+  // in `tools.bash.gated` (agentuse-lab#168).
   trusted?: boolean | undefined;
 }
 

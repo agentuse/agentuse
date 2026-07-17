@@ -185,6 +185,18 @@ Define a skill explicitly (without trusting it) when it is core to the agent but
 skills: [linkedin]
 ```
 
+<Warning>
+The bare array form is an **allowlist**, not just a preload. It turns off `auto`, so **only** the listed skills stay visible: every other discovered skill is hidden from the model and cannot be loaded. Use it when you want to pin the agent to a fixed set.
+</Warning>
+
+To preload a skill **and** keep the rest discoverable on demand, set `auto: true` alongside the explicit entry:
+
+```yaml
+skills:
+  linkedin:         # preloaded (bare = include, no special grant)
+  auto: true        # ...but other skills stay loadable on demand
+```
+
 To inspect a skill's grants:
 
 ```bash
