@@ -586,6 +586,35 @@ describe('content-html', () => {
     expect(html).toContain('code()');
   });
 
+  it('renders nested lists with real nesting', () => {
+    const html = renderMarkdownBlock([
+      '- Scope:',
+      '  - Only handled ticket `#301088`',
+      '  - Did not fetch mailbox',
+      '- What changed:',
+      '  - Reply states:',
+      '    - no completed cancellation found',
+      '    - refund actions were completed',
+      '- Next:',
+    ].join('\n'));
+    expect(html).toContain('<li>Scope:<ul><li>Only handled ticket <code>#301088</code></li><li>Did not fetch mailbox</li></ul></li>');
+    expect(html).toContain('<li>Reply states:<ul><li>no completed cancellation found</li><li>refund actions were completed</li></ul></li>');
+    expect(html).toContain('<li>Next:</li></ul>');
+    // Top level + Scope + What changed + Reply states; deep dedent adds no stray list.
+    expect(html.match(/<ul>/g)?.length).toBe(4);
+  });
+
+  it('renders ordered lists nested under unordered items', () => {
+    const html = renderMarkdownBlock([
+      '- Steps:',
+      '  1. first',
+      '  2. second',
+      '- Done',
+    ].join('\n'));
+    expect(html).toContain('<li>Steps:<ol><li>first</li><li>second</li></ol></li>');
+    expect(html).toContain('<li>Done</li></ul>');
+  });
+
   it('renders common assistant markdown beyond flat lists', () => {
     const html = renderMarkdownBlock([
       'Result',

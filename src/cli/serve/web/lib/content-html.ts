@@ -35,11 +35,42 @@ export function renderInlineMarkdown(value: string): string {
     .replace(/\u0000CODE(\d+)\u0000/g, (_, index) => codeSpans[Number(index)] ?? '');
 }
 
+type MarkdownListItem = { indent: number; type: 'ul' | 'ol'; text: string };
+
+/** Builds (possibly nested) list markup from indent-annotated items. */
+function renderNestedList(items: MarkdownListItem[]): string {
+  const out: string[] = [];
+  const stack: Array<{ indent: number; type: 'ul' | 'ol' }> = [];
+  const openList = (item: MarkdownListItem) => {
+    stack.push({ indent: item.indent, type: item.type });
+    out.push(`<${item.type}><li>${renderInlineMarkdown(item.text)}`);
+  };
+  const closeList = () => {
+    const level = stack.pop();
+    if (level) out.push(`</li></${level.type}>`);
+  };
+  for (const item of items) {
+    if (stack.length === 0 || item.indent > stack[stack.length - 1].indent) {
+      openList(item);
+      continue;
+    }
+    while (stack.length > 1 && item.indent < stack[stack.length - 1].indent) closeList();
+    if (item.type !== stack[stack.length - 1].type) {
+      closeList();
+      openList(item);
+    } else {
+      out.push(`</li><li>${renderInlineMarkdown(item.text)}`);
+    }
+  }
+  while (stack.length > 0) closeList();
+  return out.join('');
+}
+
 function renderMarkdownTextBlock(value: string): string {
   const lines = value.split(/\r?\n/);
   const html: string[] = [];
   let paragraph: string[] = [];
-  let list: { type: 'ul' | 'ol'; items: string[] } | null = null;
+  let listItems: MarkdownListItem[] = [];
   let quote: string[] = [];
 
   const flushParagraph = () => {
@@ -48,9 +79,9 @@ function renderMarkdownTextBlock(value: string): string {
     paragraph = [];
   };
   const flushList = () => {
-    if (!list) return;
-    html.push(`<${list.type}>${list.items.map(item => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</${list.type}>`);
-    list = null;
+    if (listItems.length === 0) return;
+    html.push(renderNestedList(listItems));
+    listItems = [];
   };
   const flushQuote = () => {
     if (quote.length === 0) return;
@@ -112,26 +143,15 @@ function renderMarkdownTextBlock(value: string): string {
       html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
       continue;
     }
-    const unordered = trimmed.match(/^[-*+]\s+(.+)$/);
-    if (unordered) {
+    const listMatch = line.match(/^(\s*)(?:([-*+])|(\d+\.))\s+(.+)$/);
+    if (listMatch) {
       flushParagraph();
       flushQuote();
-      if (!list || list.type !== 'ul') {
-        flushList();
-        list = { type: 'ul', items: [] };
-      }
-      list.items.push(unordered[1]);
-      continue;
-    }
-    const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
-    if (ordered) {
-      flushParagraph();
-      flushQuote();
-      if (!list || list.type !== 'ol') {
-        flushList();
-        list = { type: 'ol', items: [] };
-      }
-      list.items.push(ordered[1]);
+      listItems.push({
+        indent: listMatch[1].replace(/\t/g, '  ').length,
+        type: listMatch[3] ? 'ol' : 'ul',
+        text: listMatch[4],
+      });
       continue;
     }
     const blockquote = trimmed.match(/^>\s?(.*)$/);

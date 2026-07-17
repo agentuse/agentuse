@@ -1624,6 +1624,8 @@ a, button, select, summary, label, input, textarea,
 }
 .content-markdown ul,
 .content-markdown ol { margin: 6px 0 10px; padding-left: 22px; }
+.content-markdown li ul,
+.content-markdown li ol { margin: 3px 0; padding-left: 18px; }
 .content-markdown li { margin: 3px 0; }
 .content-markdown blockquote {
   margin: 8px 0;
@@ -4543,6 +4545,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .session-feed-content .content-markdown ol {
   margin: 9px 0 14px;
   padding-left: 24px;
+}
+.page-sessions .session-feed-content .content-markdown li ul,
+.page-sessions .session-feed-content .content-markdown li ol {
+  margin: 4px 0;
+  padding-left: 20px;
 }
 .page-sessions .session-feed-content .content-markdown li {
   margin: 5px 0;
