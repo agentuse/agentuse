@@ -144,7 +144,7 @@ export AWS_REGION=us-east-1
 export AWS_BEARER_TOKEN_BEDROCK="..."
 ```
 
-**3. AWS SDK credential provider chain** — used automatically when neither of the above is set. Resolves `AWS_PROFILE`, `~/.aws/credentials`, SSO cache, EC2/ECS/EKS instance roles, etc.
+**3. AWS SDK credential provider chain**, used automatically when neither of the above is set. Resolves `AWS_PROFILE`, `~/.aws/credentials`, SSO cache, EC2/ECS/EKS instance roles, etc.
 
 ```bash
 # Refresh SSO / assume-role credentials for your profile, then run:
@@ -167,7 +167,7 @@ agentuse run agent.agentuse -m bedrock:arn:aws:bedrock:eu-west-1:123456789012:ap
 
 ## Custom Providers (Local LLMs)
 
-Connect to any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, llama.cpp, and more.
+Connect to any OpenAI-compatible endpoint, Ollama, LM Studio, vLLM, llama.cpp, and more.
 
 ### Adding a Custom Provider
 
@@ -206,7 +206,7 @@ agentuse run agent.agentuse -m lmstudio:qwen/qwen3.5-9b
 ```
 
 <Info>
-  Custom providers support colons in model names — `ollama:qwen3.5:0.8b` is parsed as provider `ollama`, model `qwen3.5:0.8b`.
+  Custom providers support colons in model names, `ollama:qwen3.5:0.8b` is parsed as provider `ollama`, model `qwen3.5:0.8b`.
 </Info>
 
 ### Environment Variable Overrides
@@ -360,6 +360,32 @@ model: ollama:glm-5-flash:q4_K_M  # Uses local Ollama
 
 Configure provider-specific settings for fine-tuned model behavior:
 
+### Reasoning Effort (recommended, provider-agnostic)
+
+The simplest way to control how hard a model thinks is the top-level
+`reasoningEffort`. It works across providers, AgentUse maps one level to each
+one's native control (Anthropic thinking budget, OpenAI reasoning effort), so you
+set a single value and it works whether the agent runs on Claude or GPT-5:
+
+```yaml
+---
+model: anthropic:claude-opus-4-8
+reasoningEffort: high   # none | minimal | low | medium | high | xhigh
+---
+```
+
+Use `medium`/`high` for genuine judgment (hard multi-constraint calls, planning,
+debugging), `low`/`minimal` for lighter work, omit for the model default, and
+`none` to force reasoning off. It is opt-in and bills reasoning tokens at
+**output rates**.
+
+Reach for `reasoningEffort` first. The provider-specific `openai.reasoningEffort`
+and `anthropic.thinking.budgetTokens` below are escape hatches for exact control,
+honored only when the top-level `reasoningEffort` is unset. Being top-level,
+`reasoningEffort` also avoids a subtle trap: a provider-specific key placed at
+the wrong nesting level is silently dropped (the agent parses and runs with the
+tuning never applied).
+
 ### OpenAI Provider Options
 
 For OpenAI models (especially GPT-5), you can control thinking effort and verbosity:
@@ -384,7 +410,7 @@ openai:
   - `high`: More comprehensive reasoning, slower responses
   - `xhigh`: Maximum reasoning for models that support it
 
-  **reasoningSummary**: Streams a natural-language summary of the model's reasoning so it appears inline in the session trace (`auto` or `detailed`). On reasoning-capable models this **defaults to `auto`** — the reasoning tokens are billed whether or not you ask for the summary, so surfacing it is near-free. Non-reasoning models (e.g. `gpt-4o`) omit it automatically.
+  **reasoningSummary**: Streams a natural-language summary of the model's reasoning so it appears inline in the session trace (`auto` or `detailed`). On reasoning-capable models this **defaults to `auto`**, the reasoning tokens are billed whether or not you ask for the summary, so surfacing it is near-free. Non-reasoning models (e.g. `gpt-4o`) omit it automatically.
 
   **textVerbosity**: Controls response length and detail
   - `low`: Concise, minimal prose
@@ -412,7 +438,7 @@ anthropic:
 ```
 
 <Warning>
-  Extended thinking is **off by default** — an explicit opt-in. Enabling it generates new thinking tokens billed at **output rates**, a real cost increase that scales with the budget (unlike OpenAI's `reasoningSummary`, where the reasoning is billed either way). AgentUse automatically raises `max_tokens` above the budget so Anthropic's `max_tokens > budget` constraint is met and there's headroom for the answer.
+  Extended thinking is **off by default**, an explicit opt-in. Enabling it generates new thinking tokens billed at **output rates**, a real cost increase that scales with the budget (unlike OpenAI's `reasoningSummary`, where the reasoning is billed either way). AgentUse automatically raises `max_tokens` above the budget so Anthropic's `max_tokens > budget` constraint is met and there's headroom for the answer.
 </Warning>
 
 These options help you optimize for:

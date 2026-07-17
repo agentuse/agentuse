@@ -142,6 +142,27 @@ export function resolveAnthropicThinking(
   return { budgetTokens, maxOutputTokens };
 }
 
+/**
+ * Decide how reasoning is configured for a run. The provider-agnostic
+ * `reasoningEffort` knob is primary: it becomes the AI SDK's top-level
+ * `reasoning` call option, which the provider maps to its own control
+ * (Anthropic -> thinking budget as a % of maxOutputTokens, OpenAI ->
+ * reasoningEffort). The legacy `anthropic.thinking.budgetTokens` stays as an
+ * explicit escape hatch, honored only when `reasoningEffort` is unset (so the
+ * two never double-apply). Pure + exported for testing.
+ */
+export function resolveReasoning(agent: ParsedAgent): {
+  reasoning?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  anthropicThinkingBudget?: number;
+} {
+  const reasoningEffort = agent.config.reasoningEffort;
+  if (reasoningEffort) return { reasoning: reasoningEffort };
+  const provider = agent.config.model.split(':')[0];
+  const anthropicThinkingBudget =
+    provider === 'anthropic' ? resolveAnthropicThinking(agent)?.budgetTokens : undefined;
+  return anthropicThinkingBudget ? { anthropicThinkingBudget } : {};
+}
+
 function withAnthropicCacheControl(providerOptions: any): any {
   return {
     ...providerOptions,
@@ -591,10 +612,10 @@ export async function* executeAgentCore(
     // Extract provider options based on model provider
     const provider = agent.config.model.split(':')[0];
 
-    // Claude extended thinking (opt-in); resolves budget + the max_tokens needed
-    // to satisfy Anthropic's max_tokens > budget constraint.
-    const anthropicThinking = provider === 'anthropic' ? resolveAnthropicThinking(agent) : undefined;
-    const anthropicThinkingBudget = anthropicThinking?.budgetTokens;
+    // Reasoning config. `reasoningEffort` (provider-agnostic) becomes the SDK's
+    // top-level `reasoning` param; the legacy `anthropic.thinking.budgetTokens`
+    // is used only when reasoningEffort is unset (see resolveReasoning).
+    const { reasoning: reasoningEffort, anthropicThinkingBudget } = resolveReasoning(agent);
     // Per-response output ceiling. Without this, the AI SDK caps model ids it
     // doesn't recognize (e.g. claude-sonnet-5) at 4096, silently truncating runs.
     const maxOutputTokens = resolveMaxOutputTokens(agent);
@@ -643,6 +664,9 @@ export async function* executeAgentCore(
       allowSystemInMessages: true,
       maxRetries: MAX_RETRIES,
       toolChoice: 'auto' as const,
+      // Provider-agnostic reasoning effort -> the SDK maps it to the provider's
+      // native control (Anthropic thinking budget / OpenAI reasoningEffort).
+      ...(reasoningEffort && { reasoning: reasoningEffort }),
       stopWhen: contextManager
         ? [isStepCount(remainingSteps), stopForCompaction, stopOnSuspend]
         : [isStepCount(remainingSteps), stopOnSuspend],

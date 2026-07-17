@@ -3,7 +3,8 @@ import { parseAgentContent } from '../src/parser';
 import {
   openAIOptionsWithCacheDefaults,
   resolveAnthropicThinking,
-  resolveMaxOutputTokens
+  resolveMaxOutputTokens,
+  resolveReasoning
 } from '../src/runner/execution';
 
 // Build a ParsedAgent from frontmatter so the tests exercise the real config
@@ -116,5 +117,63 @@ describe('resolveMaxOutputTokens', () => {
 
   it('gives custom/local gateways a fixed conservative cap', () => {
     expect(resolveMaxOutputTokens(agent('model: mycustomgw:some-model'))).toBe(16384);
+  });
+});
+
+describe('resolveReasoning — unified reasoningEffort vs legacy thinking budget', () => {
+  it('returns nothing when neither is configured', () => {
+    expect(resolveReasoning(agent('model: anthropic:claude-opus-4-8'))).toEqual({});
+  });
+
+  it('passes reasoningEffort through as the top-level reasoning level', () => {
+    expect(resolveReasoning(agent('model: anthropic:claude-opus-4-8\nreasoningEffort: high'))).toEqual({
+      reasoning: 'high'
+    });
+  });
+
+  it('works provider-agnostically (OpenAI model, no anthropic budget path)', () => {
+    expect(resolveReasoning(agent('model: openai:gpt-5.6\nreasoningEffort: medium'))).toEqual({
+      reasoning: 'medium'
+    });
+  });
+
+  it('falls back to the legacy anthropic thinking budget when reasoningEffort is unset', () => {
+    expect(
+      resolveReasoning(
+        agent('model: anthropic:claude-opus-4-8\nanthropic:\n  thinking:\n    budgetTokens: 6144')
+      )
+    ).toEqual({ anthropicThinkingBudget: 6144 });
+  });
+
+  it('lets reasoningEffort win over an explicit budget so they never double-apply', () => {
+    expect(
+      resolveReasoning(
+        agent(
+          'model: anthropic:claude-opus-4-8\nreasoningEffort: high\nanthropic:\n  thinking:\n    budgetTokens: 6144'
+        )
+      )
+    ).toEqual({ reasoning: 'high' });
+  });
+
+  it('ignores a stray anthropic budget on a non-anthropic model', () => {
+    expect(resolveReasoning(agent('model: openai:gpt-5.6'))).toEqual({});
+  });
+});
+
+describe('parser — reasoningEffort field', () => {
+  it('accepts every valid effort level', () => {
+    for (const level of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']) {
+      expect(agent(`model: anthropic:claude-opus-4-8\nreasoningEffort: ${level}`).config.reasoningEffort).toBe(
+        level
+      );
+    }
+  });
+
+  it('rejects an invalid effort level', () => {
+    expect(() => agent('model: anthropic:claude-opus-4-8\nreasoningEffort: maximum')).toThrow();
+  });
+
+  it('is optional (undefined when omitted)', () => {
+    expect(agent('model: anthropic:claude-opus-4-8').config.reasoningEffort).toBeUndefined();
   });
 });
