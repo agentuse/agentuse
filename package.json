@@ -28,7 +28,7 @@
     "autopilot"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "bin": {
     "agentuse": "./bin/cli.js"
@@ -64,18 +64,18 @@
     "generate:models": "npx tsx scripts/generate-models.ts"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "4.0.136",
-    "@ai-sdk/anthropic": "3.0.97",
-    "@ai-sdk/mcp": "1.0.62",
-    "@ai-sdk/openai": "3.0.85",
-    "@ai-sdk/openai-compatible": "2.0.61",
-    "@ai-sdk/provider": "3.0.14",
+    "@ai-sdk/amazon-bedrock": "5.0.23",
+    "@ai-sdk/anthropic": "4.0.15",
+    "@ai-sdk/mcp": "2.0.14",
+    "@ai-sdk/openai": "4.0.15",
+    "@ai-sdk/openai-compatible": "3.0.11",
+    "@ai-sdk/provider": "4.0.3",
     "@clack/prompts": "^0.11.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@openauthjs/openauth": "^0.4.3",
     "@slack/socket-mode": "2.0.7",
     "@slack/web-api": "7.15.1",
-    "ai": "6.0.229",
+    "ai": "7.0.30",
     "chalk": "^5.5.0",
     "chokidar": "^5.0.0",
     "commander": "^12.0.0",

@@ -52,9 +52,9 @@ export function usageToAssistantTokens(usage: LanguageModelUsage): AssistantToke
   return {
     input: tokenCount(usage.inputTokens),
     output: tokenCount(usage.outputTokens),
-    reasoning: tokenCount(usage.outputTokenDetails?.reasoningTokens ?? usage.reasoningTokens),
+    reasoning: tokenCount(usage.outputTokenDetails?.reasoningTokens),
     cache: {
-      read: tokenCount(usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens),
+      read: tokenCount(usage.inputTokenDetails?.cacheReadTokens),
       write: tokenCount(usage.inputTokenDetails?.cacheWriteTokens),
     },
   };
@@ -72,12 +72,6 @@ export function addLanguageModelUsage(
     inputTokens: tokenCount(left?.inputTokens) + tokenCount(right.inputTokens),
     outputTokens: tokenCount(left?.outputTokens) + tokenCount(right.outputTokens),
     totalTokens: tokenCount(left?.totalTokens) + tokenCount(right.totalTokens),
-    ...(left?.reasoningTokens !== undefined || right.reasoningTokens !== undefined
-      ? { reasoningTokens: tokenCount(left?.reasoningTokens) + tokenCount(right.reasoningTokens) }
-      : {}),
-    ...(left?.cachedInputTokens !== undefined || right.cachedInputTokens !== undefined
-      ? { cachedInputTokens: tokenCount(left?.cachedInputTokens) + tokenCount(right.cachedInputTokens) }
-      : {}),
     inputTokenDetails: {
       noCacheTokens: tokenCount(leftInputDetails?.noCacheTokens) + tokenCount(rightInputDetails?.noCacheTokens),
       cacheReadTokens: tokenCount(leftInputDetails?.cacheReadTokens) + tokenCount(rightInputDetails?.cacheReadTokens),

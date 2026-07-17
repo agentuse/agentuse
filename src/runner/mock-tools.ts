@@ -134,7 +134,7 @@ export function wrapToolsWithLLMMock(
             const input = args[0];
             const execOptions = args[1] as { abortSignal?: AbortSignal } | undefined;
             const text = await completeText(mockModel, {
-              system: MOCK_SYSTEM_PROMPT,
+              instructions: MOCK_SYSTEM_PROMPT,
               prompt: buildMockPrompt(name, description, input),
               ...(execOptions?.abortSignal && { abortSignal: execOptions.abortSignal }),
             });

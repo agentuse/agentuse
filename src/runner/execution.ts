@@ -1,4 +1,4 @@
-import { streamText, stepCountIs, type ModelMessage, type ToolSet } from 'ai';
+import { streamText, isStepCount, type ModelMessage, type ToolSet } from 'ai';
 import { createHash } from 'crypto';
 import type { ParsedAgent } from '../parser';
 import { createModel } from '../models';
@@ -560,6 +560,17 @@ export async function* executeAgentCore(
     }
   };
 
+  // `stopWhen` predicate: stop the step loop the moment a step carries a
+  // SuspendSignal tool-error. This runs synchronously inside the SDK's own
+  // loop, so the next LLM step can never start while our (async) consumer is
+  // still dequeuing the suspend chunk — without it, v7 launches step N+1
+  // before the drain-side abort lands (agentuse-lab#165).
+  const stopOnSuspend = ({ steps }: { steps: Array<{ content?: unknown }> }): boolean => {
+    const content = steps[steps.length - 1]?.content;
+    if (!Array.isArray(content)) return false;
+    return content.some((part: any) => part?.type === 'tool-error' && isSuspendSignal(part.error));
+  };
+
   // `stopWhen` predicate: end the current streamText segment once the provider's
   // real per-step token usage crosses the compaction threshold. We then compact
   // between segments (see the segment loop) so the reduction actually persists,
@@ -653,11 +664,15 @@ export async function* executeAgentCore(
     const streamConfig: any = {
       model,
       messages,
+      // Our message pipeline carries system-role messages inside `messages`
+      // (fresh runs prepend them; resumed sessions rehydrate them). v7 rejects
+      // that by default in favor of `instructions`; keep the legacy behavior.
+      allowSystemInMessages: true,
       maxRetries: MAX_RETRIES,
       toolChoice: 'auto' as const,
       stopWhen: contextManager
-        ? [stepCountIs(remainingSteps), stopForCompaction]
-        : stepCountIs(remainingSteps),
+        ? [isStepCount(remainingSteps), stopForCompaction, stopOnSuspend]
+        : [isStepCount(remainingSteps), stopOnSuspend],
       abortSignal: effectiveAbortSignal,
       ...(providerOptions && { providerOptions }),
       ...((usesAnthropicCacheControl || contextManager) && {
@@ -819,7 +834,7 @@ Error: ${errorMessage}`);
   // is what made the 2026-07-16 ghost posts invisible (agentuse-lab#165).
   let suspendState: { toolName?: string; toolCallId?: string; payload: unknown } | undefined;
   const DRAIN_CHUNK_TIMEOUT_MS = 10_000;
-  const iterator = (stream.fullStream as AsyncIterable<any>)[Symbol.asyncIterator]();
+  const iterator = (stream.stream as AsyncIterable<any>)[Symbol.asyncIterator]();
   // While draining, never let a hung in-flight tool block the gate from
   // surfacing: bound the wait for each remaining chunk.
   const nextChunk = async (): Promise<IteratorResult<any> | 'drain-timeout'> => {

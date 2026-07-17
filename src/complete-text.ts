@@ -3,8 +3,8 @@ import { createModel } from './models';
 import { CodexAuth } from './auth/codex';
 
 export interface CompleteTextOptions {
-  /** System prompt. On the Codex backend this is also sent as the required `instructions`. */
-  system: string;
+  /** System prompt (v7 `instructions`). On the Codex backend this is also sent as the required provider-level `instructions`. */
+  instructions: string;
   /** User prompt. */
   prompt: string;
   /** Output cap. Omitted on the Codex backend, which rejects `max_output_tokens`. */
@@ -39,21 +39,19 @@ export async function completeText(modelString: string, options: CompleteTextOpt
 
   const result = streamText({
     model,
-    messages: [
-      { role: 'system', content: options.system },
-      { role: 'user', content: options.prompt },
-    ],
+    instructions: options.instructions,
+    prompt: options.prompt,
     maxRetries: options.maxRetries ?? 2,
     // Codex rejects max_output_tokens; honor the cap on every other provider.
     ...(!usesCodexBackend && options.maxOutputTokens !== undefined && { maxOutputTokens: options.maxOutputTokens }),
     // Codex requires the top-level instructions field; the system message in
     // `messages` alone is not enough.
-    ...(usesCodexBackend && { providerOptions: { openai: { instructions: options.system, store: false } } }),
+    ...(usesCodexBackend && { providerOptions: { openai: { instructions: options.instructions, store: false } } }),
     ...(options.abortSignal && { abortSignal: options.abortSignal }),
   });
 
   let text = '';
-  for await (const chunk of result.fullStream) {
+  for await (const chunk of result.stream) {
     if (chunk.type === 'error') {
       throw (chunk as { error: unknown }).error;
     }

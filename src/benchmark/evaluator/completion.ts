@@ -91,12 +91,12 @@ Respond ONLY with the JSON object, no other text.`;
     // prompt; other providers get a short judge role. completeText (streaming)
     // is used so this works on the ChatGPT Codex backend, which rejects the
     // non-streaming generateText() path.
-    const system = isAnthropicModel(judgeModelString)
+    const instructions = isAnthropicModel(judgeModelString)
       ? ANTHROPIC_IDENTITY_PROMPT
       : 'You are a strict evaluator that judges agent output against criteria and replies with a JSON object only.';
 
     const responseText = await completeText(judgeModelString, {
-      system,
+      instructions,
       prompt: userPrompt,
       maxOutputTokens: 500,
     });

@@ -24,11 +24,11 @@ mock.module('../src/utils/models-api', () => ({
 
 // Mock the AI SDK. compactMessages now goes through completeText() which uses
 // streamText (generateText cannot be used on the Codex backend), so the mock
-// returns a fake stream whose fullStream yields the summary text.
+// returns a fake stream whose stream yields the summary text.
 const SUMMARY_TEXT = '[Summary] Previous context with important decisions and tool results.';
 function fakeStream(text: string) {
   return {
-    fullStream: (async function* () {
+    stream: (async function* () {
       yield { type: 'text-delta', text };
       yield { type: 'finish' };
     })(),
@@ -37,7 +37,7 @@ function fakeStream(text: string) {
 mock.module('ai', () => ({
   generateText: mock(async () => ({ text: SUMMARY_TEXT, usage: { totalTokens: 50 } })),
   streamText: mock(() => fakeStream(SUMMARY_TEXT)),
-  stepCountIs: mock()
+  isStepCount: mock()
 }));
 
 describe('ContextManager', () => {

@@ -99,11 +99,11 @@ Pick the best category: tip | warning | pattern | tool-usage | error-fix.
 Respond with ONLY a JSON object, no other text:
 {"category": "tip", "title": "short title (max 6 words)", "instruction": "the additional instruction"}`;
 
-  const system = isAnthropicModel(agentModel)
+  const instructions = isAnthropicModel(agentModel)
     ? ANTHROPIC_IDENTITY_PROMPT
     : 'You turn a human note into one concise additional agent instruction, grounded in the run, and reply with a JSON object only.';
 
-  const responseText = await completeText(agentModel, { system, prompt });
+  const responseText = await completeText(agentModel, { instructions, prompt });
   try {
     const text = responseText.trim();
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || [null, text];
@@ -237,12 +237,12 @@ If no learnings are applicable, respond with an empty array: []`;
   // moment a Codex-authed user triggers learning. For Anthropic OAuth the Claude
   // Code identity prompt must be the system prompt; other providers get a short
   // evaluator role (which also becomes Codex's required `instructions`).
-  const system = isAnthropicModel(agentModel)
+  const instructions = isAnthropicModel(agentModel)
     ? ANTHROPIC_IDENTITY_PROMPT
     : 'You extract concise, high-signal learnings from an agent run and its reviewer feedback, and reply with a JSON array only.';
 
   const responseText = await completeText(agentModel, {
-    system,
+    instructions,
     prompt,
   });
 

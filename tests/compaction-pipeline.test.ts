@@ -27,10 +27,10 @@ mock.module('../src/models', () => ({
   AuthenticationError: class AuthenticationError extends Error {},
 }));
 
-const streamTextMock = mock((_config: any): any => ({ fullStream: (async function* () {})() }));
+const streamTextMock = mock((_config: any): any => ({ stream: (async function* () {})() }));
 mock.module('ai', () => ({
   streamText: streamTextMock,
-  stepCountIs: mock((n: number) => ({ stepCountIs: n })),
+  isStepCount: mock((n: number) => ({ isStepCount: n })),
   // executeAgentCore pulls in api-error.ts, which imports APICallError and
   // RetryError from 'ai'; the mock must provide both or module load fails in
   // isolation.
@@ -39,9 +39,9 @@ mock.module('ai', () => ({
 }));
 
 const isSummarizer = (config: any) =>
-  typeof config?.messages?.[0]?.content === 'string' && config.messages[0].content.includes('summarizer');
+  typeof (config?.messages?.[0]?.content ?? config?.instructions) === 'string' && (config?.messages?.[0]?.content ?? config?.instructions).includes('summarizer');
 const summarizerStream = () => ({
-  fullStream: (async function* () {
+  stream: (async function* () {
     yield { type: 'text-delta', text: 'folded summary' };
     yield { type: 'finish', finishReason: 'stop' };
   })(),
@@ -94,7 +94,7 @@ function suspendThenSummarize() {
     if (isSummarizer(config)) return summarizerStream();
     call++;
     return {
-      fullStream: (async function* () {
+      stream: (async function* () {
         yield { type: 'tool-call', toolCallId: 'c1', toolName: 'await_human', input: { prompt: 'Approve?' } };
         yield {
           type: 'tool-error', toolCallId: 'c1', toolName: 'await_human',
@@ -119,7 +119,7 @@ describe('compaction pipeline: marker + log behavior', () => {
       main++;
       if (main === 1) {
         return {
-          fullStream: (async function* () {
+          stream: (async function* () {
             yield { type: 'tool-call', toolCallId: 't1', toolName: 'read_file', input: { path: 'big.log' } };
             yield { type: 'tool-result', toolCallId: 't1', toolName: 'read_file', output: 'ok' };
             yield { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 8000, outputTokens: 50, totalTokens: 8050 } };
@@ -133,7 +133,7 @@ describe('compaction pipeline: marker + log behavior', () => {
         };
       }
       return {
-        fullStream: (async function* () {
+        stream: (async function* () {
           yield { type: 'text-delta', text: 'done' };
           yield { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1000, outputTokens: 10, totalTokens: 1010 } };
         })(),
@@ -164,12 +164,12 @@ describe('compaction pipeline: marker + log behavior', () => {
     streamTextMock.mockImplementation((config: any) => {
       if (isSummarizer(config)) {
         // completeText throws on an error chunk in the stream.
-        return { fullStream: (async function* () { yield { type: 'error', error: new Error('summarizer API down') }; })() };
+        return { stream: (async function* () { yield { type: 'error', error: new Error('summarizer API down') }; })() };
       }
       main++;
       if (main === 1) {
         return {
-          fullStream: (async function* () {
+          stream: (async function* () {
             yield { type: 'tool-call', toolCallId: 't1', toolName: 'read_file', input: { path: 'big.log' } };
             yield { type: 'tool-result', toolCallId: 't1', toolName: 'read_file', output: 'ok' };
             yield { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 8000, outputTokens: 50, totalTokens: 8050 } };
@@ -183,7 +183,7 @@ describe('compaction pipeline: marker + log behavior', () => {
       }
       // The run continued into a second segment despite the failed compaction.
       return {
-        fullStream: (async function* () {
+        stream: (async function* () {
           yield { type: 'text-delta', text: 'done after recovery' };
           yield { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1000, outputTokens: 10, totalTokens: 1010 } };
         })(),

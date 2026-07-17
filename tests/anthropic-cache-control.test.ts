@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { SuspendSignal } from '../src/runner/suspend';
 
 const streamTextMock = mock(() => ({
-  fullStream: (async function* () {
+  stream: (async function* () {
     yield {
       type: 'finish',
       finishReason: 'stop',
@@ -22,7 +22,7 @@ const generateTextMock = mock(async () => ({ text: 'compacted' }));
 mock.module('ai', () => ({
   generateText: generateTextMock,
   streamText: streamTextMock,
-  stepCountIs: stepCountIsMock,
+  isStepCount: stepCountIsMock,
   // execution.ts pulls in api-error.ts, which imports APICallError and
   // RetryError from 'ai'; the mock must provide both (with isInstance) or
   // module load fails when this file runs in isolation.
@@ -232,7 +232,7 @@ describe('executeAgentCore Anthropic cache control', () => {
   it('compacts active context before emitting an approval suspension snapshot at the boundary threshold', async () => {
     process.env.APPROVAL_COMPACTION_MIN_TOKENS = '1';
     streamTextMock.mockImplementationOnce(() => ({
-      fullStream: (async function* () {
+      stream: (async function* () {
         yield {
           type: 'tool-call',
           toolCallId: 'call-approval',
@@ -253,7 +253,7 @@ describe('executeAgentCore Anthropic cache control', () => {
     }));
     // Compaction summarizes via completeText(), i.e. a second streamText call.
     streamTextMock.mockImplementationOnce(() => ({
-      fullStream: (async function* () {
+      stream: (async function* () {
         yield { type: 'text-delta', text: 'compacted' };
         yield { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
       })(),
@@ -327,7 +327,7 @@ describe('executeAgentCore Anthropic cache control', () => {
 
   it('emits step usage before an approval suspension when the final finish event is absent', async () => {
     streamTextMock.mockImplementationOnce(() => ({
-      fullStream: (async function* () {
+      stream: (async function* () {
         yield {
           type: 'tool-call',
           toolCallId: 'call-approval',
@@ -395,7 +395,7 @@ describe('executeAgentCore Anthropic cache control', () => {
     // by the SDK and re-run every step.
     process.env.STEP_COMPACTION_MIN_TOKENS = '1';
     streamTextMock.mockImplementationOnce(() => ({
-      fullStream: (async function* () {
+      stream: (async function* () {
         yield {
           type: 'tool-call',
           toolCallId: 'call-read',

@@ -21,7 +21,7 @@ let summarizerCalls = 0;
 function mainSegmentOne() {
   // One tool round, then the model wants to continue (finishReason tool-calls).
   return {
-    fullStream: (async function* () {
+    stream: (async function* () {
       yield { type: 'tool-call', toolCallId: 't1', toolName: 'read_file', input: { path: 'big.log' } };
       yield { type: 'tool-result', toolCallId: 't1', toolName: 'read_file', output: 'ok' };
       yield { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 8000, outputTokens: 50, totalTokens: 8050 } };
@@ -43,7 +43,7 @@ function mainSegmentOne() {
 function mainSegmentTwo() {
   // After compaction the model finishes cleanly.
   return {
-    fullStream: (async function* () {
+    stream: (async function* () {
       yield { type: 'text-delta', text: 'all done' };
       yield { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1200, outputTokens: 10, totalTokens: 1210 } };
     })(),
@@ -53,7 +53,7 @@ function mainSegmentTwo() {
 
 function summarizerStream() {
   return {
-    fullStream: (async function* () {
+    stream: (async function* () {
       yield { type: 'text-delta', text: 'folded summary' };
       yield { type: 'finish', finishReason: 'stop' };
     })(),
@@ -61,7 +61,7 @@ function summarizerStream() {
 }
 
 const streamTextMock = mock((config: any) => {
-  const system = config?.messages?.[0]?.content;
+  const system = config?.messages?.[0]?.content ?? config?.instructions;
   const isSummarizer = typeof system === 'string' && system.includes('summarizer');
   if (isSummarizer) {
     summarizerCalls++;
@@ -73,7 +73,7 @@ const streamTextMock = mock((config: any) => {
 
 mock.module('ai', () => ({
   streamText: streamTextMock,
-  stepCountIs: mock((n: number) => ({ stepCountIs: n })),
+  isStepCount: mock((n: number) => ({ isStepCount: n })),
   // execution.ts pulls in api-error.ts, which imports APICallError and
   // RetryError from 'ai'; the mock must provide both or module load fails in
   // isolated test runs.
@@ -128,7 +128,7 @@ describe('executeAgentCore between-streams compaction loop', () => {
       }
       mainCalls++;
       return {
-        fullStream: (async function* () {
+        stream: (async function* () {
           yield { type: 'text-delta', text: 'quick answer' };
           yield { type: 'finish', finishReason: 'stop', usage: { inputTokens: 100, outputTokens: 5, totalTokens: 105 } };
         })(),

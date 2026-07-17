@@ -38,7 +38,7 @@ export async function compactMessages(
     // generateText) so this works on the ChatGPT Codex backend, which only
     // accepts streaming requests and requires the instructions field.
     const text = await completeText(modelString, {
-      system: COMPACTION_SYSTEM_PROMPT,
+      instructions: COMPACTION_SYSTEM_PROMPT,
       prompt: `Please summarize this agent context:\n\n${contextToSummarize}`,
       maxOutputTokens: MAX_SUMMARY_TOKENS,
       maxRetries: 2,

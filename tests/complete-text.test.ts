@@ -19,7 +19,7 @@ const streamText = mock((opts: Record<string, unknown>) => {
   async function* gen() {
     yield { type: "text-delta", text: "ok" };
   }
-  return { fullStream: gen() };
+  return { stream: gen() };
 });
 
 mock.module("ai", () => ({ streamText }));
@@ -37,7 +37,7 @@ describe("completeText", () => {
   // everywhere.
   it("never forwards a temperature to the provider", async () => {
     const text = await completeText("anthropic:claude-opus-4-8", {
-      system: "sys",
+      instructions: "sys",
       prompt: "hi",
     });
 
