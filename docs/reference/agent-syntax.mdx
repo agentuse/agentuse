@@ -205,7 +205,7 @@ Additional instructions or context.
   ```
 </ParamField>
 
-<ParamField path="reasoningEffort" type='"none" | "minimal" | "low" | "medium" | "high" | "xhigh"' required={false}>
+<ParamField path="reasoning" type='"none" | "minimal" | "low" | "medium" | "high" | "xhigh"' required={false}>
   Provider-agnostic reasoning effort, the recommended knob. AgentUse passes it to
   the AI SDK as the top-level `reasoning` level, which each provider maps to its
   own control: Anthropic to a thinking budget (a percentage of `maxOutputTokens`),
@@ -213,7 +213,7 @@ Additional instructions or context.
 
   ```yaml
   model: anthropic:claude-opus-4-8
-  reasoningEffort: high   # none | minimal | low | medium | high | xhigh
+  reasoning: high   # none | minimal | low | medium | high | xhigh
   ```
 
   Use `medium`/`high` for genuine judgment (hard calls under competing
@@ -224,7 +224,7 @@ Additional instructions or context.
   <Note>
     Prefer this over the provider-specific `openai.reasoningEffort` /
     `anthropic.thinking.budgetTokens` below, which are escape hatches for exact
-    control and are honored only when the top-level `reasoningEffort` is unset.
+    control and are honored only when the top-level `reasoning` is unset.
     Being top-level, it also avoids the "wrong-level key silently dropped" trap a
     misplaced `thinking:` hits.
   </Note>
@@ -232,7 +232,7 @@ Additional instructions or context.
 
 <ParamField path="openai" type="object" required={false}>
   OpenAI-specific options for GPT-5 and other OpenAI models. `reasoningEffort`
-  here is the exact-control alternative to the top-level `reasoningEffort` above.
+  here is the exact-control alternative to the top-level `reasoning` above.
 
   **Supported Options:**
   - `reasoningEffort`: Controls thinking effort for reasoning models (`'none'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`)
@@ -257,11 +257,11 @@ Additional instructions or context.
 
 <ParamField path="anthropic" type="object" required={false}>
   Anthropic-specific options for Claude models. `thinking.budgetTokens` is the
-  exact-budget alternative to the top-level `reasoningEffort` above; use it only
+  exact-budget alternative to the top-level `reasoning` above; use it only
   when you need to pin an exact token budget.
 
   **Supported Options:**
-  - `thinking.budgetTokens`: Enables Claude [extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking) with the given token budget (minimum `1024`). When set, Claude streams its reasoning, which appears inline in the [session trace](/reference/session-storage). Honored only when the top-level `reasoningEffort` is unset.
+  - `thinking.budgetTokens`: Enables Claude [extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking) with the given token budget (minimum `1024`). When set, Claude streams its reasoning, which appears inline in the [session trace](/reference/session-storage). Honored only when the top-level `reasoning` is unset.
 
   ```yaml
   anthropic:

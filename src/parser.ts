@@ -157,13 +157,15 @@ const AgentSchema = z.object({
   // single response or write a big file in one tool call; it's clamped to the
   // model's real output limit when known.
   maxOutputTokens: z.number().positive().int().optional(),
-  // Provider-agnostic reasoning effort (preferred). The AI SDK maps one level to
-  // each provider's native control: Anthropic -> a thinking budget (a % of
+  // Provider-agnostic reasoning effort (preferred). Named to match the AI SDK's
+  // top-level `reasoning` param, and to stay distinct from the nested
+  // `openai.reasoningEffort` escape hatch. The SDK maps one level to each
+  // provider's native control: Anthropic -> a thinking budget (a % of
   // maxOutputTokens), OpenAI -> its own reasoningEffort. Prefer this over the
-  // provider-specific `anthropic.thinking` / `openai.reasoningEffort` escape
-  // hatches below. It engages (and bills) reasoning tokens at output rates.
-  // `none` explicitly disables reasoning; omit the key to use the model default.
-  reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+  // provider-specific `anthropic.thinking` / `openai.reasoningEffort` below.
+  // It engages (and bills) reasoning tokens at output rates. `none` explicitly
+  // disables reasoning; omit the key to use the model default.
+  reasoning: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
   openai: z.object({
     reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
     // Request a streamed natural-language summary of the model's reasoning

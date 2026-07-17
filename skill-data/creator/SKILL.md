@@ -32,7 +32,7 @@ model: anthropic:claude-sonnet-5
 description: "Analyze daily metrics and send a concise summary"
 timeout: 600
 maxSteps: 100
-reasoningEffort: high  # provider-agnostic thinking effort: none|minimal|low|medium|high|xhigh. Opt-in, billed at OUTPUT rates; omit for the model default. (Advanced, exact control: anthropic.thinking.budgetTokens / openai.reasoningEffort.)
+reasoning: high        # provider-agnostic thinking effort: none|minimal|low|medium|high|xhigh. Opt-in, billed at OUTPUT rates; omit for the model default. (Advanced, exact control: anthropic.thinking.budgetTokens / openai.reasoningEffort.)
 schedule: "0 9 * * *"
 metadata:            # free-form annotations; framework never interprets them
   draft: true
@@ -78,7 +78,7 @@ constraints (honesty vs persuasion, voice vs brevity, choosing among imperfect
 options), a build to plan, a bug to trace. Left off, such an agent tends to make
 a defensible-but-wrong one-shot call and then oscillate once corrected.
 
-- **Primary knob: top-level `reasoningEffort`** (`none|minimal|low|medium|high|xhigh`),
+- **Primary knob: top-level `reasoning`** (`none|minimal|low|medium|high|xhigh`),
   provider-agnostic. AgentUse hands it to the AI SDK, which maps one level to
   each provider's native control (Anthropic thinking budget ≈ a % of
   maxOutputTokens; OpenAI reasoningEffort). `medium`/`high` for hard calls,
@@ -87,7 +87,7 @@ a defensible-but-wrong one-shot call and then oscillate once corrected.
   trap below.
 - **Advanced escape hatches** (skip unless you need exact control): Claude
   `anthropic.thinking.budgetTokens` (an exact token budget, min 1024) and OpenAI
-  `openai.reasoningEffort`. Honored only when top-level `reasoningEffort` is
+  `openai.reasoningEffort`. Honored only when top-level `reasoning` is
   unset, so the two never double-apply.
 - Leave it off for mechanical, extraction, and read-only agents, budget there is
   cost for no lift.
@@ -223,8 +223,8 @@ these. This shapes where a rule belongs:
   before calling a name invalid. Don't infer limits from other providers'
   naming (e.g. "5.5 can't exist because provider Y stops at 5.2").
 
-- **`reasoningEffort` is top-level; the exact provider budgets are nested, and a
-  wrong-level key is silently dropped.** Prefer top-level `reasoningEffort` and
+- **`reasoning` is top-level; the exact provider budgets are nested, and a
+  wrong-level key is silently dropped.** Prefer top-level `reasoning` and
   you sidestep this. The escape-hatch controls are nested: Claude budget at
   `anthropic.thinking.budgetTokens`, OpenAI at `openai.reasoningEffort`. A
   top-level `thinking:` (or a provider key at the wrong level) is NOT a schema

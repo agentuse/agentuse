@@ -363,14 +363,14 @@ Configure provider-specific settings for fine-tuned model behavior:
 ### Reasoning Effort (recommended, provider-agnostic)
 
 The simplest way to control how hard a model thinks is the top-level
-`reasoningEffort`. It works across providers, AgentUse maps one level to each
+`reasoning`. It works across providers, AgentUse maps one level to each
 one's native control (Anthropic thinking budget, OpenAI reasoning effort), so you
 set a single value and it works whether the agent runs on Claude or GPT-5:
 
 ```yaml
 ---
 model: anthropic:claude-opus-4-8
-reasoningEffort: high   # none | minimal | low | medium | high | xhigh
+reasoning: high   # none | minimal | low | medium | high | xhigh
 ---
 ```
 
@@ -379,10 +379,10 @@ debugging), `low`/`minimal` for lighter work, omit for the model default, and
 `none` to force reasoning off. It is opt-in and bills reasoning tokens at
 **output rates**.
 
-Reach for `reasoningEffort` first. The provider-specific `openai.reasoningEffort`
+Reach for `reasoning` first. The provider-specific `openai.reasoningEffort`
 and `anthropic.thinking.budgetTokens` below are escape hatches for exact control,
-honored only when the top-level `reasoningEffort` is unset. Being top-level,
-`reasoningEffort` also avoids a subtle trap: a provider-specific key placed at
+honored only when the top-level `reasoning` is unset. Being top-level,
+`reasoning` also avoids a subtle trap: a provider-specific key placed at
 the wrong nesting level is silently dropped (the agent parses and runs with the
 tuning never applied).
 

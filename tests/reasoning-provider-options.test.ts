@@ -120,24 +120,24 @@ describe('resolveMaxOutputTokens', () => {
   });
 });
 
-describe('resolveReasoning — unified reasoningEffort vs legacy thinking budget', () => {
+describe('resolveReasoning — unified reasoning vs legacy thinking budget', () => {
   it('returns nothing when neither is configured', () => {
     expect(resolveReasoning(agent('model: anthropic:claude-opus-4-8'))).toEqual({});
   });
 
-  it('passes reasoningEffort through as the top-level reasoning level', () => {
-    expect(resolveReasoning(agent('model: anthropic:claude-opus-4-8\nreasoningEffort: high'))).toEqual({
+  it('passes reasoning through as the top-level reasoning level', () => {
+    expect(resolveReasoning(agent('model: anthropic:claude-opus-4-8\nreasoning: high'))).toEqual({
       reasoning: 'high'
     });
   });
 
   it('works provider-agnostically (OpenAI model, no anthropic budget path)', () => {
-    expect(resolveReasoning(agent('model: openai:gpt-5.6\nreasoningEffort: medium'))).toEqual({
+    expect(resolveReasoning(agent('model: openai:gpt-5.6\nreasoning: medium'))).toEqual({
       reasoning: 'medium'
     });
   });
 
-  it('falls back to the legacy anthropic thinking budget when reasoningEffort is unset', () => {
+  it('falls back to the legacy anthropic thinking budget when reasoning is unset', () => {
     expect(
       resolveReasoning(
         agent('model: anthropic:claude-opus-4-8\nanthropic:\n  thinking:\n    budgetTokens: 6144')
@@ -145,11 +145,11 @@ describe('resolveReasoning — unified reasoningEffort vs legacy thinking budget
     ).toEqual({ anthropicThinkingBudget: 6144 });
   });
 
-  it('lets reasoningEffort win over an explicit budget so they never double-apply', () => {
+  it('lets reasoning win over an explicit budget so they never double-apply', () => {
     expect(
       resolveReasoning(
         agent(
-          'model: anthropic:claude-opus-4-8\nreasoningEffort: high\nanthropic:\n  thinking:\n    budgetTokens: 6144'
+          'model: anthropic:claude-opus-4-8\nreasoning: high\nanthropic:\n  thinking:\n    budgetTokens: 6144'
         )
       )
     ).toEqual({ reasoning: 'high' });
@@ -160,20 +160,20 @@ describe('resolveReasoning — unified reasoningEffort vs legacy thinking budget
   });
 });
 
-describe('parser — reasoningEffort field', () => {
+describe('parser — reasoning field', () => {
   it('accepts every valid effort level', () => {
     for (const level of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']) {
-      expect(agent(`model: anthropic:claude-opus-4-8\nreasoningEffort: ${level}`).config.reasoningEffort).toBe(
+      expect(agent(`model: anthropic:claude-opus-4-8\nreasoning: ${level}`).config.reasoning).toBe(
         level
       );
     }
   });
 
   it('rejects an invalid effort level', () => {
-    expect(() => agent('model: anthropic:claude-opus-4-8\nreasoningEffort: maximum')).toThrow();
+    expect(() => agent('model: anthropic:claude-opus-4-8\nreasoning: maximum')).toThrow();
   });
 
   it('is optional (undefined when omitted)', () => {
-    expect(agent('model: anthropic:claude-opus-4-8').config.reasoningEffort).toBeUndefined();
+    expect(agent('model: anthropic:claude-opus-4-8').config.reasoning).toBeUndefined();
   });
 });
