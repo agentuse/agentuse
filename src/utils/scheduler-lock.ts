@@ -19,7 +19,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
-import { getCurrentProcessStartTime, getProcessStartTime, isPidAlive } from './process-info';
+import { getCurrentProcessStartTime, isProcessRefAlive } from './process-info';
 
 export interface SchedulerLockHolder {
   pid: number;
@@ -56,14 +56,6 @@ function ensureLocalGitExclude(projectRoot: string): void {
   } catch {
     // Ignore: purely cosmetic.
   }
-}
-
-function isHolderAlive(holder: SchedulerLockHolder): boolean {
-  if (typeof holder.pid !== 'number' || !isPidAlive(holder.pid)) return false;
-  if (!holder.procStartedAt) return true;
-  const current = getProcessStartTime(holder.pid);
-  if (!current) return true;
-  return current === holder.procStartedAt;
 }
 
 /**
@@ -104,15 +96,23 @@ export function acquireSchedulerLock(projectRoot: string): SchedulerLockResult {
     }
 
     let holder: SchedulerLockHolder | null = null;
+    let holderRaw: string | null = null;
     try {
-      holder = JSON.parse(readFileSync(path, 'utf-8')) as SchedulerLockHolder;
+      holderRaw = readFileSync(path, 'utf-8');
+      holder = JSON.parse(holderRaw) as SchedulerLockHolder;
     } catch {
       // Corrupt or vanished mid-read: treat as stale.
     }
     if (holder && holder.pid === process.pid) return { acquired: true };
-    if (holder && isHolderAlive(holder)) return { acquired: false, holder };
+    if (holder && isProcessRefAlive(holder)) return { acquired: false, holder };
 
     try {
+      // Between judging the holder stale and this rm, another daemon may have
+      // swept the stale file and wx-created its own live lock; an unconditional
+      // unlink would destroy that fresh lock and let both daemons arm schedules
+      // (the exact double-run this lock exists to prevent). Only remove the
+      // exact bytes we judged stale; on any change, loop and re-evaluate.
+      if (holderRaw !== null && readFileSync(path, 'utf-8') !== holderRaw) continue;
       rmSync(path);
     } catch {
       // Lost a race to another sweeper; the retry's wx create decides.

@@ -82,3 +82,27 @@ export function isPidAlive(pid: number): boolean {
     return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
+
+/** A pid plus its start-time token: a comparable, recycle-safe process identity. */
+export interface ProcessRef {
+  pid: number;
+  procStartedAt?: string;
+}
+
+/** Identity of the current process, for stamping into locks and session records. */
+export function currentProcessRef(): ProcessRef {
+  const procStartedAt = getCurrentProcessStartTime();
+  return { pid: process.pid, ...(procStartedAt && { procStartedAt }) };
+}
+
+/**
+ * Whether the process a ref points at is still the same live process. A missing
+ * start token (unreadable /proc, `ps` failure) degrades to the bare pid probe.
+ */
+export function isProcessRefAlive(ref: ProcessRef): boolean {
+  if (typeof ref.pid !== 'number' || !isPidAlive(ref.pid)) return false;
+  if (!ref.procStartedAt) return true;
+  const current = getProcessStartTime(ref.pid);
+  if (!current) return true;
+  return current === ref.procStartedAt;
+}
