@@ -32,6 +32,8 @@ model: anthropic:claude-sonnet-5
 description: "Analyze daily metrics and send a concise summary"
 timeout: 600
 maxSteps: 100
+thinking:              # Claude extended thinking; opt-in, billed at OUTPUT rates.
+  budgetTokens: 4096   # omit the whole block to disable (default). OpenAI models: use `reasoningEffort` instead.
 schedule: "0 9 * * *"
 metadata:            # free-form annotations; framework never interprets them
   draft: true
@@ -46,11 +48,57 @@ mcpServers:
     args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
 ```
 
+## Choosing the Model and Thinking Budget
+
+`model:` and thinking are the two knobs with the biggest effect on quality and
+cost. Decide both on purpose, the defaults are rarely right. Validate every id
+against `agentuse models` (the catalog moves).
+
+**Model: pick by the hardest reasoning the agent actually does, not by how
+important the agent feels.**
+
+- **Top tier** (`anthropic:claude-opus-*`, full `openai:gpt-5.x`): the core is
+  open-ended judgment, drafting under many competing constraints, multi-step
+  planning, debugging, adversarial review, or orchestrating those. Wrong calls
+  are expensive and the space is open, pay for it.
+- **Mid tier** (`anthropic:claude-sonnet-*`): the sane default for most agents,
+  strong reasoning at lower cost, well-specified multi-step work.
+- **Small/fast tier** (`anthropic:claude-haiku-*`, `openai:gpt-5.x-mini`/`-nano`):
+  mechanical or high-volume, classification, extraction, reformatting, running
+  commands and collecting output, read-then-summarize.
+
+Tier per role, not per project: a manager that only *selects* a move and
+delegates can run a tier below the leaf that does the hard drafting. Don't
+default everything to the biggest model, and don't starve the one agent doing
+the real judgment.
+
+**Thinking / reasoning effort: off by default, on for genuine judgment.**
+Thinking tokens bill at **output rates**, so it is real cost, not free depth.
+Turn it on where a single forward pass fumbles: a hard call under competing
+constraints (honesty vs persuasion, voice vs brevity, choosing among imperfect
+options), a build to plan, a bug to trace. Left off, such an agent tends to make
+a defensible-but-wrong one-shot call and then oscillate once corrected.
+
+- **Claude:** `thinking.budgetTokens` (min 1024). Rough bands: ~2-4k for a
+  focused judgment call, ~6-8k for multi-constraint drafting or a build/plan,
+  higher only if it still under-reasons. Streams into the session trace.
+- **OpenAI reasoning models:** `reasoningEffort`
+  (`minimal|low|medium|high|xhigh`) instead of a token budget, `medium`/`high`
+  for hard calls, `low`/`minimal` for mechanical.
+- Leave it off for mechanical, extraction, and read-only agents, budget there is
+  cost for no lift.
+
+Tell-tale it is off or too low: the agent makes defensible-but-wrong one-shot
+calls and a human has to nudge it to the answer it should have reached. Too
+high: latency and cost with no lift. Start moderate, tune on observed output.
+
 ## Authoring Checklist
 
 - A concrete job the agent can finish without interactive supervision.
-- `model:` set explicitly; short `description:` if it may be listed or used as
-  a subagent.
+- `model:` set explicitly by role (see above); short `description:` if it may be
+  listed or used as a subagent.
+- Thinking budget decided, not defaulted: on for judgment/drafting/planning
+  agents, off for mechanical/read-only ones.
 - Tools and MCP servers declared in frontmatter, not assumed ambient.
 - Inputs, outputs, destinations, and success criteria stated in the body.
 - Multi-role work: subagents with clear names and `maxSteps` limits.
