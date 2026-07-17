@@ -746,7 +746,10 @@ export default function SessionDetail() {
       });
       if (payload.rejected) {
         // A discard on a pending gate is delivered as a reject decision so the
-        // agent can record it before ending — mirror the decision flow.
+        // agent can record it before ending — mirror the decision flow. The
+        // session comes back live, so re-arm the button: leaving submittingStop
+        // set would hide Stop/Discard for the rest of the page's life.
+        setSubmittingStop(false);
         setResult({ text: '✓ pending request rejected — agentuse is resuming the session so the agent records it before ending.', error: false });
         setStatus('resuming');
         setNudge((n) => n + 1);

@@ -255,12 +255,19 @@ export default function SessionsList() {
   const [streamFallback, setStreamFallback] = useState(false);
   const [loadedMore, setLoadedMore] = useState<SessionRow[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
+  // Cursor advanced by Load more. It must live outside the page-1 payload:
+  // every SSE snapshot replaces streamData wholesale (always carrying page 1's
+  // cursor), and in polling fallback resolvedData reads from fetched.data —
+  // either way a cursor read back out of resolvedData never advances past
+  // page 1. null = not paged yet; { cursor: undefined } = no further pages.
+  const [pagedCursor, setPagedCursor] = useState<{ cursor?: string } | null>(null);
 
   useEffect(() => {
     setStreamData(null);
     setStreamError(null);
     setStreamFallback(false);
     setLoadedMore([]);
+    setPagedCursor(null);
   }, [key]);
 
   const fetched = useFetch(
@@ -301,7 +308,16 @@ export default function SessionsList() {
   const resolvedData = streamFallback ? (fetched.data ?? streamData) : (streamData ?? fetched.data);
   const resolvedError = fetched.error ?? (!resolvedData ? streamError : null);
   const resolvedLoading = fetched.loading && !resolvedData;
-  const rows = [...(resolvedData?.sessions ?? []), ...loadedMore];
+  // Page 1 keeps refreshing (SSE snapshots / polling) while loadedMore holds
+  // older rows, so the two can overlap; keep the first (freshest) copy of each
+  // row so list keys stay unique.
+  const seenRowKeys = new Set<string>();
+  const rows = [...(resolvedData?.sessions ?? []), ...loadedMore].filter((row) => {
+    const rowKey = `${row.project}\0${row.sessionId}`;
+    if (seenRowKeys.has(rowKey)) return false;
+    seenRowKeys.add(rowKey);
+    return true;
+  });
   const multiProject = new Set(rows.map((r) => r.project)).size > 1;
   const agentGroups = groupByAgent ? groupRowsByAgent(rows) : [];
   const railItems = agentGroups.map((g) => ({ id: agentGroupAnchor(g.agentId), label: g.agentName, count: g.rows.length }));
@@ -309,15 +325,14 @@ export default function SessionsList() {
   // too-narrow window, so offer one jump to 30d (or all time from 30d/90d)
   // rather than making the operator walk the select.
   const widerWindow = WINDOWS.indexOf(win) < WINDOWS.indexOf('30d') ? '30d' : 'all';
+  const nextCursor = pagedCursor ? pagedCursor.cursor : resolvedData?.nextCursor;
   const loadMore = async () => {
-    if (!resolvedData?.nextCursor || loadingMore) return;
+    if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
     try {
-      const next = await fetchSessions({ window: win, status: statusFilter || undefined, trigger: triggerFilter || undefined, agent: agentFilter, approval: approvalFilter, limit: 50, cursor: resolvedData.nextCursor, detail: feedDetail });
+      const next = await fetchSessions({ window: win, status: statusFilter || undefined, trigger: triggerFilter || undefined, agent: agentFilter, approval: approvalFilter, limit: 50, cursor: nextCursor, detail: feedDetail });
       setLoadedMore((current) => [...current, ...next.sessions]);
-      // Keep the cursor from the most recently loaded page available to the button.
-      const { nextCursor: _previousCursor, ...pageBase } = resolvedData;
-      setStreamData({ ...pageBase, ...(next.nextCursor && { nextCursor: next.nextCursor }) });
+      setPagedCursor({ ...(next.nextCursor && { cursor: next.nextCursor }) });
     } finally {
       setLoadingMore(false);
     }
@@ -486,7 +501,7 @@ export default function SessionsList() {
                 agentFilter={agentFilter ?? ''}
               />
             ))}</div>)}
-        {resolvedData?.nextCursor && (
+        {nextCursor && (
           <button type="button" class={loadingMore ? 'load-more btn-busy' : 'load-more'} onClick={loadMore} disabled={loadingMore}>
             {loadingMore ? <><span class="btn-spinner" aria-hidden="true" />Loading…</> : 'Load more'}
           </button>
