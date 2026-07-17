@@ -5,6 +5,7 @@
  */
 
 import { getModelFromRegistry, getProviderModels, type ModelInfo as RegistryModelInfo } from '../generated/models';
+import { toRegistryKey } from './model-utils';
 
 export interface ModelInfo {
   provider: string;
@@ -50,8 +51,10 @@ export async function getModelInfo(modelString: string): Promise<ModelInfo> {
     : ['openai', modelString];
   const modelId = modelParts.join(':'); // Handle model IDs with colons
 
-  // Check generated registry first
-  const registryModel = getModelFromRegistry(modelString);
+  // Check generated registry first. toRegistryKey strips a `provider:model:env`
+  // auth suffix; the raw string would miss the registry and hand a known model
+  // the generic fallback limits (premature or absent compaction).
+  const registryModel = getModelFromRegistry(toRegistryKey(modelString));
   if (registryModel) {
     return toModelInfo(provider, modelId, registryModel);
   }

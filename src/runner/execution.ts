@@ -45,11 +45,14 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 32000;
 const CUSTOM_PROVIDER_MAX_OUTPUT_TOKENS = 16384;
 
 // Resolve the per-response max_tokens to send to the provider. Precedence:
-//   1. Extended thinking already computed a budget-aware ceiling — use it as-is.
-//   2. Custom/local gateway — fixed conservative cap (real limit unknowable),
+//   1. Explicit `maxOutputTokens` frontmatter — honored, clamped to the model's
+//      real ceiling when the registry knows it (avoids provider max_tokens
+//      errors). With extended thinking on it is additionally raised to the
+//      thinking floor (budget + answer reserve), since max_tokens must exceed
+//      the thinking budget.
+//   2. Extended thinking without an explicit override — the budget-aware ceiling.
+//   3. Custom/local gateway — fixed conservative cap (real limit unknowable),
 //      overridable by an explicit agent setting.
-//   3. Explicit `maxOutputTokens` frontmatter — honored, clamped to the model's
-//      real ceiling when the registry knows it (avoids provider max_tokens errors).
 //   4. First-class Anthropic model — the model's registry output limit, capped to
 //      DEFAULT_MAX_OUTPUT_TOKENS. This is the fix for the SDK's 4096 fallback.
 //   5. Everything else (OpenAI/Google, model unknown to the registry) — return
@@ -59,11 +62,19 @@ export function resolveMaxOutputTokens(agent: ParsedAgent): number | undefined {
   const isCustomProvider =
     !BUILTIN_PROVIDERS.includes(provider) || provider === OPENCODE_GO_PROVIDER_ID;
 
+  const override = agent.config.maxOutputTokens;
   const anthropicThinkingMax =
     provider === 'anthropic' ? resolveAnthropicThinking(agent)?.maxOutputTokens : undefined;
-  if (anthropicThinkingMax) return anthropicThinkingMax;
+  if (anthropicThinkingMax) {
+    if (!override) return anthropicThinkingMax;
+    // The documented use of `maxOutputTokens` is "my agent must emit a large
+    // single response"; letting the thinking ceiling silently override it would
+    // cap the visible answer at budget + reserve no matter what the author set.
+    const registryOutput = getModelFromRegistry(toRegistryKey(agent.config.model))?.limit?.output;
+    const clamped = registryOutput ? Math.min(override, registryOutput) : override;
+    return Math.max(clamped, anthropicThinkingMax);
+  }
 
-  const override = agent.config.maxOutputTokens;
   if (isCustomProvider) return override ?? CUSTOM_PROVIDER_MAX_OUTPUT_TOKENS;
 
   const registryOutput = getModelFromRegistry(toRegistryKey(agent.config.model))?.limit?.output;

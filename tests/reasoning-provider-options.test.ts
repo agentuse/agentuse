@@ -71,11 +71,11 @@ describe('resolveMaxOutputTokens', () => {
     expect(resolveMaxOutputTokens(agent('model: anthropic:claude-sonnet-5'))).toBe(32000);
   });
 
-  it("uses a small model's own output limit when it is below the default cap", () => {
-    // claude-3-5-sonnet-20241022 output is 8192 -> min(8192, 32000), not inflated.
-    expect(
-      resolveMaxOutputTokens(agent('model: anthropic:claude-3-5-sonnet-20241022'))
-    ).toBe(8192);
+  it("uses a small model's own output limit when it is at or below the default cap", () => {
+    // The full-catalog registry no longer lists a sub-32k Anthropic model (the
+    // old 8192-output ids were dropped), so pin the boundary instead:
+    // claude-opus-4-1 output is exactly 32000 -> min(32000, 32000), not inflated.
+    expect(resolveMaxOutputTokens(agent('model: anthropic:claude-opus-4-1'))).toBe(32000);
   });
 
   it("honors an explicit override, clamped to the model's real ceiling", () => {

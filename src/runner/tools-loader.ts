@@ -14,6 +14,7 @@ import { createReportIncompleteTool, type RunOutcome } from '../tools/report-inc
 import { createSandbox, createSandboxTools, type SandboxInstance } from '../sandbox.js';
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
 import { getModelFromRegistry } from '../generated/models.js';
+import { toRegistryKey } from '../utils/model-utils';
 import { resolveMediaToolResultSupport } from '../models.js';
 import { logger } from '../utils/logger';
 import type { ParsedAgent } from '../parser';
@@ -109,7 +110,9 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
       // Resolve the running model's input modalities (can it reason over an
       // image/PDF?) and transport media support (can its wire actually deliver
       // one in a tool result?) so filesystem_read gates media reads on both.
-      const modelInputModalities = getModelFromRegistry(agent.config.model)?.modalities.input;
+      // toRegistryKey strips a `provider:model:env` auth suffix — the raw
+      // string would miss the registry and silently disable media reads.
+      const modelInputModalities = getModelFromRegistry(toRegistryKey(agent.config.model))?.modalities.input;
       const mediaToolResultSupport = await resolveMediaToolResultSupport(agent.config.model);
       configuredTools = getConfiguredTools(toolsConfig, {
         projectRoot: projectContext.projectRoot,
