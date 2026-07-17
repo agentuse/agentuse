@@ -6,10 +6,10 @@ import { termTitle } from '../lib/terms';
  *  serve.terms; the map is injected before any module runs, so this is safe
  *  at module scope. */
 export const HOME_SECTIONS = [
+  { id: 'running', label: 'Running now' },
   { id: 'attention', label: 'Needs attention' },
   { id: 'results', label: 'Results' },
   { id: 'latest', label: 'Latest results' },
-  { id: 'running', label: 'Running now' },
   { id: 'coming-up', label: 'Coming up' },
   { id: 'feed', label: 'Activity feed' },
   { id: 'cards', label: 'Navigation cards' },

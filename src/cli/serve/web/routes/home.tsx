@@ -765,6 +765,15 @@ export default function Home() {
           <ActivitySpark sessions={liveHome.sessions} />
         </section>
 
+        {sections.isVisible('running') && running.length > 0 && (
+          <section class="group">
+            <h2 class="group-title"><span>Running now</span><span class="count">{running.length}</span><span class="rule"></span></h2>
+            <div class="now-grid">
+              {running.map((row, i) => <RunningCard key={`${row.project}:${row.sessionId}`} row={row} now={now} ticker={i < 3} />)}
+            </div>
+          </section>
+        )}
+
         {sections.isVisible('attention') && (
           <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} onDismissFailed={dismissFailed} />
         )}
@@ -830,15 +839,6 @@ export default function Home() {
 
         {sections.isVisible('latest') && (
           <LatestResults sessions={liveHome.sessions} showProject={projects.length > 1} loading={liveHome.loading} />
-        )}
-
-        {sections.isVisible('running') && running.length > 0 && (
-          <section class="group">
-            <h2 class="group-title"><span>Running now</span><span class="count">{running.length}</span><span class="rule"></span></h2>
-            <div class="now-grid">
-              {running.map((row, i) => <RunningCard key={`${row.project}:${row.sessionId}`} row={row} now={now} ticker={i < 3} />)}
-            </div>
-          </section>
         )}
 
         {sections.isVisible('coming-up') && (
