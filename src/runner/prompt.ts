@@ -13,6 +13,8 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
   • Section titles are headers (\`##\`/\`###\`: Result, What changed, Next), never bullet points ending in ":"
   • Single facts are plain "Label: value" lines, not one-item lists
   • Bullets only for true enumerations of parallel items; keep nesting to one level; short lines
+  • Markdown table when 3+ items share the same fields (per-ticket status, per-file changes) — one row each, not repeated bullet groups
+  • Numeric series (trends, comparisons, funnels) as a chart, not a number wall: fenced block tagged \`agentuse:chart\` containing {"type":"bar"|"line","title":string,"categories":[x-axis strings],"series":[{"name":string,"values":[numbers matching categories]}]} — bar compares magnitudes, line shows change over time, max 6 series
 - When tools modify the system, state what changed:
   • Modified files (path and what changed)
   • Created/updated resources (e.g., Linear issues, GitHub PRs, Slack messages)
