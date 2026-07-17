@@ -32,8 +32,9 @@ model: anthropic:claude-sonnet-5
 description: "Analyze daily metrics and send a concise summary"
 timeout: 600
 maxSteps: 100
-thinking:              # Claude extended thinking; opt-in, billed at OUTPUT rates.
-  budgetTokens: 4096   # omit the whole block to disable (default). OpenAI models: use `reasoningEffort` instead.
+anthropic:             # Claude extended thinking; opt-in, billed at OUTPUT rates.
+  thinking:
+    budgetTokens: 4096 # omit to disable (default). Must nest under `anthropic:` (see gotcha). OpenAI models: use `openai.reasoningEffort` instead.
 schedule: "0 9 * * *"
 metadata:            # free-form annotations; framework never interprets them
   draft: true
@@ -79,12 +80,15 @@ constraints (honesty vs persuasion, voice vs brevity, choosing among imperfect
 options), a build to plan, a bug to trace. Left off, such an agent tends to make
 a defensible-but-wrong one-shot call and then oscillate once corrected.
 
-- **Claude:** `thinking.budgetTokens` (min 1024). Rough bands: ~2-4k for a
-  focused judgment call, ~6-8k for multi-constraint drafting or a build/plan,
-  higher only if it still under-reasons. Streams into the session trace.
-- **OpenAI reasoning models:** `reasoningEffort`
-  (`minimal|low|medium|high|xhigh`) instead of a token budget, `medium`/`high`
-  for hard calls, `low`/`minimal` for mechanical.
+- **Claude:** `anthropic.thinking.budgetTokens` (min 1024; nested under
+  `anthropic:`, see gotcha). Rough bands: ~2-4k for a focused judgment call,
+  ~6-8k for multi-constraint drafting or a build/plan, higher only if it still
+  under-reasons. Streams into the session trace. Claude has NO effort *level* -
+  `high`/`xhigh` are the OpenAI knob below, not a Claude setting.
+- **OpenAI reasoning models:** `openai.reasoningEffort`
+  (`minimal|low|medium|high|xhigh`; nested under `openai:`) instead of a token
+  budget, `medium`/`high` for hard calls, `low`/`minimal` for mechanical.
+  `xhigh` and `none` are OpenAI-only.
 - Leave it off for mechanical, extraction, and read-only agents, budget there is
   cost for no lift.
 
@@ -218,6 +222,15 @@ these. This shapes where a rule belongs:
 - **Validate models against `agentuse models`.** The catalog moves; check it
   before calling a name invalid. Don't infer limits from other providers'
   naming (e.g. "5.5 can't exist because provider Y stops at 5.2").
+
+- **Provider tuning keys are nested, and a wrong-level key is silently dropped.**
+  Claude thinking lives at `anthropic.thinking.budgetTokens`; OpenAI effort at
+  `openai.reasoningEffort`. A **top-level** `thinking:` or `reasoningEffort:` is
+  NOT a schema error, the root frontmatter strips unknown keys, so the agent
+  parses fine and runs with the tuning **never applied** (no crash, no warning).
+  If you set a thinking budget and see no change, check the nesting first. The
+  nested provider blocks (`anthropic`/`openai`) are themselves strict, so a typo
+  *inside* them does error, only the wrong *level* fails silently.
 
 - **Defer to skills; don't inline their internals.** Reference a skill by name
   (`/linkedin`) and never copy its drift-prone internals (script paths, eval
