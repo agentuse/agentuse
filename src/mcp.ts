@@ -513,9 +513,13 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
         // Get timeout configuration for this server
         const timeoutSeconds = resolveToolTimeout(connection.config?.toolTimeout);
 
-        // Create wrapped tool with proper result handling and timeout
+        // Create wrapped tool with proper result handling and timeout.
+        // toModelOutput must be dropped: the SDK's mcpToModelOutput expects the
+        // raw MCP result shape ({content: [...]}), but our execute unwraps it to
+        // a plain string, so `"content" in result` would throw on the string.
+        const { toModelOutput: _droppedToModelOutput, ...toolWithoutModelOutput } = tool;
         const wrappedTool = {
-          ...tool,
+          ...toolWithoutModelOutput,
           execute: async (args: any, opts: any) => {
             try {
               let result: any;
