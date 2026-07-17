@@ -616,6 +616,15 @@ export async function* executeAgentCore(
     // SDK's `reasoning` param; the legacy `anthropic.thinking.budgetTokens` is
     // used only when `reasoning` is unset (see resolveReasoning).
     const { reasoning, anthropicThinkingBudget } = resolveReasoning(agent);
+    if (reasoning) {
+      logger.debug(
+        reasoning === 'none'
+          ? 'Reasoning disabled (reasoning: none).'
+          : `Reasoning enabled. Effort at: ${reasoning}`
+      );
+    } else if (anthropicThinkingBudget) {
+      logger.debug(`Reasoning enabled via anthropic.thinking budget: ${anthropicThinkingBudget} tokens.`);
+    }
     // Per-response output ceiling. Without this, the AI SDK caps model ids it
     // doesn't recognize (e.g. claude-sonnet-5) at 4096, silently truncating runs.
     const maxOutputTokens = resolveMaxOutputTokens(agent);
