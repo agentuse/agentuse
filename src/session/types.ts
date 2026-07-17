@@ -57,6 +57,15 @@ export interface SessionInfo {
     updated: number;                 // Unix timestamp (ms)
   };
 
+  // Process currently executing this run (single-machine storage). Stamped at
+  // create and on every flip back to 'running', so the orphan sweep can skip a
+  // 'running' session whose owning process (a terminal `agentuse run`, another
+  // daemon) is still alive. Absent on sessions written by older versions.
+  owner?: {
+    pid: number;
+    procStartedAt?: string;          // start-time token guarding recycled PIDs
+  };
+
   // Error (for failures before LLM calls - auth, MCP, etc.)
   // Standard error codes:
   //   - AUTH_ERROR: Authentication failure (missing/invalid API key)

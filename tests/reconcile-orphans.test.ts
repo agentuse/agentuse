@@ -50,9 +50,12 @@ async function addResolvedGate(sm: SessionManager, sessionID: string, agentId: s
 
 describe('reconcileOrphanedSessions', () => {
   it('flips a stuck-running session (touched before cutoff) to error(WORKER_INTERRUPTED)', async () => {
-    const { projectRoot, sessionManager, sessionID } = await makeSession();
+    const { projectRoot, sessionManager, sessionID, agentId } = await makeSession();
     try {
-      // createSession leaves status 'running' — exactly the zombie a dead worker leaves.
+      // createSession leaves status 'running' — exactly the zombie a dead worker
+      // leaves — but stamps this (very alive) test process as owner; point the
+      // record at an impossible pid so the sweep sees a dead owner.
+      await sessionManager.updateSession(sessionID, agentId, { owner: { pid: 0x7fffffff } });
       const cutoff = Date.now() + 60_000; // session was last touched before this
       const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff });
 
@@ -105,6 +108,8 @@ describe('reconcileOrphanedSessions', () => {
     const { projectRoot, sessionManager, sessionID, agentId, messageID } = await makeSession();
     try {
       await addResolvedGate(sessionManager, sessionID, agentId, messageID);
+      // The dead worker's session records a dead owner (see the first test).
+      await sessionManager.updateSession(sessionID, agentId, { owner: { pid: 0x7fffffff } });
 
       // Precondition: while 'running', reopen is impossible.
       const blocked = await reopenSuspendedGate({ sessionManager, sessionId: sessionID });

@@ -4,6 +4,7 @@ import { createWriteStream } from 'fs';
 import path from 'path';
 import { writeJSON, readJSON, listKeys, getStorageState, sanitizeAgentName, CorruptStorageError } from '../storage';
 import { logger } from '../utils/logger';
+import { currentProcessRef, isPidAlive } from '../utils/process-info';
 import { dehydrateSnapshotMedia, rehydrateSnapshotMedia } from './media-cache';
 import type {
   SessionInfo,
@@ -115,6 +116,23 @@ const SESSION_INDEX_DIR = '.index';
 const SESSION_INDEX_KEY = `${SESSION_INDEX_DIR}/sessions.v1`;
 const SESSION_INDEX_DIRTY_KEY = `${SESSION_INDEX_DIR}/dirty`;
 const SESSION_INDEX_LOCK_MAX_AGE_MS = 30_000;
+const SESSION_INDEX_LOCK_RETRY_DELAY_MS = 15;
+// Long enough to outlast both a full index rebuild on a large store and the
+// mtime steal age above. Session create/update writes used to be lock-free and
+// could not fail on contention; a timeout shorter than the worst-case hold
+// would turn those writes into hard failures (lost status flips, runs that
+// crash at session creation).
+const SESSION_INDEX_LOCK_MAX_ATTEMPTS = 2400;
+
+function parseSessionIndexLockPid(raw: string | null): number | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { pid?: unknown };
+    return typeof parsed.pid === 'number' ? parsed.pid : null;
+  } catch {
+    return null;
+  }
+}
 
 function toSessionListSummary(session: SessionInfo, sessionPath: string): SessionListSummary {
   return {
@@ -186,7 +204,7 @@ export class SessionManager {
     const lockPath = path.join(indexDir, 'lock');
     await fs.mkdir(indexDir, { recursive: true });
 
-    for (let attempt = 0; attempt < 200; attempt++) {
+    for (let attempt = 0; attempt < SESSION_INDEX_LOCK_MAX_ATTEMPTS; attempt++) {
       try {
         const handle = await fs.open(lockPath, 'wx');
         try {
@@ -198,12 +216,28 @@ export class SessionManager {
         }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        // A SIGKILLed holder leaves its lock behind; waiting out the mtime age
+        // below would fail every session write in the interim. The lock records
+        // its holder's pid, so probe it and steal the moment it is gone.
+        // Re-read before unlinking so a lock replaced between the probe and the
+        // unlink isn't destroyed.
+        const raw = await fs.readFile(lockPath, 'utf-8').catch(() => null);
+        const holderPid = parseSessionIndexLockPid(raw);
+        if (holderPid !== null && !isPidAlive(holderPid)) {
+          const current = await fs.readFile(lockPath, 'utf-8').catch(() => null);
+          if (current === raw) {
+            await fs.unlink(lockPath).catch(() => undefined);
+          }
+          continue;
+        }
+        // Unparseable/empty lock (holder mid-write) or a live holder: fall back
+        // to aging it out by mtime.
         const stat = await fs.stat(lockPath).catch(() => null);
         if (stat && Date.now() - stat.mtimeMs > SESSION_INDEX_LOCK_MAX_AGE_MS) {
           await fs.unlink(lockPath).catch(() => undefined);
           continue;
         }
-        await new Promise((resolve) => setTimeout(resolve, 15));
+        await new Promise((resolve) => setTimeout(resolve, SESSION_INDEX_LOCK_RETRY_DELAY_MS));
       }
     }
     throw new Error('Timed out waiting for the session index lock');
@@ -504,6 +538,7 @@ export class SessionManager {
       // Default 'manual' so every existing caller stays valid; serve sets
       // 'scheduled' / 'api' where it knows the origin.
       trigger: info.trigger ?? 'manual',
+      owner: currentProcessRef(),
       time: {
         created: now,
         updated: now
@@ -628,6 +663,9 @@ export class SessionManager {
       const session = await readJSON<SessionInfo>(key);
       if (session) {
         Object.assign(session, updates);
+        // Whichever process flips a session (back) to 'running' owns its
+        // execution now; re-stamp so the orphan sweep probes the right process.
+        if (updates.status === 'running') session.owner = currentProcessRef();
         session.time.updated = Date.now();
         await writeJSON(key, session);
         await this.updateSessionIndex(session, sessionPath);

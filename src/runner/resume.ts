@@ -1,5 +1,6 @@
 import type { SessionManager } from '../session';
 import type { ToolState } from '../session/types';
+import { isProcessRefAlive } from '../utils/process-info';
 
 export interface ResumeToolRollback {
   sessionId: string;
@@ -206,8 +207,12 @@ export interface ReconciledOrphan {
  *
  * Call this the moment a project's worker (re)spawns. There is one worker per
  * project, so a freshly (re)spawned worker owns no executions yet: any 'running'
- * session last touched BEFORE it became ready (`time.updated < cutoff`) is
- * provably orphaned by the worker that died. Flip each to a terminal
+ * session last touched BEFORE it became ready (`time.updated < cutoff`) whose
+ * recorded owner process is gone is orphaned. The owner probe matters because
+ * the storage is shared by every process serving the project (a terminal
+ * `agentuse run`, a second daemon with a different data dir) and a live run
+ * rewrites its session file only on status changes — a stale header alone does
+ * not prove the run is dead. Flip each orphan to a terminal
  * WORKER_INTERRUPTED error so reopenSuspendedGate becomes reachable. It never
  * auto-replays the run — a mutation agent could double-fire an external side
  * effect — so recovery stays an explicit, human-reviewed reopen.
@@ -224,6 +229,10 @@ export async function reconcileOrphanedSessions(options: {
   for (const { session, agentId } of sessions) {
     if (session.status !== 'running') continue;
     if (session.time.updated >= cutoff) continue; // owned by the current live worker
+    // Sessions run by a process that is still alive (a terminal `agentuse run`,
+    // another daemon's worker) are not orphans, however stale their header.
+    // Sessions from older versions carry no owner and keep the cutoff-only rule.
+    if (session.owner && isProcessRefAlive(session.owner)) continue;
     await sessionManager.setSessionError(session.id, agentId, {
       code: 'WORKER_INTERRUPTED',
       message: 'Run was interrupted when its serve worker restarted, leaving no live process. If it was waiting on approval, reopen the gate to retry.'
