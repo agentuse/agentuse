@@ -206,13 +206,18 @@ describe('suspend drain (agentuse-lab#165)', () => {
     const records = readWAL(dir);
     const spawn = records.find((r) => r.event === 'bash-spawn');
     const exit = records.find((r) => r.event === 'bash-exit');
-    // Either the spawn was aborted mid-run, or the signal landed before spawn
-    // (bash-refused-aborted) — both mean no effect escaped.
+    // No effect escaped, by any of the layered defenses: the spawn was aborted
+    // mid-run, the signal landed before spawn (bash-refused-aborted), or — since
+    // the gate streams before the sibling here (gate-first order) — the #169
+    // gate-rides-alone barrier denied it pre-dispatch so it never spawned. The
+    // abort paths remain the coverage for the reverse order the barrier can't see.
     if (spawn) {
       expect(exit).toBeDefined();
       expect(exit!.aborted).toBe(true);
     } else {
-      expect(records.some((r) => r.event === 'bash-refused-aborted')).toBe(true);
+      expect(
+        records.some((r) => r.event === 'gate-barrier-denied' || r.event === 'bash-refused-aborted')
+      ).toBe(true);
     }
   }, 15000);
 

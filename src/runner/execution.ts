@@ -677,38 +677,83 @@ export async function* executeAgentCore(
       streamConfig.tools = modelFacingTools;
     }
 
-    // Lease enforcement (agentuse-lab#165, Phase 2): the SDK consults this
-    // BEFORE dispatching execute, so an uncovered effectful command can never
-    // run - not even eagerly beside a pending gate. Denials carry a redirect
-    // reason so the model re-gates via await_human instead of retrying; the
-    // human still sees exactly one rich gate per operation.
-    if (effectPatterns.length > 0 && (modelFacingTools as any).tools__bash) {
-      streamConfig.toolApproval = {
+    // Lease enforcement (agentuse-lab#165, Phase 2) + gate-rides-alone barrier
+    // (agentuse-lab#169). The SDK consults this synchronously and in STREAM ORDER
+    // before any tool in the step is dispatched (executeToolsFromStream queues
+    // nothing until model-call-end). Two guarantees ride on that:
+    //   1. an uncovered effectful command can never run beside a pending gate
+    //      (lease coverage), and
+    //   2. a NON-effectful sibling that streams in AFTER an await_human gate in
+    //      the same step is denied too, so a human gate rides alone.
+    // Both denials keep the human seeing exactly one rich gate per operation.
+    const awaitHumanPresent = !!(modelFacingTools as any).await_human;
+    const bashPresent = !!(modelFacingTools as any).tools__bash;
+    if (bashPresent && (effectPatterns.length > 0 || awaitHumanPresent)) {
+      // Barrier state, scoped to this streamText. An await_human call always
+      // suspends the step it appears in (stopOnSuspend ends the stream), so a set
+      // flag can never leak into a later LIVE step of the same stream; no reset is
+      // needed. If await_human ever became non-suspending, this would need a
+      // per-step reset.
+      let gatePendingThisStep = false;
+      const toolApproval: Record<string, unknown> = {
         tools__bash: (input: any, approvalOptions?: { toolCallId?: string }) => {
           const command = typeof input?.command === 'string' ? input.command : '';
           const callId = approvalOptions?.toolCallId;
-          if (!command || !isEffectful(command, effectPatterns)) return undefined;
-          if (leaseStore.isCovered(command)) {
+          // Effectful commands are governed by the lease regardless of gate state:
+          // covered -> runs, uncovered -> denied with the re-gate redirect. This is
+          // the #165 path and stays first so effectful denials keep their richer
+          // reason (and so the incident test's lease-denied event is preserved).
+          if (command && isEffectful(command, effectPatterns)) {
+            if (leaseStore.isCovered(command)) {
+              options.effectWal?.append({
+                event: 'lease-approved',
+                ...(callId && { callId }),
+                tool: 'tools__bash',
+                command: sanitizeWALInput(command),
+              });
+              return 'approved';
+            }
             options.effectWal?.append({
-              event: 'lease-approved',
+              event: 'lease-denied',
               ...(callId && { callId }),
               tool: 'tools__bash',
               command: sanitizeWALInput(command),
             });
-            return 'approved';
+            return {
+              type: 'denied' as const,
+              reason: 'This command is declared effectful and is not covered by an approved plan. Do NOT retry or reword it. Call await_human with the full plan, putting the exact final content/command in changes[] (verbatim), and run the command only after the reviewer approves. If a reviewer already approved a different version, re-gate with this exact version.',
+            };
           }
-          options.effectWal?.append({
-            event: 'lease-denied',
-            ...(callId && { callId }),
-            tool: 'tools__bash',
-            command: sanitizeWALInput(command),
-          });
-          return {
-            type: 'denied' as const,
-            reason: 'This command is declared effectful and is not covered by an approved plan. Do NOT retry or reword it. Call await_human with the full plan, putting the exact final content/command in changes[] (verbatim), and run the command only after the reviewer approves. If a reviewer already approved a different version, re-gate with this exact version.',
-          };
+          // Gate-rides-alone barrier: a non-effectful sibling that arrived AFTER an
+          // await_human gate in this same step. Deny it pre-dispatch so nothing runs
+          // beside a pending gate; the model re-issues after approval. Deterministic
+          // for the gate-first stream order only; the reverse order (bash chunk
+          // before the gate chunk) is not caught here by design (a gated command in
+          // that order is still caught by the lease above).
+          if (gatePendingThisStep) {
+            options.effectWal?.append({
+              event: 'gate-barrier-denied',
+              ...(callId && { callId }),
+              tool: 'tools__bash',
+              command: sanitizeWALInput(command),
+            });
+            return {
+              type: 'denied' as const,
+              reason: 'A human approval gate (await_human) is open in this step, so this sibling command was not run. Never issue commands alongside await_human: wait for the approval result, then run this command in a later step.',
+            };
+          }
+          return undefined;
         },
       };
+      if (awaitHumanPresent) {
+        // Mark the step as gated so siblings streamed after this call are denied.
+        // await_human itself is not-applicable (undefined): it must run and suspend.
+        toolApproval.await_human = () => {
+          gatePendingThisStep = true;
+          return undefined;
+        };
+      }
+      streamConfig.toolApproval = toolApproval;
     }
 
     return streamText(streamConfig);

@@ -172,6 +172,34 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     expect(records.some((r) => r.event === 'tool-start' && r.callId === 'bash-1')).toBe(false);
   });
 
+  test('gate rides alone: a non-effectful sibling after the gate is denied pre-dispatch', async () => {
+    // echo is allowlisted but NOT in effects[], so the lease never governs it.
+    // The barrier must still deny it because it streams in AFTER await_human in
+    // the same step (the gate-first order). This is the row #169 adds on top of
+    // the lease: an allowed-but-ungated sibling can no longer leak beside a gate.
+    const { model, calls } = makeModel([
+      turn([
+        toolCallPart('gate-1', 'await_human', { prompt: 'Approve this reply?' }),
+        toolCallPart('bash-1', 'tools__bash', { command: 'echo hello' }),
+      ]),
+    ]);
+    currentModel = model;
+
+    const chunks = await runCore(makeTools());
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(chunks[chunks.length - 1].type).toBe('suspended');
+    expect(calls()).toBe(1);
+
+    const records = readWAL();
+    // Denied by the barrier, not the lease (echo is not effectful).
+    expect(records.some((r) => r.event === 'gate-barrier-denied' && r.callId === 'bash-1')).toBe(true);
+    expect(records.some((r) => r.event === 'lease-denied' && r.callId === 'bash-1')).toBe(false);
+    // Execute never ran: no bash-spawn, no tool-start for the denied sibling.
+    expect(records.some((r) => r.event === 'bash-spawn')).toBe(false);
+    expect(records.some((r) => r.event === 'tool-start' && r.callId === 'bash-1')).toBe(false);
+  });
+
   test('covered command runs straight through (approved plan, zero interruptions)', async () => {
     const marker = path.join(projectRoot, 'approved-marker.txt');
     const command = `touch ${marker}`;
