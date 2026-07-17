@@ -2663,8 +2663,13 @@ export function createServeCommand(): Command {
         choice: string | undefined
       ): { code: string; message: string } | null => {
         const gateOptions = info.approval.options;
+        // Both spellings reach the worker as an approval ('approve' and
+        // 'approved' normalize to the same decision in src/index.ts), so both
+        // must validate identically — otherwise 'approved' bypasses
+        // CHOICE_REQUIRED and a valid 'approved'+choice is spuriously rejected.
+        const isApprove = status === 'approve' || status === 'approved';
         if (choice !== undefined) {
-          if (status !== 'approve') {
+          if (!isApprove) {
             return { code: 'CHOICE_REQUIRES_APPROVE', message: 'A choice can only be submitted with an approve decision' };
           }
           if (!gateOptions?.some((o) => o.id === choice)) {
@@ -2672,7 +2677,7 @@ export function createServeCommand(): Command {
           }
           return null;
         }
-        if (status === 'approve' && gateOptions && gateOptions.length > 0) {
+        if (isApprove && gateOptions && gateOptions.length > 0) {
           return { code: 'CHOICE_REQUIRED', message: 'This gate offers options; approve decisions must include a choice (option id)' };
         }
         return null;
@@ -2706,6 +2711,10 @@ export function createServeCommand(): Command {
         const { project, sessionId, info, resumeToken, status, comment, choice } = params;
         const projectWorker = workers.get(project.id)!;
         const targetSessionId = approvalActionSessionId(info, sessionId);
+        // The resumed run will reach a fresh terminal state; drop any push-dedup
+        // entry from a previous completion (reopen-after-error flows) so the new
+        // finished poke notifies instead of reporting 'already-notified'.
+        notifiedFinishedSessions.delete(targetSessionId);
         const activeKey = `${project.id}:${targetSessionId}`;
         approvalLog.received('web', status, targetSessionId, 'web');
         const resumeStart = Date.now();
@@ -2819,6 +2828,9 @@ export function createServeCommand(): Command {
       ): void => {
         const { project, sessionId, prompt } = params;
         const projectWorker = workers.get(project.id)!;
+        // A continued session finishes again; clear the push dedup from its
+        // first completion or the continuation's terminal state sends no push.
+        notifiedFinishedSessions.delete(sessionId);
         const activeKey = `${project.id}:${sessionId}`;
         const continueStart = Date.now();
         approvalLog.continueStarted(sessionId);
@@ -3379,7 +3391,12 @@ export function createServeCommand(): Command {
           a.projectId.localeCompare(b.projectId) ||
           a.session.sessionId.localeCompare(b.session.sessionId)
         );
-        const fingerprint = ['sessions', createdAfter ?? 'all', agentFilter ?? '', statusFilter ?? '', triggerFilter ?? '', approvalFilter ?? ''].join('\0');
+        // Fingerprint on the window FILTER, not the resolved createdAfter
+        // cutoff: the cutoff is minute-quantized (listWindowNow), so embedding
+        // it would silently expire every cursor at the next minute boundary and
+        // restart Load more from page 1. A cursor row that slides out of the
+        // window is still caught by cursorPage's row-lookup fallback.
+        const fingerprint = ['sessions', daysFilter, agentFilter ?? '', statusFilter ?? '', triggerFilter ?? '', approvalFilter ?? ''].join('\0');
         const page = cursorPage(requestUrl, fingerprint, rows, (row) =>
           `${row.session.createdAt}\0${row.projectId}\0${row.session.sessionId}`
         );
@@ -3542,7 +3559,10 @@ export function createServeCommand(): Command {
         // derived from its current page, while legacy callers still receive all
         // rows and the historical full buckets.
         const ordered = [...pending, ...completed, ...expired];
-        const fingerprint = ['approvals', createdAfter ?? 'all', requestedProject ?? ''].join('\0');
+        // Fingerprint on the days PARAM, not the resolved createdAfter cutoff —
+        // the cutoff is minute-quantized and would expire every cursor at the
+        // next minute boundary (see the sessions fingerprint above).
+        const fingerprint = ['approvals', requestUrl.searchParams.get('days') ?? String(APPROVAL_LIST_DEFAULT_DAYS), requestedProject ?? ''].join('\0');
         const page = cursorPage(requestUrl, fingerprint, ordered, (row) =>
           `${row.decisionAt ?? row.suspendedAt ?? row.createdAt ?? 0}\0${row.project}\0${row.sessionId}\0${row.status}`
         );
@@ -3990,6 +4010,10 @@ export function createServeCommand(): Command {
 
         const sessionListEventsMatch = req.method === "GET" ? routePath.match(/^\/sessions\/events$/) : null;
         if (sessionListEventsMatch) {
+          // The poll closure below captures the FIRST subscriber's full URL, so
+          // every param that shapes the payload must be part of the key —
+          // including limit/cursor, or a limitless Home subscriber would share
+          // (and be truncated by) a limit-50 sessions-list snapshot.
           const streamKey = [
             'sessions',
             requestUrl.searchParams.get('window') ?? '',
@@ -3999,7 +4023,9 @@ export function createServeCommand(): Command {
             requestUrl.searchParams.get('trigger') ?? '',
             requestUrl.searchParams.get('agent') ?? '',
             requestUrl.searchParams.get('approval') ?? '',
-            requestUrl.searchParams.get('detail') ?? ''
+            requestUrl.searchParams.get('detail') ?? '',
+            requestUrl.searchParams.get('limit') ?? '',
+            requestUrl.searchParams.get('cursor') ?? ''
           ].join(':');
           const poll: import("./serve/sse").ApprovalListPoll<SessionsPayload> = async () => {
             const result = await buildSessionsPayload(requestUrl);
