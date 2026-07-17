@@ -175,6 +175,52 @@ describe('suspend drain (agentuse-lab#165)', () => {
     expect(turnToolCalls.map((c) => c.callId).sort()).toEqual(['gate-1', 'post-1']);
   });
 
+  test('known limitation: a non-gated sibling that streams BEFORE the gate still leaks (reverse order)', async () => {
+    // The approval-layer barrier only sees tool calls as they stream, in order.
+    // When the sibling arrives BEFORE await_human, its approval resolves while the
+    // gate flag is still unset, so it is queued and runs. This is the documented
+    // boundary of #169: only the lease (state-based, order-independent) protects a
+    // command in this order, which is why a truly irreversible command must be
+    // gated. post_tool ignores abort (like birdc), so the drain cannot save it.
+    const executed: string[] = [];
+    const postTool = {
+      description: 'simulates an irreversible external post (ignores abort, like birdc)',
+      inputSchema: z.object({ text: z.string() }),
+      execute: async ({ text }: { text: string }) => {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        executed.push(text);
+        return { output: 'posted' };
+      },
+    };
+
+    const { model, calls } = makeModel([
+      turn([
+        toolCallPart('post-1', 'post_tool', { text: 'reverse ghost' }),
+        toolCallPart('gate-1', 'await_human', { prompt: 'Approve this post?' }),
+      ]),
+    ]);
+    currentModel = model;
+
+    const tools = {
+      await_human: createAwaitHumanTool('test-session'),
+      post_tool: postTool,
+    };
+
+    const chunks = await runCore(tools, wal);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    // Still suspends at the gate...
+    expect(chunks[chunks.length - 1].type).toBe('suspended');
+    expect(calls()).toBe(1);
+
+    // ...but the non-gated sibling leaked: the barrier never fired for it, because
+    // the gate streamed after it. This asserts the boundary, not a desired outcome;
+    // if a future change closes the reverse-order gap, update this test.
+    expect(executed).toEqual(['reverse ghost']);
+    const records = readWAL(dir);
+    expect(records.some((r) => r.event === 'gate-barrier-denied')).toBe(false);
+  });
+
   test('real bash sibling is killed before its effect lands', async () => {
     const marker = path.join(dir, 'ghost-marker.txt');
     const { model, calls } = makeModel([
