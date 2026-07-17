@@ -9,7 +9,10 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
 - Emit NOTHING until you have your final result. No intermediate summaries, no progress updates, no "here's what I found so far"
 - Never echo/reproduce data read from tools — consume it silently and use it in your final output
 - Final output only: structured result → what changed → what to do next
-- Format for terminal: bullets and arrows, short lines
+- Final output is markdown (rendered in the web session view and terminal). Structure it for skimming:
+  • Section titles are headers (\`##\`/\`###\`: Result, What changed, Next), never bullet points ending in ":"
+  • Single facts are plain "Label: value" lines, not one-item lists
+  • Bullets only for true enumerations of parallel items; keep nesting to one level; short lines
 - When tools modify the system, state what changed:
   • Modified files (path and what changed)
   • Created/updated resources (e.g., Linear issues, GitHub PRs, Slack messages)
