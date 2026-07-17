@@ -4,6 +4,7 @@ import * as os from 'os';
 import { minimatch } from 'minimatch';
 import {
   grantsPermission,
+  type EffectAuditSink,
   type FilesystemPathConfig,
   type FilesystemPermission,
   type PathValidationResult,
@@ -34,6 +35,8 @@ export interface PathResolverContext {
   agentDir?: string | undefined;
   tmpDir?: string | undefined;
   toolOutputArtifacts?: ToolOutputArtifactSink | undefined;
+  /** Effect-layer audit journal; bash spawn/exit records land here (effect WAL). */
+  effectAudit?: EffectAuditSink | undefined;
   /** Current session id, for tools that link output to the run (e.g. artifacts). */
   sessionId?: string | undefined;
   /** Stable agent id, for tools that record provenance (e.g. artifacts). */

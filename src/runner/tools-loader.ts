@@ -19,7 +19,7 @@ import { resolveMediaToolResultSupport } from '../models.js';
 import { logger } from '../utils/logger';
 import type { ParsedAgent } from '../parser';
 import { approvalToolDefaults, isApprovalEnabled } from './approval';
-import type { ToolOutputArtifactSink } from '../tools/types.js';
+import type { EffectAuditSink, ToolOutputArtifactSink } from '../tools/types.js';
 import { isMockMode, wrapToolsWithLLMMock } from './mock-tools';
 
 /**
@@ -42,6 +42,8 @@ export interface LoadAgentToolsOptions {
   sessionId?: string | undefined;
   /** Optional session-local artifact sink for tools that preserve full output. */
   toolOutputArtifacts?: ToolOutputArtifactSink | undefined;
+  /** Optional effect-layer audit journal (bash spawn/exit records). */
+  effectAudit?: EffectAuditSink | undefined;
 }
 
 /**
@@ -82,6 +84,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     logPrefix = '',
     sessionId,
     toolOutputArtifacts,
+    effectAudit,
   } = options;
 
   // Compute agentId relative to the agent's own project (stateRoot) so the
@@ -120,6 +123,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
         sessionId,
         agentId,
         toolOutputArtifacts,
+        effectAudit,
         approval: approvalToolDefaults(agent.config),
         modelId: agent.config.model,
         modelInputModalities,

@@ -248,7 +248,11 @@ Commands not matching these patterns will be rejected.`;
       command: string;
       workdir?: string;
       timeout?: number;
-    }): Promise<ToolOutput> => {
+    }, callOptions?: { abortSignal?: AbortSignal; toolCallId?: string }): Promise<ToolOutput> => {
+      const abortSignal = callOptions?.abortSignal;
+      const callId = callOptions?.toolCallId;
+      const audit = resolverContext.effectAudit;
+
       // Validate command (async with tree-sitter)
       const validation = await validator.validate(command);
       if (!validation.allowed) {
@@ -292,6 +296,22 @@ Commands not matching these patterns will be rejected.`;
       const timeoutMs = timeoutConfigured
         ? defaultTimeout
         : (timeout ?? defaultTimeout);
+
+      // Refuse to spawn at all when the run is already aborted (e.g. an approval
+      // suspension began before this sibling call was dispatched). Spawning here
+      // would execute an effect no human ever sees.
+      if (abortSignal?.aborted) {
+        audit?.append({
+          event: 'bash-refused-aborted',
+          ...(callId && { callId }),
+          command,
+        });
+        const error: ToolErrorOutput = {
+          success: false,
+          error: 'Command not started: execution aborted (run suspended or cancelled).',
+        };
+        return { output: JSON.stringify(error), metadata: { aborted: true } };
+      }
 
       let artifactStream: ToolOutputArtifactStream | undefined;
       try {
@@ -337,6 +357,8 @@ Commands not matching these patterns will be rejected.`;
         const stdoutAcc = createBoundedAccumulator(maxOutputBytes, headRatio);
         const stderrAcc = createBoundedAccumulator(maxOutputBytes, headRatio);
         let timedOut = false;
+        let aborted = false;
+        const spawnedAt = Date.now();
 
         const payloadInvocation = getBuiltinPayloadCommandInvocation(command, config.commands);
 
@@ -356,6 +378,16 @@ Commands not matching these patterns will be rejected.`;
             env: createSafeEnvironment(cwd),
           });
 
+        // Audit at the OS boundary: the record exists the moment the process
+        // does, independent of whether the stream consumer ever sees this call.
+        audit?.append({
+          event: 'bash-spawn',
+          ...(callId && { callId }),
+          command,
+          cwd,
+          ...(child.pid !== undefined && { pid: child.pid }),
+        });
+
         // Set up timeout
         const timeoutHandle = setTimeout(async () => {
           timedOut = true;
@@ -363,6 +395,17 @@ Commands not matching these patterns will be rejected.`;
             await killProcessTree(child.pid);
           }
         }, timeoutMs);
+
+        // Abort (approval suspension or run cancellation) kills the whole
+        // process tree. Without this, a `birdc reply` sibling of a pending gate
+        // keeps running detached and posts before any human decision.
+        const onAbort = () => {
+          aborted = true;
+          if (child.pid) {
+            void killProcessTree(child.pid);
+          }
+        };
+        abortSignal?.addEventListener('abort', onAbort, { once: true });
 
         // Decode as UTF-8 across chunk boundaries. A bare data.toString() per
         // ~64KB chunk corrupts any multi-byte character (emoji/CJK/accents)
@@ -391,6 +434,16 @@ Commands not matching these patterns will be rejected.`;
         // Handle process exit
         child.on('close', async (code) => {
           clearTimeout(timeoutHandle);
+          abortSignal?.removeEventListener('abort', onAbort);
+          audit?.append({
+            event: 'bash-exit',
+            ...(callId && { callId }),
+            ...(child.pid !== undefined && { pid: child.pid }),
+            code,
+            timedOut,
+            aborted,
+            durationMs: Date.now() - spawnedAt,
+          });
 
           // Flush any bytes the decoders were holding for a split character.
           const stdoutTail = stdoutDecoder.end();
@@ -439,6 +492,10 @@ Commands not matching these patterns will be rejected.`;
             resultMetadata.push(`bash tool terminated command after exceeding timeout ${timeoutMs}ms`);
           }
 
+          if (aborted) {
+            resultMetadata.push('bash tool killed the command: execution aborted (run suspended or cancelled)');
+          }
+
           if (code !== 0 && code !== null) {
             resultMetadata.push(`exit code: ${code}`);
           }
@@ -455,6 +512,7 @@ Commands not matching these patterns will be rejected.`;
               exitCode: code,
               timedOut,
               truncated,
+              ...(aborted && { aborted }),
               ...(modelFullOutputArtifact && { fullOutputArtifact: modelFullOutputArtifact }),
             },
           });
@@ -463,6 +521,15 @@ Commands not matching these patterns will be rejected.`;
         // Handle errors
         child.on('error', async (err) => {
           clearTimeout(timeoutHandle);
+          abortSignal?.removeEventListener('abort', onAbort);
+          audit?.append({
+            event: 'bash-exit',
+            ...(callId && { callId }),
+            ...(child.pid !== undefined && { pid: child.pid }),
+            error: err.message,
+            aborted,
+            durationMs: Date.now() - spawnedAt,
+          });
           await finishArtifact(false);
           const error: ToolErrorOutput = {
             success: false,

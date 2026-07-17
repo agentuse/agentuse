@@ -512,6 +512,9 @@ export async function processAgentStream(
         break;
 
       case 'tool-call':
+        if (chunk.postSuspend) {
+          logger.warn(`Tool ${chunk.toolName} was dispatched in the same turn as a pending approval gate; it has been aborted/journaled, not silently dropped (agentuse-lab#165).`);
+        }
         if (hasTextSinceLastToolCall && options?.doomLoopDetector) {
           options.doomLoopDetector.recordNonToolEvent();
         }

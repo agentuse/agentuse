@@ -10,6 +10,7 @@ import { resolve, dirname } from 'path';
 import { computeAgentId } from './utils/agent-id';
 import { SessionManager } from './session/manager';
 import { loadAgentTools } from './runner/tools-loader';
+import { EffectWAL } from './runner/effect-wal';
 import { buildSystemMessages, buildLearningPrompt } from './runner/system-messages';
 import { createSessionAndMessage } from './runner/session-helper';
 import { isApprovalEnabled, appendApprovalInstructions, approvalToolDefaults } from './runner/approval';
@@ -173,6 +174,10 @@ export async function createSubAgentTool(
           ? await connectMCP(agent.config.mcpServers as MCPServersConfig, false, subAgentBasePath)
           : [];
 
+        // Effect WAL for this child: bound lazily once the child session exists
+        // (tools load first, but nothing executes before the model runs).
+        const effectWal = new EffectWAL();
+
         // Load all agent tools (MCP, configured, skill, store) using shared logic
         const loadedTools = await loadAgentTools({
           agent,
@@ -182,6 +187,7 @@ export async function createSubAgentTool(
           mcpConnections,
           logPrefix: '[SubAgent] ',
           toolOutputArtifacts,
+          effectAudit: effectWal,
         });
 
         // Load nested sub-agents if within depth limit (will be populated after session creation)
@@ -286,6 +292,12 @@ export async function createSubAgentTool(
               subagentSessionID = sessionResult.sessionID;
               subagentMsgID = sessionResult.messageID;
 
+              try {
+                effectWal.bind(await subagentSessionManager.getSessionDirectory(subagentSessionID, agentId));
+              } catch (error) {
+                logger.debug(`[SubAgent] Failed to bind effect WAL: ${(error as Error).message}`);
+              }
+
               logger.debug(`[SubAgent] Created session ${subagentSessionID} for ${agent.name}`);
             } catch (error) {
               logger.warn(`[SubAgent] Failed to create session: ${(error as Error).message}`);
@@ -360,7 +372,8 @@ export async function createSubAgentTool(
                 ...(subagentSessionManager && { sessionManager: subagentSessionManager }),
                 ...(subagentSessionID && { sessionID: subagentSessionID }),
                 agentId,
-                ...(subagentMsgID && { messageID: subagentMsgID })
+                ...(subagentMsgID && { messageID: subagentMsgID }),
+                effectWal
               }),
               subagentSessionID && subagentMsgID && subagentSessionManager ? {
                 sessionManager: subagentSessionManager,  // Use NEW instance

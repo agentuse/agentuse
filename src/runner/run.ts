@@ -211,7 +211,8 @@ export async function runAgent(
       assistantMsgID,
       priorTokens,
       agentId: prepAgentId,
-      doomLoopDetector
+      doomLoopDetector,
+      effectWal
     } = preparation;
 
     // Set outer scope variables for error logging
@@ -272,7 +273,8 @@ export async function runAgent(
       ...(sessionManager && { sessionManager }),
       ...(prepSessionID && { sessionID: prepSessionID }),
       ...(prepAgentId && { agentId: prepAgentId }),
-      ...(assistantMsgID && { messageID: assistantMsgID })
+      ...(assistantMsgID && { messageID: assistantMsgID }),
+      ...(effectWal && { effectWal })
     };
 
     const haveSessionScope = Boolean(sessionManager && prepSessionID && assistantMsgID && prepAgentId);

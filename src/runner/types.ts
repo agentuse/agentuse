@@ -7,6 +7,7 @@ import type { SessionManager } from '../session';
 import type { ActiveContextUsage, ContextSnapshot, SessionTrigger } from '../session/types';
 import type { AssistantTokens } from '../session/usage';
 import type { RunOutcome } from '../tools/report-incomplete.js';
+import type { EffectWAL } from './effect-wal';
 
 export type UsageKind = 'cumulative' | 'step';
 
@@ -61,6 +62,13 @@ export interface PreparedAgentExecution {
    */
   runOutcome?: RunOutcome | undefined;
   doomLoopDetector: DoomLoopDetector;
+  /**
+   * Per-session effect WAL (tool executes + bash spawn/exit records), already
+   * threaded into the bash tool as its audit sink. Pass into executeAgentCore
+   * so tool executes are journaled too. Optional so hand-built preparations
+   * (tests) stay valid; prepareAgentExecution always sets it.
+   */
+  effectWal?: EffectWAL | undefined;
   /** Cleanup function to release resources (store locks, etc.) - call when agent execution completes */
   cleanup: () => Promise<void>;
   /**
@@ -97,6 +105,10 @@ export interface AgentChunk {
   toolStartTime?: number;  // Track when tool started
   toolDuration?: number;    // Duration in ms
   isSubAgent?: boolean;     // Track if this tool is a subagent
+  /** Set on tool-call/tool-result chunks drained AFTER an approval gate
+   *  registered in the same turn: the call was already dispatched by the SDK
+   *  when the suspension began (agentuse-lab#165). Journaled for visibility. */
+  postSuspend?: boolean;
   llmModel?: string;        // Model name for LLM traces
   llmStartTime?: number;    // When LLM call started
   llmFirstTokenTime?: number; // Time to first token

@@ -96,6 +96,16 @@ export interface ToolOutputArtifactSink {
   ): Promise<ToolOutputArtifactStream | undefined>;
 }
 
+/**
+ * Synchronous append-only sink for effect-layer audit records (tool execute
+ * entry/exit, bash spawn/exit). Implemented by the runner's EffectWAL; the
+ * append must never throw and must not depend on the stream consumer, so
+ * effects stay visible even when a suspension abandons the stream mid-step.
+ */
+export interface EffectAuditSink {
+  append(record: Record<string, unknown>): void;
+}
+
 // Error output format
 export interface ToolErrorOutput {
   success: false;

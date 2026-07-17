@@ -13,6 +13,8 @@ import { compactMessages } from '../compactor';
 import { addLanguageModelUsage } from '../session/usage';
 import type { AgentChunk } from './types';
 import { isSuspendSignal } from './suspend';
+import { isApprovalEnabled } from './approval';
+import { wrapToolsWithWAL, sanitizeWALInput, type EffectWAL } from './effect-wal';
 import { recordErrorMarker } from './session-helper';
 import { extractApiErrorDetail } from './api-error';
 import { toErrorMessage } from '../utils/error-message';
@@ -116,6 +118,41 @@ export function openAIOptionsWithCacheDefaults(agent: ParsedAgent): Record<strin
     ...(isReasoningModel && { reasoningSummary: 'auto' }),
     ...configured,
   };
+}
+
+/**
+ * Interim ghost-post gate (agentuse-lab#165): for gate-capable agents, tell the
+ * provider to emit at most one tool call per assistant turn, so `await_human`
+ * can never arrive with an effect-tool sibling that the SDK executes while the
+ * gate suspends. Supported natively by Anthropic and OpenAI; other providers
+ * fall back to the drain+abort guard alone. Pure + exported for testing.
+ */
+export function applyApprovalSerialToolCalls(
+  provider: string,
+  gateCapable: boolean,
+  providerOptions: any
+): any {
+  if (!gateCapable) return providerOptions;
+  if (provider === 'anthropic') {
+    return {
+      ...(providerOptions ?? {}),
+      anthropic: {
+        ...(providerOptions?.anthropic ?? {}),
+        disableParallelToolUse: true,
+      },
+    };
+  }
+  if (provider === 'openai') {
+    return {
+      ...(providerOptions ?? {}),
+      openai: {
+        ...(providerOptions?.openai ?? {}),
+        parallelToolCalls: false,
+      },
+    };
+  }
+  logger.debug(`[Approval] Provider "${provider}" has no serial-tool-calls flag; relying on suspend drain+abort guard.`);
+  return providerOptions;
 }
 
 /**
@@ -366,9 +403,21 @@ export async function* executeAgentCore(
     sessionID?: string;
     agentId?: string;
     messageID?: string;
+    /** Effect WAL shared with the bash audit; tool executes are journaled through it. */
+    effectWal?: EffectWAL;
   }
 ): AsyncGenerator<AgentChunk> {
   const model = await createModel(agent.config.model);
+
+  // Internal abort: tripped the instant a suspension begins so the AI SDK stops
+  // the step loop and in-flight tool executes receive the signal (bash kills its
+  // process tree). Without it, the SDK's eagerly-dispatched sibling tool calls
+  // keep executing while the gate is pending — the 2026-07-16 ghost posts
+  // (agentuse-lab#165). Combined with the caller's signal when one exists.
+  const runAbort = new AbortController();
+  const effectiveAbortSignal = options.abortSignal
+    ? AbortSignal.any([options.abortSignal, runAbort.signal])
+    : runAbort.signal;
 
   // Initialize context manager if enabled
   let contextManager: ContextManager | null = null;
@@ -385,8 +434,13 @@ export async function* executeAgentCore(
   const streamTools = usesAnthropicCacheControl
     ? applyAnthropicCacheControlToTools(tools)
     : tools;
+  // WAL wraps innermost so execute entry/exit is journaled at the effect layer,
+  // independent of the stream consumer (which a suspension abandons mid-step).
+  const walledTools = options.effectWal
+    ? wrapToolsWithWAL(streamTools, options.effectWal)
+    : streamTools;
   const modelFacingTools = limitModelFacingToolOutputs(
-    streamTools,
+    walledTools,
     buildToolOutputArtifactWriter(options)
   );
 
@@ -518,6 +572,11 @@ export async function* executeAgentCore(
     return used > 0 && used >= contextManager.compactionThresholdTokens();
   };
 
+  // Gate-capable: this agent can raise an approval gate, so a sibling tool call
+  // beside the gate is a live ghost-post risk (covers both `approval:` config
+  // and an injected/explicit await_human tool).
+  const gateCapable = isApprovalEnabled(agent.config) || 'await_human' in tools;
+
   // Function to create stream with current messages
   const createStream = async () => {
     // Check if we need to compact before creating stream
@@ -581,6 +640,12 @@ export async function* executeAgentCore(
       providerOptions = { anthropic: { thinking: { type: 'enabled', budgetTokens: anthropicThinkingBudget } } };
     }
 
+    // Interim ghost-post gate (agentuse-lab#165): a gate-owning agent must never
+    // get a chance to emit an effect tool call in the same turn as `await_human`,
+    // so parallel tool use is disabled for approval-enabled agents. Remove once
+    // the lease-based per-call approval (Phase 2) enforces this structurally.
+    providerOptions = applyApprovalSerialToolCalls(provider, gateCapable, providerOptions);
+
     // Cap each segment to the remaining step budget so compaction restarts do
     // not multiply the effective step limit (each streamText call counts steps
     // from zero).
@@ -593,7 +658,7 @@ export async function* executeAgentCore(
       stopWhen: contextManager
         ? [stepCountIs(remainingSteps), stopForCompaction]
         : stepCountIs(remainingSteps),
-      ...(options.abortSignal && { abortSignal: options.abortSignal }),
+      abortSignal: effectiveAbortSignal,
       ...(providerOptions && { providerOptions }),
       ...((usesAnthropicCacheControl || contextManager) && {
         prepareStep: async ({ messages: stepMessages }: { messages: ModelMessage[] }) => {
@@ -648,6 +713,11 @@ export async function* executeAgentCore(
   // Declare timing variables before use
   let accumulatedText = '';
   const toolStartTimes = new Map<string, number>();
+  // Every tool call the model emitted in the CURRENT segment (cleared per
+  // segment), for the suspension WAL record: this is the raw in-flight
+  // assistant turn that the stripped resume snapshot does not keep. `resolved`
+  // flips when the call's result/error lands.
+  const segmentToolCalls = new Map<string, { tool: string; input: unknown; resolved: boolean }>();
   let lastToolCall: { id: string; name?: string } | null = null;
   let llmGenerationStartTime: number | undefined;
   let llmFirstTokenTime: number | undefined;
@@ -689,6 +759,7 @@ export async function* executeAgentCore(
   while (runAnotherSegment) {
   runAnotherSegment = false;
   let segmentFinishReason: string | undefined;
+  segmentToolCalls.clear();
 
   let stream;
   try {
@@ -741,8 +812,39 @@ Error: ${errorMessage}`);
   // What was actually sent this segment (createStream may compact pre-stream).
   const segmentInput = messages;
 
+  // Suspension capture: when a gate registers we do NOT abandon the stream.
+  // We abort the SDK (no further steps; in-flight effect executes get the
+  // signal) and keep draining, so every already-dispatched sibling tool call is
+  // journaled before 'suspended' is finally yielded. Returning immediately here
+  // is what made the 2026-07-16 ghost posts invisible (agentuse-lab#165).
+  let suspendState: { toolName?: string; toolCallId?: string; payload: unknown } | undefined;
+  const DRAIN_CHUNK_TIMEOUT_MS = 10_000;
+  const iterator = (stream.fullStream as AsyncIterable<any>)[Symbol.asyncIterator]();
+  // While draining, never let a hung in-flight tool block the gate from
+  // surfacing: bound the wait for each remaining chunk.
+  const nextChunk = async (): Promise<IteratorResult<any> | 'drain-timeout'> => {
+    if (!suspendState) return iterator.next();
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<'drain-timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('drain-timeout'), DRAIN_CHUNK_TIMEOUT_MS);
+      timer.unref?.();
+    });
+    try {
+      return await Promise.race([iterator.next(), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
   try {
-    for await (const chunk of stream.fullStream) {
+    while (true) {
+      const iteration = await nextChunk();
+      if (iteration === 'drain-timeout') {
+        logger.warn('Suspension drain timed out waiting for in-flight tool calls; suspending now (unresolved calls are in the effect WAL).');
+        break;
+      }
+      if (iteration.done) break;
+      const chunk = iteration.value;
       switch (chunk.type) {
         case 'tool-call': {
           stepCount++; // Each tool call counts as a step
@@ -772,6 +874,11 @@ Error: ${errorMessage}`);
           const toolCallId = (chunk as any).toolCallId || 'unknown';
           toolStartTimes.set(toolCallId, startTime);
           lastToolCall = { id: toolCallId, name: chunk.toolName };
+          segmentToolCalls.set(toolCallId, {
+            tool: chunk.toolName ?? 'unknown',
+            input: (chunk as any).input || (chunk as any).args,
+            resolved: false,
+          });
 
           yield {
             type: 'tool-call',
@@ -779,7 +886,8 @@ Error: ${errorMessage}`);
             toolCallId,  // Add toolCallId to the chunk
             toolInput: (chunk as any).input || (chunk as any).args,
             toolStartTime: startTime,
-            ...(options.subAgentNames?.has(chunk.toolName!) && { isSubAgent: true })
+            ...(options.subAgentNames?.has(chunk.toolName!) && { isSubAgent: true }),
+            ...(suspendState && { postSuspend: true })
           };
           break;
         }
@@ -788,6 +896,8 @@ Error: ${errorMessage}`);
           const toolCallId = (chunk as any).toolCallId || 'unknown';
           const startTime = toolStartTimes.get(toolCallId);
           const duration = startTime ? Date.now() - startTime : undefined;
+          const seenCall = segmentToolCalls.get(toolCallId);
+          if (seenCall) seenCall.resolved = true;
 
           // Parse once: parseToolResult is pure, and running it twice previously
           // emitted the soft-error warning twice for the same call.
@@ -819,13 +929,18 @@ Error: ${errorMessage}`);
             // the real bytes to the model) keeps its data.
             toolResultRaw: stripInlineMediaData((chunk as any).result || (chunk as any).output),
             ...(startTime && { toolStartTime: startTime }),
-            ...(duration !== undefined && { toolDuration: duration })
+            ...(duration !== undefined && { toolDuration: duration }),
+            ...(suspendState && { postSuspend: true })
           };
 
           // Clean up
           if (startTime) {
             toolStartTimes.delete(toolCallId);
           }
+
+          // No new LLM segment starts while a suspension is draining: the SDK
+          // is aborted and the run ends at the gate.
+          if (suspendState) break;
 
           // Start tracking new LLM generation segment after tool result
           llmGenerationStartTime = Date.now();
@@ -840,22 +955,29 @@ Error: ${errorMessage}`);
           const startTime = toolStartTimes.get(toolCallId);
           const duration = startTime ? Date.now() - startTime : undefined;
           const chunkError = (chunk as any).error;
+          const seenErroredCall = segmentToolCalls.get(toolCallId);
+          if (seenErroredCall) seenErroredCall.resolved = true;
 
           if (isSuspendSignal(chunkError)) {
-            await compactAtSuspensionBoundary();
-            const contextSnapshot = buildContextSnapshot(toolCallId);
-            yield {
-              type: 'suspended',
-              ...(chunk.toolName && { toolName: chunk.toolName }),
-              ...(toolCallId && { toolCallId }),
-              ...(toolCallId && { suspend: { toolCallId } }),
-              toolResultRaw: chunkError.payload,
-              ...(contextSnapshot && {
-                contextUsage: contextSnapshot.usage,
-                contextSnapshot,
-              })
-            };
-            return;
+            if (!suspendState) {
+              suspendState = {
+                ...(chunk.toolName && { toolName: chunk.toolName }),
+                ...(toolCallId && { toolCallId }),
+                payload: chunkError.payload,
+              };
+              // Stop the SDK's step loop and hand the signal to in-flight
+              // executes (bash kills its process tree). Then keep draining —
+              // the suspension is finalized after the stream closes.
+              runAbort.abort();
+              options.effectWal?.append({
+                event: 'gate-registered',
+                ...(toolCallId && { callId: toolCallId }),
+                ...(chunk.toolName && { tool: chunk.toolName }),
+              });
+            } else {
+              logger.debug('Second suspend signal while draining; keeping the first gate.');
+            }
+            break;
           }
 
           // Pass tool errors as structured results to let AI decide on retry.
@@ -894,7 +1016,8 @@ Error: ${errorMessage}`);
             }),
             toolResultRaw: { error: errorMessage },
             ...(startTime && { toolStartTime: startTime }),
-            ...(duration !== undefined && { toolDuration: duration })
+            ...(duration !== undefined && { toolDuration: duration }),
+            ...(suspendState && { postSuspend: true })
           };
 
           // Clean up
@@ -973,8 +1096,9 @@ Error: ${errorMessage}`);
             priorSegmentsUsage = emittedUsage;
           }
 
-          // Log finish reason for debugging and warnings
-          const finishReason = chunk.finishReason;
+          // Log finish reason for debugging and warnings (suppressed while a
+          // suspension drains: the abort-shaped finish is expected then).
+          const finishReason = suspendState ? undefined : chunk.finishReason;
           if (finishReason === 'length') {
             logger.warn(`
 ⚠️  OUTPUT LENGTH LIMIT REACHED
@@ -1030,10 +1154,20 @@ Current step: ${stepCount}/${options.maxSteps}`);
           break;
 
         case 'error':
+          if (suspendState) {
+            // A consequence of our own drain abort; the suspension still surfaces.
+            logger.debug(`Stream error during suspension drain (swallowed): ${toErrorMessage(chunk.error)}`);
+            break;
+          }
           yield { type: 'error', error: chunk.error };
           break;
 
         case 'abort':
+          if (suspendState) {
+            // Our own runAbort shutting the step loop down — expected during drain.
+            logger.debug('Stream aborted during suspension drain (expected).');
+            break;
+          }
           logger.warn(`⚠️  Stream aborted - likely due to timeout or cancellation (${stepCount} steps completed)`);
           // Create an AbortError to properly signal timeout
           const abortError = new Error('Stream aborted - execution timeout or manual cancellation');
@@ -1072,6 +1206,46 @@ Current step: ${stepCount}/${options.maxSteps}`);
           logger.debug(`[STREAM] Unknown chunk type received: ${chunk.type}`);
           break;
       }
+    }
+
+    // A gate registered during this segment: finalize the suspension now that
+    // the stream is fully drained (or the drain timed out). Every sibling tool
+    // call the model emitted alongside the gate has been yielded (journaled by
+    // the consumer) and recorded in the effect WAL by this point.
+    if (suspendState) {
+      const turnToolCalls = [...segmentToolCalls.entries()].map(([id, call]) => ({
+        callId: id,
+        tool: call.tool,
+        input: sanitizeWALInput(call.input),
+        resolved: call.resolved,
+      }));
+      const unresolvedCallIds = turnToolCalls
+        .filter((call) => !call.resolved && call.callId !== suspendState!.toolCallId)
+        .map((call) => call.callId);
+      options.effectWal?.append({
+        event: 'suspended',
+        ...(suspendState.toolCallId && { gateCallId: suspendState.toolCallId }),
+        ...(suspendState.toolName && { gateTool: suspendState.toolName }),
+        // The raw in-flight assistant turn (the stripped resume snapshot drops
+        // the gate's blocks; this record keeps what the model actually emitted).
+        turnToolCalls,
+        ...(unresolvedCallIds.length > 0 && { unresolvedCallIds }),
+        ...(accumulatedText && { text: accumulatedText.slice(0, 8000) }),
+      });
+      await compactAtSuspensionBoundary();
+      const contextSnapshot = buildContextSnapshot(suspendState.toolCallId);
+      yield {
+        type: 'suspended',
+        ...(suspendState.toolName && { toolName: suspendState.toolName }),
+        ...(suspendState.toolCallId && { toolCallId: suspendState.toolCallId }),
+        ...(suspendState.toolCallId && { suspend: { toolCallId: suspendState.toolCallId } }),
+        toolResultRaw: suspendState.payload,
+        ...(contextSnapshot && {
+          contextUsage: contextSnapshot.usage,
+          contextSnapshot,
+        })
+      };
+      return;
     }
 
     // Segment ended cleanly. Reconstruct the full conversation (what we sent
@@ -1118,6 +1292,15 @@ Current step: ${stepCount}/${options.maxSteps}`);
 
   } catch (error: any) {
     if (isSuspendSignal(error)) {
+      // Thrown through the iteration itself (no chance to drain): still abort
+      // so in-flight sibling executes get the signal, and leave a WAL record.
+      runAbort.abort();
+      options.effectWal?.append({
+        event: 'suspended',
+        via: 'thrown',
+        ...(lastToolCall?.id && { gateCallId: lastToolCall.id }),
+        ...(lastToolCall?.name && { gateTool: lastToolCall.name }),
+      });
       await compactAtSuspensionBoundary();
       const contextSnapshot = buildContextSnapshot(lastToolCall?.id);
       yield {
@@ -1198,6 +1381,14 @@ Error: ${errorMessage}`);
       // For other errors, still try to handle gracefully
       logger.error('Stream processing error:', error);
       yield { type: 'error', error };
+    }
+  } finally {
+    // Release the stream reader; for-await used to do this implicitly. Cancels
+    // the stream when we returned early (suspension), no-op when it completed.
+    try {
+      void Promise.resolve(iterator.return?.()).catch(() => undefined);
+    } catch {
+      // Iterator already closed.
     }
   }
   }

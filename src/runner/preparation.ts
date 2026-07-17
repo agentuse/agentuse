@@ -12,6 +12,7 @@ import { version as packageVersion } from '../../package.json';
 import type { PrepareAgentOptions, PreparedAgentExecution } from './types';
 import type { ToolSet } from 'ai';
 import { loadAgentTools } from './tools-loader';
+import { EffectWAL } from './effect-wal';
 import { buildSystemMessages, buildLearningPrompt } from './system-messages';
 import { createSessionAndMessage } from './session-helper';
 import { bindToolsToSnapshot, createToolsSnapshot } from './tool-snapshot';
@@ -205,6 +206,17 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
           sessionManager.createToolOutputArtifactStream(sessionID, agentId, assistantMsgID, toolName, metadata),
       }
     : undefined;
+  // Effect WAL: one append-only journal per session for tool executes and bash
+  // spawn/exit records, written synchronously at the effect layer so it stays
+  // complete even when a suspension abandons the stream consumer mid-step.
+  const effectWal = new EffectWAL();
+  if (sessionManager && sessionID) {
+    try {
+      effectWal.bind(await sessionManager.getSessionDirectory(sessionID, agentId));
+    } catch (error) {
+      logger.debug(`Failed to bind effect WAL: ${(error as Error).message}`);
+    }
+  }
   const loadedTools = await loadAgentTools({
     agent,
     projectContext,
@@ -213,6 +225,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     mcpConnections: mcpClients,
     sessionId: sessionID,
     toolOutputArtifacts,
+    effectAudit: effectWal,
   });
 
   // Load sub-agent tools if configured
@@ -299,6 +312,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     agentId,
     runOutcome: loadedTools.runOutcome,
     doomLoopDetector,
+    effectWal,
     cleanup,
     releaseStoreLock,
     learningsApplied
