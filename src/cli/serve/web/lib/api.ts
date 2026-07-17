@@ -335,6 +335,7 @@ export function fetchAgents(): Promise<AgentsPayload> {
 export interface AgentDetailMeta {
   filesystem?: string[];
   bashCommands?: number;
+  gated?: string[];               // bash patterns that run only after human approval
   awaitHuman?: boolean;
   skills: { auto: boolean; trusted: boolean; explicit: string[] };
   mcpServers: string[];

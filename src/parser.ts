@@ -198,12 +198,6 @@ const AgentSchema = z.object({
   // Declarative suspension gate. Enables hidden await_human tooling and
   // injects an approval step so markdown instructions can stay business-only.
   approval: ApprovalConfigSchema.optional(),
-  // Effectful bash command patterns (same wildcard shape as the bash allowlist,
-  // human-authored - never model-authored). A matching command only runs when
-  // covered by a lease derived from the latest approved await_human changes[];
-  // an uncovered match is auto-denied with a redirect to re-gate. Structural
-  // fix for the pre-approval ghost-post class (agentuse-lab#165).
-  effects: z.array(z.string().min(1)).optional(),
   // External collaboration channels. Web approvals are built in; channels
   // configure optional external surfaces such as Slack.
   channels: ChannelsConfigSchema.optional()
@@ -220,15 +214,14 @@ const AgentSchema = z.object({
     );
   }
 
-  // Effects without an approval gate is a dead end: every effectful command
-  // would be denied with a redirect to a gate the agent cannot raise.
-  if (data.effects && data.effects.length > 0 && !data.approval && data.tools?.await_human !== true) {
-    throw new ConfigError(
-      'Invalid agent configuration: "effects" requires an approval gate ("approval: true" or "tools.await_human: true") so approved plans can cover the effectful commands.',
-      'effects',
-      'conflict'
-    );
-  }
+  // A gated command needs an approval gate to derive its lease from. Rather than
+  // erroring (the pre-#169 behavior for the old top-level `effects:`), derive it:
+  // declaring `tools.bash.gated` implies the approval machinery. An explicit
+  // `tools.await_human: true` already provides the gate, so leave that path alone.
+  const gatedImpliesApproval =
+    (data.tools?.bash?.gated?.length ?? 0) > 0 &&
+    !data.approval &&
+    data.tools?.await_human !== true;
 
   // Experimental feature warnings (emit once per feature per process to avoid
   // log spam when the same or many agents are parsed repeatedly, e.g. in serve).
@@ -247,12 +240,14 @@ const AgentSchema = z.object({
       mcpServers: data.mcp_servers,
       mcp_servers: undefined,  // Remove deprecated field
       skills: data.skills ?? defaultSkillsConfig(),
+      ...(gatedImpliesApproval && { approval: true as const }),
     };
   }
 
   return {
     ...data,
     skills: data.skills ?? defaultSkillsConfig(),
+    ...(gatedImpliesApproval && { approval: true as const }),
   };
 });
 

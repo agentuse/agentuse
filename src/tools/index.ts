@@ -49,9 +49,19 @@ export function getTools(
     }
   }
 
-  // Create bash tool if configured
-  if (config.bash && config.bash.commands.length > 0) {
-    tools['tools__bash'] = createBashTool(config.bash, context.projectRoot, context);
+  // Create bash tool if configured. The execution allowlist is commands ∪ gated:
+  // a gated pattern IS runnable (the lease governs WHEN, not WHETHER it is allowed
+  // at all), so it must pass the allowlist too. `gated` stays separately readable
+  // (agent.config.tools.bash.gated) for the lease/barrier enforcement.
+  if (config.bash) {
+    const commands = config.bash.commands ?? [];
+    const gated = config.bash.gated ?? [];
+    if (commands.length > 0 || gated.length > 0) {
+      const effectiveBash = gated.length > 0
+        ? { ...config.bash, commands: [...new Set([...commands, ...gated])] }
+        : config.bash;
+      tools['tools__bash'] = createBashTool(effectiveBash, context.projectRoot, context);
+    }
   }
 
   // Create artifact tools if configured. The artifact tool owns its write path

@@ -100,6 +100,36 @@ Good approval boundaries usually separate reversible preparation from external s
 - Usually approval-required: publishing, sending email, scheduling posts, deploying, merging, deleting, charging, or changing production/external state
 - If unsure, ask for approval before the action
 
+## Gated commands (mechanical enforcement)
+
+The boundary above is guidance the model follows. For irreversible **bash commands** you can also enforce it mechanically, so the command cannot run before you approve it even if the model tries. List those commands under `tools.bash.gated`:
+
+```yaml
+model: anthropic:claude-sonnet-5
+tools:
+  bash:
+    commands:        # auto-run, no approval
+      - "birdc read *"
+      - "birdc search *"
+    gated:           # run only after you approve the exact action
+      - "birdc reply *"
+```
+
+Read it as: `commands` is what the agent can do; `gated` is what it can't do without you. A gated command is still allowed to run (the effective allowlist is `commands` plus `gated`), but only after a human approves the exact action. A command matching both lists is gated (gated wins), so a broad `birdc *` in `commands` cannot un-gate `birdc reply *`.
+
+Declaring `gated` enables the approval machinery automatically, you do not also need `approval: true`. When the agent reaches a gated command, AgentUse has it present the plan through `await_human`, and the command runs only once you approve.
+
+The guarantee is two-fold, enforced per action (not once per session):
+
+1. A gated command never runs before approval.
+2. A gated command never runs anything other than what you approved. Approval binds to the exact content the reviewer saw (the tweet text, the command); if the agent revises it, the old approval no longer covers it and it must re-gate.
+
+Notes:
+
+- **You rarely hand-write this.** Skills that ship posting commands, the interactive command prompt, and generated agent files add `gated` for you. `agentuse doctor <file>` also flags an allowlisted command that looks irreversible (`reply`, `post`, `delete`, `git push`, `curl -X POST`, ...) but is not gated. AgentUse never auto-gates from a keyword guess, it only suggests.
+- **Gate the content-bearing step.** The verbatim-content guarantee works when the approved content is in the command itself (`birdc reply "text"`). For browser automation, gate the step that carries the words (`agent-browser type "..."`), not a contentless click.
+- **Unattended runs suspend only on a declared gate**, never on a tooling question. You approve outcomes, not commands.
+
 ## Start the Server
 
 Start the AgentUse daemon:
@@ -232,6 +262,7 @@ approval:
 
 - `approval`: `true` or an object to enable the approval gate
 - `approval.timeout`: optional suspension timeout, such as `30m`, `24h`, or `7d`
+- `tools.bash.gated`: bash command patterns that run only after human approval, enforced by a per-action lease. Declaring it implies the approval gate. See [Gated commands](#gated-commands-mechanical-enforcement).
 
 Channel config is separate:
 

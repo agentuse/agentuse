@@ -3,7 +3,7 @@
  * Phase 2) against the REAL AI SDK v7 `toolApproval` machinery.
  *
  * The permanent fix for the ghost-post class: commands matching human-authored
- * `effects:` patterns are consulted against the lease derived from the latest
+ * `tools.bash.gated` patterns are consulted against the lease derived from the latest
  * approved `await_human.changes[]` BEFORE the SDK dispatches execute. Uncovered
  * -> auto-denied with a redirect reason (the model re-gates); covered -> runs
  * with zero interruption. Unlike Phase 0's abort (a race the runtime usually
@@ -84,7 +84,7 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     config: {
       model: 'anthropic:mock-model',
       approval: true,
-      effects: ['touch *', 'birdc reply *'],
+      tools: { bash: { commands: ['touch *', 'echo *', 'birdc *'], gated: ['touch *', 'birdc reply *'] } },
     },
   } as any;
 
@@ -173,7 +173,7 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
   });
 
   test('gate rides alone: a non-effectful sibling after the gate is denied pre-dispatch', async () => {
-    // echo is allowlisted but NOT in effects[], so the lease never governs it.
+    // echo is allowlisted but NOT in gated[], so the lease never governs it.
     // The barrier must still deny it because it streams in AFTER await_human in
     // the same step (the gate-first order). This is the row #169 adds on top of
     // the lease: an allowed-but-ungated sibling can no longer leak beside a gate.

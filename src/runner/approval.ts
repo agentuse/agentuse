@@ -53,14 +53,14 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
   // effectful command patterns, the runtime mechanically matches each matching
   // command against the latest APPROVED changes[] before it may execute. The
   // model must therefore put the exact final content/command in changes[] and
-  // must never run an effectful command before its gate is approved.
-  const effectPatterns = config.effects ?? [];
+  // must never run a gated command before its gate is approved.
+  const effectPatterns = config.tools?.bash?.gated ?? [];
   const effectsNote = effectPatterns.length > 0
     ? [
         '',
-        '## Effectful commands are lease-enforced',
+        '## Gated commands are lease-enforced',
         '',
-        `These bash command patterns are EFFECTFUL and mechanically blocked until covered by an approved plan: ${effectPatterns.map(p => `\`${p}\``).join(', ')}.`,
+        `These bash command patterns are GATED and mechanically blocked until covered by an approved plan: ${effectPatterns.map((p: string) => `\`${p}\``).join(', ')}.`,
         '',
         '- Before running any matching command, call `await_human` and put the exact final content (or the exact command) in `changes[].content`, verbatim. On approve, the runtime derives the grant from those entries; a matching command runs only when it equals or contains an approved entry.',
         '- Never emit a matching command before the gate returns approve: it is auto-denied, never executed.',

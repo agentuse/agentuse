@@ -15,6 +15,13 @@ export const FilesystemPathConfigSchema = z.object({
 
 export const BashConfigSchema = z.object({
   commands: z.array(z.string()),
+  // Gated command patterns (same wildcard shape as `commands`, human-authored -
+  // never model-authored). A gated command IS allowed to run (effective allowlist
+  // is commands ∪ gated), but only when covered by a lease derived from the latest
+  // approved await_human changes[]; an uncovered match is auto-denied with a
+  // redirect to re-gate. A command matching both lists is gated (gated wins).
+  // Structural fix for the pre-approval ghost-post class (agentuse-lab#165/#169).
+  gated: z.array(z.string().min(1)).optional(),
   timeout: z.number().positive().optional(),
   allowedPaths: z.array(z.string()).optional(),
 });

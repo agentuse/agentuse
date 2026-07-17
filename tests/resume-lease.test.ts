@@ -1,7 +1,7 @@
 /**
  * Lease lifecycle at the resume boundary (agentuse-lab#165, Phase 2): an
  * APPROVE decision derives a lease from the gate's changes[]; reject/comment
- * revoke it. The lease is what lets `effects:`-declared commands run.
+ * revoke it. The lease is what lets `tools.bash.gated`-declared commands run.
  */
 import { describe, expect, it } from 'bun:test';
 import { mkdtemp, rm } from 'fs/promises';

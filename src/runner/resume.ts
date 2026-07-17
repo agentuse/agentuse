@@ -79,10 +79,10 @@ export async function applyResumeToolResult(options: {
 
   // Lease lifecycle (agentuse-lab#165, Phase 2): an APPROVE derives a
   // machine-readable lease from the gate's changes[] - the only grant that
-  // lets `effects:`-declared commands run. Any other decision (reject,
-  // comment) revokes: nothing effectful may run until a fresh plan is
-  // approved. Best-effort: a lease failure must not block the resume, it just
-  // means effectful commands stay denied.
+  // lets `tools.bash.gated`-declared commands run. Any other decision (reject,
+  // comment) revokes: nothing gated may run until a fresh plan is approved.
+  // Best-effort: a lease failure must not block the resume, it just means
+  // gated commands stay denied.
   try {
     const sessionDir = await sessionManager.getSessionDirectory(sessionId, found.agentId);
     const leaseStore = new LeaseStore(sessionDir);

@@ -1497,7 +1497,8 @@ async function collectDirAbouts(
  */
 interface AgentDetailMeta {
   filesystem?: string[];          // permissions in use: read | write | edit
-  bashCommands?: number;          // count of allow-listed bash command patterns
+  bashCommands?: number;          // count of auto-run bash command patterns (commands)
+  gated?: string[];               // bash patterns that run only after human approval
   awaitHuman?: boolean;           // tools.await_human gate
   skills: { auto: boolean; trusted: boolean; explicit: string[] };
   mcpServers: string[];
@@ -1538,6 +1539,7 @@ async function collectAgentDetail(project: Project, runPath: string): Promise<Ag
   const meta: AgentDetailMeta = {
     ...(fsPerms.size > 0 && { filesystem: ['read', 'write', 'edit'].filter((p) => fsPerms.has(p)) }),
     ...(config.tools?.bash && { bashCommands: config.tools.bash.commands.length }),
+    ...(config.tools?.bash?.gated?.length && { gated: config.tools.bash.gated }),
     ...(config.tools?.await_human && { awaitHuman: true }),
     skills: { auto: skills.auto, trusted: skills.trusted, explicit: Object.keys(skills.explicit ?? {}) },
     mcpServers: Object.keys(config.mcpServers ?? {}),

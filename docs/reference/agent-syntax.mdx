@@ -413,11 +413,15 @@ tools:
     - path: ${root}
       permissions: [read, write]   # write also grants edit
   bash:
-    commands:
+    commands:                      # auto-run allowlist
       - "git *"
       - "npm *"
+    gated:                         # run only after human approval (per-action lease)
+      - "npm publish *"
   artifacts: true                  # enables artifact_save and artifact_list
 ```
+
+`tools.bash.gated` lists commands that need human sign-off: they run only after an approval covering the exact action, and declaring `gated` enables the approval gate automatically. See [Gated commands](/guides/approval-gates#gated-commands-mechanical-enforcement).
 
 <Card title="Built-in Tools Reference" icon="wrench" href="/reference/builtin-tools">
   See full configuration options for filesystem, bash, and artifact tools

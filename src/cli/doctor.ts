@@ -11,6 +11,8 @@ import { resolveProjectContext } from '../utils/project.js';
 import { computeAgentId } from '../utils/agent-id.js';
 import { getSessionStorageDir } from '../storage/paths.js';
 import { parseBashCommand } from '../tools/bash-parser.js';
+import { looksEffectful } from '../tools/effectful-heuristic.js';
+import { isEffectful } from '../runner/approval-lease.js';
 import type { Message, Part, SessionInfo, ToolPart } from '../session/types.js';
 
 interface DoctorOptions {
@@ -327,6 +329,30 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
     if (agent.config.skills!.auto && explicitSkillNames.length === 0 && commandReports.length === 0) {
       console.log(chalk.gray('Auto skills are enabled. Define core skills explicitly to include them in static inspection.'));
     }
+  }
+
+  // Gated-command heuristic (advisory): allowlisted commands that LOOK effectful
+  // but are not covered by a `tools.bash.gated` pattern. Nudge only - AgentUse
+  // never auto-gates from a keyword guess (a deploy agent that legitimately pushes
+  // should not be force-gated), so this is a suggestion the author can ignore.
+  const bashCommands = agent.config.tools?.bash?.commands ?? [];
+  const gatedPatterns = agent.config.tools?.bash?.gated ?? [];
+  const effectfulNotGated = bashCommands.filter(
+    (cmd) => looksEffectful(cmd) && !isEffectful(cmd, gatedPatterns)
+  );
+  if (effectfulNotGated.length > 0) {
+    console.log(chalk.yellow('\nGated commands (heuristic):'));
+    for (const cmd of effectfulNotGated) {
+      console.log(`- \`${cmd}\` looks effectful but is not gated.`);
+    }
+    console.log(chalk.gray('\nIf a command performs an irreversible action (post, send, delete, deploy), consider moving it under tools.bash.gated so it runs only after human approval:'));
+    console.log('tools:');
+    console.log('  bash:');
+    console.log('    gated:');
+    for (const cmd of effectfulNotGated) {
+      console.log(`      - "${cmd}"`);
+    }
+    console.log(chalk.gray('Advisory only: AgentUse never auto-gates from a keyword guess.'));
   }
 
   console.log(chalk.gray('\nFor runtime-accurate diagnosis, run `agentuse doctor <agent-file> --last-run`.'));

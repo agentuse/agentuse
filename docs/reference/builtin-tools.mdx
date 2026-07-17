@@ -199,6 +199,8 @@ tools:
       - "git *"
       - "npm *"
       - "pnpm *"
+    gated:
+      - "npm publish *"
     allowedPaths:
       - /tmp
       - ~/workspace
@@ -209,7 +211,8 @@ tools:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `commands` | `string[]` | Required | Allowlist of command patterns (supports `*` wildcard) |
+| `commands` | `string[]` | Required | Auto-run allowlist of command patterns (supports `*` wildcard) |
+| `gated` | `string[]` | `[]` | Command patterns that run only after human approval, enforced by a per-action lease. Also runnable (the effective allowlist is `commands` plus `gated`); a match in both is gated. Declaring `gated` implies the approval gate. See [Gated commands](/guides/approval-gates#gated-commands-mechanical-enforcement). |
 | `allowedPaths` | `string[]` | `[]` | Additional directories beyond project root |
 | `timeout` | `number` | `120000` | Command timeout in milliseconds |
 

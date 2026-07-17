@@ -9,9 +9,9 @@ import { logger } from '../utils/logger';
  *
  * Trust chain: the LLM proposes (writes `changes[]`, spec'd as "the exact
  * actions executed on approval, verbatim"), the human approves (the ONLY
- * grant), the runtime matches mechanically. Effectful commands (declared in
- * human-authored `effects:` frontmatter) only run when covered by the latest
- * approved lease; anything uncovered is auto-denied with a redirect to
+ * grant), the runtime matches mechanically. Gated commands (declared in
+ * human-authored `tools.bash.gated` frontmatter) only run when covered by the
+ * latest approved lease; anything uncovered is auto-denied with a redirect to
  * re-gate. No LLM ever approves anything, and the human still sees exactly
  * one rich gate per operation - never per-call micro-approvals.
  */

@@ -389,11 +389,11 @@ export async function* executeAgentCore(
     ? AbortSignal.any([options.abortSignal, runAbort.signal])
     : runAbort.signal;
 
-  // Approval leases (agentuse-lab#165, Phase 2): effectful commands declared in
-  // `effects:` frontmatter only run when covered by the latest approved
-  // await_human changes[]. The store is file-based in the session directory
-  // (granted at resume time, possibly by another process) and read per call.
-  const effectPatterns = agent.config.effects ?? [];
+  // Approval leases (agentuse-lab#165, Phase 2): gated commands declared in
+  // `tools.bash.gated` only run when covered by the latest approved await_human
+  // changes[]. The store is file-based in the session directory (granted at
+  // resume time, possibly by another process) and read per call.
+  const effectPatterns = agent.config.tools?.bash?.gated ?? [];
   const leaseStore = new LeaseStore();
   if (effectPatterns.length > 0 && options.sessionManager && options.sessionID && options.agentId) {
     try {
@@ -729,7 +729,7 @@ export async function* executeAgentCore(
             });
             return {
               type: 'denied' as const,
-              reason: 'This command is declared effectful and is not covered by an approved plan. Do NOT retry or reword it. Call await_human with the full plan, putting the exact final content/command in changes[] (verbatim), and run the command only after the reviewer approves. If a reviewer already approved a different version, re-gate with this exact version.',
+              reason: 'This command is gated and is not covered by an approved plan. Do NOT retry or reword it. Call await_human with the full plan, putting the exact final content/command in changes[] (verbatim), and run the command only after the reviewer approves. If a reviewer already approved a different version, re-gate with this exact version.',
             };
           }
         }

@@ -113,6 +113,9 @@ function capabilitySentences(meta: AgentDetailMeta, scheduleHuman: string | unde
   if (typeof meta.bashCommands === 'number') {
     sentences.push(`Can run ${meta.bashCommands} approved command pattern${meta.bashCommands === 1 ? '' : 's'}.`);
   }
+  if (meta.gated && meta.gated.length > 0) {
+    sentences.push(`${meta.gated.length} command pattern${meta.gated.length === 1 ? '' : 's'} ${meta.gated.length === 1 ? 'is' : 'are'} gated: they run only after you approve the exact action.`);
+  }
   if (meta.mcpServers.length > 0) sentences.push(`Connects to ${joinNames(meta.mcpServers)}.`);
   if (meta.subagents.length > 0) sentences.push(`Delegates to ${joinNames(meta.subagents)}.`);
   if (meta.channels.length > 0) sentences.push(`Reports to ${joinNames(meta.channels)}.`);
@@ -138,6 +141,7 @@ function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: s
   const toolChips: VNode[] = [];
   if (meta.filesystem && meta.filesystem.length > 0) toolChips.push(<Chip key="fs">fs: {meta.filesystem.join(' · ')}</Chip>);
   if (typeof meta.bashCommands === 'number') toolChips.push(<Chip key="bash">bash: {meta.bashCommands} cmd{meta.bashCommands === 1 ? '' : 's'}</Chip>);
+  if (meta.gated && meta.gated.length > 0) toolChips.push(<Chip key="gated" tone="amber" title={meta.gated.join(' · ')}>gated: {meta.gated.length}</Chip>);
   if (meta.awaitHuman) toolChips.push(<Chip key="await" tone="amber">await_human</Chip>);
 
   const runtimeChips: VNode[] = [<Chip key="model" tone="cyan">{props.model}</Chip>];
