@@ -6,7 +6,9 @@ import { parseSkillFrontmatter, parseSkillContent } from '../src/skill/parser';
 import { discoverSkills, getSkill, getAllSkills } from '../src/skill/discovery';
 import { validateAllowedTools, formatToolsWarning } from '../src/skill/validate';
 import { createSkillTool, createSkillTools, loadSkillPromptOutputs } from '../src/skill/tool';
-import { expandSkillAllows } from '../src/skill/capabilities';
+import { expandTrustedSkills } from '../src/skill/capabilities';
+import type { NormalizedSkillsConfig } from '../src/skill/config';
+import type { SkillInfo } from '../src/skill/types';
 import { extractSkillCommandMentions } from '../src/skill/command-extract';
 import type { ToolsConfig } from '../src/tools/types';
 import { logger } from '../src/utils/logger';
@@ -787,23 +789,16 @@ description: Preloaded
     });
   });
 
-  describe('skill allows', () => {
-    it('expands allow entries into generic bash command families', () => {
-      const config = expandSkillAllows(undefined, ['agent-browser', 'python3']);
+  describe('trust expansion preserves bash config (agentuse-lab#168)', () => {
+    // Grant behavior (per-skill/global/none) is covered in skill-trust.test.ts;
+    // here we pin the bash-config preservation the old expandSkillAllows tested.
+    const skillsMap = new Map<string, SkillInfo>([
+      ['browser', { name: 'browser', description: 'b', location: '/s/browser/SKILL.md', allowedTools: ['Bash(agent-browser:*)'] }],
+    ]);
+    const trust = (name: string): NormalizedSkillsConfig => ({ auto: true, trusted: false, explicit: { [name]: { trusted: true } } });
+    const UNTRUSTED: NormalizedSkillsConfig = { auto: true, trusted: false, explicit: {} };
 
-      expect(config?.bash?.commands).toContain('agent-browser *');
-      expect(config?.bash?.commands).toContain('python3 *');
-    });
-
-    it('returns baseConfig unchanged when only "*" is requested', () => {
-      const baseConfig = { bash: { commands: ['git *'] } };
-
-      const config = expandSkillAllows(baseConfig, ['*']);
-
-      expect(config).toBe(baseConfig);
-    });
-
-    it('preserves existing bash.allowedPaths and merges new commands', () => {
+    it('merges granted commands while preserving allowedPaths and timeout', () => {
       const baseConfig = {
         bash: {
           commands: ['git *'],
@@ -812,21 +807,24 @@ description: Preloaded
         },
       };
 
-      const config = expandSkillAllows(baseConfig, ['agent-browser']);
+      const config = expandTrustedSkills(baseConfig, skillsMap, trust('browser'));
 
       expect(config?.bash?.commands).toEqual(['git *', 'agent-browser *']);
       expect(config?.bash?.allowedPaths).toEqual(['/tmp', '~/workspace']);
       expect(config?.bash?.timeout).toBe(60000);
       expect(config?.bash?.commands).not.toBe(baseConfig.bash.commands);
-      expect(config?.bash?.allowedPaths).not.toBe(baseConfig.bash.allowedPaths);
     });
 
-    it('does not append a duplicate when allow already matches an existing pattern', () => {
+    it('returns baseConfig unchanged when nothing is trusted', () => {
+      const baseConfig = { bash: { commands: ['git *'] } };
+      expect(expandTrustedSkills(baseConfig, skillsMap, UNTRUSTED)).toBe(baseConfig);
+    });
+
+    it('does not append a duplicate when the grant already matches an existing pattern', () => {
       const baseConfig = { bash: { commands: ['agent-browser *'] } };
-
-      const config = expandSkillAllows(baseConfig, ['agent-browser', 'agent-browser']);
-
-      expect(config?.bash?.commands).toEqual(['agent-browser *']);
+      // Trust would grant `agent-browser *`, which is already present, so the
+      // config is returned unchanged (nothing new to add).
+      expect(expandTrustedSkills(baseConfig, skillsMap, trust('browser'))).toBe(baseConfig);
     });
   });
 

@@ -188,10 +188,33 @@ Test agent`, 'test');
       expect(agent.config.skills).toEqual({ auto: true, trusted: true, explicit: {} });
     });
 
-    it('parses explicit skill preload list', () => {
+    it('preloads a listed skill without hiding the rest (agentuse-lab#168)', () => {
+      // Listing skills PRELOADS them and keeps discovery on: auto stays true, so
+      // unlisted skills remain loadable on demand. (v0.15.0 treated this as an
+      // allowlist with auto:false — reversed deliberately.)
       const agent = parseAgentContent(`---
 model: anthropic:claude-sonnet-4-0
 skills: [linkedin, browser]
+---
+
+Test agent`, 'test');
+
+      expect(agent.config.skills).toEqual({
+        auto: true,
+        trusted: false,
+        explicit: {
+          linkedin: {},
+          browser: {},
+        },
+      });
+    });
+
+    it('restricts to a closed set only with an explicit auto: false', () => {
+      const agent = parseAgentContent(`---
+model: anthropic:claude-sonnet-4-0
+skills:
+  linkedin:
+  auto: false
 ---
 
 Test agent`, 'test');
@@ -201,7 +224,6 @@ Test agent`, 'test');
         trusted: false,
         explicit: {
           linkedin: {},
-          browser: {},
         },
       });
     });

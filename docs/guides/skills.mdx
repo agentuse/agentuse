@@ -179,23 +179,39 @@ tools:
 
 `agentuse doctor` flags granted commands that look irreversible, so you know what to consider gating.
 
-Define a skill explicitly (without trusting it) when it is core to the agent but you want to grant its commands yourself. Explicit skills are preloaded before the task starts, so the agent does not need to infer the trigger from the user instruction:
+### Preloading skills
+
+List a skill to **preload** it: its instructions are injected before the task starts, so the agent does not have to infer the trigger from the user instruction. Use this when a skill is core to the agent's job.
 
 ```yaml
-skills: [linkedin]
+skills: [linkedin, x-personal]
 ```
 
-<Warning>
-The bare array form is an **allowlist**, not just a preload. It turns off `auto`, so **only** the listed skills stay visible: every other discovered skill is hidden from the model and cannot be loaded. Use it when you want to pin the agent to a fixed set.
-</Warning>
+Listing a skill preloads it; **it never hides the others.** Discovery stays on, so every unlisted skill is still loadable on demand. Listing is "these are the skills I use," not "forbid all others."
 
-To preload a skill **and** keep the rest discoverable on demand, set `auto: true` alongside the explicit entry:
+<Note>
+This reverses pre-`0.16.0` behavior, where `skills: [x]` was an allowlist that silently hid every other skill. Restricting is now an explicit, deliberate act (see below).
+</Note>
+
+To pin the agent to a **closed set** (only the listed skills are visible, everything else is hidden), opt in explicitly with `auto: false`:
 
 ```yaml
 skills:
-  linkedin:         # preloaded (bare = include, no special grant)
-  auto: true        # ...but other skills stay loadable on demand
+  linkedin:         # bare = include, no special grant
+  auto: false       # ...and hide every other discovered skill
 ```
+
+Because hiding skills is the rarer, higher-consequence choice, it is loud (`auto: false`) rather than a silent side effect of listing.
+
+### Skill config forms
+
+| Config | Discovery | Preloaded | Trusted |
+|--------|-----------|-----------|---------|
+| omitted / `skills: auto` | all | none | none |
+| `skills: [linkedin]` | all | linkedin | none |
+| `skills: { linkedin: trusted }` | all | linkedin | linkedin |
+| `skills: { linkedin:, auto: false }` | **only linkedin** | linkedin | none |
+| `skills: trusted` | all | none | all |
 
 To inspect a skill's grants:
 

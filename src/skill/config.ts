@@ -37,17 +37,26 @@ function normalizeGrant(value: unknown): SkillGrantConfig | { error: string } {
   return { error: 'skill value must be "trusted", an object, or empty' };
 }
 
+// Naming a skill (in the array or map form) PRELOADS it; it never hides the
+// others. Discovery stays on by default, so unlisted skills remain loadable
+// on demand. Restricting to a closed set is an explicit, deliberate act:
+// set `auto: false` in the map form. This keeps the common intent ("these are
+// the skills I use") on the short path and makes hiding loud, not accidental
+// (agentuse-lab#168). Note: this reverses v0.15.0, where `skills: [x]` was an
+// allowlist that silently hid every other skill.
 export const SkillsConfigSchema = z.union([
   z.literal('auto').transform((): NormalizedSkillsConfig => ({ auto: true, trusted: false, explicit: {} })),
   z.literal('trusted').transform((): NormalizedSkillsConfig => ({ auto: true, trusted: true, explicit: {} })),
   z.array(SkillNameSchema).transform((names): NormalizedSkillsConfig => ({
-    auto: false,
+    auto: true,
     trusted: false,
     explicit: Object.fromEntries(names.map((name) => [name, {}])),
   })),
   z.record(z.unknown()).transform((raw, ctx): NormalizedSkillsConfig => {
     const explicit: Record<string, SkillGrantConfig> = {};
-    let auto = false;
+    // Open by default: naming skills annotates them, it does not fence out the
+    // rest. Opt into a closed set with an explicit `auto: false`.
+    let auto = true;
 
     for (const [key, value] of Object.entries(raw)) {
       if (key === 'auto') {
