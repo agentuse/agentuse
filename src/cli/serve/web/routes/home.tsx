@@ -60,7 +60,9 @@ function formatElapsed(ms: number): string {
 const LIVE_STATUSES = new Set(['running', 'resuming', 'continuing']);
 
 function isLiveRow(row: SessionRow): boolean {
-  return LIVE_STATUSES.has(row.status);
+  // A suspended parent parked on a running delegated child is live work ("running
+  // · subagent"), so it counts as running even though its raw status is suspended.
+  return LIVE_STATUSES.has(row.status) || row.subagentActive === true;
 }
 
 function FeedRow(props: { event: ActivityEvent }) {
@@ -88,6 +90,7 @@ function RunningCard(props: { row: SessionRow; now: number; ticker: boolean }) {
       <div class="now-card-head">
         <span class="now-dot" aria-hidden="true"></span>
         <span class="now-agent">{row.agent.name || row.agent.id}</span>
+        {row.subagentActive && <span class="now-subagent" title="Work is running in a delegated subagent">subagent</span>}
         <span class="now-elapsed">{formatElapsed(now - row.createdAt)}</span>
       </div>
       {/* Purely visual preview of the session page it links to; hidden from AT
@@ -658,7 +661,9 @@ export default function Home() {
 
   const sections = useHomeSections();
   const running = liveHome.sessions.filter(isLiveRow);
-  const waiting = liveHome.sessions.filter((s) => s.status === 'suspended');
+  // subagentActive rows are live work (counted in `running`), not blocked on a
+  // human, so they must not also show up as waiting.
+  const waiting = liveHome.sessions.filter((s) => s.status === 'suspended' && !s.subagentActive);
   // Recent failures surface in "Needs your attention" alongside pending gates.
   // Not every failed-tone run is waiting on a human: runs the reviewer stopped
   // themselves (USER_STOPPED) or already reviewed and discarded (dismissedAt,

@@ -2802,6 +2802,7 @@ async function runInternalWorker() {
           ...sessionErrorFields(session),
           ...dismissedAtField(session),
           ...mockField(session),
+          ...(session.subagentActive && { subagentActive: true }),
         }))
         .sort((a, b) => b.createdAt - a.createdAt);
 

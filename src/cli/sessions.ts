@@ -6,6 +6,7 @@ import { getSessionStorageDir, getProjectDir, getXdgDataDir } from "../storage/p
 import type { SessionInfo, Message, Part, SessionStatus } from "../session/types";
 import { initStorage } from "../storage";
 import { SessionManager } from "../session";
+import { computeSubagentActiveIds } from "../session/subagent-active";
 import { resolveProjectContext } from "../utils/project";
 import { loadGlobalDefaults } from "../utils/global-config";
 import { logger, LogLevel } from "../utils/logger";
@@ -28,6 +29,9 @@ interface SessionSummary {
   status?: SessionStatus;
   errorCode?: string;
   errorMessage?: string;
+  /** Suspended parent parked on a running delegated child; renders as
+   *  "running · subagent" rather than bare "suspended". Derived at list time. */
+  subagentActive?: boolean;
 }
 
 interface SessionScope {
@@ -387,6 +391,27 @@ function statusLabel(status?: SessionStatus, errorCode?: string): string {
         : 'running';
 }
 
+/** Display status for a summary row, folding in the "running · subagent" state
+ *  (a suspended parent parked on a running delegated child). */
+function sessionStatusText(session: Pick<SessionSummary, 'status' | 'errorCode' | 'subagentActive'>): string {
+  if (session.subagentActive) return 'running · subagent';
+  return statusLabel(session.status, session.errorCode);
+}
+
+/** Annotate summaries in place with subagentActive, derived over the FULL set
+ *  (parents + subagents) so a parent keeps the flag after subagents are filtered
+ *  out for display. */
+function markSubagentActive(sessions: SessionSummary[]): void {
+  const activeIds = computeSubagentActiveIds(sessions.map((s) => ({
+    sessionId: s.id,
+    ...(s.parentSessionID && { parentSessionId: s.parentSessionID }),
+    status: s.status ?? '',
+  })));
+  for (const s of sessions) {
+    if (activeIds.has(s.id)) s.subagentActive = true;
+  }
+}
+
 function projectLabel(projectRoot: string): string {
   if (/^[a-f0-9]{16}$/i.test(projectRoot)) return projectRoot;
   return path.basename(projectRoot) || projectRoot;
@@ -707,6 +732,11 @@ async function listSessionsCommand(
 ): Promise<void> {
   let sessions = await sessionsForScope(scope);
 
+  // Derive "running · subagent" over the full set BEFORE dropping subagents: the
+  // running leaf that makes a suspended parent subagent-active is exactly the row
+  // the next filter removes.
+  markSubagentActive(sessions);
+
   // Filter out subagents unless --subagents is specified
   if (!options?.subagents) {
     sessions = sessions.filter((s) => !s.isSubAgent);
@@ -740,7 +770,9 @@ async function listSessionsCommand(
 
   // Calculate column widths
   const idWidth = 12; // First 12 chars of ULID
-  const statusWidth = 10; // "incomplete"
+  // Base 10 ("incomplete"); grow to fit "running · subagent" when present so the
+  // wider label doesn't push the table out of alignment.
+  const statusWidth = Math.min(18, Math.max(10, ...sessions.map((s) => sessionStatusText(s).length)));
   const projectWidth = scope.kind === "all"
     ? Math.min(28, Math.max(...sessions.map((s) => projectLabel(s.projectRoot).length)))
     : 0;
@@ -767,7 +799,7 @@ async function listSessionsCommand(
   // Rows
   for (const session of sessions) {
     const shortId = session.id.substring(0, idWidth);
-    const statusText = statusLabel(session.status, session.errorCode);
+    const statusText = sessionStatusText(session);
     const agent = truncate(session.agentId, agentWidth).padEnd(agentWidth);
     const date = formatDate(session.created);
 
@@ -804,7 +836,10 @@ async function showSession(
   }
 
   const s = details.session;
-  const childSessions = (await listSessions(session.projectRoot))
+  const allProjectSessions = await listSessions(session.projectRoot);
+  markSubagentActive(allProjectSessions);
+  const subagentActive = allProjectSessions.find((x) => x.id === s.id)?.subagentActive === true;
+  const childSessions = allProjectSessions
     .filter((child) => child.parentSessionID === s.id)
     .sort((a, b) => a.created.getTime() - b.created.getTime() || a.id.localeCompare(b.id));
 
@@ -838,8 +873,14 @@ async function showSession(
   // Display session status. An agent-declared incomplete run is still
   // status 'error' on disk, but reads as its own state here.
   const isIncomplete = s.status === 'error' && s.error?.code === 'INCOMPLETE';
-  const statusIcon = s.status === 'completed' ? '✓' : isIncomplete ? '⚠' : s.status === 'error' ? '✗' : s.status === 'suspended' ? '⏸' : '⋯';
-  process.stdout.write(`Status:      ${statusIcon} ${isIncomplete ? 'incomplete' : s.status || 'unknown'}\n`);
+  const statusIcon = s.status === 'completed' ? '✓'
+    : isIncomplete ? '⚠'
+    : s.status === 'error' ? '✗'
+    : subagentActive ? '⋯'
+    : s.status === 'suspended' ? '⏸'
+    : '⋯';
+  const statusText = isIncomplete ? 'incomplete' : subagentActive ? 'running · subagent' : (s.status || 'unknown');
+  process.stdout.write(`Status:      ${statusIcon} ${statusText}\n`);
 
   if (s.config.mcpServers && s.config.mcpServers.length > 0) {
     process.stdout.write(`MCP Servers: ${s.config.mcpServers.join(", ")}\n`);

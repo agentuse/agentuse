@@ -231,6 +231,8 @@ interface SessionSummary {
   errorCode?: string;
   errorMessage?: string;
   mock?: boolean;
+  /** Suspended parent parked on a running delegated child (see serve/types). */
+  subagentActive?: boolean;
   finalResponse?: string;
 }
 

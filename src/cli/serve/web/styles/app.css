@@ -3250,6 +3250,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .now-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.4s ease-in-out infinite; flex-shrink: 0; }
 .page-home .now-agent { font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-home .now-elapsed { font-family: var(--mono); font-size: 12px; color: var(--green); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.page-home .now-subagent { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted-3); white-space: nowrap; flex-shrink: 0; }
 .page-home .now-desc { font-size: 12.5px; color: var(--muted-3); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .page-home .now-meta { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 /* Live tail of the running session: the card "types" what the agent is doing. */

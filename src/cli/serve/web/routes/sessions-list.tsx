@@ -62,6 +62,12 @@ export function SessionRowView(props: {
   // 'error' on disk) so a skim distinguishes "crashed" from "agent declared
   // non-delivery" from "operator stopped it".
   const status = displayStatusLabel(row.status, row.errorCode);
+  // A suspended parent parked on a running delegated child is live work, not a
+  // human gate: show "running · subagent" with the running pill (statusKey drives
+  // the CSS class, which keys off the status word). Filtering stays on raw status.
+  const subagentActive = row.subagentActive === true;
+  const statusText = subagentActive ? 'running · subagent' : status;
+  const statusKey = subagentActive ? 'running' : status;
   // Status/trigger chips double as filter shortcuts: click applies that filter,
   // click again (when already applied) clears it. Incomplete is persisted as an
   // error with code INCOMPLETE, but it has its own API filter so the displayed
@@ -89,10 +95,10 @@ export function SessionRowView(props: {
           <>
             <div class="row-head">
               <a
-                class={statusClass(status)}
+                class={statusClass(statusKey)}
                 href={filterHref('status', statusActive ? '' : statusFilterValue)}
                 title={statusActive ? `Stop filtering by status: ${statusFilterValue}` : `Filter sessions by status: ${statusFilterValue}`}
-              >{status}</a>
+              >{statusText}</a>
               {multiProject && <span class="chip project">{row.project}</span>}
               <a
                 class="chip trigger"
@@ -135,10 +141,10 @@ export function SessionRowView(props: {
               </div>
             </div>
             <a
-              class={statusClass(status)}
+              class={statusClass(statusKey)}
               href={filterHref('status', statusActive ? '' : statusFilterValue)}
               title={statusActive ? `Stop filtering by status: ${statusFilterValue}` : `Filter sessions by status: ${statusFilterValue}`}
-            >{status}</a>
+            >{statusText}</a>
           </div>
         )}
       {view === 'feed' && row.errorMessage && <div class="session-feed-error">{errorText(row.errorMessage)}</div>}
@@ -146,6 +152,7 @@ export function SessionRowView(props: {
         <FeedResponse
           value={row.finalResponse}
           status={status}
+          subagentActive={subagentActive}
           href={href}
         />
       )}
@@ -161,18 +168,23 @@ export function SessionRowView(props: {
   );
 }
 
-export function FeedResponse(props: { value: string | undefined; status: string; href: string }) {
+export function FeedResponse(props: { value: string | undefined; status: string; subagentActive?: boolean; href: string }) {
   const [expanded, setExpanded] = useState(false);
   const long = Boolean(props.value && (props.value.length > 1_800 || props.value.split(/\r?\n/).length > 18));
-  const emptyMessage = props.status === 'running'
-    ? 'Agent is working. Its response will appear here as it becomes available.'
-    : props.status === 'suspended'
-      ? 'Waiting on an approval or a delegated sub-agent. No final response yet.'
-      : 'This session ended without a final response.';
+  // subagentActive reads as live (like running): the response lands when the
+  // delegated sub-agent returns.
+  const live = props.status === 'running' || props.subagentActive === true;
+  const emptyMessage = props.subagentActive
+    ? 'Working in a delegated sub-agent. Its response will appear here when the sub-agent returns.'
+    : props.status === 'running'
+      ? 'Agent is working. Its response will appear here as it becomes available.'
+      : props.status === 'suspended'
+        ? 'Waiting on an approval or a delegated sub-agent. No final response yet.'
+        : 'This session ended without a final response.';
 
   return (
-    <div class="session-feed-response" aria-live={props.status === 'running' ? 'polite' : undefined}>
-      <div class="session-feed-response-label">{props.status === 'running' ? 'Latest response' : 'Final response'}</div>
+    <div class="session-feed-response" aria-live={live ? 'polite' : undefined}>
+      <div class="session-feed-response-label">{live ? 'Latest response' : 'Final response'}</div>
       {props.value
         ? (
           <div class={`session-feed-content${long && !expanded ? ' is-collapsed' : ''}`}>
@@ -463,7 +475,7 @@ export default function SessionsList() {
           )
           : groupByAgent
             ? <div class="agent-groups">{agentGroups.map((group) => {
-                const liveCount = group.rows.filter((r) => LIVE_SESSION_STATUSES.has(r.status)).length;
+                const liveCount = group.rows.filter((r) => LIVE_SESSION_STATUSES.has(r.status) || r.subagentActive).length;
                 return (
                   <details class="agent-group" open id={agentGroupAnchor(group.agentId)} key={group.agentId}>
                     <summary>

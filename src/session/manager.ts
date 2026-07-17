@@ -6,6 +6,7 @@ import { writeJSON, readJSON, listKeys, getStorageState, sanitizeAgentName, Corr
 import { logger } from '../utils/logger';
 import { currentProcessRef, isPidAlive } from '../utils/process-info';
 import { dehydrateSnapshotMedia, rehydrateSnapshotMedia } from './media-cache';
+import { computeSubagentActiveIds } from './subagent-active';
 import type {
   SessionInfo,
   SessionTrigger,
@@ -54,6 +55,10 @@ export interface SessionListSummary {
   error?: { code?: string; message?: string };
   dismissedAt?: number;
   mock?: boolean;
+  /** Suspended parent parked on a running delegated child (a "running ·
+   *  subagent" run, not one blocked on a human gate). Derived at list time from
+   *  the full set, not persisted. See ./subagent-active. */
+  subagentActive?: boolean;
   path: string;
 }
 
@@ -1167,10 +1172,18 @@ export class SessionManager {
       });
     }
 
-    return Object.values(index.sessions)
+    // Derive subagent-active over the FULL set (parents + subagents) before the
+    // includeSubagents filter drops children: the running leaf that makes a
+    // suspended manager "running · subagent" is exactly the row that gets
+    // filtered, so computing after the filter would always miss it.
+    const all = Object.values(index.sessions);
+    const activeIds = computeSubagentActiveIds(all);
+
+    return all
       .filter((session) => options.includeSubagents || (!session.parentSessionId && !session.agent.isSubAgent))
       .filter((session) => options.createdAfter === undefined || session.createdAt >= options.createdAfter)
-      .sort((a, b) => b.createdAt - a.createdAt || b.sessionId.localeCompare(a.sessionId));
+      .sort((a, b) => b.createdAt - a.createdAt || b.sessionId.localeCompare(a.sessionId))
+      .map((session) => activeIds.has(session.sessionId) ? { ...session, subagentActive: true } : session);
   }
 
   async listSessionsCreatedAfter(

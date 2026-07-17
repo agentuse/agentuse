@@ -152,6 +152,50 @@ describe('session list scanning', () => {
     }
   });
 
+  it('marks a suspended parent with a running delegated child as subagentActive', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-subagent-active-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+
+    try {
+      const state = await initStorage(projectRoot);
+      const parentId = ulid();
+      const childId = ulid();
+
+      const parent = sessionInfo({
+        id: parentId, agentId: 'agents/manager', agentName: 'Manager', projectRoot, created: Date.now(),
+      });
+      parent.status = 'suspended';
+      const parentDir = await writeSession(state.dir, '', parent);
+
+      const child = sessionInfo({
+        id: childId, agentId: 'agents/leaf', agentName: 'Leaf', projectRoot, created: Date.now(),
+        isSubAgent: true, parentSessionID: parentId,
+      });
+      child.status = 'running';
+      await writeSession(state.dir, join(parentDir, 'subagent'), child);
+
+      // The default list drops subagents, yet the parent must still carry the
+      // flag: it is derived over the full set (incl. the running leaf) before the
+      // includeSubagents filter removes that leaf.
+      const topLevel = await new SessionManager().listSessionSummaries();
+      expect(topLevel.map((s) => s.sessionId)).toEqual([parentId]);
+      expect(topLevel[0]?.subagentActive).toBe(true);
+
+      // When the child stops running (e.g. it too parks at its own gate), the
+      // parent is no longer subagent-active — it is genuinely blocked.
+      child.status = 'suspended';
+      await writeSession(state.dir, join(parentDir, 'subagent'), child);
+      await rm(join(state.dir, '.index'), { recursive: true, force: true });
+      const afterGate = await new SessionManager().listSessionSummaries();
+      expect(afterGate[0]?.subagentActive).toBeUndefined();
+    } finally {
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it('prefilters non-approval part files before parsing latest approval parts', async () => {
     const originalXdg = process.env.XDG_DATA_HOME;
     const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-approval-prefilter-'));

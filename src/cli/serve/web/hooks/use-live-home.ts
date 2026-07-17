@@ -26,7 +26,7 @@ const FEED_LIMIT = 20;
 const SEED_LIMIT = 8;
 
 function toneFor(label: string): ActivityEvent['tone'] {
-  if (label === 'started' || label === 'running' || label === 'resuming' || label === 'continuing') return 'running';
+  if (label === 'started' || label === 'running' || label === 'running · subagent' || label === 'resuming' || label === 'continuing') return 'running';
   if (label === 'awaiting approval' || label === 'approval expired' || label === 'suspended') return 'waiting';
   if (label === 'completed') return 'done';
   return 'failed';
@@ -57,6 +57,10 @@ export function suspendedGateKinds(approvals: ApprovalsListPayload | null): Susp
 export function labelFor(row: SessionRow, isNew: boolean, gates: SuspendedGateKinds): string {
   const status = displayStatusLabel(row.status, row.errorCode);
   if (status === 'suspended') {
+    // A suspended parent parked on a running delegated child is progressing, not
+    // blocked on a human: the work is live in the subagent. Mutually exclusive
+    // with a pending gate (a child at its own gate is suspended, not running).
+    if (row.subagentActive) return 'running · subagent';
     // Until the approvals snapshot arrives, keep the historical default.
     if (!gates.loaded || gates.pending.has(sessionRowKey(row))) return 'awaiting approval';
     if (gates.expired.has(sessionRowKey(row))) return 'approval expired';

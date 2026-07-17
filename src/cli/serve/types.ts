@@ -84,6 +84,10 @@ export interface SessionSummary {
   /** Reviewer discarded this ended failed run; needs-attention surfaces skip it. */
   dismissedAt?: number;
   mock?: boolean;
+  /** Suspended parent parked on a running delegated child: the run is live, work
+   *  is in a subagent, so surfaces render it "running · subagent" rather than the
+   *  bare "suspended" that means "waiting on you". */
+  subagentActive?: boolean;
   /** Present on session-list rows only when the caller requests feed detail. */
   finalResponse?: string;
 }
