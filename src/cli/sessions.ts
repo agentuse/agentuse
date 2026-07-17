@@ -22,6 +22,7 @@ interface SessionSummary {
   agentName: string;
   model: string;
   created: Date;
+  updated?: Date;
   isSubAgent: boolean;
   parentSessionID?: string;
   dirPath: string;
@@ -134,6 +135,7 @@ function sessionSummaryFromInfo(sessionInfo: SessionInfo & { agent: { id?: strin
     agentName: sessionInfo.agent.name,
     model: sessionInfo.model,
     created: new Date(sessionInfo.time.created),
+    updated: new Date(sessionInfo.time.updated),
     isSubAgent: sessionInfo.agent.isSubAgent,
     ...(sessionInfo.parentSessionID && { parentSessionID: sessionInfo.parentSessionID }),
     dirPath,
@@ -396,6 +398,22 @@ function statusLabel(status?: SessionStatus, errorCode?: string): string {
 function sessionStatusText(session: Pick<SessionSummary, 'status' | 'errorCode' | 'subagentActive'>): string {
   if (session.subagentActive) return 'running · subagent';
   return statusLabel(session.status, session.errorCode);
+}
+
+/** Live runs (actively running, or a parent whose delegated child is running)
+ *  sort ahead of everything else so in-flight work is never buried below runs
+ *  that merely finished more recently. Requires subagentActive to be marked. */
+function sessionLiveRank(s: SessionSummary): number {
+  return (s.status === 'running' || s.subagentActive) ? 0 : 1;
+}
+
+/** Display order for the session list: live first, then most-recently-active
+ *  (updatedAt), with created + id as stable tiebreaks. Exported for testing. */
+export function compareSessionsForList(a: SessionSummary, b: SessionSummary): number {
+  return sessionLiveRank(a) - sessionLiveRank(b)
+    || (b.updated ?? b.created).getTime() - (a.updated ?? a.created).getTime()
+    || b.created.getTime() - a.created.getTime()
+    || a.id.localeCompare(b.id);
 }
 
 /** Annotate summaries in place with subagentActive, derived over the FULL set
@@ -741,6 +759,10 @@ async function listSessionsCommand(
   if (!options?.subagents) {
     sessions = sessions.filter((s) => !s.isSubAgent);
   }
+
+  // Re-order for display now that subagentActive is known: live runs first, then
+  // most-recently-active. (The upstream created-desc sort predates the flag.)
+  sessions.sort(compareSessionsForList);
 
   // Apply limit. Reject non-numeric/non-positive values instead of silently
   // treating them as "no limit" (parseInt("abc") is NaN, so `limit > 0` was

@@ -3390,7 +3390,15 @@ export function createServeCommand(): Command {
           }
         }
 
+        // Live runs (actively running, or a parent whose delegated child is
+        // running) sort ahead of everything else so in-flight work is never
+        // buried below runs that merely finished more recently; within each tier,
+        // most-recently-active first. The cursor relocates rows by their stable
+        // key (createdAt+id), so this ordering does not affect pagination.
+        const isLive = (s: SessionSummary) => s.status === 'running' || s.subagentActive === true;
         rows.sort((a, b) =>
+          (isLive(a.session) ? 0 : 1) - (isLive(b.session) ? 0 : 1) ||
+          b.session.updatedAt - a.session.updatedAt ||
           b.session.createdAt - a.session.createdAt ||
           a.projectId.localeCompare(b.projectId) ||
           a.session.sessionId.localeCompare(b.session.sessionId)
