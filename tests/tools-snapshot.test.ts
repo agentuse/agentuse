@@ -50,6 +50,37 @@ describe('tools snapshot', () => {
     expect(bound.approve.execute).toBe(next.approve.execute);
   });
 
+  it('serializes refined/effected Zod schemas instead of degrading to a permissive object', () => {
+    // record_metric's real shape: a top-level `.refine()` (cross-field rule)
+    // wraps the object in ZodEffects. Before ZodEffects was handled this
+    // snapshotted to `{ type: 'object', additionalProperties: true }` on every
+    // suspend, silently dropping the tool's schema on resume.
+    const current = {
+      tools__record_metric: {
+        description: 'record a metric',
+        inputSchema: z.object({
+          metric: z.string(),
+          count: z.number().int().optional(),
+          // inner `.refine()` (await_human's url fields use this shape) must
+          // keep `type: string`, not collapse to `{}`.
+          link: z.string().url().refine(() => true).optional(),
+        }).refine((v) => v.count !== undefined, { message: 'need count' }),
+        execute: async () => 'ok'
+      }
+    } as any;
+
+    const snapshot = createToolsSnapshot(current);
+    expect(snapshot.tools[0].inputSchema).toMatchObject({
+      type: 'object',
+      properties: {
+        metric: { type: 'string' },
+        count: { type: 'number' },
+        link: { type: 'string' }
+      },
+      required: ['metric']
+    });
+  });
+
   it('fails when a snapshotted tool is unavailable', () => {
     expect(() => bindToolsToSnapshot({} as any, {
       tools: [{ name: 'missing_tool' }]

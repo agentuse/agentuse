@@ -29,7 +29,22 @@ function zodToJsonSchema(schema: any): JsonSchema | undefined {
     case 'ZodOptional':
     case 'ZodNullable':
     case 'ZodDefault':
+    case 'ZodReadonly':
+    case 'ZodCatch':
       return zodToJsonSchema(schema._def.innerType);
+    // Wrappers that decorate an inner schema under a different key than
+    // `innerType`. Without these, a tool whose inputSchema is refined /
+    // transformed / branded / piped falls through to the `default` below,
+    // returns undefined, and gets JSON.stringify'd into Zod internals with no
+    // top-level "type" - so it snapshots to a permissive `{}` on suspend and
+    // loses its real shape on resume. `record_metric`'s top-level `.refine()`
+    // and `await_human`'s `.refine()`d url fields both hit this.
+    case 'ZodEffects': // .refine() / .superRefine() / .transform() / .preprocess()
+      return zodToJsonSchema(schema._def.schema);
+    case 'ZodBranded': // .brand()
+      return zodToJsonSchema(schema._def.type);
+    case 'ZodPipeline': // .pipe() - the input side is what validates tool args
+      return zodToJsonSchema(schema._def.in);
     case 'ZodRecord':
       return withDescription({ type: 'object', additionalProperties: true });
     case 'ZodUnknown':
