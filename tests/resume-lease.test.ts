@@ -84,6 +84,30 @@ describe('resume lease lifecycle', () => {
     }
   });
 
+  it("approve grants under the CLI decision shape too (status: 'approve', not 'approved')", async () => {
+    // The CLI sends `status: 'approve'` while Slack/serve send 'approved'
+    // (both normalize to the same decision downstream). The live e2e replay
+    // caught the lease grant only matching 'approved': a CLI approval
+    // revoked the lease and the approved command stayed denied.
+    const { projectRoot, sessionManager, sessionID, sessionDir } = await makeSuspendedSession(GATE_INPUT);
+    try {
+      await applyResumeToolResult({
+        sessionManager,
+        sessionId: sessionID,
+        toolResult: { status: 'approve', reviewer: { username: 'cli' } },
+        resumeToken: 'tok-123',
+      });
+
+      const store = new LeaseStore(sessionDir);
+      const lease = store.read();
+      expect(lease).toBeDefined();
+      expect(store.isCovered(`birdc reply 2077948120484513954 "${APPROVED_REPLY}"`)).toBe(true);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
   it('reject revokes any existing lease and grants nothing', async () => {
     const { projectRoot, sessionManager, sessionID, sessionDir } = await makeSuspendedSession(GATE_INPUT);
     try {

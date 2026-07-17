@@ -89,7 +89,10 @@ export async function applyResumeToolResult(options: {
     const decisionStatus = toolResult && typeof toolResult === 'object'
       ? (toolResult as { status?: unknown }).status
       : undefined;
-    if (decisionStatus === 'approved') {
+    // Decision payloads carry either spelling depending on surface: the CLI
+    // sends 'approve', Slack/serve send 'approved' (see the normalization in
+    // src/index.ts and src/cli/serve.ts). Both must grant.
+    if (decisionStatus === 'approved' || decisionStatus === 'approve') {
       const entries = deriveLeaseEntries(input);
       if (entries.length > 0) {
         leaseStore.grant({ version: 1, grantedAt: now, entries });
