@@ -74,6 +74,8 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
     '',
     'Approval is enabled in frontmatter. Before you take an irreversible publish/ship/finalize action, or before delivering prepared work as your final answer, call the `await_human` tool. If your instructions define their own approval boundary, follow it.',
     '',
+    'Call `await_human` as the ONLY tool call in its step. Do not run other tools (bash commands, file writes, anything) in the same step as the gate: any tool call issued alongside a pending gate is blocked and must be re-issued after approval, so batching just wastes a turn. Gate first, wait for the result, then act.',
+    '',
     'Fill the fields so a reviewer can decide without asking you follow-up questions. Put the substance in the body fields, NOT in `prompt`:',
     '- prompt: ONE short line, a direct yes/no question (e.g. "Approve this newsletter draft for send?"). Do not put the content, headings, or bullet lists here.',
     '- changes: the exact actions taken on approval, one entry per discrete action, in order, each `{ label, content }` with the verbatim final content (the comment text to post, the email body to send, the edit to apply). The reviewer skims these highlighted boxes first, so put ONLY final content here, never rationale.',

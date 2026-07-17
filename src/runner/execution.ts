@@ -682,27 +682,35 @@ export async function* executeAgentCore(
     // before any tool in the step is dispatched (executeToolsFromStream queues
     // nothing until model-call-end). Two guarantees ride on that:
     //   1. an uncovered effectful command can never run beside a pending gate
-    //      (lease coverage), and
-    //   2. a NON-effectful sibling that streams in AFTER an await_human gate in
-    //      the same step is denied too, so a human gate rides alone.
-    // Both denials keep the human seeing exactly one rich gate per operation.
+    //      (lease coverage, order-independent), and
+    //   2. EVERY sibling that streams in AFTER an await_human gate in the same
+    //      step is denied, so a human gate rides alone (gate-first order only).
+    // A generic (all-tools) approval fn is safe: no tool defines its own
+    // needsApproval, so nothing is being overridden by taking sole authority.
     const awaitHumanPresent = !!(modelFacingTools as any).await_human;
-    const bashPresent = !!(modelFacingTools as any).tools__bash;
-    if (bashPresent && (effectPatterns.length > 0 || awaitHumanPresent)) {
+    if (awaitHumanPresent || effectPatterns.length > 0) {
       // Barrier state, scoped to this streamText. An await_human call always
       // suspends the step it appears in (stopOnSuspend ends the stream), so a set
       // flag can never leak into a later LIVE step of the same stream; no reset is
       // needed. If await_human ever became non-suspending, this would need a
       // per-step reset.
       let gatePendingThisStep = false;
-      const toolApproval: Record<string, unknown> = {
-        tools__bash: (input: any, approvalOptions?: { toolCallId?: string }) => {
+      streamConfig.toolApproval = (opts: { toolCall: { toolName: string; toolCallId?: string; input?: any } }) => {
+        const { toolName, toolCallId: callId, input } = opts.toolCall;
+
+        // The gate itself: mark the step gated, then run and suspend. Returning
+        // undefined (not-applicable) lets await_human execute normally.
+        if (toolName === 'await_human') {
+          gatePendingThisStep = true;
+          return undefined;
+        }
+
+        // Effectful bash is governed by the lease regardless of gate state:
+        // covered -> runs, uncovered -> denied with the re-gate redirect. This is
+        // the #165 path and stays first so effectful denials keep their richer
+        // reason (and so the incident test's lease-denied event is preserved).
+        if (toolName === 'tools__bash') {
           const command = typeof input?.command === 'string' ? input.command : '';
-          const callId = approvalOptions?.toolCallId;
-          // Effectful commands are governed by the lease regardless of gate state:
-          // covered -> runs, uncovered -> denied with the re-gate redirect. This is
-          // the #165 path and stays first so effectful denials keep their richer
-          // reason (and so the incident test's lease-denied event is preserved).
           if (command && isEffectful(command, effectPatterns)) {
             if (leaseStore.isCovered(command)) {
               options.effectWal?.append({
@@ -724,36 +732,31 @@ export async function* executeAgentCore(
               reason: 'This command is declared effectful and is not covered by an approved plan. Do NOT retry or reword it. Call await_human with the full plan, putting the exact final content/command in changes[] (verbatim), and run the command only after the reviewer approves. If a reviewer already approved a different version, re-gate with this exact version.',
             };
           }
-          // Gate-rides-alone barrier: a non-effectful sibling that arrived AFTER an
-          // await_human gate in this same step. Deny it pre-dispatch so nothing runs
-          // beside a pending gate; the model re-issues after approval. Deterministic
-          // for the gate-first stream order only; the reverse order (bash chunk
-          // before the gate chunk) is not caught here by design (a gated command in
-          // that order is still caught by the lease above).
-          if (gatePendingThisStep) {
-            options.effectWal?.append({
-              event: 'gate-barrier-denied',
-              ...(callId && { callId }),
-              tool: 'tools__bash',
-              command: sanitizeWALInput(command),
-            });
-            return {
-              type: 'denied' as const,
-              reason: 'A human approval gate (await_human) is open in this step, so this sibling command was not run. Never issue commands alongside await_human: wait for the approval result, then run this command in a later step.',
-            };
-          }
-          return undefined;
-        },
+        }
+
+        // Gate-rides-alone barrier: ANY sibling (bash or not) that arrived AFTER an
+        // await_human gate in this same step. Deny it pre-dispatch so nothing runs
+        // beside a pending gate; the model re-issues after approval. Deterministic
+        // for the gate-first stream order only; the reverse order is covered by the
+        // lease (gated commands) and the suspend-drain abort, not here.
+        if (gatePendingThisStep) {
+          const command = typeof input?.command === 'string' ? input.command : undefined;
+          options.effectWal?.append({
+            event: 'gate-barrier-denied',
+            ...(callId && { callId }),
+            tool: toolName,
+            ...(command !== undefined
+              ? { command: sanitizeWALInput(command) }
+              : { input: sanitizeWALInput(input) }),
+          });
+          return {
+            type: 'denied' as const,
+            reason: 'A human approval gate (await_human) is open in this step, so this sibling tool call was not run. Never call other tools alongside await_human: wait for the approval result, then issue this call in a later step.',
+          };
+        }
+
+        return undefined;
       };
-      if (awaitHumanPresent) {
-        // Mark the step as gated so siblings streamed after this call are denied.
-        // await_human itself is not-applicable (undefined): it must run and suspend.
-        toolApproval.await_human = () => {
-          gatePendingThisStep = true;
-          return undefined;
-        };
-      }
-      streamConfig.toolApproval = toolApproval;
     }
 
     return streamText(streamConfig);

@@ -110,7 +110,7 @@ describe('suspend drain (agentuse-lab#165)', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  test('ghost scenario: sibling effect tool beside the gate is fully journaled and the run still suspends', async () => {
+  test('ghost scenario prevented: a non-bash sibling beside the gate is denied before it runs', async () => {
     const executed: string[] = [];
     const postTool = {
       description: 'simulates an irreversible external post (ignores abort, like birdc)',
@@ -123,7 +123,9 @@ describe('suspend drain (agentuse-lab#165)', () => {
     };
 
     const { model, calls } = makeModel([
-      // Second turn would post AGAIN — it must never run.
+      // Gate-first order: the #169 gate-rides-alone barrier denies the post before
+      // dispatch, so this abort-ignoring sibling never runs at all — the leak that
+      // #165 could only journal after the fact is now prevented.
       turn([
         toolCallPart('gate-1', 'await_human', { prompt: 'Approve this post?' }),
         toolCallPart('post-1', 'post_tool', { text: 'ghost draft v3' }),
@@ -138,7 +140,7 @@ describe('suspend drain (agentuse-lab#165)', () => {
     };
 
     const chunks = await runCore(tools, wal);
-    // Let the abort-ignoring execute settle so its WAL exit record lands.
+    // Wait past post_tool's 150ms execute, so a leak would have landed by now.
     await new Promise((resolve) => setTimeout(resolve, 400));
 
     // The suspension surfaced, exactly once, as the final chunk.
@@ -148,19 +150,21 @@ describe('suspend drain (agentuse-lab#165)', () => {
     expect(suspendedChunks[0].toolName).toBe('await_human');
     expect((suspendedChunks[0].toolResultRaw as any).kind).toBe('await_human');
 
-    // The model was never called again after the gate registered.
+    // The model was never called again, and the post NEVER executed — the barrier
+    // stopped the non-bash sibling before dispatch.
     expect(calls()).toBe(1);
-    expect(executed).toEqual(['ghost draft v3']);
+    expect(executed).toEqual([]);
 
-    // The sibling call is visible in the yielded chunks (drained, not dropped).
+    // The sibling call is still visible as a streamed tool-call (denied, not dropped).
     const siblingCall = chunks.find((c) => c.type === 'tool-call' && c.toolName === 'post_tool');
     expect(siblingCall).toBeDefined();
 
-    // The WAL has the full ghost trail regardless of consumer behavior.
+    // WAL: the barrier denied post-1; its execute never started (no tool-start/tool-end).
     const records = readWAL(dir);
     const events = records.map((r) => `${r.event}:${r.tool ?? r.gateTool ?? ''}`);
-    expect(events).toContain('tool-start:post_tool');
-    expect(events).toContain('tool-end:post_tool');
+    expect(records.some((r) => r.event === 'gate-barrier-denied' && r.callId === 'post-1')).toBe(true);
+    expect(events).not.toContain('tool-start:post_tool');
+    expect(events).not.toContain('tool-end:post_tool');
     expect(events).toContain('tool-suspend:await_human');
     expect(events).toContain('gate-registered:await_human');
 
