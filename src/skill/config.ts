@@ -1,12 +1,17 @@
 import { z } from 'zod';
 
 export interface SkillGrantConfig {
-  allow?: string[] | undefined;
+  // Trusting a skill grants it the bash commands it declares in its SKILL.md
+  // `allowed-tools`. Default (no trust) grants nothing: the skill loads but its
+  // commands must be listed in `tools.bash.commands` to run. Trust is a real
+  // decision (like installing an editor extension) - see the trust expansion in
+  // capabilities.ts, which auto-gates the irreversible-looking granted commands.
+  trusted?: boolean | undefined;
 }
 
 export interface NormalizedSkillsConfig {
   auto: boolean;
-  trusted: boolean;
+  trusted: boolean;   // global: trust ALL discovered skills (the blunt shortcut)
   explicit: Record<string, SkillGrantConfig>;
 }
 
@@ -15,8 +20,20 @@ const SkillNameSchema = z.string()
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*(?::[a-z0-9]+(?:-[a-z0-9]+)*)*$/, 'Invalid skill name');
 
 const SkillGrantSchema = z.object({
-  allow: z.array(z.string()).optional(),
+  trusted: z.boolean().optional(),
 }).strict();
+
+/** Normalize one per-skill value: `trusted` shorthand, an object, or bare inclusion. */
+function normalizeGrant(value: unknown): SkillGrantConfig | { error: string } {
+  if (value === 'trusted') return { trusted: true };
+  if (value == null) return {};
+  if (typeof value === 'object') {
+    const result = SkillGrantSchema.safeParse(value);
+    if (!result.success) return { error: result.error.issues[0]?.message ?? 'invalid skill grant' };
+    return result.data;
+  }
+  return { error: 'skill value must be "trusted", an object, or empty' };
+}
 
 export const SkillsConfigSchema = z.union([
   z.literal('auto').transform((): NormalizedSkillsConfig => ({ auto: true, trusted: false, explicit: {} })),
@@ -54,18 +71,17 @@ export const SkillsConfigSchema = z.union([
         return z.NEVER;
       }
 
-      const grantResult = SkillGrantSchema.safeParse(value ?? {});
-      if (!grantResult.success) {
-        for (const issue of grantResult.error.issues) {
-          ctx.addIssue({
-            ...issue,
-            path: [key, ...issue.path],
-          });
-        }
+      const grant = normalizeGrant(value);
+      if ('error' in grant) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: grant.error,
+        });
         return z.NEVER;
       }
 
-      explicit[key] = grantResult.data;
+      explicit[key] = grant;
     }
 
     return { auto, trusted: false, explicit };
@@ -80,18 +96,20 @@ export function getExplicitSkillNames(skills: NormalizedSkillsConfig | undefined
   return Object.keys(skills?.explicit ?? {});
 }
 
-export function getGrantedSkillAllows(skills: NormalizedSkillsConfig | undefined): string[] {
-  const allows = new Set<string>();
-  for (const grant of Object.values(skills?.explicit ?? {})) {
-    for (const allow of grant.allow ?? []) {
-      if (allow !== '*') {
-        allows.add(allow);
-      }
-    }
-  }
-  return [...allows];
+/** Whether a specific discovered skill is trusted (globally or per-skill). */
+export function isSkillTrusted(skills: NormalizedSkillsConfig | undefined, name: string): boolean {
+  if (!skills) return false;
+  return skills.trusted === true || skills.explicit[name]?.trusted === true;
 }
 
-export function hasFullSkillGrant(skills: NormalizedSkillsConfig | undefined): boolean {
-  return skills?.trusted === true || Object.values(skills?.explicit ?? {}).some((grant) => grant.allow?.includes('*'));
+/** The explicit skills marked `trusted` (does not include the global trust-all switch). */
+export function getTrustedSkillNames(skills: NormalizedSkillsConfig | undefined): string[] {
+  return Object.entries(skills?.explicit ?? {})
+    .filter(([, grant]) => grant.trusted === true)
+    .map(([name]) => name);
+}
+
+/** Global trust-all switch: every discovered skill is trusted. */
+export function trustsAllSkills(skills: NormalizedSkillsConfig | undefined): boolean {
+  return skills?.trusted === true;
 }

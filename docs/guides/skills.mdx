@@ -149,27 +149,42 @@ If validation fails:
 
 Skills run with the **agent's tools**. For a skill to use the tools it documents, the agent must have them configured.
 
-Agents use `skills: auto` by default, even when the field is omitted. This makes installed skills discoverable and lets the model load relevant skills on demand.
+Agents use `skills: auto` by default, even when the field is omitted. This makes installed skills discoverable and lets the model load relevant skills on demand. By default a skill is discovered but granted **nothing**: to run a command a skill documents, it must be in `tools.bash.commands`, or you must trust the skill.
 
-Use `skills: trusted` for sandboxed or yolo-style agents. It keeps auto skill loading, but treats loaded skills as trusted to use the tools already configured on the agent. It does not enable new tools or new bash commands.
+**Trusting a skill grants it the bash commands it declares** in its SKILL.md `allowed-tools`, so you do not have to re-list them. Trust per skill:
+
+```yaml
+skills:
+  linkedin: trusted
+```
+
+or trust every discovered skill (the blunt shortcut, use deliberately):
 
 ```yaml
 skills: trusted
 ```
 
-Define a skill explicitly when it is core to the agent. Explicit skills are preloaded before the task starts, so the agent does not need to infer the trigger from the user instruction:
+Trusting a skill is a real trust decision, the same class as installing an editor extension: you are granting a skill you may not have written the commands it asks for. Two rails keep it safe:
+
+- **Irreversible commands are gated, not auto-run.** A trusted skill can mark its own irreversible commands gated in SKILL.md (`metadata.agentuse-gated`), so trust brings the [gate](/guides/approval-gates#gated-commands-mechanical-enforcement) together with the grant. AgentUse also auto-gates a granted command that *looks* irreversible (e.g. `deploy *`). So trust grants capability, never un-gated posting.
+- **A command you list yourself** in `tools.bash.commands` is always respected as your explicit choice, never auto-gated.
+
+Define a skill explicitly (without trusting it) when it is core to the agent but you want to grant its commands yourself. Explicit skills are preloaded before the task starts, so the agent does not need to infer the trigger from the user instruction:
 
 ```yaml
 skills: [linkedin]
 ```
 
+A skill author marks irreversible commands in the SKILL.md frontmatter's standard `metadata` namespace, so the file stays a portable, valid skill everywhere else:
+
 ```yaml
-skills:
-  linkedin:
-    allow: [agent-browser]
+# SKILL.md frontmatter
+allowed-tools: Bash(birdc:*)
+metadata:
+  agentuse-gated: "birdc reply *, birdc tweet *"
 ```
 
-`allow` entries are user-authored command-family grants. AgentUse does not infer or validate command needs from skill text. For example, `allow: [agent-browser]` grants the `agent-browser *` command family. Use `allow: ["*"]` only for trusted skills that may use all tools already configured for the agent.
+Trusting that skill grants `birdc *` and gates `birdc reply *` / `birdc tweet *`.
 
 To inspect a skill's grants:
 

@@ -206,15 +206,15 @@ Test agent`, 'test');
       });
     });
 
-    it('parses explicit skill grants with mixed auto mode', () => {
+    it('parses per-skill trust with mixed auto mode (object and shorthand)', () => {
       const agent = parseAgentContent(`---
 model: anthropic:claude-sonnet-4-0
 skills:
   auto: true
   linkedin:
-    allow: [agent-browser]
-  trusted-skill:
-    allow: ["*"]
+    trusted: true
+  x-personal: trusted
+  scout:
 ---
 
 Test agent`, 'test');
@@ -223,13 +223,14 @@ Test agent`, 'test');
         auto: true,
         trusted: false,
         explicit: {
-          linkedin: { allow: ['agent-browser'] },
-          'trusted-skill': { allow: ['*'] },
+          linkedin: { trusted: true },
+          'x-personal': { trusted: true },
+          scout: {},
         },
       });
     });
 
-    it('accepts arbitrary skill allow names', () => {
+    it('rejects the removed per-skill allow key', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0
 skills:
@@ -239,8 +240,7 @@ skills:
 
 Test agent`;
 
-      const agent = parseAgentContent(content, 'test');
-      expect(agent.config.skills?.explicit.linkedin?.allow).toEqual(['spaceship']);
+      expect(() => parseAgentContent(content, 'test')).toThrow(/Unrecognized key/);
     });
 
     it('parses minimal approval configuration with channels', () => {

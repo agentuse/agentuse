@@ -135,7 +135,7 @@ function extractCommandSubstitutionHeads(snippet: string): string[] {
   return commands;
 }
 
-function extractCommandFromAllowedTool(tool: string): string | undefined {
+export function extractCommandFromAllowedTool(tool: string): string | undefined {
   const match = tool.match(/^Bash\(([^:*()\s]+)(?::\*)?\)$/);
   return match?.[1];
 }

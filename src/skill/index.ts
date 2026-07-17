@@ -20,18 +20,21 @@ export { validateAllowedTools, formatToolsWarning } from './validate.js';
 export { createSkillTool, createSkillTools, loadSkillPromptOutputs } from './tool.js';
 export type { SkillPromptOutput, SkillToolsOptions, SkillToolsResult } from './tool.js';
 
-// Config/allow expansion
+// Config / trust expansion
 export {
   SkillsConfigSchema,
   defaultSkillsConfig,
   getExplicitSkillNames,
-  getGrantedSkillAllows,
-  hasFullSkillGrant,
+  isSkillTrusted,
+  getTrustedSkillNames,
+  trustsAllSkills,
 } from './config.js';
 export type { NormalizedSkillsConfig, SkillGrantConfig } from './config.js';
 export {
-  expandSkillAllows,
+  expandTrustedSkills,
+  trustedSkillGrants,
+  skillDeclaredGated,
 } from './capabilities.js';
 
-export { extractSkillCommandMentions } from './command-extract.js';
+export { extractSkillCommandMentions, extractCommandFromAllowedTool } from './command-extract.js';
 export type { SkillCommandMention } from './command-extract.js';

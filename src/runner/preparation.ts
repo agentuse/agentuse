@@ -20,10 +20,11 @@ import { rehydrateMessages } from '../session';
 import type { AssistantTokens } from '../session/usage';
 import { appendApprovalInstructions } from './approval';
 import {
-  expandSkillAllows,
+  expandTrustedSkills,
   getExplicitSkillNames,
   loadSkillPromptOutputs,
 } from '../skill/index.js';
+import { discoverSkills } from '../skill/discovery.js';
 
 /**
  * Prepare agent execution - shared setup logic for both streaming and non-streaming modes
@@ -59,11 +60,13 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   if (!existingSessionId && projectContext) {
     const explicitSkillNames = getExplicitSkillNames(agent.config.skills);
     if (explicitSkillNames.length > 0) {
-      const effectiveToolsConfig = expandSkillAllows(
+      // Pass the trust-expanded config so a trusted skill's own allowed-tools
+      // don't show as "ungranted" in its preloaded prompt output.
+      const discovered = await discoverSkills(projectContext.projectRoot);
+      const effectiveToolsConfig = expandTrustedSkills(
         agent.config.tools,
-        explicitSkillNames.flatMap((name) =>
-          agent.config.skills!.explicit[name]?.allow?.filter((allow) => allow !== '*') ?? []
-        )
+        discovered,
+        agent.config.skills
       );
       const preloadedSkills = await loadSkillPromptOutputs(
         projectContext.projectRoot,

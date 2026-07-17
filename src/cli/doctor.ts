@@ -4,9 +4,9 @@ import fs from 'fs/promises';
 import path, { resolve } from 'path';
 import { parseAgent } from '../parser.js';
 import { discoverSkills } from '../skill/discovery.js';
-import { getExplicitSkillNames } from '../skill/config.js';
-import { parseSkillContent } from '../skill/parser.js';
-import { extractSkillCommandMentions } from '../skill/command-extract.js';
+import { getExplicitSkillNames, isSkillTrusted, trustsAllSkills } from '../skill/config.js';
+import { extractCommandFromAllowedTool } from '../skill/command-extract.js';
+import { skillDeclaredGated } from '../skill/capabilities.js';
 import { resolveProjectContext } from '../utils/project.js';
 import { computeAgentId } from '../utils/agent-id.js';
 import { getSessionStorageDir } from '../storage/paths.js';
@@ -241,44 +241,28 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
         : [];
 
   const unknownExplicit = explicitSkillNames.filter((name) => !skills.has(name));
-  const ungrantedExplicit = skillNames
-    .filter((name) => skills.has(name))
-    .filter((name) => !agent.config.skills!.trusted && !agent.config.skills!.explicit[name]?.allow?.length);
-  const grantedBySkill = new Map(
-    Object.entries(agent.config.skills!.explicit)
-      .map(([name, grant]) => [name, new Set(grant.allow ?? [])])
-  );
   const inspectedSkills = skillNames.filter((name) => skills.has(name)).sort();
-  const commandReports = [];
 
-  for (const skillName of inspectedSkills) {
-    const skill = skills.get(skillName);
-    if (!skill) continue;
-    const content = await parseSkillContent(skill.location);
-    const mentions = await extractSkillCommandMentions(content);
-    const grants = grantedBySkill.get(skillName) ?? new Set<string>();
-    const globallyAllowed = mentions
-      .map((mention) => mention.command)
-      .filter((command) => globallyAllowsCommand(agent, command))
-      .sort();
-    commandReports.push({
-      skillName,
-      mentions,
-      grants: [...grants].sort(),
-      globallyAllowed,
-      ungranted: mentions
-        .map((mention) => mention.command)
-        .filter((command) => agent.config.skills!.trusted
-          ? !globallyAllowsCommand(agent, command)
-          : !grants.has('*') && !grants.has(command) && !globallyAllowsCommand(agent, command))
-        .sort(),
-    });
-  }
-
-  if (agent.config.skills!.trusted) {
-    console.log(chalk.yellow('\nSkill trust: trusted'));
-    console.log(chalk.gray('Loaded skills may use all tools already configured for this agent. This does not enable new tools.'));
-  }
+  // Per inspected skill: the bash commands it declares (allowed-tools), whether
+  // it is trusted, and where trust routes each grant (auto-run vs gated). A skill
+  // is a source of grants only when trusted; otherwise its declared commands run
+  // only if the author also lists them in tools.bash.commands.
+  const skillReports = inspectedSkills.map((name) => {
+    const skill = skills.get(name)!;
+    const declared = [...new Set((skill.allowedTools ?? [])
+      .map((tool) => extractCommandFromAllowedTool(tool))
+      .filter((head): head is string => Boolean(head)))].sort();
+    const trusted = isSkillTrusted(agent.config.skills, name);
+    const declaredGated = skillDeclaredGated(skill).sort();
+    // A declared command is auto-gated when trust grants it, it looks irreversible,
+    // and the author has not already listed it themselves (their explicit choice wins).
+    const autoGated = trusted
+      ? declared.filter((head) => looksEffectful(`${head} *`) && !globallyAllowsCommand(agent, head))
+      : [];
+    const autoRun = trusted ? declared.filter((head) => !autoGated.includes(head)) : [];
+    const notGranted = trusted ? [] : declared.filter((head) => !globallyAllowsCommand(agent, head));
+    return { name, declared, trusted, declaredGated, autoGated, autoRun, notGranted };
+  });
 
   if (unknownExplicit.length > 0) {
     console.log(chalk.red('\nProblems:'));
@@ -287,46 +271,47 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
     }
   }
 
-  if (ungrantedExplicit.length > 0) {
-    console.log(chalk.yellow('\nSkill grants:'));
-    for (const name of ungrantedExplicit) {
-      console.log(`- ${name} is inspectable/loaded but has no skill-scoped allow grants.`);
+  if (trustsAllSkills(agent.config.skills)) {
+    console.log(chalk.yellow('\nSkill trust: all skills trusted (skills: trusted)'));
+    console.log(chalk.gray('Every discovered skill is granted the bash commands it declares in allowed-tools. Irreversible-looking grants are auto-gated (need approval). Trusting a skill is a real trust decision, like installing an editor extension.'));
+  }
+
+  if (skillReports.length > 0) {
+    console.log(chalk.bold('\nSkills'));
+    for (const report of skillReports) {
+      console.log(`\n${chalk.cyan(report.name)}${report.trusted ? chalk.green(' (trusted)') : ''}`);
+      if (report.declared.length === 0) {
+        console.log(chalk.gray('  Declares no bash commands in allowed-tools.'));
+        continue;
+      }
+      console.log(`  declares: ${report.declared.join(', ')}`);
+      if (report.declaredGated.length > 0) {
+        console.log(chalk.yellow(`  declares gated (skill-marked, needs approval): ${report.declaredGated.join(', ')}`));
+      }
+      if (report.trusted) {
+        if (report.autoRun.length > 0) console.log(`  granted, auto-run: ${report.autoRun.join(', ')}`);
+        if (report.autoGated.length > 0) console.log(chalk.yellow(`  granted, gated (needs approval): ${report.autoGated.join(', ')}`));
+      } else if (report.notGranted.length > 0) {
+        console.log(`  not granted: ${report.notGranted.join(', ')}`);
+      }
     }
-    console.log(chalk.gray('\nAgentUse does not infer command needs from skill text. Add only the CLI families you intentionally trust, for example:'));
+  }
+
+  const ungrantedSkills = skillReports.filter((report) => report.notGranted.length > 0);
+  if (ungrantedSkills.length > 0) {
+    console.log(chalk.yellow('\nSome skills declare commands the agent has not granted.'));
+    console.log(chalk.gray('Trust a skill to grant the commands it declares (irreversible ones are auto-gated):'));
     console.log('skills:');
-    if (agent.config.skills!.auto) {
-      console.log('  auto: true');
+    if (agent.config.skills!.auto) console.log('  auto: true');
+    for (const report of ungrantedSkills) {
+      console.log(`  ${report.name}: trusted`);
     }
-    for (const name of ungrantedExplicit) {
-      console.log(`  ${name}:`);
-      console.log('    allow: [<cli-name>]');
-    }
+    console.log(chalk.gray('Or list specific commands yourself under tools.bash.commands.'));
   }
 
-  if (commandReports.length > 0) {
-    console.log(chalk.bold('\nCommands Mentioned By Skills'));
-    console.log(chalk.gray('Advisory only: AgentUse extracts command-looking snippets from skill docs; it does not prove they are required.'));
-
-    for (const report of commandReports) {
-      console.log(`\n${chalk.cyan(report.skillName)}`);
-      if (report.mentions.length === 0) {
-        console.log(chalk.gray('  No command-looking snippets found.'));
-      } else {
-        console.log(`  mentioned: ${report.mentions.map((mention) => mention.command).join(', ')}`);
-      }
-      console.log(`  granted: ${agent.config.skills!.trusted ? 'trusted' : report.grants.length > 0 ? report.grants.join(', ') : '(none)'}`);
-      if (report.globallyAllowed.length > 0) {
-        console.log(`  already allowed globally: ${report.globallyAllowed.join(', ')}`);
-      }
-      if (report.ungranted.length > 0) {
-        console.log(`  not covered: ${report.ungranted.join(', ')}`);
-      }
-    }
-  }
-
-  if (unknownExplicit.length === 0 && ungrantedExplicit.length === 0 && commandReports.every((report) => report.ungranted.length === 0)) {
+  if (unknownExplicit.length === 0 && ungrantedSkills.length === 0) {
     console.log(chalk.green('\nNo skill capability problems found.'));
-    if (agent.config.skills!.auto && explicitSkillNames.length === 0 && commandReports.length === 0) {
+    if (agent.config.skills!.auto && explicitSkillNames.length === 0 && skillReports.length === 0) {
       console.log(chalk.gray('Auto skills are enabled. Define core skills explicitly to include them in static inspection.'));
     }
   }

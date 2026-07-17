@@ -168,7 +168,7 @@ Trusted mode agent.`);
     await runDoctor(agentPath);
 
     const output = logs.join('\n');
-    expect(output).toContain('Skill trust: trusted');
-    expect(output).not.toContain('Skill grants:');
+    expect(output).toContain('Skill trust: all skills trusted');
+    expect(output).not.toContain('not granted');
   });
 });

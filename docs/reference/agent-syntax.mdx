@@ -255,29 +255,25 @@ Additional instructions or context.
   skills: auto
   ```
 
-  `auto` preserves the default behavior: all discovered skills are available for on-demand loading when relevant.
+  `auto` preserves the default behavior: all discovered skills are available for on-demand loading when relevant. A discovered skill is granted nothing until trusted (or its commands are listed in `tools.bash.commands`).
 
-  `trusted` keeps auto discovery and trusts loaded skills to use the tools already configured on the agent. It does not enable new tools or new bash commands:
+  **Trusting a skill grants it the bash commands it declares** in its SKILL.md `allowed-tools`. Trust per skill (recommended) or globally:
 
   ```yaml
-  skills: trusted
+  skills:
+    linkedin: trusted     # grant just this skill's declared commands
+  # or: skills: trusted    # trust every discovered skill (blunt shortcut)
   ```
 
-  To preload a skill before the task starts, define it explicitly:
+  A trusted skill's irreversible commands are gated, not auto-run: the skill can mark them in SKILL.md (`metadata.agentuse-gated`), and AgentUse also auto-gates a granted command that looks irreversible (e.g. `deploy *`). A command you list yourself in `tools.bash.commands` is respected as-is and never auto-gated. See [Gated commands](/guides/approval-gates#gated-commands-mechanical-enforcement).
+
+  To preload a skill before the task starts without trusting it, define it explicitly (grant its commands yourself via `tools.bash.commands`):
 
   ```yaml
   skills: [linkedin]
   ```
 
-  Add `allow` when a preloaded skill should grant a command family:
-
-  ```yaml
-  skills:
-    linkedin:
-      allow: [agent-browser]
-  ```
-
-  Explicit skills are loaded into the agent's initial context. `allow` grants user-authored command families needed by that skill. For example, `agent-browser` expands to `agent-browser *`. AgentUse does not infer or validate command needs from skill text.
+  Inspect what trust granted with `agentuse doctor <agent-file>`.
 
   You can combine auto discovery with explicit preloads:
 

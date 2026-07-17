@@ -4,11 +4,12 @@ import { computeAgentId } from '../utils/agent-id';
 import { getTools as getConfiguredTools, type PathResolverContext } from '../tools/index.js';
 import { createSkillTools } from '../skill/index.js';
 import {
-  expandSkillAllows,
+  expandTrustedSkills,
   getExplicitSkillNames,
-  getGrantedSkillAllows,
-  hasFullSkillGrant,
+  trustsAllSkills,
+  getTrustedSkillNames,
 } from '../skill/index.js';
+import { discoverSkills } from '../skill/discovery.js';
 import { createStore, createStoreTools, type Store } from '../store/index.js';
 import { createReportIncompleteTool, type RunOutcome } from '../tools/report-incomplete.js';
 import { createSandbox, createSandboxTools, type SandboxInstance } from '../sandbox.js';
@@ -94,12 +95,27 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   // Convert MCP tools to AI SDK format
   const mcpTools = await getMCPTools(mcpConnections);
   const explicitSkillNames = getExplicitSkillNames(agent.config.skills);
-  const grantedAllows = getGrantedSkillAllows(agent.config.skills);
-  const effectiveToolsConfig = expandSkillAllows(agent.config.tools, grantedAllows);
-  if (agent.config.skills?.trusted) {
-    logger.warn(`${logPrefix}Skill configuration uses skills: trusted. Loaded skills can use all configured agent tools.`);
-  } else if (hasFullSkillGrant(agent.config.skills)) {
-    logger.warn(`${logPrefix}Skill configuration uses allow: ["*"]. Explicit skills can use all configured agent tools.`);
+
+  // Trust expansion (agentuse-lab#168): a trusted skill grants the bash commands
+  // it declares in `allowed-tools`. Discover skills up front so their grants can
+  // be folded into the tools config BEFORE the bash tool is built; irreversible-
+  // looking grants are auto-gated inside expandTrustedSkills.
+  let effectiveToolsConfig = agent.config.tools;
+  if (projectContext) {
+    try {
+      const discovered = await discoverSkills(projectContext.projectRoot);
+      effectiveToolsConfig = expandTrustedSkills(agent.config.tools, discovered, agent.config.skills);
+    } catch (error) {
+      logger.warn(`${logPrefix}Skill trust expansion failed: ${(error as Error).message}`);
+    }
+  }
+  if (trustsAllSkills(agent.config.skills)) {
+    logger.warn(`${logPrefix}Skill configuration uses skills: trusted - every discovered skill is granted the commands it declares in allowed-tools. Irreversible-looking commands are gated; review with 'agentuse doctor'.`);
+  } else {
+    const trusted = getTrustedSkillNames(agent.config.skills);
+    if (trusted.length > 0) {
+      logger.debug(`${logPrefix}Trusted skills: ${trusted.join(', ')} (granted their declared allowed-tools commands).`);
+    }
   }
 
   // Get configured builtin tools (filesystem, bash)
