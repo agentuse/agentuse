@@ -14,7 +14,9 @@ export const FilesystemPathConfigSchema = z.object({
 );
 
 export const BashConfigSchema = z.object({
-  commands: z.array(z.string()),
+  // Optional: commands can also arrive from trusted skills (agentuse-lab#168) or
+  // be gated-only, so a bash block may legitimately omit its own allowlist.
+  commands: z.array(z.string()).optional().default([]),
   // Gated command patterns (same wildcard shape as `commands`, human-authored -
   // never model-authored). A gated command IS allowed to run (effective allowlist
   // is commands ∪ gated), but only when covered by a lease derived from the latest

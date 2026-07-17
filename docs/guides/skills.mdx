@@ -164,27 +164,26 @@ or trust every discovered skill (the blunt shortcut, use deliberately):
 skills: trusted
 ```
 
-Trusting a skill is a real trust decision, the same class as installing an editor extension: you are granting a skill you may not have written the commands it asks for. Two rails keep it safe:
+Trusting a skill is a real trust decision, the same class as installing an editor extension: you are granting a skill you may not have written the commands it asks for. Trust only **grants** (adds the commands so they can run); it never invents gates. Gating stays your explicit call:
 
-- **Irreversible commands are gated, not auto-run.** A trusted skill can mark its own irreversible commands gated in SKILL.md (`metadata.agentuse-gated`), so trust brings the [gate](/guides/approval-gates#gated-commands-mechanical-enforcement) together with the grant. AgentUse also auto-gates a granted command that *looks* irreversible (e.g. `deploy *`). So trust grants capability, never un-gated posting.
-- **A command you list yourself** in `tools.bash.commands` is always respected as your explicit choice, never auto-gated.
+- To require approval for a subset of what a skill grants, list that pattern in [`tools.bash.gated`](/guides/approval-gates#gated-commands-mechanical-enforcement). For example, a skill declares `Bash(birdc:*)`, so trusting it grants `birdc *`. If you want `birdc reply *` behind approval, add it to `tools.bash.gated`. Gated-wins precedence gates `birdc reply` while `birdc read` still auto-runs.
+
+```yaml
+skills:
+  x-personal: trusted        # grants birdc *
+tools:
+  bash:
+    gated:
+      - "birdc reply *"       # ...but reply needs your approval
+```
+
+`agentuse doctor` flags granted commands that look irreversible, so you know what to consider gating.
 
 Define a skill explicitly (without trusting it) when it is core to the agent but you want to grant its commands yourself. Explicit skills are preloaded before the task starts, so the agent does not need to infer the trigger from the user instruction:
 
 ```yaml
 skills: [linkedin]
 ```
-
-A skill author marks irreversible commands in the SKILL.md frontmatter's standard `metadata` namespace, so the file stays a portable, valid skill everywhere else:
-
-```yaml
-# SKILL.md frontmatter
-allowed-tools: Bash(birdc:*)
-metadata:
-  agentuse-gated: "birdc reply *, birdc tweet *"
-```
-
-Trusting that skill grants `birdc *` and gates `birdc reply *` / `birdc tweet *`.
 
 To inspect a skill's grants:
 

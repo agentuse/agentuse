@@ -33,7 +33,6 @@ export type { NormalizedSkillsConfig, SkillGrantConfig } from './config.js';
 export {
   expandTrustedSkills,
   trustedSkillGrants,
-  skillDeclaredGated,
 } from './capabilities.js';
 
 export { extractSkillCommandMentions, extractCommandFromAllowedTool } from './command-extract.js';

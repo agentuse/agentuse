@@ -6,7 +6,6 @@ import { parseAgent } from '../parser.js';
 import { discoverSkills } from '../skill/discovery.js';
 import { getExplicitSkillNames, isSkillTrusted, trustsAllSkills } from '../skill/config.js';
 import { extractCommandFromAllowedTool } from '../skill/command-extract.js';
-import { skillDeclaredGated } from '../skill/capabilities.js';
 import { resolveProjectContext } from '../utils/project.js';
 import { computeAgentId } from '../utils/agent-id.js';
 import { getSessionStorageDir } from '../storage/paths.js';
@@ -253,15 +252,14 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
       .map((tool) => extractCommandFromAllowedTool(tool))
       .filter((head): head is string => Boolean(head)))].sort();
     const trusted = isSkillTrusted(agent.config.skills, name);
-    const declaredGated = skillDeclaredGated(skill).sort();
-    // A declared command is auto-gated when trust grants it, it looks irreversible,
-    // and the author has not already listed it themselves (their explicit choice wins).
-    const autoGated = trusted
-      ? declared.filter((head) => looksEffectful(`${head} *`) && !globallyAllowsCommand(agent, head))
-      : [];
-    const autoRun = trusted ? declared.filter((head) => !autoGated.includes(head)) : [];
+    const granted = trusted ? declared : declared.filter((head) => globallyAllowsCommand(agent, head));
     const notGranted = trusted ? [] : declared.filter((head) => !globallyAllowsCommand(agent, head));
-    return { name, declared, trusted, declaredGated, autoGated, autoRun, notGranted };
+    // Advisory: granted commands that look irreversible and aren't already gated,
+    // so the author knows what to consider adding to tools.bash.gated.
+    const gatedPatterns = agent.config.tools?.bash?.gated ?? [];
+    const shouldConsiderGating = granted.filter((head) =>
+      looksEffectful(`${head} *`) && !isEffectful(`${head} x`, gatedPatterns));
+    return { name, declared, trusted, granted, notGranted, shouldConsiderGating };
   });
 
   if (unknownExplicit.length > 0) {
@@ -273,7 +271,7 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
 
   if (trustsAllSkills(agent.config.skills)) {
     console.log(chalk.yellow('\nSkill trust: all skills trusted (skills: trusted)'));
-    console.log(chalk.gray('Every discovered skill is granted the bash commands it declares in allowed-tools. Irreversible-looking grants are auto-gated (need approval). Trusting a skill is a real trust decision, like installing an editor extension.'));
+    console.log(chalk.gray('Every discovered skill is granted the bash commands it declares in allowed-tools. Trust is a real decision, like installing an editor extension: gate irreversible commands yourself with tools.bash.gated.'));
   }
 
   if (skillReports.length > 0) {
@@ -285,12 +283,12 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
         continue;
       }
       console.log(`  declares: ${report.declared.join(', ')}`);
-      if (report.declaredGated.length > 0) {
-        console.log(chalk.yellow(`  declares gated (skill-marked, needs approval): ${report.declaredGated.join(', ')}`));
-      }
       if (report.trusted) {
-        if (report.autoRun.length > 0) console.log(`  granted, auto-run: ${report.autoRun.join(', ')}`);
-        if (report.autoGated.length > 0) console.log(chalk.yellow(`  granted, gated (needs approval): ${report.autoGated.join(', ')}`));
+        console.log(`  granted (auto-run): ${report.granted.join(', ')}`);
+        if (report.shouldConsiderGating.length > 0) {
+          console.log(chalk.yellow(`  looks irreversible, not gated: ${report.shouldConsiderGating.join(', ')}`));
+          console.log(chalk.gray(`  Consider gating the irreversible commands under tools.bash.gated (e.g. \`${report.shouldConsiderGating[0]} reply *\`).`));
+        }
       } else if (report.notGranted.length > 0) {
         console.log(`  not granted: ${report.notGranted.join(', ')}`);
       }
@@ -300,13 +298,13 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
   const ungrantedSkills = skillReports.filter((report) => report.notGranted.length > 0);
   if (ungrantedSkills.length > 0) {
     console.log(chalk.yellow('\nSome skills declare commands the agent has not granted.'));
-    console.log(chalk.gray('Trust a skill to grant the commands it declares (irreversible ones are auto-gated):'));
+    console.log(chalk.gray('Trust a skill to grant the commands it declares:'));
     console.log('skills:');
     if (agent.config.skills!.auto) console.log('  auto: true');
     for (const report of ungrantedSkills) {
       console.log(`  ${report.name}: trusted`);
     }
-    console.log(chalk.gray('Or list specific commands yourself under tools.bash.commands.'));
+    console.log(chalk.gray('Or list specific commands yourself under tools.bash.commands. Gate irreversible ones with tools.bash.gated.'));
   }
 
   if (unknownExplicit.length === 0 && ungrantedSkills.length === 0) {

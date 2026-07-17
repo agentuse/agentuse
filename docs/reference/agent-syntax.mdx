@@ -265,7 +265,7 @@ Additional instructions or context.
   # or: skills: trusted    # trust every discovered skill (blunt shortcut)
   ```
 
-  A trusted skill's irreversible commands are gated, not auto-run: the skill can mark them in SKILL.md (`metadata.agentuse-gated`), and AgentUse also auto-gates a granted command that looks irreversible (e.g. `deploy *`). A command you list yourself in `tools.bash.commands` is respected as-is and never auto-gated. See [Gated commands](/guides/approval-gates#gated-commands-mechanical-enforcement).
+  Trust only grants (the commands can run); gating is your explicit call. To require approval for a subset a skill grants (e.g. trust grants `birdc *` but you want `birdc reply *` approved), add that pattern to [`tools.bash.gated`](/guides/approval-gates#gated-commands-mechanical-enforcement); gated-wins precedence gates it while the rest of the family auto-runs. `agentuse doctor` flags granted commands that look irreversible.
 
   To preload a skill before the task starts without trusting it, define it explicitly (grant its commands yourself via `tools.bash.commands`):
 
