@@ -207,7 +207,38 @@ these. This shapes where a rule belongs:
 - **Agents cannot prompt the user mid-run.** Never write "stop and ask the user
   to do X." The only branches at a blocker: exit with a clear error, record to
   the store and continue/stop, or fire an approval/notification. The approval
-  gate is the only human-in-the-loop path.
+  gate is the only human-in-the-loop path. Corollary for runtime input: parse
+  whatever the appended prompt gives (a bare arg, a comma-/space-separated list,
+  a `key:` label) and proceed - one value is valid input. An agent that "asks to
+  confirm" the input just stalls.
+
+- **Frontmatter must be the first bytes of the file.** Any content above the
+  opening `---` - a `#` heading OR an HTML `<!-- -->` comment - makes the parser
+  (`gray-matter`) miss the frontmatter and fail with `Invalid agent
+  configuration: model: Required`. `agentuse doctor <file>` catches this in ~1s
+  for free; run it before any token-heavy `--mock`.
+
+- **The body IS the prompt; nothing strips comments.** `matter()` splits off
+  only the frontmatter; everything after becomes the agent's `instructions`
+  verbatim. A `<!-- ... -->` block after the frontmatter parses fine but is fed
+  to the model, and the model will obey any imperative inside it (verified: a
+  hidden marker in a body comment reached the model; a `metadata:` marker did
+  not). So don't use `<!-- -->` for notes. Route by audience: author/tooling
+  pointers (`about`, `docs`, `repo`) → `metadata:` frontmatter (free-form, never
+  interpreted, never in the prompt, still visible in the file); longer
+  human-facing docs for a published artifact (e.g. a gist) → a companion
+  `README.md` published alongside (`gh gist create agent.agentuse README.md
+  --public`), which GitHub renders and which never touches the prompt.
+
+- **Agents run from a URL; state does not follow them.** `agentuse run <url>`
+  executes a remote agent directly (`npx agentuse run <raw-gist-url> "args"`, no
+  clone). But `store:` state lives at `<projectRoot>/.agentuse/store/`, and for a
+  URL/copy-paste run `projectRoot = findProjectRoot(process.cwd())` (walks up for
+  `.agentuse`/`.git`/`package.json`, else cwd). So a portable agent that leans on
+  the store silently re-baselines when run from a different directory. Prefer
+  stateless; use `store:` only when cross-run memory is the actual point. For a
+  "what's new" feel without state, scope by data (items dated in the last N days),
+  not by remembered deltas. Pin the store with `-C <path>` when cron'ing a URL run.
 
 - **Blocked runs declare themselves incomplete automatically.** The runtime
   system prompt already tells every agent to call the always-on
@@ -248,6 +279,37 @@ these. This shapes where a rule belongs:
 - **Match channel prose to the frontmatter key.** `channels.slack` is the key.
   Don't describe Slack delivery as `notifications.routes`; the body must name
   the key the frontmatter uses.
+
+## Patterns
+
+- **Inline script vs persistent.** For a one-off (verify a deploy, audit a
+  metric), have the agent write its script to `tmp/` at runtime and run it - one
+  file, the spec lives in the agent body. Commit a persistent `agents/<name>.py`
+  only when a caller other than this single agent will reuse it (a repeated
+  workflow, CI, a scheduled job). Default to inline.
+
+- **Config with runtime override.** To bake in a canonical value but allow
+  per-run overrides, resolve the effective value in Steps as: (1) a runtime
+  override from the appended prompt if present, else (2) the Configuration value,
+  else (3) refuse on the placeholder and stop. Lets you commit the default
+  without blocking ad-hoc runs.
+
+- **Aggregating over a store: read the file via a script, don't slurp.** The
+  store is a local JSON file (`.agentuse/store/<name>/items.json`). An agent that
+  filters or aggregates over dozens of items must NOT do it via `store_list` +
+  in-context reasoning: a field-projected list over ~20 wordy items can exceed
+  the ~30KB tool-result limit and come back truncated, and re-deriving the filter
+  in prose can hit the model's output-token cap mid-run. Grant the store file as
+  a read-only filesystem path, have the agent write a stdlib script to `tmp/`
+  that reads it and prints ONE compact JSON result (the queue, the aggregate, the
+  exact `store_update` payload). All store WRITES still go through the store tools.
+
+- **Discovery/harvest agents write keepers as they go.** An agent that sweeps
+  many surfaces and only writes its store items at the end loses everything if it
+  hits a step cap or the output-token cap mid-run. Persist each keeper
+  (`store_create`) the moment it is classified, hard-cap the surface count per
+  run, and keep responses terse (never restate harvested text; extraction evals
+  return compact arrays). Put this in the agent body, not just learnings.
 
 ## References
 
