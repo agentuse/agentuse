@@ -452,4 +452,36 @@ describe('CommandValidator', () => {
       expect(result.allowed).toBe(true);
     });
   });
+
+  describe('Quoted argument matching', () => {
+    test('double-quoted argument matches unquoted pattern', async () => {
+      const validator = new CommandValidator(['curl * https://r.jina.ai/*'], projectRoot);
+
+      const result = await validator.validate(
+        'curl -sSL --max-time 45 "https://r.jina.ai/https://example.com/x" -o tmp/fetched.txt'
+      );
+      expect(result.allowed).toBe(true);
+    });
+
+    test('single-quoted argument matches unquoted pattern', async () => {
+      const validator = new CommandValidator(['curl * https://r.jina.ai/*'], projectRoot);
+
+      const result = await validator.validate("curl -sSL 'https://r.jina.ai/https://example.com/x'");
+      expect(result.allowed).toBe(true);
+    });
+
+    test('trailing arguments after last pattern token are allowed', async () => {
+      const validator = new CommandValidator(['curl * https://r.jina.ai/*'], projectRoot);
+
+      const result = await validator.validate('curl https://r.jina.ai/https://example.com/x -o tmp/out.txt');
+      expect(result.allowed).toBe(true);
+    });
+
+    test('quoting does not bypass the allowlist', async () => {
+      const validator = new CommandValidator(['curl * https://r.jina.ai/*'], projectRoot);
+
+      const result = await validator.validate('curl "https://evil.example.com/x"');
+      expect(result.allowed).toBe(false);
+    });
+  });
 });

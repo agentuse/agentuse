@@ -259,11 +259,13 @@ export async function parseBashCommand(commandString: string): Promise<ParsedCom
       if (
         child.type === 'command_name' ||
         child.type === 'word' ||
-        child.type === 'string' ||
-        child.type === 'raw_string' ||
         child.type === 'concatenation'
       ) {
         parts.push(child.text);
+      } else if (child.type === 'string' || child.type === 'raw_string') {
+        // Strip the surrounding quotes so allowlist patterns match the argument
+        // value: `curl "https://r.jina.ai/x"` must match `curl https://r.jina.ai/*`
+        parts.push(stripOuterQuotes(child.text));
       }
     }
 

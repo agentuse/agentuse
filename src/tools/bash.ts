@@ -226,6 +226,13 @@ ${allowedCommandsList}
 Allowed file paths (use these for any file operations):
 ${allowedPathsList}
 
+How allowlist matching works:
+- A pattern matches token by token: the first token is the command name, each following pattern token must match an argument (in order). "*" matches any run of arguments, "?" matches a single character inside a token.
+- Extra arguments before, between, or after pattern tokens are fine as long as every pattern token finds a match (e.g. "curl * https://r.jina.ai/*" allows "curl -sSL https://r.jina.ai/x -o tmp/y.txt").
+- In compound commands (&&, ||, ;, |), EVERY segment must match an allowed pattern on its own. Don't chain helpers like echo/cat unless they are allowlisted; run one allowed command per call instead.
+- Redirections (> file, 2>&1) are not part of matching, but redirection target paths must be inside the allowed file paths.
+- "cd" is always allowed, but prefer the workdir parameter.
+
 Commands not matching these patterns will be rejected.`;
 
   // Build input schema - only expose timeout if not configured by user
@@ -259,6 +266,7 @@ Commands not matching these patterns will be rejected.`;
         const message = [
           'Command blocked by agent configuration.',
           `Reason: ${validation.error || 'Command validation failed'}`,
+          'Matching rules: patterns match token by token ("*" = any run of arguments); extra arguments around matched tokens are fine. In compound commands (&&, ;, |) EVERY segment must independently match an allowed pattern, so retry with a single allowed command and without unlisted helpers like echo/cat.',
           'Run `agentuse doctor <agent-file>` to diagnose missing tools or skill grants.',
         ].filter(Boolean).join('\n');
         const error: ToolErrorOutput = {
