@@ -232,7 +232,11 @@ these. This shapes where a rule belongs:
 
 - **Agents run from a URL; state does not follow them.** `agentuse run <url>`
   executes a remote agent directly (`npx agentuse run <raw-gist-url> "args"`, no
-  clone). But `store:` state lives at `<projectRoot>/.agentuse/store/`, and for a
+  clone). The first URL run shows a trust prompt (`[p]review / [y]es / [N]o`);
+  only `agentuse.io` URLs skip it, so a gist/raw URL always asks - fine
+  interactively, but pipe `y` (or otherwise answer it) in non-interactive tests
+  or the run hangs on stdin. But `store:` state lives at
+  `<projectRoot>/.agentuse/store/`, and for a
   URL/copy-paste run `projectRoot = findProjectRoot(process.cwd())` (walks up for
   `.agentuse`/`.git`/`package.json`, else cwd). So a portable agent that leans on
   the store silently re-baselines when run from a different directory. Prefer
