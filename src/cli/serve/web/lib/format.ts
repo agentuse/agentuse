@@ -185,6 +185,13 @@ export function runTone(status: string): RunTone {
   return 'failed';
 }
 
+/** Is this run in flight right now? The single source of truth behind every
+ *  "running now" affordance (live dots, project live counts, sort order), so
+ *  they can't drift apart. Kept in lockstep with runTone's 'running' bucket. */
+export function isRunningStatus(status: string | undefined): boolean {
+  return status !== undefined && runTone(status) === 'running';
+}
+
 export function isEndedStatus(status: string | undefined): boolean {
   return status === 'completed' || status === 'error' || status === 'stopped' || status === 'timeout' || status === 'incomplete';
 }

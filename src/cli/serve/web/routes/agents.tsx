@@ -8,7 +8,7 @@ import { LogContent } from '../components/content';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { useAgentsView } from '../hooks/use-agents-view';
-import { formatApprovalTime, formatRelativeTime, displayStatusLabel, runTone } from '../lib/format';
+import { formatApprovalTime, formatRelativeTime, displayStatusLabel, runTone, isRunningStatus } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { usePins } from '../hooks/use-pins';
 import { useAgentColumns } from '../hooks/use-agent-columns';
@@ -206,8 +206,6 @@ export function agentsProjectHref(projectId: string): string {
   return `/agents/${encodeURIComponent(projectId)}`;
 }
 
-const LIVE_RUN_STATUSES = new Set(['running', 'resuming', 'continuing']);
-
 /**
  * Recent sessions per agent file (newest first), joined client-side: sessions
  * carry an absolute `agent.filePath` while agents carry a project-relative
@@ -378,7 +376,7 @@ function walk(node: TreeNode, levels: boolean[], rows: VNode[], ctx: RowCtx): vo
     if (child.agent) {
       const a = child.agent;
       const pinned = ctx.pins.isPinned(a);
-      const running = LIVE_RUN_STATUSES.has(ctx.lastRunFor(a)?.status ?? '');
+      const running = isRunningStatus(ctx.lastRunFor(a)?.status);
       rows.push(
         <div class={pinned ? 'tree-row pinned' : 'tree-row'} key={a.path}>
           <span class="tree-path">
@@ -421,7 +419,7 @@ function AgentCard(props: { agent: AgentRow; ctx: RowCtx; showProject?: boolean 
   const a = props.agent;
   const runs = props.ctx.runsFor(a);
   const last = runs[0];
-  const running = last !== undefined && runTone(last.status) === 'running';
+  const running = isRunningStatus(last?.status);
   const pinned = props.ctx.pins.isPinned(a);
   return (
     <div class={running ? 'agent-card running' : 'agent-card'}>
@@ -460,7 +458,7 @@ function AgentCard(props: { agent: AgentRow; ctx: RowCtx; showProject?: boolean 
  * activity remains visible without turning every project into a dashboard.
  */
 function ProjectCollectionHeader(props: { projectId: string; agents: AgentRow[]; ctx: RowCtx; about?: AboutInfo | undefined }) {
-  const liveCount = props.agents.filter((a) => runTone(props.ctx.lastRunFor(a)?.status ?? '') === 'running').length;
+  const liveCount = props.agents.filter((a) => isRunningStatus(props.ctx.lastRunFor(a)?.status)).length;
   const countLabel = `${props.agents.length} agent${props.agents.length === 1 ? '' : 's'}`;
   const name = props.about?.name ?? props.projectId;
   return (
@@ -586,8 +584,8 @@ function cardOrder(ctx: RowCtx): (a: AgentRow, b: AgentRow) => number {
     if (pa !== pb) return pb - pa;
     const ra = ctx.lastRunFor(a);
     const rb = ctx.lastRunFor(b);
-    const la = ra !== undefined && runTone(ra.status) === 'running' ? 1 : 0;
-    const lb = rb !== undefined && runTone(rb.status) === 'running' ? 1 : 0;
+    const la = isRunningStatus(ra?.status) ? 1 : 0;
+    const lb = isRunningStatus(rb?.status) ? 1 : 0;
     if (la !== lb) return lb - la;
     const ta = ra?.createdAt ?? 0;
     const tb = rb?.createdAt ?? 0;
