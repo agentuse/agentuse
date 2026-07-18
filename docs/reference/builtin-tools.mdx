@@ -216,6 +216,8 @@ tools:
 | `allowedPaths` | `string[]` | `[]` | Additional directories beyond project root |
 | `timeout` | `number \| string` | `120000` | Command timeout. Prefer a duration string (`"30s"`, `"2m"`). A bare number is **milliseconds** (deprecated: every other timeout field uses seconds; bare numbers here flip to seconds in 1.0) |
 
+When no config timeout is set, the model may pass a per-call `timeout` with the same shape. A bare per-call number under 1000 is rejected with a corrective error (it is always a seconds-vs-milliseconds mixup; a real sub-second timeout must be written as `"500ms"`).
+
 ### Command Patterns
 
 Commands use simple wildcard matching:

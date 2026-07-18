@@ -258,8 +258,26 @@ Commands not matching these patterns will be rejected.`;
     ? z.object(baseSchema)
     : z.object({
         ...baseSchema,
-        timeout: z.number().optional().describe(`Optional timeout in MILLISECONDS, not seconds (default: ${DEFAULT_TIMEOUT}ms = 2 minutes). e.g. 30000 for 30 seconds.`),
+        timeout: z.union([z.number(), z.string()]).optional().describe(`Optional timeout. Prefer a duration string: "30s", "2m", "500ms". A bare number is MILLISECONDS, not seconds (default: ${DEFAULT_TIMEOUT}ms = 2 minutes).`),
       });
+
+  // A bare-number timeout under 1s is (in practice) always a seconds-vs-ms
+  // confusion: nobody intends to give a shell command <1000ms. Rejecting with a
+  // corrective error lets the model fix its next call, instead of the command
+  // dying at 30ms and the run deriving a "learning" about it.
+  function resolveCallTimeoutMs(timeout: number | string | undefined): number | { error: string } {
+    if (timeout === undefined) return defaultTimeout;
+    if (typeof timeout === 'number' && timeout < 1000) {
+      return {
+        error: `Invalid timeout: ${timeout}. Bare numbers are MILLISECONDS (${timeout}ms would kill the command almost instantly). Pass a duration string like "${timeout}s", or ${timeout * 1000} for ${timeout} seconds. For a real sub-second timeout, pass "${timeout}ms" explicitly.`,
+      };
+    }
+    try {
+      return parseDurationMs(timeout, { bareUnit: 'milliseconds', field: 'timeout' });
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
 
   return {
     description,
@@ -267,7 +285,7 @@ Commands not matching these patterns will be rejected.`;
     execute: async ({ command, workdir, timeout }: {
       command: string;
       workdir?: string;
-      timeout?: number;
+      timeout?: number | string;
     }, callOptions?: { abortSignal?: AbortSignal; toolCallId?: string }): Promise<ToolOutput> => {
       const abortSignal = callOptions?.abortSignal;
       const callId = callOptions?.toolCallId;
@@ -314,9 +332,17 @@ Commands not matching these patterns will be rejected.`;
       }
 
       // If user configured timeout, use it strictly; otherwise let model decide
-      const timeoutMs = timeoutConfigured
-        ? defaultTimeout
-        : (timeout ?? defaultTimeout);
+      let timeoutMs: number;
+      if (timeoutConfigured) {
+        timeoutMs = defaultTimeout;
+      } else {
+        const resolved = resolveCallTimeoutMs(timeout);
+        if (typeof resolved !== 'number') {
+          const error: ToolErrorOutput = { success: false, error: resolved.error };
+          return { output: JSON.stringify(error) };
+        }
+        timeoutMs = resolved;
+      }
 
       // Refuse to spawn at all when the run is already aborted (e.g. an approval
       // suspension began before this sibling call was dispatched). Spawning here

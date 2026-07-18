@@ -45,6 +45,63 @@ describe('bash tool timeout units', () => {
     expect(result.metadata.timedOut).toBe(true);
   });
 
+  test('per-call timeout accepts a duration string', async () => {
+    const tool = createBashTool({ commands: ['sleep *'] }, projectRoot, { projectRoot }) as any;
+
+    const started = Date.now();
+    const result = await tool.execute(
+      { command: 'sleep 5', timeout: '1s' },
+      { toolCallId: 'call-3' }
+    );
+    const elapsed = Date.now() - started;
+
+    expect(elapsed).toBeLessThan(3000);
+    expect(result.metadata.timedOut).toBe(true);
+  });
+
+  test('per-call bare number under 1000 is rejected with a corrective error', async () => {
+    const tool = createBashTool({ commands: ['echo *'] }, projectRoot, { projectRoot }) as any;
+
+    const result = await tool.execute(
+      { command: 'echo hi', timeout: 30 },
+      { toolCallId: 'call-4' }
+    );
+
+    const parsed = JSON.parse(result.output);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('MILLISECONDS');
+    expect(parsed.error).toContain('"30s"');
+    expect(parsed.error).toContain('30000');
+  });
+
+  test('per-call bare number >= 1000 still works as milliseconds', async () => {
+    const tool = createBashTool({ commands: ['sleep *'] }, projectRoot, { projectRoot }) as any;
+
+    const started = Date.now();
+    const result = await tool.execute(
+      { command: 'sleep 5', timeout: 1000 },
+      { toolCallId: 'call-5' }
+    );
+    const elapsed = Date.now() - started;
+
+    expect(elapsed).toBeLessThan(3500);
+    expect(result.metadata.timedOut).toBe(true);
+  });
+
+  test('explicit sub-second duration string is honored', async () => {
+    const tool = createBashTool({ commands: ['sleep *'] }, projectRoot, { projectRoot }) as any;
+
+    const started = Date.now();
+    const result = await tool.execute(
+      { command: 'sleep 5', timeout: '500ms' },
+      { toolCallId: 'call-6' }
+    );
+    const elapsed = Date.now() - started;
+
+    expect(elapsed).toBeLessThan(2500);
+    expect(result.metadata.timedOut).toBe(true);
+  });
+
   test('invalid config timeout throws at tool creation', () => {
     expect(() =>
       createBashTool({ commands: ['echo *'], timeout: 'soon' }, projectRoot, { projectRoot })
