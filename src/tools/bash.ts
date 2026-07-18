@@ -5,7 +5,7 @@ import { StringDecoder } from 'string_decoder';
 import * as path from 'path';
 import * as os from 'os';
 import { CommandValidator, getBuiltinPayloadCommandInvocation } from './command-validator.js';
-import type { BashConfig, ToolOutput, ToolErrorOutput } from './types.js';
+import { ToolConfigError, type BashConfig, type ToolOutput, type ToolErrorOutput } from './types.js';
 import { resolveRealPath, type PathResolverContext } from './path-validator.js';
 import { createBoundedAccumulator, getToolOutputLimits } from './tool-output-limits.js';
 import { logger } from '../utils/logger.js';
@@ -203,7 +203,7 @@ export function createBashTool(
       field: 'tools.bash.timeout',
       value: config.timeout,
     });
-    throw new Error(
+    throw new ToolConfigError(
       `tools.bash.timeout no longer accepts bare numbers (the unit was ambiguous: this field was milliseconds while every other timeout field is seconds). ` +
       `Use a duration string instead, e.g. "${Math.max(1, Math.round(config.timeout / 1000))}s" if ${config.timeout} was milliseconds, or "${config.timeout}s" if it was seconds.`
     );

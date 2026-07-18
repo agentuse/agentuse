@@ -20,7 +20,7 @@ import { resolveMediaToolResultSupport } from '../models.js';
 import { logger } from '../utils/logger';
 import type { ParsedAgent } from '../parser';
 import { approvalToolDefaults, isApprovalEnabled } from './approval';
-import type { EffectAuditSink, ToolOutputArtifactSink } from '../tools/types.js';
+import { ToolConfigError, type EffectAuditSink, type ToolOutputArtifactSink } from '../tools/types.js';
 import { isMockMode, wrapToolsWithLLMMock } from './mock-tools';
 
 /**
@@ -149,6 +149,12 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
         logger.debug(`${logPrefix}Loaded ${Object.keys(configuredTools).length} configured tool(s): ${Object.keys(configuredTools).join(', ')}`);
       }
     } catch (error) {
+      // An invalid tool configuration must fail the run: continuing without
+      // the tool means the agent silently runs degraded and fails confusingly
+      // later. Only transient/environmental load failures stay warnings.
+      if (error instanceof ToolConfigError) {
+        throw error;
+      }
       logger.warn(`${logPrefix}Failed to load configured tools: ${(error as Error).message}`);
     }
   }

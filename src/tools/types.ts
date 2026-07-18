@@ -13,6 +13,19 @@ export const FilesystemPathConfigSchema = z.object({
   { message: 'Either "path" or "paths" must be specified' }
 );
 
+/**
+ * A tool configuration error the author must fix (invalid value in agent
+ * frontmatter). Unlike transient load failures, these must FAIL the run:
+ * tools-loader rethrows this type instead of downgrading it to a warning,
+ * so an agent never silently runs without a tool it was configured to have.
+ */
+export class ToolConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ToolConfigError';
+  }
+}
+
 export const BashConfigSchema = z.object({
   // Optional: commands can also arrive from trusted skills (agentuse-lab#168) or
   // be gated-only, so a bash block may legitimately omit its own allowlist.
