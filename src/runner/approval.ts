@@ -23,7 +23,7 @@ function getSlackApprovalChannel(config: AgentConfig): { channelId?: string } | 
 }
 
 export function approvalToolDefaults(config: AgentConfig): {
-  timeout?: string;
+  timeout?: string | number;
   slack?: { channelId?: string };
 } | undefined {
   if (!isApprovalEnabled(config)) return undefined;

@@ -222,4 +222,22 @@ describe('await_human approval URL', () => {
       expect(err.payload.expiresAt).toBeLessThanOrEqual(now + 24 * 60 * 60 * 1000 + 1000);
     }
   });
+
+  it('treats bare-number timeouts as seconds, not milliseconds', async () => {
+    const now = Date.now();
+    const tool = createAwaitHumanTool('session-1', {
+      projectRoot: '/tmp/project-a',
+      timeout: 3600
+    });
+
+    try {
+      await tool.execute?.({ prompt: 'Approve this?' } as any, {} as any);
+      throw new Error('expected suspend signal');
+    } catch (err) {
+      expect(isSuspendSignal(err)).toBe(true);
+      if (!isSuspendSignal(err)) return;
+      expect(err.payload.expiresAt).toBeGreaterThanOrEqual(now + 3600 * 1000 - 1000);
+      expect(err.payload.expiresAt).toBeLessThanOrEqual(now + 3600 * 1000 + 1000);
+    }
+  });
 });

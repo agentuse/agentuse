@@ -9,6 +9,7 @@ import type { BashConfig, ToolOutput, ToolErrorOutput } from './types.js';
 import { resolveRealPath, type PathResolverContext } from './path-validator.js';
 import { createBoundedAccumulator, getToolOutputLimits } from './tool-output-limits.js';
 import { logger } from '../utils/logger.js';
+import { parseDurationMs } from '../utils/duration.js';
 import type { ModelToolOutputArtifactRef, ToolOutputArtifactRef, ToolOutputArtifactStream } from '../session/types.js';
 
 const DEFAULT_TIMEOUT = 120000; // 2 minutes
@@ -190,7 +191,19 @@ export function createBashTool(
   const resolverContext: PathResolverContext = context ?? { projectRoot };
   const validator = new CommandValidator(config.commands, projectRoot, allowedPaths, resolverContext);
   const timeoutConfigured = config.timeout !== undefined;
-  const defaultTimeout = config.timeout ?? DEFAULT_TIMEOUT;
+  const defaultTimeout = config.timeout !== undefined
+    ? parseDurationMs(config.timeout, {
+        bareUnit: 'milliseconds',
+        field: 'tools.bash.timeout',
+        onBareNumber: (v) => {
+          logger.warn(
+            `tools.bash.timeout: ${v} is interpreted as MILLISECONDS (deprecated). ` +
+            `Use a suffixed duration like "${v}ms" or "${Math.max(1, Math.round(v / 1000))}s" - ` +
+            `bare numbers here will mean seconds in 1.0.`
+          );
+        },
+      })
+    : DEFAULT_TIMEOUT;
   const { maxBytes: maxOutputBytes, headRatio } = getToolOutputLimits();
   const artifactSink = resolverContext.toolOutputArtifacts;
 
@@ -245,7 +258,7 @@ Commands not matching these patterns will be rejected.`;
     ? z.object(baseSchema)
     : z.object({
         ...baseSchema,
-        timeout: z.number().optional().describe(`Optional timeout in milliseconds (default: ${DEFAULT_TIMEOUT}ms)`),
+        timeout: z.number().optional().describe(`Optional timeout in MILLISECONDS, not seconds (default: ${DEFAULT_TIMEOUT}ms = 2 minutes). e.g. 30000 for 30 seconds.`),
       });
 
   return {

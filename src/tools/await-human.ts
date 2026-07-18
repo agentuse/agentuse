@@ -6,21 +6,14 @@ import { findServerForProject } from '../utils/server-registry';
 import { sessionViewToken } from '../utils/session-token';
 import { loadGlobalConfig } from '../utils/global-config';
 import { isHttpUrl } from '../utils/url';
+import { parseDurationMs } from '../utils/duration';
 
-function parseTimeout(value?: string): number | undefined {
-  if (!value) return undefined;
-  const match = value.match(/^(\d+)\s*(ms|s|m|h|d)?$/i);
-  if (!match) return undefined;
-  const amount = Number(match[1]);
-  const unit = (match[2] ?? 'ms').toLowerCase();
-  const multipliers: Record<string, number> = {
-    ms: 1,
-    s: 1000,
-    m: 60 * 1000,
-    h: 60 * 60 * 1000,
-    d: 24 * 60 * 60 * 1000
-  };
-  return amount * multipliers[unit];
+function parseTimeout(value?: string | number): number | undefined {
+  if (value === undefined || value === '') return undefined;
+  // Bare numbers are SECONDS, matching every other timeout field. (Before
+  // v0.16 a bare number here meant milliseconds, which expired gates almost
+  // instantly - no one can have depended on that on purpose.)
+  return parseDurationMs(value, { bareUnit: 'seconds', field: 'approval.timeout' });
 }
 
 function getConfigPublicUrl(): string | undefined {
@@ -88,7 +81,7 @@ export function getArtifactUrl(
 }
 
 export interface AwaitHumanDefaults {
-  timeout?: string;
+  timeout?: string | number;
   slack?: { channelId?: string };
   projectRoot?: string;
 }

@@ -518,6 +518,45 @@ Capture and apply execution learnings.`;
       });
     });
 
+    it('accepts duration strings for timeout fields, normalized to seconds', () => {
+      const content = `---
+model: openai:gpt-5
+timeout: 10m
+mcpServers:
+  filesystem:
+    command: npx
+    toolTimeout: 90s
+approval:
+  timeout: 30m
+---
+
+Test agent.`;
+
+      const agent = parseAgentContent(content, 'test');
+      expect(agent.config.timeout).toBe(600);
+      expect(agent.config.mcpServers?.filesystem).toMatchObject({ toolTimeout: 90 });
+      expect(agent.config.approval).toEqual({ timeout: '30m' });
+    });
+
+    it('accepts bare-number approval.timeout (seconds) and rejects invalid durations', () => {
+      const valid = `---
+model: openai:gpt-5
+approval:
+  timeout: 3600
+---
+
+Test agent.`;
+      expect(parseAgentContent(valid, 'test').config.approval).toEqual({ timeout: 3600 });
+
+      const invalid = `---
+model: openai:gpt-5
+timeout: soon
+---
+
+Test agent.`;
+      expect(() => parseAgentContent(invalid, 'test')).toThrow(/Invalid duration/);
+    });
+
     it('parses complete agent configuration', () => {
       const content = `---
 model: openai:gpt-5

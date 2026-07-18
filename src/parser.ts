@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { readFile } from 'fs/promises';
 import { resolve, basename } from 'path';
 import { logger } from './utils/logger';
+import { durationSecondsSchema, parseDurationMs } from './utils/duration';
 import { ToolsConfigSchema } from './tools/index.js';
 import { ScheduleConfigSchema } from './scheduler/index.js';
 import { StoreConfigSchema } from './store/index.js';
@@ -49,7 +50,7 @@ const MCPServerSchema = z.union([
     requiredEnvVars: z.array(z.string()).optional(),
     allowedEnvVars: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),
-    toolTimeout: z.number().positive().optional()
+    toolTimeout: durationSecondsSchema('mcpServers.toolTimeout').optional()
   }),
   // HTTP configuration (has url)
   z.object({
@@ -66,14 +67,26 @@ const MCPServerSchema = z.union([
     requiredEnvVars: z.array(z.string()).optional(),
     allowedEnvVars: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),
-    toolTimeout: z.number().positive().optional()
+    toolTimeout: durationSecondsSchema('mcpServers.toolTimeout').optional()
   })
 ]);
 
 const ApprovalConfigSchema = z.union([
   z.boolean(),
   z.object({
-    timeout: z.string().optional(),
+    // Duration until an unanswered gate expires: bare number = SECONDS, or a
+    // suffixed string ("30m", "24h"). Validated here so a typo fails at parse
+    // time instead of silently creating a gate that expires in milliseconds.
+    timeout: z.union([z.number(), z.string()]).superRefine((value, ctx) => {
+      try {
+        parseDurationMs(value, { bareUnit: 'seconds', field: 'approval.timeout' });
+      } catch (error) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }).optional(),
   }).strict()
 ]);
 
@@ -149,7 +162,9 @@ const AgentSchema = z.object({
   // them. This is the sanctioned home for custom keys, which are otherwise
   // stripped from frontmatter.
   metadata: z.record(z.unknown()).optional(),
-  timeout: z.number().positive().optional(),
+  // Run timeout: bare number = SECONDS (unchanged), or a suffixed duration
+  // string like "10m" / "900s". Normalized to whole seconds at parse time.
+  timeout: durationSecondsSchema('timeout').optional(),
   maxSteps: z.number().positive().int().optional(),
   // Per-response output-token ceiling (max_tokens). Optional: unset, first-class
   // Anthropic models default to their real registry limit capped at 32000, other

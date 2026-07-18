@@ -30,7 +30,7 @@ Describe where results should go and what format they should use.
 ```yaml
 model: anthropic:claude-sonnet-5
 description: "Analyze daily metrics and send a concise summary"
-timeout: 600
+timeout: 600         # run ceiling: bare number = SECONDS, or "10m"
 maxSteps: 100
 reasoning: high        # provider-agnostic thinking effort: none|minimal|low|medium|high|xhigh. Opt-in, billed at OUTPUT rates; omit for the model default. (Advanced, exact control: anthropic.thinking.budgetTokens / openai.reasoningEffort.)
 schedule: "0 9 * * *"
@@ -203,6 +203,13 @@ these. This shapes where a rule belongs:
 - **Approval gates are async.** `approval: true` / `await_human` gates suspend
   the run; `timeout:` does not tick during the wait. Size `timeout:` for the
   active work between gates, not human response time.
+
+- **Timeout units: bare numbers are seconds everywhere EXCEPT `tools.bash.timeout`
+  and the bash tool's per-call `timeout` parameter, which are milliseconds.**
+  `tools.bash.timeout: 30` means 30ms and kills the command almost instantly.
+  Avoid the trap entirely by writing suffixed duration strings, accepted on every
+  timeout field: `timeout: "10m"`, `tools.bash.timeout: "30s"`,
+  `approval: { timeout: "24h" }`, `toolTimeout: "2m"`.
 
 - **Agents cannot prompt the user mid-run.** Never write "stop and ask the user
   to do X." The only branches at a blocker: exit with a clear error, record to

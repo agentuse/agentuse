@@ -210,6 +210,17 @@ model: anthropic:claude-sonnet-5:dev  # Uses ANTHROPIC_API_KEY_DEV
   </Note>
 </ParamField>
 
+<ParamField path="MCP_TOOL_TIMEOUT" type="number">
+  Default timeout in seconds for individual MCP tool calls.
+  Default: 60
+
+  ```bash
+  export MCP_TOOL_TIMEOUT="120"
+  ```
+
+  **Precedence:** A server's `toolTimeout` in agent YAML overrides this variable; this variable overrides the built-in 60-second default.
+</ParamField>
+
 ## Mock Mode (Testing)
 
 Mock all tool outputs with the LLM instead of executing them. Mirror the `--mock` flags on

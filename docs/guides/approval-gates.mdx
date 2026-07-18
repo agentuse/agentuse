@@ -261,7 +261,7 @@ approval:
 ```
 
 - `approval`: `true` or an object to enable the approval gate
-- `approval.timeout`: optional suspension timeout, such as `30m`, `24h`, or `7d`
+- `approval.timeout`: optional suspension timeout, such as `30m`, `24h`, or `7d`. A bare number means seconds.
 - `tools.bash.gated`: bash command patterns that run only after human approval, enforced by a per-action lease. Declaring it implies the approval gate. See [Gated commands](#gated-commands-mechanical-enforcement).
 
 Channel config is separate:

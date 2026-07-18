@@ -24,7 +24,10 @@ export const BashConfigSchema = z.object({
   // redirect to re-gate. A command matching both lists is gated (gated wins).
   // Structural fix for the pre-approval ghost-post class (agentuse-lab#165/#169).
   gated: z.array(z.string().min(1)).optional(),
-  timeout: z.number().positive().optional(),
+  // Command timeout. Prefer a suffixed duration string ("30s", "2m"). A bare
+  // number is MILLISECONDS for backward compatibility (deprecated - every other
+  // timeout field is seconds; bare numbers here will flip to seconds at 1.0).
+  timeout: z.union([z.number().positive(), z.string()]).optional(),
   allowedPaths: z.array(z.string()).optional(),
 });
 

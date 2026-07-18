@@ -54,8 +54,9 @@ Additional instructions or context.
 
 ### Optional Fields
 
-<ParamField path="timeout" type="number" required={false}>
-  Maximum execution time in seconds before the agent is terminated.
+<ParamField path="timeout" type="number | string" required={false}>
+  Maximum execution time before the agent is terminated. A bare number means
+  seconds; a suffixed duration string (`"90s"`, `"10m"`, `"1h"`) also works.
   Default: 300 (5 minutes)
 
   This prevents runaway agents and provides a safety ceiling for execution time.
@@ -63,8 +64,8 @@ Additional instructions or context.
   **Precedence:** CLI `--timeout` flag overrides this value.
 
   ```yaml
-  timeout: 600  # 10 minutes
-  timeout: 1800  # 30 minutes
+  timeout: 600   # 10 minutes (bare number = seconds)
+  timeout: 30m   # duration string
   ```
 
   <Note>
@@ -327,7 +328,7 @@ Additional instructions or context.
   **Fields (when using object form):**
   - `provider`: Must be `docker` (required)
   - `image`: Docker image to use (default: `node:22-slim`)
-  - `timeout`: Container timeout in seconds (default: `300`)
+  - `timeout`: Container timeout: bare number = seconds (default: `300`), or a duration string like `"10m"`
   - `setup`: Shell command(s) to run after container starts
   - `env`: Host env var names to forward into the container
 
@@ -381,7 +382,7 @@ Additional instructions or context.
   ```
 
   **Fields:**
-  - `timeout`: optional suspension timeout such as `24h` or `7d`. Approvals do not expire by default.
+  - `timeout`: optional suspension timeout such as `24h` or `7d`. A bare number means seconds. Approvals do not expire by default.
 
   Approval requests render best when the agent can provide `summary`, `draft` or `artifact_url`, `context`, and `risk` fields to the internal approval tool.
 
@@ -467,6 +468,9 @@ mcpServers:
     disallowedTools:      # Optional: tools to exclude
       - write_file
       - delete_file
+    toolTimeout: 90       # Optional per-tool-call timeout: bare number = seconds
+                          # (default 60), or a duration string like "2m".
+                          # Env fallback: MCP_TOOL_TIMEOUT (seconds).
 ```
 
 ### HTTP MCP Configuration

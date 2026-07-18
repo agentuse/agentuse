@@ -204,7 +204,7 @@ tools:
     allowedPaths:
       - /tmp
       - ~/workspace
-    timeout: 120000
+    timeout: 2m
 ```
 
 ### Fields
@@ -214,7 +214,7 @@ tools:
 | `commands` | `string[]` | Required | Auto-run allowlist of command patterns (supports `*` wildcard) |
 | `gated` | `string[]` | `[]` | Command patterns that run only after human approval, enforced by a per-action lease. Also runnable (the effective allowlist is `commands` plus `gated`); a match in both is gated. Declaring `gated` implies the approval gate. See [Gated commands](/guides/approval-gates#gated-commands-mechanical-enforcement). |
 | `allowedPaths` | `string[]` | `[]` | Additional directories beyond project root |
-| `timeout` | `number` | `120000` | Command timeout in milliseconds |
+| `timeout` | `number \| string` | `120000` | Command timeout. Prefer a duration string (`"30s"`, `"2m"`). A bare number is **milliseconds** (deprecated: every other timeout field uses seconds; bare numbers here flip to seconds in 1.0) |
 
 ### Command Patterns
 

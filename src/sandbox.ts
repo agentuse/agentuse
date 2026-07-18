@@ -11,13 +11,14 @@ import { join, resolve, sep } from 'path';
 import { homedir } from 'os';
 import type { ResolvedMount } from './tools/path-validator.js';
 import { logger } from './utils/logger';
+import { durationSecondsSchema } from './utils/duration';
 
 // ── Schema ──────────────────────────────────────────────────────────
 
 const SandboxObjectSchema = z.object({
   provider: z.literal('docker'),
   image: z.string().optional(),              // default 'node:22-slim'
-  timeout: z.number().positive().optional(),  // seconds, default 300
+  timeout: durationSecondsSchema('sandbox.timeout').optional(),  // bare number = seconds (default 300), or "10m"
   setup: z.union([z.string(), z.array(z.string())]).optional(), // commands to run after container starts
   env: z.array(z.string()).optional(),       // env var names to forward from host
 });
