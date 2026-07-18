@@ -31,7 +31,7 @@ describe('createProviderCommand', () => {
     ).rejects.toThrow('process.exit:1');
 
     expect(errorSpy).toHaveBeenCalledWith(
-      "Cannot use reserved provider name 'bedrock'. Reserved: anthropic, openai, openrouter, opencode-go, demo, bedrock"
+      "Cannot use reserved provider name 'bedrock'. Reserved: anthropic, openai, openrouter, opencode-go, bedrock, demo"
     );
   });
 
@@ -47,7 +47,7 @@ describe('createProviderCommand', () => {
     ).rejects.toThrow('process.exit:1');
 
     expect(errorSpy).toHaveBeenCalledWith(
-      "Cannot use reserved provider name 'opencode-go'. Reserved: anthropic, openai, openrouter, opencode-go, demo, bedrock"
+      "Cannot use reserved provider name 'opencode-go'. Reserved: anthropic, openai, openrouter, opencode-go, bedrock, demo"
     );
   });
 
