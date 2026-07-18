@@ -180,6 +180,33 @@ function hasAnthropicCacheControl(providerOptions: any): boolean {
   );
 }
 
+// Remove a message-level Anthropic cacheControl breakpoint, returning
+// providerOptions without it (or undefined if nothing else remains). Leaves
+// content-part breakpoints alone, they are re-derived by buildUserMessage.
+function withoutAnthropicCacheControl(providerOptions: any): any {
+  if (!hasAnthropicCacheControl(providerOptions)) return providerOptions;
+  const { cacheControl: _c, cache_control: _s, ...restAnthropic } = providerOptions.anthropic;
+  const nextProviderOptions = { ...providerOptions };
+  if (Object.keys(restAnthropic).length === 0) {
+    delete nextProviderOptions.anthropic;
+  } else {
+    nextProviderOptions.anthropic = restAnthropic;
+  }
+  return Object.keys(nextProviderOptions).length === 0 ? undefined : nextProviderOptions;
+}
+
+// Strip stale message-level breakpoints from the whole history. Stamped
+// messages persist across steps (setMessages / snapshots), so without this the
+// per-step stampers pile a fresh breakpoint on each new last message while the
+// old ones ride along, blowing past Anthropic's 4-breakpoint limit.
+function clearAnthropicCacheControlFromMessages(messages: any[]): any[] {
+  return messages.map((message) =>
+    hasAnthropicCacheControl(message?.providerOptions)
+      ? { ...message, providerOptions: withoutAnthropicCacheControl(message.providerOptions) }
+      : message
+  );
+}
+
 function messageHasCacheableContentPart(message: any): boolean {
   return Array.isArray(message?.content) &&
     message.content.some((part: any) => hasAnthropicCacheControl(part?.providerOptions));
@@ -241,8 +268,13 @@ function applyAnthropicCacheControlToLastMessage(messages: any[]): any[] {
 }
 
 function applyAnthropicCacheControlToStepMessages(messages: any[]): any[] {
+  // Clear stale breakpoints first so re-stamping is idempotent, the request
+  // then carries exactly the intended breakpoints (system + last message)
+  // regardless of how many steps' worth of stamps persisted in history.
   return applyAnthropicCacheControlToLastMessage(
-    applyAnthropicCacheControlToMessages(messages)
+    applyAnthropicCacheControlToMessages(
+      clearAnthropicCacheControlFromMessages(messages)
+    )
   );
 }
 

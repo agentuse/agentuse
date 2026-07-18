@@ -113,6 +113,46 @@ describe('executeAgentCore Anthropic cache control', () => {
     });
   });
 
+  it('does not accumulate cache breakpoints when stamped messages are fed back through prepareStep', async () => {
+    for await (const _ of executeAgentCore(
+      {
+        name: 'cache-test',
+        config: {
+          model: 'anthropic:claude-haiku-4-5',
+        },
+      } as any,
+      { bash: { description: 'Run a command' } as any },
+      {
+        userMessage: 'Check cache usage',
+        systemMessages: [{ role: 'system', content: 'static instructions' }],
+        maxSteps: 3,
+      }
+    )) {
+      // Consume the stream.
+    }
+
+    const streamConfig = streamTextMock.mock.calls[0][0] as any;
+
+    // Simulate a multi-step run: each step's prepareStep output persists into
+    // history and is fed into the next step. The count of message-level
+    // breakpoints must stay bounded (system + last message), not grow per step.
+    const countBreakpoints = (messages: any[]) =>
+      messages.filter((m) => m?.providerOptions?.anthropic?.cacheControl).length;
+
+    let history: any[] = [
+      { role: 'system', content: 'static instructions' },
+      { role: 'user', content: 'first turn' },
+    ];
+    for (let step = 0; step < 8; step++) {
+      // Each step feeds the prior stamped output back in and grows the history,
+      // exactly the path that leaked 6→11 breakpoints before the strip. The
+      // request the SDK actually sends must stay bounded at 2 every step.
+      const sent = (await streamConfig.prepareStep({ messages: history })).messages;
+      expect(countBreakpoints(sent)).toBe(2);
+      history = [...sent, { role: 'assistant', content: `reply ${step}` }];
+    }
+  });
+
   it('keeps dynamic user input after the cacheable instruction prefix', async () => {
     for await (const _ of executeAgentCore(
       {
