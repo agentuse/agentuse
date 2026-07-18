@@ -10,6 +10,7 @@ import { resolveRealPath, type PathResolverContext } from './path-validator.js';
 import { createBoundedAccumulator, getToolOutputLimits } from './tool-output-limits.js';
 import { logger } from '../utils/logger.js';
 import { parseDurationMs } from '../utils/duration.js';
+import { telemetry } from '../telemetry/index.js';
 import type { ModelToolOutputArtifactRef, ToolOutputArtifactRef, ToolOutputArtifactStream } from '../session/types.js';
 
 const DEFAULT_TIMEOUT = 120000; // 2 minutes
@@ -191,18 +192,24 @@ export function createBashTool(
   const resolverContext: PathResolverContext = context ?? { projectRoot };
   const validator = new CommandValidator(config.commands, projectRoot, allowedPaths, resolverContext);
   const timeoutConfigured = config.timeout !== undefined;
+  // Bare numbers are rejected outright on this field: it was the one timeout
+  // in the config surface measured in milliseconds while every sibling field
+  // uses seconds, and the ambiguity produced both instant kills (30 = 30ms)
+  // and, had we flipped the unit later, silent 33-hour timeouts (120000).
+  // A duration string is never ambiguous.
+  if (typeof config.timeout === 'number') {
+    telemetry.captureTimeoutUnitError({
+      surface: 'config',
+      field: 'tools.bash.timeout',
+      value: config.timeout,
+    });
+    throw new Error(
+      `tools.bash.timeout no longer accepts bare numbers (the unit was ambiguous: this field was milliseconds while every other timeout field is seconds). ` +
+      `Use a duration string instead, e.g. "${Math.max(1, Math.round(config.timeout / 1000))}s" if ${config.timeout} was milliseconds, or "${config.timeout}s" if it was seconds.`
+    );
+  }
   const defaultTimeout = config.timeout !== undefined
-    ? parseDurationMs(config.timeout, {
-        bareUnit: 'milliseconds',
-        field: 'tools.bash.timeout',
-        onBareNumber: (v) => {
-          logger.warn(
-            `tools.bash.timeout: ${v} is interpreted as MILLISECONDS (deprecated). ` +
-            `Use a suffixed duration like "${v}ms" or "${Math.max(1, Math.round(v / 1000))}s" - ` +
-            `bare numbers here will mean seconds in 1.0.`
-          );
-        },
-      })
+    ? parseDurationMs(config.timeout, { bareUnit: 'milliseconds', field: 'tools.bash.timeout' })
     : DEFAULT_TIMEOUT;
   const { maxBytes: maxOutputBytes, headRatio } = getToolOutputLimits();
   const artifactSink = resolverContext.toolOutputArtifacts;
@@ -268,6 +275,11 @@ Commands not matching these patterns will be rejected.`;
   function resolveCallTimeoutMs(timeout: number | string | undefined): number | { error: string } {
     if (timeout === undefined) return defaultTimeout;
     if (typeof timeout === 'number' && timeout < 1000) {
+      telemetry.captureTimeoutUnitError({
+        surface: 'tool_call',
+        field: 'tools.bash.timeout',
+        value: timeout,
+      });
       return {
         error: `Invalid timeout: ${timeout}. Bare numbers are MILLISECONDS (${timeout}ms would kill the command almost instantly). Pass a duration string like "${timeout}s", or ${timeout * 1000} for ${timeout} seconds. For a real sub-second timeout, pass "${timeout}ms" explicitly.`,
       };

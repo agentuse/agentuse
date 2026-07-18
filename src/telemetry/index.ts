@@ -12,7 +12,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { PostHog } from 'posthog-node';
 import { getOrCreateAnonymousId, isFirstRun, markFirstRunComplete } from './id';
-import type { ExecutionResult, ToolCallMetrics, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult } from './types';
+import type { ExecutionResult, ToolCallMetrics, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult, TimeoutUnitError } from './types';
 import type { ToolCallTrace } from '../plugin/types';
 
 // PostHog configuration
@@ -377,6 +377,44 @@ class TelemetryManager {
           ...(error.provider && { provider: error.provider }),
           ...(error.field && { config_field: error.field }),
           ...(error.issue && { config_issue: error.issue }),
+        },
+      });
+    } catch {
+      // Silently ignore capture errors
+    }
+  }
+
+  /**
+   * Capture a rejected bare-number timeout (seconds-vs-milliseconds mixup).
+   * Counts how many users hit the tools.bash.timeout unit break so the
+   * migration cost of the 0.16 unit unification is measurable.
+   */
+  captureTimeoutUnitError(error: TimeoutUnitError): void {
+    if (!this.enabled || !this.initialized || !this.client || !this.anonymousId) {
+      return;
+    }
+
+    try {
+      this.client.capture({
+        distinctId: this.anonymousId,
+        event: 'timeout_unit_error',
+        properties: {
+          $process_person_profile: false,
+
+          // Version and environment
+          version: VERSION,
+          os: process.platform,
+          arch: process.arch,
+          node_version: process.version,
+          is_ci: isCI(),
+          is_docker: isDocker(),
+          is_npx: isNpx(),
+          is_local_dev: isLocalDev(),
+
+          // Rejection details (anonymous - a timeout magnitude only)
+          surface: error.surface,
+          config_field: error.field,
+          value: error.value,
         },
       });
     } catch {

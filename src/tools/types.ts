@@ -24,9 +24,12 @@ export const BashConfigSchema = z.object({
   // redirect to re-gate. A command matching both lists is gated (gated wins).
   // Structural fix for the pre-approval ghost-post class (agentuse-lab#165/#169).
   gated: z.array(z.string().min(1)).optional(),
-  // Command timeout. Prefer a suffixed duration string ("30s", "2m"). A bare
-  // number is MILLISECONDS for backward compatibility (deprecated - every other
-  // timeout field is seconds; bare numbers here will flip to seconds at 1.0).
+  // Command timeout as a suffixed duration string ("30s", "2m", "500ms").
+  // Bare numbers are rejected at tool creation (this field was historically
+  // milliseconds while every sibling timeout is seconds - the ambiguity is
+  // not worth keeping). The number type stays in the schema only so the
+  // rejection can carry a corrective message + telemetry instead of a
+  // generic zod type error.
   timeout: z.union([z.number().positive(), z.string()]).optional(),
   allowedPaths: z.array(z.string()).optional(),
 });

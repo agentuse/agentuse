@@ -214,9 +214,9 @@ tools:
 | `commands` | `string[]` | Required | Auto-run allowlist of command patterns (supports `*` wildcard) |
 | `gated` | `string[]` | `[]` | Command patterns that run only after human approval, enforced by a per-action lease. Also runnable (the effective allowlist is `commands` plus `gated`); a match in both is gated. Declaring `gated` implies the approval gate. See [Gated commands](/guides/approval-gates#gated-commands-mechanical-enforcement). |
 | `allowedPaths` | `string[]` | `[]` | Additional directories beyond project root |
-| `timeout` | `number \| string` | `120000` | Command timeout. Prefer a duration string (`"30s"`, `"2m"`). A bare number is **milliseconds** (deprecated: every other timeout field uses seconds; bare numbers here flip to seconds in 1.0) |
+| `timeout` | `string` | `"2m"` | Command timeout as a duration string (`"30s"`, `"2m"`, `"500ms"`). Bare numbers are **rejected** with a corrective error: this field was historically milliseconds while every other timeout field is seconds, so a bare number is ambiguous by construction |
 
-When no config timeout is set, the model may pass a per-call `timeout` with the same shape. A bare per-call number under 1000 is rejected with a corrective error (it is always a seconds-vs-milliseconds mixup; a real sub-second timeout must be written as `"500ms"`).
+When no config timeout is set, the model may pass a per-call `timeout`: a duration string, or a bare number meaning milliseconds (kept for model familiarity). A bare per-call number under 1000 is rejected with a corrective error (it is always a seconds-vs-milliseconds mixup; a real sub-second timeout must be written as `"500ms"`).
 
 ### Command Patterns
 

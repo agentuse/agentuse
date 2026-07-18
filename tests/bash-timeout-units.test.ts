@@ -30,19 +30,14 @@ describe('bash tool timeout units', () => {
     expect(result.metadata.timedOut).toBe(true);
   });
 
-  test('bare-number config timeout stays milliseconds (back-compat)', async () => {
-    const tool = createBashTool(
-      { commands: ['sleep *'], timeout: 500 },
-      projectRoot,
-      { projectRoot }
-    ) as any;
+  test('bare-number config timeout is rejected with a corrective error', () => {
+    expect(() =>
+      createBashTool({ commands: ['sleep *'], timeout: 120000 }, projectRoot, { projectRoot })
+    ).toThrow(/no longer accepts bare numbers.*"120s" if 120000 was milliseconds/s);
 
-    const started = Date.now();
-    const result = await tool.execute({ command: 'sleep 5' }, { toolCallId: 'call-2' });
-    const elapsed = Date.now() - started;
-
-    expect(elapsed).toBeLessThan(3000);
-    expect(result.metadata.timedOut).toBe(true);
+    expect(() =>
+      createBashTool({ commands: ['sleep *'], timeout: 30 }, projectRoot, { projectRoot })
+    ).toThrow(/no longer accepts bare numbers/);
   });
 
   test('per-call timeout accepts a duration string', async () => {

@@ -53,6 +53,15 @@ export interface StartupError {
   issue?: string;
 }
 
+export interface TimeoutUnitError {
+  /** Where the bad value arrived: agent config frontmatter or a model tool call */
+  surface: 'config' | 'tool_call';
+  /** Field involved (e.g. 'tools.bash.timeout') */
+  field: string;
+  /** The rejected bare-number value (a timeout magnitude; not sensitive) */
+  value: number;
+}
+
 export interface ExecutionResult {
   /** Provider identifier (e.g., "anthropic", "openai", "openrouter") */
   provider: string;

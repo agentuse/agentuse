@@ -204,14 +204,14 @@ these. This shapes where a rule belongs:
   the run; `timeout:` does not tick during the wait. Size `timeout:` for the
   active work between gates, not human response time.
 
-- **Timeout units: bare numbers are seconds everywhere EXCEPT `tools.bash.timeout`
-  and the bash tool's per-call `timeout` parameter, which are milliseconds.**
-  `tools.bash.timeout: 30` means 30ms and kills the command almost instantly.
-  (At runtime the per-call bash `timeout` rejects bare numbers under 1000 with a
-  corrective error, so the guess self-heals; config values don't get that guard.)
-  Avoid the trap entirely by writing suffixed duration strings, accepted on every
-  timeout field: `timeout: "10m"`, `tools.bash.timeout: "30s"`,
-  `approval: { timeout: "24h" }`, `toolTimeout: "2m"`.
+- **Timeout units: bare numbers are seconds on every field EXCEPT
+  `tools.bash.timeout`, where they are rejected entirely** (the field was
+  historically milliseconds, so a bare number is ambiguous). Write duration
+  strings, accepted on every timeout field: `timeout: "10m"`,
+  `tools.bash.timeout: "30s"`, `approval: { timeout: "24h" }`,
+  `toolTimeout: "2m"`. The bash tool's per-call `timeout` parameter still takes
+  bare MILLISECONDS (or a duration string); bare per-call numbers under 1000
+  are rejected with a corrective error.
 
 - **Agents cannot prompt the user mid-run.** Never write "stop and ask the user
   to do X." The only branches at a blocker: exit with a clear error, record to
