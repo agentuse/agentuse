@@ -729,31 +729,14 @@ export default function Agents({ project }: { project?: string } = {}) {
   // feedback and mirrors it into the URL with replaceState — no history entry
   // per keystroke, and no router re-render that could steal input focus.
   const [filter, setFilter] = useState(location.query.q ?? '');
-  const [runningOnly, setRunningOnly] = useState(location.query.running === '1');
-  const syncUrl = (nextFilter: string, nextRunning: boolean) => {
+  const syncUrl = (nextFilter: string) => {
     const base = scoped ? `/agents/${encodeURIComponent(project)}` : '/agents';
-    const params = new URLSearchParams();
     const q = nextFilter.trim();
-    if (q) params.set('q', q);
-    if (nextRunning) params.set('running', '1');
-    const qs = params.toString();
-    history.replaceState(null, '', qs ? `${base}?${qs}` : base);
+    history.replaceState(null, '', q ? `${base}?${new URLSearchParams({ q })}` : base);
   };
   const updateFilter = (value: string) => {
     setFilter(value);
-    syncUrl(value, runningOnly);
-  };
-  const toggleRunningOnly = () => {
-    setRunningOnly((prev) => {
-      const next = !prev;
-      syncUrl(filter, next);
-      return next;
-    });
-  };
-  const clearAllFilters = () => {
-    setFilter('');
-    setRunningOnly(false);
-    syncUrl('', false);
+    syncUrl(value);
   };
   const query = filter.trim().toLowerCase();
 
@@ -778,10 +761,7 @@ export default function Agents({ project }: { project?: string } = {}) {
   const runsFor = runHistoryFinder(allLoaded, sessions.data?.sessions ?? []);
   const lastRunFor = (a: AgentRow) => runsFor(a)[0];
   const rowCtx: RowCtx = { pins, columns: renderColumns, runsFor, lastRunFor };
-  const isRunning = (a: AgentRow) => LIVE_RUN_STATUSES.has(lastRunFor(a)?.status ?? '');
-  const runningCount = loadedAgents.filter(isRunning).length;
-  const textFiltered = query ? loadedAgents.filter((a) => matchesFilter(a, query)) : loadedAgents;
-  const allAgents = runningOnly ? textFiltered.filter(isRunning) : textFiltered;
+  const allAgents = query ? loadedAgents.filter((a) => matchesFilter(a, query)) : loadedAgents;
   const byProject = new Map<string, AgentRow[]>();
   for (const agent of allAgents) {
     const list = byProject.get(agent.projectId);
@@ -799,8 +779,8 @@ export default function Agents({ project }: { project?: string } = {}) {
   const pinnedAgents = keys.map((k) => byKey.get(k)).filter((a): a is AgentRow => a !== undefined);
 
   const trimmed = filter.trim();
-  const filterActive = query.length > 0 || runningOnly;
-  const filterLabel = [query && `“${trimmed}”`, runningOnly && 'running now'].filter(Boolean).join(' + ');
+  const filterActive = query.length > 0;
+  const filterLabel = `“${trimmed}”`;
   const lede = !data
     ? (loading ? 'Loading agents…' : '')
     : projectMissing
@@ -870,18 +850,6 @@ export default function Agents({ project }: { project?: string } = {}) {
                   <button type="button" class="agents-filter-clear" aria-label="Clear filter" onClick={() => updateFilter('')}>×</button>
                 )}
               </div>
-              <button
-                type="button"
-                class={runningOnly ? 'agents-running-toggle on' : 'agents-running-toggle'}
-                aria-pressed={runningOnly}
-                disabled={runningCount === 0 && !runningOnly}
-                onClick={toggleRunningOnly}
-                title={runningOnly ? 'Show all agents' : 'Show only agents running now'}
-              >
-                <span class="tree-live" aria-hidden="true"></span>
-                <span>running now</span>
-                {runningCount > 0 && <span class="agents-running-count">{runningCount}</span>}
-              </button>
               <div class="view-toggle" role="group" aria-label="Layout">
                 <button type="button" class={view === 'tree' ? 'on' : ''} aria-pressed={view === 'tree'} onClick={() => setView('tree')}>Tree</button>
                 <button type="button" class={view === 'cards' ? 'on' : ''} aria-pressed={view === 'cards'} onClick={() => setView('cards')}>Cards</button>
@@ -952,7 +920,7 @@ export default function Agents({ project }: { project?: string } = {}) {
             : <div class="empty">
               {emptyMsg}
               {filterActive && !projectMissing && (
-                <button type="button" class="empty-action" onClick={clearAllFilters}>Clear filter</button>
+                <button type="button" class="empty-action" onClick={() => updateFilter('')}>Clear filter</button>
               )}
             </div>}</div>
           : [...byProject.entries()].map(([projectId, agents]) => (
