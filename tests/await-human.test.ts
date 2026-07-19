@@ -223,6 +223,41 @@ describe('await_human approval URL', () => {
     }
   });
 
+  it('rejects inputs carrying leaked XML tool-call markup instead of suspending', async () => {
+    const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
+
+    // Real-world drift shape: the model closed `summary` with XML tool syntax
+    // and smuggled the next field in as markup instead of a JSON property.
+    const garbled = {
+      prompt: 'Approve this batch?',
+      summary: 'Seven replies staged.</parameter>\n<parameter name="changes">[{"content": "hi"}]',
+      context: 'Batch ref 123</parameter>\n</invoke>'
+    };
+
+    try {
+      await tool.execute?.(garbled as any, {} as any);
+      throw new Error('expected a validation error');
+    } catch (err) {
+      expect(isSuspendSignal(err)).toBe(false);
+      expect((err as Error).message).toContain('XML tool-call markup');
+    }
+  });
+
+  it('does not false-positive on angle brackets in normal markdown', async () => {
+    const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
+
+    try {
+      await tool.execute?.({
+        prompt: 'Approve?',
+        summary: 'Uses generics like Array<string> and <div> tags, plus a <placeholder>.',
+        changes: [{ content: 'if (a < b && b > c) { ... }' }]
+      } as any, {} as any);
+      throw new Error('expected suspend signal');
+    } catch (err) {
+      expect(isSuspendSignal(err)).toBe(true);
+    }
+  });
+
   it('treats bare-number timeouts as seconds, not milliseconds', async () => {
     const now = Date.now();
     const tool = createAwaitHumanTool('session-1', {

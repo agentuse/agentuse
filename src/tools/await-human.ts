@@ -80,6 +80,22 @@ export function getArtifactUrl(
   return url.toString();
 }
 
+// Long, markdown-heavy await_human inputs occasionally trigger a known Claude
+// failure mode: mid-call the model drifts from JSON tool-use into its legacy
+// XML tool syntax, leaving `</parameter>\n<parameter name="changes">…` embedded
+// inside string values. Zod can't catch it (the junk lives inside valid
+// strings), and suspending with it produces a garbled approval card that only
+// a human can un-stick. Detect the markup and bounce the call back to the
+// model as a tool error so it re-emits clean JSON instead.
+const XML_TOOL_MARKUP = /<\/?(?:antml:)?(?:parameter|invoke|function_calls)\b/;
+
+function findXmlToolMarkup(value: unknown): boolean {
+  if (typeof value === 'string') return XML_TOOL_MARKUP.test(value);
+  if (Array.isArray(value)) return value.some(findXmlToolMarkup);
+  if (value && typeof value === 'object') return Object.values(value).some(findXmlToolMarkup);
+  return false;
+}
+
 export interface AwaitHumanDefaults {
   timeout?: string | number;
   slack?: { channelId?: string };
@@ -117,7 +133,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       context: z.string().optional().describe('Only background the other fields do not already carry: constraints, inputs used, process notes. Never repeat the reference, changes, or summary content (no restating the target, URL, or revision story). Omit entirely when nothing extra remains. Rendered as Markdown.'),
       risk: z.string().optional().describe('Concrete risks, unresolved questions, or areas needing reviewer attention. Rendered as Markdown.')
     }),
-    execute: async ({ prompt }: {
+    execute: async (input: {
       prompt: string;
       summary?: string;
       draft?: string;
@@ -131,6 +147,14 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       context?: string;
       risk?: string;
     }) => {
+      const { prompt } = input;
+      if (findXmlToolMarkup(input)) {
+        throw new Error(
+          'await_human input contains XML tool-call markup (e.g. </parameter>, <parameter name="...">). ' +
+          'The call was not shown to the reviewer. Re-issue await_human as a pure JSON tool call: ' +
+          'each field (summary, changes, context, risk, ...) must be its own JSON property, with no XML tags inside string values.'
+        );
+      }
       const timeoutMs = parseTimeout(defaults?.timeout);
       const expiresAt = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
       const resumeToken = randomBytes(24).toString('base64url');
