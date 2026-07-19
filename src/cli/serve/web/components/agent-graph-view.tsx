@@ -16,10 +16,12 @@ const NODE_W = 176;
 const NODE_H = 52;
 const COL_GAP = 72;
 const ROW_GAP = 16;
+/** Extra space between independent subgraphs (component row bands). */
+const COMP_GAP = 36;
 const PAD = 12;
 
 function nodeX(n: GraphNode): number { return PAD + n.rank * (NODE_W + COL_GAP); }
-function nodeY(n: GraphNode): number { return PAD + n.order * (NODE_H + ROW_GAP); }
+function nodeY(n: GraphNode): number { return PAD + n.order * (NODE_H + ROW_GAP) + n.component * COMP_GAP; }
 
 /** Filter match mirroring the list views: dim, never remove, so edges survive. */
 function matches(agent: AgentRow | undefined, query: string): boolean {
@@ -33,9 +35,8 @@ export function AgentGraphView(props: { agents: AgentRow[]; query: string }) {
   const graph: AgentGraph = buildAgentGraph(props.agents);
   const [hovered, setHovered] = useState<string | null>(null);
 
-  const rows = graph.nodes.length === 0 ? 0 : Math.max(...graph.nodes.map((n) => n.order)) + 1;
   const width = PAD * 2 + graph.rankCount * NODE_W + Math.max(0, graph.rankCount - 1) * COL_GAP;
-  const height = PAD * 2 + rows * NODE_H + Math.max(0, rows - 1) * ROW_GAP;
+  const height = graph.nodes.length === 0 ? 0 : Math.max(...graph.nodes.map((n) => nodeY(n))) + NODE_H + PAD;
   const byPath = new Map(graph.nodes.map((n) => [n.path, n]));
   const neighbors = new Set<string>();
   if (hovered) {

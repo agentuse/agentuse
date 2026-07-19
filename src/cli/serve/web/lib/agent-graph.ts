@@ -26,6 +26,12 @@ export interface GraphNode {
   order: number;
   /** Entry point: depended on / delegating, but not itself downstream of anything. */
   entry: boolean;
+  /**
+   * Weakly-connected-component index. Independent subgraphs each get their own
+   * band of rows so pipelines never interleave; the view adds extra vertical
+   * space between bands.
+   */
+  component: number;
   /** Shared store name, when the agent declares one. */
   store?: string;
 }
@@ -46,6 +52,8 @@ export interface AgentGraph {
   isolated: AgentRow[];
   /** Number of columns in the layout. */
   rankCount: number;
+  /** Number of independent subgraphs (row bands). */
+  componentCount: number;
 }
 
 /**
@@ -93,6 +101,7 @@ export function buildAgentGraph(agents: AgentRow[]): AgentGraph {
       rank: 0,
       order: 0,
       entry: false,
+      component: 0,
       ...(agent?.store && { store: agent.store }),
     });
   }
@@ -127,28 +136,65 @@ export function buildAgentGraph(agents: AgentRow[]): AgentGraph {
       && (outgoing.get(node.path) ?? []).length > 0;
   }
 
-  // Order within each column: one barycenter pass (average of upstream rows)
-  // to reduce crossings, then stable alphabetical for determinism.
-  const columns = new Map<number, GraphNode[]>();
+  // Weakly connected components: independent subgraphs must not interleave in
+  // shared columns (with several pipelines that reads as one tangled graph),
+  // so each gets its own contiguous band of rows.
+  const compRoot = new Map<string, string>();
+  const find = (p: string): string => {
+    let root = p;
+    while (compRoot.get(root) !== root) root = compRoot.get(root) ?? root;
+    compRoot.set(p, root);
+    return root;
+  };
+  for (const path of nodes.keys()) compRoot.set(path, path);
+  for (const e of edges) {
+    const a = find(e.from);
+    const b = find(e.to);
+    if (a !== b) compRoot.set(a, b);
+  }
+  const members = new Map<string, GraphNode[]>();
   for (const node of nodes.values()) {
-    (columns.get(node.rank) ?? columns.set(node.rank, []).get(node.rank)!).push(node);
+    const root = find(node.path);
+    (members.get(root) ?? members.set(root, []).get(root)!).push(node);
   }
-  const rankCount = columns.size === 0 ? 0 : Math.max(...columns.keys()) + 1;
+  // Big graphs first, then alphabetical by their first node for determinism.
+  const components = [...members.values()].sort((a, b) =>
+    b.length - a.length
+    || (a[0]?.name ?? '').localeCompare(b[0]?.name ?? '')
+    || (a[0]?.path ?? '').localeCompare(b[0]?.path ?? ''));
+
+  // Order within each column, component by component: one barycenter pass
+  // (average of upstream rows) to reduce crossings, then stable alphabetical.
+  // `order` is a global row index; components stack via a running offset.
+  const rankCount = nodes.size === 0 ? 0 : Math.max(...[...nodes.values()].map((n) => n.rank)) + 1;
   const rowOf = new Map<string, number>();
-  for (let r = 0; r < rankCount; r++) {
-    const col = columns.get(r) ?? [];
-    const bary = (n: GraphNode): number => {
-      const ups = (incoming.get(n.path) ?? []).map((u) => rowOf.get(u)).filter((v): v is number => v !== undefined);
-      return ups.length ? ups.reduce((a, b) => a + b, 0) / ups.length : Number.MAX_SAFE_INTEGER;
-    };
-    col.sort((a, b) => bary(a) - bary(b) || a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
-    col.forEach((n, i) => { n.order = i; rowOf.set(n.path, i); });
-  }
+  let rowOffset = 0;
+  components.forEach((comp, compIndex) => {
+    for (const n of comp) n.component = compIndex;
+    const columns = new Map<number, GraphNode[]>();
+    for (const n of comp) {
+      (columns.get(n.rank) ?? columns.set(n.rank, []).get(n.rank)!).push(n);
+    }
+    let compRows = 0;
+    const compRankMax = Math.max(...comp.map((n) => n.rank));
+    for (let r = 0; r <= compRankMax; r++) {
+      const col = columns.get(r) ?? [];
+      const bary = (n: GraphNode): number => {
+        const ups = (incoming.get(n.path) ?? []).map((u) => rowOf.get(u)).filter((v): v is number => v !== undefined);
+        return ups.length ? ups.reduce((a, b) => a + b, 0) / ups.length : Number.MAX_SAFE_INTEGER;
+      };
+      col.sort((a, b) => bary(a) - bary(b) || a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
+      col.forEach((n, i) => { n.order = rowOffset + i; rowOf.set(n.path, n.order); });
+      compRows = Math.max(compRows, col.length);
+    }
+    rowOffset += compRows;
+  });
 
   return {
-    nodes: [...nodes.values()].sort((a, b) => a.rank - b.rank || a.order - b.order),
+    nodes: [...nodes.values()].sort((a, b) => a.component - b.component || a.rank - b.rank || a.order - b.order),
     edges,
     isolated,
     rankCount,
+    componentCount: components.length,
   };
 }

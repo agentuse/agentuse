@@ -67,6 +67,33 @@ describe('buildAgentGraph', () => {
     expect(graph.rankCount).toBeGreaterThan(0);
   });
 
+  it('stacks independent subgraphs into separate row bands', () => {
+    const graph = buildAgentGraph([
+      row({ path: 'p1/a.agentuse', subagents: ['p1/b.agentuse'] }),
+      row({ path: 'p1/b.agentuse' }),
+      row({ path: 'p2/x.agentuse', dependsOn: ['p2/y.agentuse'] }),
+      row({ path: 'p2/y.agentuse' }),
+      row({ path: 'p3/m.agentuse', subagents: ['p3/w1.agentuse', 'p3/w2.agentuse'] }),
+      row({ path: 'p3/w1.agentuse' }),
+      row({ path: 'p3/w2.agentuse' }),
+    ]);
+    expect(graph.componentCount).toBe(3);
+    const byPath = new Map(graph.nodes.map((n) => [n.path, n]));
+    // Members of one subgraph share a component; different subgraphs never do.
+    expect(byPath.get('p1/a.agentuse')!.component).toBe(byPath.get('p1/b.agentuse')!.component);
+    expect(byPath.get('p2/x.agentuse')!.component).toBe(byPath.get('p2/y.agentuse')!.component);
+    expect(byPath.get('p1/a.agentuse')!.component).not.toBe(byPath.get('p2/x.agentuse')!.component);
+    // Row bands are disjoint: no shared `order` across components in any column.
+    const seen = new Map<string, number>();
+    for (const n of graph.nodes) {
+      const prev = seen.get(`${n.rank}:${n.order}`);
+      expect(prev === undefined || prev === n.component).toBe(true);
+      seen.set(`${n.rank}:${n.order}`, n.component);
+    }
+    // Largest subgraph (3 nodes) sorts first.
+    expect(byPath.get('p3/m.agentuse')!.component).toBe(0);
+  });
+
   it('ranks a delegation fan-out with manager on the left', () => {
     const graph = buildAgentGraph([
       row({ path: 'manager.agentuse', subagents: ['w1.agentuse', 'w2.agentuse'] }),
