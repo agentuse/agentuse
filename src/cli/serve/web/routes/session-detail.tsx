@@ -993,9 +993,9 @@ export default function SessionDetail() {
         })}
         {showWorking && (
           <li class="log-item log-working">
-            <span class="log-time" />
-            <span class="log-marker"><span class="log-spinner" aria-label="working" /></span>
-            <div class="log-main">
+            <div class="log-head">
+              <span class="log-time" />
+              <span class="log-marker"><span class="log-spinner" aria-label="working" /></span>
               <span class="log-title">{workingLabel}<span class="log-dots" aria-hidden="true" /></span>
             </div>
           </li>

@@ -581,16 +581,16 @@ function LogEntryImpl(props: LogEntryProps) {
         toggle();
       }}
     >
-      <span class="log-time">{formatLogTime(entry.time)}</span>
-      <span
-        class="log-marker"
-        {...(spinning
-          ? {}
-          : entry.type === 'log'
-            ? { 'aria-label': `${entry.level ?? 'info'} log`, title: entry.level ?? 'info', role: 'img' }
-            : { 'aria-hidden': 'true' })}
-      >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : failed ? '✗' : entry.type === 'tool' && entry.status === 'completed' ? '✓' : '⋮')}</span>
-      <div class="log-main">
+      <div class="log-head">
+        <span class="log-time">{formatLogTime(entry.time)}</span>
+        <span
+          class="log-marker"
+          {...(spinning
+            ? {}
+            : entry.type === 'log'
+              ? { 'aria-label': `${entry.level ?? 'info'} log`, title: entry.level ?? 'info', role: 'img' }
+              : { 'aria-hidden': 'true' })}
+        >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : failed ? '✗' : entry.type === 'tool' && entry.status === 'completed' ? '✓' : '⋮')}</span>
         <span class="log-title">
           {entry.type === 'tool' && entry.tool && !isApprovalEntry
             ? <span class="tool-chip" title={entry.title} aria-label={entry.title}>{toolChipLabel(entry.tool)}</span>
@@ -602,6 +602,8 @@ function LogEntryImpl(props: LogEntryProps) {
             <span class="log-warn-badge" title={`${warnings.length} warning${warnings.length === 1 ? '' : 's'} about this tool call`}>⚠ {warnings.length}</span>
           )}
         </span>
+      </div>
+      <div class="log-main">
         {/* The sub-agent card carries status + a link to the child run, so keep
             it visible even when the row is collapsed; only the tool input/output
             below stays behind the expand toggle. */}

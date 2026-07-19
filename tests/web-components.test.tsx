@@ -170,6 +170,27 @@ function renderEntry(entry: ApprovalLogEntry, overrides: Partial<Parameters<type
 }
 
 describe('LogEntry component', () => {
+  it('groups the timestamp, status marker, and title into one row header', () => {
+    const html = renderEntry({
+      id: 'tool-row-header',
+      type: 'tool',
+      tool: 'tools__filesystem_read',
+      title: 'tools__filesystem_read completed',
+      status: 'completed',
+      time: Date.now(),
+    });
+    const headerStart = html.indexOf('<div class="log-head">');
+    const bodyStart = html.indexOf('<div class="log-main">');
+    const header = html.slice(headerStart, bodyStart);
+
+    expect(headerStart).toBeGreaterThanOrEqual(0);
+    expect(bodyStart).toBeGreaterThan(headerStart);
+    expect(header).toContain('class="log-time"');
+    expect(header).toContain('class="log-marker"');
+    expect(header).toContain('class="log-title"');
+    expect(header).toContain('filesystem_read');
+  });
+
   it('renders a context compaction event with its summary, not expandable', () => {
     const html = renderEntry({
       id: 'log-c1',

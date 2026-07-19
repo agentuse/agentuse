@@ -1073,24 +1073,25 @@ a, button, select, summary, label, input, textarea,
 /* logs */
 .logs { list-style: none; margin: 0; padding: 0; }
 .log-item {
+  display: block;
+  padding: 10px 0 10px 12px;
+  border-bottom: 1px dashed var(--line);
+  /* Per-type accent spine, colored by the data-log-type rules below. */
+  border-left: 2px solid transparent;
+}
+.log-head {
   display: grid;
   /* 84px fits a locale timestamp ("12:41:38 PM") at 11px on one line; the rail
      is deliberately narrow and quiet so the type spine + content, not the
      clock, carry the eye. */
   grid-template-columns: 84px 14px 1fr;
   gap: 12px;
-  padding: 10px 0 10px 12px;
-  border-bottom: 1px dashed var(--line);
-  /* Per-type accent spine, colored by the data-log-type rules below. */
-  border-left: 2px solid transparent;
   align-items: start;
 }
 .log-item:last-child { border-bottom: 0; }
-/* Grid items default to min-width:auto, so a wide table (width: max-content)
-   inside .log-main widens the whole 1fr column past the panel instead of
-   scrolling inside .content-table-scroll. min-width: 0 lets the column shrink
-   to the grid track, giving the table scroller a bounded width to scroll in. */
-.log-main { min-width: 0; }
+/* Align detail content under the desktop title: timestamp + marker + two gaps.
+   Keeping it outside the header lets mobile details reclaim the full row. */
+.log-main { min-width: 0; margin-left: calc(84px + 14px + 24px); }
 .log-time { color: var(--muted-2); font-size: 11px; padding-top: 2px; font-variant-numeric: tabular-nums; }
 .log-marker {
   display: inline-flex;
@@ -2543,19 +2544,21 @@ html[data-route-loading] body::after {
 
 @media (max-width: 640px) {
   .page-approval-detail h1 { font-size: 26px; }
-  /* Stack the timestamp/marker above the log so content uses the full width.
-     Horizontal padding matters here: without the desktop time-column gutter,
-     content would sit flush on the card edge and the actionable accent bar. */
+  /* Keep timestamp, status, and title/action chip on one scannable row.
+     Expanded content still drops below at full width for readable output. */
   .log-item {
-    grid-template-columns: auto 1fr;
-    column-gap: 8px;
-    row-gap: 4px;
     padding: 12px 10px;
   }
+  .log-head {
+    grid-template-columns: auto 14px minmax(0, 1fr);
+    gap: 8px;
+  }
   .log-item.is-actionable { padding-left: 14px; }
-  .log-time { grid-column: 1; grid-row: 1; }
-  .log-marker { grid-column: 2; grid-row: 1; justify-content: flex-start; }
-  .log-main { grid-column: 1 / -1; grid-row: 2; }
+  .log-main { margin-left: 0; }
+  /* Long tool ids yield space before the Show/Hide control wraps. */
+  .log-item.expandable .log-title { display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .log-item.expandable .tool-chip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-item.expandable .log-title::after { flex: 0 0 auto; }
   .approval-question { font-size: 17px; }
   /* Let the label / char count / copy chip wrap instead of crushing the label. */
   .approval-change-head { flex-wrap: wrap; row-gap: 4px; }
