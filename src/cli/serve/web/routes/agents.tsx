@@ -1,8 +1,9 @@
 import type { VNode } from 'preact';
 import { useLocation } from 'preact-iso';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { AboutInfo, AgentRow, SessionRow } from '../lib/api';
+import type { AboutInfo, AgentRow, SessionRow, SessionsPayload } from '../lib/api';
 import { fetchAgents, fetchSessions } from '../lib/api';
+import { useSessionsStream } from '../hooks/use-sessions-stream';
 import { term, termTitle } from '../lib/terms';
 import { LogContent } from '../components/content';
 import { useFetch } from '../hooks/use-fetch';
@@ -717,9 +718,30 @@ export default function Agents({ project }: { project?: string } = {}) {
   const { columns, addColumn, removeColumn } = useAgentColumns();
   const narrow = useMediaQuery('(max-width: 700px)');
   // Recent sessions power the "Last run" column (and the live pulse on rows).
-  // 30d keeps rarely-run agents from reading as "never ran"; a short refresh
-  // keeps the running/finished transition visible without a reload.
-  const sessions = useFetch('agents-last-runs', () => fetchSessions({ window: '30d' }), { refreshMs: 10_000 });
+  // 30d keeps rarely-run agents from reading as "never ran". Prefer the shared
+  // sessions stream over polling, like Home: the hub pushes on a ~2s cadence
+  // while anything is running, so a run's dot appears and clears promptly
+  // instead of waiting out a poll tick. Polling stays as the fallback for when
+  // the stream can't connect (proxies that buffer SSE, older daemons).
+  const [streamedSessions, setStreamedSessions] = useState<SessionsPayload | null>(null);
+  const [sessionsFallback, setSessionsFallback] = useState(false);
+  const fetchedSessions = useFetch(
+    'agents-last-runs',
+    () => fetchSessions({ window: '30d' }),
+    sessionsFallback ? { refreshMs: 10_000 } : {}
+  );
+  useSessionsStream({
+    window: '30d',
+    agent: undefined,
+    status: undefined,
+    trigger: undefined,
+    approval: undefined,
+    enabled: !sessionsFallback,
+    onData: setStreamedSessions,
+    onError: () => setSessionsFallback(true),
+    onFallback: () => setSessionsFallback(true),
+  });
+  const sessionRows = (streamedSessions ?? fetchedSessions.data)?.sessions ?? [];
   const { view, setView } = useAgentsView();
 
   // The filter lives in the URL (?q=) so a filtered view survives refresh and
@@ -756,7 +778,7 @@ export default function Agents({ project }: { project?: string } = {}) {
   const inactiveColumns = allColumns.filter((c) => !activeColumns.includes(c.id));
   const renderColumns = narrow ? activeColumns.filter((id) => id === 'run' || id === 'lastRun') : activeColumns;
   const gridTemplate = columnsGridTemplate(renderColumns);
-  const runsFor = runHistoryFinder(allLoaded, sessions.data?.sessions ?? []);
+  const runsFor = runHistoryFinder(allLoaded, sessionRows);
   const lastRunFor = (a: AgentRow) => runsFor(a)[0];
   const rowCtx: RowCtx = { pins, columns: renderColumns, runsFor, lastRunFor };
   const allAgents = query ? loadedAgents.filter((a) => matchesFilter(a, query)) : loadedAgents;
