@@ -1,6 +1,10 @@
 export { buildAutonomousAgentPrompt } from './runner/prompt';
 export { prepareAgentExecution } from './runner/preparation';
 export { processAgentStream } from './runner/stream';
+export { SessionRecorder } from './runner/session-recorder';
+export type { SessionRecorderOptions } from './runner/session-recorder';
+export { LoggerTerminalPresenter, defaultTerminalPresenter } from './runner/terminal-presenter';
+export type { TerminalPresenter, TerminalToolResultOptions } from './runner/terminal-presenter';
 export { executeAgentCore } from './runner/execution';
 export { runAgent } from './runner/run';
 export { applyResumeToolResult, restoreResumeToolResult, reopenSuspendedGate, reconcileOrphanedSessions } from './runner/resume';
