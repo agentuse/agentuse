@@ -4,8 +4,9 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { initStorage } from '../src/storage';
 import { SessionManager } from '../src/session';
-import { createSessionLogSink, describeLogPart } from '../src/runner';
-import { warnOnSoftToolError } from '../src/runner/execution';
+import { createSessionLogSink, describeLogPart, LoggerTerminalPresenter, processAgentStream, type AgentChunk } from '../src/runner';
+import { isSoftToolError } from '../src/runner/execution';
+import { createBashTool } from '../src/tools/bash';
 import { logger, runWithLogSink, type LogRecord } from '../src/utils/logger';
 
 describe('describeLogPart (log part -> session-view entry)', () => {
@@ -29,32 +30,22 @@ describe('describeLogPart (log part -> session-view entry)', () => {
   });
 });
 
-describe('warnOnSoftToolError (soft tool-failure heuristic)', () => {
-  const capture = (chunk: any, result: string): LogRecord[] => {
-    const records: LogRecord[] = [];
-    runWithLogSink((r) => records.push(r), () => warnOnSoftToolError(chunk, result));
-    return records;
-  };
-
-  it('does not warn when an error keyword only appears mid-output (the LinkedIn false positive)', () => {
+describe('isSoftToolError (soft tool-failure classification)', () => {
+  it('does not fail when an error keyword only appears mid-output (the LinkedIn false positive)', () => {
     const result = '// Extract posts from LinkedIn feed\nconst x = 1; // page not found handler\nwindow.MAX_ITEMS = 5;';
-    expect(capture({ toolName: 'tools__bash', toolCallId: 'c1' }, result)).toHaveLength(0);
+    expect(isSoftToolError({ toolName: 'tools__bash' }, result)).toBe(false);
   });
 
-  it('does not warn when the first line is a success title containing an error word', () => {
-    expect(capture({ toolName: 'tools__bash', toolCallId: 'c2' }, '✓ Search | LinkedIn — 3 results, none unauthorized')).toHaveLength(0);
+  it('does not fail when the first line is a success title containing an error word', () => {
+    expect(isSoftToolError({ toolName: 'tools__bash' }, '✓ Search | LinkedIn — 3 results, none unauthorized')).toBe(false);
   });
 
-  it('warns once when the result actually starts as an error, carrying the toolId', () => {
-    const records = capture({ toolName: 'tools__bash', toolCallId: 'c3' }, 'Error: command not found: foo');
-    expect(records).toHaveLength(1);
-    expect(records[0].level).toBe('warn');
-    expect(records[0].toolId).toBe('c3');
-    expect(records[0].message).toContain('failed -');
+  it('fails when the result actually starts as an error', () => {
+    expect(isSoftToolError({ toolName: 'tools__bash' }, 'Error: command not found: foo')).toBe(true);
   });
 
   it('skips skill tools whose content documents errors', () => {
-    expect(capture({ toolName: 'tools__skill_load', toolCallId: 'c4' }, 'Error: not found')).toHaveLength(0);
+    expect(isSoftToolError({ toolName: 'tools__skill_load' }, 'Error: not found')).toBe(false);
   });
 });
 
@@ -120,6 +111,48 @@ describe('runWithLogSink (logger structured capture)', () => {
     }
   });
 
+  it('keeps every terminal projection out of the session sink', () => {
+    const records: LogRecord[] = [];
+    const presenter = new LoggerTerminalPresenter();
+    logger.configure({ disableTUI: true });
+    logger.startCapture();
+    try {
+      runWithLogSink((record) => records.push(record), () => {
+        presenter.llmStarted('demo:model');
+        presenter.llmFirstToken('demo:model', 25);
+        presenter.toolStarted('tools__bash', { command: 'echo hello' });
+        presenter.toolFinished('hello', { duration: 5, success: true });
+        presenter.warning('tool-output warning');
+        presenter.text('answer');
+        presenter.responseComplete();
+        logger.info('real operational diagnostic');
+      });
+
+      expect(logger.stopCapture()).toContain('Bash: echo hello');
+      expect(records.map((record) => record.message)).toEqual(['real operational diagnostic']);
+    } finally {
+      logger.stopCapture();
+      logger.configure({ disableTUI: false });
+    }
+  });
+
+  it('returns a blocked Bash command as structured output without a warning log', async () => {
+    const records: LogRecord[] = [];
+    const bash = createBashTool({ commands: ['ls *'] }, tmpdir(), { projectRoot: tmpdir() }) as any;
+
+    const result = await runWithLogSink((record) => records.push(record), () =>
+      bash.execute({ command: 'head -80' }, { toolCallId: 'blocked-call' })
+    );
+    // Regression guard for the former setImmediate(logger.warn(...)) path.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(JSON.parse(result.output)).toMatchObject({
+      success: false,
+      error: expect.stringContaining('Command blocked by agent configuration'),
+    });
+    expect(records).toHaveLength(0);
+  });
+
   // Mirrors run.ts/subagent.ts: the stream is an async generator created and
   // consumed inside the sink scope. The context must survive each yield/await
   // so logs emitted between chunks (deep in the stream) are still captured.
@@ -183,6 +216,47 @@ async function withTempProject(prefix: string, fn: (projectRoot: string) => Prom
 }
 
 describe('createSessionLogSink', () => {
+  it('persists one structured tool record with no terminal-presentation log duplicate', async () => {
+    await withTempProject('agentuse-single-tool-record-', async () => {
+      const { sessionManager, sessionID, messageID } = await makeSessionWithMessage(process.env.XDG_DATA_HOME!);
+      const sink = createSessionLogSink(sessionManager, sessionID, 'agents/review', messageID);
+
+      async function* chunks(): AsyncGenerator<AgentChunk> {
+        yield {
+          type: 'tool-call',
+          toolName: 'tools__bash',
+          toolCallId: 'blocked-call',
+          toolInput: { command: 'head -80' },
+          toolStartTime: 1_000,
+        };
+        yield {
+          type: 'tool-result',
+          toolName: 'tools__bash',
+          toolCallId: 'blocked-call',
+          toolDuration: 5,
+          toolResult: '{"success":false,"error":"Command blocked"}',
+          toolResultRaw: { error: 'Command blocked' },
+        };
+      }
+
+      await runWithLogSink(sink.capture, () => processAgentStream(chunks(), {
+        sessionManager,
+        sessionID,
+        agentId: 'agents/review',
+        messageID,
+      }));
+      await sink.flush();
+
+      const parts = await sessionManager.getMessageParts(sessionID, 'agents/review', messageID);
+      expect(parts.filter((part) => part.type === 'tool')).toHaveLength(1);
+      expect(parts.filter((part) => part.type === 'log')).toHaveLength(0);
+      expect((parts.find((part) => part.type === 'tool') as any).state).toMatchObject({
+        status: 'error',
+        error: 'Command blocked',
+      });
+    });
+  });
+
   it('persists captured records as ordered log parts', async () => {
     await withTempProject('agentuse-log-sink-', async () => {
       const { sessionManager, sessionID, messageID } = await makeSessionWithMessage(process.env.XDG_DATA_HOME!);

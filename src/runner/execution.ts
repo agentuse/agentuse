@@ -1034,10 +1034,10 @@ Error: ${errorMessage}`);
           const seenCall = segmentToolCalls.get(toolCallId);
           if (seenCall) seenCall.resolved = true;
 
-          // Parse once: parseToolResult is pure, and running it twice previously
-          // emitted the soft-error warning twice for the same call.
+          // Normalize ambiguous string results once so every projection agrees
+          // on whether this lifecycle completed or failed.
           const toolResultStr = parseToolResult(chunk);
-          warnOnSoftToolError(chunk, toolResultStr);
+          const toolSuccess = !isSoftToolError(chunk, toolResultStr);
 
           // Note: we intentionally do NOT add the tool result to contextManager
           // here. `prepareStep` (createStream) is the single source of truth for
@@ -1058,6 +1058,7 @@ Error: ${errorMessage}`);
             toolName: chunk.toolName,
             toolCallId,  // Add toolCallId to the chunk
             toolResult: toolResultStr,
+            toolSuccess,
             // Strip any inline base64 media before this raw value is persisted to
             // the session store / traces (stream.ts). stripInlineMediaData returns
             // a copy, so the AI SDK's own reference (used by toModelOutput to send
@@ -1690,18 +1691,16 @@ function parseToolResult(chunk: any): string {
 }
 
 /**
- * Emit a single operational warning when a *successful* tool result actually
- * reads like a soft failure (a tool that reports an error in its return value
- * instead of throwing). Patterns are anchored to the result's first non-empty
- * line so incidental keywords buried in long output (scraped pages, bash/JS
- * scripts) don't trip a false "failed" warning. Call this exactly once per
- * tool-result chunk: parseToolResult is pure and may run more than once.
+ * Classify a nominally successful tool result that actually reads like a soft
+ * failure (a tool that reports an error in its return value instead of
+ * throwing). The normalized AgentChunk carries this classification so terminal
+ * and session projections render the same single failed lifecycle.
  */
-export function warnOnSoftToolError(chunk: any, resultStr: string): void {
-  if (!resultStr || typeof resultStr !== 'string') return;
+export function isSoftToolError(chunk: any, resultStr: string): boolean {
+  if (!resultStr || typeof resultStr !== 'string') return false;
   // Skill content often documents errors (e.g. "not found" troubleshooting), so
   // it would always trip the heuristic; skip it.
-  if (chunk.toolName === 'tools__skill_load' || chunk.toolName === 'tools__skill_read') return;
+  if (chunk.toolName === 'tools__skill_load' || chunk.toolName === 'tools__skill_read') return false;
 
   const firstLine = resultStr.split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
   const errorPatterns = [
@@ -1714,16 +1713,5 @@ export function warnOnSoftToolError(chunk: any, resultStr: string): void {
     /^not found\b/i,
     /^invalid\s+(?:token|api[\s_-]?key)\b/i,
   ];
-  if (!errorPatterns.some((pattern) => pattern.test(firstLine))) return;
-
-  // Best-effort context for the warning: the command/file/action the error names.
-  let operation = 'operation';
-  const commandMatch = firstLine.match(/['"`]([^'"`]+)['"`]/);
-  const fileMatch = firstLine.match(/(?:file|path|directory)\s+['"`]?([^\s'"`]+)/i);
-  const actionMatch = firstLine.match(/(?:failed to|cannot|unable to)\s+(\w+)/i);
-  if (commandMatch) operation = commandMatch[1];
-  else if (fileMatch) operation = fileMatch[1];
-  else if (actionMatch) operation = actionMatch[1];
-
-  logger.warnWithTool(chunk.toolName || 'unknown', operation, resultStr, chunk.toolCallId);
+  return errorPatterns.some((pattern) => pattern.test(firstLine));
 }

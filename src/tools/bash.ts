@@ -317,11 +317,6 @@ Commands not matching these patterns will be rejected.`;
           error: message,
         };
 
-        // Log warning after tool result is displayed (next tick)
-        setImmediate(() => {
-          logger.warn(`Bash command blocked: "${command}"`);
-        });
-
         return { output: JSON.stringify(error) };
       }
 

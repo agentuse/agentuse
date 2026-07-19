@@ -521,7 +521,6 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
         const wrappedTool = {
           ...toolWithoutModelOutput,
           execute: async (args: any, opts: any) => {
-            try {
               let result: any;
 
               // Apply timeout if configured (0 means no timeout)
@@ -559,7 +558,6 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
 
                 // Check for isError flag - MCP servers return this when tool execution fails
                 if (result.isError === true) {
-                  logger.error(`[MCP] Tool ${prefixedName} returned error (isError=true): ${output.substring(0, 200)}`);
                   throw new Error(output || 'Tool execution failed');
                 }
 
@@ -579,7 +577,6 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
                     // the result of someone else's HTTP request.
                     if (hasErrorObject && (hasErrorStatus || hasErrorCode)) {
                       const errorMsg = parsed.message || parsed.error?.message || output;
-                      logger.error(`[MCP] Tool ${prefixedName} returned error JSON: ${errorMsg.substring(0, 200)}`);
                       throw new Error(errorMsg);
                     }
                   }
@@ -598,14 +595,6 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
               // Fallback for non-standard result formats - return string directly
               // AI SDK v6 handles automatic conversion to provider format
               return typeof result === 'string' ? result : JSON.stringify(result);
-            } catch (error) {
-              // Log the error first
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              logger.error(`Tool call failed: ${prefixedName} - ${errorMessage}`);
-
-              // Re-throw the error so it properly triggers tool-error event
-              throw error;
-            }
           }
         };
         
