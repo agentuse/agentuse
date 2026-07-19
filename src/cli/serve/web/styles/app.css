@@ -3720,6 +3720,25 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .agent-graph-sched { color: var(--muted); flex-shrink: 0; }
 .page-agents .agent-graph-model { color: var(--muted-3); overflow: hidden; text-overflow: ellipsis; }
+.page-agents .agent-graph-mgr {
+  padding: 0 5px; border: 1px solid var(--line-strong); border-radius: 999px;
+  font-family: var(--mono); font-size: 9px; font-weight: 400; letter-spacing: 0.05em;
+  color: var(--muted); flex-shrink: 0;
+}
+/* Last-run health: age pushed to the row's right edge, tone-colored. */
+.page-agents .agent-graph-time { margin-left: auto; padding-left: 6px; flex-shrink: 0; color: var(--muted-3); }
+.page-agents .agent-graph-time.running { color: var(--green); }
+.page-agents .agent-graph-time.failed { color: var(--red); }
+.page-agents .agent-graph-time.waiting { color: var(--cyan); }
+/* :not(.failed): the failed state is an auto-sized ✕ glyph, not a dot. */
+.page-agents .agent-graph-node .lastrun-dot:not(.failed) { width: 6px; height: 6px; }
+/* Run affordance: hidden until the node is hovered or focused. */
+.page-agents .agent-graph-run {
+  position: absolute; right: 6px; bottom: 6px;
+  opacity: 0; transition: opacity 120ms ease;
+}
+.page-agents .agent-graph-node:hover .agent-graph-run,
+.page-agents .agent-graph-run:focus-visible { opacity: 1; }
 .page-agents .agent-graph-shared-pill {
   padding: 0.5px 6px; border: 1px dashed var(--line-strong); border-radius: 999px;
   color: var(--muted); font-size: 9.5px; letter-spacing: 0.04em; flex-shrink: 0;

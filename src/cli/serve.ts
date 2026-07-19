@@ -1443,6 +1443,8 @@ interface AgentSummary {
   dependsOn?: string[];
   /** Shared store name when `store:` is a string; isolated (`true`) omitted. */
   store?: string;
+  /** Frontmatter `type:` when declared (currently only 'manager'). */
+  type?: string;
   /** Server-computed relationship lint findings (dangling/self/cycle). */
   warnings?: string[];
 }
@@ -1496,6 +1498,7 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
           ...(subagents?.length && { subagents }),
           ...(dependsOn?.length && { dependsOn }),
           ...(typeof parsed.config.store === 'string' && { store: parsed.config.store }),
+          ...(parsed.config.type && { type: parsed.config.type }),
         };
         agentSummaryCache.set(absPath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size, summary });
         agents.push(summary);

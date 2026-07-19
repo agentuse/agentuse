@@ -334,6 +334,8 @@ export interface AgentSummary {
   dependsOn?: string[];
   /** Shared store name when frontmatter `store` is a string; isolated (`true`) is omitted. */
   store?: string;
+  /** Frontmatter `type:` when declared (currently only 'manager'). */
+  type?: string;
   /** Server-computed lint findings on declared relationships (dangling/self/cycle). */
   warnings?: string[];
 }

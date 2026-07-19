@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { AgentRow } from '../lib/api';
+import type { AgentRow, SessionRow } from '../lib/api';
 import { buildAgentGraph, type AgentGraph, type GraphEdge, type GraphNode } from '../lib/agent-graph';
+import { formatRelativeTime, runTone } from '../lib/format';
+import { useRunAgent } from '../hooks/use-run-agent';
 import { agentDetailHref } from '../routes/agent-detail';
 
 /**
@@ -65,12 +67,30 @@ function clusterTitle(nodes: GraphNode[]): string {
     ?? '';
 }
 
-function MiniCardBody(props: { name: string; agent?: AgentRow | undefined; ghost?: boolean; shared?: boolean }) {
+/** Node tooltip: the description is the useful hover info; keep the path as the locator. */
+function nodeTitle(path: string, agent?: AgentRow): string {
+  return agent?.description ? `${path}\n\n${agent.description}` : path;
+}
+
+/** Compact last-run health: tone-colored dot by the name, outcome + age in the sub row. */
+function lastRunText(last: SessionRow): string {
+  const tone = runTone(last.status);
+  const at = last.updatedAt || last.createdAt;
+  if (tone === 'running') return 'running';
+  if (tone === 'waiting') return 'waiting';
+  const age = formatRelativeTime(at);
+  return tone === 'failed' ? `failed · ${age}` : age;
+}
+
+function MiniCardBody(props: { name: string; agent?: AgentRow | undefined; ghost?: boolean; shared?: boolean; last?: SessionRow | undefined }) {
   const a = props.agent;
+  const tone = props.last ? runTone(props.last.status) : undefined;
   return (
     <>
       <span class="agent-graph-node-name">
+        {props.last && tone && <span class={`lastrun-dot ${tone}`} aria-hidden="true"></span>}
         {props.name}
+        {a?.type === 'manager' && <span class="agent-graph-mgr" title="Manager: orchestrates its subagents">mgr</span>}
         {a?.warnings && (
           <span class="agent-graph-warn" title={a.warnings.join('\n')}>⚠</span>
         )}
@@ -85,10 +105,40 @@ function MiniCardBody(props: { name: string; agent?: AgentRow | undefined; ghost
                   the tooltip carries the cadence. */}
               {a.schedule && <span class="agent-graph-sched" title={`${a.scheduleHuman ?? a.schedule} (${a.schedule})`}>⏱</span>}
               <span class="agent-graph-model" title={a.model}>{shortModel(a.model)}</span>
+              {props.last && tone && (
+                <span class={`agent-graph-time ${tone}`} aria-label={`Last run ${lastRunText(props.last)}`}>{lastRunText(props.last)}</span>
+              )}
             </>
           )}
       </span>
     </>
+  );
+}
+
+/**
+ * Hover-revealed run affordance (the graph answers "what runs first"; this
+ * closes the loop). Lives inside the node link, so the click must not follow
+ * the anchor to the detail page.
+ */
+function GraphRunButton(props: { agent: AgentRow }) {
+  const { run, busy, error } = useRunAgent(props.agent.runPath, props.agent.projectId);
+  return (
+    <button
+      type="button"
+      class="run-btn agent-graph-run"
+      disabled={busy}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); void run(); }}
+      aria-label={`Run ${props.agent.name} now`}
+      title={error ?? 'Run this agent now and open its session'}
+    >
+      {busy ? (
+        <span class="btn-spinner" aria-hidden="true" />
+      ) : (
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="M5 3.5v9a.75.75 0 0 0 1.14.64l7.25-4.5a.75.75 0 0 0 0-1.28l-7.25-4.5A.75.75 0 0 0 5 3.5Z" />
+        </svg>
+      )}
+    </button>
   );
 }
 
@@ -99,6 +149,7 @@ function ClusterTile(props: {
   query: string;
   hovered: string | null;
   setHovered: (id: string | null) => void;
+  lastRunFor?: ((a: AgentRow) => SessionRow | undefined) | undefined;
 }) {
   const { nodes, edges, query, hovered, setHovered } = props;
   // Overflow affordance: a blurred fade on whichever side has more canvas to
@@ -189,7 +240,7 @@ function ClusterTile(props: {
               queryMiss ? 'dim' : hoverMiss ? 'soft-dim' : '',
             ].filter(Boolean).join(' ');
             const style = { left: `${nodeX(n)}px`, top: `${nodeY(n)}px`, width: `${NODE_W}px`, height: `${NODE_H}px` };
-            const body = <MiniCardBody name={n.name} agent={n.agent} ghost={n.ghost} shared={n.shared} />;
+            const body = <MiniCardBody name={n.name} agent={n.agent} ghost={n.ghost} shared={n.shared} last={n.agent && props.lastRunFor?.(n.agent)} />;
             return n.agent
               ? (
                 <a
@@ -197,10 +248,10 @@ function ClusterTile(props: {
                   class={cls}
                   style={style}
                   href={agentDetailHref(n.agent.projectId, n.agent.runPath)}
-                  title={n.path}
+                  title={nodeTitle(n.path, n.agent)}
                   onMouseEnter={() => setHovered(n.id)}
                   onMouseLeave={() => setHovered(null)}
-                >{body}</a>
+                >{body}<GraphRunButton agent={n.agent} /></a>
               )
               : (
                 <div
@@ -243,7 +294,12 @@ function ClusterTile(props: {
   );
 }
 
-export function AgentGraphView(props: { agents: AgentRow[]; query: string }) {
+export function AgentGraphView(props: {
+  agents: AgentRow[];
+  query: string;
+  /** Recent-session join from the page (same source as the cards' health cell). */
+  lastRunFor?: (a: AgentRow) => SessionRow | undefined;
+}) {
   const graph: AgentGraph = buildAgentGraph(props.agents);
   const [hovered, setHovered] = useState<string | null>(null);
 
@@ -282,6 +338,7 @@ export function AgentGraphView(props: { agents: AgentRow[]; query: string }) {
               query={props.query}
               hovered={hovered}
               setHovered={setHovered}
+              lastRunFor={props.lastRunFor}
             />
           ))}
         </div>
@@ -298,9 +355,10 @@ export function AgentGraphView(props: { agents: AgentRow[]; query: string }) {
                 key={a.path}
                 class={`agent-graph-node static${props.query && !matches(a, props.query) ? ' dim' : ''}`}
                 href={agentDetailHref(a.projectId, a.runPath)}
-                title={a.path}
+                title={nodeTitle(a.path, a)}
               >
-                <MiniCardBody name={a.name} agent={a} />
+                <MiniCardBody name={a.name} agent={a} last={props.lastRunFor?.(a)} />
+                <GraphRunButton agent={a} />
               </a>
             ))}
           </div>

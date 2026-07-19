@@ -982,7 +982,7 @@ export default function Agents({ project }: { project?: string } = {}) {
                   // The graph gets the project's FULL row set (not the filtered
                   // slice): removing rows would sever edges, so the filter dims
                   // non-matching nodes inside the view instead.
-                  ? <AgentGraphView agents={loadedAgents.filter((a) => a.projectId === projectId)} query={query} />
+                  ? <AgentGraphView agents={loadedAgents.filter((a) => a.projectId === projectId)} query={query} lastRunFor={lastRunFor} />
                   : <div class="panel">
                       <div class="tree" style={{ gridTemplateColumns: gridTemplate }}>
                         <div class="tree-head">
