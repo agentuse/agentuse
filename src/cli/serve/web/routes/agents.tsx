@@ -19,6 +19,7 @@ import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { RunInstructionDialog } from '../components/run-instruction-dialog';
+import { AgentGraphView } from '../components/agent-graph-view';
 import { GroupRail } from '../components/group-rail';
 import { agentDetailHref } from './agent-detail';
 
@@ -873,6 +874,7 @@ export default function Agents({ project }: { project?: string } = {}) {
               <div class="view-toggle" role="group" aria-label="Layout">
                 <button type="button" class={view === 'tree' ? 'on' : ''} aria-pressed={view === 'tree'} onClick={() => setView('tree')}>Tree</button>
                 <button type="button" class={view === 'cards' ? 'on' : ''} aria-pressed={view === 'cards'} onClick={() => setView('cards')}>Cards</button>
+                <button type="button" class={view === 'graph' ? 'on' : ''} aria-pressed={view === 'graph'} onClick={() => setView('graph')}>Graph</button>
               </div>
             </div>
           )}
@@ -946,7 +948,7 @@ export default function Agents({ project }: { project?: string } = {}) {
           : [...byProject.entries()].map(([projectId, agents]) => (
             <section class={view === 'cards' && !scoped ? 'group project-collection' : 'group'} id={projectAnchor(projectId)} key={projectId}>
               {!scoped && view === 'cards' && <ProjectCollectionHeader projectId={projectId} agents={agents} ctx={rowCtx} about={aboutOf(projectId, '.')} />}
-              {!scoped && view === 'tree' && (
+              {!scoped && view !== 'cards' && (
                 <h2 class="group-title">
                   <a class="group-link" href={agentsProjectHref(projectId)} {...(aboutOf(projectId, '.')?.name ? { title: projectId } : {})}><span>{projectLabel(projectId)}</span></a>
                   <span class="count">{agents.length} agent{agents.length === 1 ? '' : 's'}</span>
@@ -955,16 +957,21 @@ export default function Agents({ project }: { project?: string } = {}) {
               )}
               {view === 'cards'
                 ? <AgentDirectoryGroups agents={agents} ctx={rowCtx} projectId={projectId} aboutFor={(dir) => aboutOf(projectId, dir)} />
-                : <div class="panel">
-                    <div class="tree" style={{ gridTemplateColumns: gridTemplate }}>
-                      <div class="tree-head">
-                        <span>Tree</span>
-                        {renderColumns.map((id) => <span key={id}>{columnLabel(id)}</span>)}
-                        <span></span>
+                : view === 'graph'
+                  // The graph gets the project's FULL row set (not the filtered
+                  // slice): removing rows would sever edges, so the filter dims
+                  // non-matching nodes inside the view instead.
+                  ? <AgentGraphView agents={loadedAgents.filter((a) => a.projectId === projectId)} query={query} />
+                  : <div class="panel">
+                      <div class="tree" style={{ gridTemplateColumns: gridTemplate }}>
+                        <div class="tree-head">
+                          <span>Tree</span>
+                          {renderColumns.map((id) => <span key={id}>{columnLabel(id)}</span>)}
+                          <span></span>
+                        </div>
+                        <AgentTree agents={agents} ctx={rowCtx} />
                       </div>
-                      <AgentTree agents={agents} ctx={rowCtx} />
-                    </div>
-                  </div>}
+                    </div>}
             </section>
           ))}
       </main>

@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'preact/hooks';
 
 /**
- * The Agents page's layout mode: the dense path tree for operators, or the
- * card gallery that leads with names and descriptions for presenting. Like
- * pins/columns the choice is per-browser, persisted, and synced across tabs.
+ * The Agents page's layout mode: the dense path tree for operators, the card
+ * gallery that leads with names and descriptions for presenting, or the
+ * relationship graph (delegation + dependsOn edges). Like pins/columns the
+ * choice is per-browser, persisted, and synced across tabs.
  */
-export type AgentsView = 'tree' | 'cards';
+export type AgentsView = 'tree' | 'cards' | 'graph';
 
 const STORAGE_KEY = 'agentuse-agents-view';
 
 function read(): AgentsView {
   try {
-    return localStorage.getItem(STORAGE_KEY) === 'cards' ? 'cards' : 'tree';
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored === 'cards' || stored === 'graph' ? stored : 'tree';
   } catch {
     return 'tree';
   }

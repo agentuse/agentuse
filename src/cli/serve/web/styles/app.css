@@ -3617,6 +3617,59 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .chip.status { color: var(--cyan); border-color: var(--cyan-border); }
 
+/* --- graph view: declared relationships as a left-to-right DAG ----------- */
+.page-agents .agent-graph { padding: 0; overflow: hidden; }
+.page-agents .agent-graph-scroll { overflow-x: auto; }
+.page-agents .agent-graph-canvas { position: relative; }
+.page-agents .agent-graph-edges { position: absolute; inset: 0; color: var(--muted-2); }
+.page-agents .agent-graph-edge path { stroke: currentColor; stroke-width: 1.3; transition: opacity 120ms ease; }
+.page-agents .agent-graph-edge.dependency path { stroke-dasharray: 5 4; }
+.page-agents .agent-graph-edge text { fill: var(--muted); font-family: var(--mono); font-size: 10px; }
+.page-agents .agent-graph-edge.hi { color: var(--cyan); }
+.page-agents .agent-graph-edge.hi text { fill: var(--cyan); }
+.page-agents .agent-graph-edge.dim { opacity: 0.25; }
+.page-agents .agent-graph-node {
+  position: absolute; display: flex; flex-direction: column; justify-content: center; gap: 3px;
+  padding: 6px 10px; box-sizing: border-box;
+  border: 1px solid var(--line-strong); border-radius: 10px;
+  background: var(--bg); color: var(--fg); text-decoration: none;
+  transition: opacity 120ms ease, border-color 120ms ease;
+}
+.page-agents a.agent-graph-node:hover { border-color: var(--cyan-border); background: var(--panel-hover); }
+.page-agents .agent-graph-node.dim { opacity: 0.3; }
+.page-agents .agent-graph-node.ghost { border-style: dashed; color: var(--muted); background: var(--panel); }
+.page-agents .agent-graph-node.entry { border-color: var(--cyan-border); }
+.page-agents .agent-graph-node-name {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12.5px; font-weight: 600; line-height: 1.2;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.page-agents .agent-graph-warn { color: var(--amber); font-size: 11px; flex-shrink: 0; }
+.page-agents .agent-graph-node-sub {
+  display: flex; align-items: center; gap: 6px; min-height: 14px;
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  overflow: hidden; white-space: nowrap;
+}
+.page-agents .agent-graph-entry-pill {
+  padding: 0.5px 6px; border: 1px solid var(--cyan-border); border-radius: 999px;
+  color: var(--cyan); background: var(--cyan-soft); font-size: 9.5px; letter-spacing: 0.04em;
+}
+.page-agents .agent-graph-store { color: var(--muted-3); }
+.page-agents .agent-graph-ghost-note { font-style: italic; }
+.page-agents .agent-graph-isolated {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 10px 14px; border-top: 1px solid var(--line);
+}
+.page-agents .agent-graph-isolated-label { font-family: var(--mono); font-size: 10.5px; color: var(--muted-2); margin-right: 4px; }
+.page-agents .agent-graph-chip {
+  padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted-3); background: var(--panel); text-decoration: none; font-size: 11.5px;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.page-agents .agent-graph-chip:hover { color: var(--fg); border-color: var(--line-strong); }
+.page-agents .agent-graph-chip.dim { opacity: 0.35; }
+.page-agents .agent-graph .empty { padding: 28px 16px; }
+
 /* --- ⋯ overflow menu (holds name, model + pin toggle) --- */
 .page-agents .tree-menu { justify-content: flex-end; }
 .page-agents .tree-meta { justify-content: flex-start; min-width: 0; }
