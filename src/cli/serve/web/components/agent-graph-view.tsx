@@ -221,9 +221,14 @@ export function AgentGraphView(props: { agents: AgentRow[]; query: string }) {
     <div class="agent-graph">
       <svg class="agent-graph-defs" width="0" height="0" aria-hidden="true">
         <defs>
-          <marker id={markerId} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-            <path d="M0 0.5 L7.5 4 L0 7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
-          </marker>
+          {/* Two markers, same shape: the base one matches the edge stroke, the
+              -hi one matches the hover highlight. CSS swaps marker-end on .hi
+              edges, since marker contents can't see the referencing stroke. */}
+          {[markerId, `${markerId}-hi`].map((id) => (
+            <marker key={id} id={id} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0.5 L7.5 4 L0 7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+            </marker>
+          ))}
         </defs>
       </svg>
       {clusters.length > 0 && (

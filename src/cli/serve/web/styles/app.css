@@ -3619,7 +3619,12 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 
 /* --- graph view: declared relationships, one tile per cluster ------------ */
 .page-agents .agent-graph { display: flex; flex-direction: column; gap: 18px; }
-.page-agents .agent-graph-defs { position: absolute; }
+/* Arrowheads take their color from the defs svg (marker contents can't see the
+   referencing edge's stroke), so pin it to the edge color and keep a cyan
+   variant for highlighted edges. */
+.page-agents .agent-graph-defs { position: absolute; color: var(--muted-2); }
+.page-agents #agent-graph-arrow-hi { color: var(--cyan); }
+.page-agents .agent-graph-edge.hi path { marker-end: url(#agent-graph-arrow-hi); }
 .page-agents .agent-graph-grid { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
 .page-agents .agent-graph-cluster {
   background: var(--panel); border-radius: 12px;
