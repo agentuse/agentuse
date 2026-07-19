@@ -3638,14 +3638,38 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   text-transform: uppercase; color: var(--muted-2);
 }
 .page-agents .agent-graph-cluster-count { font-family: var(--mono); font-size: 10.5px; color: var(--muted-3); }
+.page-agents .agent-graph-scrollwrap { position: relative; }
 .page-agents .agent-graph-scroll { overflow-x: auto; }
+/* Overflow hint: a blurred semi-transparent fade over the clipped side. */
+.page-agents .agent-graph-fade {
+  position: absolute; top: 0; bottom: 0; width: 44px; z-index: 4;
+  pointer-events: none;
+  backdrop-filter: blur(1.5px); -webkit-backdrop-filter: blur(1.5px);
+}
+.page-agents .agent-graph-fade.right {
+  right: 0;
+  background: linear-gradient(to right, transparent, var(--panel));
+  -webkit-mask-image: linear-gradient(to right, transparent, #000);
+  mask-image: linear-gradient(to right, transparent, #000);
+}
+.page-agents .agent-graph-fade.left {
+  left: 0;
+  background: linear-gradient(to left, transparent, var(--panel));
+  -webkit-mask-image: linear-gradient(to left, transparent, #000);
+  mask-image: linear-gradient(to left, transparent, #000);
+}
 .page-agents .agent-graph-canvas { position: relative; }
 .page-agents .agent-graph-edges { position: absolute; inset: 0; color: var(--muted-2); }
 .page-agents .agent-graph-edge path { stroke: currentColor; stroke-width: 1.3; transition: opacity 120ms ease; }
 .page-agents .agent-graph-edge.dependency path { stroke-dasharray: 5 4; }
-.page-agents .agent-graph-edge text { fill: var(--muted); font-family: var(--mono); font-size: 10px; }
 .page-agents .agent-graph-edge.hi { color: var(--cyan); }
-.page-agents .agent-graph-edge.hi text { fill: var(--cyan); }
+.page-agents .agent-graph-edge-label {
+  position: absolute; z-index: 3; transform: translate(-50%, -50%);
+  pointer-events: none; white-space: nowrap;
+  font-family: var(--mono); font-size: 10px; color: var(--cyan);
+  background: var(--bg); border: 1px solid var(--cyan-border);
+  border-radius: 999px; padding: 1px 8px;
+}
 .page-agents .agent-graph-edge.soft-dim { opacity: 0.35; }
 .page-agents .agent-graph-node {
   position: absolute; display: flex; flex-direction: column; justify-content: center; gap: 4px;

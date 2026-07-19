@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { AgentRow } from '../lib/api';
 import { buildAgentGraph, type AgentGraph, type GraphEdge, type GraphNode } from '../lib/agent-graph';
 import { agentDetailHref } from '../routes/agent-detail';
@@ -101,6 +101,23 @@ function ClusterTile(props: {
   setHovered: (id: string | null) => void;
 }) {
   const { nodes, edges, query, hovered, setHovered } = props;
+  // Overflow affordance: a blurred fade on whichever side has more canvas to
+  // scroll to. State-driven (not pure CSS) so the fades vanish entirely when
+  // the whole DAG fits.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [fade, setFade] = useState({ left: false, right: false });
+  const updateFade = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const left = el.scrollLeft > 2;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+    setFade((f) => (f.left === left && f.right === right ? f : { left, right }));
+  };
+  useEffect(() => {
+    updateFade();
+    window.addEventListener('resize', updateFade);
+    return () => window.removeEventListener('resize', updateFade);
+  }, [nodes.length]);
   const minRow = Math.min(...nodes.map((n) => n.order));
   const nodeY = (n: GraphNode) => PAD + (n.order - minRow) * (NODE_H + ROW_GAP);
   const rankCount = Math.max(...nodes.map((n) => n.rank)) + 1;
@@ -122,8 +139,9 @@ function ClusterTile(props: {
         <span class="agent-graph-cluster-title">{clusterTitle(nodes)}</span>
         <span class="agent-graph-cluster-count">{nodes.length}</span>
       </div>
-      <div class="agent-graph-scroll">
-        <div class="agent-graph-canvas" style={{ width: `${width}px`, height: `${height}px` }}>
+      <div class="agent-graph-scrollwrap">
+        <div class="agent-graph-scroll" ref={scrollRef} onScroll={updateFade}>
+          <div class="agent-graph-canvas" style={{ width: `${width}px`, height: `${height}px` }}>
           <svg class="agent-graph-edges" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
             {edges.map((e) => {
               const from = byId.get(e.from);
@@ -157,13 +175,6 @@ function ClusterTile(props: {
                     fill="none"
                     marker-end={`url(#${props.markerId})`}
                   />
-                  {/* Store labels only surface on hover: always-on text collides
-                      once tiles pack tightly, and the edge itself already says
-                      "connected". */}
-                  {e.store && active && (y1 === y2
-                    ? <text x={midX} y={y1 - 7} text-anchor="middle">⛁ {e.store}</text>
-                    : <text x={midX + 6} y={(y1 + y2) / 2 + 3}>⛁ {e.store}</text>
-                  )}
                 </g>
               );
             })}
@@ -202,7 +213,28 @@ function ClusterTile(props: {
                 >{body}</div>
               );
           })}
+          {/* Store labels only surface on hover, as HTML chips floating above
+              the edge midpoint: store names are wider than the column gap, so
+              inline SVG text would run under the neighboring cards. A solid
+              chip may overlap a card and still read as a tooltip. */}
+          {hovered !== null && edges.filter((e) => e.store && (e.from === hovered || e.to === hovered)).map((e) => {
+            const from = byId.get(e.from);
+            const to = byId.get(e.to);
+            if (!from || !to) return null;
+            const midX = (nodeX(from) + NODE_W + nodeX(to) - 3) / 2;
+            const midY = (nodeY(from) + nodeY(to)) / 2 + NODE_H / 2;
+            return (
+              <span
+                key={`label|${e.kind}|${e.from}|${e.to}`}
+                class="agent-graph-edge-label"
+                style={{ left: `${midX}px`, top: `${midY}px` }}
+              >⛁ {e.store}</span>
+            );
+          })}
+          </div>
         </div>
+        {fade.left && <div class="agent-graph-fade left" aria-hidden="true"></div>}
+        {fade.right && <div class="agent-graph-fade right" aria-hidden="true"></div>}
       </div>
     </div>
   );
