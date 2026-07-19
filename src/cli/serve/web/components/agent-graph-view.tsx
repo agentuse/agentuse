@@ -42,9 +42,14 @@ function matches(agent: AgentRow | undefined, query: string): boolean {
  * entry agent.
  */
 function clusterTitle(nodes: GraphNode[]): string {
+  // Shared duplicates are borrowed utilities (a judge in agents/shared/ used
+  // by every fleet); letting them into the prefix would collapse
+  // agents/substack/ down to agents/. Only fall back to them when the whole
+  // cluster is borrowed.
+  const own = nodes.filter((n) => !n.ghost && !n.shared);
+  const members = own.length > 0 ? own : nodes.filter((n) => !n.ghost);
   let common: string[] | null = null;
-  for (const n of nodes) {
-    if (n.ghost) continue;
+  for (const n of members) {
     const dirs = n.path.split('/').slice(0, -1);
     if (common === null) { common = dirs; continue; }
     let i = 0;
