@@ -37,18 +37,21 @@ function matches(agent: AgentRow | undefined, query: string): boolean {
 }
 
 /**
- * Tile header: the shared parent folder when the whole cluster lives in one
- * (the fleets' natural name, e.g. `linkedin/`), otherwise the entry agent.
+ * Tile header: the deepest directory shared by every member (the fleet's
+ * natural name, full relative path like `agents/quotes/`), otherwise the
+ * entry agent.
  */
 function clusterTitle(nodes: GraphNode[]): string {
-  const dirs = new Set(
-    nodes.filter((n) => !n.ghost).map((n) => {
-      const i = n.path.indexOf('/');
-      return i === -1 ? '' : n.path.slice(0, i);
-    })
-  );
-  const [dir] = dirs;
-  if (dirs.size === 1 && dir) return `${dir}/`;
+  let common: string[] | null = null;
+  for (const n of nodes) {
+    if (n.ghost) continue;
+    const dirs = n.path.split('/').slice(0, -1);
+    if (common === null) { common = dirs; continue; }
+    let i = 0;
+    while (i < common.length && i < dirs.length && common[i] === dirs[i]) i++;
+    common = common.slice(0, i);
+  }
+  if (common?.length) return `${common.join('/')}/`;
   // Prefer a real agent for the title; a ghost root (dangling target) should
   // not name the whole tile after something that doesn't exist.
   return nodes.find((n) => n.entry)?.name

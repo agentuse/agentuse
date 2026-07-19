@@ -3681,8 +3681,12 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .agent-graph-ghost-note { font-style: italic; }
 .page-agents .agent-graph-standalone { display: flex; flex-direction: column; }
-.page-agents .agent-graph-standalone-grid { display: flex; flex-wrap: wrap; gap: 10px; }
-.page-agents .agent-graph-node.static { position: relative; width: 200px; height: 58px; }
+/* Fluid columns so narrow screens still fit two cards per row instead of a
+   single 200px card with dead space beside it. */
+.page-agents .agent-graph-standalone-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 10px;
+}
+.page-agents .agent-graph-node.static { position: relative; width: auto; height: 58px; }
 /* Legend rides in the page header (rendered once, not per project). */
 .page-agents .agent-graph-legend {
   display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
