@@ -878,6 +878,27 @@ export default function Agents({ project }: { project?: string } = {}) {
               </div>
             </div>
           )}
+          {view === 'graph' && loadedAgents.length > 0 && (
+            <div class="agent-graph-legend">
+              <span class="agent-graph-legend-item">
+                <svg width="26" height="8" viewBox="0 0 26 8" aria-hidden="true"><path d="M1 4h24" stroke="currentColor" stroke-width="1.3" fill="none" /></svg>
+                delegates to
+              </span>
+              <span class="agent-graph-legend-item">
+                <svg width="26" height="8" viewBox="0 0 26 8" aria-hidden="true"><path d="M1 4h24" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" fill="none" /></svg>
+                depends on
+              </span>
+              <span class="agent-graph-legend-item">
+                <span class="agent-graph-legend-entry" aria-hidden="true"></span>
+                entry point
+              </span>
+              {!loadedAgents.some((a) => (a.subagents?.length ?? 0) > 0 || (a.dependsOn?.length ?? 0) > 0) && (
+                <span class="agent-graph-legend-hint">
+                  No relationships declared yet: add <code>dependsOn:</code> or <code>subagents:</code> to agent frontmatter.
+                </span>
+              )}
+            </div>
+          )}
           {view === 'tree' && loadedAgents.length > 0 && (
             <div class="agents-cols">
               <span class="agents-cols-label">Columns</span>

@@ -1,27 +1,32 @@
 import { useState } from 'preact/hooks';
 import type { AgentRow } from '../lib/api';
-import { buildAgentGraph, type AgentGraph, type GraphNode } from '../lib/agent-graph';
+import { buildAgentGraph, type AgentGraph, type GraphEdge, type GraphNode } from '../lib/agent-graph';
 import { agentDetailHref } from '../routes/agent-detail';
 
 /**
- * The agents page's Graph layout: declared relationships for one project as a
- * left-to-right DAG. Nodes are HTML (links, ellipsis, tooltips for free)
- * absolutely positioned over an SVG underlay that draws the edges — solid for
- * `subagents:` delegation, dashed for `dependsOn:`, the latter labeled with
- * the shared store name when both ends declare it. Agents with no
- * relationships render as a dimmed strip below rather than cluttering the DAG.
+ * The agents page's Graph layout: declared relationships for one project.
+ * Each cluster (one workflow/fleet) renders as its own tile in a wrapping
+ * grid, so narrow DAGs sit side by side on desktop instead of stacking down a
+ * full-width canvas. Nodes are mini-cards (HTML: links, ellipsis, tooltips
+ * for free) absolutely positioned over an SVG underlay per tile: solid edges
+ * for `subagents:` delegation, dashed for `dependsOn:`, the latter labeled
+ * with the shared store name on hover. Agents with no relationships render as
+ * the same mini-cards in a Standalone section below.
  */
 
-const NODE_W = 176;
-const NODE_H = 52;
-const COL_GAP = 72;
-const ROW_GAP = 16;
-/** Extra space between independent subgraphs (component row bands). */
-const COMP_GAP = 36;
-const PAD = 12;
+const NODE_W = 200;
+const NODE_H = 58;
+const COL_GAP = 84;
+const ROW_GAP = 14;
+const PAD = 10;
 
 function nodeX(n: GraphNode): number { return PAD + n.rank * (NODE_W + COL_GAP); }
-function nodeY(n: GraphNode): number { return PAD + n.order * (NODE_H + ROW_GAP) + n.component * COMP_GAP; }
+
+/** Provider prefixes repeat on every node; the bare model name is the signal. */
+function shortModel(model: string): string {
+  const i = model.indexOf(':');
+  return i === -1 ? model : model.slice(i + 1);
+}
 
 /** Filter match mirroring the list views: dim, never remove, so edges survive. */
 function matches(agent: AgentRow | undefined, query: string): boolean {
@@ -31,127 +36,215 @@ function matches(agent: AgentRow | undefined, query: string): boolean {
     .some((v) => v.toLowerCase().includes(query));
 }
 
-export function AgentGraphView(props: { agents: AgentRow[]; query: string }) {
-  const graph: AgentGraph = buildAgentGraph(props.agents);
-  const [hovered, setHovered] = useState<string | null>(null);
+/**
+ * Tile header: the shared parent folder when the whole cluster lives in one
+ * (the fleets' natural name, e.g. `linkedin/`), otherwise the entry agent.
+ */
+function clusterTitle(nodes: GraphNode[]): string {
+  const dirs = new Set(
+    nodes.filter((n) => !n.ghost).map((n) => {
+      const i = n.path.indexOf('/');
+      return i === -1 ? '' : n.path.slice(0, i);
+    })
+  );
+  const [dir] = dirs;
+  if (dirs.size === 1 && dir) return `${dir}/`;
+  // Prefer a real agent for the title; a ghost root (dangling target) should
+  // not name the whole tile after something that doesn't exist.
+  return nodes.find((n) => n.entry)?.name
+    ?? nodes.find((n) => !n.ghost)?.name
+    ?? nodes[0]?.name
+    ?? '';
+}
 
-  const width = PAD * 2 + graph.rankCount * NODE_W + Math.max(0, graph.rankCount - 1) * COL_GAP;
-  const height = graph.nodes.length === 0 ? 0 : Math.max(...graph.nodes.map((n) => nodeY(n))) + NODE_H + PAD;
-  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+function MiniCardBody(props: { name: string; agent?: AgentRow | undefined; ghost?: boolean; shared?: boolean }) {
+  const a = props.agent;
+  return (
+    <>
+      <span class="agent-graph-node-name">
+        {props.name}
+        {a?.warnings && (
+          <span class="agent-graph-warn" title={a.warnings.join('\n')}>⚠</span>
+        )}
+      </span>
+      <span class="agent-graph-node-sub">
+        {props.shared && <span class="agent-graph-shared-pill" title="Also used by other groups in this graph">shared</span>}
+        {props.ghost
+          ? <span class="agent-graph-ghost-note">not loaded</span>
+          : a && (
+            <>
+              {/* Presence beats detail on a mini-card: the glyph says "scheduled",
+                  the tooltip carries the cadence. */}
+              {a.schedule && <span class="agent-graph-sched" title={`${a.scheduleHuman ?? a.schedule} (${a.schedule})`}>⏱</span>}
+              <span class="agent-graph-model" title={a.model}>{shortModel(a.model)}</span>
+            </>
+          )}
+      </span>
+    </>
+  );
+}
+
+function ClusterTile(props: {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  markerId: string;
+  query: string;
+  hovered: string | null;
+  setHovered: (id: string | null) => void;
+}) {
+  const { nodes, edges, query, hovered, setHovered } = props;
+  const minRow = Math.min(...nodes.map((n) => n.order));
+  const nodeY = (n: GraphNode) => PAD + (n.order - minRow) * (NODE_H + ROW_GAP);
+  const rankCount = Math.max(...nodes.map((n) => n.rank)) + 1;
+  const width = PAD * 2 + rankCount * NODE_W + (rankCount - 1) * COL_GAP;
+  const height = Math.max(...nodes.map((n) => nodeY(n))) + NODE_H + PAD;
+  const byId = new Map(nodes.map((n) => [n.id, n]));
   const neighbors = new Set<string>();
   if (hovered) {
     neighbors.add(hovered);
-    for (const e of graph.edges) {
+    for (const e of edges) {
       if (e.from === hovered) neighbors.add(e.to);
       if (e.to === hovered) neighbors.add(e.from);
     }
   }
 
   return (
-    <div class="agent-graph panel">
-      {graph.nodes.length === 0
-        ? <div class="empty">No declared relationships yet. Add <code>dependsOn:</code> or <code>subagents:</code> to agent frontmatter to draw edges here.</div>
-        : (
-          <div class="agent-graph-scroll">
-            <div class="agent-graph-canvas" style={{ width: `${width}px`, height: `${height}px` }}>
-              <svg class="agent-graph-edges" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
-                <defs>
-                  <marker id="agent-graph-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M0 0.5 L7.5 4 L0 7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
-                  </marker>
-                </defs>
-                {graph.edges.map((e) => {
-                  const from = byId.get(e.from);
-                  const to = byId.get(e.to);
-                  if (!from || !to) return null;
-                  const x1 = nodeX(from) + NODE_W;
-                  const y1 = nodeY(from) + NODE_H / 2;
-                  const x2 = nodeX(to) - 3;
-                  const y2 = nodeY(to) + NODE_H / 2;
-                  const bend = Math.max(28, (x2 - x1) / 2);
-                  const cls = [
-                    'agent-graph-edge',
-                    e.kind,
-                    hovered ? (e.from === hovered || e.to === hovered ? 'hi' : 'dim') : '',
-                  ].filter(Boolean).join(' ');
-                  return (
-                    <g class={cls} key={`${e.kind}|${e.from}|${e.to}`}>
-                      <path
-                        d={`M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`}
-                        fill="none"
-                        marker-end="url(#agent-graph-arrow)"
-                      />
-                      {e.store && (
-                        <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 5} text-anchor="middle">⛁ {e.store}</text>
-                      )}
-                    </g>
-                  );
-                })}
-              </svg>
-              {graph.nodes.map((n) => {
-                const dimmed = (props.query && !matches(n.agent, props.query))
-                  || (hovered !== null && !neighbors.has(n.id));
-                const cls = [
-                  'agent-graph-node',
-                  n.ghost ? 'ghost' : '',
-                  n.entry ? 'entry' : '',
-                  n.shared ? 'shared' : '',
-                  dimmed ? 'dim' : '',
-                ].filter(Boolean).join(' ');
-                const style = { left: `${nodeX(n)}px`, top: `${nodeY(n)}px`, width: `${NODE_W}px`, height: `${NODE_H}px` };
-                const body = (
-                  <>
-                    <span class="agent-graph-node-name">
-                      {n.name}
-                      {n.agent?.warnings && (
-                        <span class="agent-graph-warn" title={n.agent.warnings.join('\n')}>⚠</span>
-                      )}
-                    </span>
-                    <span class="agent-graph-node-sub">
-                      {n.entry && <span class="agent-graph-entry-pill">entry</span>}
-                      {n.shared && <span class="agent-graph-shared-pill" title="Also used by other groups in this graph">shared</span>}
-                      {n.store && <span class="agent-graph-store">⛁ {n.store}</span>}
-                      {n.ghost && <span class="agent-graph-ghost-note">not loaded</span>}
-                    </span>
-                  </>
-                );
-                return n.agent
-                  ? (
-                    <a
-                      key={n.id}
-                      class={cls}
-                      style={style}
-                      href={agentDetailHref(n.agent.projectId, n.agent.runPath)}
-                      title={n.path}
-                      onMouseEnter={() => setHovered(n.id)}
-                      onMouseLeave={() => setHovered(null)}
-                    >{body}</a>
-                  )
-                  : (
-                    <div
-                      key={n.id}
-                      class={cls}
-                      style={style}
-                      title={n.path}
-                      onMouseEnter={() => setHovered(n.id)}
-                      onMouseLeave={() => setHovered(null)}
-                    >{body}</div>
-                  );
-              })}
-            </div>
-          </div>
-        )}
-      {graph.isolated.length > 0 && (
-        <div class="agent-graph-isolated">
-          <span class="agent-graph-isolated-label">No declared relationships</span>
-          {graph.isolated.map((a) => (
-            <a
-              key={a.path}
-              class={`agent-graph-chip${props.query && !matches(a, props.query) ? ' dim' : ''}`}
-              href={agentDetailHref(a.projectId, a.runPath)}
-              title={a.path}
-            >{a.name}</a>
+    <div class="agent-graph-cluster">
+      <div class="agent-graph-cluster-head">
+        <span class="agent-graph-cluster-title">{clusterTitle(nodes)}</span>
+        <span class="agent-graph-cluster-count">{nodes.length}</span>
+      </div>
+      <div class="agent-graph-scroll">
+        <div class="agent-graph-canvas" style={{ width: `${width}px`, height: `${height}px` }}>
+          <svg class="agent-graph-edges" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
+            {edges.map((e) => {
+              const from = byId.get(e.from);
+              const to = byId.get(e.to);
+              if (!from || !to) return null;
+              const x1 = nodeX(from) + NODE_W;
+              const y1 = nodeY(from) + NODE_H / 2;
+              const x2 = nodeX(to) - 3;
+              const y2 = nodeY(to) + NODE_H / 2;
+              const bend = Math.max(28, (x2 - x1) / 2);
+              const active = hovered !== null && (e.from === hovered || e.to === hovered);
+              const cls = [
+                'agent-graph-edge',
+                e.kind,
+                hovered ? (active ? 'hi' : 'soft-dim') : '',
+              ].filter(Boolean).join(' ');
+              return (
+                <g class={cls} key={`${e.kind}|${e.from}|${e.to}`}>
+                  <path
+                    d={`M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`}
+                    fill="none"
+                    marker-end={`url(#${props.markerId})`}
+                  />
+                  {/* Store labels only surface on hover: always-on text collides
+                      once tiles pack tightly, and the edge itself already says
+                      "connected". */}
+                  {e.store && active && (
+                    <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 5} text-anchor="middle">⛁ {e.store}</text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+          {nodes.map((n) => {
+            const queryMiss = Boolean(query) && !matches(n.agent, query);
+            const hoverMiss = hovered !== null && !neighbors.has(n.id);
+            const cls = [
+              'agent-graph-node',
+              n.ghost ? 'ghost' : '',
+              n.entry ? 'entry' : '',
+              queryMiss ? 'dim' : hoverMiss ? 'soft-dim' : '',
+            ].filter(Boolean).join(' ');
+            const style = { left: `${nodeX(n)}px`, top: `${nodeY(n)}px`, width: `${NODE_W}px`, height: `${NODE_H}px` };
+            const body = <MiniCardBody name={n.name} agent={n.agent} ghost={n.ghost} shared={n.shared} />;
+            return n.agent
+              ? (
+                <a
+                  key={n.id}
+                  class={cls}
+                  style={style}
+                  href={agentDetailHref(n.agent.projectId, n.agent.runPath)}
+                  title={n.path}
+                  onMouseEnter={() => setHovered(n.id)}
+                  onMouseLeave={() => setHovered(null)}
+                >{body}</a>
+              )
+              : (
+                <div
+                  key={n.id}
+                  class={cls}
+                  style={style}
+                  title={n.path}
+                  onMouseEnter={() => setHovered(n.id)}
+                  onMouseLeave={() => setHovered(null)}
+                >{body}</div>
+              );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function AgentGraphView(props: { agents: AgentRow[]; query: string }) {
+  const graph: AgentGraph = buildAgentGraph(props.agents);
+  const [hovered, setHovered] = useState<string | null>(null);
+
+  // One arrowhead marker per project section (markers resolve by document id,
+  // so tiles share a single hidden defs svg instead of colliding per tile).
+  const markerId = 'agent-graph-arrow';
+  const clusters: GraphNode[][] = [];
+  for (const n of graph.nodes) {
+    (clusters[n.component] ??= []).push(n);
+  }
+  const memberIds = clusters.map((c) => new Set(c.map((n) => n.id)));
+  const clusterEdges = (k: number) => graph.edges.filter((e) => memberIds[k]!.has(e.from));
+
+  return (
+    <div class="agent-graph">
+      <svg class="agent-graph-defs" width="0" height="0" aria-hidden="true">
+        <defs>
+          <marker id={markerId} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0.5 L7.5 4 L0 7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+          </marker>
+        </defs>
+      </svg>
+      {clusters.length > 0 && (
+        <div class="agent-graph-grid">
+          {clusters.map((nodes, k) => (
+            <ClusterTile
+              key={nodes[0]!.id}
+              nodes={nodes}
+              edges={clusterEdges(k)}
+              markerId={markerId}
+              query={props.query}
+              hovered={hovered}
+              setHovered={setHovered}
+            />
           ))}
+        </div>
+      )}
+      {graph.isolated.length > 0 && (
+        <div class="agent-graph-standalone">
+          <div class="agent-graph-cluster-head">
+            <span class="agent-graph-cluster-title">standalone</span>
+            <span class="agent-graph-cluster-count">{graph.isolated.length}</span>
+          </div>
+          <div class="agent-graph-standalone-grid">
+            {graph.isolated.map((a) => (
+              <a
+                key={a.path}
+                class={`agent-graph-node static${props.query && !matches(a, props.query) ? ' dim' : ''}`}
+                href={agentDetailHref(a.projectId, a.runPath)}
+                title={a.path}
+              >
+                <MiniCardBody name={a.name} agent={a} />
+              </a>
+            ))}
+          </div>
         </div>
       )}
     </div>

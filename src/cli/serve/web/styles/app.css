@@ -3617,8 +3617,22 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .chip.status { color: var(--cyan); border-color: var(--cyan-border); }
 
-/* --- graph view: declared relationships as a left-to-right DAG ----------- */
-.page-agents .agent-graph { padding: 0; overflow: hidden; }
+/* --- graph view: declared relationships, one tile per cluster ------------ */
+.page-agents .agent-graph { display: flex; flex-direction: column; gap: 18px; }
+.page-agents .agent-graph-defs { position: absolute; }
+.page-agents .agent-graph-grid { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+.page-agents .agent-graph-cluster {
+  background: var(--panel); border-radius: 12px;
+  padding: 10px 12px 12px; max-width: 100%;
+}
+.page-agents .agent-graph-cluster-head {
+  display: flex; align-items: baseline; gap: 7px; margin: 0 2px 8px;
+}
+.page-agents .agent-graph-cluster-title {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--muted-2);
+}
+.page-agents .agent-graph-cluster-count { font-family: var(--mono); font-size: 10.5px; color: var(--muted-3); }
 .page-agents .agent-graph-scroll { overflow-x: auto; }
 .page-agents .agent-graph-canvas { position: relative; }
 .page-agents .agent-graph-edges { position: absolute; inset: 0; color: var(--muted-2); }
@@ -3627,18 +3641,27 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .agent-graph-edge text { fill: var(--muted); font-family: var(--mono); font-size: 10px; }
 .page-agents .agent-graph-edge.hi { color: var(--cyan); }
 .page-agents .agent-graph-edge.hi text { fill: var(--cyan); }
-.page-agents .agent-graph-edge.dim { opacity: 0.25; }
+.page-agents .agent-graph-edge.soft-dim { opacity: 0.35; }
 .page-agents .agent-graph-node {
-  position: absolute; display: flex; flex-direction: column; justify-content: center; gap: 3px;
-  padding: 6px 10px; box-sizing: border-box;
-  border: 1px solid var(--line-strong); border-radius: 10px;
+  position: absolute; display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  padding: 8px 12px; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 10px;
   background: var(--bg); color: var(--fg); text-decoration: none;
-  transition: opacity 120ms ease, border-color 120ms ease;
+  transition: opacity 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
-.page-agents a.agent-graph-node:hover { border-color: var(--cyan-border); background: var(--panel-hover); }
+.page-agents a.agent-graph-node:hover {
+  border-color: var(--cyan-border); background: var(--panel-hover);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+}
 .page-agents .agent-graph-node.dim { opacity: 0.3; }
-.page-agents .agent-graph-node.ghost { border-style: dashed; color: var(--muted); background: var(--panel); }
-.page-agents .agent-graph-node.entry { border-color: var(--cyan-border); }
+.page-agents .agent-graph-node.soft-dim { opacity: 0.45; }
+.page-agents .agent-graph-node.ghost { border-style: dashed; color: var(--muted); background: transparent; }
+/* Entry point: one cue, the cyan accent bar (mirrors the running-session accent). */
+.page-agents .agent-graph-node.entry { padding-left: 15px; }
+.page-agents .agent-graph-node.entry::before {
+  content: ''; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px;
+  border-radius: 0 2px 2px 0; background: var(--cyan);
+}
 .page-agents .agent-graph-node-name {
   display: flex; align-items: center; gap: 5px;
   font-size: 12.5px; font-weight: 600; line-height: 1.2;
@@ -3646,33 +3669,29 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .agent-graph-warn { color: var(--amber); font-size: 11px; flex-shrink: 0; }
 .page-agents .agent-graph-node-sub {
-  display: flex; align-items: center; gap: 6px; min-height: 14px;
+  display: flex; align-items: center; gap: 7px; min-height: 14px;
   font-family: var(--mono); font-size: 10px; color: var(--muted);
   overflow: hidden; white-space: nowrap;
 }
-.page-agents .agent-graph-entry-pill {
-  padding: 0.5px 6px; border: 1px solid var(--cyan-border); border-radius: 999px;
-  color: var(--cyan); background: var(--cyan-soft); font-size: 9.5px; letter-spacing: 0.04em;
-}
+.page-agents .agent-graph-sched { color: var(--muted); flex-shrink: 0; }
+.page-agents .agent-graph-model { color: var(--muted-3); overflow: hidden; text-overflow: ellipsis; }
 .page-agents .agent-graph-shared-pill {
   padding: 0.5px 6px; border: 1px dashed var(--line-strong); border-radius: 999px;
-  color: var(--muted); font-size: 9.5px; letter-spacing: 0.04em;
+  color: var(--muted); font-size: 9.5px; letter-spacing: 0.04em; flex-shrink: 0;
 }
-.page-agents .agent-graph-store { color: var(--muted-3); }
 .page-agents .agent-graph-ghost-note { font-style: italic; }
-.page-agents .agent-graph-isolated {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  padding: 10px 14px; border-top: 1px solid var(--line);
+.page-agents .agent-graph-standalone { display: flex; flex-direction: column; }
+.page-agents .agent-graph-standalone-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+.page-agents .agent-graph-node.static { position: relative; width: 200px; height: 58px; }
+/* Legend rides in the page header (rendered once, not per project). */
+.page-agents .agent-graph-legend {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+  margin-top: 10px; font-family: var(--mono); font-size: 10.5px; color: var(--muted-2);
 }
-.page-agents .agent-graph-isolated-label { font-family: var(--mono); font-size: 10.5px; color: var(--muted-2); margin-right: 4px; }
-.page-agents .agent-graph-chip {
-  padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px;
-  color: var(--muted-3); background: var(--panel); text-decoration: none; font-size: 11.5px;
-  transition: border-color 120ms ease, color 120ms ease;
-}
-.page-agents .agent-graph-chip:hover { color: var(--fg); border-color: var(--line-strong); }
-.page-agents .agent-graph-chip.dim { opacity: 0.35; }
-.page-agents .agent-graph .empty { padding: 28px 16px; }
+.page-agents .agent-graph-legend svg { display: block; color: var(--muted-2); }
+.page-agents .agent-graph-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.page-agents .agent-graph-legend-entry { width: 3px; height: 12px; border-radius: 2px; background: var(--cyan); }
+.page-agents .agent-graph-legend-hint { color: var(--muted-3); }
 
 /* --- ⋯ overflow menu (holds name, model + pin toggle) --- */
 .page-agents .tree-menu { justify-content: flex-end; }
