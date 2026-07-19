@@ -764,6 +764,21 @@ class AgentWorker {
     }) as Promise<WorkerListSessionsResult | WorkerExecuteError>;
   }
 
+  /** Drop this project's cached lists after an out-of-process run changed state.
+   *  `externalActivity` additionally keeps the lists hot for a short window, for
+   *  pokes that land before the change they announce is readable. */
+  invalidateLists(
+    projectRoot: string,
+    options: { externalActivity?: boolean } = {}
+  ): Promise<WorkerExecuteResult | WorkerExecuteError> {
+    return this.request({
+      type: "invalidate-lists",
+      projectRoot,
+      ...(options.externalActivity && { externalActivity: true }),
+      timeout: 10,
+    }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
+  }
+
   getSessionFinalResponses(
     projectRoot: string,
     sessions: Array<{ sessionId: string; agentId: string }>
@@ -2080,6 +2095,30 @@ export function createServeCommand(): Command {
       // once the hubs exist; a no-op indirection here because the scheduler
       // (and its cron jobs) is armed before the hubs are constructed.
       let wakeListHubs: () => void = () => {};
+
+      /**
+       * Make the next dashboard read reflect an out-of-process change. Waking
+       * the hubs alone isn't enough: they re-read through the worker's list
+       * cache, so a stale entry would just be served faster. Drop the cache
+       * first, then wake.
+       */
+      const refreshProjectLists = async (
+        project: { id: string; root: string },
+        options: { externalActivity?: boolean } = {}
+      ): Promise<void> => {
+        // Note the two different keys: workers are keyed by project id, while
+        // the worker's own list cache is keyed by project root (what it was
+        // asked to scan). Mixing them up silently skips the invalidation.
+        const worker = workers.get(project.id);
+        if (worker) {
+          try {
+            await worker.invalidateLists(project.root, options);
+          } catch (err) {
+            logger.debug(`List cache invalidation failed: ${(err as Error).message}`);
+          }
+        }
+        wakeListHubs();
+      };
 
       // Helper function to execute an agent (used by scheduler)
       // Uses subprocess to work around EBADF issue when spawning from async callbacks
@@ -4782,6 +4821,39 @@ export function createServeCommand(): Command {
           return;
         }
 
+        // POST /sessions/:id/started: the runner's best-effort poke that a run
+        // just began (see runner/announce.ts). Runs the daemon launches itself
+        // invalidate their caches inline; this is how a plain `agentuse run` in
+        // another process gets the same treatment, so its session shows up live
+        // instead of waiting out a cached list. No push — starting isn't news.
+        const sessionStartedMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/started$/) : null;
+        if (sessionStartedMatch) {
+          try {
+            const sessionId = decodeURIComponent(sessionStartedMatch[1]);
+            const body = await parseJSONBody(req);
+            const token = typeof body.token === 'string' ? body.token : requestUrl.searchParams.get('token') ?? undefined;
+            const projectId = typeof body.project === 'string' ? body.project : undefined;
+
+            if (!sessionAuthorized(sessionId, token)) {
+              sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+              return;
+            }
+
+            const found = await findSessionStatusInfo(sessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+
+            await refreshProjectLists(found.project, { externalActivity: true });
+            sendJSON(res, 200, { success: true, status: "refreshed" });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 500, "INTERNAL_ERROR", (err as Error).message);
+          }
+          return;
+        }
+
         // POST /sessions/:id/finished: the runner's best-effort poke that a run
         // reached a terminal state (see runner/announce.ts), fanned out as a Web
         // Push to devices subscribed to the sessions category. The reported
@@ -4808,8 +4880,10 @@ export function createServeCommand(): Command {
 
             const status = found.session.sessionStatus;
             // Regardless of push dedup below, a terminal-state poke means the
-            // session lists just changed; refresh dashboards promptly.
-            wakeListHubs();
+            // session lists just changed; refresh dashboards promptly. Waking
+            // the hubs without dropping the worker's cache would re-serve the
+            // stale "still running" list, so go through refreshProjectLists.
+            await refreshProjectLists(found.project);
             if (status !== 'completed' && status !== 'error') {
               sendJSON(res, 200, { success: true, status: "ignored", reason: `session is ${status}` });
               return;

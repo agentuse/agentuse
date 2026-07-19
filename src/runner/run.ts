@@ -1,5 +1,5 @@
 import type { ParsedAgent } from '../parser';
-import { announceSessionFinished } from './announce';
+import { announceSessionFinished, announceSessionStarted } from './announce';
 import type { MCPConnection } from '../mcp';
 import type { SessionInfo, SessionManager, SessionTrigger } from '../session';
 import type { AgentCompleteEvent, PluginManager } from '../plugin';
@@ -218,6 +218,14 @@ export async function runAgent(
     // Set outer scope variables for error logging
     sessionID = prepSessionID;
     agentId = prepAgentId;
+
+    // The session row now exists on disk as `running`. Poke the daemon so its
+    // dashboards pick it up: runs it launched itself invalidate inline, but a
+    // run started from a terminal has no other way to announce itself.
+    void announceSessionStarted({
+      agentName: agent.name,
+      ...(prepSessionID && { sessionId: prepSessionID }),
+    });
 
     if (
       existingSessionId &&

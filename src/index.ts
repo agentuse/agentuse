@@ -945,9 +945,11 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate';
+    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists';
     agentPath?: string;
     projectRoot: string;
+    /** invalidate-lists: hold the short list TTL for a window (start pokes). */
+    externalActivity?: boolean;
     prompt?: string;
     model?: string;
     timeout?: number;
@@ -2427,6 +2429,22 @@ async function runInternalWorker() {
   // would otherwise cache a "nothing running" list for the whole run, so live
   // dashboards never see the session until it ends. Cap staleness hard here.
   const LIST_CACHE_ACTIVE_TTL_MS = 1_000;
+  // A list that claims something is running is a promise the daemon can't keep
+  // on its own: runs started by another process (a plain `agentuse run`) finish
+  // without touching any of our invalidation hooks, so a full-TTL entry would
+  // keep showing a live dot long after the run ended. Bound those the same way,
+  // whoever started them — the backstop for announcements that never arrive
+  // because the run was killed.
+  const LIST_CACHE_LIVE_TTL_MS = 2_000;
+  // How long a start poke keeps a project "hot". Invalidating on the poke alone
+  // isn't enough: the poke races the session write, so the very next scan can
+  // still see nothing running and cache that emptiness for the full TTL. This
+  // is the out-of-process twin of activeExecuteRequests — for the daemon's own
+  // runs that counter stays raised for the whole run; here we only get an edge,
+  // so hold the short TTL for a window after it.
+  const EXTERNAL_ACTIVITY_WINDOW_MS = 15_000;
+  /** projectRoot -> timestamp until which external activity is assumed. */
+  const externalActivityUntil = new Map<string, number>();
   type ApprovalInfoResponse = Awaited<ReturnType<typeof getApprovalInfoUncached>>;
   type ApprovalInfoCacheEntry = {
     expiresAt: number;
@@ -2552,6 +2570,33 @@ async function runInternalWorker() {
     }
   }
 
+  /** Is a project this cache key belongs to inside its post-poke activity window? */
+  function externallyActive(cacheKey: string): boolean {
+    if (externalActivityUntil.size === 0) return false;
+    const now = Date.now();
+    for (const [projectRoot, until] of externalActivityUntil) {
+      if (until <= now) {
+        externalActivityUntil.delete(projectRoot);
+        continue;
+      }
+      if (cacheKey.includes(`\0${projectRoot}\0`)) return true;
+    }
+    return false;
+  }
+
+  /** Does this list payload assert that something is live right now? Mirrors the
+   *  web client's isRunningStatus so the cache and the UI agree on "live". */
+  function containsLiveRow(response: ListResponse): boolean {
+    const rows = response.sessions;
+    if (!Array.isArray(rows)) return false;
+    return rows.some((row) => {
+      if (typeof row !== 'object' || row === null) return false;
+      const { status, subagentActive } = row as { status?: unknown; subagentActive?: unknown };
+      return subagentActive === true
+        || status === 'running' || status === 'resuming' || status === 'continuing';
+    });
+  }
+
   async function withListCache<T extends ListResponse>(
     key: string,
     requestId: string,
@@ -2575,7 +2620,9 @@ async function runInternalWorker() {
         const { id: _id, ...rest } = response;
         // While an execution is in flight, this scan may have raced a session
         // write; cap how long it can be served so live views track the run.
-        const ttlMs = activeExecuteRequests > 0 ? LIST_CACHE_ACTIVE_TTL_MS : LIST_CACHE_TTL_MS;
+        const ttlMs = activeExecuteRequests > 0 || externallyActive(key)
+          ? LIST_CACHE_ACTIVE_TTL_MS
+          : containsLiveRow(response) ? LIST_CACHE_LIVE_TTL_MS : LIST_CACHE_TTL_MS;
         listResponseCache.set(key, {
           expiresAt: Date.now() + ttlMs,
           response: rest as Omit<T, 'id'>
@@ -3319,6 +3366,17 @@ async function runInternalWorker() {
         listAllApprovals(request).then((response) => {
           console.log(JSON.stringify(response));
         });
+      } else if (request.type === 'invalidate-lists') {
+        // A run this worker didn't start just changed state (see the runner's
+        // started/finished pokes in runner/announce.ts). Drop the cached lists
+        // so the next dashboard read reflects it instead of waiting out the TTL.
+        // A start poke also opens an activity window, because it races the
+        // session write and the refill right after it can still see nothing.
+        if (request.externalActivity) {
+          externalActivityUntil.set(request.projectRoot, Date.now() + EXTERNAL_ACTIVITY_WINDOW_MS);
+        }
+        invalidateListCaches(request.projectRoot);
+        console.log(JSON.stringify({ id: request.id, success: true }));
       } else if (request.type === 'list-sessions') {
         listSessions(request).then((response) => {
           console.log(JSON.stringify(response));
