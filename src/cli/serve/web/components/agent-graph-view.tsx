@@ -128,7 +128,7 @@ function ClusterTile(props: {
               const y1 = nodeY(from) + NODE_H / 2;
               const x2 = nodeX(to) - 3;
               const y2 = nodeY(to) + NODE_H / 2;
-              const bend = Math.max(28, (x2 - x1) / 2);
+              const midX = (x1 + x2) / 2;
               const active = hovered !== null && (e.from === hovered || e.to === hovered);
               const cls = [
                 'agent-graph-edge',
@@ -137,16 +137,27 @@ function ClusterTile(props: {
               ].filter(Boolean).join(' ');
               return (
                 <g class={cls} key={`${e.kind}|${e.from}|${e.to}`}>
+                  {/* Orthogonal rounded elbows instead of beziers: every edge
+                      from one source shares the same horizontal stub and
+                      mid-gap vertical, so a fan-out reads as a single trunk
+                      that brackets its targets rather than N crossing curves. */}
                   <path
-                    d={`M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`}
+                    d={y1 === y2
+                      ? `M ${x1} ${y1} H ${x2}`
+                      : (() => {
+                        const dir = y2 > y1 ? 1 : -1;
+                        const r = Math.min(10, Math.abs(y2 - y1) / 2, (x2 - x1) / 2);
+                        return `M ${x1} ${y1} H ${midX - r} Q ${midX} ${y1} ${midX} ${y1 + r * dir} V ${y2 - r * dir} Q ${midX} ${y2} ${midX + r} ${y2} H ${x2}`;
+                      })()}
                     fill="none"
                     marker-end={`url(#${props.markerId})`}
                   />
                   {/* Store labels only surface on hover: always-on text collides
                       once tiles pack tightly, and the edge itself already says
                       "connected". */}
-                  {e.store && active && (
-                    <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 5} text-anchor="middle">⛁ {e.store}</text>
+                  {e.store && active && (y1 === y2
+                    ? <text x={midX} y={y1 - 7} text-anchor="middle">⛁ {e.store}</text>
+                    : <text x={midX + 6} y={(y1 + y2) / 2 + 3}>⛁ {e.store}</text>
                   )}
                 </g>
               );
