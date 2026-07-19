@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { processAgentStream, type AgentChunk } from '../src/runner';
+import { processAgentStream, type AgentChunk, type TerminalPresenter } from '../src/runner';
 
 describe('processAgentStream session logging', () => {
   it('finalizes very short text replies even when part creation resolves after finish', async () => {
@@ -364,5 +364,74 @@ describe('processAgentStream session logging', () => {
     // Both blocks are finalized: part-1 with the accumulated first block, part-2 with the second.
     expect(updates.find((u) => u[3] === 'part-1')?.[4]).toMatchObject({ text: 'First thought.' });
     expect(updates.find((u) => u[3] === 'part-2')?.[4]).toMatchObject({ text: 'Second thought.' });
+  });
+
+  it('projects one tool lifecycle independently to the terminal and session recorder', async () => {
+    const addedParts: any[] = [];
+    const updatedParts: any[] = [];
+    const terminalEvents: string[] = [];
+    const presenter: TerminalPresenter = {
+      text: (text) => terminalEvents.push(`text:${text}`),
+      responseComplete: () => terminalEvents.push('response-complete'),
+      llmStarted: (model) => terminalEvents.push(`llm-start:${model}`),
+      llmFirstToken: (model, latency) => terminalEvents.push(`llm-first:${model}:${latency}`),
+      toolStarted: (name) => terminalEvents.push(`tool-start:${name}`),
+      toolFinished: (_result, options) => terminalEvents.push(`tool-finish:${options?.success}`),
+      warning: (message) => terminalEvents.push(`warning:${message}`),
+    };
+    const sessionManager = {
+      addPart: async (_s: string, _a: string, _m: string, part: any) => {
+        addedParts.push(part);
+        return 'tool-part-1';
+      },
+      updatePart: async (...args: any[]) => {
+        updatedParts.push(args);
+      },
+      updateMessage: async () => {},
+    };
+
+    async function* chunks(): AsyncGenerator<AgentChunk> {
+      yield {
+        type: 'tool-call',
+        toolName: 'tools__bash',
+        toolCallId: 'call-1',
+        toolInput: { command: 'head -80' },
+        toolStartTime: 1_000,
+      };
+      yield {
+        type: 'tool-result',
+        toolName: 'tools__bash',
+        toolCallId: 'call-1',
+        toolDuration: 5,
+        toolResult: '{"success":false,"error":"Command blocked"}',
+        toolResultRaw: {
+          output: '{"success":false,"error":"Command blocked"}',
+          metadata: { exitCode: 1 },
+        },
+      };
+    }
+
+    await processAgentStream(chunks(), {
+      sessionManager: sessionManager as any,
+      sessionID: 'session-1',
+      agentId: 'agent-1',
+      messageID: 'message-1',
+      terminalPresenter: presenter,
+    });
+
+    expect(terminalEvents).toEqual([
+      'tool-start:tools__bash',
+      'tool-finish:false',
+    ]);
+    expect(addedParts).toHaveLength(1);
+    expect(addedParts[0]).toMatchObject({
+      type: 'tool',
+      callID: 'call-1',
+      state: { status: 'running' },
+    });
+    expect(updatedParts).toHaveLength(1);
+    expect(updatedParts[0][4]).toMatchObject({
+      state: { status: 'error', error: 'Command blocked' },
+    });
   });
 });

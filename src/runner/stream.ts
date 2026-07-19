@@ -12,6 +12,8 @@ import { safeHttpUrl } from '../utils/url';
 import { formatToolResultForDisplay } from '../utils/format-tool-result';
 import { sendSlackApprovalRequest, sendSlackApprovalRequestToThread } from '../slack/approval';
 import type { AgentChunk } from './types';
+import { SessionRecorder } from './session-recorder';
+import { defaultTerminalPresenter, type TerminalPresenter } from './terminal-presenter';
 
 type SlackRunChannelHandle = {
   channel: string;
@@ -177,6 +179,8 @@ export async function processAgentStream(
     priorTokens?: AssistantTokens;
     /** Suppress console output (for serve mode) */
     quiet?: boolean;
+    /** Ephemeral renderer for normalized events; defaults to the CLI terminal. */
+    terminalPresenter?: TerminalPresenter;
   }
 ): Promise<{
   text: string;
@@ -199,7 +203,7 @@ export async function processAgentStream(
   const toolCalls: Array<{ tool: string; args: unknown }> = [];
   let subAgentTokens = 0;
   const toolCallTraces: ToolCallTrace[] = [];
-  const pendingToolCalls = new Map<string, { name: string; startTime: number; addPartPromise?: Promise<string | undefined>; input?: unknown }>();
+  const pendingToolCalls = new Map<string, { name: string; startTime: number; input?: unknown }>();
   let currentLlmCall: { model: string; startTime: number; firstTokenTime?: number } | null = null;
   let llmSegmentCount = 0;
   let hasTextOutput = false;
@@ -209,100 +213,8 @@ export async function processAgentStream(
   let suspended = false;
   let suspendApprovalUrl: string | undefined;
   let hasTextSinceLastToolCall = false;
-
-  // Track current text part for streaming updates with debouncing
-  let currentTextPart: { partID?: string; text: string; startTime: number; createPromise?: Promise<void> } | null = null;
-  let textUpdateTimer: NodeJS.Timeout | null = null;
-  const TEXT_UPDATE_DEBOUNCE_MS = 500; // Write to disk every 500ms max
-
-  // Track current reasoning (extended-thinking) part, keyed by the provider's
-  // block id. Mirrors the text-part streaming/debounce so the model's reasoning
-  // shows up live in the session trace.
-  let currentReasoningPart: { partID?: string; text: string; startTime: number; createPromise?: Promise<void>; id?: string } | null = null;
-  let reasoningUpdateTimer: NodeJS.Timeout | null = null;
-
-  // Track pending session updates to ensure they complete before returning
-  // Use Set with self-cleanup to avoid holding references to resolved promises
-  const pendingSessionUpdates = new Set<Promise<unknown>>();
-  const trackSessionUpdate = (promise: Promise<unknown>) => {
-    pendingSessionUpdates.add(promise);
-    promise.finally(() => pendingSessionUpdates.delete(promise));
-  };
-
-  // Helper to finalize current text part
-  const finalizeTextPart = async () => {
-    // Clear any pending debounced update
-    if (textUpdateTimer) {
-      clearTimeout(textUpdateTimer);
-      textUpdateTimer = null;
-    }
-
-    if (currentTextPart && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
-      const textPart = currentTextPart;
-      if (textPart.createPromise) {
-        await textPart.createPromise;
-      }
-      if (!textPart.partID) {
-        currentTextPart = null;
-        return;
-      }
-      try {
-        await options.sessionManager.updatePart(
-          options.sessionID,
-          options.agentId,
-          options.messageID,
-          textPart.partID,
-          {
-            text: textPart.text.trimEnd(),
-            time: {
-              start: textPart.startTime,
-              end: Date.now()
-            }
-          }
-        );
-      } catch (err) {
-        logger.debug(`Failed to finalize text part: ${(err as Error).message}`);
-      }
-      currentTextPart = null;
-    }
-  };
-
-  // Helper to finalize the current reasoning part (flush debounce + stamp end).
-  const finalizeReasoningPart = async () => {
-    if (reasoningUpdateTimer) {
-      clearTimeout(reasoningUpdateTimer);
-      reasoningUpdateTimer = null;
-    }
-
-    if (currentReasoningPart && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
-      const reasoningPart = currentReasoningPart;
-      if (reasoningPart.createPromise) {
-        await reasoningPart.createPromise;
-      }
-      if (!reasoningPart.partID) {
-        currentReasoningPart = null;
-        return;
-      }
-      try {
-        await options.sessionManager.updatePart(
-          options.sessionID,
-          options.agentId,
-          options.messageID,
-          reasoningPart.partID,
-          {
-            text: reasoningPart.text.trimEnd(),
-            time: {
-              start: reasoningPart.startTime,
-              end: Date.now()
-            }
-          }
-        );
-      } catch (err) {
-        logger.debug(`Failed to finalize reasoning part: ${(err as Error).message}`);
-      }
-      currentReasoningPart = null;
-    }
-  };
+  const recorder = new SessionRecorder(options);
+  const terminal = options?.quiet ? undefined : (options?.terminalPresenter ?? defaultTerminalPresenter);
 
   const recordUsage = (chunk: AgentChunk) => {
     // Normalize AI SDK usage semantics. `totalUsage` arrives here as
@@ -318,22 +230,10 @@ export async function processAgentStream(
       contextUsage = chunk.contextUsage;
     }
 
-    if (usage && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
-      const updatePromise = options.sessionManager.updateMessage(options.sessionID, options.agentId, options.messageID, {
-        assistant: {
-          tokens: addAssistantTokens(options.priorTokens, usageToAssistantTokens(usage)),
-          ...(contextUsage && { context: contextUsage })
-        }
-      }).catch(err => logger.debug(`Failed to persist interim usage: ${err.message}`));
-      trackSessionUpdate(updatePromise);
-    } else if (contextUsage && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
-      const updatePromise = options.sessionManager.updateMessage(options.sessionID, options.agentId, options.messageID, {
-        assistant: {
-          context: contextUsage
-        }
-      }).catch(err => logger.debug(`Failed to persist interim context usage: ${err.message}`));
-      trackSessionUpdate(updatePromise);
-    }
+    recorder.recordUsage(
+      usage ? addAssistantTokens(options?.priorTokens, usageToAssistantTokens(usage)) : undefined,
+      contextUsage,
+    );
   };
 
   try {
@@ -342,74 +242,19 @@ export async function processAgentStream(
       case 'reasoning': {
         // End-of-block marker: finalize and stop.
         if (chunk.reasoningDone) {
-          await finalizeReasoningPart();
+          await recorder.finalizeReasoning();
           break;
         }
         const reasoningText = chunk.text;
         if (!reasoningText) break;
-        // A different block id means the prior reasoning block ended.
-        if (currentReasoningPart && currentReasoningPart.id !== chunk.reasoningId) {
-          await finalizeReasoningPart();
-        }
-
-        if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
-          if (!currentReasoningPart) {
-            // First delta of this block: create the part (await for partID).
-            const startTime = Date.now();
-            const reasoningPart: { partID?: string; text: string; startTime: number; createPromise?: Promise<void>; id?: string } = {
-              text: reasoningText,
-              startTime,
-              ...(chunk.reasoningId !== undefined && { id: chunk.reasoningId })
-            };
-            currentReasoningPart = reasoningPart;
-            const addPromise = options.sessionManager.addPart(options.sessionID, options.agentId, options.messageID, {
-              type: 'reasoning',
-              text: reasoningText,
-              time: { start: startTime }
-            } as any).then(partID => {
-              reasoningPart.partID = partID;
-            }).catch(err => logger.debug(`Failed to create reasoning part: ${err.message}`));
-            reasoningPart.createPromise = addPromise;
-            trackSessionUpdate(addPromise);
-          } else {
-            // Subsequent deltas: update in-memory now, debounce disk writes.
-            const reasoningPart = currentReasoningPart;
-            reasoningPart.text += reasoningText;
-
-            if (reasoningUpdateTimer) {
-              clearTimeout(reasoningUpdateTimer);
-            }
-            const getText = () => currentReasoningPart?.text || '';
-            reasoningUpdateTimer = setTimeout(() => {
-              if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
-                const updatePromise = Promise.resolve()
-                  .then(async () => {
-                    if (reasoningPart.createPromise) {
-                      await reasoningPart.createPromise;
-                    }
-                    if (!reasoningPart.partID) return;
-                    await options.sessionManager!.updatePart(
-                      options.sessionID!,
-                      options.agentId!,
-                      options.messageID!,
-                      reasoningPart.partID,
-                      { text: getText() }
-                    );
-                  })
-                  .catch(err => logger.debug(`Failed to update reasoning part: ${err.message}`));
-                trackSessionUpdate(updatePromise);
-              }
-              reasoningUpdateTimer = null;
-            }, TEXT_UPDATE_DEBOUNCE_MS);
-          }
-        }
+        await recorder.reasoningDelta(reasoningText, chunk.reasoningId);
         break;
       }
 
       case 'text':
         // Reasoning always precedes the visible answer; close out any open
         // reasoning block before the text part begins.
-        await finalizeReasoningPart();
+        await recorder.finalizeReasoning();
         parts.push({
           type: 'text',
           text: chunk.text!,
@@ -420,76 +265,13 @@ export async function processAgentStream(
           hasTextOutput = true;
           hasTextSinceLastToolCall = true;
         }
-        if (!options?.quiet) {
-          logger.response(chunk.text!);
-        }
-
-        // Log to session with debounced writes to prevent race conditions
-        if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
-          if (!currentTextPart) {
-            // First text chunk: create new part (await to ensure partID is available)
-            const startTime = Date.now();
-            const textPart: { partID?: string; text: string; startTime: number; createPromise?: Promise<void> } = {
-              text: chunk.text!,
-              startTime
-            };
-            currentTextPart = textPart;
-            const addPromise = options.sessionManager.addPart(options.sessionID, options.agentId, options.messageID, {
-              type: 'text',
-              text: chunk.text!,
-              time: { start: startTime }
-            } as any).then(partID => {
-              textPart.partID = partID;
-            }).catch(err => logger.debug(`Failed to create text part: ${err.message}`));
-            textPart.createPromise = addPromise;
-            trackSessionUpdate(addPromise);
-          } else {
-            // Subsequent chunks: update in-memory immediately, debounce disk writes
-            if (currentTextPart) {
-              const textPart = currentTextPart;
-              textPart.text += chunk.text!;
-
-              // Clear existing timer and schedule new debounced write
-              if (textUpdateTimer) {
-                clearTimeout(textUpdateTimer);
-              }
-
-              // Capture current state for the timeout callback
-              const getText = () => currentTextPart?.text || '';
-
-              textUpdateTimer = setTimeout(() => {
-                if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
-                  const updatePromise = Promise.resolve()
-                    .then(async () => {
-                      if (textPart.createPromise) {
-                        await textPart.createPromise;
-                      }
-                      if (!textPart.partID) return;
-                      await options.sessionManager!.updatePart(
-                        options.sessionID!,
-                        options.agentId!,
-                        options.messageID!,
-                        textPart.partID,
-                        {
-                          text: getText()
-                        }
-                      );
-                    })
-                    .catch(err => logger.debug(`Failed to update text part: ${err.message}`));
-                  trackSessionUpdate(updatePromise);
-                }
-                textUpdateTimer = null;
-              }, TEXT_UPDATE_DEBOUNCE_MS);
-            }
-          }
-        }
+        terminal?.text(chunk.text!);
+        recorder.textDelta(chunk.text!);
         break;
 
       case 'llm-start':
         // Track the start of an LLM generation
-        if (chunk.llmModel && !options?.quiet) {
-          logger.llmStart(chunk.llmModel);
-        }
+        if (chunk.llmModel) terminal?.llmStarted(chunk.llmModel);
 
         if (chunk.llmModel && chunk.llmStartTime) {
           currentLlmCall = {
@@ -504,9 +286,9 @@ export async function processAgentStream(
         // Track time to first token
         if (currentLlmCall && chunk.llmFirstTokenTime) {
           currentLlmCall.firstTokenTime = chunk.llmFirstTokenTime;
-          if (currentLlmCall.startTime && !options?.quiet) {
+          if (currentLlmCall.startTime) {
             const latency = chunk.llmFirstTokenTime - currentLlmCall.startTime;
-            logger.llmFirstToken(currentLlmCall.model, latency);
+            terminal?.llmFirstToken(currentLlmCall.model, latency);
           }
         }
         break;
@@ -527,8 +309,7 @@ export async function processAgentStream(
         }
 
         // Finalize any pending reasoning/text part before tool call
-        await finalizeReasoningPart();
-        await finalizeTextPart();
+        await recorder.finalizeStreaming();
 
         parts.push({
           type: 'tool-call',
@@ -536,43 +317,24 @@ export async function processAgentStream(
           args: chunk.toolInput,
           timestamp: Date.now()
         });
-        if (!options?.quiet) {
-          logger.tool(chunk.toolName!, chunk.toolInput, undefined, chunk.isSubAgent);
-        }
+        terminal?.toolStarted(chunk.toolName!, chunk.toolInput, chunk.isSubAgent);
         if (options?.collectToolCalls) {
           toolCalls.push({ tool: chunk.toolName!, args: chunk.toolInput });
         }
         // Store info for this tool call using toolCallId as key
-        if (chunk.toolCallId && chunk.toolName && chunk.toolStartTime) {
+        if (chunk.toolCallId && chunk.toolName) {
+          const startTime = chunk.toolStartTime || Date.now();
           pendingToolCalls.set(chunk.toolCallId, {
             name: chunk.toolName,
-            startTime: chunk.toolStartTime,
+            startTime,
             input: chunk.toolInput  // Store input for later use in completed state
           });
-        }
-
-        // Log to session and store the promise for later awaiting
-        if (options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId && chunk.toolCallId) {
-          const addPartPromise = options.sessionManager.addPart(options.sessionID, options.agentId, options.messageID, {
-            type: 'tool',
+          recorder.toolStarted({
             callID: chunk.toolCallId,
             tool: chunk.toolName!,
-            state: {
-              status: 'running',
-              input: chunk.toolInput,
-              time: { start: chunk.toolStartTime || Date.now() }
-            }
-          } as any).catch(err => {
-            logger.debug(`Failed to log tool-call part: ${err.message}`);
-            return undefined; // Return undefined on error so partID check fails gracefully
+            input: chunk.toolInput,
+            startTime,
           });
-          trackSessionUpdate(addPartPromise);
-
-          // Store the promise directly so tool-result can await it
-          const pending = pendingToolCalls.get(chunk.toolCallId);
-          if (pending) {
-            pendingToolCalls.set(chunk.toolCallId, { ...pending, addPartPromise });
-          }
         }
         break;
 
@@ -583,7 +345,7 @@ export async function processAgentStream(
         let isSubAgent = false;
 
         // Extract metadata and success status before logging
-        let toolSuccess = true;
+        let toolSuccess = chunk.toolSuccess ?? true;
         let rawResult: Record<string, unknown> | null = null;
         let toolMetadata: Record<string, unknown> | null = null;
 
@@ -665,35 +427,33 @@ export async function processAgentStream(
           timestamp: Date.now()
         });
 
-        // Log the result with timing info
+        // Present the result with timing info
         // For skill tools, show a simple message instead of the full content
-        if (!options?.quiet) {
-          if (chunk.toolName === 'tools__skill_load') {
-            logger.toolResult('Skill loaded', {
-              ...(toolDuration !== undefined && { duration: toolDuration }),
-              success: toolSuccess
-            });
-            // Check for warnings in skill output and log them after "Skill loaded"
-            const result = typeof chunk.toolResult === 'string' ? chunk.toolResult : '';
-            const warningMatch = result.match(/> ⚠️ WARNING: (.+)/g);
-            if (warningMatch) {
-              for (const warning of warningMatch) {
-                const msg = warning.replace(/^> ⚠️ WARNING: /, '');
-                logger.warn(msg);
-              }
+        if (chunk.toolName === 'tools__skill_load') {
+          terminal?.toolFinished('Skill loaded', {
+            ...(toolDuration !== undefined && { duration: toolDuration }),
+            success: toolSuccess
+          });
+          // Check for warnings in skill output and present them after "Skill loaded"
+          const result = typeof chunk.toolResult === 'string' ? chunk.toolResult : '';
+          const warningMatch = result.match(/> ⚠️ WARNING: (.+)/g);
+          if (warningMatch) {
+            for (const warning of warningMatch) {
+              const msg = warning.replace(/^> ⚠️ WARNING: /, '');
+              terminal?.warning(msg);
             }
-          } else if (chunk.toolName === 'tools__skill_read') {
-            logger.toolResult('File read', {
-              ...(toolDuration !== undefined && { duration: toolDuration }),
-              success: toolSuccess
-            });
-          } else {
-            logger.toolResult(chunk.toolResult ?? chunk.toolResultRaw ?? 'No result', {
-              ...(toolDuration !== undefined && { duration: toolDuration }),
-              success: toolSuccess,
-              ...(tokens && { tokens })
-            });
           }
+        } else if (chunk.toolName === 'tools__skill_read') {
+          terminal?.toolFinished('File read', {
+            ...(toolDuration !== undefined && { duration: toolDuration }),
+            success: toolSuccess
+          });
+        } else {
+          terminal?.toolFinished(chunk.toolResult ?? chunk.toolResultRaw ?? 'No result', {
+            ...(toolDuration !== undefined && { duration: toolDuration }),
+            success: toolSuccess,
+            ...(tokens && { tokens })
+          });
         }
 
         // Find and complete the tool call trace using toolCallId
@@ -717,37 +477,25 @@ export async function processAgentStream(
               ...(traceOutput !== undefined && { output: traceOutput }),
             });
 
-            // Update the session storage part with completed state
-            // Await the addPartPromise to ensure partID is available (fixes race condition for fast tools like skill_load)
-            if (pending.addPartPromise && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
-              const partID = await pending.addPartPromise;
-              if (partID) {
-                // Build state based on success/failure
-                const endTime = Date.now();
-                const toolState: ToolStateCompleted | ToolStateError = toolSuccess
-                  ? {
-                      status: 'completed',
-                      input: pending.input || {},
-                      output: chunk.toolResultRaw || chunk.toolResult,
-                      time: { start: pending.startTime, end: endTime },
-                      ...(tokens && { metadata: { tokens } })
-                    }
-                  : {
-                      status: 'error',
-                      input: pending.input || {},
-                      error: rawResult?.error
-                        ? formatToolResultForDisplay(rawResult.error, { preferError: true })
-                        : formatToolResultForDisplay(chunk.toolResult ?? chunk.toolResultRaw ?? 'Unknown error', { preferError: true }),
-                      time: { start: pending.startTime, end: endTime },
-                      ...(tokens && { metadata: { tokens } })
-                    };
-
-                const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentId, options.messageID, partID, {
-                  state: toolState
-                }).catch(err => logger.debug(`Failed to update tool part: ${err.message}`));
-                trackSessionUpdate(updatePromise);
-              }
-            }
+            const endTime = Date.now();
+            const toolState: ToolStateCompleted | ToolStateError = toolSuccess
+              ? {
+                  status: 'completed',
+                  input: pending.input || {},
+                  output: chunk.toolResultRaw || chunk.toolResult,
+                  time: { start: pending.startTime, end: endTime },
+                  ...(tokens && { metadata: { tokens } })
+                }
+              : {
+                  status: 'error',
+                  input: pending.input || {},
+                  error: rawResult?.error
+                    ? formatToolResultForDisplay(rawResult.error, { preferError: true })
+                    : formatToolResultForDisplay(chunk.toolResult ?? chunk.toolResultRaw ?? 'Unknown error', { preferError: true }),
+                  time: { start: pending.startTime, end: endTime },
+                  ...(tokens && { metadata: { tokens } })
+                };
+            await recorder.updateTool(chunk.toolCallId, toolState);
 
             pendingToolCalls.delete(chunk.toolCallId);
           }
@@ -761,31 +509,17 @@ export async function processAgentStream(
         const errorStr = typeof chunk.error === 'string'
           ? chunk.error
           : ((chunk.error as any)?.message || 'Unknown error');
-        logger.warnWithTool(chunk.toolName || 'unknown', 'call', errorStr, chunk.toolCallId);
-        if (prefix) logger.warn(prefix.trim()); // Show any prefix separately
+        terminal?.toolFinished(errorStr, { success: false });
+        if (prefix) terminal?.warning(prefix.trim());
         break;
 
       case 'suspended': {
         suspended = true;
-        await finalizeReasoningPart();
-        await finalizeTextPart();
+        await recorder.finalizeStreaming();
 
         if (chunk.contextSnapshot) {
           contextUsage = chunk.contextSnapshot.usage;
-          if (options?.sessionManager && options?.sessionID && options?.agentId) {
-            try {
-              await options.sessionManager.writeContextSnapshot(
-                options.sessionID,
-                options.agentId,
-                {
-                  ...chunk.contextSnapshot,
-                  ...(options.messageID && { messageID: options.messageID }),
-                }
-              );
-            } catch (err) {
-              logger.debug(`Failed to persist suspension context snapshot: ${(err as Error).message}`);
-            }
-          }
+          await recorder.writeContextSnapshot(chunk.contextSnapshot);
         } else if (chunk.contextUsage) {
           contextUsage = chunk.contextUsage;
         }
@@ -797,72 +531,62 @@ export async function processAgentStream(
 
         if (chunk.toolCallId) {
           const pending = pendingToolCalls.get(chunk.toolCallId);
-          if (pending?.addPartPromise && options?.sessionManager && options?.sessionID && options?.messageID && options?.agentId) {
-            const partID = await pending.addPartPromise;
-            if (partID) {
-              const payload = suspendPayload;
-              let channelMessage = payload.channelMessage && typeof payload.channelMessage === 'object'
-                ? payload.channelMessage as any
-                : undefined;
-              const suspendedAt = Math.max(
-                Date.now(),
-                (chunk.contextSnapshot?.updatedAt ?? 0) + 1
-              );
-              // A 'subagent_wait' is a parent step parked on a delegated child's gate:
-              // store only the pointer down (childSessionID) so the cascade can descend.
-              // It carries no human-facing fields and triggers no Slack/announce (gated
-              // below to 'await_human'), so the parent suspends silently while the real
-              // gate stays on the leaf and surfaces once at the root.
-              const buildPendingState = (activeChannelMessage?: any) => ({
-                status: 'pending',
+          if (pending) {
+            const payload = suspendPayload;
+            const channelMessage = payload.channelMessage && typeof payload.channelMessage === 'object'
+              ? payload.channelMessage as any
+              : undefined;
+            const suspendedAt = Math.max(
+              Date.now(),
+              (chunk.contextSnapshot?.updatedAt ?? 0) + 1
+            );
+            // A 'subagent_wait' is a parent step parked on a delegated child's gate:
+            // store only the pointer down (childSessionID) so the cascade can descend.
+            // It carries no human-facing fields and triggers no Slack/announce (gated
+            // below to 'await_human'), so the parent suspends silently while the real
+            // gate stays on the leaf and surfaces once at the root.
+            const buildPendingState = (activeChannelMessage?: any) => ({
+              status: 'pending',
+              input: pending.input,
+              suspendedAt,
+              resumePayload: payload.kind === 'subagent_wait'
+                ? {
+                    kind: 'subagent_wait',
+                    ...(typeof payload.childSessionID === 'string' && { childSessionID: payload.childSessionID }),
+                    ...(typeof payload.childAgentName === 'string' && { childAgentName: payload.childAgentName }),
+                  }
+                : {
+                    kind: 'await_human',
+                    ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
+                    ...(typeof payload.surface === 'string' && { surface: payload.surface }),
+                    ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
+                    ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
+                    ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
+                    ...(activeChannelMessage ? { channelMessage: activeChannelMessage } : {})
+                  }
+            });
+            const persisted = await recorder.updateTool(chunk.toolCallId, buildPendingState(channelMessage) as any);
+            if (persisted && payload.kind === 'await_human') {
+              const sentChannelMessage = await sendPersistedSlackApproval({
+                ...(options?.sessionID && { sessionId: options.sessionID }),
+                ...(options?.agentName && { agentName: options.agentName }),
+                ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
+                ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
+                ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
+                ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
                 input: pending.input,
-                suspendedAt,
-                resumePayload: payload.kind === 'subagent_wait'
-                  ? {
-                      kind: 'subagent_wait',
-                      ...(typeof payload.childSessionID === 'string' && { childSessionID: payload.childSessionID }),
-                      ...(typeof payload.childAgentName === 'string' && { childAgentName: payload.childAgentName }),
-                    }
-                  : {
-                      kind: 'await_human',
-                      ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
-                      ...(typeof payload.surface === 'string' && { surface: payload.surface }),
-                      ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
-                      ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
-                      ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
-                      ...(activeChannelMessage ? { channelMessage: activeChannelMessage } : {})
-                    }
+                channelRequest: payload.channelRequest,
+                ...(options?.slackRunChannelHandles && { slackRunChannelHandles: options.slackRunChannelHandles })
               });
-              const updatePromise = options.sessionManager.updatePart(options.sessionID, options.agentId, options.messageID, partID, {
-                state: buildPendingState(channelMessage)
-              } as any).catch(err => logger.debug(`Failed to mark tool part pending: ${err.message}`));
-              trackSessionUpdate(updatePromise);
-              await updatePromise;
-              if (payload.kind === 'await_human') {
-                const sentChannelMessage = await sendPersistedSlackApproval({
-                  sessionId: options.sessionID,
-                  ...(options.agentName && { agentName: options.agentName }),
-                  ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
-                  ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
-                  ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
-                  ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
-                  input: pending.input,
-                  channelRequest: payload.channelRequest,
-                  ...(options.slackRunChannelHandles && { slackRunChannelHandles: options.slackRunChannelHandles })
-                });
-                if (sentChannelMessage) {
-                  channelMessage = sentChannelMessage;
-                  await options.sessionManager.updatePart(options.sessionID, options.agentId, options.messageID, partID, {
-                    state: buildPendingState(sentChannelMessage)
-                  } as any);
-                }
-                await announceApprovalRequested({
-                  sessionId: options.sessionID,
-                  ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
-                  ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
-                  ...(typeof payload.prompt === 'string' && { prompt: payload.prompt })
-                });
+              if (sentChannelMessage) {
+                await recorder.updateTool(chunk.toolCallId, buildPendingState(sentChannelMessage) as any);
               }
+              await announceApprovalRequested({
+                ...(options?.sessionID && { sessionId: options.sessionID }),
+                ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
+                ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
+                ...(typeof payload.prompt === 'string' && { prompt: payload.prompt })
+              });
             }
           }
         }
@@ -871,8 +595,7 @@ export async function processAgentStream(
 
       case 'finish':
         // Finalize any pending reasoning/text part
-        await finalizeReasoningPart();
-        await finalizeTextPart();
+        await recorder.finalizeStreaming();
 
         recordUsage(chunk);
 
@@ -899,9 +622,7 @@ export async function processAgentStream(
           currentLlmCall = null;
         }
 
-        if (finalText.trim() && !options?.quiet) {
-          logger.responseComplete();
-        }
+        if (finalText.trim()) terminal?.responseComplete();
         break;
 
       case 'usage':
@@ -910,21 +631,12 @@ export async function processAgentStream(
 
       case 'error':
         // Finalize any pending reasoning/text part before throwing error
-        await finalizeReasoningPart();
-        await finalizeTextPart();
+        await recorder.finalizeStreaming();
         throw chunk.error;
       }
     }
   } finally {
-    // Finalize any pending reasoning/text part before returning or throwing.
-    await finalizeReasoningPart();
-    await finalizeTextPart();
-
-    // Wait for all pending session updates to complete before returning.
-    // This ensures tool states are persisted (e.g., "running" -> "completed").
-    if (pendingSessionUpdates.size > 0) {
-      await Promise.allSettled(pendingSessionUpdates);
-    }
+    await recorder.flush();
   }
 
   return {

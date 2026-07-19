@@ -96,6 +96,8 @@ export interface AgentChunk {
   toolInput?: unknown;
   toolResult?: string;
   toolResultRaw?: unknown;
+  /** Canonical success classification when the raw tool result is ambiguous. */
+  toolSuccess?: boolean;
   error?: unknown;
   finishReason?: string;
   usage?: LanguageModelUsage;
