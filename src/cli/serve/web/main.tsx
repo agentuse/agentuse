@@ -1,9 +1,11 @@
 import { render } from 'preact';
 import { App } from './app';
 import { initPushNavigation } from './lib/push-nav';
+import { initSystemThemeSync } from './hooks/use-theme';
 import './styles/app.css';
 
 initPushNavigation();
+initSystemThemeSync();
 
 // Register the service worker eagerly (not only on push opt-in) so its
 // cache-first asset handler makes repeat opens instant and offline-capable.
