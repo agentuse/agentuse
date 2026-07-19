@@ -3654,6 +3654,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   padding: 0.5px 6px; border: 1px solid var(--cyan-border); border-radius: 999px;
   color: var(--cyan); background: var(--cyan-soft); font-size: 9.5px; letter-spacing: 0.04em;
 }
+.page-agents .agent-graph-shared-pill {
+  padding: 0.5px 6px; border: 1px dashed var(--line-strong); border-radius: 999px;
+  color: var(--muted); font-size: 9.5px; letter-spacing: 0.04em;
+}
 .page-agents .agent-graph-store { color: var(--muted-3); }
 .page-agents .agent-graph-ghost-note { font-style: italic; }
 .page-agents .agent-graph-isolated {

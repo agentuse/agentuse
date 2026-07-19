@@ -94,6 +94,26 @@ describe('buildAgentGraph', () => {
     expect(byPath.get('p3/m.agentuse')!.component).toBe(0);
   });
 
+  it('duplicates subagents shared across managers into each band', () => {
+    const graph = buildAgentGraph([
+      row({ path: 'li.agentuse', subagents: ['judge.agentuse'] }),
+      row({ path: 'ss.agentuse', subagents: ['judge.agentuse'] }),
+      row({ path: 'judge.agentuse' }),
+    ]);
+    // Without duplication the shared judge would fuse both managers into one
+    // tangled band; instead each manager keeps its own cluster and copy.
+    expect(graph.componentCount).toBe(2);
+    const judges = graph.nodes.filter((n) => n.path === 'judge.agentuse');
+    expect(judges).toHaveLength(2);
+    expect(judges.every((n) => n.shared)).toBe(true);
+    expect(new Set(judges.map((n) => n.component)).size).toBe(2);
+    // Each band carries its own edge to its own copy.
+    expect(graph.edges).toHaveLength(2);
+    expect(new Set(graph.edges.map((e) => e.to)).size).toBe(2);
+    // Unshared nodes keep path identity as their instance id.
+    expect(graph.nodes.find((n) => n.path === 'li.agentuse')!.id).toBe('li.agentuse');
+  });
+
   it('ranks a delegation fan-out with manager on the left', () => {
     const graph = buildAgentGraph([
       row({ path: 'manager.agentuse', subagents: ['w1.agentuse', 'w2.agentuse'] }),

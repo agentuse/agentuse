@@ -37,7 +37,7 @@ export function AgentGraphView(props: { agents: AgentRow[]; query: string }) {
 
   const width = PAD * 2 + graph.rankCount * NODE_W + Math.max(0, graph.rankCount - 1) * COL_GAP;
   const height = graph.nodes.length === 0 ? 0 : Math.max(...graph.nodes.map((n) => nodeY(n))) + NODE_H + PAD;
-  const byPath = new Map(graph.nodes.map((n) => [n.path, n]));
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const neighbors = new Set<string>();
   if (hovered) {
     neighbors.add(hovered);
@@ -61,8 +61,8 @@ export function AgentGraphView(props: { agents: AgentRow[]; query: string }) {
                   </marker>
                 </defs>
                 {graph.edges.map((e) => {
-                  const from = byPath.get(e.from);
-                  const to = byPath.get(e.to);
+                  const from = byId.get(e.from);
+                  const to = byId.get(e.to);
                   if (!from || !to) return null;
                   const x1 = nodeX(from) + NODE_W;
                   const y1 = nodeY(from) + NODE_H / 2;
@@ -90,11 +90,12 @@ export function AgentGraphView(props: { agents: AgentRow[]; query: string }) {
               </svg>
               {graph.nodes.map((n) => {
                 const dimmed = (props.query && !matches(n.agent, props.query))
-                  || (hovered !== null && !neighbors.has(n.path));
+                  || (hovered !== null && !neighbors.has(n.id));
                 const cls = [
                   'agent-graph-node',
                   n.ghost ? 'ghost' : '',
                   n.entry ? 'entry' : '',
+                  n.shared ? 'shared' : '',
                   dimmed ? 'dim' : '',
                 ].filter(Boolean).join(' ');
                 const style = { left: `${nodeX(n)}px`, top: `${nodeY(n)}px`, width: `${NODE_W}px`, height: `${NODE_H}px` };
@@ -108,6 +109,7 @@ export function AgentGraphView(props: { agents: AgentRow[]; query: string }) {
                     </span>
                     <span class="agent-graph-node-sub">
                       {n.entry && <span class="agent-graph-entry-pill">entry</span>}
+                      {n.shared && <span class="agent-graph-shared-pill" title="Also used by other groups in this graph">shared</span>}
                       {n.store && <span class="agent-graph-store">⛁ {n.store}</span>}
                       {n.ghost && <span class="agent-graph-ghost-note">not loaded</span>}
                     </span>
@@ -116,22 +118,22 @@ export function AgentGraphView(props: { agents: AgentRow[]; query: string }) {
                 return n.agent
                   ? (
                     <a
-                      key={n.path}
+                      key={n.id}
                       class={cls}
                       style={style}
                       href={agentDetailHref(n.agent.projectId, n.agent.runPath)}
                       title={n.path}
-                      onMouseEnter={() => setHovered(n.path)}
+                      onMouseEnter={() => setHovered(n.id)}
                       onMouseLeave={() => setHovered(null)}
                     >{body}</a>
                   )
                   : (
                     <div
-                      key={n.path}
+                      key={n.id}
                       class={cls}
                       style={style}
                       title={n.path}
-                      onMouseEnter={() => setHovered(n.path)}
+                      onMouseEnter={() => setHovered(n.id)}
                       onMouseLeave={() => setHovered(null)}
                     >{body}</div>
                   );
