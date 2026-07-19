@@ -3640,23 +3640,39 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .agent-graph-cluster-count { font-family: var(--mono); font-size: 10.5px; color: var(--muted-3); }
 .page-agents .agent-graph-scrollwrap { position: relative; }
 .page-agents .agent-graph-scroll { overflow-x: auto; }
-/* Overflow hint: a blurred semi-transparent fade over the clipped side. */
+/* Overflow hint: progressive blur, not a fade-to-solid. Stacked backdrop
+   layers with blur doubling toward the edge, each masked to overlapping bands
+   (the flat single-blur + gradient version read as an abrupt smear and hid
+   the clipped card). A faint surface tint keeps the direction readable while
+   the content underneath stays visible. */
 .page-agents .agent-graph-fade {
-  position: absolute; top: 0; bottom: 0; width: 44px; z-index: 4;
+  --fade-dir: to right;
+  position: absolute; top: 0; bottom: 0; width: 56px; z-index: 4;
   pointer-events: none;
-  backdrop-filter: blur(1.5px); -webkit-backdrop-filter: blur(1.5px);
+  background: linear-gradient(var(--fade-dir), transparent, color-mix(in srgb, var(--panel) 55%, transparent));
 }
-.page-agents .agent-graph-fade.right {
-  right: 0;
-  background: linear-gradient(to right, transparent, var(--panel));
-  -webkit-mask-image: linear-gradient(to right, transparent, #000);
-  mask-image: linear-gradient(to right, transparent, #000);
+.page-agents .agent-graph-fade.right { right: 0; }
+.page-agents .agent-graph-fade.left { left: 0; --fade-dir: to left; }
+.page-agents .agent-graph-fade i { position: absolute; inset: 0; }
+.page-agents .agent-graph-fade i:nth-child(1) {
+  backdrop-filter: blur(1px); -webkit-backdrop-filter: blur(1px);
+  mask-image: linear-gradient(var(--fade-dir), transparent 0%, #000 25%, #000 50%, transparent 75%);
+  -webkit-mask-image: linear-gradient(var(--fade-dir), transparent 0%, #000 25%, #000 50%, transparent 75%);
 }
-.page-agents .agent-graph-fade.left {
-  left: 0;
-  background: linear-gradient(to left, transparent, var(--panel));
-  -webkit-mask-image: linear-gradient(to left, transparent, #000);
-  mask-image: linear-gradient(to left, transparent, #000);
+.page-agents .agent-graph-fade i:nth-child(2) {
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+  mask-image: linear-gradient(var(--fade-dir), transparent 25%, #000 50%, #000 75%, transparent 100%);
+  -webkit-mask-image: linear-gradient(var(--fade-dir), transparent 25%, #000 50%, #000 75%, transparent 100%);
+}
+.page-agents .agent-graph-fade i:nth-child(3) {
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  mask-image: linear-gradient(var(--fade-dir), transparent 50%, #000 75%, #000 100%);
+  -webkit-mask-image: linear-gradient(var(--fade-dir), transparent 50%, #000 75%, #000 100%);
+}
+.page-agents .agent-graph-fade i:nth-child(4) {
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  mask-image: linear-gradient(var(--fade-dir), transparent 75%, #000 100%);
+  -webkit-mask-image: linear-gradient(var(--fade-dir), transparent 75%, #000 100%);
 }
 .page-agents .agent-graph-canvas { position: relative; }
 .page-agents .agent-graph-edges { position: absolute; inset: 0; color: var(--muted-2); }

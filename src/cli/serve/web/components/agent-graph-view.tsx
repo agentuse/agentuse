@@ -233,8 +233,11 @@ function ClusterTile(props: {
           })}
           </div>
         </div>
-        {fade.left && <div class="agent-graph-fade left" aria-hidden="true"></div>}
-        {fade.right && <div class="agent-graph-fade right" aria-hidden="true"></div>}
+        {/* Progressive blur (Apple-style scroll scrim): four stacked backdrop
+            layers, blur doubling toward the edge, each masked to its own band
+            so the softening ramps in instead of one flat blur + hard fade. */}
+        {fade.left && <div class="agent-graph-fade left" aria-hidden="true"><i /><i /><i /><i /></div>}
+        {fade.right && <div class="agent-graph-fade right" aria-hidden="true"><i /><i /><i /><i /></div>}
       </div>
     </div>
   );
