@@ -1437,6 +1437,14 @@ interface AgentSummary {
   scheduleHuman?: string;
   /** Free-form frontmatter `metadata:`, passed through untouched for the UI. */
   metadata?: Record<string, unknown>;
+  /** Declared subagent targets, normalized project-relative (see serve/types). */
+  subagents?: string[];
+  /** Advisory `dependsOn` targets, normalized project-relative (never runtime). */
+  dependsOn?: string[];
+  /** Shared store name when `store:` is a string; isolated (`true`) omitted. */
+  store?: string;
+  /** Server-computed relationship lint findings (dangling/self/cycle). */
+  warnings?: string[];
 }
 
 interface CollectAgentsResult {
@@ -1468,6 +1476,14 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
           continue;
         }
         const parsed = await parseAgent(absPath);
+        // Relationship targets normalize to the same project-relative notation
+        // as `path`, so the client can match edges by string equality. Targets
+        // escaping the project root keep their `../` form and render as
+        // external ghosts rather than resolving to another row.
+        const agentDir = dirname(absPath);
+        const toRel = (p: string) => relative(project.root, resolve(agentDir, p));
+        const subagents = parsed.config.subagents?.map((s) => toRel(s.path));
+        const dependsOn = parsed.config.dependsOn?.map(toRel);
         const summary: AgentSummary = {
           projectId: project.id,
           path: toProjectRelativeAgentPath(project, agentFile),
@@ -1477,6 +1493,9 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
           model: parsed.config.model,
           ...(parsed.config.schedule && { schedule: parsed.config.schedule, scheduleHuman: formatScheduleHuman(parsed.config.schedule) }),
           ...(parsed.config.metadata && { metadata: parsed.config.metadata }),
+          ...(subagents?.length && { subagents }),
+          ...(dependsOn?.length && { dependsOn }),
+          ...(typeof parsed.config.store === 'string' && { store: parsed.config.store }),
         };
         agentSummaryCache.set(absPath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size, summary });
         agents.push(summary);
@@ -1487,7 +1506,60 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
     }
   }
   agents.sort((a, b) => a.projectId.localeCompare(b.projectId) || a.path.localeCompare(b.path));
+  annotateRelationshipWarnings(agents);
   return { agents, errors };
+}
+
+/**
+ * Cross-row lint for declared `dependsOn` edges: dangling targets, self
+ * references, and cycles. Computed per request over the assembled list (cheap,
+ * in-memory) rather than cached per file, because every finding depends on
+ * OTHER rows existing — a cached warning would go stale when a neighbor is
+ * added or deleted. Mutates rows in place; `warnings` is absent when clean.
+ */
+function annotateRelationshipWarnings(agents: AgentSummary[]): void {
+  const byProject = new Map<string, Map<string, AgentSummary>>();
+  for (const agent of agents) {
+    let rows = byProject.get(agent.projectId);
+    if (!rows) byProject.set(agent.projectId, rows = new Map());
+    rows.set(agent.path, agent);
+    delete agent.warnings; // cached rows may carry findings from a previous pass
+  }
+  for (const agent of agents) {
+    if (!agent.dependsOn) continue;
+    const rows = byProject.get(agent.projectId)!;
+    const warnings: string[] = [];
+    for (const target of agent.dependsOn) {
+      if (target === agent.path) warnings.push('dependsOn includes itself');
+      else if (target.startsWith('..')) continue; // outside the project: rendered as external, not lintable
+      else if (!rows.has(target)) warnings.push(`dependsOn target not found: ${target}`);
+    }
+    if (warnings.length) agent.warnings = warnings;
+  }
+  // Cycle pass: DFS over dependsOn edges within each project.
+  for (const rows of byProject.values()) {
+    const state = new Map<string, 'visiting' | 'done'>();
+    const flagCycle = (path: string, stack: string[]): void => {
+      const s = state.get(path);
+      if (s === 'done') return;
+      if (s === 'visiting') {
+        for (const member of stack.slice(stack.indexOf(path))) {
+          const row = rows.get(member)!;
+          const note = 'dependsOn forms a cycle';
+          if (!row.warnings?.includes(note)) (row.warnings ??= []).push(note);
+        }
+        return;
+      }
+      state.set(path, 'visiting');
+      stack.push(path);
+      for (const target of rows.get(path)?.dependsOn ?? []) {
+        if (rows.has(target)) flagCycle(target, stack);
+      }
+      stack.pop();
+      state.set(path, 'done');
+    };
+    for (const path of rows.keys()) flagCycle(path, []);
+  }
 }
 
 /**

@@ -324,6 +324,18 @@ export interface AgentSummary {
    * agent declares none.
    */
   metadata?: Record<string, unknown>;
+  /**
+   * Declared relationships, all normalized to the same project-relative
+   * notation as `path` so the client resolves edges by string equality.
+   * Targets outside the project keep their `../` form. Omitted when empty.
+   */
+  subagents?: string[];
+  /** Advisory cross-run ordering from frontmatter `dependsOn` (never runtime). */
+  dependsOn?: string[];
+  /** Shared store name when frontmatter `store` is a string; isolated (`true`) is omitted. */
+  store?: string;
+  /** Server-computed lint findings on declared relationships (dangling/self/cycle). */
+  warnings?: string[];
 }
 
 export interface Project {
