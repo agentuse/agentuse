@@ -90,6 +90,53 @@ describe('serveSessionArtifact', () => {
     }
   });
 
+  it('previews any UTF-8 text file regardless of extension (content sniff)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
+    try {
+      mkdirSync(join(root, 'out'), { recursive: true });
+      writeFileSync(join(root, 'out/config.toml'), '[server]\nport = 8080\n');
+      const { res, captured } = fakeResponse();
+      await __testing.serveSessionArtifact(res, root, 'out/config.toml');
+      expect(captured.status).toBe(200);
+      expect(captured.headers['Content-Type']).toContain('text/html');
+      expect(captured.headers['Content-Disposition']).toBeUndefined();
+      expect(captured.body).toContain('artifact-raw');
+      expect(captured.body).toContain('port = 8080');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('downloads binary content instead of previewing it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
+    try {
+      mkdirSync(join(root, 'out'), { recursive: true });
+      writeFileSync(join(root, 'out/data.bin'), Buffer.from([0x00, 0x01, 0xff, 0xfe, 0x00]));
+      const { res, captured } = fakeResponse();
+      await __testing.serveSessionArtifact(res, root, 'out/data.bin');
+      expect(captured.status).toBe(200);
+      expect(captured.headers['Content-Type']).toBe('application/octet-stream');
+      expect(captured.headers['Content-Disposition']).toContain('attachment');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('downloads non-UTF-8 text-like content rather than rendering mojibake', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
+    try {
+      mkdirSync(join(root, 'out'), { recursive: true });
+      // Latin-1 encoded "café" is invalid UTF-8 but contains no NUL bytes.
+      writeFileSync(join(root, 'out/legacy.txt'), Buffer.from([0x63, 0x61, 0x66, 0xe9]));
+      const { res, captured } = fakeResponse();
+      await __testing.serveSessionArtifact(res, root, 'out/legacy.txt');
+      expect(captured.status).toBe(200);
+      expect(captured.headers['Content-Disposition']).toContain('attachment');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('renders markdown without frontmatter unchanged', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {

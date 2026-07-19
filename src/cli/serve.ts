@@ -1282,6 +1282,7 @@ async function serveResolvedArtifactFile(res: ServerResponse, resolved: string, 
 
   const ext = extname(resolved).toLowerCase();
   const title = basename(resolved);
+  const content = await readFile(resolved);
   const rawMime = ARTIFACT_RAW_MIME[ext];
   if (rawMime) {
     const headers: Record<string, string> = {
@@ -1309,26 +1310,44 @@ async function serveResolvedArtifactFile(res: ServerResponse, resolved: string, 
       headers['X-Frame-Options'] = 'SAMEORIGIN';
     }
     res.writeHead(200, headers);
-    res.end(await readFile(resolved));
+    res.end(content);
     return;
   }
-  if (ext === '.md' || ext === '.markdown' || ext === '.agentuse') {
-    sendHTML(res, 200, renderArtifactDocument(title, renderMarkdownArtifact(await readFile(resolved, 'utf8')), theme));
-    return;
-  }
-  const textExts = new Set(['.txt', '.log', '.json', '.csv', '.yaml', '.yml', '.xml', '.ts', '.js', '.py', '.sh', '']);
-  if (textExts.has(ext)) {
-    const body = `<pre class="artifact-raw">${escapeHtml(await readFile(resolved, 'utf8'))}</pre>`;
+  // Anything that isn't a raw-streamed type previews as text when the bytes
+  // actually are text (sniffed, not extension-guessed), so new text formats
+  // work without being enumerated here. The sniff only ever routes into the
+  // escaped/rendered HTML documents, never the script-capable raw branches
+  // above, so it cannot widen the CSP-sandboxed surface.
+  const text = decodeArtifactText(content);
+  if (text !== null) {
+    const isMarkdown = ext === '.md' || ext === '.markdown' || ext === '.agentuse';
+    const body = isMarkdown
+      ? renderMarkdownArtifact(text)
+      : `<pre class="artifact-raw">${escapeHtml(text)}</pre>`;
     sendHTML(res, 200, renderArtifactDocument(title, body, theme));
     return;
   }
-  // Unknown binary type: hand it to the browser as a download rather than guess.
+  // Binary content: hand it to the browser as a download rather than guess.
   res.writeHead(200, {
     'Content-Type': 'application/octet-stream',
     'Cache-Control': 'no-store',
     'Content-Disposition': `attachment; filename="${title.replace(/["\\]/g, '')}"`
   });
-  res.end(await readFile(resolved));
+  res.end(content);
+}
+
+/**
+ * Decode artifact bytes as text for preview, or return null for binary
+ * content. Uses the git-style heuristic (a NUL byte in the leading window
+ * means binary) plus a strict UTF-8 decode so mojibake never renders.
+ */
+function decodeArtifactText(content: Buffer): string | null {
+  if (content.subarray(0, 8192).includes(0)) return null;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(content);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1336,8 +1355,9 @@ async function serveResolvedArtifactFile(res: ServerResponse, resolved: string, 
  * `await_human` gate. The path is interpreted relative to the project root and
  * must resolve inside it (no traversal), and a small denylist keeps secrets and
  * internal session state out of reach even if a prompt coaxed the agent into
- * pointing the gate at them. Text/markdown render to a themed doc; html/images/
- * pdf are streamed raw for the iframe to display; everything else downloads.
+ * pointing the gate at them. html/images/pdf are streamed raw for the iframe to
+ * display; anything whose bytes sniff as UTF-8 text renders as a themed doc
+ * (markdown-family extensions get the markdown renderer); binaries download.
  */
 async function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath: string, theme?: string): Promise<void> {
   const decoded = (() => { try { return decodeURIComponent(rawPath); } catch { return rawPath; } })();
