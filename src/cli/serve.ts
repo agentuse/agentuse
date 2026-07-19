@@ -1312,7 +1312,7 @@ async function serveResolvedArtifactFile(res: ServerResponse, resolved: string, 
     res.end(await readFile(resolved));
     return;
   }
-  if (ext === '.md' || ext === '.markdown') {
+  if (ext === '.md' || ext === '.markdown' || ext === '.agentuse') {
     sendHTML(res, 200, renderArtifactDocument(title, renderMarkdownArtifact(await readFile(resolved, 'utf8')), theme));
     return;
   }

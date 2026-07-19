@@ -69,6 +69,27 @@ describe('serveSessionArtifact', () => {
     }
   });
 
+  it('renders a .agentuse artifact as markdown with a frontmatter table', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
+    try {
+      mkdirSync(join(root, 'agents'), { recursive: true });
+      writeFileSync(
+        join(root, 'agents/growth.agentuse'),
+        '---\nname: x-growth-manager\nmodel: anthropic:claude-opus-4-8\n---\n\n# Mission\n\nGrow the account.\n',
+      );
+      const { res, captured } = fakeResponse();
+      await __testing.serveSessionArtifact(res, root, 'agents/growth.agentuse');
+      expect(captured.status).toBe(200);
+      expect(captured.headers['Content-Type']).toContain('text/html');
+      expect(captured.headers['Content-Disposition']).toBeUndefined();
+      expect(captured.body).toContain('class="content-frontmatter"');
+      expect(captured.body).toContain('x-growth-manager');
+      expect(captured.body).toContain('<h2>Mission</h2>');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('renders markdown without frontmatter unchanged', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
     try {
