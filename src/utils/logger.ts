@@ -938,22 +938,26 @@ class Logger {
         // Capture for testing/debugging (include prefix for logging)
         this.capture(`${this.getAgentPrefix()}${text}\n`);
       } else {
-        // Fallback for non-TTY
-        if (builtinFormat) {
-          this.info(`${builtinFormat.badge}: ${chalk.cyan(builtinFormat.detail)}`);
-        } else {
-          // Format args with granular truncation for non-builtin tools
-          let argsDisplay = '';
-          if (args) {
-            const formatted = formatToolArgsGranular(args, { disableTruncation: debugMode });
-            if (formatted) {
-              argsDisplay = ` ${chalk.gray(formatted)}`;
+        // Fallback for non-TTY. Tool calls already persist as structured session
+        // parts, so this presentation-only line must bypass the operational-log
+        // sink or the session file contains a duplicate `type: "log"` entry.
+        withoutLogSink(() => {
+          if (builtinFormat) {
+            this.info(`${builtinFormat.badge}: ${chalk.cyan(builtinFormat.detail)}`);
+          } else {
+            // Format args with granular truncation for non-builtin tools
+            let argsDisplay = '';
+            if (args) {
+              const formatted = formatToolArgsGranular(args, { disableTruncation: debugMode });
+              if (formatted) {
+                argsDisplay = ` ${chalk.gray(formatted)}`;
+              }
             }
+            const callType = (name.startsWith('subagent__') || isSubAgent) ? 'Calling subagent:' : 'Calling tool:';
+            const displayName = this.getToolDisplayName(name);
+            this.info(`${callType} ${chalk.cyan(displayName)}${argsDisplay}`);
           }
-          const callType = (name.startsWith('subagent__') || isSubAgent) ? 'Calling subagent:' : 'Calling tool:';
-          const displayName = this.getToolDisplayName(name);
-          this.info(`${callType} ${chalk.cyan(displayName)}${argsDisplay}`);
-        }
+        });
       }
 
       // Show full args in debug mode

@@ -97,6 +97,29 @@ describe('runWithLogSink (logger structured capture)', () => {
     expect(() => logger.info('no sink attached')).not.toThrow();
   });
 
+  it('keeps non-TTY tool announcements out of the session sink while preserving terminal output', () => {
+    const records: LogRecord[] = [];
+    logger.configure({ disableTUI: true });
+    logger.startCapture();
+    try {
+      runWithLogSink((r) => records.push(r), () => {
+        logger.tool('tools__bash', { command: 'echo hello' });
+        logger.tool('mcp__search__query', { query: 'hello' });
+        logger.info('ordinary operational info');
+      });
+      const terminalOutput = logger.stopCapture();
+
+      expect(terminalOutput).toContain('Bash: echo hello');
+      expect(terminalOutput).toContain('Calling tool: search:query (MCP)');
+      expect(records.map((r) => r.message)).toEqual(['ordinary operational info']);
+    } finally {
+      // stopCapture is idempotent enough for the assertion-failure path and
+      // avoids leaking capture/config state into later tests in this process.
+      logger.stopCapture();
+      logger.configure({ disableTUI: false });
+    }
+  });
+
   // Mirrors run.ts/subagent.ts: the stream is an async generator created and
   // consumed inside the sink scope. The context must survive each yield/await
   // so logs emitted between chunks (deep in the stream) are still captured.
@@ -250,6 +273,7 @@ describe('createSessionLogSink', () => {
       const sink = createSessionLogSink(sessionManager, sessionID, 'agents/review', messageID);
 
       await runWithLogSink(sink.capture, async () => {
+        logger.tool('tools__bash', { command: 'echo session-file-check' });
         logger.info('run starting');
         logger.debug('verbose detail');
         await Promise.resolve();
@@ -263,6 +287,7 @@ describe('createSessionLogSink', () => {
       expect(messages).toContain('run starting');
       expect(messages).toContain('verbose detail');
       expect(messages).toContain('a soft warning');
+      expect(messages).not.toContain('Bash: echo session-file-check');
     });
   });
 });
