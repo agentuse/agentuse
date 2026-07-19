@@ -642,4 +642,75 @@ Test agent`;
       expect(agent.config.metadata).toBeUndefined();
     });
   });
+
+  describe('dependsOn', () => {
+    it('normalizes a string to a single-element array', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+dependsOn: scrape.agentuse
+---
+
+Test agent`;
+
+      const agent = parseAgentContent(content, 'test');
+
+      expect(agent.config.dependsOn).toEqual(['scrape.agentuse']);
+    });
+
+    it('keeps a list as-is', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+dependsOn:
+  - scrape.agentuse
+  - ../shared/dedupe.agentuse
+---
+
+Test agent`;
+
+      const agent = parseAgentContent(content, 'test');
+
+      expect(agent.config.dependsOn).toEqual(['scrape.agentuse', '../shared/dedupe.agentuse']);
+    });
+
+    it('leaves dependsOn undefined when absent', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+---
+
+Test agent`;
+
+      const agent = parseAgentContent(content, 'test');
+
+      expect(agent.config.dependsOn).toBeUndefined();
+    });
+
+    it('rejects empty strings', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+dependsOn: ""
+---
+
+Test agent`;
+
+      expect(() => parseAgentContent(content, 'test')).toThrow();
+    });
+
+    it('survives alongside deprecated mcp_servers normalization', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+dependsOn: scrape.agentuse
+mcp_servers:
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem"]
+---
+
+Test agent`;
+
+      const agent = parseAgentContent(content, 'test');
+
+      expect(agent.config.dependsOn).toEqual(['scrape.agentuse']);
+      expect(agent.config.mcpServers).toBeDefined();
+    });
+  });
 });

@@ -207,6 +207,13 @@ const AgentSchema = z.object({
     name: z.string().optional(),
     maxSteps: z.number().optional()
   })).optional(),
+  // Advisory cross-run ordering: agents whose output this one consumes
+  // (typically via a shared store). Display/graph metadata only — the runner
+  // and scheduler never act on it. Paths resolve relative to this agent file.
+  dependsOn: z.union([
+    z.string().min(1),
+    z.array(z.string().min(1))
+  ]).optional(),
   tools: ToolsConfigSchema.optional(),
   schedule: ScheduleConfigSchema.optional(),
   // Store configuration: true for isolated store, string for shared store
@@ -256,11 +263,17 @@ const AgentSchema = z.object({
   if (data.learning) warnExperimentalOnce('learning', 'Learning feature');
   if (data.sandbox) warnExperimentalOnce('sandbox', 'Sandbox feature');
 
+  // Normalize the string shorthand so consumers always see an array.
+  const dependsOn = data.dependsOn === undefined
+    ? undefined
+    : Array.isArray(data.dependsOn) ? data.dependsOn : [data.dependsOn];
+
   // Normalize to mcpServers and warn about deprecation
   if (data.mcp_servers && !data.mcpServers) {
     warnOnce('deprecated:mcp_servers', 'The "mcp_servers" field is deprecated. Please use "mcpServers" (camelCase) instead.');
     return {
       ...data,
+      dependsOn,
       mcpServers: data.mcp_servers,
       mcp_servers: undefined,  // Remove deprecated field
       skills: data.skills ?? defaultSkillsConfig(),
@@ -270,6 +283,7 @@ const AgentSchema = z.object({
 
   return {
     ...data,
+    dependsOn,
     skills: data.skills ?? defaultSkillsConfig(),
     ...(gatedImpliesApproval && { approval: true as const }),
   };
