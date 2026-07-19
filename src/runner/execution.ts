@@ -1,4 +1,5 @@
 import { streamText, isStepCount, type ModelMessage, type ToolSet } from 'ai';
+import { repairSmuggledXmlToolCall } from './tool-call-repair';
 import { createHash } from 'crypto';
 import type { ParsedAgent } from '../parser';
 import { createModel } from '../models';
@@ -712,6 +713,10 @@ export async function* executeAgentCore(
         ? [isStepCount(remainingSteps), stopForCompaction, stopOnSuspend]
         : [isStepCount(remainingSteps), stopOnSuspend],
       abortSignal: effectiveAbortSignal,
+      // Deterministic fix for the XML-drift failure mode (fields smuggled into
+      // neighboring strings as <parameter> markup); anything else falls through
+      // to the normal invalid-input -> tool-error -> model-retry path.
+      repairToolCall: repairSmuggledXmlToolCall,
       ...(providerOptions && { providerOptions }),
       ...((usesAnthropicCacheControl || contextManager) && {
         prepareStep: async ({ messages: stepMessages }: { messages: ModelMessage[] }) => {

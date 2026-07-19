@@ -7,6 +7,7 @@ import { sessionViewToken } from '../utils/session-token';
 import { loadGlobalConfig } from '../utils/global-config';
 import { isHttpUrl } from '../utils/url';
 import { parseDurationMs } from '../utils/duration';
+import { findXmlToolMarkup } from '../runner/tool-call-repair';
 
 function parseTimeout(value?: string | number): number | undefined {
   if (value === undefined || value === '') return undefined;
@@ -80,22 +81,6 @@ export function getArtifactUrl(
   return url.toString();
 }
 
-// Long, markdown-heavy await_human inputs occasionally trigger a known Claude
-// failure mode: mid-call the model drifts from JSON tool-use into its legacy
-// XML tool syntax, leaving `</parameter>\n<parameter name="changes">…` embedded
-// inside string values. Zod can't catch it (the junk lives inside valid
-// strings), and suspending with it produces a garbled approval card that only
-// a human can un-stick. Detect the markup and bounce the call back to the
-// model as a tool error so it re-emits clean JSON instead.
-const XML_TOOL_MARKUP = /<\/?(?:antml:)?(?:parameter|invoke|function_calls)\b/;
-
-function findXmlToolMarkup(value: unknown): boolean {
-  if (typeof value === 'string') return XML_TOOL_MARKUP.test(value);
-  if (Array.isArray(value)) return value.some(findXmlToolMarkup);
-  if (value && typeof value === 'object') return Object.values(value).some(findXmlToolMarkup);
-  return false;
-}
-
 export interface AwaitHumanDefaults {
   timeout?: string | number;
   slack?: { channelId?: string };
@@ -132,6 +117,21 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       })).min(2).optional().describe('When the decision is a pick among alternatives (candidates, variants, strategies) rather than a plain yes/no, list them here: the reviewer gets a single-select menu instead of having to type the pick into a comment. On approval the tool result carries the selected id as `choice`. Reject and comment stay available as escape hatches, so do not add "reject all" or "other" as options.'),
       context: z.string().optional().describe('Only background the other fields do not already carry: constraints, inputs used, process notes. Never repeat the reference, changes, or summary content (no restating the target, URL, or revision story). Omit entirely when nothing extra remains. Rendered as Markdown.'),
       risk: z.string().optional().describe('Concrete risks, unresolved questions, or areas needing reviewer attention. Rendered as Markdown.')
+    }).superRefine((val, ctx) => {
+      // Approval cards are the one surface where XML-drifted input fails
+      // silently (a human sees a garbled card instead of the model seeing an
+      // error), so reject it at validation time. The runner's repairToolCall
+      // (tool-call-repair.ts) then un-smuggles the fields deterministically;
+      // only an unrepairable call surfaces this message to the model.
+      if (findXmlToolMarkup(val)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'input contains XML tool-call markup (e.g. </parameter>, <parameter name="...">). ' +
+            'Re-issue await_human as a pure JSON tool call: each field (summary, changes, context, risk, ...) ' +
+            'must be its own JSON property, with no XML tags inside string values.'
+        });
+      }
     }),
     execute: async (input: {
       prompt: string;
@@ -148,13 +148,6 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       risk?: string;
     }) => {
       const { prompt } = input;
-      if (findXmlToolMarkup(input)) {
-        throw new Error(
-          'await_human input contains XML tool-call markup (e.g. </parameter>, <parameter name="...">). ' +
-          'The call was not shown to the reviewer. Re-issue await_human as a pure JSON tool call: ' +
-          'each field (summary, changes, context, risk, ...) must be its own JSON property, with no XML tags inside string values.'
-        );
-      }
       const timeoutMs = parseTimeout(defaults?.timeout);
       const expiresAt = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
       const resumeToken = randomBytes(24).toString('base64url');
