@@ -8,6 +8,7 @@ import { ToolsConfigSchema } from './tools/index.js';
 import { ScheduleConfigSchema } from './scheduler/index.js';
 import { StoreConfigSchema } from './store/index.js';
 import { LearningConfigSchema } from './learning/index.js';
+import { VerifyConfigSchema } from './verify/types.js';
 import { SandboxConfigSchema } from './sandbox.js';
 import { SkillsConfigSchema, defaultSkillsConfig } from './skill/config.js';
 
@@ -222,6 +223,9 @@ const AgentSchema = z.object({
   type: z.enum(['manager']).optional(),
   // Learning configuration: extract and apply learnings from execution
   learning: LearningConfigSchema.optional(),
+  // Verify configuration: judge the final output before it ships; on fail,
+  // redo it in-session with the judge's critique (up to maxRedos)
+  verify: VerifyConfigSchema.optional(),
   // Sandbox configuration: isolated cloud VM for command execution
   sandbox: SandboxConfigSchema.optional(),
   // Skill configuration: auto discovery by default, explicit keys preload skills
@@ -261,6 +265,7 @@ const AgentSchema = z.object({
   if (data.type === 'manager') warnExperimentalOnce('manager', 'Manager agents (type: manager)');
   if (data.store) warnExperimentalOnce('store', 'Store feature');
   if (data.learning) warnExperimentalOnce('learning', 'Learning feature');
+  if (data.verify) warnExperimentalOnce('verify', 'Verify feature');
   if (data.sandbox) warnExperimentalOnce('sandbox', 'Sandbox feature');
 
   // Normalize the string shorthand so consumers always see an array.
