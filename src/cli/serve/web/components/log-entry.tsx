@@ -402,6 +402,37 @@ function SubagentCard(props: { session: LogSubagentSession }) {
     : <div class="subagent-event">{inner}</div>;
 }
 
+const toolTokenFmt = new Intl.NumberFormat('en-US');
+
+function ToolTokenUsageStrip(props: { usage: NonNullable<ApprovalLogDetails['tokenUsage']> }) {
+  const cached = Math.max(0, props.usage.cachedInput);
+  const input = Math.max(0, props.usage.input - cached);
+  const output = Math.max(0, props.usage.output);
+  const metrics = [
+    { label: 'input', value: toolTokenFmt.format(input) },
+    { label: 'output', value: toolTokenFmt.format(output) },
+    { label: 'cached', value: `+${toolTokenFmt.format(cached)}` },
+  ];
+  const sharedCalls = props.usage.sharedCalls ?? 1;
+
+  return (
+    <div class="tool-token-usage" aria-label="Model step token usage">
+      {metrics.map((metric) => (
+        <span class="tool-token-metric" key={metric.label}>
+          <span class="tool-token-label">{metric.label}</span>
+          <span class="tool-token-value">{metric.value}</span>
+        </span>
+      ))}
+      {sharedCalls > 1 && (
+        <span
+          class="tool-token-shared"
+          title="These counters cover the model step that emitted all of these tool calls; they are not charged once per tool."
+        >shared across {sharedCalls} calls</span>
+      )}
+    </div>
+  );
+}
+
 function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; token: string | undefined }) {
   const details = props.details;
   const rows = [
@@ -410,9 +441,10 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
     details.errorMessage ? { label: 'Error', value: details.errorMessage } : undefined,
   ].filter((row): row is { label: string; value: string } => Boolean(row));
   const artifact = details.toolOutputArtifact;
-  if (rows.length === 0 && !artifact) return null;
+  if (rows.length === 0 && !artifact && !details.tokenUsage) return null;
   return (
     <div class="log-details">
+      {details.tokenUsage && <ToolTokenUsageStrip usage={details.tokenUsage} />}
       {rows.map((row) => (
         <div class="log-detail" key={row.label}>
           <div class="log-detail-label">{row.label}</div>

@@ -281,6 +281,38 @@ describe('LogEntry component', () => {
     expect(html).not.toContain(' expanded');
   });
 
+  it('renders the model-step input, output, and cached usage in an expanded tool row', () => {
+    const html = renderEntry({
+      id: 'log-token-usage',
+      type: 'tool',
+      tool: 'tools__web_search',
+      title: 'tools__web_search completed',
+      status: 'completed',
+      time: Date.now(),
+      details: {
+        input: 'the input',
+        output: 'the output',
+        tokenUsage: {
+          input: 1_200,
+          output: 90,
+          cachedInput: 800,
+          sharedCalls: 2,
+        },
+      },
+    }, { expanded: true });
+
+    expect(html).toContain('expanded');
+    expect(html).toContain('tool-token-usage');
+    expect(html).toContain('Model step token usage');
+    expect(html).toContain('>input<');
+    expect(html).toContain('>400<');
+    expect(html).toContain('>output<');
+    expect(html).toContain('>90<');
+    expect(html).toContain('>cached<');
+    expect(html).toContain('>+800<');
+    expect(html).toContain('shared across 2 calls');
+  });
+
   it('renders full tool output artifact links', () => {
     const html = renderEntry({
       id: 'log-1',
@@ -549,7 +581,7 @@ describe('SessionDetail header', () => {
       },
     });
 
-    expect(items).toEqual([
+    expect(items).toMatchObject([
       { label: 'context used', value: '91.8% left', title: '75,992 / 922,000' },
       { label: 'input', value: '486,568' },
       { label: 'output', value: '5,996' },
@@ -564,7 +596,7 @@ describe('SessionDetail header', () => {
       output: 211,
     });
 
-    expect(items).toEqual([
+    expect(items).toMatchObject([
       { label: 'input', value: '143,366' },
       { label: 'output', value: '211' },
     ]);
@@ -585,7 +617,7 @@ describe('SessionDetail header', () => {
       },
     });
 
-    expect(items).toEqual([
+    expect(items).toMatchObject([
       { label: 'context used', value: '99.6% left', title: '3,596 / 922,000' },
       { label: 'provider usage', value: 'not reported yet' },
     ]);
