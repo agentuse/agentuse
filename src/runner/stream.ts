@@ -3,7 +3,7 @@ import type { ToolCallTrace } from '../plugin/types';
 import type { DoomLoopDetector } from '../tools/index.js';
 import type { SessionManager } from '../session';
 import type { AgentPart } from '../types/parts';
-import type { ToolStateCompleted, ToolStateError } from '../session/types';
+import type { ToolState, ToolStateCompleted, ToolStateError } from '../session/types';
 import type { ActiveContextUsage } from '../session/types';
 import { addLanguageModelUsage, usageToAssistantTokens, addAssistantTokens, type AssistantTokens } from '../session/usage';
 import { repairEscapedText } from '../utils/display-text';
@@ -204,6 +204,8 @@ export async function processAgentStream(
   let subAgentTokens = 0;
   const toolCallTraces: ToolCallTrace[] = [];
   const pendingToolCalls = new Map<string, { name: string; startTime: number; input?: unknown }>();
+  const toolStates = new Map<string, ToolState>();
+  const currentStepToolCallIds = new Set<string>();
   let currentLlmCall: { model: string; startTime: number; firstTokenTime?: number } | null = null;
   let llmSegmentCount = 0;
   let hasTextOutput = false;
@@ -215,6 +217,42 @@ export async function processAgentStream(
   let hasTextSinceLastToolCall = false;
   const recorder = new SessionRecorder(options);
   const terminal = options?.quiet ? undefined : (options?.terminalPresenter ?? defaultTerminalPresenter);
+
+  // Tool results can arrive before the AI SDK emits finish-step usage. Keep the
+  // latest full state in memory so the later usage update can enrich a completed,
+  // failed, or suspended tool without losing its output or approval payload.
+  const persistToolState = async (callID: string, nextState: ToolState): Promise<boolean> => {
+    const previousMetadata = toolStates.get(callID)?.metadata;
+    const metadata = { ...previousMetadata, ...nextState.metadata };
+    const state = Object.keys(metadata).length > 0
+      ? { ...nextState, metadata } as ToolState
+      : nextState;
+    toolStates.set(callID, state);
+    return recorder.updateTool(callID, state);
+  };
+
+  const persistCurrentStepToolUsage = async (chunk: AgentChunk): Promise<void> => {
+    if (chunk.usageKind !== 'step' || !chunk.usage || currentStepToolCallIds.size === 0) return;
+
+    const callIDs = [...currentStepToolCallIds];
+    const tokens = usageToAssistantTokens(chunk.usage);
+    const modelStepUsage = {
+      input: tokens.input,
+      output: tokens.output,
+      cachedInput: tokens.cache.read,
+      sharedCalls: callIDs.length,
+    };
+
+    await Promise.all(callIDs.map(async (callID) => {
+      const state = toolStates.get(callID);
+      if (!state) return;
+      await persistToolState(callID, {
+        ...state,
+        metadata: { ...state.metadata, modelStepUsage },
+      } as ToolState);
+    }));
+    currentStepToolCallIds.clear();
+  };
 
   const recordUsage = (chunk: AgentChunk) => {
     // Normalize AI SDK usage semantics. `totalUsage` arrives here as
@@ -329,6 +367,12 @@ export async function processAgentStream(
             startTime,
             input: chunk.toolInput  // Store input for later use in completed state
           });
+          toolStates.set(chunk.toolCallId, {
+            status: 'running',
+            input: chunk.toolInput,
+            time: { start: startTime },
+          });
+          currentStepToolCallIds.add(chunk.toolCallId);
           recorder.toolStarted({
             callID: chunk.toolCallId,
             tool: chunk.toolName!,
@@ -495,7 +539,7 @@ export async function processAgentStream(
                   time: { start: pending.startTime, end: endTime },
                   ...(tokens && { metadata: { tokens } })
                 };
-            await recorder.updateTool(chunk.toolCallId, toolState);
+            await persistToolState(chunk.toolCallId, toolState);
 
             pendingToolCalls.delete(chunk.toolCallId);
           }
@@ -565,7 +609,7 @@ export async function processAgentStream(
                     ...(activeChannelMessage ? { channelMessage: activeChannelMessage } : {})
                   }
             });
-            const persisted = await recorder.updateTool(chunk.toolCallId, buildPendingState(channelMessage) as any);
+            const persisted = await persistToolState(chunk.toolCallId, buildPendingState(channelMessage) as ToolState);
             if (persisted && payload.kind === 'await_human') {
               const sentChannelMessage = await sendPersistedSlackApproval({
                 ...(options?.sessionID && { sessionId: options.sessionID }),
@@ -579,7 +623,7 @@ export async function processAgentStream(
                 ...(options?.slackRunChannelHandles && { slackRunChannelHandles: options.slackRunChannelHandles })
               });
               if (sentChannelMessage) {
-                await recorder.updateTool(chunk.toolCallId, buildPendingState(sentChannelMessage) as any);
+                await persistToolState(chunk.toolCallId, buildPendingState(sentChannelMessage) as ToolState);
               }
               await announceApprovalRequested({
                 ...(options?.sessionID && { sessionId: options.sessionID }),
@@ -597,6 +641,7 @@ export async function processAgentStream(
         // Finalize any pending reasoning/text part
         await recorder.finalizeStreaming();
 
+        await persistCurrentStepToolUsage(chunk);
         recordUsage(chunk);
 
         finishReasons.push(chunk.finishReason ?? 'unknown');
@@ -626,6 +671,7 @@ export async function processAgentStream(
         break;
 
       case 'usage':
+        await persistCurrentStepToolUsage(chunk);
         recordUsage(chunk);
         break;
 

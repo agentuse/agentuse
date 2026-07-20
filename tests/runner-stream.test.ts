@@ -278,7 +278,93 @@ describe('processAgentStream session logging', () => {
         },
       },
     });
-    expect(partUpdates[0][4].state.status).toBe('pending');
+    const pendingState = partUpdates.at(-1)?.[4].state;
+    expect(pendingState).toMatchObject({
+      status: 'pending',
+      metadata: {
+        modelStepUsage: {
+          input: 76_000,
+          output: 120,
+          cachedInput: 20_000,
+          sharedCalls: 1,
+        },
+      },
+    });
+  });
+
+  it('attaches model-step usage to every parallel tool call without multiplying it', async () => {
+    const partUpdates: any[] = [];
+    const sessionManager = {
+      addPart: async (_s: string, _a: string, _m: string, part: any) => part.callID,
+      updatePart: async (...args: any[]) => {
+        partUpdates.push(args);
+      },
+      updateMessage: async () => {}
+    };
+
+    async function* chunks(): AsyncGenerator<AgentChunk> {
+      yield {
+        type: 'tool-call',
+        toolName: 'tools__read',
+        toolCallId: 'call-1',
+        toolInput: { path: 'one.txt' },
+        toolStartTime: 1_000,
+      };
+      yield {
+        type: 'tool-call',
+        toolName: 'tools__read',
+        toolCallId: 'call-2',
+        toolInput: { path: 'two.txt' },
+        toolStartTime: 1_001,
+      };
+      yield {
+        type: 'tool-result',
+        toolName: 'tools__read',
+        toolCallId: 'call-1',
+        toolResult: 'one',
+        toolDuration: 10,
+      };
+      yield {
+        type: 'tool-result',
+        toolName: 'tools__read',
+        toolCallId: 'call-2',
+        toolResult: 'two',
+        toolDuration: 11,
+      };
+      yield {
+        type: 'usage',
+        usageKind: 'step',
+        usage: {
+          inputTokens: 1_200,
+          outputTokens: 90,
+          totalTokens: 1_290,
+          inputTokenDetails: { cacheReadTokens: 800 },
+        } as any,
+      };
+    }
+
+    await processAgentStream(chunks(), {
+      sessionManager: sessionManager as any,
+      sessionID: 'session-1',
+      agentId: 'agent-1',
+      messageID: 'message-1',
+      quiet: true
+    });
+
+    for (const callID of ['call-1', 'call-2']) {
+      const finalUpdate = partUpdates.filter((update) => update[3] === callID).at(-1);
+      expect(finalUpdate?.[4].state).toMatchObject({
+        status: 'completed',
+        metadata: {
+          modelStepUsage: {
+            input: 1_200,
+            output: 90,
+            cachedInput: 800,
+            sharedCalls: 2,
+          },
+        },
+      });
+    }
   });
 
   it('persists reasoning chunks as a streamed reasoning part, finalized before text', async () => {

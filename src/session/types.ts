@@ -236,6 +236,7 @@ export interface PartBase {
 export type ToolStatePending = {
   status: 'pending';
   input?: unknown;
+  metadata?: Record<string, unknown>;
   suspendedAt?: number;
   resumePayload?: {
     // 'await_human': a real human gate (the leaf's await_human tool part).
