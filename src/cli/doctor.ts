@@ -6,6 +6,7 @@ import { parseAgent } from '../parser.js';
 import { discoverSkills } from '../skill/discovery.js';
 import { getExplicitSkillNames, isSkillTrusted, trustsAllSkills } from '../skill/config.js';
 import { extractCommandFromAllowedTool } from '../skill/command-extract.js';
+import { estimateSkillCatalogTokens } from '../skill/tool.js';
 import { resolveProjectContext } from '../utils/project.js';
 import { computeAgentId } from '../utils/agent-id.js';
 import { getSessionStorageDir } from '../storage/paths.js';
@@ -38,6 +39,10 @@ function skillLooksReferenced(agent: Awaited<ReturnType<typeof parseAgent>>, ski
     agent.instructions,
   ].join('\n').toLowerCase();
   return haystack.includes(skillName.toLowerCase());
+}
+
+function formatEstimatedTokens(tokens: number): string {
+  return tokens >= 1000 ? `~${(tokens / 1000).toFixed(1)}k` : `~${tokens}`;
 }
 
 function globallyAllowsCommand(agent: Awaited<ReturnType<typeof parseAgent>>, command: string): boolean {
@@ -233,6 +238,13 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
 
   const skills = await discoverSkills(projectContext.projectRoot);
   const explicitSkillNames = getExplicitSkillNames(agent.config.skills);
+  const visibleSkills = agent.config.skills!.auto
+    ? [...skills.values()]
+    : explicitSkillNames.flatMap((name) => {
+        const skill = skills.get(name);
+        return skill ? [skill] : [];
+      });
+  const estimatedCatalogTokens = estimateSkillCatalogTokens(visibleSkills);
   const skillNames = explicitSkillNames.length > 0
       ? explicitSkillNames
       : agent.config.skills!.auto
@@ -241,6 +253,17 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
 
   const unknownExplicit = explicitSkillNames.filter((name) => !skills.has(name));
   const inspectedSkills = skillNames.filter((name) => skills.has(name)).sort();
+
+  console.log(chalk.bold('\nSkill discovery'));
+  console.log(`  mode: ${agent.config.skills!.auto ? 'open' : 'closed'}`);
+  console.log(`  discovered: ${skills.size}`);
+  console.log(`  visible: ${visibleSkills.length}`);
+  console.log(`  preloaded: ${explicitSkillNames.length > 0 ? explicitSkillNames.join(', ') : 'none'}`);
+  console.log(`  estimated catalog: ${formatEstimatedTokens(estimatedCatalogTokens)} tokens/model request`);
+  if (agent.config.skills!.auto && explicitSkillNames.length > 0) {
+    console.log(chalk.yellow('  Listed skills are preloaded; they do not restrict discovery.'));
+    console.log(chalk.gray('  Add `auto: false` to expose only the listed skills.'));
+  }
 
   // Per inspected skill: the bash commands it declares (allowed-tools), whether
   // it is trusted, and where trust routes each grant (auto-run vs gated). A skill

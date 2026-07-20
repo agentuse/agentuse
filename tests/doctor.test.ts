@@ -14,6 +14,19 @@ describe('agentuse doctor', () => {
   let originalConsoleLog: typeof console.log;
   let logs: string[];
 
+  async function writeSkill(name: string, description: string): Promise<void> {
+    const skillDir = join(testDir, '.agentuse', 'skills', name);
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, 'SKILL.md'), `---
+name: ${name}
+description: ${description}
+---
+
+# ${name}
+
+Follow the skill instructions.`);
+  }
+
   beforeEach(async () => {
     testDir = await mkdtemp(join(tmpdir(), 'doctor-test-'));
     originalCwd = process.cwd();
@@ -170,5 +183,56 @@ Trusted mode agent.`);
     const output = logs.join('\n');
     expect(output).toContain('Skill trust: all skills trusted');
     expect(output).not.toContain('not granted');
+  });
+
+  it('reports open discovery overhead and explains that listed skills do not restrict it', async () => {
+    await writeSkill('preloaded', 'A skill the agent always needs.');
+    await writeSkill('optional', 'A skill available through discovery.');
+    const agentPath = join(testDir, 'open.agentuse');
+    await writeFile(agentPath, `---
+name: Open Skills Agent
+model: demo:test
+skills: [preloaded]
+---
+
+Use the preloaded skill.`);
+
+    await runDoctor(agentPath);
+
+    const output = logs.join('\n');
+    expect(output).toContain('Skill discovery');
+    expect(output).toContain('mode: open');
+    const discovered = output.match(/discovered: (\d+)/)?.[1];
+    const visible = output.match(/visible: (\d+)/)?.[1];
+    expect(Number(discovered)).toBeGreaterThanOrEqual(2);
+    expect(visible).toBe(discovered);
+    expect(output).toContain('preloaded: preloaded');
+    expect(output).toMatch(/estimated catalog: ~[\d.]+k? tokens\/model request/);
+    expect(output).toContain('Listed skills are preloaded; they do not restrict discovery.');
+    expect(output).toContain('Add `auto: false`');
+  });
+
+  it('reports a closed skill catalog without the open-discovery hint', async () => {
+    await writeSkill('preloaded', 'The only skill this agent needs.');
+    await writeSkill('hidden', 'A discovered skill hidden from this agent.');
+    const agentPath = join(testDir, 'closed.agentuse');
+    await writeFile(agentPath, `---
+name: Closed Skills Agent
+model: demo:test
+skills:
+  auto: false
+  preloaded:
+---
+
+Use the preloaded skill.`);
+
+    await runDoctor(agentPath);
+
+    const output = logs.join('\n');
+    expect(output).toContain('mode: closed');
+    expect(Number(output.match(/discovered: (\d+)/)?.[1])).toBeGreaterThanOrEqual(2);
+    expect(output).toContain('visible: 1');
+    expect(output).toContain('preloaded: preloaded');
+    expect(output).not.toContain('Listed skills are preloaded');
   });
 });

@@ -115,6 +115,17 @@ function buildToolDescription(skills: SkillInfo[]): string {
   ].join('\n');
 }
 
+/**
+ * Estimate the recurring prompt cost of the visible skill catalog.
+ *
+ * AgentUse uses the same chars/4 approximation for context accounting. An
+ * empty catalog costs nothing because the skill tools are not registered.
+ */
+export function estimateSkillCatalogTokens(skills: SkillInfo[]): number {
+  if (skills.length === 0) return 0;
+  return Math.ceil(buildToolDescription(skills).length / 4);
+}
+
 const SKILL_DIRECTORY_VARIABLES = [
   '${skillDir}', // Legacy AgentUse placeholder
   '${SKILL_DIR}', // Generic/cross-agent convention

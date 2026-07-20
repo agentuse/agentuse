@@ -37,6 +37,9 @@ schedule: "0 9 * * *"
 metadata:            # free-form annotations; framework never interprets them
   draft: true
   owner: leon
+skills:
+  auto: false        # prefer a closed catalog when the required skills are known
+  creator:           # preload this specific skill
 subagents:
   - path: ./researcher.agentuse
     name: research
@@ -104,6 +107,8 @@ high: latency and cost with no lift. Start moderate, tune on observed output.
 - Thinking budget decided, not defaulted: on for judgment/drafting/planning
   agents, off for mechanical/read-only ones.
 - Tools and MCP servers declared in frontmatter, not assumed ambient.
+- Known skills listed explicitly; prefer `auto: false` when the agent does not
+  need to discover arbitrary skills at runtime.
 - Inputs, outputs, destinations, and success criteria stated in the body.
 - Multi-role work: subagents with clear names and `maxSteps` limits.
 - Recurring work: YAML `schedule:` + a note that `agentuse serve` must run.
@@ -130,6 +135,26 @@ out every branch makes the agent brittle on the case you did not enumerate.
 Over-specification smells: the same rule in three places, a paragraph
 justifying *why* a step exists, an enumerated decision tree derivable from one
 sentence of intent. Write what a competent teammate needs, not a spec.
+
+## Scope Skills Deliberately
+
+When an agent relies on known skills, list them explicitly and prefer a closed
+catalog:
+
+```yaml
+skills:
+  auto: false
+  x-personal:
+```
+
+The named skills are preloaded. `auto: false` hides every unlisted discovered
+skill, reducing the catalog repeated on each model request and making runtime
+selection more deterministic. Leave discovery open only when the task genuinely
+needs to choose among skills that were not known at authoring time:
+
+```yaml
+skills: [x-personal] # preloads x-personal; all discovered skills remain visible
+```
 
 Skills are instructions, not tool grants: declare an agent's tools in
 frontmatter even when a skill documents them with `allowed-tools`. Put reusable
