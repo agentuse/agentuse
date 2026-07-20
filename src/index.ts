@@ -1250,6 +1250,28 @@ async function runInternalWorker() {
           ...(typeof part.time?.start === 'number' && { time: part.time.start })
         };
       }
+      if (part?.type === 'verify') {
+        const attempt = typeof part.attempt === 'number' ? part.attempt : 0;
+        const maxRedos = typeof part.maxRedos === 'number' ? part.maxRedos : 0;
+        const critique = typeof part.critique === 'string' ? part.critique : undefined;
+        const judge = typeof part.judge === 'string' ? part.judge : undefined;
+        const title = part.verdict === 'pass'
+          ? `Verification passed${attempt > 0 ? ` (after ${attempt} redo${attempt === 1 ? '' : 's'})` : ''}`
+          : part.verdict === 'fail'
+            ? `Verification failed (attempt ${attempt + 1} of ${maxRedos + 1})`
+            : 'Verification judge error';
+        const message = part.verdict === 'error'
+          ? critique ?? 'Judge failed; output shipped unverified'
+          : critique ?? (judge ? `Judged by ${judge}` : undefined);
+        return {
+          id: String(part.id),
+          type: 'verify',
+          status: part.verdict === 'pass' ? 'completed' : 'error',
+          title,
+          ...(message !== undefined && { message }),
+          ...(typeof part.time?.start === 'number' && { time: part.time.start })
+        };
+      }
       if (part?.type === 'error') {
         const { title, message } = describeErrorPart({
           source: part.source === 'compaction' ? 'compaction' : 'agent',
