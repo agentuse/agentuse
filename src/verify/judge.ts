@@ -53,6 +53,7 @@ function truncateMiddle(text: string, maxChars: number): string {
 }
 
 const VERDICT_FORMAT_INSTRUCTIONS = `## Verdict format (required)
+Keep any reasoning before the verdict brief (under 150 words) — the verdict object must not be cut off.
 End your response with a single JSON object on its own line:
 {"pass": true, "critique": ""}
 or
@@ -123,7 +124,9 @@ async function judgeBuiltin(
   const responseText = await completeText(judgeModel, {
     instructions,
     prompt,
-    maxOutputTokens: 1000,
+    // Room for rubric-by-rubric reasoning before the trailing verdict object;
+    // a too-small cap truncates the response before the JSON ever appears.
+    maxOutputTokens: 2500,
   });
 
   const verdict = extractVerdict(responseText);
