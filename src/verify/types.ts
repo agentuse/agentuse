@@ -11,9 +11,23 @@ import { z } from 'zod';
  * - `judge`: another .agentuse file acts as the evaluator, resolved relative
  *   to the verifying agent's file. Its own frontmatter governs model/tools.
  */
+/**
+ * Where the judge runs:
+ * - `gate`: judge each `await_human` payload BEFORE the run suspends. A failed
+ *   verdict returns a rejection-with-comment tool result (the same protocol as
+ *   a human rejection), so the agent revises and re-gates without the human
+ *   ever seeing the draft. After `maxRedos` rejections the gate fails OPEN to
+ *   the human with the unresolved critique logged.
+ * - `output`: judge the run's final output before it ships (post-run).
+ * - `both`: both placements.
+ * Default: `gate` when the agent has an approval gate, `output` otherwise.
+ */
+export type VerifyPlacement = 'gate' | 'output' | 'both';
+
 export interface CanonicalVerifyConfig {
   criteria?: string | undefined;
   judge?: string | undefined;
+  at?: VerifyPlacement | undefined;
   maxRedos: number;
   model?: string | undefined; // built-in judge model override; invalid with `judge`
 }
@@ -22,6 +36,7 @@ const CanonicalVerifySchema = z
   .object({
     criteria: z.string().min(1).optional(),
     judge: z.string().min(1).optional(),
+    at: z.enum(['gate', 'output', 'both']).optional(),
     maxRedos: z.number().int().min(0).max(10).default(1),
     model: z.string().min(1).optional(),
   })

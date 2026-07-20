@@ -25,6 +25,7 @@ import {
   loadSkillPromptOutputs,
 } from '../skill/index.js';
 import { discoverSkills } from '../skill/discovery.js';
+import { resolveVerifyPlacements, withGateVerify } from '../verify/gate.js';
 
 /**
  * Prepare agent execution - shared setup logic for both streaming and non-streaming modes
@@ -270,6 +271,25 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       tools = bindToolsToSnapshot(tools, snapshot);
     } else {
       await sessionManager.writeToolsSnapshot(sessionID, agentId, createToolsSnapshot(tools));
+    }
+  }
+
+  // Verify gate placement: judge each await_human payload before suspending.
+  // Wrapped after the snapshot bind — the wrapper preserves name/schema, so
+  // snapshots and resume are unaffected.
+  if (agent.config.verify && tools.await_human) {
+    const placements = resolveVerifyPlacements(agent.config.verify, true);
+    if (placements.has('gate')) {
+      // The toolset entry type is a union the AI SDK derives per-tool; the
+      // wrapper only spreads the tool and replaces execute, so the cast is safe.
+      tools.await_human = withGateVerify(tools.await_human as import('ai').Tool, {
+        config: agent.config.verify,
+        agentModel: agent.config.model,
+        task: agent.instructions,
+        agentFilePath,
+        projectContext,
+        abortSignal,
+      });
     }
   }
 

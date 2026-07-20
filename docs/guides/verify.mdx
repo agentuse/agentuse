@@ -39,10 +39,21 @@ verify: "Every metric cited must come from a tool result; includes a risks secti
 |--------|------|-------------|
 | `criteria` | string | Rubric for the built-in judge (one LLM call). Mutually exclusive with `judge`. |
 | `judge` | string | Path to a `.agentuse` file to run as the evaluator, relative to this agent file. Mutually exclusive with `criteria`. |
+| `at` | `gate` \| `output` \| `both` | Where the judge runs. Defaults to `gate` when the agent has an approval gate, `output` otherwise. |
 | `maxRedos` | number | Maximum critique-informed redos before shipping anyway (default `1`, max `10`, `0` = judge only). |
 | `model` | string | Model for the built-in judge. Defaults to the agent's own model. Invalid with `judge`. |
 
 `verify: true` uses a generic task-fulfillment rubric. `verify: "<string>"` is shorthand for `{ criteria: "<string>" }`.
+
+## Gate Placement (approval agents)
+
+For agents with an [approval gate](/guides/approval-gates), verify defaults to `at: gate`: the judge reviews each `await_human` request **before** it suspends to the human.
+
+- **Fail** → the run does not suspend. The critique returns as a rejection-with-comment tool result, the same protocol as a human rejection, so the agent revises its draft and requests approval again. The human never sees the failed draft.
+- **Pass** → the gate suspends to the human as normal.
+- **Fail-open** → after `maxRedos` pre-review rejections, or on any judge error, the request goes to the human regardless, with the unresolved critique in the session log. The judge protects your attention; it can never deadlock a run or replace your decision.
+
+The judge receives the full approval payload (draft, exact on-approval content, target reference/excerpt, context), so write criteria against what the reviewer would see. Because the check runs before anything posts, this placement is the quality gate; `at: output` is a post-run audit. Gate placement also works for delegated sub-agents: a leaf's gate is judged in the leaf, before the request cascades to the root.
 
 ## Using a Judge Agent
 

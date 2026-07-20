@@ -20,6 +20,7 @@ import { extractApiErrorDetail } from './api-error';
 import { prepareAgentExecution } from './preparation';
 import { processAgentStream } from './stream';
 import { runVerifyLoop } from './verify-loop';
+import { resolveVerifyPlacements } from '../verify/gate';
 import type { PreparedAgentExecution, RunAgentResult } from './types';
 import type { ModelMessage } from 'ai';
 
@@ -329,8 +330,12 @@ export async function runAgent(
     // below; verification then resolves on the post-resume run.
     let verification: SessionInfo['verification'] | undefined;
     const verifyConfig = agent.config.verify;
+    const verifyOutputActive = verifyConfig
+      ? resolveVerifyPlacements(verifyConfig, Boolean(tools.await_human)).has('output')
+      : false;
     if (
       verifyConfig &&
+      verifyOutputActive &&
       !result.suspended &&
       !preparation.runOutcome?.incomplete &&
       sessionManager && prepSessionID && prepAgentId && assistantMsgID
@@ -375,7 +380,7 @@ export async function runAgent(
           logger.debug(`Failed to persist verification outcome: ${(error as Error).message}`);
         }
       }
-    } else if (verifyConfig && !result.suspended) {
+    } else if (verifyConfig && verifyOutputActive && !result.suspended) {
       logger.debug('[Verify] Skipped: session substrate unavailable or run declared incomplete');
     }
 

@@ -21,6 +21,7 @@ import { extractApiErrorDetail } from './runner/api-error';
 import { toErrorMessage } from './utils/error-message';
 import { usageToAssistantTokens } from './session/usage';
 import { resolveMaxSteps } from './utils/config';
+import { resolveVerifyPlacements, withGateVerify } from './verify/gate';
 
 // Constants
 const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
@@ -333,6 +334,21 @@ export async function createSubAgentTool(
               ...approvalToolDefaults(agent.config),
               ...(projectContext?.projectRoot && { projectRoot: projectContext.projectRoot }),
             });
+            // Verify gate placement for a delegated leaf: judge each gate
+            // payload pre-suspension, same as the top-level path.
+            if (agent.config.verify) {
+              const placements = resolveVerifyPlacements(agent.config.verify, true);
+              if (placements.has('gate')) {
+                tools.await_human = withGateVerify(tools.await_human, {
+                  config: agent.config.verify,
+                  agentModel: agent.config.model,
+                  task: agent.instructions,
+                  agentFilePath: resolvedPath,
+                  projectContext,
+                  abortSignal,
+                });
+              }
+            }
           }
 
           // Persist a tools snapshot so the child is resumable after a gate, mirroring
