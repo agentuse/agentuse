@@ -19,7 +19,9 @@ import { executeAgentCore } from './execution';
 import { extractApiErrorDetail } from './api-error';
 import { prepareAgentExecution } from './preparation';
 import { processAgentStream } from './stream';
+import { runVerifyLoop } from './verify-loop';
 import type { PreparedAgentExecution, RunAgentResult } from './types';
+import type { ModelMessage } from 'ai';
 
 type PersistedSlackRunChannelHandle = {
   channel: string;
@@ -319,6 +321,63 @@ export async function runAgent(
 
     logger.debug(`Agent finish reasons: ${result.finishReasons?.join(', ') ?? 'none'}`);
     logger.debug(`Agent produced text output: ${result.hasTextOutput}`);
+
+    // Verify (experimental): judge the final output before it ships; on a
+    // failed verdict inject the critique and redo in-session, up to maxRedos.
+    // Requires the session substrate (redo continues on rehydrated history).
+    // A redo that hits an approval gate falls through to the suspended branch
+    // below; verification then resolves on the post-resume run.
+    let verification: SessionInfo['verification'] | undefined;
+    const verifyConfig = agent.config.verify;
+    if (
+      verifyConfig &&
+      !result.suspended &&
+      !preparation.runOutcome?.incomplete &&
+      sessionManager && prepSessionID && prepAgentId && assistantMsgID
+    ) {
+      // Judge context: the original task. On a resumed run userMessage is only
+      // the latest continuation prompt, so prepend the agent's instructions.
+      const verifyTask = existingSessionId
+        ? `${agent.instructions}\n\nLatest instruction:\n${userMessage}`
+        : userMessage;
+      const executeRedo = (redoMessages: ModelMessage[], redoUserMessage: string) => {
+        const redoStream = () => processAgentStream(
+          executeAgentCore(agent, tools, { ...coreOptions, messages: redoMessages, userMessage: redoUserMessage }),
+          streamOptions
+        );
+        return logSink ? runWithLogSink(logSink.capture, redoStream) : redoStream();
+      };
+      try {
+        const verifyOutcome = await runVerifyLoop({
+          agent,
+          config: verifyConfig,
+          task: verifyTask,
+          initialResult: result,
+          sessionManager,
+          sessionID: prepSessionID,
+          agentId: prepAgentId,
+          messageID: assistantMsgID,
+          executeRedo,
+          ...(agentFilePath !== undefined && { agentFilePath }),
+          ...(projectContext !== undefined && { projectContext }),
+          ...(abortSignal && { abortSignal }),
+          quiet
+        });
+        result = verifyOutcome.result;
+        verification = verifyOutcome.verification;
+      } finally {
+        if (logSink) await logSink.flush();
+      }
+      if (verification) {
+        try {
+          await sessionManager.updateSession(prepSessionID, prepAgentId, { verification });
+        } catch (error) {
+          logger.debug(`Failed to persist verification outcome: ${(error as Error).message}`);
+        }
+      }
+    } else if (verifyConfig && !result.suspended) {
+      logger.debug('[Verify] Skipped: session substrate unavailable or run declared incomplete');
+    }
 
     if (result.suspended) {
       // Release the store lock before the status flip so the session never

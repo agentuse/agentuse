@@ -99,6 +99,16 @@ export interface SessionInfo {
   // outcome in status/error.
   dismissedAt?: number;
 
+  // Outcome of the verify feature's final judgment on this run. `failed` means
+  // the output shipped despite exhausting redos (or the judge itself erroring)
+  // — a needs-attention signal, not a crash. Absent when verify is off.
+  verification?: {
+    status: 'passed' | 'failed' | 'error';
+    redoCount: number;                 // redos actually performed this run
+    critique?: string;                 // last failing critique / judge error detail
+    time: number;                      // Unix timestamp (ms) of the final verdict
+  };
+
   // Durable channel anchors. These let resume/follow-up paths update the same
   // external thread even when they run in a different serve worker.
   channels?: {
@@ -334,6 +344,7 @@ export type Part =
   | PatchPart
   | CompactionPart
   | LearningPart
+  | VerifyPart
   | ErrorPart
   | LogPart;
 
@@ -373,6 +384,29 @@ export interface LearningPart extends PartBase {
   count: number;
   titles?: string[];
   detail?: string;
+  time: {
+    start: number;
+  };
+}
+
+/** Verdict of one verify judge invocation. `error` = the judge itself failed
+ * (model/parse error in `detail`) and the output shipped unverified. */
+export type VerifyPartVerdict = 'pass' | 'fail' | 'error';
+
+/**
+ * Marker recorded per verify judge invocation, so each verdict — and the
+ * critique that drove a redo — is visible in the session log.
+ */
+export interface VerifyPart extends PartBase {
+  type: 'verify';
+  verdict: VerifyPartVerdict;
+  /** 0 = the run's first output, N = the output produced by the Nth redo. */
+  attempt: number;
+  maxRedos: number;
+  /** The judge's critique (fail) or failure detail (error). */
+  critique?: string;
+  /** Judge identity: model string (built-in) or judge agent name. */
+  judge?: string;
   time: {
     start: number;
   };
