@@ -260,11 +260,21 @@ export interface ApprovalOption {
   recommended?: boolean;
 }
 
+export interface ToolTokenUsage {
+  /** Provider input tokens for the model step, including cached reads. */
+  input: number;
+  output: number;
+  cachedInput: number;
+  /** Tool calls emitted by the same model step and sharing these counters. */
+  sharedCalls?: number;
+}
+
 export interface ApprovalLogDetails {
   resumeToken?: string;
   prompt?: string;
   input?: string;
   output?: string;
+  tokenUsage?: ToolTokenUsage;
   summary?: string;
   context?: string;
   risk?: string;

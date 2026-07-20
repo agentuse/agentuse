@@ -1027,6 +1027,12 @@ async function runInternalWorker() {
     prompt?: string;
     input?: string;
     output?: string;
+    tokenUsage?: {
+      input: number;
+      output: number;
+      cachedInput: number;
+      sharedCalls?: number;
+    };
     summary?: string;
     context?: string;
     risk?: string;
@@ -1505,6 +1511,25 @@ async function runInternalWorker() {
 
   function buildToolDetails(state: any, tool?: string): ApprovalLogDetails | undefined {
     const fields: ApprovalLogDetails = {};
+    const usage = valueAsRecord(valueAsRecord(state?.metadata).modelStepUsage);
+    const inputTokens = usage.input;
+    const outputTokens = usage.output;
+    const cachedInputTokens = usage.cachedInput;
+    if (
+      typeof inputTokens === 'number' && Number.isFinite(inputTokens) && inputTokens >= 0 &&
+      typeof outputTokens === 'number' && Number.isFinite(outputTokens) && outputTokens >= 0 &&
+      typeof cachedInputTokens === 'number' && Number.isFinite(cachedInputTokens) && cachedInputTokens >= 0
+    ) {
+      const sharedCalls = typeof usage.sharedCalls === 'number' && Number.isFinite(usage.sharedCalls)
+        ? Math.max(1, Math.floor(usage.sharedCalls))
+        : undefined;
+      fields.tokenUsage = {
+        input: inputTokens,
+        output: outputTokens,
+        cachedInput: cachedInputTokens,
+        ...(sharedCalls !== undefined && { sharedCalls }),
+      };
+    }
 
     if (state?.status === 'completed' && tool === 'tools__artifact_save') {
       const saved = savedArtifactFromState(state);

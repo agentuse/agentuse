@@ -409,6 +409,12 @@ interface ApprovalLogDetails {
   prompt?: string;
   input?: string;
   output?: string;
+  tokenUsage?: {
+    input: number;
+    output: number;
+    cachedInput: number;
+    sharedCalls?: number;
+  };
   summary?: string;
   context?: string;
   risk?: string;
