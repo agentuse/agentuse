@@ -48,7 +48,8 @@
         "guides/context-management",
         "guides/manager-agents",
         "guides/store",
-        "guides/learning"
+        "guides/learning",
+        "guides/verify"
       ]
     },
     {

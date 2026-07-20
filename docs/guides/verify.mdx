@@ -1,0 +1,85 @@
+---
+title: Verify
+description: Judge the agent's output before it ships, and redo it with the critique on failure
+tag: Experimental
+---
+
+<Warning>
+  **Experimental Feature**: Verify is experimental. The configuration and behavior may change or be removed in future versions. Discuss feedback in [GitHub Discussions](https://github.com/agentuse/agentuse/discussions).
+</Warning>
+
+## What is Verify?
+
+Verify puts a quality gate between your agent's final output and delivery. After the run finishes, a judge evaluates the output against your criteria. If it fails, the judge's critique is injected back into the same session as a revision instruction and the agent **redoes the output**, with all its tool results and completed work still in context, up to `maxRedos` times. Only then does the output ship to channels, a delegating manager, or the CLI.
+
+The redo is a continuation, not a re-run: the agent sees everything it already did (including side effects like sent messages or filed issues), so it revises the deliverable instead of repeating actions.
+
+## Quick Start
+
+```yaml
+---
+model: anthropic:claude-sonnet-5
+verify: true   # generic rubric: does the output fulfill the task?
+---
+
+# Weekly Report Writer
+
+Summarize this week's metrics into a report.
+```
+
+Or with your own rubric:
+
+```yaml
+verify: "Every metric cited must come from a tool result; includes a risks section; no filler"
+```
+
+## Configuration Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `criteria` | string | Rubric for the built-in judge (one LLM call). Mutually exclusive with `judge`. |
+| `judge` | string | Path to a `.agentuse` file to run as the evaluator, relative to this agent file. Mutually exclusive with `criteria`. |
+| `maxRedos` | number | Maximum critique-informed redos before shipping anyway (default `1`, max `10`, `0` = judge only). |
+| `model` | string | Model for the built-in judge. Defaults to the agent's own model. Invalid with `judge`. |
+
+`verify: true` uses a generic task-fulfillment rubric. `verify: "<string>"` is shorthand for `{ criteria: "<string>" }`.
+
+## Using a Judge Agent
+
+When a one-line rubric isn't enough, the evaluation needs its own files, tools, or a stronger model, point `judge` at another agent file:
+
+```yaml
+verify:
+  judge: ./shared/reply-judge.agentuse
+  maxRedos: 1
+```
+
+The judge is a normal agent: its own frontmatter controls its model, reasoning effort, and tools (e.g. read access to rubric files). It receives the task and the candidate output, and must end its response with a JSON verdict on its own line:
+
+```json
+{"pass": false, "critique": "The reply restates the target's framing. Add one distinct layer: a concrete example from practice."}
+```
+
+When `pass` is `false`, `critique` is required and must be actionable in one revision, it is injected verbatim into the redo turn. Everything else the judge writes stays in its own reasoning; only the verdict object affects the run.
+
+Judges conventionally stay read-only (they evaluate, the parent revises), but this is not enforced, a judge that runs your test suite is a legitimate design. Judges cannot suspend on approval gates; a suspended judge counts as a judge error.
+
+## What Happens on Failure
+
+1. The verdict and critique are recorded in the session log (visible in the web UI).
+2. The critique is injected as a revision instruction: attempt count, criteria, the critique verbatim, and directives (revise, don't argue with the review, completed side effects stand, tools allowed for new information).
+3. The agent's revised output is judged again, up to `maxRedos`.
+4. If every attempt fails, the **last output still ships**, and the session is marked `verification: failed`, a needs-attention signal for you or a delegating manager, not a crash.
+
+A judge that itself errors (model/auth/parse failure) never blocks the run: the output ships unverified with a visible `error` marker.
+
+## Cost and Behavior Notes
+
+- Each verification is one extra LLM call; each redo is a continuation of the existing session (prompt caching keeps it near generation-only cost). Redo steps count against `maxSteps`.
+- The built-in judge defaults to the agent's own model so authentication always works; set `model` to use a cheaper judge.
+- Verify requires session storage (the default), it is skipped when no session substrate is available, and skipped for runs that declared themselves incomplete via `report_incomplete`.
+- If a redo hits an approval gate, the run suspends normally; verification resolves at the end of the resumed run.
+
+## Verify vs. Learning
+
+Verify catches a bad output **now**; [Learning](/guides/learning) makes the agent better **next run**. They compose: a verify critique that fixed the output this run is exactly the kind of rule worth promoting into learnings (automatic promotion is planned).
