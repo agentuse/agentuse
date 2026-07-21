@@ -13,6 +13,7 @@ import { formatToolResultForDisplay } from '../utils/format-tool-result';
 import { sendSlackApprovalRequest, sendSlackApprovalRequestToThread } from '../slack/approval';
 import type { AgentChunk } from './types';
 import { SessionRecorder } from './session-recorder';
+import { withoutToolIntent } from './tool-intent';
 import { defaultTerminalPresenter, type TerminalPresenter } from './terminal-presenter';
 
 type SlackRunChannelHandle = {
@@ -340,10 +341,12 @@ export async function processAgentStream(
         }
         hasTextSinceLastToolCall = false;
 
-        // Check for doom loop (repeated identical tool calls)
+        // Check for doom loop (repeated identical tool calls). Compare without
+        // the injected intent phrase: a model stuck in a loop may vary the
+        // wording while repeating the exact same call.
         if (options?.doomLoopDetector) {
           // This will throw DoomLoopError if threshold exceeded
-          options.doomLoopDetector.check(chunk.toolName!, chunk.toolInput);
+          options.doomLoopDetector.check(chunk.toolName!, withoutToolIntent(chunk.toolInput));
         }
 
         // Finalize any pending reasoning/text part before tool call

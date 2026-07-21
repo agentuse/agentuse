@@ -216,6 +216,12 @@ const AgentSchema = z.object({
     z.array(z.string().min(1))
   ]).optional(),
   tools: ToolsConfigSchema.optional(),
+  // Tool-call intent phrases: an optional `intent` parameter is injected into
+  // every tool schema so the model states what each call is trying to achieve;
+  // the CLI and web session views show it as the call's activity label. On by
+  // default; `intent: false` keeps tool schemas pristine (e.g. for providers or
+  // third-party tools that are sensitive to extra parameters).
+  intent: z.boolean().optional(),
   schedule: ScheduleConfigSchema.optional(),
   // Store configuration: true for isolated store, string for shared store
   store: StoreConfigSchema.optional(),

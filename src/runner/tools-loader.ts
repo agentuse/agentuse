@@ -22,6 +22,7 @@ import type { ParsedAgent } from '../parser';
 import { approvalToolDefaults, isApprovalEnabled } from './approval';
 import { ToolConfigError, type EffectAuditSink, type ToolOutputArtifactSink } from '../tools/types.js';
 import { isMockMode, wrapToolsWithLLMMock } from './mock-tools';
+import { withIntentParam } from './tool-intent';
 
 /**
  * Options for loading agent tools
@@ -254,7 +255,12 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   // merged outside this point (see preparation.ts), so they stay real while each
   // sub-agent's own leaf tools get mocked via its own loadAgentTools call.
   const mergedTools: Record<string, Tool> = Object.assign({}, ...toolSources);
-  const all = isMockMode() ? wrapToolsWithLLMMock(mergedTools) : mergedTools;
+  const withMocks = isMockMode() ? wrapToolsWithLLMMock(mergedTools) : mergedTools;
+  // Intent injection wraps LAST so its strip-execute sees exactly the args the
+  // model sent, even when mock mode replaced the real execute underneath. This
+  // runs before the tools snapshot in preparation.ts, so suspended sessions
+  // resume with the same extended schemas they were created with.
+  const all = agent.config.intent === false ? withMocks : withIntentParam(withMocks);
 
   return {
     mcpTools,
