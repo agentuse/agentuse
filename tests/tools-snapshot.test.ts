@@ -81,10 +81,14 @@ describe('tools snapshot', () => {
     });
   });
 
-  it('fails when a snapshotted tool is unavailable', () => {
-    expect(() => bindToolsToSnapshot({} as any, {
-      tools: [{ name: 'missing_tool' }]
-    })).toThrow('TOOL_UNAVAILABLE: missing_tool');
+  it('stubs a snapshotted tool that was removed from the config instead of failing the resume', async () => {
+    const bound = bindToolsToSnapshot({} as any, {
+      tools: [{ name: 'missing_tool', inputSchema: { type: 'object' } }]
+    }) as any;
+    expect(bound.missing_tool).toBeDefined();
+    const result = await bound.missing_tool.execute({});
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('no longer available');
   });
 
   it('unwraps AI SDK jsonSchema() wrappers (MCP tools) instead of persisting the wrapper', () => {

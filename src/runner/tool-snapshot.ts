@@ -142,8 +142,17 @@ export function bindToolsToSnapshot(currentTools: ToolSet, snapshot: ToolsSnapsh
     .map(tool => tool.name)
     .filter(name => !(name in currentTools));
 
+  // Agent configs legitimately evolve while a session sits suspended (a
+  // subagent or MCP server removed, a tool renamed). Failing the resume here
+  // would brick the session AFTER the human already spent their decision - so
+  // bind a stub instead: the snapshot schema keeps the model-facing tool list
+  // consistent with the session history, and only an actual CALL to the
+  // removed tool errors (as a tool result the model can react to).
   if (missing.length > 0) {
-    throw new Error(`TOOL_UNAVAILABLE: ${missing.join(', ')}`);
+    logger.warn(
+      `Resuming with tool(s) removed from the agent config since this session started: ${missing.join(', ')}. ` +
+      `Calls to them will return an error result.`
+    );
   }
 
   const bound: ToolSet = {};
@@ -154,7 +163,12 @@ export function bindToolsToSnapshot(currentTools: ToolSet, snapshot: ToolsSnapsh
     // still resume.
     const snapSchema = unwrapJsonSchemaWrapper(snap.inputSchema) ?? snap.inputSchema;
     (bound as Record<string, any>)[snap.name] = {
-      ...current,
+      ...(current ?? {
+        execute: async () => ({
+          success: false,
+          error: `Tool "${snap.name}" is no longer available: it was removed from the agent configuration after this session started. Continue without it.`
+        })
+      }),
       ...(snap.description !== undefined && { description: snap.description }),
       ...(snapSchema !== undefined && { inputSchema: jsonSchema(snapSchema as any) })
     };
