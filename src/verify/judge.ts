@@ -10,6 +10,8 @@
  */
 
 import { dirname, resolve } from 'path';
+import { tool } from 'ai';
+import { z } from 'zod';
 import { completeText } from '../complete-text.js';
 import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic.js';
 import { parseAgent } from '../parser.js';
@@ -66,6 +68,9 @@ function truncateMiddle(text: string, maxChars: number): string {
   return `${text.slice(0, half)}\n\n[... truncated ${text.length - maxChars} chars ...]\n\n${text.slice(-half)}`;
 }
 
+// Built-in judge (single completeText call, no tools): the verdict is trailing
+// JSON scraped by extractVerdict. generateObject/generateText can't replace this
+// - the Codex OAuth backend rejects non-streaming calls (see complete-text.ts).
 const VERDICT_FORMAT_INSTRUCTIONS = `## Verdict format (required)
 Keep any reasoning before the verdict brief (under 150 words) — the verdict object must not be cut off.
 End your response with a single JSON object on its own line:
@@ -74,7 +79,16 @@ or
 {"pass": false, "critique": "<what fails and what a passing output looks like>"}
 The critique is required in BOTH cases (it is the record of what the judge did, shown on the pass/fail marker). On a pass, give the single thing that made it clear the bar (the strongest risk you checked and why it's fine), not empty praise. On a fail, it must be concrete enough to act on in ONE revision: name what is wrong AND what passing looks like. Do not include any text after the JSON object.`;
 
-function buildJudgePrompt(input: JudgeInput, criteria: string): string {
+// Agent judge (runs a tool-capable loop): the verdict is a structured
+// submit_verdict tool call, not scraped from prose. Reasoning stays as text
+// (persisted in the judge's own session); the verdict can't be truncated or
+// mis-parsed because it's validated tool args in their own message.
+const SUBMIT_VERDICT_INSTRUCTIONS = `## Verdict (required)
+Reason briefly first (name which criteria or attacks the output survived or failed), then record your decision by calling the \`submit_verdict\` tool exactly once. That tool call IS your verdict — do not also write a JSON object in your text.
+- \`pass\`: true if a demanding reviewer would accept the output as-is; false if they would send it back.
+- \`critique\`: one line, required either way. On a pass, the single sharpest risk you checked and why it's fine (not empty praise). On a fail, what is wrong AND what a passing output looks like, concrete enough to act on in one revision.`;
+
+function buildJudgePrompt(input: JudgeInput, criteria: string, outputInstructions: string): string {
   return `You are verifying an AI agent's final output before it is delivered.
 
 ## Task the agent was given
@@ -89,7 +103,7 @@ ${criteria}
 ## Instructions
 Judge whether the output satisfies ALL the criteria in the context of the task. Be strict but fair: pass output a demanding reviewer would accept, reject output they would send back.
 
-${VERDICT_FORMAT_INSTRUCTIONS}`;
+${outputInstructions}`;
 }
 
 /**
@@ -127,7 +141,7 @@ async function judgeBuiltin(
   agentModel: string
 ): Promise<JudgeOutcome> {
   const judgeModel = config.model ?? agentModel;
-  const prompt = buildJudgePrompt(input, config.criteria ?? GENERIC_CRITERIA);
+  const prompt = buildJudgePrompt(input, config.criteria ?? GENERIC_CRITERIA, VERDICT_FORMAT_INSTRUCTIONS);
 
   // For Anthropic OAuth the Claude Code identity prompt must be the system
   // prompt; completeText streams so the ChatGPT Codex backend works too.
@@ -197,8 +211,26 @@ async function judgeViaAgent(
       stateRoot: projectContext?.stateRoot,
     });
 
-    const judgeTask = `${buildJudgePrompt(input, 'Apply the evaluation standard defined in your own instructions.')}`;
+    const judgeTask = `${buildJudgePrompt(input, 'Apply the evaluation standard defined in your own instructions.', SUBMIT_VERDICT_INSTRUCTIONS)}`;
     const userMessage = `${judgeAgent.instructions}\n\n${judgeTask}`;
+
+    // The verdict is a structured tool call, not scraped prose: the judge
+    // reasons in text (persisted in its session) then calls submit_verdict.
+    // Captured here via closure so we get the schema-validated args directly.
+    let submittedVerdict: VerifyVerdict | undefined;
+    const submitVerdictTool = tool({
+      description: 'Record your final verdict and end the review. Call this exactly once, after your reasoning. This tool call IS your verdict — do not also write a JSON object in your text.',
+      inputSchema: z.object({
+        pass: z.boolean().describe('true if a demanding reviewer would accept the output as-is; false if they would send it back'),
+        critique: z.string().describe('One line, required either way. On a pass: the single sharpest risk you checked and why it held (not empty praise). On a fail: what is wrong AND what a passing output looks like, concrete enough to act on in one revision.'),
+      }),
+      execute: async ({ pass, critique }: { pass: boolean; critique: string }) => {
+        const trimmed = typeof critique === 'string' && critique.trim() ? critique.trim() : undefined;
+        submittedVerdict = { pass, ...(trimmed && { critique: trimmed }) };
+        return { recorded: true, pass };
+      },
+    });
+    const judgeTools = { ...loadedTools.all, submit_verdict: submitVerdictTool };
 
     // Run the judge as an inspectable child session under the parent, so its
     // full reasoning + tool calls (which exemplar/voice files it actually read)
@@ -242,7 +274,7 @@ async function judgeViaAgent(
     }
 
     const runJudge = () => processAgentStream(
-      executeAgentCore(judgeAgent, loadedTools.all, {
+      executeAgentCore(judgeAgent, judgeTools, {
         userMessage,
         cacheableUserMessage: judgeAgent.instructions,
         systemMessages: systemMessagesResult.messages,
@@ -299,10 +331,12 @@ async function judgeViaAgent(
       return { status: 'error', detail: `judge agent ${judgeAgent.name} suspended on an approval gate; judges cannot suspend` };
     }
 
-    const verdict = extractVerdict(result.text ?? '');
+    // Prefer the structured submit_verdict tool call; fall back to scraping a
+    // trailing JSON object from the text for a judge that answered in prose.
+    const verdict = submittedVerdict ?? extractVerdict(result.text ?? '');
     if (!verdict) {
-      await finalizeJudgeSession({ code: 'JUDGE_NO_VERDICT', message: 'judge returned no parseable verdict JSON' });
-      return { status: 'error', detail: `judge agent ${judgeAgent.name} returned no parseable verdict JSON` };
+      await finalizeJudgeSession({ code: 'JUDGE_NO_VERDICT', message: 'judge did not call submit_verdict or return a parseable verdict' });
+      return { status: 'error', detail: `judge agent ${judgeAgent.name} did not call submit_verdict or return a parseable verdict` };
     }
     if (!verdict.pass && !verdict.critique) {
       await finalizeJudgeSession({ code: 'JUDGE_NO_CRITIQUE', message: 'judge failed the output without a critique' });
