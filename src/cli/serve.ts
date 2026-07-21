@@ -159,7 +159,7 @@ interface WorkerSweepExpiredResult {
 
 type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
 type ApprovalSessionFilter = 'pending' | 'completed' | 'errored';
-type SessionStatusFilter = 'running' | 'suspended' | 'completed' | 'error' | 'incomplete';
+type SessionStatusFilter = 'running' | 'suspended' | 'completed' | 'error' | 'incomplete' | 'needs-attention';
 type SessionWindowFilter = `${number}h` | `${number}d` | 'all';
 const APPROVAL_LIST_DEFAULT_DAYS = 30;
 const SESSION_LIST_DEFAULT_WINDOW: SessionWindowFilter = '24h';
@@ -231,6 +231,8 @@ interface SessionSummary {
   updatedAt: number;
   errorCode?: string;
   errorMessage?: string;
+  /** Reviewer discarded this ended failed run; needs-attention surfaces skip it. */
+  dismissedAt?: number;
   mock?: boolean;
   /** Suspended parent parked on a running delegated child (see serve/types). */
   subagentActive?: boolean;
@@ -1109,9 +1111,24 @@ function isSessionWindowFilter(value: string): value is SessionWindowFilter {
 }
 
 function parseSessionStatusFilter(value: string | undefined): SessionStatusFilter | undefined {
-  return value === 'running' || value === 'suspended' || value === 'completed' || value === 'error' || value === 'incomplete'
+  return value === 'running' || value === 'suspended' || value === 'completed' || value === 'error'
+    || value === 'incomplete' || value === 'needs-attention'
     ? value
     : undefined;
+}
+
+/**
+ * A failed run still waiting on a human: an ended run that failed (status
+ * `error`, which also carries the INCOMPLETE outcome) but was not stopped by the
+ * operator and has not yet been reviewed-and-discarded. This is the exact set
+ * the home "Needs your attention" panel surfaces, made filterable in the list.
+ */
+function sessionNeedsAttention(
+  session: Pick<SessionSummary, 'status' | 'errorCode' | 'dismissedAt'>
+): boolean {
+  return session.status === 'error'
+    && session.errorCode !== 'USER_STOPPED'
+    && session.dismissedAt === undefined;
 }
 
 /**
@@ -1120,10 +1137,11 @@ function parseSessionStatusFilter(value: string | undefined): SessionStatusFilte
  * UI instead of treating it as a separate on-disk session status.
  */
 function sessionMatchesStatusFilter(
-  session: Pick<SessionSummary, 'status' | 'errorCode'>,
+  session: Pick<SessionSummary, 'status' | 'errorCode' | 'dismissedAt'>,
   filter: SessionStatusFilter | undefined
 ): boolean {
   if (!filter) return true;
+  if (filter === 'needs-attention') return sessionNeedsAttention(session);
   if (filter === 'incomplete') return session.status === 'error' && session.errorCode === 'INCOMPLETE';
   return session.status === filter;
 }

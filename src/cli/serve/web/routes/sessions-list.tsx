@@ -1,7 +1,7 @@
 import { useLocation } from 'preact-iso';
-import { useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useState } from 'preact/hooks';
 import type { SessionRow, SessionsPayload } from '../lib/api';
-import { fetchSessions, fetchAgents } from '../lib/api';
+import { fetchSessions, fetchAgents, postSessionStop } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useMediaQuery } from '../hooks/use-media-query';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
@@ -18,9 +18,31 @@ import { term } from '../lib/terms';
 import { useSessionListView, type SessionListView } from '../hooks/use-session-list-view';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
-const STATUSES = ['', 'running', 'suspended', 'completed', 'error', 'incomplete'];
+// value is the API/query token; label is what the operator reads. 'needs-attention'
+// is the filterable twin of the home "Needs your attention" panel (undismissed
+// failed runs), surfaced first so triage is one click from the list.
+const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'any' },
+  { value: 'needs-attention', label: 'needs a look' },
+  { value: 'running', label: 'running' },
+  { value: 'suspended', label: 'suspended' },
+  { value: 'completed', label: 'completed' },
+  { value: 'error', label: 'error' },
+  { value: 'incomplete', label: 'incomplete' },
+];
 const TRIGGERS = ['', 'manual', 'scheduled', 'slack', 'api'];
 const LIVE_SESSION_STATUSES = new Set(['running', 'resuming', 'continuing']);
+
+function sessionRowKey(row: SessionRow): string {
+  return `${row.project}:${row.sessionId}`;
+}
+
+/** An ended failed run the reviewer can wave off: same rule the server's
+ *  needs-attention filter and the home panel use. USER_STOPPED runs were the
+ *  operator's own doing (never re-surface); already-dismissed ones are done. */
+function isDiscardable(row: SessionRow): boolean {
+  return row.status === 'error' && row.errorCode !== 'USER_STOPPED' && row.dismissedAt === undefined;
+}
 
 interface AgentGroup { agentId: string; agentName: string; rows: SessionRow[] }
 
@@ -55,9 +77,26 @@ export function SessionRowView(props: {
   statusFilter: string;
   triggerFilter: string;
   agentFilter: string;
+  dismissed: boolean;
+  onDiscard: (row: SessionRow) => void;
 }) {
-  const { row, view, multiProject, filterHref, statusFilter, triggerFilter, agentFilter } = props;
+  const { row, view, multiProject, filterHref, statusFilter, triggerFilter, agentFilter, dismissed, onDiscard } = props;
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
+  // A failed run the reviewer can wave off. Once dismissed (here or on the
+  // server) the button gives way to a "dismissed" chip so the row's triage
+  // state is always legible, the gap the raw error list left open.
+  const discardable = isDiscardable(row) && !dismissed;
+  const discardButton = discardable
+    ? (
+      <button
+        type="button"
+        class="row-discard"
+        title="Mark reviewed and drop from Needs your attention"
+        onClick={(event) => { event.preventDefault(); event.stopPropagation(); onDiscard(row); }}
+      >Discard</button>
+    )
+    : null;
+  const dismissedChip = dismissed ? <span class="chip dismissed" title="Reviewed and discarded">dismissed</span> : null;
   // stopped / timeout / incomplete render as their own chips (still status
   // 'error' on disk) so a skim distinguishes "crashed" from "agent declared
   // non-delivery" from "operator stopped it".
@@ -86,7 +125,7 @@ export function SessionRowView(props: {
     .toUpperCase();
   return (
     <div
-      class={`row${view === 'feed' ? ' session-feed-card' : ''}`}
+      class={`row${view === 'feed' ? ' session-feed-card' : ''}${dismissed ? ' is-dismissed' : ''}`}
       role={view === 'feed' ? 'article' : undefined}
       aria-label={view === 'feed' ? `${row.agent.name || row.agent.id} session` : undefined}
     >
@@ -111,7 +150,9 @@ export function SessionRowView(props: {
                 title={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
               >{row.agent.id}</a>
               {row.mock && <span class="chip mock">mock</span>}
+              {dismissedChip}
               <span class="row-time" title={formatApprovalTime(row.createdAt)}>{formatRelativeTime(row.createdAt)}</span>
+              {discardButton}
             </div>
             <a class="row-title row-link" href={href}>{row.agent.name || row.agent.id}</a>
             {row.agent.description && <div class="row-sub">{row.agent.description}</div>}
@@ -140,11 +181,14 @@ export function SessionRowView(props: {
                 <span title={formatApprovalTime(row.createdAt)}>{formatRelativeTime(row.createdAt)}</span>
               </div>
             </div>
-            <a
-              class={statusClass(statusKey)}
-              href={filterHref('status', statusActive ? '' : statusFilterValue)}
-              title={statusActive ? `Stop filtering by status: ${statusFilterValue}` : `Filter sessions by status: ${statusFilterValue}`}
-            >{statusText}</a>
+            <div class="session-feed-status">
+              {dismissedChip}
+              <a
+                class={statusClass(statusKey)}
+                href={filterHref('status', statusActive ? '' : statusFilterValue)}
+                title={statusActive ? `Stop filtering by status: ${statusFilterValue}` : `Filter sessions by status: ${statusFilterValue}`}
+              >{statusText}</a>
+            </div>
           </div>
         )}
       {view === 'feed' && row.errorMessage && <div class="session-feed-error">{errorText(row.errorMessage)}</div>}
@@ -161,6 +205,7 @@ export function SessionRowView(props: {
         : (
           <div class="session-feed-footer">
             <code>{row.sessionId}</code>
+            {discardButton}
             <a class="session-feed-open" href={href}>Open session <span aria-hidden="true">→</span></a>
           </div>
         )}
@@ -248,6 +293,11 @@ export default function SessionsList() {
   ];
   const [filtersOpen, setFiltersOpen] = useState(activeCount > 0);
   const [groupByAgent, setGroupByAgent] = useState(false);
+  // Optimistic discard set (keyed by project:sessionId): a just-discarded row
+  // shows its "dismissed" state immediately, then drops out of the
+  // needs-attention view without waiting for the next SSE snapshot. Rolled back
+  // if the stop request fails so the row is never silently lost.
+  const [dismissedLocal, setDismissedLocal] = useState<ReadonlySet<string>>(() => new Set<string>());
 
   // Agent list powers the filter's type-ahead so operators pick a real agent id
   // instead of guessing a substring (which silently misses renamed/moved ids).
@@ -328,6 +378,9 @@ export default function SessionsList() {
     const rowKey = `${row.project}\0${row.sessionId}`;
     if (seenRowKeys.has(rowKey)) return false;
     seenRowKeys.add(rowKey);
+    // In the needs-attention view a locally-discarded row no longer belongs,
+    // so hide it right away; every other view keeps it (marked "dismissed").
+    if (statusFilter === 'needs-attention' && dismissedLocal.has(sessionRowKey(row))) return false;
     return true;
   });
   const multiProject = new Set(rows.map((r) => r.project)).size > 1;
@@ -349,6 +402,25 @@ export default function SessionsList() {
       setLoadingMore(false);
     }
   };
+
+  // Discard = the reviewer's "reviewed, wave it off" on an ended failed run.
+  // Reuses the stop endpoint, which stamps dismissedAt for an already-ended
+  // failed session (identical to the home panel's "×").
+  const discardRow = useCallback((row: SessionRow) => {
+    const rowKey = sessionRowKey(row);
+    setDismissedLocal((current) => new Set(current).add(rowKey));
+    postSessionStop(row.sessionId, undefined, { project: row.project, reason: 'Discarded from sessions list' })
+      .catch(() => {
+        // Discard did not land; restore the row so it isn't silently lost.
+        setDismissedLocal((current) => {
+          const next = new Set(current);
+          next.delete(rowKey);
+          return next;
+        });
+      });
+  }, []);
+  const isDismissed = (row: SessionRow): boolean =>
+    row.dismissedAt !== undefined || dismissedLocal.has(sessionRowKey(row));
 
   // Build a URL that preserves the other active filters when one changes.
   // The window is carried only when the operator explicitly picked one: pinning
@@ -442,7 +514,7 @@ export default function SessionsList() {
             </label>
             <label class="filter-field filter-field-status">status
               <select value={statusFilter} onChange={onSelect('status')}>
-                {STATUSES.map((s) => <option value={s} key={s || 'any'}>{s || 'any'}</option>)}
+                {STATUS_OPTIONS.map((s) => <option value={s.value} key={s.value || 'any'}>{s.label}</option>)}
               </select>
             </label>
             <label class="filter-field filter-field-trigger">trigger
@@ -495,6 +567,8 @@ export default function SessionsList() {
                           statusFilter={statusFilter}
                           triggerFilter={triggerFilter}
                           agentFilter={agentFilter ?? ''}
+                          dismissed={isDismissed(row)}
+                          onDiscard={discardRow}
                         />
                       ))}
                     </div>
@@ -511,6 +585,8 @@ export default function SessionsList() {
                 statusFilter={statusFilter}
                 triggerFilter={triggerFilter}
                 agentFilter={agentFilter ?? ''}
+                dismissed={isDismissed(row)}
+                onDiscard={discardRow}
               />
             ))}</div>)}
         {nextCursor && (

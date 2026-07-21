@@ -4664,7 +4664,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   text-decoration: none;
 }
 .page-sessions .session-feed-byline a:hover { color: var(--cyan); }
-.page-sessions .session-feed-header > .chip.status {
+.page-sessions .session-feed-status {
+  display: inline-flex; align-items: center; gap: 8px;
+  justify-content: flex-end;
+}
+.page-sessions .session-feed-header .chip.status {
   margin-top: 1px;
   background: transparent;
   font-size: 9.5px;
@@ -4864,6 +4868,34 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 /* Agent-declared non-delivery (error/INCOMPLETE): amber, distinct from a crash,
    so a skim separates "blocked, needs a human" from "broke". */
 .page-sessions .chip.status.incomplete { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
+/* Reviewed-and-discarded marker: deliberately neutral (not red/amber) so a
+   handled failure reads as settled, and the row it sits on dims to match. */
+.page-sessions .chip.dismissed {
+  color: var(--muted-2);
+  border-color: var(--line-strong);
+  background: var(--panel);
+  letter-spacing: 0.02em;
+}
+.page-sessions .row.is-dismissed { opacity: 0.6; }
+.page-sessions .row.is-dismissed:hover { opacity: 1; }
+/* Per-row triage action: a quiet text button until hovered, then it warms to
+   the same red the failure chips use. Mirrors the home panel's dismiss "×". */
+.page-sessions .row-discard {
+  flex: none;
+  margin-left: 8px;
+  padding: 2px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted-2);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.page-sessions .row-discard:hover { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
+.page-sessions .session-feed-footer .row-discard { margin-left: auto; }
 .page-sessions footer { color: var(--muted); font-size: 11px; margin-top: 32px; text-align: center; }
 @media (max-width: 640px) {
   .page-sessions .session-feed-card { padding: 14px; }
