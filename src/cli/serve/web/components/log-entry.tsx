@@ -633,7 +633,7 @@ function LogEntryImpl(props: LogEntryProps) {
           {entry.type === 'tool' && entry.tool && !isApprovalEntry
             ? (
               <>
-                {toolIntent && <span class="log-intent">{toolIntent}</span>}
+                {toolIntent && <span class="log-intent" title={toolIntent}>{toolIntent}</span>}
                 <span class={`tool-chip${toolIntent ? ' has-intent' : ''}`} title={entry.title} aria-label={entry.title}>{toolChipLabel(entry.tool)}</span>
               </>
             )

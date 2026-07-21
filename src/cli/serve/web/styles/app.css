@@ -2615,6 +2615,20 @@ html[data-route-loading] body::after {
   .log-item.expandable .log-title { display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
   .log-item.expandable .tool-chip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .log-item.expandable .log-title::after { flex: 0 0 auto; }
+  /* With an intent phrase, the phrase IS the row on a phone: the chip would
+     crush it to a few characters ("Read wr…"), so the chip yields until the row
+     is expanded (tap), where the tool identity matters again. Long phrases wrap
+     to two clamped lines instead of truncating. */
+  .log-item .log-intent {
+    flex: 1 1 auto;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .log-item:not(.expanded) .tool-chip.has-intent { display: none; }
   .approval-question { font-size: 17px; }
   /* Let the label / char count / copy chip wrap instead of crushing the label. */
   .approval-change-head { flex-wrap: wrap; row-gap: 4px; }
