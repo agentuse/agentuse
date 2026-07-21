@@ -173,6 +173,72 @@ const IMAGE_ARTIFACT_RE = /\.(png|jpe?g|gif|webp|svg|avif)$/i;
 const HTML_ARTIFACT_RE = /\.(html?)$/i;
 const PDF_ARTIFACT_RE = /\.pdf$/i;
 
+/** Image-file path tokens inside gate payload prose. */
+const PAYLOAD_IMAGE_PATH_RE = /[\w.~@/-]+\.(?:png|jpe?g|gif|webp|avif)\b/gi;
+
+/**
+ * Project-relative image paths mentioned anywhere in the gate payload text.
+ * Agents routinely name the media a gate covers (a generated diagram, a
+ * downloaded repost image) without filling artifact_paths; surfacing those
+ * mentions gives the reviewer the actual image with zero agent cooperation.
+ * Authorization stays server-side (serveSessionArtifact containment +
+ * denylist); a path that 403s/404s simply hides its tile via onError. SVG is
+ * deliberately excluded here: only explicitly declared artifact_paths get the
+ * script-capable branches.
+ */
+function detectPayloadImagePaths(details: ApprovalLogDetails, explicit: string[]): string[] {
+  const texts = [
+    details.summary,
+    details.draft,
+    details.context,
+    details.risk,
+    ...(details.changes ?? []).map((c) => c.content),
+  ].filter((v): v is string => typeof v === 'string');
+  const seen = new Set(explicit.map((p) => p.replace(/^\.\//, '')));
+  const out: string[] = [];
+  for (const text of texts) {
+    for (const match of text.matchAll(PAYLOAD_IMAGE_PATH_RE)) {
+      const raw = match[0];
+      // URL, not a local path: token starting at the //host part, or preceded by a scheme colon.
+      if (raw.startsWith('//') || (match.index !== undefined && text[match.index - 1] === ':')) continue;
+      const path = raw.replace(/^\.\//, '');
+      if (seen.has(path)) continue;
+      seen.add(path);
+      out.push(path);
+    }
+  }
+  return out;
+}
+
+/**
+ * Artifact tile + inline image preview for a payload-detected path. Unlike
+ * explicit artifact_paths, a detected mention may be stale or a false
+ * positive, so the whole item removes itself when the image fails to load.
+ */
+function DetectedImageItem(props: { path: string; href: string }) {
+  const [hidden, setHidden] = useState(false);
+  if (hidden) return null;
+  return (
+    <div class="artifact-item">
+      <div class="artifact-tiles">
+        <a class="artifact-open" href={props.href} target="_blank" rel="noopener noreferrer">
+          <span class="artifact-open-name">{artifactName(props.path)}</span>
+          <span class="artifact-open-hint">open</span>
+        </a>
+      </div>
+      <a class="artifact-preview" href={props.href} target="_blank" rel="noopener noreferrer">
+        <img
+          class="artifact-preview-img"
+          src={props.href}
+          alt={artifactName(props.path)}
+          loading="lazy"
+          onError={() => setHidden(true)}
+        />
+      </a>
+    </div>
+  );
+}
+
 /** Inline preview widget under an artifact tile: images render directly, HTML
  *  and PDF embed in a height-capped frame. Anything else keeps just the tile. */
 function ArtifactPreview(props: { path: string; href: string }) {
@@ -255,6 +321,7 @@ function ApprovalDetailCard(props: {
 }) {
   const details = props.details;
   const artifactPaths = details.artifactPaths ?? [];
+  const detectedImagePaths = detectPayloadImagePaths(details, artifactPaths);
   const changes = details.changes ?? [];
   const options = details.options ?? [];
   const decidedOptionLabel = details.decisionChoice
@@ -282,7 +349,7 @@ function ApprovalDetailCard(props: {
     details.draftUrl ? <a class="approval-link" href={details.draftUrl} target="_blank" rel="noopener noreferrer">Open draft</a> : null,
     details.artifactUrl ? <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact</a> : null,
   ].filter(Boolean);
-  const hasContent = details.prompt || primary || changes.length > 0 || options.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage;
+  const hasContent = details.prompt || primary || changes.length > 0 || options.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || detectedImagePaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage;
   if (!hasContent) return null;
 
   return (
@@ -290,9 +357,9 @@ function ApprovalDetailCard(props: {
       {details.prompt && <div class="approval-question"><InlineMarkdown value={details.prompt} /></div>}
       {details.reference && <ReferenceBlock reference={details.reference} />}
       {changes.length > 0 && <ChangesBlock changes={changes} />}
-      {artifactPaths.length > 0 && (
+      {(artifactPaths.length > 0 || detectedImagePaths.length > 0) && (
         <section class="approval-section approval-artifact">
-          <div class="approval-section-title">{artifactPaths.length > 1 ? 'Artifacts' : 'Artifact'}</div>
+          <div class="approval-section-title">{artifactPaths.length + detectedImagePaths.length > 1 ? 'Artifacts' : 'Artifact'}</div>
           <div class="approval-section-body approval-artifact-body">
             {artifactPaths.map((path) => {
               const href = artifactHref(props.sessionId, path, props.token);
@@ -308,6 +375,9 @@ function ApprovalDetailCard(props: {
                 </div>
               );
             })}
+            {detectedImagePaths.map((path) => (
+              <DetectedImageItem key={path} path={path} href={artifactHref(props.sessionId, path, props.token)} />
+            ))}
           </div>
         </section>
       )}
