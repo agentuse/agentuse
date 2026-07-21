@@ -115,6 +115,23 @@ Additional instructions or context.
   </Note>
 </ParamField>
 
+<ParamField path="intent" type="boolean" required={false} default="true">
+  Tool-call intent phrases. When enabled (the default), every tool schema gains
+  an optional `intent` parameter: one short phrase from the model stating what
+  each specific call is trying to achieve (for example, "Running runner tests to
+  verify the resume fix"). The CLI and the serve session view show the phrase as
+  the call's activity label, and it is recorded in the session log; the real
+  tool never sees the parameter (it is stripped before dispatch).
+
+  Set `intent: false` to keep tool schemas pristine, for example when a provider
+  or a third-party MCP server is sensitive to extra parameters, or to save the
+  few output tokens the phrase costs on every call.
+
+  ```yaml
+  intent: false   # disable intent phrases for this agent
+  ```
+</ParamField>
+
 <ParamField path="description" type="string" required={false}>
   A brief description of what the agent does.
 
