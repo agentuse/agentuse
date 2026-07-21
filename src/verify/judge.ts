@@ -55,10 +55,10 @@ function truncateMiddle(text: string, maxChars: number): string {
 const VERDICT_FORMAT_INSTRUCTIONS = `## Verdict format (required)
 Keep any reasoning before the verdict brief (under 150 words) — the verdict object must not be cut off.
 End your response with a single JSON object on its own line:
-{"pass": true, "critique": ""}
+{"pass": true, "critique": "<one line: the sharpest objection you tested and why it held, so a reader sees what was actually checked>"}
 or
 {"pass": false, "critique": "<what fails and what a passing output looks like>"}
-When pass is false, the critique is required and must be concrete enough to act on in ONE revision: name what is wrong AND what passing looks like. Do not include any text after the JSON object.`;
+The critique is required in BOTH cases (it is the record of what the judge did, shown on the pass/fail marker). On a pass, give the single thing that made it clear the bar (the strongest risk you checked and why it's fine), not empty praise. On a fail, it must be concrete enough to act on in ONE revision: name what is wrong AND what passing looks like. Do not include any text after the JSON object.`;
 
 function buildJudgePrompt(input: JudgeInput, criteria: string): string {
   return `You are verifying an AI agent's final output before it is delivered.
