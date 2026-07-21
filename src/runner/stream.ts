@@ -609,6 +609,7 @@ export async function processAgentStream(
                     ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
                     ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
                     ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
+                    ...(Array.isArray(payload.artifactSnapshots) && payload.artifactSnapshots.length > 0 && { artifactSnapshots: payload.artifactSnapshots }),
                     ...(activeChannelMessage ? { channelMessage: activeChannelMessage } : {})
                   }
             });

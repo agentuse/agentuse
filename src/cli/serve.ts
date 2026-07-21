@@ -4,7 +4,7 @@ import { WebClient } from "@slack/web-api";
 import { timingSafeEqual } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
 import { join, resolve, basename, relative, extname, dirname } from "path";
-import { existsSync, realpathSync } from "fs";
+import { createReadStream, existsSync, realpathSync } from "fs";
 import { readFile, stat } from "fs/promises";
 import { glob } from "glob";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
@@ -17,6 +17,7 @@ import { findProjectRoot, resolveProjectContext } from "../utils/project";
 import { logger, LogLevel, executionLog, approvalLog } from "../utils/logger";
 import { printLogo } from "../utils/branding";
 import { getSessionStorageDir, initStorage } from "../storage/index.js";
+import { findGateSnapshotFile } from "../session/gate-artifacts.js";
 import { getXdgDataDir } from "../storage/paths.js";
 import { Scheduler, type Schedule, type SerializedSchedule } from "../scheduler";
 import { FileWatcher } from "../watcher";
@@ -1201,8 +1202,53 @@ const ARTIFACT_RAW_MIME: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
+  '.avif': 'image/avif',
   '.svg': 'image/svg+xml'
 };
+
+/** Audio/video artifacts: streamed with Range support (native <video>/<audio>
+ *  scrubbing) instead of buffered whole, and exempt from the 10MB preview cap. */
+const ARTIFACT_AV_MIME: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg'
+};
+const MAX_AV_ARTIFACT_BYTES = 512 * 1024 * 1024;
+
+/** Stream an audio/video artifact, honoring a single-range Range header. */
+function serveAvArtifact(res: ServerResponse, resolved: string, mime: string, size: number, rangeHeader?: string): void {
+  const base: Record<string, string> = {
+    'Content-Type': mime,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    'Accept-Ranges': 'bytes',
+  };
+  const range = rangeHeader ? /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim()) : null;
+  if (range && (range[1] !== '' || range[2] !== '')) {
+    const start = range[1] === '' ? Math.max(0, size - Number(range[2])) : Number(range[1]);
+    const end = range[1] !== '' && range[2] !== '' ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) {
+      res.writeHead(416, { ...base, 'Content-Range': `bytes */${size}` });
+      res.end();
+      return;
+    }
+    res.writeHead(206, {
+      ...base,
+      'Content-Range': `bytes ${start}-${end}/${size}`,
+      'Content-Length': String(end - start + 1),
+    });
+    createReadStream(resolved, { start, end }).pipe(res);
+    return;
+  }
+  res.writeHead(200, { ...base, 'Content-Length': String(size) });
+  createReadStream(resolved).pipe(res);
+}
 
 /**
  * CSP for script-capable artifacts shown in the (allow-scripts, opaque-origin)
@@ -1271,7 +1317,7 @@ ${themeScript}
 </head><body>${bodyHtml}</body></html>`;
 }
 
-async function serveResolvedArtifactFile(res: ServerResponse, resolved: string, theme?: string): Promise<void> {
+async function serveResolvedArtifactFile(res: ServerResponse, resolved: string, theme?: string, rangeHeader?: string): Promise<void> {
   let fileStat;
   try {
     fileStat = await stat(resolved);
@@ -1280,6 +1326,15 @@ async function serveResolvedArtifactFile(res: ServerResponse, resolved: string, 
   }
   if (!fileStat || !fileStat.isFile()) {
     sendHTML(res, 404, '<!doctype html><title>Artifact</title><p>Artifact not found.</p>');
+    return;
+  }
+  const avMime = ARTIFACT_AV_MIME[extname(resolved).toLowerCase()];
+  if (avMime) {
+    if (fileStat.size > MAX_AV_ARTIFACT_BYTES) {
+      sendHTML(res, 413, '<!doctype html><title>Artifact</title><p>Media artifact is too large to stream (over 512 MB).</p>');
+      return;
+    }
+    serveAvArtifact(res, resolved, avMime, fileStat.size, rangeHeader);
     return;
   }
   const MAX_BYTES = 10 * 1024 * 1024;
@@ -1367,7 +1422,24 @@ function decodeArtifactText(content: Buffer): string | null {
  * display; anything whose bytes sniff as UTF-8 text renders as a themed doc
  * (markdown-family extensions get the markdown renderer); binaries download.
  */
-async function serveSessionArtifact(res: ServerResponse, projectRoot: string, rawPath: string, theme?: string): Promise<void> {
+async function serveSessionArtifact(
+  res: ServerResponse,
+  projectRoot: string,
+  rawPath: string,
+  theme?: string,
+  opts?: { sessionId?: string | undefined; snapHash?: string | undefined; rangeHeader?: string | undefined }
+): Promise<void> {
+  // A gate-time snapshot takes priority over the live workspace path: the
+  // reviewer must see the exact bytes the approval covers. Snapshot files are
+  // hash-named inside the session's own storage, so no traversal or denylist
+  // concerns apply; a missing snapshot falls back to the live path below.
+  if (opts?.snapHash && opts.sessionId) {
+    const snapshotFile = await findGateSnapshotFile(projectRoot, opts.sessionId, opts.snapHash);
+    if (snapshotFile) {
+      await serveResolvedArtifactFile(res, snapshotFile, theme, opts.rangeHeader);
+      return;
+    }
+  }
   const decoded = (() => { try { return decodeURIComponent(rawPath); } catch { return rawPath; } })();
   const resolved = resolve(projectRoot, decoded);
   // Lexical containment first. Then, when the target exists, resolve symlinks on
@@ -1390,7 +1462,7 @@ async function serveSessionArtifact(res: ServerResponse, projectRoot: string, ra
     sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This artifact path is not viewable.</p>');
     return;
   }
-  await serveResolvedArtifactFile(res, resolved, theme);
+  await serveResolvedArtifactFile(res, resolved, theme, opts?.rangeHeader);
 }
 
 async function serveSessionToolOutputArtifact(
@@ -4460,7 +4532,11 @@ export function createServeCommand(): Command {
             sendHTML(res, found.status, `<!doctype html><title>Artifact</title><p>${escapeHtml(found.message)}</p>`);
             return;
           }
-          await serveSessionArtifact(res, found.project.root, sessionArtifactMatch[2], requestUrl.searchParams.get('theme') ?? undefined);
+          await serveSessionArtifact(res, found.project.root, sessionArtifactMatch[2], requestUrl.searchParams.get('theme') ?? undefined, {
+            sessionId,
+            snapHash: requestUrl.searchParams.get('snap') ?? undefined,
+            rangeHeader: typeof req.headers.range === 'string' ? req.headers.range : undefined,
+          });
           return;
         }
 

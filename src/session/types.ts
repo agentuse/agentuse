@@ -265,6 +265,8 @@ export type ToolStatePending = {
       channel?: string;
       url?: string;
     };
+    /** await_human only: gate-time snapshots of referenced media (session/gate-artifacts). */
+    artifactSnapshots?: Array<{ path: string; hash: string; ext: string; bytes: number }>;
     // subagent_wait only: the suspended child gate this step is parked on.
     childSessionID?: string;
     childAgentName?: string;

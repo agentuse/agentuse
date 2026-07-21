@@ -71,10 +71,14 @@ function StoreEventBlock(props: { event: StoreEvent }) {
   );
 }
 
-function artifactHref(sessionId: string, artifactPath: string, token: string | undefined): string {
+function artifactHref(sessionId: string, artifactPath: string, token: string | undefined, snapHash?: string): string {
   const encoded = artifactPath.split('/').map(encodeURIComponent).join('/');
   const base = `/sessions/${encodeURIComponent(sessionId)}/artifacts/${encoded}`;
-  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  const params = new URLSearchParams();
+  if (token) params.set('token', token);
+  if (snapHash) params.set('snap', snapHash);
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
 }
 
 function toolArtifactHref(sessionId: string, artifactPath: string, token: string | undefined): string {
@@ -172,9 +176,11 @@ function ChangesBlock(props: { changes: ApprovalChange[] }) {
 const IMAGE_ARTIFACT_RE = /\.(png|jpe?g|gif|webp|svg|avif)$/i;
 const HTML_ARTIFACT_RE = /\.(html?)$/i;
 const PDF_ARTIFACT_RE = /\.pdf$/i;
+const VIDEO_ARTIFACT_RE = /\.(mp4|m4v|webm|mov)$/i;
+const AUDIO_ARTIFACT_RE = /\.(mp3|m4a|wav|ogg)$/i;
 
-/** Image-file path tokens inside gate payload prose. */
-const PAYLOAD_IMAGE_PATH_RE = /[\w.~@/-]+\.(?:png|jpe?g|gif|webp|avif)\b/gi;
+/** Media-file path tokens inside gate payload prose (images + audio/video). */
+const PAYLOAD_IMAGE_PATH_RE = /[\w.~@/-]+\.(?:png|jpe?g|gif|webp|avif|mp4|m4v|webm|mov|mp3|m4a|wav)\b/gi;
 
 /**
  * Project-relative image paths mentioned anywhere in the gate payload text.
@@ -211,13 +217,31 @@ function detectPayloadImagePaths(details: ApprovalLogDetails, explicit: string[]
 }
 
 /**
- * Artifact tile + inline image preview for a payload-detected path. Unlike
+ * Artifact tile + inline media preview for a payload-detected path. Unlike
  * explicit artifact_paths, a detected mention may be stale or a false
- * positive, so the whole item removes itself when the image fails to load.
+ * positive, so the whole item removes itself when the media fails to load.
+ * Snapshot-backed items (`snapped`) reviewed the frozen gate-time bytes and
+ * keep their tile even if the live file is gone.
  */
-function DetectedImageItem(props: { path: string; href: string }) {
+function DetectedMediaItem(props: { path: string; href: string; snapped?: boolean }) {
   const [hidden, setHidden] = useState(false);
   if (hidden) return null;
+  const hide = props.snapped ? undefined : () => setHidden(true);
+  const preview = VIDEO_ARTIFACT_RE.test(props.path)
+    ? <video class="artifact-preview-video" src={props.href} controls preload="metadata" onError={hide} />
+    : AUDIO_ARTIFACT_RE.test(props.path)
+      ? <audio class="artifact-preview-audio" src={props.href} controls preload="metadata" onError={hide} />
+      : (
+        <a class="artifact-preview" href={props.href} target="_blank" rel="noopener noreferrer">
+          <img
+            class="artifact-preview-img"
+            src={props.href}
+            alt={artifactName(props.path)}
+            loading="lazy"
+            onError={hide}
+          />
+        </a>
+      );
   return (
     <div class="artifact-item">
       <div class="artifact-tiles">
@@ -226,15 +250,7 @@ function DetectedImageItem(props: { path: string; href: string }) {
           <span class="artifact-open-hint">open</span>
         </a>
       </div>
-      <a class="artifact-preview" href={props.href} target="_blank" rel="noopener noreferrer">
-        <img
-          class="artifact-preview-img"
-          src={props.href}
-          alt={artifactName(props.path)}
-          loading="lazy"
-          onError={() => setHidden(true)}
-        />
-      </a>
+      {preview}
     </div>
   );
 }
@@ -257,6 +273,12 @@ function ArtifactPreview(props: { path: string; href: string }) {
   if (PDF_ARTIFACT_RE.test(props.path)) {
     // Chrome's built-in PDF viewer does not render inside a sandboxed frame.
     return <iframe class="artifact-preview-frame" src={props.href} title={artifactName(props.path)} loading="lazy" />;
+  }
+  if (VIDEO_ARTIFACT_RE.test(props.path)) {
+    return <video class="artifact-preview-video" src={props.href} controls preload="metadata" />;
+  }
+  if (AUDIO_ARTIFACT_RE.test(props.path)) {
+    return <audio class="artifact-preview-audio" src={props.href} controls preload="metadata" />;
   }
   return null;
 }
@@ -321,7 +343,16 @@ function ApprovalDetailCard(props: {
 }) {
   const details = props.details;
   const artifactPaths = details.artifactPaths ?? [];
-  const detectedImagePaths = detectPayloadImagePaths(details, artifactPaths);
+  // Gate-time snapshots: path -> hash. Snapshot-known paths render frozen
+  // bytes; when the gate recorded snapshots, they are the authoritative list
+  // of payload-mentioned media and client-side sniffing only fills in for
+  // older gates recorded before snapshotting existed.
+  const snapshots = details.artifactSnapshots ?? [];
+  const snapshotByPath = new Map(snapshots.map((s) => [s.path, s.hash]));
+  const snapshotOnlyPaths = snapshots.map((s) => s.path).filter((p) => !artifactPaths.includes(p));
+  const detectedImagePaths = snapshots.length > 0
+    ? []
+    : detectPayloadImagePaths(details, artifactPaths);
   const changes = details.changes ?? [];
   const options = details.options ?? [];
   const decidedOptionLabel = details.decisionChoice
@@ -349,7 +380,7 @@ function ApprovalDetailCard(props: {
     details.draftUrl ? <a class="approval-link" href={details.draftUrl} target="_blank" rel="noopener noreferrer">Open draft</a> : null,
     details.artifactUrl ? <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact</a> : null,
   ].filter(Boolean);
-  const hasContent = details.prompt || primary || changes.length > 0 || options.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || detectedImagePaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage;
+  const hasContent = details.prompt || primary || changes.length > 0 || options.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage;
   if (!hasContent) return null;
 
   return (
@@ -357,12 +388,12 @@ function ApprovalDetailCard(props: {
       {details.prompt && <div class="approval-question"><InlineMarkdown value={details.prompt} /></div>}
       {details.reference && <ReferenceBlock reference={details.reference} />}
       {changes.length > 0 && <ChangesBlock changes={changes} />}
-      {(artifactPaths.length > 0 || detectedImagePaths.length > 0) && (
+      {(artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0) && (
         <section class="approval-section approval-artifact">
-          <div class="approval-section-title">{artifactPaths.length + detectedImagePaths.length > 1 ? 'Artifacts' : 'Artifact'}</div>
+          <div class="approval-section-title">{artifactPaths.length + snapshotOnlyPaths.length + detectedImagePaths.length > 1 ? 'Artifacts' : 'Artifact'}</div>
           <div class="approval-section-body approval-artifact-body">
             {artifactPaths.map((path) => {
-              const href = artifactHref(props.sessionId, path, props.token);
+              const href = artifactHref(props.sessionId, path, props.token, snapshotByPath.get(path));
               return (
                 <div class="artifact-item" key={path}>
                   <div class="artifact-tiles">
@@ -375,8 +406,11 @@ function ApprovalDetailCard(props: {
                 </div>
               );
             })}
+            {snapshotOnlyPaths.map((path) => (
+              <DetectedMediaItem key={path} path={path} href={artifactHref(props.sessionId, path, props.token, snapshotByPath.get(path))} snapped />
+            ))}
             {detectedImagePaths.map((path) => (
-              <DetectedImageItem key={path} path={path} href={artifactHref(props.sessionId, path, props.token)} />
+              <DetectedMediaItem key={path} path={path} href={artifactHref(props.sessionId, path, props.token)} />
             ))}
           </div>
         </section>

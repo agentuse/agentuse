@@ -19,6 +19,9 @@ export interface SuspendPayload {
   expiresAt?: number;
   resumeToken?: string;
   approvalUrl?: string;
+  /** await_human only: gate-time snapshots of referenced media files, so the
+   *  approval page shows the exact bytes under review (see session/gate-artifacts). */
+  artifactSnapshots?: Array<{ path: string; hash: string; ext: string; bytes: number }>;
   // subagent_wait only: the suspended child gate this parent step is parked on.
   childSessionID?: string;
   childAgentName?: string;

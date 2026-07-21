@@ -289,6 +289,11 @@ export interface ApprovalLogDetails {
   artifactUrl?: string;
   /** Project-root-relative paths to local file artifacts, viewable via /sessions/:id/artifacts/*. */
   artifactPaths?: string[];
+  /** Gate-time snapshots of media the gate referenced (explicit or mentioned in
+   *  payload prose). Served via /sessions/:id/artifacts/<path>?snap=<hash>, so
+   *  the reviewer sees the exact bytes the approval covers even if the live
+   *  file changed since. */
+  artifactSnapshots?: Array<{ path: string; hash: string; ext: string; bytes?: number }>;
   /** Session-storage-relative full tool output artifact, viewable via /sessions/:id/tool-artifacts/*. */
   toolOutputArtifact?: {
     path: string;

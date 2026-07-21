@@ -8,6 +8,8 @@ import { loadGlobalConfig } from '../utils/global-config';
 import { isHttpUrl } from '../utils/url';
 import { parseDurationMs } from '../utils/duration';
 import { findXmlToolMarkup } from '../runner/tool-call-repair';
+import { snapshotGateArtifacts } from '../session/gate-artifacts';
+import { logger } from '../utils/logger';
 
 function parseTimeout(value?: string | number): number | undefined {
   if (value === undefined || value === '') return undefined;
@@ -153,6 +155,18 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       const resumeToken = randomBytes(24).toString('base64url');
       const approvalUrl = getSessionUrl(sessionId, defaults?.projectRoot);
 
+      // Freeze the media this gate covers before suspending: the approval page
+      // then reviews immutable snapshots, not whatever the workspace path holds
+      // by review time. Best-effort; never blocks the gate.
+      let artifactSnapshots: Awaited<ReturnType<typeof snapshotGateArtifacts>> = [];
+      if (sessionId && defaults?.projectRoot) {
+        try {
+          artifactSnapshots = await snapshotGateArtifacts(defaults.projectRoot, sessionId, input as Record<string, unknown>);
+        } catch (error) {
+          logger.warn(`await_human: artifact snapshot failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
       let channelRequest: { type: 'slack-message'; channel: string } | undefined;
       if (defaults?.slack) {
         const botToken = process.env.SLACK_BOT_TOKEN;
@@ -174,7 +188,8 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
         ...(expiresAt !== undefined && { expiresAt }),
         resumeToken,
         ...(approvalUrl && { approvalUrl }),
-        ...(channelRequest ? { channelRequest } : {})
+        ...(channelRequest ? { channelRequest } : {}),
+        ...(artifactSnapshots.length > 0 && { artifactSnapshots })
       });
     }
   };

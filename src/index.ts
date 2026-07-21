@@ -1046,6 +1046,8 @@ async function runInternalWorker() {
     draftUrl?: string;
     artifactUrl?: string;
     artifactPaths?: string[];
+    /** Gate-time snapshots of referenced media (see session/gate-artifacts). */
+    artifactSnapshots?: Array<{ path: string; hash: string; ext: string; bytes?: number }>;
     toolOutputArtifact?: {
       path: string;
       bytes?: number;
@@ -1441,6 +1443,18 @@ async function runInternalWorker() {
     }
     const uniqueArtifactPaths = [...new Set(artifactPaths)];
     if (uniqueArtifactPaths.length > 0) fields.artifactPaths = uniqueArtifactPaths;
+    if (Array.isArray(resumePayload.artifactSnapshots)) {
+      const snapshots = resumePayload.artifactSnapshots
+        .map((s: unknown) => valueAsRecord(s))
+        .filter((s) => typeof s.path === 'string' && /^[a-f0-9]{16}$/.test(String(s.hash)) && typeof s.ext === 'string')
+        .map((s) => ({
+          path: s.path as string,
+          hash: s.hash as string,
+          ext: s.ext as string,
+          ...(typeof s.bytes === 'number' && { bytes: s.bytes })
+        }));
+      if (snapshots.length > 0) fields.artifactSnapshots = snapshots;
+    }
 
     if (state?.status === 'completed') {
       const decisionStatus = typeof output.status === 'string' ? output.status : undefined;
