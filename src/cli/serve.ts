@@ -2840,6 +2840,34 @@ export function createServeCommand(): Command {
 
       const activeApprovalResumes = new Map<string, Promise<unknown>>();
       const activeSessionContinuations = new Map<string, Promise<unknown>>();
+      // The last background resume failure per gate (keyed `${projectId}:${sessionId}`),
+      // so a failed approve/reject/comment surfaces an error on the still-pending
+      // gate instead of silently doing nothing (the resume is fire-and-forget, so
+      // the failure lands after the 202 and can't be returned in the response).
+      // Cleared when a fresh decision is submitted and when a resume succeeds.
+      const approvalResumeErrors = new Map<string, { status: string; message: string; at: number }>();
+      // Verb for the surfaced message, per decision status.
+      const resumeActionVerb = (status: string): string =>
+        status === 'approved' ? 'approve'
+          : status === 'rejected' ? 'reject'
+            : status === 'comment' ? 'send your comment on'
+              : 'act on';
+      // Attach any recorded resume failure to a pending gate's approval object as
+      // its errorMessage (empty on a live gate), so the existing web gate renders
+      // it. No-op once the gate leaves the suspended/waiting state.
+      const applyResumeError = <T extends { errorMessage?: string; sessionStatus?: string }>(
+        approvalObj: T,
+        activeKey: string
+      ): T => {
+        const failure = approvalResumeErrors.get(activeKey);
+        if (!failure) return approvalObj;
+        const stillOpen = approvalObj.sessionStatus === undefined
+          || approvalObj.sessionStatus === 'suspended'
+          || approvalObj.sessionStatus === 'waiting';
+        if (!stillOpen) return approvalObj;
+        approvalObj.errorMessage = `Couldn't ${resumeActionVerb(failure.status)} this request: ${failure.message} — the gate is still open, try again.`;
+        return approvalObj;
+      };
       const loggedApprovalRequests = new Map<string, number>();
       // Sessions whose terminal state already produced a push, so runner
       // retries or duplicate pokes can't buzz devices twice.
@@ -2956,6 +2984,8 @@ export function createServeCommand(): Command {
         // finished poke notifies instead of reporting 'already-notified'.
         notifiedFinishedSessions.delete(targetSessionId);
         const activeKey = `${project.id}:${targetSessionId}`;
+        // Fresh decision: drop any error from a previous failed attempt on this gate.
+        approvalResumeErrors.delete(activeKey);
         approvalLog.received('web', status, targetSessionId, 'web');
         const resumeStart = Date.now();
         approvalLog.resumeStarted(targetSessionId);
@@ -3001,9 +3031,12 @@ export function createServeCommand(): Command {
           if (!result.success) {
             const alreadyCompleted = /SESSION_NOT_SUSPENDED:\s*completed/i.test(result.error.message);
             if (alreadyCompleted) {
+              approvalResumeErrors.delete(activeKey);
               approvalLog.resumeCompleted(targetSessionId, Date.now() - resumeStart);
               return;
             }
+            // Surface the failure on the still-pending gate (the 202 already went out).
+            approvalResumeErrors.set(activeKey, { status, message: result.error.message, at: Date.now() });
             approvalLog.resumeFailed(targetSessionId, Date.now() - resumeStart, result.error.message);
             logger.warn(`Approval resume ${targetSessionId} failed: ${result.error.message}`);
             try {
@@ -3029,6 +3062,7 @@ export function createServeCommand(): Command {
               }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
             }
           } else {
+            approvalResumeErrors.delete(activeKey);
             approvalLog.resumeCompleted(targetSessionId, Date.now() - resumeStart);
             if (slackChannelMessage && info.approval.prompt) {
               void updateSlackApprovalRequestStatus({
@@ -4413,6 +4447,7 @@ export function createServeCommand(): Command {
               params.set('project', found.project.id);
               approval.parentHref = `/sessions/${encodeURIComponent(approval.parentSessionId)}?${params.toString()}`;
             }
+            applyResumeError(approval, activeKey);
             return { ok: true, snapshot: { status, approval, logs } };
           };
           if (!approvalHub.subscribe({ key: sessionId, sessionId, poll, req, res })) {
@@ -4452,7 +4487,7 @@ export function createServeCommand(): Command {
               sessionId,
               status,
               project: found.project.id,
-              approval: found.session
+              approval: applyResumeError({ ...found.session }, activeKey)
             }));
             return;
           }
@@ -4496,11 +4531,11 @@ export function createServeCommand(): Command {
             success: true,
             sessionId,
             status,
-            approval: {
+            approval: applyResumeError({
               ...found.info.approval,
               logs,
               ...(parentHref && { parentHref }),
-            },
+            }, activeKey),
             logs,
             decision: found.info.approval.decision
           }));
@@ -5389,7 +5424,7 @@ export function createServeCommand(): Command {
             success: true,
             sessionId,
             status,
-            approval: found.info.approval,
+            approval: applyResumeError({ ...found.info.approval }, activeKey),
             logs: found.info.approval.logs ?? [],
             decision: found.info.approval.decision
           }));
