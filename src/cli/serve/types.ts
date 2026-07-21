@@ -272,6 +272,9 @@ export interface ToolTokenUsage {
 export interface ApprovalLogDetails {
   resumeToken?: string;
   prompt?: string;
+  /** Model-declared goal of this call (the injected `intent` parameter), shown
+   *  as the tool row's primary label with the tool chip demoted to metadata. */
+  intent?: string;
   input?: string;
   output?: string;
   tokenUsage?: ToolTokenUsage;

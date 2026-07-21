@@ -1346,6 +1346,25 @@ a, button, select, summary, label, input, textarea,
   color: var(--fg);
   vertical-align: 1px;
 }
+/* Model-declared intent phrase: the row's primary text. The chip that follows
+   it drops to quiet metadata so the log reads as a narrative of goals with tool
+   names as annotations, not a list of tool names. */
+.log-intent {
+  color: var(--fg);
+  font-weight: 500;
+  margin-right: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-chip.has-intent {
+  flex: 0 0 auto;
+  font-weight: 400;
+  color: var(--muted);
+  border-color: var(--line);
+  background: transparent;
+}
 .log-item.completed .tool-chip, .log-item.approved .tool-chip { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
 .log-item.running .tool-chip { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
 .log-item.error .tool-chip, .log-item.failed .tool-chip { border-color: var(--red-border); background: var(--red-soft); color: var(--red); }

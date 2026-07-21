@@ -4,6 +4,7 @@ import { connectMCP } from './mcp';
 import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, reopenSuspendedGate, reconcileOrphanedSessions, describeErrorPart, describeLogPart, type PreparedAgentExecution } from './runner';
 import { describeLearningOutcome } from './learning';
 import { isApprovalEnabled } from './runner/approval';
+import { extractToolIntent, withoutToolIntent } from './runner/tool-intent';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
 import { contextUsageFromSnapshot } from './session/usage';
 import { repairEscapedText } from './utils/display-text';
@@ -1025,6 +1026,8 @@ async function runInternalWorker() {
   interface ApprovalLogDetails {
     resumeToken?: string;
     prompt?: string;
+    /** Model-declared goal of this call (the injected `intent` parameter). */
+    intent?: string;
     input?: string;
     output?: string;
     tokenUsage?: {
@@ -1559,7 +1562,16 @@ async function runInternalWorker() {
       if (saved) return { savedArtifact: saved };
     }
 
-    const input = formatApprovalLogValue(state?.input);
+    // The injected intent phrase is the row's primary label; the input dump
+    // shows the real args without it (an intent-only input renders no dump).
+    const intent = extractToolIntent(state?.input);
+    if (intent !== undefined) fields.intent = intent;
+    const inputWithoutIntent = withoutToolIntent(state?.input);
+    const inputIsEmpty = inputWithoutIntent !== null
+      && typeof inputWithoutIntent === 'object'
+      && Object.keys(inputWithoutIntent).length === 0
+      && intent !== undefined;
+    const input = inputIsEmpty ? undefined : formatApprovalLogValue(inputWithoutIntent);
     if (input !== undefined) fields.input = input;
 
     if (state?.status === 'completed') {

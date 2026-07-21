@@ -894,26 +894,42 @@ class Logger {
       const debugMode = this.isDebugEnabled();
       const useTUI = this.tui.useTUI && !debugMode;
 
+      // Model-declared intent phrase (injected `intent` param): becomes the
+      // detail line, with the real args demoted to a dim suffix. Stripped from
+      // the args display either way so it never prints twice.
+      let intent: string | undefined;
+      let displayArgs = args;
+      if (args && typeof args === 'object' && !Array.isArray(args)) {
+        const record = args as Record<string, unknown>;
+        if (typeof record.intent === 'string' && record.intent.trim()) {
+          intent = record.intent.trim();
+          const { intent: _intent, ...rest } = record;
+          displayArgs = rest;
+        }
+      }
+
       // Try to format as built-in tool first
-      const builtinFormat = this.formatBuiltinTool(name, args, useTUI);
+      const builtinFormat = this.formatBuiltinTool(name, displayArgs, useTUI);
 
       // Format with new TUI style
       if (useTUI) {
         let text: string;
 
         if (builtinFormat) {
-          text = ` ${builtinFormat.badge} ${chalk.gray(builtinFormat.detail)}`;
+          text = intent
+            ? ` ${builtinFormat.badge} ${intent} ${chalk.gray(`· ${builtinFormat.detail}`)}`
+            : ` ${builtinFormat.badge} ${chalk.gray(builtinFormat.detail)}`;
         } else {
           // Format args with granular truncation for non-builtin tools
           let argsDisplay = '';
-          if (args) {
-            const formatted = formatToolArgsGranular(args, { disableTruncation: debugMode });
+          if (displayArgs) {
+            const formatted = formatToolArgsGranular(displayArgs, { disableTruncation: debugMode });
             if (formatted) {
-              argsDisplay = ` ${chalk.gray(formatted)}`;
+              argsDisplay = intent ? ` ${chalk.gray(`· ${formatted}`)}` : ` ${chalk.gray(formatted)}`;
             }
           }
           const badge = this.formatToolBadge(name, isSubAgent);
-          text = ` ${badge}${argsDisplay}`;
+          text = intent ? ` ${badge} ${intent}${argsDisplay}` : ` ${badge}${argsDisplay}`;
         }
 
         // Truncate to prevent terminal wrapping (which causes duplicate lines)
@@ -943,19 +959,23 @@ class Logger {
         // sink or the session file contains a duplicate `type: "log"` entry.
         withoutLogSink(() => {
           if (builtinFormat) {
-            this.info(`${builtinFormat.badge}: ${chalk.cyan(builtinFormat.detail)}`);
+            this.info(intent
+              ? `${builtinFormat.badge}: ${intent} ${chalk.gray(`· ${builtinFormat.detail}`)}`
+              : `${builtinFormat.badge}: ${chalk.cyan(builtinFormat.detail)}`);
           } else {
             // Format args with granular truncation for non-builtin tools
             let argsDisplay = '';
-            if (args) {
-              const formatted = formatToolArgsGranular(args, { disableTruncation: debugMode });
+            if (displayArgs) {
+              const formatted = formatToolArgsGranular(displayArgs, { disableTruncation: debugMode });
               if (formatted) {
-                argsDisplay = ` ${chalk.gray(formatted)}`;
+                argsDisplay = intent ? ` ${chalk.gray(`· ${formatted}`)}` : ` ${chalk.gray(formatted)}`;
               }
             }
             const callType = (name.startsWith('subagent__') || isSubAgent) ? 'Calling subagent:' : 'Calling tool:';
             const displayName = this.getToolDisplayName(name);
-            this.info(`${callType} ${chalk.cyan(displayName)}${argsDisplay}`);
+            this.info(intent
+              ? `${callType} ${chalk.cyan(displayName)} ${intent}${argsDisplay}`
+              : `${callType} ${chalk.cyan(displayName)}${argsDisplay}`);
           }
         });
       }

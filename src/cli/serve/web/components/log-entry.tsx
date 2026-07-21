@@ -573,6 +573,12 @@ function LogEntryImpl(props: LogEntryProps) {
   const prose = entry.type === 'text' || entry.type === 'reasoning';
   const typing = prose && entry.status === 'streaming' && Boolean(entry.message);
   const message = useSmoothText(entry.message ?? '', typing);
+  // Model-declared intent phrase: promoted to the row's primary text, with the
+  // tool chip demoted to trailing metadata. Rows without one keep the chip-only
+  // layout, so mixed sessions (older runs, models that skip the param) align.
+  const toolIntent = entry.type === 'tool' && !isApprovalEntry && entry.details?.intent
+    ? entry.details.intent
+    : undefined;
   // On a pick-among-options gate the approve button names the selection, so the
   // reviewer sees exactly what a click commits to.
   const selectedOptionLabel = props.showActions && props.selectedChoice
@@ -625,7 +631,12 @@ function LogEntryImpl(props: LogEntryProps) {
         >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'verify' ? (entry.status === 'completed' ? '✓' : '⚖') : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : failed ? '✗' : entry.type === 'tool' && entry.status === 'completed' ? '✓' : '⋮')}</span>
         <span class="log-title">
           {entry.type === 'tool' && entry.tool && !isApprovalEntry
-            ? <span class="tool-chip" title={entry.title} aria-label={entry.title}>{toolChipLabel(entry.tool)}</span>
+            ? (
+              <>
+                {toolIntent && <span class="log-intent">{toolIntent}</span>}
+                <span class={`tool-chip${toolIntent ? ' has-intent' : ''}`} title={entry.title} aria-label={entry.title}>{toolChipLabel(entry.tool)}</span>
+              </>
+            )
             : entry.title}
           {props.repeatCount !== undefined && props.repeatCount > 1 && (
             <span class="log-count-badge">x{props.repeatCount}</span>

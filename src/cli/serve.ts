@@ -407,6 +407,8 @@ interface LogSubagentSession extends ChildSessionSummary {
 interface ApprovalLogDetails {
   resumeToken?: string;
   prompt?: string;
+  /** Model-declared goal of this call (the injected `intent` parameter). */
+  intent?: string;
   input?: string;
   output?: string;
   tokenUsage?: {
