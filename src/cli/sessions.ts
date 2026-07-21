@@ -1032,7 +1032,7 @@ async function showSession(
       // Show interleaved output (text and tool parts in chronological order)
       // Sort parts by ULID id (which is chronologically sortable)
       const displayParts = parts
-        .filter((p) => p.type === "text" || p.type === "tool" || p.type === "compaction" || p.type === "learning" || p.type === "error" || p.type === "log")
+        .filter((p) => p.type === "text" || p.type === "tool" || p.type === "compaction" || p.type === "learning" || p.type === "error" || p.type === "log" || p.type === "verify")
         .sort((a, b) => a.id.localeCompare(b.id));
 
       if (displayParts.length > 0) {
@@ -1188,6 +1188,26 @@ async function showSession(
             // CLI stream readable with only info/warn/error/system lines.
             if (l.level !== "debug") {
               process.stdout.write(`  [${l.level.toUpperCase()}] ${truncate(l.message, 400)}\n`);
+            }
+          } else if (part.type === "verify") {
+            const v = part as Part & {
+              type: "verify";
+              verdict: "pass" | "fail" | "error";
+              critique?: string;
+              judge?: string;
+              attempt: number;
+              maxRedos: number;
+            };
+            const mark = v.verdict === "pass" ? "✓" : v.verdict === "fail" ? "✗" : "⚠";
+            const label = v.verdict === "pass"
+              ? `Verification passed${v.attempt > 0 ? ` (after ${v.attempt} redo${v.attempt === 1 ? "" : "s"})` : ""}`
+              : v.verdict === "fail"
+                ? `Verification failed (attempt ${v.attempt + 1} of ${v.maxRedos + 1})`
+                : "Verification judge error";
+            const by = v.judge ? ` (judged by ${v.judge})` : "";
+            process.stdout.write(`\n${mark} ${label}${by}\n`);
+            if (v.critique) {
+              process.stdout.write(`  ${truncate(v.critique, 400)}\n`);
             }
           }
         }
