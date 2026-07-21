@@ -346,6 +346,10 @@ export async function createSubAgentTool(
                   agentFilePath: resolvedPath,
                   projectContext,
                   abortSignal,
+                  sessionManager: subagentSessionManager,
+                  sessionID: subagentSessionID,
+                  agentId,
+                  messageID: subagentMsgID,
                 });
               }
             }

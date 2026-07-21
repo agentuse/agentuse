@@ -289,6 +289,10 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
         agentFilePath,
         projectContext,
         abortSignal,
+        sessionManager,
+        sessionID,
+        agentId,
+        messageID: assistantMsgID,
       });
     }
   }

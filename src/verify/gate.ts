@@ -12,6 +12,8 @@ import type { Tool } from 'ai';
 import { judgeOutput } from './judge.js';
 import type { CanonicalVerifyConfig, VerifyPlacement } from './types.js';
 import { logger } from '../utils/logger.js';
+import type { SessionManager } from '../session/manager.js';
+import type { Part, VerifyPart } from '../session/types.js';
 
 /** Resolve which placements are active. Default: gate when the agent carries
  * an approval gate, output otherwise. */
@@ -76,6 +78,14 @@ export interface GateVerifyOptions {
   agentFilePath?: string | undefined;
   projectContext?: { projectRoot: string; stateRoot: string; cwd: string } | undefined;
   abortSignal?: AbortSignal | undefined;
+  /** Session handles for persisting the gate judge verdict as a VerifyPart, so
+   * a pre-review PASS is inspectable in `sessions show` (not just a log line),
+   * matching the output redo-loop path. All four must be present or persistence
+   * is skipped (best-effort — a missing session never blocks the gate). */
+  sessionManager?: SessionManager | undefined;
+  sessionID?: string | undefined;
+  agentId?: string | undefined;
+  messageID?: string | undefined;
 }
 
 /**
@@ -86,9 +96,23 @@ export interface GateVerifyOptions {
  */
 export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptions): T {
   const { config, agentModel, task, agentFilePath, projectContext, abortSignal } = options;
+  const { sessionManager, sessionID, agentId, messageID } = options;
   const innerExecute = tool.execute;
   if (!innerExecute) return tool;
   let gateRejections = 0;
+
+  const judgeName = config.judge ?? config.model ?? agentModel;
+  // Persist the gate verdict as a VerifyPart so a PASS (and error) is inspectable
+  // in the session, mirroring the output redo-loop (runner/verify-loop.ts).
+  // Best-effort: a missing session handle or a write failure never blocks the gate.
+  const recordVerifyPart = async (part: Omit<VerifyPart, 'id' | 'sessionID' | 'messageID'>) => {
+    if (!sessionManager || !sessionID || !agentId || !messageID) return;
+    try {
+      await sessionManager.addPart(sessionID, agentId, messageID, part as Omit<Part, 'id' | 'sessionID' | 'messageID'>);
+    } catch (error) {
+      logger.debug(`[Verify] Failed to record gate verify marker: ${(error as Error).message}`);
+    }
+  };
 
   return {
     ...tool,
@@ -102,8 +126,9 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         return suspend();
       }
 
+      const attempt = gateRejections;
       const outcome = await judgeOutput({
-        input: { task, output: renderGatePayload(input), attempt: gateRejections },
+        input: { task, output: renderGatePayload(input), attempt },
         config,
         agentModel,
         agentFilePath,
@@ -113,16 +138,29 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
 
       if (outcome.status === 'error') {
         logger.warn(`[Verify] Gate pre-review judge failed (${outcome.detail}); escalating to the human reviewer unjudged`);
+        await recordVerifyPart({
+          type: 'verify', verdict: 'error', attempt, maxRedos: config.maxRedos,
+          critique: outcome.detail, judge: judgeName, time: { start: Date.now() },
+        });
         return suspend();
       }
 
       if (outcome.verdict.pass) {
         logger.info('[Verify] Gate draft passed pre-review; requesting human approval');
+        await recordVerifyPart({
+          type: 'verify', verdict: 'pass', attempt, maxRedos: config.maxRedos,
+          ...(outcome.verdict.critique && { critique: outcome.verdict.critique }),
+          judge: judgeName, time: { start: Date.now() },
+        });
         return suspend();
       }
 
       gateRejections++;
       const critique = outcome.verdict.critique ?? 'The draft did not pass pre-review.';
+      await recordVerifyPart({
+        type: 'verify', verdict: 'fail', attempt, maxRedos: config.maxRedos,
+        critique, judge: judgeName, time: { start: Date.now() },
+      });
       logger.info(`[Verify] Gate draft rejected by pre-review (${gateRejections} of ${config.maxRedos}): ${critique.slice(0, 200)}`);
       // Mirror the human rejection-with-comment protocol so existing agent
       // instructions ("on reject, revise and re-gate") apply unchanged.
