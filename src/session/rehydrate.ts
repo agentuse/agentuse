@@ -11,6 +11,7 @@ function getPartOrder(part: Part): number {
     if (state.status === 'pending') return state.suspendedAt ?? Number.MAX_SAFE_INTEGER;
     return state.time.start;
   }
+  if (part.type === 'verify') return part.time.start;
   return Number.MAX_SAFE_INTEGER;
 }
 
