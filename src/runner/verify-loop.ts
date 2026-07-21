@@ -120,6 +120,7 @@ export async function runVerifyLoop(params: {
       agentFilePath,
       projectContext,
       abortSignal,
+      parentSession: { sessionManager, sessionID, agentId },
     });
     const now = Date.now();
 

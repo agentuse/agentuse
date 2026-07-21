@@ -134,6 +134,9 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         agentFilePath,
         projectContext,
         abortSignal,
+        ...(sessionManager && sessionID && agentId
+          ? { parentSession: { sessionManager, sessionID, agentId } }
+          : {}),
       });
 
       if (outcome.status === 'error') {

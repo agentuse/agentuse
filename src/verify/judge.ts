@@ -20,8 +20,22 @@ import { loadAgentTools } from '../runner/tools-loader.js';
 import { buildSystemMessages } from '../runner/system-messages.js';
 import { DoomLoopDetector } from '../tools/index.js';
 import { resolveMaxSteps } from '../utils/config.js';
-import { logger } from '../utils/logger.js';
+import { logger, runWithLogSink } from '../utils/logger.js';
+import { SessionManager } from '../session/manager.js';
+import { createSessionAndMessage, createSessionLogSink, type SessionLogSink } from '../runner/session-helper.js';
+import { computeAgentId } from '../utils/agent-id.js';
+import { usageToAssistantTokens } from '../session/usage.js';
 import type { CanonicalVerifyConfig, VerifyVerdict } from './types.js';
+
+/** Parent-session handles so a judge agent can run as an inspectable child
+ * session (appears under the parent's childSessions) instead of a discarded
+ * ephemeral run. Optional everywhere: absent → the judge runs sessionless as
+ * before, so verification never depends on session plumbing being present. */
+export interface JudgeParentSession {
+  sessionManager: SessionManager;
+  sessionID: string;
+  agentId: string;
+}
 
 /** Outcome of a judge invocation. `error` never blocks the output — the runner
  * ships it and surfaces the failure as a session marker instead. */
@@ -150,7 +164,8 @@ async function judgeViaAgent(
   judgePath: string,
   agentFilePath: string | undefined,
   projectContext: { projectRoot: string; stateRoot: string; cwd: string } | undefined,
-  abortSignal: AbortSignal | undefined
+  abortSignal: AbortSignal | undefined,
+  parentSession: JudgeParentSession | undefined
 ): Promise<JudgeOutcome> {
   const resolvedPath = agentFilePath ? resolve(dirname(agentFilePath), judgePath) : resolve(judgePath);
   const judgeAgent = await parseAgent(resolvedPath);
@@ -185,7 +200,48 @@ async function judgeViaAgent(
     const judgeTask = `${buildJudgePrompt(input, 'Apply the evaluation standard defined in your own instructions.')}`;
     const userMessage = `${judgeAgent.instructions}\n\n${judgeTask}`;
 
-    const result = await processAgentStream(
+    // Run the judge as an inspectable child session under the parent, so its
+    // full reasoning + tool calls (which exemplar/voice files it actually read)
+    // are viewable via childSessions - not just the one-line verdict marker.
+    // Best-effort: any session-setup failure falls back to a sessionless run so
+    // verification never breaks on session plumbing.
+    let judgeSessionManager: SessionManager | undefined;
+    let judgeSessionID: string | undefined;
+    let judgeAgentId: string | undefined;
+    let judgeMsgID: string | undefined;
+    let logSink: SessionLogSink | undefined;
+    if (parentSession && projectContext) {
+      try {
+        judgeSessionManager = new SessionManager();
+        const parentFullPath = parentSession.sessionManager.getFullPath();
+        if (parentFullPath) judgeSessionManager.setParentPath(parentFullPath);
+        judgeAgentId = computeAgentId(resolvedPath, projectContext.stateRoot, judgeAgent.name);
+        const created = await createSessionAndMessage({
+          sessionManager: judgeSessionManager,
+          agent: judgeAgent,
+          agentFilePath: resolvedPath,
+          systemMessages: systemMessagesResult.messages.map(m => m.content),
+          task: judgeAgent.instructions,
+          userPrompt: judgeTask,
+          projectContext,
+          version: process.env.npm_package_version || 'unknown',
+          config: {
+            ...(judgeAgent.config.timeout !== undefined && { timeout: judgeAgent.config.timeout }),
+            maxSteps: resolveMaxSteps(undefined, judgeAgent.config.maxSteps),
+          },
+          isSubAgent: true,
+          parentSessionID: parentSession.sessionID,
+        });
+        judgeSessionID = created.sessionID;
+        judgeMsgID = created.messageID;
+        logSink = createSessionLogSink(judgeSessionManager, judgeSessionID, judgeAgentId, judgeMsgID);
+      } catch (error) {
+        logger.debug(`[Verify] Judge session setup failed; running sessionless: ${(error as Error).message}`);
+        judgeSessionManager = undefined; judgeSessionID = undefined; judgeAgentId = undefined; judgeMsgID = undefined; logSink = undefined;
+      }
+    }
+
+    const runJudge = () => processAgentStream(
       executeAgentCore(judgeAgent, loadedTools.all, {
         userMessage,
         cacheableUserMessage: judgeAgent.instructions,
@@ -193,21 +249,66 @@ async function judgeViaAgent(
         maxSteps: resolveMaxSteps(undefined, judgeAgent.config.maxSteps),
         subAgentNames: new Set<string>(),
         ...(abortSignal && { abortSignal }),
+        ...(judgeSessionManager && { sessionManager: judgeSessionManager }),
+        ...(judgeSessionID && { sessionID: judgeSessionID }),
+        ...(judgeAgentId && { agentId: judgeAgentId }),
+        ...(judgeMsgID && { messageID: judgeMsgID }),
       }),
-      { collectToolCalls: true, logPrefix: '[Verify] ', doomLoopDetector: new DoomLoopDetector({ threshold: 3, action: 'error' }), quiet: true }
+      {
+        collectToolCalls: true, logPrefix: '[Verify] ',
+        doomLoopDetector: new DoomLoopDetector({ threshold: 3, action: 'error' }), quiet: true,
+        ...(judgeSessionManager && { sessionManager: judgeSessionManager }),
+        ...(judgeSessionID && { sessionID: judgeSessionID }),
+        ...(judgeAgentId && { agentId: judgeAgentId }),
+        ...(judgeMsgID && { messageID: judgeMsgID }),
+      }
     );
 
+    let result: Awaited<ReturnType<typeof runJudge>>;
+    try {
+      result = logSink ? await runWithLogSink(logSink.capture, runJudge) : await runJudge();
+    } finally {
+      if (logSink) await logSink.flush();
+    }
+
+    // Finalize the judge's child session (best-effort) so it doesn't linger as
+    // "running": completed on a clean verdict, error otherwise.
+    const finalizeJudgeSession = async (
+      outcome: 'completed' | { code: string; message: string }
+    ): Promise<void> => {
+      if (!judgeSessionManager || !judgeSessionID || !judgeAgentId) return;
+      try {
+        if (judgeMsgID && result.usage) {
+          await judgeSessionManager.updateMessage(judgeSessionID, judgeAgentId, judgeMsgID, {
+            time: { completed: Date.now() },
+            assistant: {
+              tokens: usageToAssistantTokens(result.usage),
+              ...(result.contextUsage && { context: result.contextUsage }),
+            },
+          });
+        }
+        if (outcome === 'completed') await judgeSessionManager.setSessionCompleted(judgeSessionID, judgeAgentId);
+        else await judgeSessionManager.setSessionError(judgeSessionID, judgeAgentId, outcome);
+      } catch (error) {
+        logger.debug(`[Verify] Failed to finalize judge session: ${(error as Error).message}`);
+      }
+    };
+
     if (result.suspended) {
+      await finalizeJudgeSession({ code: 'JUDGE_SUSPENDED', message: 'judge suspended on an approval gate' });
       return { status: 'error', detail: `judge agent ${judgeAgent.name} suspended on an approval gate; judges cannot suspend` };
     }
 
     const verdict = extractVerdict(result.text ?? '');
     if (!verdict) {
+      await finalizeJudgeSession({ code: 'JUDGE_NO_VERDICT', message: 'judge returned no parseable verdict JSON' });
       return { status: 'error', detail: `judge agent ${judgeAgent.name} returned no parseable verdict JSON` };
     }
     if (!verdict.pass && !verdict.critique) {
+      await finalizeJudgeSession({ code: 'JUDGE_NO_CRITIQUE', message: 'judge failed the output without a critique' });
       return { status: 'error', detail: `judge agent ${judgeAgent.name} failed the output without a critique` };
     }
+    await finalizeJudgeSession('completed');
     return { status: 'verdict', verdict };
   } finally {
     if (loadedTools.store) {
@@ -234,11 +335,14 @@ export async function judgeOutput(params: {
   agentFilePath?: string | undefined;
   projectContext?: { projectRoot: string; stateRoot: string; cwd: string } | undefined;
   abortSignal?: AbortSignal | undefined;
+  /** Parent session so a judge agent runs as an inspectable child session.
+   * Omitted → sessionless judge (built-in judge ignores this entirely). */
+  parentSession?: JudgeParentSession | undefined;
 }): Promise<JudgeOutcome> {
-  const { input, config, agentModel, agentFilePath, projectContext, abortSignal } = params;
+  const { input, config, agentModel, agentFilePath, projectContext, abortSignal, parentSession } = params;
   try {
     if (config.judge) {
-      return await judgeViaAgent(input, config.judge, agentFilePath, projectContext, abortSignal);
+      return await judgeViaAgent(input, config.judge, agentFilePath, projectContext, abortSignal, parentSession);
     }
     return await judgeBuiltin(input, config, agentModel);
   } catch (error) {
