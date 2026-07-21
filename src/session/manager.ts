@@ -641,18 +641,33 @@ export class SessionManager {
   /**
    * Update an existing part
    * Uses serialized writes to prevent race conditions during concurrent updates
+   *
+   * A miss at the cached/derived path is NOT a silent no-op: nested (subagent)
+   * sessions resolve to a wrong flat path when this instance's cache is cold,
+   * and swallowing that write corrupts resume flows downstream (an approval
+   * decision that never lands leaves a dangling tool call for the model). Fall
+   * back to the store walk, and throw when the part is genuinely absent.
    */
   async updatePart(sessionID: string, agentId: string, messageID: string, partID: string, updates: Partial<Part>): Promise<void> {
-    const sessionPath = this.knownSessionPath(sessionID, agentId);
+    let sessionPath = this.knownSessionPath(sessionID, agentId);
     // New path structure: {messageID}/part/{partID}.json
-    const key = `${sessionPath}/${messageID}/part/${partID}`;
+    let key = `${sessionPath}/${messageID}/part/${partID}`;
+
+    if (!(await readJSON<Part>(key))) {
+      const resolved = await this.resolveSessionDir(sessionID, agentId);
+      if (resolved !== sessionPath) {
+        sessionPath = resolved;
+        key = `${sessionPath}/${messageID}/part/${partID}`;
+      }
+    }
 
     await this.serializedWrite(key, async () => {
       const existing = await readJSON<Part>(key);
-      if (existing) {
-        const updated = { ...existing, ...updates };
-        await writeJSON(key, updated);
+      if (!existing) {
+        throw new Error(`PART_NOT_FOUND: cannot update part ${partID} of session ${sessionID} (resolved path: ${sessionPath})`);
       }
+      const updated = { ...existing, ...updates };
+      await writeJSON(key, updated);
     });
   }
 

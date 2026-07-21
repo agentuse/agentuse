@@ -36,6 +36,10 @@ describe('resume tool result', () => {
       updatePart: async (...args: any[]) => {
         updates.push(args);
       },
+      getPart: async () => {
+        const last = [...updates].reverse().find((u) => Array.isArray(u) && u[4]?.state);
+        return last ? { state: last[4].state } : null;
+      },
       setSessionRunning: async (...args: any[]) => {
         updates.push(['running', ...args]);
       },
@@ -100,6 +104,10 @@ describe('resume tool result', () => {
         part: { id: 'part-1', state: pendingState }
       }),
       updatePart: async (...args: any[]) => { updates.push(args); },
+      getPart: async () => {
+        const last = [...updates].reverse().find((u) => Array.isArray(u) && u[4]?.state);
+        return last ? { state: last[4].state } : null;
+      },
       setSessionRunning: async () => {},
       setSessionSuspended: async () => {}
     };

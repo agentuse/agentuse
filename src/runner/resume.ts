@@ -77,6 +77,17 @@ export async function applyResumeToolResult(options: {
     }
   } as any);
 
+  // Verify the decision actually landed before the run proceeds. A write that
+  // silently missed (wrong resolved path for a nested session) leaves the gate
+  // pending in the resumed message history — the model then sees a dangling
+  // tool call and the AI SDK throws MissingToolResultError AFTER the reviewer
+  // already spent their decision. Failing here instead keeps the gate intact
+  // and surfaces a diagnosable error to the approval surface.
+  const applied = await sessionManager.getPart(sessionId, found.agentId, pending.message.id, pending.part.id);
+  if (!applied || (applied as { state?: { status?: string } }).state?.status !== 'completed') {
+    throw new Error(`DECISION_NOT_PERSISTED: approval decision for session ${sessionId} did not persist to the gate part (${pending.part.id}); resume aborted before the run`);
+  }
+
   // Lease lifecycle (agentuse-lab#165, Phase 2): an APPROVE derives a
   // machine-readable lease from the gate's changes[] - the only grant that
   // lets `tools.bash.gated`-declared commands run. Any other decision (reject,
