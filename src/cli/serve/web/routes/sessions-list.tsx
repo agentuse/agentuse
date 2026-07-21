@@ -18,17 +18,14 @@ import { term } from '../lib/terms';
 import { useSessionListView, type SessionListView } from '../hooks/use-session-list-view';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
-// value is the API/query token; label is what the operator reads. 'needs-attention'
-// is the filterable twin of the home "Needs your attention" panel (undismissed
-// failed runs), surfaced first so triage is one click from the list.
-const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
+const STATUSES = ['', 'running', 'suspended', 'completed', 'error', 'incomplete'];
+// Triage is orthogonal to status: has an ended run been reviewed-and-discarded?
+// 'undismissed' composes with status=error to reproduce the home "attention"
+// set (open failures), without conflating triage into the status axis.
+const TRIAGE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: '', label: 'any' },
-  { value: 'needs-attention', label: 'needs a look' },
-  { value: 'running', label: 'running' },
-  { value: 'suspended', label: 'suspended' },
-  { value: 'completed', label: 'completed' },
-  { value: 'error', label: 'error' },
-  { value: 'incomplete', label: 'incomplete' },
+  { value: 'undismissed', label: 'undismissed' },
+  { value: 'dismissed', label: 'dismissed' },
 ];
 const TRIGGERS = ['', 'manual', 'scheduled', 'slack', 'api'];
 const LIVE_SESSION_STATUSES = new Set(['running', 'resuming', 'continuing']);
@@ -253,6 +250,7 @@ export default function SessionsList() {
   const location = useLocation();
   const q = location.query;
   const statusFilter = q.status || '';
+  const triageFilter = q.triage || '';
   const triggerFilter = q.trigger || '';
   const agentFilter = q.agent || undefined;
   const approvalFilter = q.approval || undefined;
@@ -274,6 +272,7 @@ export default function SessionsList() {
   const activeCount = [
     win !== defaultWin,
     statusFilter !== '',
+    triageFilter !== '',
     triggerFilter !== '',
     Boolean(agentFilter),
     Boolean(approvalFilter),
@@ -287,6 +286,7 @@ export default function SessionsList() {
   const activeFilters = [
     ...(win !== defaultWin ? [{ key: 'window', label: 'Time', value: win }] : []),
     ...(statusFilter ? [{ key: 'status', label: 'Status', value: statusFilter }] : []),
+    ...(triageFilter ? [{ key: 'triage', label: 'Triage', value: triageFilter }] : []),
     ...(triggerFilter ? [{ key: 'trigger', label: 'Trigger', value: triggerFilter }] : []),
     ...(agentFilter ? [{ key: 'agent', label: 'Agent', value: agentFilter }] : []),
     ...(approvalFilter ? [{ key: 'approval', label: 'Approval', value: approvalFilter }] : []),
@@ -294,9 +294,9 @@ export default function SessionsList() {
   const [filtersOpen, setFiltersOpen] = useState(activeCount > 0);
   const [groupByAgent, setGroupByAgent] = useState(false);
   // Optimistic discard set (keyed by project:sessionId): a just-discarded row
-  // shows its "dismissed" state immediately, then drops out of the
-  // needs-attention view without waiting for the next SSE snapshot. Rolled back
-  // if the stop request fails so the row is never silently lost.
+  // shows its "dismissed" state immediately, then drops out of the undismissed
+  // view without waiting for the next SSE snapshot. Rolled back if the stop
+  // request fails so the row is never silently lost.
   const [dismissedLocal, setDismissedLocal] = useState<ReadonlySet<string>>(() => new Set<string>());
 
   // Agent list powers the filter's type-ahead so operators pick a real agent id
@@ -311,7 +311,7 @@ export default function SessionsList() {
     return [...byId.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   })();
 
-  const key = `sessions:${win}:${statusFilter}:${triggerFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}:${view}`;
+  const key = `sessions:${win}:${statusFilter}:${triageFilter}:${triggerFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}:${view}`;
   const [streamData, setStreamData] = useState<SessionsPayload | null>(null);
   const [streamError, setStreamError] = useState<Error | null>(null);
   const [streamFallback, setStreamFallback] = useState(false);
@@ -337,6 +337,7 @@ export default function SessionsList() {
     () => fetchSessions({
       window: win,
       status: statusFilter || undefined,
+      triage: triageFilter || undefined,
       trigger: triggerFilter || undefined,
       agent: agentFilter,
       approval: approvalFilter,
@@ -353,6 +354,7 @@ export default function SessionsList() {
   useSessionsStream({
     window: win,
     status: statusFilter || undefined,
+    triage: triageFilter || undefined,
     trigger: triggerFilter || undefined,
     agent: agentFilter,
     approval: approvalFilter,
@@ -378,9 +380,9 @@ export default function SessionsList() {
     const rowKey = `${row.project}\0${row.sessionId}`;
     if (seenRowKeys.has(rowKey)) return false;
     seenRowKeys.add(rowKey);
-    // In the needs-attention view a locally-discarded row no longer belongs,
-    // so hide it right away; every other view keeps it (marked "dismissed").
-    if (statusFilter === 'needs-attention' && dismissedLocal.has(sessionRowKey(row))) return false;
+    // In the undismissed view a locally-discarded row no longer belongs, so
+    // hide it right away; every other view keeps it (marked "dismissed").
+    if (triageFilter === 'undismissed' && dismissedLocal.has(sessionRowKey(row))) return false;
     return true;
   });
   const multiProject = new Set(rows.map((r) => r.project)).size > 1;
@@ -395,7 +397,7 @@ export default function SessionsList() {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
     try {
-      const next = await fetchSessions({ window: win, status: statusFilter || undefined, trigger: triggerFilter || undefined, agent: agentFilter, approval: approvalFilter, limit: 50, cursor: nextCursor, detail: feedDetail });
+      const next = await fetchSessions({ window: win, status: statusFilter || undefined, triage: triageFilter || undefined, trigger: triggerFilter || undefined, agent: agentFilter, approval: approvalFilter, limit: 50, cursor: nextCursor, detail: feedDetail });
       setLoadedMore((current) => [...current, ...next.sessions]);
       setPagedCursor({ ...(next.nextCursor && { cursor: next.nextCursor }) });
     } finally {
@@ -429,7 +431,7 @@ export default function SessionsList() {
   const withParam = (key: string, value: string): string => {
     const params = new URLSearchParams();
     const base: Record<string, string | undefined> = {
-      window: q.window, status: statusFilter, trigger: triggerFilter, agent: agentFilter, approval: approvalFilter,
+      window: q.window, status: statusFilter, triage: triageFilter, trigger: triggerFilter, agent: agentFilter, approval: approvalFilter,
     };
     base[key] = value;
     for (const [k, v] of Object.entries(base)) {
@@ -514,7 +516,12 @@ export default function SessionsList() {
             </label>
             <label class="filter-field filter-field-status">status
               <select value={statusFilter} onChange={onSelect('status')}>
-                {STATUS_OPTIONS.map((s) => <option value={s.value} key={s.value || 'any'}>{s.label}</option>)}
+                {STATUSES.map((s) => <option value={s} key={s || 'any'}>{s || 'any'}</option>)}
+              </select>
+            </label>
+            <label class="filter-field filter-field-triage">triage
+              <select value={triageFilter} onChange={onSelect('triage')}>
+                {TRIAGE_OPTIONS.map((t) => <option value={t.value} key={t.value || 'any'}>{t.label}</option>)}
               </select>
             </label>
             <label class="filter-field filter-field-trigger">trigger

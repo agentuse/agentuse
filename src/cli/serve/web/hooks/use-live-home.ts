@@ -132,6 +132,7 @@ export function useLiveHome(): LiveHome {
     window: '24h',
     agent: undefined,
     status: undefined,
+    triage: undefined,
     trigger: undefined,
     approval: undefined,
     detail: 'feed',

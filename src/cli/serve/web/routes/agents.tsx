@@ -735,6 +735,7 @@ export default function Agents({ project }: { project?: string } = {}) {
     window: '30d',
     agent: undefined,
     status: undefined,
+    triage: undefined,
     trigger: undefined,
     approval: undefined,
     enabled: !sessionsFallback,

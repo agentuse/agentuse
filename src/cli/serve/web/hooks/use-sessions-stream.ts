@@ -7,6 +7,7 @@ const SSE_FAILURES_BEFORE_FALLBACK = 2;
 export function useSessionsStream(options: {
   agent: string | undefined;
   status: string | undefined;
+  triage: string | undefined;
   trigger: string | undefined;
   approval: string | undefined;
   window: string | undefined;
@@ -39,6 +40,7 @@ export function useSessionsStream(options: {
       const es = new EventSource(sessionsEventUrl({
         agent: options.agent,
         status: options.status,
+        triage: options.triage,
         trigger: options.trigger,
         approval: options.approval,
         window: options.window,
@@ -92,5 +94,5 @@ export function useSessionsStream(options: {
       document.removeEventListener('visibilitychange', onVisible);
       source?.close();
     };
-  }, [options.agent, options.status, options.trigger, options.approval, options.window, options.limit, options.detail, options.enabled]);
+  }, [options.agent, options.status, options.triage, options.trigger, options.approval, options.window, options.limit, options.detail, options.enabled]);
 }

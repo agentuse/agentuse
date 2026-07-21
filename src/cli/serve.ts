@@ -159,7 +159,9 @@ interface WorkerSweepExpiredResult {
 
 type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
 type ApprovalSessionFilter = 'pending' | 'completed' | 'errored';
-type SessionStatusFilter = 'running' | 'suspended' | 'completed' | 'error' | 'incomplete' | 'needs-attention';
+type SessionStatusFilter = 'running' | 'suspended' | 'completed' | 'error' | 'incomplete';
+/** Triage axis, orthogonal to status: has an ended run been reviewed-and-discarded yet? */
+type SessionTriageFilter = 'undismissed' | 'dismissed';
 type SessionWindowFilter = `${number}h` | `${number}d` | 'all';
 const APPROVAL_LIST_DEFAULT_DAYS = 30;
 const SESSION_LIST_DEFAULT_WINDOW: SessionWindowFilter = '24h';
@@ -247,6 +249,7 @@ interface SessionsPayload {
   window: { value: string; days?: number | 'all'; hours?: number; createdAfter?: number };
   agent?: string;
   status?: string;
+  triage?: SessionTriageFilter;
   trigger?: SessionTrigger;
   approval?: string;
   errors: Array<{ projectId: string; message: string }>;
@@ -1111,24 +1114,13 @@ function isSessionWindowFilter(value: string): value is SessionWindowFilter {
 }
 
 function parseSessionStatusFilter(value: string | undefined): SessionStatusFilter | undefined {
-  return value === 'running' || value === 'suspended' || value === 'completed' || value === 'error'
-    || value === 'incomplete' || value === 'needs-attention'
+  return value === 'running' || value === 'suspended' || value === 'completed' || value === 'error' || value === 'incomplete'
     ? value
     : undefined;
 }
 
-/**
- * A failed run still waiting on a human: an ended run that failed (status
- * `error`, which also carries the INCOMPLETE outcome) but was not stopped by the
- * operator and has not yet been reviewed-and-discarded. This is the exact set
- * the home "Needs your attention" panel surfaces, made filterable in the list.
- */
-function sessionNeedsAttention(
-  session: Pick<SessionSummary, 'status' | 'errorCode' | 'dismissedAt'>
-): boolean {
-  return session.status === 'error'
-    && session.errorCode !== 'USER_STOPPED'
-    && session.dismissedAt === undefined;
+function parseSessionTriageFilter(value: string | undefined): SessionTriageFilter | undefined {
+  return value === 'undismissed' || value === 'dismissed' ? value : undefined;
 }
 
 /**
@@ -1137,13 +1129,25 @@ function sessionNeedsAttention(
  * UI instead of treating it as a separate on-disk session status.
  */
 function sessionMatchesStatusFilter(
-  session: Pick<SessionSummary, 'status' | 'errorCode' | 'dismissedAt'>,
+  session: Pick<SessionSummary, 'status' | 'errorCode'>,
   filter: SessionStatusFilter | undefined
 ): boolean {
   if (!filter) return true;
-  if (filter === 'needs-attention') return sessionNeedsAttention(session);
   if (filter === 'incomplete') return session.status === 'error' && session.errorCode === 'INCOMPLETE';
   return session.status === filter;
+}
+
+/**
+ * Triage state, independent of status: `undismissed` = not yet reviewed-and-
+ * discarded (the default operator view); `dismissed` = waved off. Compose with
+ * a status filter to get e.g. undismissed errors (the home "attention" set).
+ */
+function sessionMatchesTriageFilter(
+  session: Pick<SessionSummary, 'dismissedAt'>,
+  filter: SessionTriageFilter | undefined
+): boolean {
+  if (!filter) return true;
+  return filter === 'dismissed' ? session.dismissedAt !== undefined : session.dismissedAt === undefined;
 }
 
 function parseApprovalSessionFilter(value: string | undefined): ApprovalSessionFilter | undefined {
@@ -3545,6 +3549,7 @@ export function createServeCommand(): Command {
       > => {
         const agentFilter = requestUrl.searchParams.get('agent') ?? undefined;
         const statusFilter = parseSessionStatusFilter(requestUrl.searchParams.get('status') ?? undefined);
+        const triageFilter = parseSessionTriageFilter(requestUrl.searchParams.get('triage') ?? undefined);
         const triggerFilterRaw = requestUrl.searchParams.get('trigger') ?? undefined;
         const triggerFilter: SessionTrigger | undefined =
           triggerFilterRaw === 'scheduled' || triggerFilterRaw === 'manual' || triggerFilterRaw === 'slack' || triggerFilterRaw === 'api'
@@ -3615,6 +3620,7 @@ export function createServeCommand(): Command {
           }
           for (const session of result.sessions ?? []) {
             if (!sessionMatchesStatusFilter(session, statusFilter)) continue;
+            if (!sessionMatchesTriageFilter(session, triageFilter)) continue;
             if (triggerFilter && session.trigger !== triggerFilter) continue;
             if (approvalFilter && !approvalSessionIdsByProject.get(result.project.id)?.has(session.sessionId)) continue;
             if (agentFilter && !sessionMatchesAgentFilter(session, agentFilter)) continue;
@@ -3640,7 +3646,7 @@ export function createServeCommand(): Command {
         // it would silently expire every cursor at the next minute boundary and
         // restart Load more from page 1. A cursor row that slides out of the
         // window is still caught by cursorPage's row-lookup fallback.
-        const fingerprint = ['sessions', daysFilter, agentFilter ?? '', statusFilter ?? '', triggerFilter ?? '', approvalFilter ?? ''].join('\0');
+        const fingerprint = ['sessions', daysFilter, agentFilter ?? '', statusFilter ?? '', triageFilter ?? '', triggerFilter ?? '', approvalFilter ?? ''].join('\0');
         const page = cursorPage(requestUrl, fingerprint, rows, (row) =>
           `${row.session.createdAt}\0${row.projectId}\0${row.session.sessionId}`
         );
@@ -3725,6 +3731,7 @@ export function createServeCommand(): Command {
             },
             ...(agentFilter && { agent: agentFilter }),
             ...(statusFilter && { status: statusFilter }),
+            ...(triageFilter && { triage: triageFilter }),
             ...(triggerFilter && { trigger: triggerFilter }),
             ...(approvalFilter && { approval: approvalFilter }),
             ...(page.limit !== undefined && { limit: page.limit }),
@@ -4237,7 +4244,7 @@ export function createServeCommand(): Command {
 
         // GET /sessions (+ /api/sessions): operator surface listing every run.
         // API-key gated (not a capability route). Filters: ?agent= ?status=
-        // ?trigger= ?approval=
+        // ?triage=<undismissed|dismissed> ?trigger= ?approval=
         // ?window=<1h|6h|24h|7d|30d|90d|all> (default: 24h).
         // Legacy ?days=<n|all> and ?hours=<n> still work.
         if (req.method === "GET" && routePath === '/sessions') {
@@ -4264,6 +4271,7 @@ export function createServeCommand(): Command {
             requestUrl.searchParams.get('days') ?? '',
             requestUrl.searchParams.get('hours') ?? '',
             requestUrl.searchParams.get('status') ?? '',
+            requestUrl.searchParams.get('triage') ?? '',
             requestUrl.searchParams.get('trigger') ?? '',
             requestUrl.searchParams.get('agent') ?? '',
             requestUrl.searchParams.get('approval') ?? '',

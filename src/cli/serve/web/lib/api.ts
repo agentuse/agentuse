@@ -409,6 +409,7 @@ export interface SessionsPayload {
   window: { value: string; days?: number | 'all'; hours?: number; createdAfter?: number };
   agent?: string;
   status?: string;
+  triage?: string;
   trigger?: string;
   approval?: string;
   errors: Array<{ projectId: string; message: string }>;
@@ -419,6 +420,7 @@ export interface SessionsPayload {
 export function fetchSessions(options: {
   agent?: string | undefined;
   status?: string | undefined;
+  triage?: string | undefined;
   trigger?: string | undefined;
   approval?: string | undefined;
   window?: string | undefined;
@@ -429,6 +431,7 @@ export function fetchSessions(options: {
   return getJson('/api/sessions', {
     agent: options.agent,
     status: options.status,
+    triage: options.triage,
     trigger: options.trigger,
     approval: options.approval,
     window: options.window,
@@ -471,6 +474,7 @@ export function postPushSubscription(body: {
 export function sessionsEventUrl(options: {
   agent?: string | undefined;
   status?: string | undefined;
+  triage?: string | undefined;
   trigger?: string | undefined;
   approval?: string | undefined;
   window?: string | undefined;
@@ -480,6 +484,7 @@ export function sessionsEventUrl(options: {
   const url = new URL('/sessions/events', location.origin);
   if (options.agent !== undefined) url.searchParams.set('agent', options.agent);
   if (options.status !== undefined) url.searchParams.set('status', options.status);
+  if (options.triage !== undefined) url.searchParams.set('triage', options.triage);
   if (options.trigger !== undefined) url.searchParams.set('trigger', options.trigger);
   if (options.approval !== undefined) url.searchParams.set('approval', options.approval);
   if (options.window !== undefined) url.searchParams.set('window', options.window);
