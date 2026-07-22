@@ -1,7 +1,7 @@
 import type { ModelMessage } from 'ai';
 import type { SessionManager } from './manager';
 import type { Part, ToolPart } from './types';
-import { stripToolBlocks } from './message-utils';
+import { stripToolBlocks, hasReasoningParts, lastAssistantMessage } from './message-utils';
 
 function getPartOrder(part: Part): number {
   if (part.type === 'text') return part.time?.start ?? Number.MAX_SAFE_INTEGER;
@@ -100,7 +100,34 @@ export async function rehydrateMessages(
     const reappendedToolIds = new Set(
       fresh.filter((part): part is ToolPart => part.type === 'tool').map((part) => part.callID)
     );
-    const messages = stripToolBlocks(snapshot.messages as ModelMessage[], reappendedToolIds);
+    const snapshotMessages = snapshot.messages as ModelMessage[];
+
+    // Reasoning-safe resume. If the trailing assistant turn carries signed
+    // Anthropic thinking blocks, it must be replayed byte-for-byte: keep every
+    // tool-CALL block in place (re-appending a second tool-call for the same id
+    // would both duplicate the call and force a rewrite of the signed turn, which
+    // Anthropic rejects with `thinking blocks cannot be modified`). Strip only
+    // the stale tool-RESULTS for the ids we are re-appending, then attach exactly
+    // one real result per call after the intact turn.
+    const signedTurn = lastAssistantMessage(snapshotMessages);
+    if (signedTurn && hasReasoningParts(signedTurn)) {
+      const messages = stripToolBlocks(snapshotMessages, reappendedToolIds, { resultsOnly: true });
+      for (const part of fresh) {
+        if (part.type === 'tool') {
+          appendToolResult(messages, part);
+        } else {
+          appendPartMessages(messages, part);
+        }
+      }
+      // A tool-call left without any result would dangle (Anthropic rejects a
+      // tool_use with no matching tool_result). Backfill a benign error result
+      // for any call in the signed turn that neither the snapshot nor a fresh
+      // part resolved.
+      backfillMissingToolResults(messages, signedTurn);
+      return normalizeRehydratedMessages(messages);
+    }
+
+    const messages = stripToolBlocks(snapshotMessages, reappendedToolIds);
     for (const part of fresh) {
       appendPartMessages(messages, part);
     }
@@ -144,6 +171,36 @@ function appendPartMessages(messages: ModelMessage[], part: Part): void {
   }
 }
 
+function toolResultMessage(part: ToolPart): ModelMessage | undefined {
+  const state = part.state;
+  if (state.status === 'completed') {
+    return {
+      role: 'tool',
+      content: [{
+        type: 'tool-result',
+        toolCallId: part.callID,
+        toolName: part.tool,
+        output: toToolResultOutput(state.output)
+      }]
+    } as unknown as ModelMessage;
+  }
+  if (state.status === 'error') {
+    return {
+      role: 'tool',
+      content: [{
+        type: 'tool-result',
+        toolCallId: part.callID,
+        toolName: part.tool,
+        output: toToolResultOutput({
+          success: false,
+          error: state.error
+        })
+      }]
+    } as unknown as ModelMessage;
+  }
+  return undefined; // pending/other: no result yet
+}
+
 function appendToolMessages(messages: ModelMessage[], part: ToolPart): void {
   const state = part.state;
   const input = 'input' in state ? state.input : undefined;
@@ -158,28 +215,53 @@ function appendToolMessages(messages: ModelMessage[], part: ToolPart): void {
     }]
   } as unknown as ModelMessage);
 
-  if (state.status === 'completed') {
+  const result = toolResultMessage(part);
+  if (result) messages.push(result);
+}
+
+/**
+ * Append only the resolved `tool-result` for `part` (no tool-call). Used on the
+ * reasoning-safe resume path where the tool-CALL already lives in the intact,
+ * signed assistant turn and must not be re-emitted.
+ */
+function appendToolResult(messages: ModelMessage[], part: ToolPart): void {
+  const result = toolResultMessage(part);
+  if (result) messages.push(result);
+}
+
+/**
+ * Ensure every `tool-call` in the signed `assistantTurn` has a matching
+ * `tool-result` somewhere in `messages`; synthesize a benign error result for
+ * any that don't. A tool_use with no matching tool_result is rejected by
+ * Anthropic, so this guards against a sibling call the journaling never
+ * resolved.
+ */
+function backfillMissingToolResults(messages: ModelMessage[], assistantTurn: ModelMessage): void {
+  const content = (assistantTurn as { content?: unknown }).content;
+  if (!Array.isArray(content)) return;
+  const resolved = new Set<string>();
+  for (const message of messages) {
+    const mc = (message as { content?: unknown }).content;
+    if (message.role === 'tool' && Array.isArray(mc)) {
+      for (const part of mc as any[]) {
+        if (part?.type === 'tool-result') resolved.add(part.toolCallId);
+      }
+    }
+  }
+  for (const part of content as any[]) {
+    if (part?.type !== 'tool-call' || resolved.has(part.toolCallId)) continue;
     messages.push({
       role: 'tool',
       content: [{
         type: 'tool-result',
-        toolCallId: part.callID,
-        toolName: part.tool,
-        output: toToolResultOutput(state.output)
-      }]
-    } as unknown as ModelMessage);
-  } else if (state.status === 'error') {
-    messages.push({
-      role: 'tool',
-      content: [{
-        type: 'tool-result',
-        toolCallId: part.callID,
-        toolName: part.tool,
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
         output: toToolResultOutput({
           success: false,
-          error: state.error
+          error: 'Tool call was not resolved before resume.'
         })
       }]
     } as unknown as ModelMessage);
+    resolved.add(part.toolCallId);
   }
 }

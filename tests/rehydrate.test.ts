@@ -486,4 +486,138 @@ describe('rehydrateMessages', () => {
       delete process.env.XDG_DATA_HOME;
     }
   });
+
+  it('preserves a signed thinking turn verbatim across a gate resume (reasoning-safe path)', async () => {
+    // Reproduces the HTTP 400 that crashed resume with "messages.1.content.N:
+    // `thinking` or `redacted_thinking` blocks in the latest assistant message
+    // cannot be modified" (session 01KY5HNX...). With extended thinking on, the
+    // gate turn is a single SIGNED assistant message holding reasoning blocks +
+    // the await_human tool-call + sibling tool-calls the model fired alongside it
+    // (journaled per #165). The old strip/re-append rewrote that turn's content
+    // array, invalidating the provider signature. The reasoning-safe path must
+    // replay the turn byte-for-byte and only append tool-results after it.
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-rehydrate-thinking-gate-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+
+    try {
+      await initStorage(projectRoot);
+      const sessionManager = new SessionManager();
+      const sessionID = await sessionManager.createSession({
+        agent: { id: 'agents/review', name: 'review', isSubAgent: false },
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: { root: projectRoot, cwd: projectRoot }
+      });
+      const agentId = 'agents/review';
+      const messageID = await sessionManager.createMessage(sessionID, agentId, {
+        user: { prompt: { task: 'Reply with approval' } },
+        assistant: {
+          system: ['system'],
+          modelID: 'test',
+          providerID: 'demo',
+          mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+        }
+      });
+
+      // The signed thinking turn: reasoning blocks (with a provider signature)
+      // followed by the gate call and two sibling calls fired in the same turn.
+      const signedAssistant = {
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: 'Deciding whether this is the right account.', providerOptions: { anthropic: { signature: 'sig-abc-123' } } },
+          { type: 'tool-call', toolCallId: 'call-gate', toolName: 'await_human', input: { prompt: 'Approve?' } },
+          { type: 'tool-call', toolCallId: 'call-bash', toolName: 'bash', input: { command: 'x.com/agentuse' } },
+          { type: 'tool-call', toolCallId: 'call-store', toolName: 'store_get', input: { id: 'z' } },
+        ],
+      };
+      // Snapshot as written at suspend: the signed turn + the SDK's synthetic
+      // "suspended" tool-result for the gate.
+      await sessionManager.writeContextSnapshot(sessionID, agentId, {
+        version: 1,
+        updatedAt: 1_000,
+        messageID,
+        messages: [
+          { role: 'system', content: 'system' },
+          { role: 'user', content: 'Reply with approval' },
+          signedAssistant,
+          { role: 'tool', content: [
+            { type: 'tool-result', toolCallId: 'call-gate', toolName: 'await_human', output: { type: 'error-text', value: 'Agent execution suspended' } },
+          ] },
+        ] as any,
+        usage: {
+          activeTokens: 76_000,
+          contextLimit: 922_000,
+          usagePercentage: 8.243,
+          compacted: false,
+          compactions: 0,
+          updatedAt: 1_000,
+        }
+      });
+
+      // Resolved parts (fresh, time.start > snapshot.updatedAt): gate approved,
+      // both siblings denied/journaled.
+      await sessionManager.addPart(sessionID, agentId, messageID, {
+        type: 'tool',
+        callID: 'call-gate',
+        tool: 'await_human',
+        state: { status: 'completed', input: { prompt: 'Approve?' }, output: { status: 'approve', reviewer: { username: 'web' } }, time: { start: 1_002, end: 5_000 } }
+      } as any);
+      await sessionManager.addPart(sessionID, agentId, messageID, {
+        type: 'tool',
+        callID: 'call-bash',
+        tool: 'bash',
+        state: { status: 'completed', input: { command: 'x.com/agentuse' }, output: { denied: true, reason: 'gate open' }, time: { start: 1_003, end: 1_003 } }
+      } as any);
+      await sessionManager.addPart(sessionID, agentId, messageID, {
+        type: 'tool',
+        callID: 'call-store',
+        tool: 'store_get',
+        state: { status: 'completed', input: { id: 'z' }, output: { denied: true, reason: 'gate open' }, time: { start: 1_004, end: 1_004 } }
+      } as any);
+
+      const messages = await rehydrateMessages(sessionManager, sessionID, agentId);
+
+      // The signed assistant turn must be replayed BYTE-FOR-BYTE: same reasoning
+      // block (signature intact) and all three tool-calls in the same message,
+      // same order. This is what the provider signature covers.
+      const signedInReplay = (messages as any[]).find((m) =>
+        m.role === 'assistant' && Array.isArray(m.content) && m.content.some((p: any) => p.type === 'reasoning')
+      );
+      expect(signedInReplay).toBeDefined();
+      expect(signedInReplay.content).toEqual(signedAssistant.content);
+
+      // Exactly one tool-call per id across the whole transcript (no duplicate
+      // that the old re-append produced).
+      for (const id of ['call-gate', 'call-bash', 'call-store']) {
+        const calls = (messages as any[]).flatMap((m) =>
+          Array.isArray(m.content) ? m.content.filter((p: any) => p.type === 'tool-call' && p.toolCallId === id) : []
+        );
+        expect(calls).toHaveLength(1);
+      }
+
+      // The gate carries the REAL approval decision, not the stale placeholder.
+      const gateResults = (messages as any[]).flatMap((m) =>
+        Array.isArray(m.content) ? m.content.filter((p: any) => p.type === 'tool-result' && p.toolCallId === 'call-gate') : []
+      );
+      expect(gateResults).toHaveLength(1);
+      expect(gateResults[0].output).toEqual({ type: 'json', value: { status: 'approve', reviewer: { username: 'web' } } });
+      expect(JSON.stringify(messages)).not.toContain('Agent execution suspended');
+
+      // Every tool-call in the signed turn has a matching result (no dangling
+      // sibling tool_use, which the provider also rejects).
+      for (const id of ['call-gate', 'call-bash', 'call-store']) {
+        const results = (messages as any[]).flatMap((m) =>
+          m.role === 'tool' && Array.isArray(m.content) ? m.content.filter((p: any) => p.type === 'tool-result' && p.toolCallId === id) : []
+        );
+        expect(results).toHaveLength(1);
+      }
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
 });

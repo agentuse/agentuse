@@ -13,15 +13,31 @@ import type { ModelMessage } from 'ai';
  * - read side (rehydrate): evict any gate blocks the snapshot still carries
  *   before re-appending the resolved part, healing snapshots written before the
  *   write-side trim existed.
+ *
+ * `opts.resultsOnly` keeps every `tool-call` block and drops only matching
+ * `tool-result` blocks. This is the reasoning-safe mode: when the suspended
+ * assistant turn carries signed Anthropic thinking blocks, its content array
+ * must not be rewritten (see `hasReasoningParts`), so the tool-CALL stays put and
+ * only the stale tool-RESULT is removed.
  */
-export function stripToolBlocks(messages: ModelMessage[], ids: Set<string>): ModelMessage[] {
+export function stripToolBlocks(
+  messages: ModelMessage[],
+  ids: Set<string>,
+  opts: { resultsOnly?: boolean } = {},
+): ModelMessage[] {
   if (ids.size === 0) return [...messages];
+  const resultsOnly = opts.resultsOnly ?? false;
   const out: ModelMessage[] = [];
   for (const message of messages) {
     const content = (message as { content?: unknown }).content;
     if ((message.role === 'assistant' || message.role === 'tool') && Array.isArray(content)) {
       const kept = content.filter((part: any) => {
-        if ((part?.type === 'tool-call' || part?.type === 'tool-result') && ids.has(part.toolCallId)) {
+        const isCall = part?.type === 'tool-call';
+        const isResult = part?.type === 'tool-result';
+        if ((isCall || isResult) && ids.has(part.toolCallId)) {
+          // In results-only mode, keep tool-CALL blocks (they live in a signed
+          // thinking turn that must survive verbatim); drop only the tool-result.
+          if (resultsOnly && isCall) return true;
           return false;
         }
         return true;
@@ -33,4 +49,26 @@ export function stripToolBlocks(messages: ModelMessage[], ids: Set<string>): Mod
     }
   }
   return out;
+}
+
+/**
+ * True if this assistant message carries Anthropic extended-thinking output
+ * (AI SDK `reasoning` parts). Those blocks are cryptographically signed by the
+ * provider and must be replayed byte-for-byte: any edit to the content array of
+ * a thinking-bearing turn invalidates the signature, and Anthropic rejects the
+ * whole request with `thinking ... blocks cannot be modified`. Callers use this
+ * to take a reasoning-safe suspend/resume path that never rewrites the signed
+ * turn (only appends tool-results after it).
+ */
+export function hasReasoningParts(message: ModelMessage): boolean {
+  const content = (message as { content?: unknown }).content;
+  return Array.isArray(content) && content.some((part: any) => part?.type === 'reasoning');
+}
+
+/** The last `assistant` message in order, or undefined if there is none. */
+export function lastAssistantMessage(messages: ModelMessage[]): ModelMessage | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === 'assistant') return messages[i];
+  }
+  return undefined;
 }

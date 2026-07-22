@@ -24,7 +24,7 @@ import type { CompactionReason, ModelToolOutputArtifactRef, SessionManager, Tool
 import { clampToolResultForModel } from '../tools/tool-output-limits.js';
 import { stripInlineMediaData } from '../tools/media.js';
 import { messagesContainInlineMedia } from '../session/media-cache.js';
-import { stripToolBlocks } from '../session/message-utils';
+import { stripToolBlocks, hasReasoningParts, lastAssistantMessage } from '../session/message-utils';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -884,9 +884,19 @@ export async function* executeAgentCore(
     if (!contextManager) return undefined;
     const updatedAt = currentModelStepStartedAt ?? Date.now();
     const usage = { ...contextManager.getStats(), updatedAt };
-    const messages = suspendedToolCallId
-      ? stripToolBlocks(contextManager.getMessages(), new Set([suspendedToolCallId]))
-      : contextManager.getMessages();
+    const raw = contextManager.getMessages();
+    let messages = raw;
+    if (suspendedToolCallId) {
+      // If the suspended turn carries signed Anthropic thinking blocks, its
+      // content must survive verbatim to resume (any edit to a thinking-bearing
+      // assistant turn is rejected). Strip only the stale synthetic "suspended"
+      // tool-RESULT, never the tool-CALL, which lives in that signed turn; the
+      // reasoning-safe rehydrate path re-attaches the real resolved result.
+      // Non-reasoning turns keep the original full strip.
+      const last = lastAssistantMessage(raw);
+      const preserveSignedTurn = last ? hasReasoningParts(last) : false;
+      messages = stripToolBlocks(raw, new Set([suspendedToolCallId]), { resultsOnly: preserveSignedTurn });
+    }
     return {
       version: 1 as const,
       updatedAt,
