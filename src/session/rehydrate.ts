@@ -40,11 +40,28 @@ function isToolResultOutput(value: unknown): boolean {
 // Heal context snapshots written before the prepareStep/stream-consumer race was
 // fixed (see runner/execution.ts). Those snapshots can carry a tool-result whose
 // `output` is a bare string instead of the AI SDK v5 `{ type, value }`
-// ToolResultOutput form, and/or a duplicate tool-result for a toolCallId that
-// already has one. Either makes the messages fail `modelMessageSchema` validation
-// on resume. Normalize on read so existing sessions can still resume: wrap any
-// bare-string output, and keep only the first tool-result per toolCallId.
+// ToolResultOutput form, a duplicate tool-result for a toolCallId that already
+// has one, or an ORPHANED tool-result whose tool-call was dropped from the
+// history (a gate sibling that was denied/journaled while its tool_use never
+// made it into the signed turn - see appendToolResult). Any of these makes the
+// messages fail validation on resume; the orphan specifically triggers the
+// provider HTTP 400 "unexpected tool_use_id ... must have a corresponding
+// tool_use block in the previous message". Normalize on read so existing
+// sessions can still resume: wrap any bare-string output, keep only the first
+// tool-result per toolCallId, and drop any tool-result with no matching
+// tool-call. This is the symmetric counterpart to backfillMissingToolResults
+// (which heals the inverse: a tool-call with no result).
 function normalizeRehydratedMessages(messages: ModelMessage[]): ModelMessage[] {
+  const calledIds = new Set<string>();
+  for (const message of messages) {
+    const content = (message as { content?: unknown }).content;
+    if (message.role === 'assistant' && Array.isArray(content)) {
+      for (const part of content as any[]) {
+        if (part?.type === 'tool-call') calledIds.add(part.toolCallId);
+      }
+    }
+  }
+
   const seenResults = new Set<string>();
   const out: ModelMessage[] = [];
   for (const message of messages) {
@@ -52,6 +69,10 @@ function normalizeRehydratedMessages(messages: ModelMessage[]): ModelMessage[] {
     if (message.role === 'tool' && Array.isArray(content)) {
       const kept = content.filter((part: any) => {
         if (part?.type !== 'tool-result') return true;
+        // Orphan: its tool-call was dropped from history. Anthropic rejects a
+        // tool_result with no matching tool_use, so drop it. Safe: such a
+        // sibling was denied/aborted, never executed, so nothing is lost.
+        if (!calledIds.has(part.toolCallId)) return false;
         if (seenResults.has(part.toolCallId)) return false;
         seenResults.add(part.toolCallId);
         return true;

@@ -620,4 +620,113 @@ describe('rehydrateMessages', () => {
       delete process.env.XDG_DATA_HOME;
     }
   });
+
+  it('drops an orphaned tool-result whose tool-call was dropped from the signed turn', async () => {
+    // Reproduces the HTTP 400 that crashed a verify-gate redo resume:
+    // "messages.10.content.0: unexpected `tool_use_id` found in `tool_result`
+    // blocks: toolu_... Each `tool_result` block must have a corresponding
+    // `tool_use` block" (session 01KY5MA4YP...). During a verify-judge redo the
+    // model fired store_update siblings alongside the re-gate; they were
+    // denied/journaled and their tool-RESULTS were persisted as fresh parts, but
+    // their tool_use blocks never made it into the signed turn. appendToolResult
+    // then re-emits a result with no matching call -> orphan -> provider 400.
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-rehydrate-orphan-result-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+
+    try {
+      await initStorage(projectRoot);
+      const sessionManager = new SessionManager();
+      const sessionID = await sessionManager.createSession({
+        agent: { id: 'agents/review', name: 'review', isSubAgent: false },
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: { root: projectRoot, cwd: projectRoot }
+      });
+      const agentId = 'agents/review';
+      const messageID = await sessionManager.createMessage(sessionID, agentId, {
+        user: { prompt: { task: 'Reply with approval' } },
+        assistant: {
+          system: ['system'],
+          modelID: 'test',
+          providerID: 'demo',
+          mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+        }
+      });
+
+      // Signed thinking turn holding ONLY the gate call. The store_update sibling
+      // the model fired was aborted/journaled and its tool_use never landed here.
+      const signedAssistant = {
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: 'Re-gating with the revised draft.', providerOptions: { anthropic: { signature: 'sig-xyz-789' } } },
+          { type: 'tool-call', toolCallId: 'call-gate', toolName: 'await_human', input: { prompt: 'Approve revised?' } },
+        ],
+      };
+      await sessionManager.writeContextSnapshot(sessionID, agentId, {
+        version: 1,
+        updatedAt: 1_000,
+        messageID,
+        messages: [
+          { role: 'system', content: 'system' },
+          { role: 'user', content: 'Reply with approval' },
+          signedAssistant,
+          { role: 'tool', content: [
+            { type: 'tool-result', toolCallId: 'call-gate', toolName: 'await_human', output: { type: 'error-text', value: 'Agent execution suspended' } },
+          ] },
+        ] as any,
+        usage: {
+          activeTokens: 76_000,
+          contextLimit: 922_000,
+          usagePercentage: 8.243,
+          compacted: false,
+          compactions: 0,
+          updatedAt: 1_000,
+        }
+      });
+
+      // Fresh parts: the gate approved, plus a denied store_update sibling whose
+      // tool-call is NOT in the signed turn (the orphan source).
+      await sessionManager.addPart(sessionID, agentId, messageID, {
+        type: 'tool',
+        callID: 'call-gate',
+        tool: 'await_human',
+        state: { status: 'completed', input: { prompt: 'Approve revised?' }, output: { status: 'approve', reviewer: { username: 'web' } }, time: { start: 1_002, end: 5_000 } }
+      } as any);
+      await sessionManager.addPart(sessionID, agentId, messageID, {
+        type: 'tool',
+        callID: 'call-orphan-store',
+        tool: 'store_update',
+        state: { status: 'completed', input: { id: 'x' }, output: { denied: true, reason: 'gate open' }, time: { start: 1_003, end: 1_003 } }
+      } as any);
+
+      const messages = await rehydrateMessages(sessionManager, sessionID, agentId);
+
+      // No tool-result may reference a toolCallId that has no tool-call anywhere.
+      const callIds = new Set(
+        (messages as any[]).flatMap((m) =>
+          m.role === 'assistant' && Array.isArray(m.content)
+            ? m.content.filter((p: any) => p.type === 'tool-call').map((p: any) => p.toolCallId)
+            : []
+        )
+      );
+      const resultIds = (messages as any[]).flatMap((m) =>
+        m.role === 'tool' && Array.isArray(m.content)
+          ? m.content.filter((p: any) => p.type === 'tool-result').map((p: any) => p.toolCallId)
+          : []
+      );
+      for (const id of resultIds) {
+        expect(callIds.has(id)).toBe(true);
+      }
+      // The orphaned result is gone; the real gate decision survives.
+      expect(resultIds).not.toContain('call-orphan-store');
+      expect(resultIds).toContain('call-gate');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
 });
