@@ -151,4 +151,49 @@ describe('DoomLoopDetector integration with processAgentStream', () => {
 
     expect(result).toBeDefined();
   });
+
+  // Regression: an approval agent hits a gate and, in that same turn, a sibling
+  // tool call is dispatched. It is aborted/journaled (not executed) and the model
+  // is told to re-issue it after approval. Those gate-barrier-denied calls carry
+  // postSuspend and must be excluded from the doom-loop count; otherwise the
+  // aborted sibling crosses the threshold and kills an otherwise-approved run.
+  it('does not count a gate-barrier-denied (postSuspend) sibling toward the doom loop', async () => {
+    const detector = new DoomLoopDetector({ threshold: 3 });
+    const call = { command: 'cat work/failed-payments.csv' };
+    const chunks: AgentChunk[] = [
+      { type: 'tool-call', toolName: 'tools__bash', toolCallId: 'call_1', toolInput: call },
+      { type: 'tool-result', toolCallId: 'call_1', toolResult: 'rows' },
+      { type: 'tool-call', toolName: 'tools__bash', toolCallId: 'call_2', toolInput: call },
+      { type: 'tool-result', toolCallId: 'call_2', toolResult: 'rows' },
+      // Third identical call, but dispatched as a sibling of a pending approval
+      // gate: aborted, journaled, re-issued after approval. Must not be counted.
+      { type: 'tool-call', toolName: 'tools__bash', toolCallId: 'call_3', toolInput: call, postSuspend: true },
+      { type: 'finish', finishReason: 'stop' },
+    ];
+
+    const result = await processAgentStream(makeStream(chunks), {
+      doomLoopDetector: detector,
+      quiet: true,
+    });
+
+    expect(result).toBeDefined();
+  });
+
+  it('control: the same third call WITHOUT postSuspend does trip the detector', async () => {
+    const detector = new DoomLoopDetector({ threshold: 3 });
+    const call = { command: 'cat work/failed-payments.csv' };
+    const chunks: AgentChunk[] = [
+      { type: 'tool-call', toolName: 'tools__bash', toolCallId: 'call_1', toolInput: call },
+      { type: 'tool-result', toolCallId: 'call_1', toolResult: 'rows' },
+      { type: 'tool-call', toolName: 'tools__bash', toolCallId: 'call_2', toolInput: call },
+      { type: 'tool-result', toolCallId: 'call_2', toolResult: 'rows' },
+      { type: 'tool-call', toolName: 'tools__bash', toolCallId: 'call_3', toolInput: call },
+      { type: 'finish', finishReason: 'stop' },
+    ];
+
+    await expect(processAgentStream(makeStream(chunks), {
+      doomLoopDetector: detector,
+      quiet: true,
+    })).rejects.toThrow(DoomLoopError);
+  });
 });
