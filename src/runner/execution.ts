@@ -621,6 +621,13 @@ export async function* executeAgentCore(
     return used > 0 && used >= contextManager.compactionThresholdTokens();
   };
 
+  // Set once an await_human gate opens in a stream: from that point every sibling
+  // tool call in the same turn is barrier-denied (never executed) and the model is
+  // told to re-issue after approval. Function-scoped so the tool-call yield sites
+  // below can stamp those siblings postSuspend; a resume starts a fresh
+  // executeAgentCore, so it never leaks past the suspend.
+  let gateBarrierActive = false;
+
   // Function to create stream with current messages
   const createStream = async () => {
     // Check if we need to compact before creating stream
@@ -772,6 +779,7 @@ export async function* executeAgentCore(
         // undefined (not-applicable) lets await_human execute normally.
         if (toolName === 'await_human') {
           gatePendingThisStep = true;
+          gateBarrierActive = true;
           return undefined;
         }
 
@@ -1027,7 +1035,7 @@ Error: ${errorMessage}`);
             toolInput: (chunk as any).input || (chunk as any).args,
             toolStartTime: startTime,
             ...(options.subAgentNames?.has(chunk.toolName!) && { isSubAgent: true }),
-            ...(suspendState && { postSuspend: true })
+            ...((suspendState || gateBarrierActive) && { postSuspend: true })
           };
           break;
         }
@@ -1071,7 +1079,7 @@ Error: ${errorMessage}`);
             toolResultRaw: stripInlineMediaData((chunk as any).result || (chunk as any).output),
             ...(startTime && { toolStartTime: startTime }),
             ...(duration !== undefined && { toolDuration: duration }),
-            ...(suspendState && { postSuspend: true })
+            ...((suspendState || gateBarrierActive) && { postSuspend: true })
           };
 
           // Clean up
@@ -1158,7 +1166,7 @@ Error: ${errorMessage}`);
             toolResultRaw: { error: errorMessage },
             ...(startTime && { toolStartTime: startTime }),
             ...(duration !== undefined && { toolDuration: duration }),
-            ...(suspendState && { postSuspend: true })
+            ...((suspendState || gateBarrierActive) && { postSuspend: true })
           };
 
           // Clean up
@@ -1359,7 +1367,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
             toolResultRaw: { denied: true, reason },
             ...(startTime && { toolStartTime: startTime }),
             ...(duration !== undefined && { toolDuration: duration }),
-            ...(suspendState && { postSuspend: true })
+            ...((suspendState || gateBarrierActive) && { postSuspend: true })
           };
           if (startTime) {
             toolStartTimes.delete(toolCallId);

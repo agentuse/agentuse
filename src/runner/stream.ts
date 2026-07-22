@@ -334,7 +334,7 @@ export async function processAgentStream(
 
       case 'tool-call':
         if (chunk.postSuspend) {
-          logger.warn(`Tool ${chunk.toolName} was dispatched in the same turn as a pending approval gate; it has been aborted/journaled, not silently dropped (agentuse-lab#165).`);
+          logger.warn(`Tool ${chunk.toolName} was dispatched in the same turn as a pending approval gate; it has been aborted/journaled, not silently dropped.`);
         }
         if (hasTextSinceLastToolCall && options?.doomLoopDetector) {
           options.doomLoopDetector.recordNonToolEvent();
@@ -344,7 +344,13 @@ export async function processAgentStream(
         // Check for doom loop (repeated identical tool calls). Compare without
         // the injected intent phrase: a model stuck in a loop may vary the
         // wording while repeating the exact same call.
-        if (options?.doomLoopDetector) {
+        //
+        // Skip postSuspend calls: a tool dispatched in the same turn as a
+        // pending approval gate is aborted, not executed, and the model is
+        // explicitly told to re-issue it after approval. Counting the aborted
+        // sibling plus its forced re-issue reads as a loop and kills an
+        // otherwise-approved run right after the gate.
+        if (options?.doomLoopDetector && !chunk.postSuspend) {
           // This will throw DoomLoopError if threshold exceeded
           options.doomLoopDetector.check(chunk.toolName!, withoutToolIntent(chunk.toolInput));
         }
