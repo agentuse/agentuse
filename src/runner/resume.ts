@@ -2,6 +2,7 @@ import type { SessionManager } from '../session';
 import type { ToolState } from '../session/types';
 import { isProcessRefAlive } from '../utils/process-info';
 import { LeaseStore, deriveLeaseEntries } from './approval-lease';
+import { GateSealStore } from './gate-seal';
 import { logger } from '../utils/logger';
 
 export interface ResumeToolRollback {
@@ -112,6 +113,15 @@ export async function applyResumeToolResult(options: {
       }
     } else {
       leaseStore.revoke();
+    }
+
+    // Reject is terminal: seal the gate so no further await_human can suspend
+    // this run (it may still resume for its own cleanup, but can never re-ask
+    // the human). Only a human reject reaches here - the verify pre-review
+    // rejection is returned inline without suspending, so it never resumes.
+    // `comment` is the revise-and-re-gate path and deliberately does NOT seal.
+    if (decisionStatus === 'rejected' || decisionStatus === 'reject') {
+      new GateSealStore(sessionDir).seal('human reviewer rejected an await_human gate', now);
     }
   } catch (error) {
     logger.debug(`[Lease] resume lease update failed: ${(error as Error).message}`);

@@ -16,6 +16,7 @@ import type { AgentChunk } from './types';
 import { isSuspendSignal } from './suspend';
 import { wrapToolsWithWAL, sanitizeWALInput, type EffectWAL } from './effect-wal';
 import { LeaseStore, isEffectful } from './approval-lease';
+import { GateSealStore } from './gate-seal';
 import { registerSDKTelemetryOnce } from '../telemetry/sdk-telemetry';
 import { recordErrorMarker } from './session-helper';
 import { extractApiErrorDetail } from './api-error';
@@ -449,11 +450,17 @@ export async function* executeAgentCore(
   // resume time, possibly by another process) and read per call.
   const effectPatterns = agent.config.tools?.bash?.gated ?? [];
   const leaseStore = new LeaseStore();
-  if (effectPatterns.length > 0 && options.sessionManager && options.sessionID && options.agentId) {
+  // Gate seal (reject-is-terminal): bound whenever the run has a session, since
+  // any approval-enabled agent can carry an await_human gate regardless of
+  // whether it also declares gated bash commands.
+  const gateSealStore = new GateSealStore();
+  if (options.sessionManager && options.sessionID && options.agentId) {
     try {
-      leaseStore.bind(await options.sessionManager.getSessionDirectory(options.sessionID, options.agentId));
+      const sessionDir = await options.sessionManager.getSessionDirectory(options.sessionID, options.agentId);
+      if (effectPatterns.length > 0) leaseStore.bind(sessionDir);
+      gateSealStore.bind(sessionDir);
     } catch (error) {
-      logger.debug(`[Lease] failed to bind lease store: ${(error as Error).message}`);
+      logger.debug(`[Lease] failed to bind session-dir stores: ${(error as Error).message}`);
     }
   }
 
@@ -778,6 +785,23 @@ export async function* executeAgentCore(
         // The gate itself: mark the step gated, then run and suspend. Returning
         // undefined (not-applicable) lets await_human execute normally.
         if (toolName === 'await_human') {
+          // Reject is terminal (runtime guarantee): once a human rejected a
+          // prior gate this run, the gate is sealed. Deny any further
+          // await_human PRE-dispatch so it never re-suspends / re-asks the human
+          // (and never runs the verify pre-review). The run may still finish its
+          // own cleanup; it just cannot gate again. `comment` does not seal, so
+          // the revise-and-re-gate path is unaffected. See gate-seal.ts.
+          if (gateSealStore.isSealed()) {
+            options.effectWal?.append({
+              event: 'gate-sealed-denied',
+              ...(callId && { callId }),
+              tool: 'await_human',
+            });
+            return {
+              type: 'denied' as const,
+              reason: 'The human reviewer REJECTED this request, which is terminal: the approval gate is closed for this run. Do not call await_human again. Perform any required cleanup (for example status updates) and end the run with a short summary of the rejection. (A reviewer who wanted changes rather than a stop would have used Comment, not Reject.)',
+            };
+          }
           gatePendingThisStep = true;
           gateBarrierActive = true;
           return undefined;
