@@ -117,24 +117,85 @@ high: latency and cost with no lift. Start moderate, tune on observed output.
   and `--json` exposes them under `.metadata` for filtering. Metadata is an
   annotation, not runtime input (it is not injected into the prompt).
 
+## Goals for Judgment Agents, Procedures for Compliance Agents
+
+The runtime treats agent instructions as authoritative (top of the guidance
+precedence ladder), so the body's *shape* sets how much judgment the model
+exercises. A numbered SOP laced with "MANDATORY / no exceptions / don't
+improvise" gets literal step-following on any model tier: putting Opus behind
+one buys top-tier reasoning and then forbids using it.
+
+Pick the shape by where the agent's value lives:
+
+- **Judgment-heavy** (drafting, planning, review, debugging): state the goal,
+  the context to load, and the hard constraints, then explicitly hand over the
+  open decisions ("angle, structure, and length are your call; deviate from
+  the template when the content earns it"). Reserve MANDATORY/STOP wording for
+  true invariants: save paths, output schema, irreversible actions,
+  missing-precondition errors.
+- **Compliance-heavy** (scanners, trackers, report generators): a strict
+  procedure with a pinned output schema is correct; determinism is the point.
+
+The same split applies to tools: the frontmatter allowlist is the real
+capability ceiling, and no prompt wording can widen it. Scope a compliance
+agent tightly; give a judgment agent the read surface and search commands it
+needs to explore (see the grep gotcha below).
+
 ## Write Lean: Hard-Code Invariants, Delegate Judgment
 
-The prompt is a brief, not a manual. It is re-sent on every step, so length is
-a recurring token cost and a long prompt buries the rules that matter. Pin down
-only what must be exact:
+Treat the body as a recurring prompt cost. Write compressed, not crammed.
 
-- safety boundaries (read-only, never call X, which store to write),
-- exact commands, paths, and flags the model cannot guess,
-- the output schema and where it goes,
-- ordering that changes the result.
+Keep only:
 
-For everything else, how to investigate, how to phrase, the long tail of edge
-cases, state the goal and the constraint, then let the model decide. Spelling
-out every branch makes the agent brittle on the case you did not enumerate.
+- safety boundaries and irreversible-action gates,
+- exact commands, paths, fields, and status values the model cannot infer,
+- ordering that changes the result,
+- inputs, output schema, destination, and success criteria.
 
-Over-specification smells: the same rule in three places, a paragraph
-justifying *why* a step exists, an enumerated decision tree derivable from one
-sentence of intent. Write what a competent teammate needs, not a spec.
+Route everything else:
+
+- reusable platform/tool mechanics -> a skill,
+- dated failures and reviewer corrections -> learned guidelines,
+- author rationale and operating notes -> `metadata:` or a companion `ABOUT.md`,
+- examples -> keep only when they disambiguate a rule.
+
+Use controlled shorthand:
+
+- One invariant or branch per line.
+- Prefer imperative fragments: `Read scoreboard first.`
+- Prefer compact flow: `Draft -> approve -> post -> verify.`
+- Drop articles, pronouns, transitions, and repeated rationale.
+- Keep full grammar where negation, condition, order, or scope could blur.
+- Never pack multiple policies and exceptions into one long paragraph.
+
+Good:
+
+```markdown
+1. Read scoreboard unless the manager supplied `soft_bias`.
+2. Select one fresh, in-lane target.
+3. Draft 1-2 sentences; add one new insight.
+4. Save as `awaiting_approval`.
+5. Request approval as the only tool call.
+6. Explicit approval -> post, verify ID, mark `posted`.
+7. Otherwise -> mark `rejected` or `needs_revision`; never post.
+```
+
+Run a compression pass after every substantive edit:
+
+1. Remove duplicated rules, incident history, and derivable branches.
+2. Move reusable mechanics and learnings to their proper layers.
+3. Split dense lines; preserve unambiguous negation, conditions, order, scope.
+4. Run `agentuse doctor <file>`.
+
+Size guidance is advisory, not a parser limit:
+
+- Over 1,500 body words: compress before handoff.
+- Over 2,500: split/reference or record why the complexity must stay inline.
+- Over 800 characters on one line: usually multiple rules; split it.
+
+Over-specification smells: the same rule in several layers, history embedded in
+an invariant, rationale longer than the rule, or a decision tree derivable from
+one sentence of intent. Write what a competent teammate needs, not a manual.
 
 ## Scope Skills Deliberately
 

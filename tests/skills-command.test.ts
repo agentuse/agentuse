@@ -120,6 +120,8 @@ ${body}
     expect(output).toContain('name: runner');
     expect(output).toContain('--- creator/SKILL.md ---');
     expect(output).toContain('name: creator');
+    expect(output).toContain('Write compressed, not crammed.');
+    expect(output).toContain('Over 1,500 body words: compress before handoff.');
   });
 
   it('prints raw installed skill content with installed get', async () => {

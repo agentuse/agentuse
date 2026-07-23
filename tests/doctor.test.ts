@@ -212,6 +212,26 @@ Use the preloaded skill.`);
     expect(output).toContain('Add `auto: false`');
   });
 
+  it('reports agent-body prompt cost and warns about large dense instructions', async () => {
+    const agentPath = join(testDir, 'large.agentuse');
+    const largeDenseBody = `Do the task.\n${'Keep this instruction explicit. '.repeat(1600)}`;
+    await writeFile(agentPath, `---
+name: Large Agent
+model: demo:test
+---
+
+${largeDenseBody}`);
+
+    await runDoctor(agentPath);
+
+    const output = logs.join('\n');
+    expect(output).toContain('Prompt size');
+    expect(output).toMatch(/agent body: [\d,]+ words, ~[\d.]+k? tokens\/model request/);
+    expect(output).toMatch(/longest line: [\d,]+ characters/);
+    expect(output).toContain('Very large body: split/reference it');
+    expect(output).toContain('Dense line: split it into one invariant or branch per line');
+  });
+
   it('reports a closed skill catalog without the open-discovery hint', async () => {
     await writeSkill('preloaded', 'The only skill this agent needs.');
     await writeSkill('hidden', 'A discovered skill hidden from this agent.');

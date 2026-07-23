@@ -32,6 +32,10 @@ interface RuntimeProblem {
   suggestedAllows: string[];
 }
 
+const LARGE_AGENT_BODY_WORDS = 1500;
+const VERY_LARGE_AGENT_BODY_WORDS = 2500;
+const DENSE_INSTRUCTION_LINE_CHARS = 800;
+
 function skillLooksReferenced(agent: Awaited<ReturnType<typeof parseAgent>>, skillName: string): boolean {
   const haystack = [
     agent.name,
@@ -43,6 +47,19 @@ function skillLooksReferenced(agent: Awaited<ReturnType<typeof parseAgent>>, ski
 
 function formatEstimatedTokens(tokens: number): string {
   return tokens >= 1000 ? `~${(tokens / 1000).toFixed(1)}k` : `~${tokens}`;
+}
+
+function countWords(text: string): number {
+  const trimmed = text.trim();
+  return trimmed ? trimmed.split(/\s+/).length : 0;
+}
+
+function estimateTextTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function longestLineLength(text: string): number {
+  return text.split(/\r?\n/).reduce((longest, line) => Math.max(longest, line.length), 0);
 }
 
 function globallyAllowsCommand(agent: Awaited<ReturnType<typeof parseAgent>>, command: string): boolean {
@@ -253,6 +270,21 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
 
   const unknownExplicit = explicitSkillNames.filter((name) => !skills.has(name));
   const inspectedSkills = skillNames.filter((name) => skills.has(name)).sort();
+  const instructionWords = countWords(agent.instructions);
+  const estimatedInstructionTokens = estimateTextTokens(agent.instructions);
+  const longestInstructionLine = longestLineLength(agent.instructions);
+
+  console.log(chalk.bold('\nPrompt size'));
+  console.log(`  agent body: ${instructionWords.toLocaleString()} words, ${formatEstimatedTokens(estimatedInstructionTokens)} tokens/model request`);
+  console.log(`  longest line: ${longestInstructionLine.toLocaleString()} characters`);
+  if (instructionWords > VERY_LARGE_AGENT_BODY_WORDS) {
+    console.log(chalk.yellow('  Very large body: split/reference it, or record why the complexity must stay inline.'));
+  } else if (instructionWords > LARGE_AGENT_BODY_WORDS) {
+    console.log(chalk.yellow('  Large body: compress duplicated rules, rationale, and derivable branches.'));
+  }
+  if (longestInstructionLine > DENSE_INSTRUCTION_LINE_CHARS) {
+    console.log(chalk.yellow('  Dense line: split it into one invariant or branch per line; preserve explicit scope and conditions.'));
+  }
 
   console.log(chalk.bold('\nSkill discovery'));
   console.log(`  mode: ${agent.config.skills!.auto ? 'open' : 'closed'}`);

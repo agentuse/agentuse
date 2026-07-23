@@ -13,6 +13,14 @@ content matched to the installed version, so load that before non-trivial work:
 agentuse skills get core [--full]   # start here
 ```
 
+Before creating, editing, reviewing, or debugging any `.agentuse` file, load
+both authoring guides:
+
+```bash
+agentuse skills get core --full
+agentuse skills get creator --full
+```
+
 `core` routes to the specialized builtin skills:
 
 ```bash
