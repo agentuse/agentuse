@@ -133,9 +133,34 @@ export async function rehydrateMessages(
     const signedTurn = lastAssistantMessage(snapshotMessages);
     if (signedTurn && hasReasoningParts(signedTurn)) {
       const messages = stripToolBlocks(snapshotMessages, reappendedToolIds, { resultsOnly: true });
+      // Result-only append assumes the part's tool-CALL survives in the
+      // snapshot — but the suspended step's output is only folded into the
+      // active context when the prepareStep race wins. When it lost, the gate
+      // call is absent from the snapshot entirely; appending its result alone
+      // creates an orphan that normalizeRehydratedMessages drops, silently
+      // losing the reviewer's decision (the resumed model then re-gates the
+      // stale draft as if it never asked). Split fresh tool parts by whether
+      // their call exists in the snapshot: known calls get the result appended
+      // in place, unknown calls get the full call+result pair re-appended as a
+      // new turn AFTER the signed turn is fully resolved, so the signed content
+      // is never rewritten and no tool_use is left dangling in between.
+      const snapshotCallIds = new Set<string>();
+      for (const message of messages) {
+        const content = (message as { content?: unknown }).content;
+        if (message.role === 'assistant' && Array.isArray(content)) {
+          for (const part of content as any[]) {
+            if (part?.type === 'tool-call') snapshotCallIds.add(part.toolCallId);
+          }
+        }
+      }
+      const uncapturedToolParts: ToolPart[] = [];
       for (const part of fresh) {
         if (part.type === 'tool') {
-          appendToolResult(messages, part);
+          if (snapshotCallIds.has(part.callID)) {
+            appendToolResult(messages, part);
+          } else {
+            uncapturedToolParts.push(part);
+          }
         } else {
           appendPartMessages(messages, part);
         }
@@ -145,6 +170,13 @@ export async function rehydrateMessages(
       // for any call in the signed turn that neither the snapshot nor a fresh
       // part resolved.
       backfillMissingToolResults(messages, signedTurn);
+      for (const part of uncapturedToolParts) {
+        // Only settled parts: a pending part has no result yet and would
+        // itself dangle.
+        if (part.state.status === 'completed' || part.state.status === 'error') {
+          appendToolMessages(messages, part);
+        }
+      }
       return normalizeRehydratedMessages(messages);
     }
 

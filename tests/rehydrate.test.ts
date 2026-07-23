@@ -621,15 +621,18 @@ describe('rehydrateMessages', () => {
     }
   });
 
-  it('drops an orphaned tool-result whose tool-call was dropped from the signed turn', async () => {
-    // Reproduces the HTTP 400 that crashed a verify-gate redo resume:
+  it('re-pairs a fresh tool-result whose tool-call never made it into the signed turn', async () => {
+    // Guards the HTTP 400 that crashed a verify-gate redo resume:
     // "messages.10.content.0: unexpected `tool_use_id` found in `tool_result`
     // blocks: toolu_... Each `tool_result` block must have a corresponding
     // `tool_use` block" (session 01KY5MA4YP...). During a verify-judge redo the
     // model fired store_update siblings alongside the re-gate; they were
     // denied/journaled and their tool-RESULTS were persisted as fresh parts, but
-    // their tool_use blocks never made it into the signed turn. appendToolResult
-    // then re-emits a result with no matching call -> orphan -> provider 400.
+    // their tool_use blocks never made it into the signed turn. Result-only
+    // append re-emitted a result with no matching call -> orphan -> provider
+    // 400. Originally healed by dropping the orphan; now the full call+result
+    // pair is re-appended instead (same no-orphan invariant, and the model
+    // keeps the denial memory it needs to re-issue after approval).
     const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-rehydrate-orphan-result-'));
     process.env.XDG_DATA_HOME = projectRoot;
 
@@ -721,9 +724,147 @@ describe('rehydrateMessages', () => {
       for (const id of resultIds) {
         expect(callIds.has(id)).toBe(true);
       }
-      // The orphaned result is gone; the real gate decision survives.
-      expect(resultIds).not.toContain('call-orphan-store');
+      // The real gate decision survives, and the sibling is re-paired with its
+      // call (not an orphan, not silently forgotten).
       expect(resultIds).toContain('call-gate');
+      expect(resultIds).toContain('call-orphan-store');
+      expect(callIds.has('call-orphan-store')).toBe(true);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
+  it('re-appends the full call+result pair when the gate call never reached the snapshot', async () => {
+    // Reproduces the swallowed reviewer comment (session 01KY7SNGDAF7): the
+    // suspended step's output is only folded into the active context when the
+    // prepareStep race wins. When it lost, the snapshot ends BEFORE the gate
+    // turn — no await_human tool-call anywhere — while an earlier assistant
+    // turn still carries signed reasoning, so rehydrate takes the
+    // reasoning-safe path. Result-only append then produced an orphaned
+    // tool-result that normalizeRehydratedMessages dropped: the model resumed
+    // with no trace of the gate OR the reviewer's comment and re-gated the
+    // stale draft. The fix re-appends the full call+result pair for any fresh
+    // tool part whose call is absent from the snapshot.
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-rehydrate-uncaptured-gate-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+
+    try {
+      await initStorage(projectRoot);
+      const sessionManager = new SessionManager();
+      const sessionID = await sessionManager.createSession({
+        agent: { id: 'agents/review', name: 'review', isSubAgent: false },
+        model: 'demo:test',
+        version: 'test',
+        config: {},
+        project: { root: projectRoot, cwd: projectRoot }
+      });
+      const agentId = 'agents/review';
+      const messageID = await sessionManager.createMessage(sessionID, agentId, {
+        user: { prompt: { task: 'Reply with approval' } },
+        assistant: {
+          system: ['system'],
+          modelID: 'test',
+          providerID: 'demo',
+          mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+        }
+      });
+
+      // Snapshot as written when the prepareStep race LOST: it ends at the
+      // step before the gate (store_create + its result). The signed reasoning
+      // turn is an earlier turn; the await_human call is nowhere in history.
+      const signedAssistant = {
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: 'Drafting the reply and logging it to the store.', providerOptions: { anthropic: { signature: 'sig-def-456' } } },
+          { type: 'text', text: 'Draft ready, logging the store item.' },
+          { type: 'tool-call', toolCallId: 'call-store-create', toolName: 'store_create', input: { title: 'draft item' } },
+        ],
+      };
+      await sessionManager.writeContextSnapshot(sessionID, agentId, {
+        version: 1,
+        updatedAt: 1_000,
+        messageID,
+        messages: [
+          { role: 'system', content: 'system' },
+          { role: 'user', content: 'Reply with approval' },
+          signedAssistant,
+          { role: 'tool', content: [
+            { type: 'tool-result', toolCallId: 'call-store-create', toolName: 'store_create', output: { type: 'json', value: { success: true, id: 'item-1' } } },
+          ] },
+        ] as any,
+        usage: {
+          activeTokens: 76_000,
+          contextLimit: 922_000,
+          usagePercentage: 8.243,
+          compacted: false,
+          compactions: 0,
+          updatedAt: 1_000,
+        }
+      });
+
+      // Fresh part: the resolved gate, carrying the reviewer's comment. Its
+      // tool-call exists only here — never in the snapshot.
+      await sessionManager.addPart(sessionID, agentId, messageID, {
+        type: 'tool',
+        callID: 'call-gate-uncaptured',
+        tool: 'await_human',
+        state: {
+          status: 'completed',
+          input: { prompt: 'Approve this reply?', changes: [{ content: 'the draft text' }] },
+          output: { status: 'comment', comment: 'i am using herdr, i like the multiplexer', reviewer: { username: 'web' } },
+          time: { start: 1_002, end: 5_000 }
+        }
+      } as any);
+
+      const messages = await rehydrateMessages(sessionManager, sessionID, agentId);
+
+      // The signed turn survives byte-for-byte.
+      const signedInReplay = (messages as any[]).find((m) =>
+        m.role === 'assistant' && Array.isArray(m.content) && m.content.some((p: any) => p.type === 'reasoning')
+      );
+      expect(signedInReplay).toBeDefined();
+      expect(signedInReplay.content).toEqual(signedAssistant.content);
+
+      // The gate call was re-appended as its own turn, exactly once...
+      const gateCalls = (messages as any[]).flatMap((m) =>
+        m.role === 'assistant' && Array.isArray(m.content)
+          ? m.content.filter((p: any) => p.type === 'tool-call' && p.toolCallId === 'call-gate-uncaptured')
+          : []
+      );
+      expect(gateCalls).toHaveLength(1);
+
+      // ...and the reviewer's comment survives as its result (not dropped as an
+      // orphan).
+      const gateResults = (messages as any[]).flatMap((m) =>
+        m.role === 'tool' && Array.isArray(m.content)
+          ? m.content.filter((p: any) => p.type === 'tool-result' && p.toolCallId === 'call-gate-uncaptured')
+          : []
+      );
+      expect(gateResults).toHaveLength(1);
+      expect(gateResults[0].output).toEqual({
+        type: 'json',
+        value: { status: 'comment', comment: 'i am using herdr, i like the multiplexer', reviewer: { username: 'web' } }
+      });
+
+      // No dangling tool_use and no orphaned tool_result anywhere.
+      const callIds = new Set(
+        (messages as any[]).flatMap((m) =>
+          m.role === 'assistant' && Array.isArray(m.content)
+            ? m.content.filter((p: any) => p.type === 'tool-call').map((p: any) => p.toolCallId)
+            : []
+        )
+      );
+      const resultIds = (messages as any[]).flatMap((m) =>
+        m.role === 'tool' && Array.isArray(m.content)
+          ? m.content.filter((p: any) => p.type === 'tool-result').map((p: any) => p.toolCallId)
+          : []
+      );
+      for (const id of resultIds) expect(callIds.has(id)).toBe(true);
+      for (const id of callIds) expect(resultIds).toContain(id);
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
       delete process.env.XDG_DATA_HOME;
