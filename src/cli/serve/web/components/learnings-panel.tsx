@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { noAutofill } from '../lib/form';
 import {
   fetchSessionLearnings,
   addSessionLearning,
@@ -126,6 +127,7 @@ function LearningsSection(props: {
           class="learnings-add-input"
           placeholder="add an instruction for future runs…"
           disabled={adding}
+          {...noAutofill}
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
               event.preventDefault();

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { noAutofill } from '../lib/form';
 
 export type DecisionDialogMode = 'comment' | 'reject';
 
@@ -99,6 +100,7 @@ export function DecisionDialog(props: {
             id={`${props.mode}-comment`}
             ref={inputRef}
             placeholder={copy.placeholder}
+            {...noAutofill}
             onKeyDown={(event) => {
               if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                 event.preventDefault();

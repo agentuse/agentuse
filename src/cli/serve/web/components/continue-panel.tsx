@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { noAutofill } from '../lib/form';
 
 export function ContinuePanel(props: {
   hidden: boolean;
@@ -33,6 +34,7 @@ export function ContinuePanel(props: {
         ref={inputRef}
         placeholder="tell the agent what to do next"
         disabled={props.disabled}
+        {...noAutofill}
         onKeyDown={(event) => {
           if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
             event.preventDefault();

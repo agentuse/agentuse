@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { noAutofill } from '../lib/form';
 
 /**
  * Collects a one-off instruction to append to an agent's prompt before kicking
@@ -61,6 +62,7 @@ export function RunInstructionDialog(props: {
             ref={inputRef}
             placeholder="e.g. focus on the EU region this time and skip the email step"
             disabled={props.busy}
+            {...noAutofill}
             onKeyDown={(event) => {
               if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                 event.preventDefault();

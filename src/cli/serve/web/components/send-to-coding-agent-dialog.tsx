@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { noAutofill } from '../lib/form';
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -96,6 +97,7 @@ export function SendToCodingAgentDialog(props: {
             id="cca-detail-input"
             placeholder={props.placeholder}
             value={detail}
+            {...noAutofill}
             onInput={(e) => setDetail((e.target as HTMLTextAreaElement).value)}
           />
         </div>
