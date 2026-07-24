@@ -20,7 +20,11 @@ export function buildDebugPrompt(ctx: DebugPromptContext, detail = ''): string {
   const lines: string[] = [];
   lines.push('Help me debug, fix, or improve this AgentUse agent run.');
   lines.push('');
-  lines.push('Use the /agentuse skill for AgentUse commands and workflows.');
+  lines.push('Use the `/agentuse` skill for AgentUse commands and workflows.');
+  lines.push('Before editing any `.agentuse` file, run:');
+  lines.push('  agentuse skills get core --full');
+  lines.push('  agentuse skills get creator --full');
+  lines.push('After editing, run `agentuse doctor <agent-file>`.');
   lines.push('');
   lines.push('Session:');
   lines.push(`- Session ID: ${ctx.sessionId}`);

@@ -245,7 +245,7 @@ function LearningsGroup(props: { project: string; runPath: string }) {
  * so the prompt works even where the coding agent can't read the file directly;
  * `detail` is the operator's optional "what to implement" note.
  */
-function buildCodingAgentPrompt(opts: { project: string; path: string; source: string; detail: string }): string {
+export function buildCodingAgentPrompt(opts: { project: string; path: string; source: string; detail: string }): string {
   const task = opts.detail.trim() || 'Review this agent and help me improve it.';
   return [
     'You are working on an AgentUse agent: a `.agentuse` file (Markdown with YAML',
@@ -255,8 +255,14 @@ function buildCodingAgentPrompt(opts: { project: string; path: string; source: s
     `Project: ${opts.project}`,
     `File:    ${opts.path}`,
     '',
-    'Load the `agentuse` skill if you have it (file format + CLI); otherwise see',
-    'https://docs.agentuse.io.',
+    'Before reviewing or editing:',
+    '1. Load the `/agentuse` skill if available.',
+    '2. Run `agentuse skills get core --full`.',
+    '3. Run `agentuse skills get creator --full`.',
+    '4. Follow the creator guidance; keep the agent body compressed, not crammed.',
+    '',
+    `After editing, run \`agentuse doctor ${opts.path}\`. If AgentUse is unavailable,`,
+    'use https://docs.agentuse.io.',
     '',
     `Task: ${task}`,
     '',
