@@ -103,6 +103,21 @@ function normalizeRehydratedMessages(messages: ModelMessage[]): ModelMessage[] {
   return out;
 }
 
+/**
+ * Parts belonging to an attempt that `reopenSuspendedGate` rewound. They stay
+ * in the durable log for the human but must never re-enter the model history,
+ * or the retry replays the abandoned tail it was reopened to discard.
+ */
+async function contextParts(
+  sessionManager: SessionManager,
+  sessionID: string,
+  agentId: string,
+  messageID: string,
+): Promise<Part[]> {
+  const parts = await sessionManager.getMessageParts(sessionID, agentId, messageID);
+  return parts.filter((part) => !part.superseded);
+}
+
 export async function rehydrateMessages(
   sessionManager: SessionManager,
   sessionID: string,
@@ -115,7 +130,7 @@ export async function rehydrateMessages(
 
   const snapshot = await sessionManager.readContextSnapshot(sessionID, agentId);
   if (snapshot?.version === 1 && Array.isArray(snapshot.messages)) {
-    const parts = await sessionManager.getMessageParts(sessionID, agentId, message.id);
+    const parts = await contextParts(sessionManager, sessionID, agentId, message.id);
     const fresh = parts.filter((part) => getPartOrder(part) > snapshot.updatedAt);
 
     // A suspended gate (e.g. `await_human`) is already captured in the snapshot:
@@ -220,7 +235,7 @@ export async function rehydrateMessages(
     : message.user.prompt.task;
   messages.push({ role: 'user', content: userContent } as ModelMessage);
 
-  const parts = await sessionManager.getMessageParts(sessionID, agentId, message.id);
+  const parts = await contextParts(sessionManager, sessionID, agentId, message.id);
 
   for (const part of parts) {
     appendPartMessages(messages, part);

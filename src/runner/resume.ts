@@ -229,6 +229,16 @@ function reopenableGate(part: any): { input: unknown; start: number; resumePaylo
  * `resumePayload` + `input` (the in-memory rollback token is long gone by now),
  * clears the session error, and re-suspends. The original gate `resumeToken`
  * is preserved, so the normal approval/decision → resume flow takes over.
+ *
+ * Rewinding the gate part alone is not enough: everything the abandoned attempt
+ * recorded AFTER the gate (its tool calls and its closing report) is still in
+ * the part log, and the context snapshot is the pre-gate one, so `rehydrate`
+ * would replay that whole tail and hand the provider a history ending on the
+ * assistant's final message — an accidental prefill, which Anthropic rejects
+ * outright on models that disallow it (HTTP 400 "does not support assistant
+ * message prefill"), and which asks the model to continue its own sign-off on
+ * models that allow it. So mark the tail `superseded`: it stays visible in the
+ * session log, but the retry replays from the gate.
  */
 export async function reopenSuspendedGate(options: {
   sessionManager: SessionManager;
@@ -275,6 +285,20 @@ export async function reopenSuspendedGate(options: {
   };
 
   await sessionManager.updatePart(sessionId, found.agentId, message.id, target.part.id, { state: pendingState } as any);
+
+  // Retire the abandoned attempt's tail. `parts` is ordered (getPartOrder, then
+  // ULID), so everything after the gate's index is what the resumed run
+  // produced. Only text/tool parts feed the model history (rehydrate ignores
+  // the rest), so only those need the flag.
+  const gateIndex = parts.findIndex((part) => part.id === target.part.id);
+  for (const part of parts.slice(gateIndex + 1)) {
+    if (part.type !== 'text' && part.type !== 'tool') continue;
+    if (part.superseded) continue;
+    // Deliberately not best-effort: a half-rewound tail is exactly the broken
+    // history this function exists to prevent, so surface the failure.
+    await sessionManager.updatePart(sessionId, found.agentId, message.id, part.id, { superseded: true });
+  }
+
   // setSessionSuspended only flips status; clear the lingering error too so the
   // page renders a clean suspended approval rather than an errored one. The
   // `undefined` is dropped on JSON write, removing the key. Cast around

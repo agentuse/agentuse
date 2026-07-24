@@ -16,7 +16,7 @@ import { EffectWAL } from './effect-wal';
 import { buildSystemMessages, buildLearningPrompt } from './system-messages';
 import { createSessionAndMessage } from './session-helper';
 import { bindToolsToSnapshot, createToolsSnapshot } from './tool-snapshot';
-import { rehydrateMessages } from '../session';
+import { rehydrateMessages, ensureTrailingUserTurn } from '../session';
 import type { AssistantTokens } from '../session/usage';
 import { appendApprovalInstructions } from './approval';
 import {
@@ -147,6 +147,16 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
         { role: 'user', content: userPrompt.trim() } as any
       ];
       userMessage = userPrompt.trim();
+    }
+    // Last line of defence before the resumed history reaches a provider: a
+    // trailing assistant turn is an accidental prefill and is a hard 400 on
+    // Anthropic reasoning models. Whatever produced it (a rewound attempt whose
+    // tail was not fully retired, a hand-edited session), a resume that can run
+    // beats a resume that cannot.
+    const guarded = ensureTrailingUserTurn(resumedMessages);
+    if (guarded !== resumedMessages) {
+      logger.debug('Resumed history ended on an assistant turn; appended a continuation user turn');
+      resumedMessages = guarded;
     }
   } else {
     // Build system messages (Anthropic prompt, autonomous prompt, manager prompt if applicable)

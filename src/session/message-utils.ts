@@ -72,3 +72,28 @@ export function lastAssistantMessage(messages: ModelMessage[]): ModelMessage | u
   }
   return undefined;
 }
+
+/** Injected when a resumed history would otherwise end on an assistant turn. */
+export const RESUME_CONTINUATION_PROMPT =
+  'Resuming the run. Continue from the state above and finish the task.';
+
+/**
+ * Guarantee a resumed history ends on a user turn.
+ *
+ * A trailing assistant message is an assistant-prefill request: Anthropic
+ * reasoning models reject it outright ("This model does not support assistant
+ * message prefill. The conversation must end with a user message.", HTTP 400),
+ * and models that do accept it silently ask the model to continue its own last
+ * sentence instead of taking a new turn. Neither is ever what a resume wants.
+ * Appending a neutral continuation turn is the only repair that keeps the
+ * history intact — dropping the trailing message would lose the model's own
+ * words and can strand a tool-call.
+ *
+ * Returns the array unchanged when it already ends on `user` or `tool` (a
+ * tool-result IS the user turn as far as the provider is concerned).
+ */
+export function ensureTrailingUserTurn(messages: ModelMessage[]): ModelMessage[] {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== 'assistant') return messages;
+  return [...messages, { role: 'user', content: RESUME_CONTINUATION_PROMPT } as ModelMessage];
+}

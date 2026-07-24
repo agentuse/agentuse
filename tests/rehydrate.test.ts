@@ -2,8 +2,9 @@ import { describe, expect, it } from 'bun:test';
 import { mkdtemp, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import type { ModelMessage } from 'ai';
 import { initStorage } from '../src/storage';
-import { SessionManager, rehydrateMessages } from '../src/session';
+import { SessionManager, rehydrateMessages, ensureTrailingUserTurn, RESUME_CONTINUATION_PROMPT } from '../src/session';
 
 describe('rehydrateMessages', () => {
   it('rebuilds persisted text and tool parts as model messages', async () => {
@@ -893,5 +894,31 @@ describe('rehydrateMessages', () => {
       await rm(projectRoot, { recursive: true, force: true });
       delete process.env.XDG_DATA_HOME;
     }
+  });
+});
+
+describe('ensureTrailingUserTurn', () => {
+  it('appends a continuation turn when the history ends on an assistant message', () => {
+    const messages = [
+      { role: 'user', content: 'do the thing' },
+      { role: 'assistant', content: 'Done, here is the report.' }
+    ] as ModelMessage[];
+
+    const guarded = ensureTrailingUserTurn(messages);
+
+    expect(guarded).not.toBe(messages);
+    expect(guarded).toHaveLength(3);
+    expect(guarded[2]).toEqual({ role: 'user', content: RESUME_CONTINUATION_PROMPT });
+  });
+
+  it('leaves a history ending on a user or tool turn untouched', () => {
+    const endsUser = [{ role: 'user', content: 'go' }] as ModelMessage[];
+    const endsTool = [
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 't', input: {} }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 't', output: { type: 'json', value: 1 } }] }
+    ] as unknown as ModelMessage[];
+
+    expect(ensureTrailingUserTurn(endsUser)).toBe(endsUser);
+    expect(ensureTrailingUserTurn(endsTool)).toBe(endsTool);
   });
 });

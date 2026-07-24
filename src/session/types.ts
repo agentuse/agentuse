@@ -240,6 +240,13 @@ export interface PartBase {
   id: string;        // Part ID (ULID)
   sessionID: string; // Session this part belongs to
   messageID: string; // Message this part belongs to
+  /**
+   * This part belongs to an attempt that was rewound (see reopenSuspendedGate):
+   * it stays in the durable log so the human can read what the failed attempt
+   * did, but `rehydrateMessages` excludes it from the model-facing history so
+   * the retry replays from the gate rather than from the abandoned tail.
+   */
+  superseded?: boolean;
 }
 
 // Tool State - discriminated union for type safety
