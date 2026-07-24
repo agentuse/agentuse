@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useRunAgent } from '../hooks/use-run-agent';
+import { RunInstructionDialog } from './run-instruction-dialog';
 
 /**
  * ⋯ overflow menu in the session bar. Holds actions about the agent behind the
- * session rather than the session itself — currently "Run new session", which
- * kicks off a fresh detached run of the same agent and navigates to its live
- * view. Mirrors the agents-page menu pattern: a position:fixed popover that
- * closes on outside click, Escape, scroll, or resize.
+ * session rather than the session itself — "Run new session" (a fresh detached
+ * run of the same agent, navigating to its live view) and the same run with a
+ * one-off instruction appended. Mirrors the agents-page menu pattern: a
+ * position:fixed popover that closes on outside click, Escape, scroll, or resize.
  */
 export function SessionMenu(props: {
   agentName: string;
@@ -16,6 +17,7 @@ export function SessionMenu(props: {
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const [runOpen, setRunOpen] = useState(false);
   const { run, busy, error } = useRunAgent(props.agentFilePath, props.projectId);
 
   useEffect(() => {
@@ -87,9 +89,30 @@ export function SessionMenu(props: {
             )}
             <span>{busy ? 'Starting…' : 'Run new session'}</span>
           </button>
-          {error && <p class="menu-error" role="alert">{error}</p>}
+          <button
+            type="button"
+            class="menu-item"
+            role="menuitem"
+            disabled={busy}
+            title="Start a fresh run with a one-off instruction appended to the agent's prompt"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPos(null); setRunOpen(true); }}
+          >
+            <svg class="menu-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 4.5 6.5 8 3 11.5" /><path d="M8.5 11.5H13" />
+            </svg>
+            <span>Run new session with custom instruction</span>
+          </button>
+          {error && !runOpen && <p class="menu-error" role="alert">{error}</p>}
         </div>
       )}
+      <RunInstructionDialog
+        open={runOpen}
+        agentName={props.agentName}
+        busy={busy}
+        error={error}
+        onSubmit={(instruction) => { void run(instruction); }}
+        onClose={() => { if (!busy) setRunOpen(false); }}
+      />
     </div>
   );
 }

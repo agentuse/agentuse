@@ -2156,7 +2156,7 @@ dialog#decision-dialog {
    is lower (color-mix-era Safari). */
 dialog#decision-dialog::backdrop,
 .push-bell-dialog::backdrop,
-.page-agents .run-dialog::backdrop,
+.run-dialog::backdrop,
 .cca-dialog::backdrop,
 .palette-backdrop {
   background: rgba(0,0,0,0.55);
@@ -2165,7 +2165,7 @@ dialog#decision-dialog::backdrop,
 }
 :root[data-theme="light"] dialog#decision-dialog::backdrop,
 :root[data-theme="light"] .push-bell-dialog::backdrop,
-:root[data-theme="light"] .page-agents .run-dialog::backdrop,
+:root[data-theme="light"] .run-dialog::backdrop,
 :root[data-theme="light"] .cca-dialog::backdrop,
 :root[data-theme="light"] .palette-backdrop {
   background: rgba(0,0,0,0.30);
@@ -3933,7 +3933,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .menu-item .menu-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--cyan); }
 
 /* --- Run with Custom Instruction dialog --- */
-.page-agents .run-dialog {
+/* Unscoped: opened from the agents list/menu and from the session view's ⋯
+   menu (.page-approval-detail), so the shell can't hang off .page-agents. The
+   foot-button block below stays scoped — the session page already styles bare
+   dialog buttons via its broad `.page-approval-detail button` rules. */
+.run-dialog {
   width: min(520px, calc(100vw - 32px));
   max-width: 100%;
   padding: 0;
@@ -3943,10 +3947,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   color: var(--fg);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
 }
-.page-agents .run-dialog form { margin: 0; padding: 0; }
-.page-agents .run-dialog .dialog-description strong { color: var(--fg); font-weight: 600; }
-.page-agents .run-dialog .dialog-error { margin: 0; padding: 0 18px 4px; color: var(--red); font-size: 12.5px; }
-.page-agents .run-dialog .dialog-foot .actions { display: inline-flex; gap: 8px; }
+.run-dialog form { margin: 0; padding: 0; }
+.run-dialog .dialog-description strong { color: var(--fg); font-weight: 600; }
+.run-dialog .dialog-error { margin: 0; padding: 0 18px 4px; color: var(--red); font-size: 12.5px; }
+.run-dialog .dialog-foot .actions { display: inline-flex; gap: 8px; }
 .page-agents .run-dialog .dialog-foot button {
   font-family: var(--mono); font-size: 13px; font-weight: 500; letter-spacing: 0.02em;
   border: 1px solid var(--line-strong); background: transparent; color: var(--fg);
