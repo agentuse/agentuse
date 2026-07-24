@@ -37,6 +37,18 @@ function isToolResultOutput(value: unknown): boolean {
     && 'value' in (value as object);
 }
 
+function assistantTurnTexts(message: ModelMessage): Set<string> {
+  if (message.role !== 'assistant') return new Set();
+  const content = (message as { content?: unknown }).content;
+  const normalize = (text: string) => text.replace(/\s+/g, ' ').trim();
+  if (typeof content === 'string') return new Set([normalize(content)]);
+  if (!Array.isArray(content)) return new Set();
+  return new Set(content
+    .filter((part: any) => part?.type === 'text' && typeof part.text === 'string')
+    .map((part: any) => normalize(part.text))
+    .filter(Boolean));
+}
+
 // Heal context snapshots written before the prepareStep/stream-consumer race was
 // fixed (see runner/execution.ts). Those snapshots can carry a tool-result whose
 // `output` is a bare string instead of the AI SDK v5 `{ type, value }`
@@ -133,6 +145,7 @@ export async function rehydrateMessages(
     const signedTurn = lastAssistantMessage(snapshotMessages);
     if (signedTurn && hasReasoningParts(signedTurn)) {
       const messages = stripToolBlocks(snapshotMessages, reappendedToolIds, { resultsOnly: true });
+      const signedTexts = assistantTurnTexts(signedTurn);
       // Result-only append assumes the part's tool-CALL survives in the
       // snapshot — but the suspended step's output is only folded into the
       // active context when the prepareStep race wins. When it lost, the gate
@@ -161,6 +174,16 @@ export async function rehydrateMessages(
           } else {
             uncapturedToolParts.push(part);
           }
+        } else if (
+          part.type === 'text'
+          && part.role !== 'user'
+          && signedTexts.has(part.text.replace(/\s+/g, ' ').trim())
+        ) {
+          // The durable stream consumer persists free assistant text from the
+          // gate turn as TextParts. Signed snapshots already contain those
+          // bytes in the same assistant turn; appending the TextPart again
+          // duplicates the model's statement after the approval exchange.
+          continue;
         } else {
           appendPartMessages(messages, part);
         }

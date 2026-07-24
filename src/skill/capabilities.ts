@@ -1,6 +1,6 @@
 import type { ToolsConfig } from '../tools/types.js';
 import type { SkillInfo } from './types.js';
-import { isSkillTrusted, type NormalizedSkillsConfig } from './config.js';
+import { isSkillTrusted, trustsAllSkills, type NormalizedSkillsConfig } from './config.js';
 import { extractCommandFromAllowedTool } from './command-extract.js';
 
 /**
@@ -14,6 +14,13 @@ export function trustedSkillGrants(
   const patterns = new Set<string>();
   for (const [name, info] of skills) {
     if (!isSkillTrusted(skillsConfig, name)) continue;
+    // A name-only grant cannot distinguish a trusted global skill from a
+    // project-local replacement with the same frontmatter name. Refuse the
+    // ambiguous per-skill grant. `skills: trusted` remains the explicit,
+    // deliberately broad opt-in that trusts every discovered source.
+    if (!trustsAllSkills(skillsConfig) && (info.shadowedLocations?.length ?? 0) > 0) {
+      continue;
+    }
     for (const tool of info.allowedTools ?? []) {
       const head = extractCommandFromAllowedTool(tool);
       if (head) patterns.add(`${head} *`);

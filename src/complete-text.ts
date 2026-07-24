@@ -1,6 +1,7 @@
 import { streamText } from 'ai';
 import { createModel } from './models';
 import { CodexAuth } from './auth/codex';
+import { resolveModelProvider } from './utils/model-utils';
 
 export interface CompleteTextOptions {
   /** System prompt (v7 `instructions`). On the Codex backend this is also sent as the required provider-level `instructions`. */
@@ -32,10 +33,16 @@ export interface CompleteTextOptions {
  * a low temperature isn't worth the cross-provider breakage.
  */
 export async function completeText(modelString: string, options: CompleteTextOptions): Promise<string> {
+  // Stop/timeout share this signal. Check around every setup await as well as
+  // passing it to the provider so cancellation cannot arrive during model/auth
+  // preparation and still start a new helper request afterward.
+  options.abortSignal?.throwIfAborted();
   const model = await createModel(modelString);
+  options.abortSignal?.throwIfAborted();
   // Mirror createModel's decision: a plain `openai:` model with Codex OAuth
   // available resolves to the Responses API against the ChatGPT backend.
-  const usesCodexBackend = modelString.split(':')[0] === 'openai' && Boolean(await CodexAuth.access());
+  const usesCodexBackend = resolveModelProvider(modelString) === 'openai' && Boolean(await CodexAuth.access());
+  options.abortSignal?.throwIfAborted();
 
   const result = streamText({
     model,
@@ -59,5 +66,8 @@ export async function completeText(modelString: string, options: CompleteTextOpt
       text += (chunk as { text?: string }).text ?? '';
     }
   }
+  // Some provider streams end quietly on abort. Never turn their partial text
+  // into a successful compaction or verification result.
+  options.abortSignal?.throwIfAborted();
   return text;
 }

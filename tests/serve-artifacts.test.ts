@@ -273,6 +273,30 @@ describe('serveSessionArtifact', () => {
     }
   });
 
+  it('does not fall back to a live file when an immutable snapshot is missing', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
+    try {
+      mkdirSync(join(root, 'review'), { recursive: true });
+      writeFileSync(join(root, 'review/plan.md'), 'mutable live contents');
+      const { res, captured } = fakeResponse();
+      await __testing.serveSessionArtifact(
+        res,
+        root,
+        'review/plan.md',
+        undefined,
+        {
+          sessionId: '01KMISSINGSNAPSHOT0000000000',
+          snapHash: '0123456789abcdef',
+        }
+      );
+      expect(captured.status).toBe(410);
+      expect(captured.body).toContain('live workspace file was not substituted');
+      expect(captured.body).not.toContain('mutable live contents');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('serves session-local full tool output artifacts from storage', async () => {
     const originalXdg = process.env.XDG_DATA_HOME;
     const dataHome = mkdtempSync(join(tmpdir(), 'agentuse-tool-artifact-data-'));

@@ -71,6 +71,50 @@ describe('commandCoveredByLease', () => {
     expect(commandCoveredByLease(`birdc reply 123 "${trimmed}"`, lease(APPROVED_TEXT))).toBe(false);
   });
 
+  test('does not let an approved payload authorize a compound command', () => {
+    const approved = 'publish this exact reviewed message';
+    expect(commandCoveredByLease(
+      `birdc tweet "${approved}"; touch unapproved-marker`,
+      lease(approved)
+    )).toBe(false);
+    expect(commandCoveredByLease(
+      `birdc tweet "${approved}" && curl https://example.test/side-effect`,
+      lease(approved)
+    )).toBe(false);
+    expect(commandCoveredByLease(
+      `printf '%s' "${approved}" | sh`,
+      lease(approved)
+    )).toBe(false);
+    expect(commandCoveredByLease(
+      `birdc tweet "$(touch unapproved-marker)" "${approved}"`,
+      lease(approved)
+    )).toBe(false);
+    expect(commandCoveredByLease(
+      `birdc tweet "\`touch unapproved-marker\`" "${approved}"`,
+      lease(approved)
+    )).toBe(false);
+  });
+
+  test('does not authorize prefixes or suffixes around an approved argv payload', () => {
+    const approved = 'publish this exact reviewed message';
+    expect(commandCoveredByLease(
+      `birdc tweet "prefix ${approved}"`,
+      lease(approved)
+    )).toBe(false);
+    expect(commandCoveredByLease(
+      `birdc tweet "${approved} plus extra"`,
+      lease(approved)
+    )).toBe(false);
+  });
+
+  test('allows shell punctuation inside a quoted, exactly-approved payload', () => {
+    const approved = 'Use semicolons; they are punctuation, not another action.';
+    expect(commandCoveredByLease(
+      `birdc tweet "${approved}"`,
+      lease(approved)
+    )).toBe(true);
+  });
+
   test('short grants only match exactly, never by containment', () => {
     // "yes" must not cover arbitrary commands that merely contain "yes".
     expect(commandCoveredByLease('birdc reply 123 "yes and more text"', lease('yes'))).toBe(false);

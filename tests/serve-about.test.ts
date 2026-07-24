@@ -72,6 +72,22 @@ describe('readAbout', () => {
     expect(await readAbout(dir)).toBeNull();
   });
 
+  it('rejects a symlinked ABOUT.md instead of disclosing its target', async () => {
+    const secret = path.join(dir, 'secret.env');
+    const about = path.join(dir, 'ABOUT.md');
+    fs.writeFileSync(secret, 'TOP_SECRET=do-not-render');
+    fs.symlinkSync(secret, about);
+    expect(await readAbout(dir)).toBeNull();
+    fs.rmSync(about);
+  });
+
+  it('rejects oversized files before they can bloat an API response', async () => {
+    const about = path.join(dir, 'ABOUT.md');
+    fs.writeFileSync(about, 'x'.repeat(64 * 1024 + 1));
+    expect(await readAbout(dir)).toBeNull();
+    fs.rmSync(about);
+  });
+
   it('reads and caches by mtime, picking up edits', async () => {
     const file = path.join(dir, 'ABOUT.md');
     fs.writeFileSync(file, '---\nname: First\n---\n');

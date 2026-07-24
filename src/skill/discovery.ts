@@ -57,7 +57,15 @@ async function discoverSkillsFromDirectories(directories: string[]): Promise<Map
 
       // Warn on duplicate skill names
       if (skills.has(skill.name)) {
-        logger.warn(`Duplicate skill name "${skill.name}". Using first found: ${skills.get(skill.name)!.location}`);
+        const selected = skills.get(skill.name)!;
+        selected.shadowedLocations = [
+          ...(selected.shadowedLocations ?? []),
+          skill.location,
+        ];
+        logger.warn(
+          `Duplicate skill name "${skill.name}". Using first found: ${selected.location}. ` +
+          `Per-skill trust grants are disabled for this ambiguous name.`
+        );
         continue;
       }
 

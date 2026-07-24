@@ -49,7 +49,10 @@ async function plantStuckRunningSession(dataDir: string) {
     model: 'demo:test', version: 'test', config: {},
     project: { root: dataDir, cwd: dataDir },
   });
-  // createSession leaves status 'running' — the exact zombie a killed worker leaves.
+  // createSession correctly stamps this live test process as owner. Replace it
+  // with an impossible PID to model the killed worker the fixture claims to
+  // create, otherwise reconciliation must (correctly) leave it alone.
+  await sm.updateSession(sessionID, 'agents/review', { owner: { pid: 0x7fffffff } });
   return sessionID;
 }
 

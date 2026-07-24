@@ -20,7 +20,8 @@ Be concise but comprehensive. Output a single summary that captures the essence 
  */
 export async function compactMessages(
   messages: ModelMessage[],
-  modelString: string
+  modelString: string,
+  abortSignal?: AbortSignal
 ): Promise<ModelMessage> {
   try {
     // Prepare messages for summarization
@@ -42,6 +43,7 @@ export async function compactMessages(
       prompt: `Please summarize this agent context:\n\n${contextToSummarize}`,
       maxOutputTokens: MAX_SUMMARY_TOKENS,
       maxRetries: 2,
+      ...(abortSignal && { abortSignal }),
     });
 
     // Return as a system message with the summary

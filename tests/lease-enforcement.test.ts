@@ -222,10 +222,44 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     expect(fs.existsSync(marker)).toBe(true);
     expect(calls()).toBe(2);
     expect(chunks.some((c) => c.type === 'suspended')).toBe(false);
+    // The grant belongs to this resumed segment only. A later continuation
+    // must start without authority from the earlier human decision.
+    expect(fs.existsSync(path.join(sessionDir, LEASE_FILENAME))).toBe(false);
 
     const records = readWAL();
     expect(records.some((r) => r.event === 'lease-approved' && r.callId === 'bash-1')).toBe(true);
     expect(records.some((r) => r.event === 'bash-spawn')).toBe(true);
+  });
+
+  test('abandoning a segment consumes its lease before a later continuation', async () => {
+    const store = new LeaseStore(sessionDir);
+    store.grant({
+      version: 1,
+      grantedAt: Date.now(),
+      entries: [{ content: 'touch previously-approved' }],
+    });
+    const { model } = makeModel([
+      turn([
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'partial output' },
+        { type: 'text-end', id: 't1' },
+      ], 'stop'),
+    ]);
+    currentModel = model;
+
+    const generator = executeAgentCore(agent, makeTools() as any, {
+      userMessage: 'go',
+      systemMessages: [],
+      maxSteps: 5,
+      sessionManager,
+      sessionID,
+      agentId,
+      effectWal: wal,
+    });
+    expect((await generator.next()).done).toBe(false);
+    await generator.return(undefined);
+
+    expect(fs.existsSync(path.join(sessionDir, LEASE_FILENAME))).toBe(false);
   });
 
   test('uncovered effectful command is denied and the model is told to re-gate', async () => {

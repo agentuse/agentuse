@@ -302,10 +302,31 @@ Commands not matching these patterns will be rejected.`;
       const abortSignal = callOptions?.abortSignal;
       const callId = callOptions?.toolCallId;
       const audit = resolverContext.effectAudit;
+      let preSpawnAborted = abortSignal?.aborted ?? false;
+      const onPreSpawnAbort = () => {
+        preSpawnAborted = true;
+      };
+      abortSignal?.addEventListener('abort', onPreSpawnAbort, { once: true });
+      const stopWatchingPreSpawn = () => {
+        abortSignal?.removeEventListener('abort', onPreSpawnAbort);
+      };
+      const refusedAborted = (): ToolOutput => {
+        audit?.append({
+          event: 'bash-refused-aborted',
+          ...(callId && { callId }),
+          command,
+        });
+        const error: ToolErrorOutput = {
+          success: false,
+          error: 'Command not started: execution aborted (run suspended or cancelled).',
+        };
+        return { output: JSON.stringify(error), metadata: { aborted: true } };
+      };
 
       // Validate command (async with tree-sitter)
       const validation = await validator.validate(command);
       if (!validation.allowed) {
+        stopWatchingPreSpawn();
         const message = [
           'Command blocked by agent configuration.',
           `Reason: ${validation.error || 'Command validation failed'}`,
@@ -329,6 +350,7 @@ Commands not matching these patterns will be rejected.`;
 
         // Security: ensure workdir is within allowed directories
         if (!isPathWithinAllowed(resolvedWorkdir, projectRoot, allowedPaths, resolverContext)) {
+          stopWatchingPreSpawn();
           const error: ToolErrorOutput = {
             success: false,
             error: `Working directory outside allowed paths. Add "${workdir}" to tools.bash.allowedPaths`,
@@ -345,6 +367,7 @@ Commands not matching these patterns will be rejected.`;
       } else {
         const resolved = resolveCallTimeoutMs(timeout);
         if (typeof resolved !== 'number') {
+          stopWatchingPreSpawn();
           const error: ToolErrorOutput = { success: false, error: resolved.error };
           return { output: JSON.stringify(error) };
         }
@@ -354,17 +377,9 @@ Commands not matching these patterns will be rejected.`;
       // Refuse to spawn at all when the run is already aborted (e.g. an approval
       // suspension began before this sibling call was dispatched). Spawning here
       // would execute an effect no human ever sees.
-      if (abortSignal?.aborted) {
-        audit?.append({
-          event: 'bash-refused-aborted',
-          ...(callId && { callId }),
-          command,
-        });
-        const error: ToolErrorOutput = {
-          success: false,
-          error: 'Command not started: execution aborted (run suspended or cancelled).',
-        };
-        return { output: JSON.stringify(error), metadata: { aborted: true } };
+      if (preSpawnAborted || abortSignal?.aborted) {
+        stopWatchingPreSpawn();
+        return refusedAborted();
       }
 
       let artifactStream: ToolOutputArtifactStream | undefined;
@@ -407,6 +422,15 @@ Commands not matching these patterns will be rejected.`;
         }
       };
 
+      // Artifact setup is asynchronous. Cancellation during that await must
+      // still prevent the process from ever crossing the spawn boundary.
+      if (preSpawnAborted || abortSignal?.aborted) {
+        stopWatchingPreSpawn();
+        await finishArtifact(false);
+        return refusedAborted();
+      }
+      stopWatchingPreSpawn();
+
       return new Promise((resolve) => {
         const stdoutAcc = createBoundedAccumulator(maxOutputBytes, headRatio);
         const stderrAcc = createBoundedAccumulator(maxOutputBytes, headRatio);
@@ -415,6 +439,23 @@ Commands not matching these patterns will be rejected.`;
         const spawnedAt = Date.now();
 
         const payloadInvocation = getBuiltinPayloadCommandInvocation(command, config.commands);
+
+        let activeChild: ReturnType<typeof spawn> | undefined;
+        // Install the process-phase listener before spawning. The synchronous
+        // aborted recheck closes the handoff from the pre-spawn listener.
+        const onAbort = () => {
+          aborted = true;
+          if (activeChild?.pid) {
+            void killProcessTree(activeChild.pid);
+          }
+        };
+        abortSignal?.addEventListener('abort', onAbort, { once: true });
+        if (abortSignal?.aborted) {
+          onAbort();
+          abortSignal.removeEventListener('abort', onAbort);
+          void finishArtifact(false).finally(() => resolve(refusedAborted()));
+          return;
+        }
 
         // Spawn built-in payload commands without a shell so embedded languages
         // like JavaScript are passed as data, not re-parsed as shell syntax.
@@ -431,6 +472,10 @@ Commands not matching these patterns will be rejected.`;
             detached: true, // Create new process group for cleanup
             env: createSafeEnvironment(cwd),
           });
+        activeChild = child;
+        // Abort may have won between the last synchronous check and listener
+        // delivery; kill immediately if so.
+        if (abortSignal?.aborted) onAbort();
 
         // Audit at the OS boundary: the record exists the moment the process
         // does, independent of whether the stream consumer ever sees this call.
@@ -449,17 +494,6 @@ Commands not matching these patterns will be rejected.`;
             await killProcessTree(child.pid);
           }
         }, timeoutMs);
-
-        // Abort (approval suspension or run cancellation) kills the whole
-        // process tree. Without this, a `birdc reply` sibling of a pending gate
-        // keeps running detached and posts before any human decision.
-        const onAbort = () => {
-          aborted = true;
-          if (child.pid) {
-            void killProcessTree(child.pid);
-          }
-        };
-        abortSignal?.addEventListener('abort', onAbort, { once: true });
 
         // Decode as UTF-8 across chunk boundaries. A bare data.toString() per
         // ~64KB chunk corrupts any multi-byte character (emoji/CJK/accents)

@@ -9,6 +9,17 @@ import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
 import { BUILTIN_PROVIDERS } from '../providers/registry-sources';
 
 /**
+ * Resolve a model string to its canonical provider.
+ *
+ * Bare model IDs are OpenAI IDs. This mirrors createModel() and keeps every
+ * caller from independently interpreting `gpt-*` as a custom provider.
+ */
+export function resolveModelProvider(modelString: string): string {
+  const firstColon = modelString.indexOf(':');
+  return firstColon === -1 ? 'openai' : modelString.slice(0, firstColon);
+}
+
+/**
  * Collapse the optional `:env` auth suffix so a model string can be looked up
  * in the registry. `provider:model:env` (e.g. anthropic:claude-fable-5:dev)
  * must resolve to the `provider:model` registry key; without this the suffix
@@ -19,7 +30,7 @@ import { BUILTIN_PROVIDERS } from '../providers/registry-sources';
  */
 export function toRegistryKey(modelString: string): string {
   const firstColon = modelString.indexOf(':');
-  if (firstColon === -1) return modelString;
+  if (firstColon === -1) return `openai:${modelString}`;
   const provider = modelString.slice(0, firstColon);
   if (provider === 'bedrock' || !BUILTIN_PROVIDERS.includes(provider)) return modelString;
   const rest = modelString.slice(firstColon + 1);

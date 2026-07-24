@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
-import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, reopenSuspendedGate, reconcileOrphanedSessions, describeErrorPart, describeLogPart, type PreparedAgentExecution } from './runner';
+import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, reopenSuspendedGate, reconcileOrphanedSessions, describeErrorPart, describeLogPart, classifyRunResult, executionOutcomeFields, runResultJson, workerRunResponse, type PreparedAgentExecution } from './runner';
 import { describeLearningOutcome } from './learning';
 import { isApprovalEnabled } from './runner/approval';
 import { extractToolIntent, withoutToolIntent } from './runner/tool-intent';
@@ -20,6 +20,7 @@ import { createAgentsCommand } from './cli/agents';
 import { createAddCommand } from './cli/add';
 import { createDoctorCommand } from './cli/doctor';
 import { BUILTIN_PROVIDERS } from './providers/registry-sources';
+import { resolveModelProvider } from './utils/model-utils';
 import { logger, LogLevel } from './utils/logger';
 import { safeHttpUrl } from './utils/url';
 import { basename, resolve, dirname, join } from 'path';
@@ -466,13 +467,9 @@ program
 
       // Override model if specified via CLI
       if (options.model) {
-        // Validate model format (provider:model or provider:model:env)
-        const modelParts = options.model.split(':');
-        if (modelParts.length < 2) {
-          throw new Error(`Invalid model format '${options.model}'. Expected format: provider:model or provider:model:env (e.g., openai:gpt-5, anthropic:claude-sonnet-4-0:dev)`);
-        }
-
-        const [provider] = modelParts;
+        // Bare IDs are canonical OpenAI model IDs; qualified IDs may select a
+        // built-in or configured custom provider.
+        const provider = resolveModelProvider(options.model);
         if (!BUILTIN_PROVIDERS.includes(provider)) {
           // Check if it's a custom provider
           const customProvider = await AuthStorage.getCustomProvider(provider);
@@ -772,13 +769,16 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         process.off('SIGTERM', sigtermHandler);
       }
 
-      // Capture telemetry for successful execution
+      const disposition = classifyRunResult(result);
+
+      // Product success, not merely a clean process return. An agent-declared
+      // incomplete run is a failed outcome everywhere automation can observe.
       telemetry.captureExecution({
         ...parseModel(agent.config.model),
         durationMs: Date.now() - startTime,
         inputTokens: result.usage?.inputTokens ?? 0,
         outputTokens: result.usage?.outputTokens ?? 0,
-        success: true,
+        ...executionOutcomeFields(result),
         toolCalls: aggregateToolCalls(result.toolCallTraces),
         steps: countSteps(result.toolCallTraces),
 
@@ -815,21 +815,10 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       // Output JSON result if --json mode
       if (jsonMode) {
         const duration = Date.now() - startTime;
-        const jsonOutput = {
-          success: true,
-          result: {
-            text: result.text || '',
-            ...(result.finishReason && { finishReason: result.finishReason }),
-            duration,
-            ...(result.usage && { tokens: { input: result.usage.inputTokens || 0, output: result.usage.outputTokens || 0 } }),
-            toolCalls: result.toolCallCount || 0,
-          },
-        };
-        console.log(JSON.stringify(jsonOutput));
+        console.log(JSON.stringify(runResultJson(result, duration)));
       }
 
-      // Exit successfully after agent completes
-      process.exit(0);
+      process.exit(disposition.exitCode);
     } catch (error) {
       // Restore original working directory if changed
       if (options.directory && originalCwd && originalCwd !== process.cwd()) {
@@ -1898,6 +1887,12 @@ async function runInternalWorker() {
     if (childResult.status === 'suspended') {
       return { handled: true, response: cascadeReparkedResponse(reqId, rootSessionId) };
     }
+    if (childResult.incomplete) {
+      return {
+        handled: true,
+        response: workerRunResponse(reqId, childResult, Date.now() - startTime, rootSessionId),
+      };
+    }
 
     // 3. Walk up: complete each ancestor's bookmark with the child's output, resume it,
     //    stopping if it re-suspends (its gate re-surfaces at the root next poll).
@@ -1923,6 +1918,12 @@ async function runInternalWorker() {
       if (parentResult.status === 'suspended') {
         return { handled: true, response: cascadeReparkedResponse(reqId, rootSessionId) };
       }
+      if (parentResult.incomplete) {
+        return {
+          handled: true,
+          response: workerRunResponse(reqId, parentResult, Date.now() - startTime, rootSessionId),
+        };
+      }
       childResult = parentResult;
       childSessionId = parent.sessionId;
       childAgentName = parent.agentName;
@@ -1931,18 +1932,7 @@ async function runInternalWorker() {
     const duration = Date.now() - startTime;
     return {
       handled: true,
-      response: {
-        id: reqId,
-        success: true as const,
-        result: {
-          text: childResult.text || '',
-          ...(childResult.finishReason && { finishReason: childResult.finishReason }),
-          duration,
-          ...(childResult.usage && { tokens: { input: childResult.usage.inputTokens || 0, output: childResult.usage.outputTokens || 0 } }),
-          toolCalls: childResult.toolCallCount || 0,
-          sessionId: rootSessionId,
-        },
-      },
+      response: workerRunResponse(reqId, childResult, duration, rootSessionId),
     };
   }
 
@@ -3220,24 +3210,7 @@ async function runInternalWorker() {
         // Learning capture (execution + any reviewer comments) runs once inside
         // runAgent's post-run lifecycle, so nothing extra is needed here.
 
-        return {
-          id: req.id,
-          success: true,
-          result: {
-            text: result.text || '',
-            ...(result.finishReason && { finishReason: result.finishReason }),
-            duration,
-            ...(result.usage && {
-              tokens: {
-                input: result.usage.inputTokens || 0,
-                output: result.usage.outputTokens || 0,
-              },
-            }),
-            toolCalls: result.toolCallCount || 0,
-            ...(result.sessionId && { sessionId: result.sessionId }),
-            ...(result.approvalUrl && { approvalUrl: result.approvalUrl }),
-          },
-        };
+        return workerRunResponse(req.id, result, duration);
       } catch (err) {
         clearTimeout(timeoutId);
         // Once the agent run has started, keep the reviewer's decision durable.

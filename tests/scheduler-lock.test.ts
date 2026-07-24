@@ -10,6 +10,10 @@ import {
 } from '../src/utils/scheduler-lock';
 import { getProcessStartTime } from '../src/utils/process-info';
 
+const inspectablePid = 1;
+const inspectablePidStart = getProcessStartTime(inspectablePid);
+const itWithProcessStartTime = inspectablePidStart ? it : it.skip;
+
 describe('scheduler lock', () => {
   let projectRoot: string;
 
@@ -57,8 +61,12 @@ describe('scheduler lock', () => {
     expect(holder.pid).toBe(process.pid);
   });
 
-  it('takes over a recycled PID (start-time token mismatch)', () => {
-    writeHolder({ pid: 1, procStartedAt: 'ps:definitely not when pid 1 started', acquiredAt: Date.now() });
+  itWithProcessStartTime('takes over a recycled PID (start-time token mismatch)', () => {
+    writeHolder({
+      pid: inspectablePid,
+      procStartedAt: `not:${inspectablePidStart}`,
+      acquiredAt: Date.now(),
+    });
     const result = acquireSchedulerLock(projectRoot);
     expect(result.acquired).toBe(true);
   });

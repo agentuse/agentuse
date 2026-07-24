@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { aiSdkErrorMocks } from './helpers/ai-sdk-mock';
 
 // Pin a small context window so a single oversized tool result crosses the
 // compaction threshold (10000 * 0.7 = 7000 tokens).
@@ -74,11 +75,7 @@ const streamTextMock = mock((config: any) => {
 mock.module('ai', () => ({
   streamText: streamTextMock,
   isStepCount: mock((n: number) => ({ isStepCount: n })),
-  // execution.ts pulls in api-error.ts, which imports APICallError and
-  // RetryError from 'ai'; the mock must provide both or module load fails in
-  // isolated test runs.
-  APICallError: { isInstance: () => false },
-  RetryError: { isInstance: () => false },
+  ...aiSdkErrorMocks(),
 }));
 
 let executeAgentCore: typeof import('../src/runner/execution').executeAgentCore;

@@ -30,6 +30,102 @@ export interface MCPConnection {
 }
 
 /**
+ * Convert a raw MCP tool result into AI SDK model output without discarding
+ * non-text blocks. Unknown block types fail explicitly so protocol drift cannot
+ * silently erase data.
+ */
+export function mcpResultToModelOutput({ output }: { output: unknown }): any {
+  if (typeof output === 'string') return { type: 'text', value: output };
+  if (!output || typeof output !== 'object') return { type: 'json', value: output ?? null };
+
+  const result = output as {
+    content?: unknown;
+    structuredContent?: unknown;
+    toolResult?: unknown;
+  };
+  if (!Array.isArray(result.content)) {
+    return { type: 'json', value: result.toolResult ?? output };
+  }
+
+  const value: any[] = [];
+  for (const rawPart of result.content) {
+    if (!rawPart || typeof rawPart !== 'object') {
+      throw new Error('Unsupported MCP content block: expected an object');
+    }
+    const part = rawPart as Record<string, unknown>;
+    switch (part.type) {
+      case 'text':
+        if (typeof part.text !== 'string') throw new Error('Invalid MCP text content: missing text');
+        value.push({ type: 'text', text: part.text });
+        break;
+      case 'image':
+        if (typeof part.data !== 'string' || typeof part.mimeType !== 'string') {
+          throw new Error('Invalid MCP image content: missing data or mimeType');
+        }
+        value.push({ type: 'image-data', data: part.data, mediaType: part.mimeType });
+        break;
+      case 'audio':
+      case 'file':
+        if (typeof part.data !== 'string' || typeof part.mimeType !== 'string') {
+          throw new Error(`Invalid MCP ${String(part.type)} content: missing data or mimeType`);
+        }
+        value.push({
+          type: 'file-data',
+          data: part.data,
+          mediaType: part.mimeType,
+          ...(typeof part.name === 'string' && { filename: part.name }),
+        });
+        break;
+      case 'resource': {
+        const resource = part.resource;
+        if (!resource || typeof resource !== 'object') {
+          throw new Error('Invalid MCP resource content: missing resource');
+        }
+        const resourceRecord = resource as Record<string, unknown>;
+        if (typeof resourceRecord.text === 'string') {
+          // Keep URI/name/mime metadata alongside the text, not just the body.
+          value.push({ type: 'text', text: JSON.stringify(part) });
+        } else if (typeof resourceRecord.blob === 'string') {
+          value.push({
+            type: 'text',
+            text: JSON.stringify({
+              type: 'resource',
+              resource: Object.fromEntries(
+                Object.entries(resourceRecord).filter(([key]) => key !== 'blob')
+              ),
+            }),
+          });
+          value.push({
+            type: 'file-data',
+            data: resourceRecord.blob,
+            mediaType: typeof resourceRecord.mimeType === 'string'
+              ? resourceRecord.mimeType
+              : 'application/octet-stream',
+            ...(typeof resourceRecord.name === 'string' && { filename: resourceRecord.name }),
+          });
+        } else {
+          throw new Error('Invalid MCP resource content: expected text or blob');
+        }
+        break;
+      }
+      case 'resource_link':
+        value.push({ type: 'text', text: JSON.stringify(part) });
+        break;
+      default:
+        throw new Error(`Unsupported MCP content type "${String(part.type ?? 'unknown')}"`);
+    }
+  }
+
+  if (result.structuredContent !== undefined) {
+    value.push({
+      type: 'text',
+      text: `[MCP structured content]\n${JSON.stringify(result.structuredContent)}`,
+    });
+  }
+  return { type: 'content', value };
+}
+
+/**
  * Resolve ${env:VAR_NAME} placeholders in a string
  * @param value The string that may contain ${env:VAR_NAME} placeholders
  * @returns The string with placeholders replaced by environment variable values
@@ -514,12 +610,9 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
         const timeoutSeconds = resolveToolTimeout(connection.config?.toolTimeout);
 
         // Create wrapped tool with proper result handling and timeout.
-        // toModelOutput must be dropped: the SDK's mcpToModelOutput expects the
-        // raw MCP result shape ({content: [...]}), but our execute unwraps it to
-        // a plain string, so `"content" in result` would throw on the string.
-        const { toModelOutput: _droppedToModelOutput, ...toolWithoutModelOutput } = tool;
         const wrappedTool = {
-          ...toolWithoutModelOutput,
+          ...tool,
+          toModelOutput: mcpResultToModelOutput,
           execute: async (args: any, opts: any) => {
               let result: any;
 
@@ -551,21 +644,24 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
 
               // Handle MCP result format (like opencode does)
               if (result && typeof result === 'object' && 'content' in result && Array.isArray(result.content)) {
-                const output = result.content
+                // Validate/convert now as well as at model projection time so an
+                // unsupported protocol block is a visible tool error.
+                mcpResultToModelOutput({ output: result });
+                const textOutput = result.content
                   .filter((x: any) => x.type === "text")
                   .map((x: any) => x.text)
                   .join("\n\n");
 
                 // Check for isError flag - MCP servers return this when tool execution fails
                 if (result.isError === true) {
-                  throw new Error(output || 'Tool execution failed');
+                  throw new Error(textOutput || JSON.stringify(result.content) || 'Tool execution failed');
                 }
 
                 // Additional check: Parse the content to detect API error responses
                 // Some MCP servers don't set isError but return error JSON
                 // Look for common error patterns like {"status": 400, "object": "error", ...}
                 try {
-                  const parsed = JSON.parse(output);
+                  const parsed = JSON.parse(textOutput);
                   if (parsed && typeof parsed === 'object') {
                     // Check for HTTP error status codes (4xx, 5xx)
                     const hasErrorStatus = typeof parsed.status === 'number' && parsed.status >= 400;
@@ -576,7 +672,7 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
                     // a bare {status: 404, ...} may just be a tool reporting
                     // the result of someone else's HTTP request.
                     if (hasErrorObject && (hasErrorStatus || hasErrorCode)) {
-                      const errorMsg = parsed.message || parsed.error?.message || output;
+                      const errorMsg = parsed.message || parsed.error?.message || textOutput;
                       throw new Error(errorMsg);
                     }
                   }
@@ -588,8 +684,9 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
                   }
                 }
 
-                // Return as string - AI SDK handles conversion automatically
-                return output;
+                // Keep the raw result so toModelOutput can carry images,
+                // structured content, resources, and files to the provider.
+                return result;
               }
 
               // Fallback for non-standard result formats - return string directly

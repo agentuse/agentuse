@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
 import * as fs from "fs";
 import * as path from "path";
+import { tmpdir } from "os";
 import {
   registerServer,
   unregisterServer,
@@ -13,6 +14,9 @@ import {
 } from "../src/utils/server-registry";
 import { getXdgDataDir } from "../src/storage/paths";
 
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const testDataHome = fs.mkdtempSync(path.join(tmpdir(), "agentuse-server-registry-"));
+process.env.XDG_DATA_HOME = testDataHome;
 const REGISTRY_DIR = path.join(getXdgDataDir(), "agentuse", "servers");
 
 describe("Server Registry", () => {
@@ -26,6 +30,11 @@ describe("Server Registry", () => {
 
   beforeEach(cleanupTestEntries);
   afterEach(cleanupTestEntries);
+  afterAll(() => {
+    if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = originalXdgDataHome;
+    fs.rmSync(testDataHome, { recursive: true, force: true });
+  });
 
   describe("registerServer", () => {
     it("should create a registry file for the current process", () => {

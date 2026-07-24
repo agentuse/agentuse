@@ -122,7 +122,7 @@ export interface AgentChunk {
 }
 
 export interface RunAgentResult {
-  status?: 'completed' | 'suspended';
+  status?: 'completed' | 'suspended' | 'failed';
   text: string;
   usage?: LanguageModelUsage;
   usageKind?: UsageKind;

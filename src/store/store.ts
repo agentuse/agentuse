@@ -2,13 +2,13 @@
  * Store class for persistent agent data storage
  */
 
-import { readFile, writeFile, mkdir, unlink, rename, open } from 'fs/promises';
+import { readFile, mkdir, rename, open } from 'fs/promises';
 import { existsSync, lstatSync } from 'fs';
 import { join, dirname, resolve, relative, isAbsolute } from 'path';
-import process from 'node:process';
 import { randomBytes } from 'crypto';
 import { ulid } from 'ulid';
 import { logger } from '../utils/logger';
+import { withOwnershipLock } from '../utils/ownership-lock';
 import { StoreFileSchema, isSafeStoreName } from './schema';
 import type {
   StoreItem,
@@ -111,19 +111,6 @@ function describeType(value: unknown): string {
 }
 
 /**
- * Check if a process with given PID is running
- */
-function isProcessRunning(pid: number): boolean {
-  try {
-    // Sending signal 0 checks if process exists without actually sending a signal
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Store class that manages persistent data for agents
  */
 export class Store {
@@ -204,17 +191,19 @@ export class Store {
   private withWriteLock<T>(
     mutate: (items: StoreItem[]) => { items: StoreItem[]; result: T }
   ): Promise<T> {
-    return Store.withLockChain(this.lockPath, async () => {
-      await this.acquireFileLock();
-      try {
+    return Store.withLockChain(this.lockPath, () =>
+      withOwnershipLock(this.lockPath, async () => {
         const items = await this.readItems();
         const { items: next, result } = mutate(items);
         await this.writeItems(next);
         return result;
-      } finally {
-        await this.releaseFileLock();
-      }
-    });
+      }, {
+        staleMs: Store.STALE_LOCK_MS,
+        retryMs: Store.ACQUIRE_RETRY_MS,
+        maxWaitMs: Store.ACQUIRE_MAX_WAIT_MS,
+        label: this.agentName ?? this.storeName,
+      })
+    );
   }
 
   /**
@@ -275,146 +264,13 @@ export class Store {
   }
 
   /**
-   * Take the on-disk lock for this op. MUST run inside withLockChain so no
-   * concurrent in-process acquire/release interleaves. Steals an abandoned
-   * lock (own PID, corrupted, dead PID, or older than STALE_LOCK_MS), and
-   * retries briefly when a live, fresh lock from another process blocks us.
-   */
-  private async acquireFileLock(): Promise<void> {
-    const storeDir = dirname(this.lockPath);
-    if (!existsSync(storeDir)) {
-      await mkdir(storeDir, { recursive: true });
-    }
-
-    const deadline = Date.now() + Store.ACQUIRE_MAX_WAIT_MS;
-    for (;;) {
-      const blocker = await this.inspectLock();
-      if (!blocker) {
-        // Exclusive create (O_EXCL) is the actual mutual-exclusion primitive:
-        // an existsSync-then-write pair lets two processes both pass the check
-        // and clobber each other's lock. If another process raced us to create
-        // the file, re-inspect — steal only if it is genuinely abandoned.
-        if (await this.writeLockFile()) return;
-        continue;
-      }
-      if (Date.now() >= deadline) {
-        throw new Error(
-          `Store "${this.storeName}" is locked by another process.\n` +
-          `  PID: ${blocker.pid}\n` +
-          `  Agent: ${blocker.agent || 'unknown'}\n` +
-          `  Locked: ${blocker.ageStr}\n` +
-          `Wait for it to complete, or remove the lock file:\n` +
-          `  rm "${this.lockPath}"`
-        );
-      }
-      await new Promise<void>((resolve) => setTimeout(resolve, Store.ACQUIRE_RETRY_MS));
-    }
-  }
-
-  /**
-   * Inspect any on-disk lock. Returns null when we may take it (no file, our
-   * own leftover, corrupted, stale-by-age, or dead PID), or details of a live,
-   * fresh lock from another process that we must wait on.
-   */
-  private async inspectLock(): Promise<{ pid: number; agent?: string | undefined; ageStr: string } | null> {
-    if (!existsSync(this.lockPath)) return null;
-
-    let lockData: { pid?: number; agent?: string; timestamp?: string } | null;
-    try {
-      lockData = JSON.parse(await readFile(this.lockPath, 'utf-8'));
-    } catch {
-      logger.warn(`[Store] Removing corrupted lock file`);
-      return null;
-    }
-
-    const pid = lockData?.pid;
-    if (typeof pid !== 'number') {
-      logger.warn(`[Store] Removing lock file with no PID`);
-      return null;
-    }
-
-    // Our own leftover from a write killed mid-flight: reclaim it.
-    if (pid === process.pid) return null;
-
-    const ageMs = Date.now() - new Date(lockData?.timestamp ?? 0).getTime();
-
-    // Age is the load-bearing signal: a lock older than a single op could
-    // possibly take is abandoned, even if its PID still runs (the leaked-in-
-    // worker case). An unparseable timestamp counts as infinitely old.
-    if (!Number.isFinite(ageMs) || ageMs >= Store.STALE_LOCK_MS) {
-      logger.warn(`[Store] Stealing stale lock from PID ${pid} (age ${Math.round(ageMs / 1000)}s)`);
-      return null;
-    }
-
-    if (!isProcessRunning(pid)) {
-      logger.warn(`[Store] Removing stale lock from dead PID ${pid}`);
-      return null;
-    }
-
-    const ageStr = ageMs > 60000
-      ? `${Math.round(ageMs / 60000)}m ago`
-      : `${Math.round(ageMs / 1000)}s ago`;
-    return { pid, agent: lockData?.agent, ageStr };
-  }
-
-  /**
-   * Try to take the on-disk lock via exclusive create. Returns true when we
-   * won it, false when another process holds it and we should re-inspect.
-   * Caller must have just seen inspectLock() return null.
-   */
-  private async writeLockFile(): Promise<boolean> {
-    const payload = JSON.stringify({
-      pid: process.pid,
-      agent: this.agentName,
-      timestamp: new Date().toISOString(),
-    }, null, 2);
-
-    try {
-      await writeFile(this.lockPath, payload, { encoding: 'utf-8', flag: 'wx' });
-      return true;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-    }
-
-    // A file exists. Re-inspect: inspectLock() returning null means it is our
-    // own leftover / stale / dead-PID, so it is safe to remove and retry once.
-    // If it is now a live lock from another process, back off and let the
-    // caller wait — do NOT unlink a lock we don't own.
-    if ((await this.inspectLock()) !== null) return false;
-    await unlink(this.lockPath).catch(() => {});
-    try {
-      await writeFile(this.lockPath, payload, { encoding: 'utf-8', flag: 'wx' });
-      return true;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
-      throw err;
-    }
-  }
-
-  /**
-   * Remove the on-disk lock if we still own it. Best-effort.
-   */
-  private async releaseFileLock(): Promise<void> {
-    try {
-      if (!existsSync(this.lockPath)) return;
-      const content = await readFile(this.lockPath, 'utf-8').catch(() => null);
-      const lockData = content ? JSON.parse(content) : null;
-      if (!lockData || lockData.pid === process.pid) {
-        await unlink(this.lockPath).catch(() => {});
-      }
-    } catch {
-      // Ignore errors when releasing the lock.
-    }
-  }
-
-  /**
    * Defensive sweep, kept for callers that ran in the old run-scoped model
-   * (preparation cleanup, run.ts, subagent). Per-op locking already releases
-   * after every write, so by the time this runs no transaction is in flight;
-   * it just clears any lock file this process leaked. Idempotent.
+   * (preparation cleanup, run.ts, subagent). Per-op ownership locks always
+   * release in finally, so there is nothing safe to remove here: deleting a
+   * path without its owner token could destroy another process's replacement.
    */
   async releaseLock(): Promise<void> {
-    await Store.withLockChain(this.lockPath, () => this.releaseFileLock());
+    await Store.withLockChain(this.lockPath, async () => undefined);
   }
 
   /**
@@ -491,7 +347,8 @@ export class Store {
    */
   async upsertWhere(
     where: Record<string, string | number | boolean>,
-    options: StoreCreateOptions
+    options: StoreCreateOptions,
+    behavior: { replaceData?: boolean } = {}
   ): Promise<{ item: StoreItem; created: boolean }> {
     const now = new Date().toISOString();
     const normalizedData = normalizeStoreData(options.data);
@@ -531,7 +388,9 @@ export class Store {
         ...(options.status !== undefined && { status: options.status }),
         ...(options.parentId !== undefined && { parentId: options.parentId }),
         ...(options.tags !== undefined && { tags: options.tags }),
-        data: { ...existing.data, ...normalizedData },
+        data: behavior.replaceData
+          ? normalizedData
+          : { ...existing.data, ...normalizedData },
       };
       items[index] = updated;
       return { items, result: { item: updated, created: false } };

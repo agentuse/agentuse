@@ -4,7 +4,8 @@ import { createWriteStream } from 'fs';
 import path from 'path';
 import { writeJSON, readJSON, listKeys, getStorageState, sanitizeAgentName, CorruptStorageError } from '../storage';
 import { logger } from '../utils/logger';
-import { currentProcessRef, isPidAlive } from '../utils/process-info';
+import { currentProcessRef } from '../utils/process-info';
+import { withOwnershipLock } from '../utils/ownership-lock';
 import { dehydrateSnapshotMedia, rehydrateSnapshotMedia } from './media-cache';
 import { computeSubagentActiveIds } from './subagent-active';
 import type {
@@ -129,16 +130,6 @@ const SESSION_INDEX_LOCK_RETRY_DELAY_MS = 15;
 // crash at session creation).
 const SESSION_INDEX_LOCK_MAX_ATTEMPTS = 2400;
 
-function parseSessionIndexLockPid(raw: string | null): number | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as { pid?: unknown };
-    return typeof parsed.pid === 'number' ? parsed.pid : null;
-  } catch {
-    return null;
-  }
-}
-
 function toSessionListSummary(session: SessionInfo, sessionPath: string): SessionListSummary {
   return {
     sessionId: session.id,
@@ -207,45 +198,12 @@ export class SessionManager {
     const state = await getStorageState();
     const indexDir = path.join(state.dir, SESSION_INDEX_DIR);
     const lockPath = path.join(indexDir, 'lock');
-    await fs.mkdir(indexDir, { recursive: true });
-
-    for (let attempt = 0; attempt < SESSION_INDEX_LOCK_MAX_ATTEMPTS; attempt++) {
-      try {
-        const handle = await fs.open(lockPath, 'wx');
-        try {
-          await handle.writeFile(JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }));
-          return await operation();
-        } finally {
-          await handle.close().catch(() => undefined);
-          await fs.unlink(lockPath).catch(() => undefined);
-        }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        // A SIGKILLed holder leaves its lock behind; waiting out the mtime age
-        // below would fail every session write in the interim. The lock records
-        // its holder's pid, so probe it and steal the moment it is gone.
-        // Re-read before unlinking so a lock replaced between the probe and the
-        // unlink isn't destroyed.
-        const raw = await fs.readFile(lockPath, 'utf-8').catch(() => null);
-        const holderPid = parseSessionIndexLockPid(raw);
-        if (holderPid !== null && !isPidAlive(holderPid)) {
-          const current = await fs.readFile(lockPath, 'utf-8').catch(() => null);
-          if (current === raw) {
-            await fs.unlink(lockPath).catch(() => undefined);
-          }
-          continue;
-        }
-        // Unparseable/empty lock (holder mid-write) or a live holder: fall back
-        // to aging it out by mtime.
-        const stat = await fs.stat(lockPath).catch(() => null);
-        if (stat && Date.now() - stat.mtimeMs > SESSION_INDEX_LOCK_MAX_AGE_MS) {
-          await fs.unlink(lockPath).catch(() => undefined);
-          continue;
-        }
-        await new Promise((resolve) => setTimeout(resolve, SESSION_INDEX_LOCK_RETRY_DELAY_MS));
-      }
-    }
-    throw new Error('Timed out waiting for the session index lock');
+    return withOwnershipLock(lockPath, operation, {
+      staleMs: SESSION_INDEX_LOCK_MAX_AGE_MS,
+      retryMs: SESSION_INDEX_LOCK_RETRY_DELAY_MS,
+      maxWaitMs: SESSION_INDEX_LOCK_MAX_ATTEMPTS * SESSION_INDEX_LOCK_RETRY_DELAY_MS,
+      label: 'session-index',
+    });
   }
 
   private async readSessionIndex(): Promise<SessionIndex | null> {
@@ -826,7 +784,11 @@ export class SessionManager {
     try {
       const entries = await fs.readdir(sessionDir, { withFileTypes: true });
       return entries
-        .filter((entry) => entry.isDirectory() && entry.name !== 'subagent')
+        .filter((entry) =>
+          entry.isDirectory()
+          && entry.name !== 'subagent'
+          && !entry.name.startsWith('.')
+        )
         .map((entry) => `${sessionPath}/${entry.name}/message`)
         .sort();
     } catch (error) {
@@ -1430,7 +1392,7 @@ export class SessionManager {
 
   async getSessionDirectory(sessionID: string, agentId: string): Promise<string> {
     const state = await getStorageState();
-    return path.join(state.dir, this.buildSessionPath(sessionID, agentId));
+    return path.join(state.dir, this.knownSessionPath(sessionID, agentId));
   }
 
   /**

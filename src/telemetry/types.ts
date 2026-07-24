@@ -76,7 +76,7 @@ export interface ExecutionResult {
   /** Whether execution completed successfully */
   success: boolean;
   /** Error category if failed */
-  errorType?: 'timeout' | 'api_error' | 'tool_error' | 'user_abort' | 'unknown';
+  errorType?: 'timeout' | 'api_error' | 'tool_error' | 'user_abort' | 'incomplete' | 'unknown';
   /** Tool call breakdown by type */
   toolCalls?: ToolCallMetrics;
   /** Number of LLM steps/iterations */

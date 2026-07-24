@@ -3,6 +3,12 @@ import { createReportIncompleteTool, type RunOutcome } from '../src/tools/report
 import { loadAgentTools } from '../src/runner/tools-loader';
 import { displayStatusLabel, isEndedStatus, sessionErrorText } from '../src/cli/serve/web/lib/format';
 import type { ParsedAgent } from '../src/parser';
+import {
+  classifyRunResult,
+  executionOutcomeFields,
+  runResultJson,
+  workerRunResponse,
+} from '../src/runner/outcome';
 
 describe('report_incomplete tool', () => {
   it('records the reason into the shared outcome and keeps the run alive', async () => {
@@ -25,6 +31,74 @@ describe('report_incomplete tool', () => {
     await tool.execute({ reason: 'second, more specific' });
 
     expect(outcome.incomplete?.reason).toBe('second, more specific');
+  });
+});
+
+describe('external run outcome mapping', () => {
+  it('maps incomplete to failure, a non-zero exit, and a stable error code', () => {
+    expect(classifyRunResult({
+      status: 'failed',
+      incomplete: { reason: 'Login expired' },
+    })).toEqual({
+      kind: 'incomplete',
+      success: false,
+      status: 'incomplete',
+      exitCode: 1,
+      error: { code: 'INCOMPLETE', message: 'Login expired' },
+    });
+  });
+
+  it('keeps completed and suspended runs successful', () => {
+    expect(classifyRunResult({ status: 'completed' })).toMatchObject({
+      kind: 'completed',
+      success: true,
+      exitCode: 0,
+    });
+    expect(classifyRunResult({ status: 'suspended' })).toMatchObject({
+      kind: 'suspended',
+      success: true,
+      exitCode: 0,
+    });
+  });
+
+  it('keeps CLI JSON, telemetry, and worker/API payloads on the same failure mapping', () => {
+    const result = {
+      status: 'failed' as const,
+      incomplete: { reason: 'Login expired' },
+      text: 'Partial diagnostic output',
+      finishReason: 'stop',
+      toolCallCount: 2,
+      hasTextOutput: true,
+      sessionId: 'session-child',
+    };
+
+    expect(executionOutcomeFields(result)).toEqual({
+      success: false,
+      errorType: 'incomplete',
+    });
+    expect(runResultJson(result, 125)).toEqual({
+      success: false,
+      status: 'incomplete',
+      error: { code: 'INCOMPLETE', message: 'Login expired' },
+      result: {
+        text: 'Partial diagnostic output',
+        finishReason: 'stop',
+        duration: 125,
+        toolCalls: 2,
+      },
+    });
+    expect(workerRunResponse('request-1', result, 125, 'session-root')).toEqual({
+      id: 'request-1',
+      success: false,
+      error: { code: 'INCOMPLETE', message: 'Login expired' },
+      result: {
+        text: 'Partial diagnostic output',
+        finishReason: 'stop',
+        duration: 125,
+        toolCalls: 2,
+        sessionId: 'session-root',
+      },
+    });
   });
 });
 

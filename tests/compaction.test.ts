@@ -623,4 +623,18 @@ describe('Compactor', () => {
     expect(summary.role).toBe('system');
     expect(summary.content).toBeDefined();
   });
+
+  it('threads the run cancellation signal into the summarizer call', async () => {
+    const controller = new AbortController();
+    const { streamText } = await import('ai');
+    const messages: any[] = [
+      { role: 'user', content: 'First message' },
+      { role: 'assistant', content: 'First response' },
+    ];
+
+    await compactMessages(messages, 'test:model', controller.signal);
+
+    const lastCall = (streamText as any).mock.calls.at(-1)[0];
+    expect(lastCall.abortSignal).toBe(controller.signal);
+  });
 });

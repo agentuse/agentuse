@@ -49,12 +49,16 @@ export function addAssistantTokens(
  * - OpenAI: input_tokens_details.cached_tokens / prompt_tokens_details.cached_tokens
  */
 export function usageToAssistantTokens(usage: LanguageModelUsage): AssistantTokens {
+  const legacyUsage = usage as LanguageModelUsage & {
+    reasoningTokens?: number;
+    cachedInputTokens?: number;
+  };
   return {
     input: tokenCount(usage.inputTokens),
     output: tokenCount(usage.outputTokens),
-    reasoning: tokenCount(usage.outputTokenDetails?.reasoningTokens),
+    reasoning: tokenCount(usage.outputTokenDetails?.reasoningTokens ?? legacyUsage.reasoningTokens),
     cache: {
-      read: tokenCount(usage.inputTokenDetails?.cacheReadTokens),
+      read: tokenCount(usage.inputTokenDetails?.cacheReadTokens ?? legacyUsage.cachedInputTokens),
       write: tokenCount(usage.inputTokenDetails?.cacheWriteTokens),
     },
   };

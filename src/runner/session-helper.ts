@@ -3,6 +3,7 @@ import type { SessionManager } from '../session';
 import type { ErrorPartSource, LogPart, LogPartLevel, Part, SessionTrigger, ToolPart } from '../session/types';
 import type { ApprovalReview, LearningOutcome } from '../learning/types';
 import { computeAgentId } from '../utils/agent-id';
+import { resolveModelProvider } from '../utils/model-utils';
 import { isMockMode } from './mock-tools';
 import { logger, withoutLogSink, type LogRecord } from '../utils/logger';
 
@@ -101,7 +102,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
     assistant: {
       system: systemMessages,
       modelID: agent.config.model,
-      providerID: agent.config.model.split(':')[0],
+      providerID: resolveModelProvider(agent.config.model),
       mode: 'build',
       path: { cwd: projectContext.cwd, root: projectContext.projectRoot },
       cost: 0,

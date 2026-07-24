@@ -130,6 +130,35 @@ interface WorkerExecuteError {
     code: string;
     message: string;
   };
+  /** Final output remains useful when report_incomplete ends the run. */
+  result?: WorkerExecuteResult['result'];
+}
+
+function workerExecutionErrorResponse(error: WorkerExecuteError): {
+  status: number;
+  body: {
+    success: false;
+    status: 'incomplete' | 'error';
+    error: WorkerExecuteError['error'];
+    result?: WorkerExecuteResult['result'];
+  };
+} {
+  const status = error.error.code === 'TIMEOUT'
+    ? 504
+    : error.error.code === 'ABORTED'
+      ? 499
+      : error.error.code === 'INCOMPLETE'
+        ? 422
+        : 500;
+  return {
+    status,
+    body: {
+      success: false,
+      status: error.error.code === 'INCOMPLETE' ? 'incomplete' : 'error',
+      error: error.error,
+      ...(error.result && { result: error.result }),
+    },
+  };
 }
 
 interface WorkerApprovalInfoResult {
@@ -1454,13 +1483,20 @@ async function serveSessionArtifact(
   // A gate-time snapshot takes priority over the live workspace path: the
   // reviewer must see the exact bytes the approval covers. Snapshot files are
   // hash-named inside the session's own storage, so no traversal or denylist
-  // concerns apply; a missing snapshot falls back to the live path below.
+  // concerns apply. A declared snapshot that is missing fails closed; only
+  // legacy gates with no snapshot hash may use the live-path compatibility path.
   if (opts?.snapHash && opts.sessionId) {
     const snapshotFile = await findGateSnapshotFile(projectRoot, opts.sessionId, opts.snapHash);
     if (snapshotFile) {
       await serveResolvedArtifactFile(res, snapshotFile, theme, opts.rangeHeader);
       return;
     }
+    sendHTML(
+      res,
+      410,
+      '<!doctype html><title>Artifact unavailable</title><p>The immutable approval snapshot is unavailable. The live workspace file was not substituted.</p>'
+    );
+    return;
   }
   const decoded = (() => { try { return decodeURIComponent(rawPath); } catch { return rawPath; } })();
   const resolved = resolve(projectRoot, decoded);
@@ -1918,7 +1954,8 @@ function isEndedSessionStatus(status: string | undefined): boolean {
  *
  * Exempt: any `/approvals/*` route (legacy, token-authenticated) and, only on
  * the non-API surface, the unified session page `/sessions/:id`, its action
- * subroutes `/sessions/:id/{decision,continue,status,stop}`, the artifact
+ * subroutes `/sessions/:id/{decision,continue,status,stop,started,finished,
+ * reopen,learnings}`, the artifact
  * listing `/sessions/:id/artifacts-list`, and artifact
  * viewer subpaths `/sessions/:id/{artifacts,tool-artifacts}/*`. These carry their own capability
  * auth (session token / api key / local); the artifact handler validates the
@@ -1934,7 +1971,7 @@ function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
   if (legacyApprovalRoute && legacyApprovalRoute[1] !== 'events') return true;
   if (isApi) return false;
   if (routePath === '/sessions/events') return false;
-  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|finished|events|artifacts-list|artifacts\/.+|tool-artifacts\/.+))?$/.test(routePath);
+  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|started|finished|reopen|events|learnings|learnings\/[^/?#]+\/discard|artifacts-list|artifacts\/.+|tool-artifacts\/.+))?$/.test(routePath);
 }
 
 /**
@@ -1984,10 +2021,12 @@ function isExposedHost(host: string): boolean {
   return host !== "127.0.0.1" && host !== "localhost";
 }
 
-function validateApiKey(req: IncomingMessage, expectedKey: string | undefined): boolean {
+function validateApiKeyHeader(
+  authHeader: string | undefined,
+  expectedKey: string | undefined
+): boolean {
   if (!expectedKey) return true;
 
-  const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) return false;
 
   const providedKey = authHeader.slice(7);
@@ -2003,6 +2042,22 @@ function validateApiKey(req: IncomingMessage, expectedKey: string | undefined): 
   }
 }
 
+function validateApiKey(req: IncomingMessage, expectedKey: string | undefined): boolean {
+  return validateApiKeyHeader(req.headers.authorization, expectedKey);
+}
+
+function isSessionCapabilityAuthorized(options: {
+  authorization?: string | undefined;
+  sessionToken?: string | undefined;
+  sessionId: string;
+  apiKey?: string | undefined;
+}): boolean {
+  const { authorization, sessionToken, sessionId, apiKey } = options;
+  return !apiKey
+    || validateApiKeyHeader(authorization, apiKey)
+    || validateSessionToken(sessionToken, sessionId, apiKey);
+}
+
 interface Project {
   id: string;
   /** Detected project/state root. Owns .agentuse/store, sessions, env, plugins. */
@@ -2011,6 +2066,26 @@ interface Project {
   scopeRoot: string;
   envFile: string;
   agentFiles: string[];
+}
+
+function selectSessionProjects<T extends { id: string }>(
+  projects: readonly T[],
+  projectId?: string
+):
+  | { success: true; projects: T[] }
+  | { success: false; status: 404; code: 'PROJECT_NOT_FOUND'; message: string } {
+  const selected = projectId
+    ? projects.filter((project) => project.id === projectId)
+    : [...projects];
+  if (selected.length > 0) return { success: true, projects: selected };
+  return {
+    success: false,
+    status: 404,
+    code: 'PROJECT_NOT_FOUND',
+    message: projectId
+      ? `Project not found: ${projectId}`
+      : 'Project not found for session request',
+  };
 }
 
 function resolveScopedAgentPath(project: Project | Omit<Project, 'agentFiles'>, agentPath: string): string {
@@ -2418,7 +2493,11 @@ export function createServeCommand(): Command {
             inputTokens: 0,
             outputTokens: 0,
             success: false,
-            errorType: spawnResult.error.code === 'TIMEOUT' ? 'timeout' : 'unknown',
+            errorType: spawnResult.error.code === 'TIMEOUT'
+              ? 'timeout'
+              : spawnResult.error.code === 'INCOMPLETE'
+                ? 'incomplete'
+                : 'unknown',
             features: {
               mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
               subagentsConfigured: agent.config.subagents?.length ?? 0,
@@ -2744,18 +2823,9 @@ export function createServeCommand(): Command {
         | { success: true; project: Project; info: WorkerApprovalInfoResult }
         | { success: false; status: number; code: string; message: string }
       > => {
-        const selectedProjects = projectId
-          ? projects.filter((project) => project.id === projectId)
-          : projects;
-
-        if (selectedProjects.length === 0) {
-          return {
-            success: false,
-            status: 404,
-            code: "PROJECT_NOT_FOUND",
-            message: projectId ? `Project not found: ${projectId}` : "Project not found for session request",
-          };
-        }
+        const selection = selectSessionProjects(projects, projectId);
+        if (!selection.success) return selection;
+        const selectedProjects = selection.projects;
 
         const nonSessionErrors: Array<{ status: number; code: string; message: string }> = [];
         for (const project of selectedProjects) {
@@ -2799,18 +2869,9 @@ export function createServeCommand(): Command {
         | { success: true; project: Project; session: SessionStatusInfo }
         | { success: false; status: number; code: string; message: string }
       > => {
-        const selectedProjects = projectId
-          ? projects.filter((project) => project.id === projectId)
-          : projects;
-
-        if (selectedProjects.length === 0) {
-          return {
-            success: false,
-            status: 404,
-            code: "PROJECT_NOT_FOUND",
-            message: projectId ? `Project not found: ${projectId}` : "Project not found for session request",
-          };
-        }
+        const selection = selectSessionProjects(projects, projectId);
+        if (!selection.success) return selection;
+        const selectedProjects = selection.projects;
 
         const nonSessionErrors: Array<{ status: number; code: string; message: string }> = [];
         for (const project of selectedProjects) {
@@ -3993,7 +4054,12 @@ export function createServeCommand(): Command {
         // local (no api key) is open; otherwise either a Bearer api key header
         // OR a valid per-session `?token=` (sessionViewToken) authorizes.
         const sessionAuthorized = (sessionId: string, token?: string): boolean =>
-          !apiKey || validateApiKey(req, apiKey) || validateSessionToken(token, sessionId, apiKey);
+          isSessionCapabilityAuthorized({
+            authorization: req.headers.authorization,
+            sessionToken: token,
+            sessionId,
+            apiKey,
+          });
 
         // SPA page routes: serve the tiny no-store HTML shell; the client fetches
         // its data from the /api/* and /sessions/:id/* JSON endpoints below. This
@@ -5862,7 +5928,11 @@ export function createServeCommand(): Command {
               inputTokens: 0,
               outputTokens: 0,
               success: false,
-              errorType: errorCode === 'TIMEOUT' ? 'timeout' : 'unknown',
+              errorType: errorCode === 'TIMEOUT'
+                ? 'timeout'
+                : errorCode === 'INCOMPLETE'
+                  ? 'incomplete'
+                  : 'unknown',
               features: {
                 mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
                 subagentsConfigured: agent.config.subagents?.length ?? 0,
@@ -5885,17 +5955,24 @@ export function createServeCommand(): Command {
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
               });
+              if (spawnResult.result?.text) {
+                const textChunk: AgentChunk = {
+                  type: "text",
+                  text: spawnResult.result.text,
+                };
+                res.write(JSON.stringify(textChunk) + "\n");
+              }
 
               const errorChunk: AgentChunk = {
                 type: "error",
-                error: errorMessage,
+                error: { code: errorCode, message: errorMessage },
               };
               res.write(JSON.stringify(errorChunk) + "\n");
               res.end();
             } else {
               // JSON error response
-              const httpStatus = errorCode === 'TIMEOUT' ? 504 : errorCode === 'ABORTED' ? 499 : 500;
-              sendError(res, httpStatus, errorCode, errorMessage);
+              const response = workerExecutionErrorResponse(spawnResult);
+              sendJSON(res, response.status, response.body);
             }
           }
         } catch (err) {
@@ -6401,6 +6478,9 @@ export const __testing = {
   serveSessionToolOutputArtifact,
   redactAgentDetailSource,
   isHeaderGateExemptRoute,
+  isSessionCapabilityAuthorized,
+  selectSessionProjects,
+  workerExecutionErrorResponse,
   isSpaPageRoute,
   collectAgents,
   formatAgentsTable,

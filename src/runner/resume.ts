@@ -4,6 +4,8 @@ import { isProcessRefAlive } from '../utils/process-info';
 import { LeaseStore, deriveLeaseEntries } from './approval-lease';
 import { GateSealStore } from './gate-seal';
 import { logger } from '../utils/logger';
+import { join } from 'node:path';
+import { withOwnershipLock } from '../utils/ownership-lock';
 
 export interface ResumeToolRollback {
   sessionId: string;
@@ -14,6 +16,45 @@ export interface ResumeToolRollback {
 }
 
 export async function applyResumeToolResult(options: {
+  sessionManager: SessionManager;
+  sessionId: string;
+  toolResult: unknown;
+  resumeToken?: string;
+  skipTokenValidation?: boolean;
+}): Promise<{ agentId: string; agentFilePath?: string; rollback?: ResumeToolRollback }> {
+  const initial = await options.sessionManager.findSession(options.sessionId);
+  if (!initial) {
+    throw new Error(`SESSION_NOT_FOUND: ${options.sessionId}`);
+  }
+
+  // The durable lock is inside the resolved session directory, so every serve
+  // worker/CLI process contends on the same claim. Keep support for narrow unit
+  // doubles that implement only the methods exercised by the state transition;
+  // every real SessionManager exposes getSessionDirectory.
+  const getSessionDirectory = (options.sessionManager as SessionManager & {
+    getSessionDirectory?: (sessionId: string, agentId: string) => Promise<string>;
+  }).getSessionDirectory;
+  if (!getSessionDirectory) {
+    return applyClaimedResumeToolResult(options);
+  }
+  const sessionDir = await getSessionDirectory.call(
+    options.sessionManager,
+    options.sessionId,
+    initial.agentId
+  );
+  return withOwnershipLock(
+    join(sessionDir, '.resume-claim'),
+    () => applyClaimedResumeToolResult(options),
+    {
+      staleMs: 30_000,
+      retryMs: 10,
+      maxWaitMs: 35_000,
+      label: `resume:${options.sessionId}`,
+    }
+  );
+}
+
+async function applyClaimedResumeToolResult(options: {
   sessionManager: SessionManager;
   sessionId: string;
   toolResult: unknown;

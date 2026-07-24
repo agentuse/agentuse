@@ -529,6 +529,7 @@ describe('rehydrateMessages', () => {
         role: 'assistant',
         content: [
           { type: 'reasoning', text: 'Deciding whether this is the right account.', providerOptions: { anthropic: { signature: 'sig-abc-123' } } },
+          { type: 'text', text: 'I prepared the final draft for review.' },
           { type: 'tool-call', toolCallId: 'call-gate', toolName: 'await_human', input: { prompt: 'Approve?' } },
           { type: 'tool-call', toolCallId: 'call-bash', toolName: 'bash', input: { command: 'x.com/agentuse' } },
           { type: 'tool-call', toolCallId: 'call-store', toolName: 'store_get', input: { id: 'z' } },
@@ -561,6 +562,18 @@ describe('rehydrateMessages', () => {
       // Resolved parts (fresh, time.start > snapshot.updatedAt): gate approved,
       // both siblings denied/journaled.
       await sessionManager.addPart(sessionID, agentId, messageID, {
+        type: 'text',
+        role: 'assistant',
+        text: 'I prepared the final draft for review.',
+        time: { start: 1_001, end: 1_001 }
+      } as any);
+      await sessionManager.addPart(sessionID, agentId, messageID, {
+        type: 'text',
+        role: 'assistant',
+        text: 'review',
+        time: { start: 1_002, end: 1_002 }
+      } as any);
+      await sessionManager.addPart(sessionID, agentId, messageID, {
         type: 'tool',
         callID: 'call-gate',
         tool: 'await_human',
@@ -589,6 +602,17 @@ describe('rehydrateMessages', () => {
       );
       expect(signedInReplay).toBeDefined();
       expect(signedInReplay.content).toEqual(signedAssistant.content);
+      const replayedText = (messages as any[]).flatMap((m) => {
+        if (m.role !== 'assistant') return [];
+        if (typeof m.content === 'string') return [m.content];
+        return Array.isArray(m.content)
+          ? m.content.filter((p: any) => p.type === 'text').map((p: any) => p.text)
+          : [];
+      });
+      expect(replayedText.filter((text) => text === 'I prepared the final draft for review.')).toHaveLength(1);
+      // Dedupe whole signed text parts only. A later, distinct text part that
+      // happens to be a substring must not disappear from replay.
+      expect(replayedText.filter((text) => text === 'review')).toHaveLength(1);
 
       // Exactly one tool-call per id across the whole transcript (no duplicate
       // that the old re-append produced).

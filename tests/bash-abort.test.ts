@@ -93,6 +93,56 @@ describe('bash tool abort + audit', () => {
     expect(audit.records.some((r) => r.event === 'bash-refused-aborted')).toBe(true);
   });
 
+  test('abort during async artifact preparation refuses to spawn', async () => {
+    const marker = path.join(projectRoot, 'pre-spawn-marker.txt');
+    const controller = new AbortController();
+    let releaseArtifact!: () => void;
+    let artifactEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { artifactEntered = resolve; });
+    const release = new Promise<void>((resolve) => { releaseArtifact = resolve; });
+    let discarded = false;
+    const tool = createBashTool(
+      { commands: ['touch *'] },
+      projectRoot,
+      {
+        projectRoot,
+        effectAudit: audit,
+        toolOutputArtifacts: {
+          createStream: async () => {
+            artifactEntered();
+            await release;
+            return {
+              write: () => {},
+              finalize: async () => ({
+                kind: 'tool-output' as const,
+                path: 'unused',
+                absolutePath: 'unused',
+                bytes: 0,
+                originalChars: 0,
+              }),
+              discard: async () => { discarded = true; },
+            };
+          },
+        },
+      }
+    ) as any;
+
+    const resultPromise = tool.execute(
+      { command: `touch ${marker}` },
+      { toolCallId: 'call-gap', abortSignal: controller.signal }
+    );
+    await entered;
+    controller.abort();
+    releaseArtifact();
+    const result = await resultPromise;
+
+    expect(result.metadata.aborted).toBe(true);
+    expect(discarded).toBe(true);
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(audit.records.some((r) => r.event === 'bash-spawn')).toBe(false);
+    expect(audit.records.some((r) => r.event === 'bash-refused-aborted')).toBe(true);
+  });
+
   test('works without an audit sink (no crash) and without an abort signal', async () => {
     const tool = createBashTool({ commands: ['echo *'] }, projectRoot, { projectRoot }) as any;
     const result = await tool.execute({ command: 'echo plain' });

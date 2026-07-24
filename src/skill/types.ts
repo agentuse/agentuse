@@ -27,6 +27,12 @@ export interface SkillInfo {
   description: string;
   /** Absolute path to SKILL.md file */
   location: string;
+  /**
+   * Lower-priority skills with the same declared name. Per-skill trust by name
+   * is intentionally not expanded while this list is non-empty: the name does
+   * not identify one canonical source.
+   */
+  shadowedLocations?: string[] | undefined;
   /** Parsed allowed-tools patterns */
   allowedTools?: string[] | undefined;
   /** License information */

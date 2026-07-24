@@ -97,4 +97,30 @@ describe('judgeOutput (built-in judge)', () => {
     });
     expect(calls).toEqual(['anthropic:claude-sonnet-4-0', 'openai:gpt-5.2-mini']);
   });
+
+  it('threads cancellation into the built-in verifier call', async () => {
+    completeTextMock.mockImplementation(async () => '{"pass": true}');
+    const controller = new AbortController();
+
+    await judgeOutput({
+      input,
+      config,
+      agentModel: 'anthropic:claude-sonnet-4-0',
+      abortSignal: controller.signal,
+    });
+
+    expect((completeTextMock.mock.calls[0][1] as any).abortSignal).toBe(controller.signal);
+  });
+
+  it('propagates cancellation instead of converting it to fail-open success', async () => {
+    const abort = new Error('stopped');
+    abort.name = 'AbortError';
+    completeTextMock.mockImplementation(async () => { throw abort; });
+
+    await expect(judgeOutput({
+      input,
+      config,
+      agentModel: 'anthropic:claude-sonnet-4-0',
+    })).rejects.toMatchObject({ name: 'AbortError' });
+  });
 });

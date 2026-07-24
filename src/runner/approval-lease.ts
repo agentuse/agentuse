@@ -18,13 +18,6 @@ import { logger } from '../utils/logger';
 
 export const LEASE_FILENAME = 'approval-lease.json';
 
-/**
- * Containment matching (lease content appearing inside a longer command) only
- * applies to reasonably long grants; a short grant like "yes" or "birdc" would
- * otherwise cover almost anything. Short grants must match the whole command.
- */
-const MIN_CONTAINMENT_CHARS = 16;
-
 export interface LeaseEntry {
   content: string;
   label?: string;
@@ -46,6 +39,70 @@ export function normalizeForLeaseMatch(value: string): string {
     .replace(/\\(["'`])/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Parse one shell command into argument values without executing or expanding
+ * it. Any unquoted shell control operator marks the command as compound. Lease
+ * payloads may match a complete argv value, never an arbitrary substring.
+ */
+function shellArguments(command: string): { args: string[]; compound: boolean } {
+  const args: string[] = [];
+  let current = '';
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  let compound = false;
+
+  const push = () => {
+    if (current.length > 0) args.push(current);
+    current = '';
+  };
+
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i]!;
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === '\\' && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      else {
+        // Double quotes still execute command substitutions. Single quotes do
+        // not. Mark these as compound before treating the bytes as one argv
+        // value, otherwise a separate effect can hide beside an approved arg.
+        if (
+          quote === '"'
+          && (char === '`' || (char === '$' && command[i + 1] === '('))
+        ) {
+          compound = true;
+        }
+        current += char;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      push();
+      if (char === '\n' || char === '\r') compound = true;
+      continue;
+    }
+    if (';&|<>`'.includes(char) || (char === '$' && command[i + 1] === '(')) {
+      compound = true;
+    }
+    current += char;
+  }
+  if (escaped) current += '\\';
+  push();
+  if (quote) compound = true;
+  return { args, compound };
 }
 
 /**
@@ -76,26 +133,32 @@ export function isEffectful(command: string, effectPatterns: string[]): boolean 
 }
 
 /**
- * Whether a command is covered by a lease: the command equals a granted entry,
- * or contains a (long enough) granted entry verbatim - the common shape where
- * the approved content is the payload of a longer command
- * (`birdc reply <id> "<approved text>"`).
+ * Whether a command is covered by a lease: the normalized command equals the
+ * full approved entry, or one complete shell argument equals an approved
+ * payload. Arbitrary substring containment is intentionally forbidden: it let
+ * `approved-effect ; unapproved-effect` inherit the first effect's grant.
  */
 export function commandCoveredByLease(command: string, lease: ApprovalLease | undefined): boolean {
   if (!lease || lease.entries.length === 0) return false;
   const normalizedCommand = normalizeForLeaseMatch(command);
+  const parsed = shellArguments(command);
   return lease.entries.some((entry) => {
     const normalizedContent = normalizeForLeaseMatch(entry.content);
     if (!normalizedContent) return false;
     if (normalizedCommand === normalizedContent) return true;
-    return normalizedContent.length >= MIN_CONTAINMENT_CHARS && normalizedCommand.includes(normalizedContent);
+    if (parsed.compound) return false;
+    return parsed.args.some((argument) =>
+      normalizeForLeaseMatch(argument) === normalizedContent
+    );
   });
 }
 
 /**
  * Per-session lease persistence. File-based (in the session directory, next to
  * the effect WAL) so a lease granted at resume time in one process is visible
- * to the resumed run in another, and survives suspend/resume cycles.
+ * to the resumed run in another. The grant is scoped to that resumed execution
+ * segment and is revoked when the segment ends; it must never authorize a later
+ * user continuation.
  *
  * Lifecycle:
  * - approve decision  -> grant (REPLACES any prior lease; the latest approved

@@ -112,8 +112,9 @@ export class LearningStore {
       const idx = existing.findIndex(e => this.similar(e.instruction, draft.instruction));
       if (idx >= 0) {
         const prior = existing[idx];
+        const { sessionId: _priorSessionId, ...priorWithoutSession } = prior;
         existing[idx] = {
-          ...prior,
+          ...priorWithoutSession,
           category: draft.category,
           title: draft.title,
           instruction: draft.instruction,

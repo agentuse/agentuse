@@ -114,6 +114,23 @@ describe("LearningStore", () => {
     expect(loaded[0].sessionId).toBe("sess-two");
   });
 
+  it("clears stale session provenance when a similar rule is upgraded at agent level", async () => {
+    const agentFile = join(tempDir, "agent.md");
+    await saveManualLearning({
+      agentFilePath: agentFile,
+      instruction: "Always include source links before publishing.",
+      sessionId: "sess-one",
+    });
+    await saveManualLearning({
+      agentFilePath: agentFile,
+      instruction: "Always include source links when publishing.",
+    });
+
+    const loaded = await store.load();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].sessionId).toBeUndefined();
+  });
+
   it("reads legacy learnings files written without a src field", async () => {
     // Pre-provenance format: metadata comment has no `src:` token.
     const legacy = `# Learnings for agent

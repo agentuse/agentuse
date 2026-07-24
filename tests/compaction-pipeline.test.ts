@@ -17,6 +17,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { SuspendSignal } from '../src/runner/suspend';
 import { logger } from '../src/utils/logger';
+import { aiSdkErrorMocks } from './helpers/ai-sdk-mock';
 
 // Pin a small window so a single oversized tool result crosses 70% (7000 tokens).
 mock.module('../src/utils/models-api', () => ({
@@ -31,11 +32,7 @@ const streamTextMock = mock((_config: any): any => ({ stream: (async function* (
 mock.module('ai', () => ({
   streamText: streamTextMock,
   isStepCount: mock((n: number) => ({ isStepCount: n })),
-  // executeAgentCore pulls in api-error.ts, which imports APICallError and
-  // RetryError from 'ai'; the mock must provide both or module load fails in
-  // isolation.
-  APICallError: { isInstance: () => false },
-  RetryError: { isInstance: () => false },
+  ...aiSdkErrorMocks(),
 }));
 
 const isSummarizer = (config: any) =>

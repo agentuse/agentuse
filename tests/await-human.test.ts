@@ -12,10 +12,12 @@ describe('await_human approval URL', () => {
   const originalServeUrl = process.env.AGENTUSE_SERVE_URL;
   const originalApiKey = process.env.AGENTUSE_API_KEY;
   const originalConfig = process.env.AGENTUSE_CONFIG;
+  const originalXdgDataHome = process.env.XDG_DATA_HOME;
   let tmpDir: string;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'agentuse-await-human-'));
+    process.env.XDG_DATA_HOME = tmpDir;
     // Point config at a non-existent path so the developer's real
     // ~/.agentuse/config.json never leaks into these tests. Tests that exercise
     // the config fallback override this with their own fixture.
@@ -23,6 +25,7 @@ describe('await_human approval URL', () => {
   });
 
   afterEach(() => {
+    unregisterServer();
     if (originalPublicUrl === undefined) delete process.env.AGENTUSE_RESUME_PUBLIC_URL;
     else process.env.AGENTUSE_RESUME_PUBLIC_URL = originalPublicUrl;
     if (originalServeUrl === undefined) delete process.env.AGENTUSE_SERVE_URL;
@@ -31,7 +34,8 @@ describe('await_human approval URL', () => {
     else process.env.AGENTUSE_API_KEY = originalApiKey;
     if (originalConfig === undefined) delete process.env.AGENTUSE_CONFIG;
     else process.env.AGENTUSE_CONFIG = originalConfig;
-    unregisterServer();
+    if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = originalXdgDataHome;
     if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
   });
 

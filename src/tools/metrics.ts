@@ -96,7 +96,10 @@ export function createRecordMetricTool(context: MetricToolContext): Tool {
       try {
         // sessionId is the idempotency key; without one each call creates.
         const outcome = sessionId !== undefined
-          ? await store.upsertWhere({ sessionId, metric }, options)
+          // A retry is a full replacement of the agent-supplied payload. The
+          // Store's default merge remains useful elsewhere, but here it would
+          // retain stale value/unit/note fields omitted by the latest fact.
+          ? await store.upsertWhere({ sessionId, metric }, options, { replaceData: true })
           : { item: await store.create(options), created: true };
         return {
           success: true,

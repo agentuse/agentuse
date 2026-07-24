@@ -7,8 +7,9 @@
  * rounds, so the reviewer can approve bytes that no longer exist by the time
  * the action runs. At gate time we copy each referenced file into the
  * session's own storage (content-addressed, immutable, removed with the
- * session) and the viewer serves the snapshot, falling back to the live path
- * only for gates recorded before this existed.
+ * session) and the viewer serves the snapshot. Gates recorded before snapshot
+ * support may still use a live path; a current gate that declares an artifact
+ * must snapshot it successfully before it can suspend.
  */
 
 import * as fs from 'fs/promises';
@@ -29,9 +30,6 @@ export interface GateArtifactSnapshot {
 
 /** Subdirectory of the session dir holding gate snapshots. */
 const GATE_MEDIA_DIR = path.join('media', 'gate');
-
-/** Extensions worth snapshotting: everything the approval viewer can preview. */
-const SNAPSHOT_EXT_RE = /\.(png|jpe?g|gif|webp|avif|svg|pdf|html?|mp4|webm|mov|m4v|mp3|m4a|wav|ogg)$/i;
 
 /** Media path tokens inside gate payload prose (images + audio/video only —
  *  html/pdf mentions in prose are usually links or docs, not review media). */
@@ -96,50 +94,68 @@ export function collectGateArtifactPaths(input: Record<string, unknown>): string
 /** Resolve the on-disk session dir (`<storage>/session/<id>-<agent>`) by id. */
 async function findSessionDir(projectRoot: string, sessionId: string): Promise<string | null> {
   const storageRoot = await getSessionStorageDir(projectRoot);
-  let entries;
-  try {
-    entries = await fs.readdir(storageRoot, { withFileTypes: true });
-  } catch {
+  const walk = async (dir: string): Promise<string | null> => {
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+    const match = entries.find((entry) =>
+      entry.isDirectory() && entry.name.startsWith(`${sessionId}-`)
+    );
+    if (match) return path.join(dir, match.name);
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === '.index') continue;
+      const found = await walk(path.join(dir, entry.name));
+      if (found) return found;
+    }
     return null;
-  }
-  const match = entries.find((e) => e.isDirectory() && e.name.startsWith(`${sessionId}-`));
-  return match ? path.join(storageRoot, match.name) : null;
+  };
+  return walk(storageRoot);
 }
 
 /**
- * Snapshot every previewable file the gate references into the session dir.
- * Best-effort by design: a missing/oversized/outside-project file is skipped
- * (the viewer falls back to the live path), and no failure here may ever block
- * the gate itself.
+ * Snapshot every file the gate explicitly references (plus detected media)
+ * into the session dir. This is fail-closed: returning a partial set would make
+ * the approval surface silently substitute mutable workspace bytes.
  */
 export async function snapshotGateArtifacts(
   projectRoot: string,
   sessionId: string,
   input: Record<string, unknown>
 ): Promise<GateArtifactSnapshot[]> {
-  const candidates = collectGateArtifactPaths(input).filter((p) => SNAPSHOT_EXT_RE.test(p));
+  const candidates = collectGateArtifactPaths(input);
   if (candidates.length === 0) return [];
   const sessionDir = await findSessionDir(projectRoot, sessionId);
-  if (!sessionDir) return [];
+  if (!sessionDir) {
+    throw new Error(`cannot locate session ${sessionId} for artifact snapshots`);
+  }
 
   const outDir = path.join(sessionDir, GATE_MEDIA_DIR);
   const snapshots: GateArtifactSnapshot[] = [];
+  const failures: string[] = [];
+  const realProjectRoot = await fs.realpath(projectRoot);
   for (const rel of candidates) {
     try {
       const resolved = path.resolve(projectRoot, rel);
-      if (!isPathInside(projectRoot, resolved)) continue;
+      if (!isPathInside(projectRoot, resolved)) {
+        throw new Error('path is outside the project');
+      }
       const real = await fs.realpath(resolved).catch(() => null);
-      if (!real || !isPathInside(await fs.realpath(projectRoot), real)) continue;
-      if (isBlockedProjectPath(projectRoot, resolved)) continue;
+      if (!real) throw new Error('file does not exist');
+      if (!isPathInside(realProjectRoot, real)) {
+        throw new Error('resolved path is outside the project');
+      }
+      if (isBlockedProjectPath(projectRoot, resolved)) {
+        throw new Error('path is blocked from approval disclosure');
+      }
       const fileStat = await fs.stat(real);
-      if (!fileStat.isFile()) continue;
+      if (!fileStat.isFile()) throw new Error('path is not a regular file');
       const ext = path.extname(rel).toLowerCase();
       const cap = AV_EXT_RE.test(ext) ? MAX_AV_BYTES : MAX_STATIC_BYTES;
       if (fileStat.size > cap) {
-        logger.warn(`gate-artifacts: skipping ${rel} (${fileStat.size} bytes exceeds snapshot cap)`);
-        continue;
+        throw new Error(`${fileStat.size} bytes exceeds the ${cap}-byte snapshot cap`);
       }
       const content = await fs.readFile(real);
+      if (content.length > cap) {
+        throw new Error(`file grew beyond the ${cap}-byte snapshot cap while reading`);
+      }
       const hash = createHash('sha256').update(content).digest('hex').slice(0, 16);
       await fs.mkdir(outDir, { recursive: true });
       const file = path.join(outDir, `${hash}${ext}`);
@@ -150,8 +166,15 @@ export async function snapshotGateArtifacts(
       }
       snapshots.push({ path: rel, hash, ext, bytes: content.length });
     } catch (error) {
-      logger.warn(`gate-artifacts: failed to snapshot ${rel}: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`gate-artifacts: failed to snapshot ${rel}: ${message}`);
+      failures.push(`${rel}: ${message}`);
     }
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `Approval artifact snapshot failed; the gate was not opened because review bytes must be immutable. ${failures.join('; ')}`
+    );
   }
   return snapshots;
 }

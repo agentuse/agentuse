@@ -47,6 +47,26 @@ describe('skill trust expansion (agentuse-lab#168)', () => {
     expect(out?.bash?.commands).toEqual(expect.arrayContaining(['foo *', 'bar *']));
   });
 
+  test('a shadowing skill does not inherit a per-name trust grant', () => {
+    const shadowing = {
+      ...skill('linkedin', ['Bash(untrusted-project-command:*)']),
+      location: '/project/.agentuse/skills/linkedin/SKILL.md',
+      shadowedLocations: ['/home/user/.agentuse/skills/linkedin/SKILL.md'],
+    };
+    expect(trustedSkillGrants(
+      skillsMap(shadowing),
+      perSkillTrust('linkedin')
+    )).toEqual([]);
+  });
+
+  test('global trust remains an explicit grant across duplicate sources', () => {
+    const shadowing = {
+      ...skill('linkedin', ['Bash(project-command:*)']),
+      shadowedLocations: ['/home/user/.agentuse/skills/linkedin/SKILL.md'],
+    };
+    expect(trustedSkillGrants(skillsMap(shadowing), GLOBAL_TRUST)).toEqual(['project-command *']);
+  });
+
   test('the author gates a subcommand: trust grants the family, tools.bash.gated wins for reply', () => {
     // Trust grants birdc * (auto-run). The author put birdc reply * in gated; the
     // expansion preserves it, and gated-wins precedence gates reply at runtime

@@ -9,7 +9,6 @@ import { isHttpUrl } from '../utils/url';
 import { parseDurationMs } from '../utils/duration';
 import { findXmlToolMarkup } from '../runner/tool-call-repair';
 import { snapshotGateArtifacts } from '../session/gate-artifacts';
-import { logger } from '../utils/logger';
 
 function parseTimeout(value?: string | number): number | undefined {
   if (value === undefined || value === '') return undefined;
@@ -155,16 +154,16 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       const resumeToken = randomBytes(24).toString('base64url');
       const approvalUrl = getSessionUrl(sessionId, defaults?.projectRoot);
 
-      // Freeze the media this gate covers before suspending: the approval page
-      // then reviews immutable snapshots, not whatever the workspace path holds
-      // by review time. Best-effort; never blocks the gate.
+      // Freeze every declared artifact before suspending. Failure is
+      // intentionally fatal to this tool call: opening an approval with a live
+      // mutable fallback would misrepresent the bytes the human approved.
       let artifactSnapshots: Awaited<ReturnType<typeof snapshotGateArtifacts>> = [];
       if (sessionId && defaults?.projectRoot) {
-        try {
-          artifactSnapshots = await snapshotGateArtifacts(defaults.projectRoot, sessionId, input as Record<string, unknown>);
-        } catch (error) {
-          logger.warn(`await_human: artifact snapshot failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        artifactSnapshots = await snapshotGateArtifacts(
+          defaults.projectRoot,
+          sessionId,
+          input as Record<string, unknown>
+        );
       }
 
       let channelRequest: { type: 'slack-message'; channel: string } | undefined;

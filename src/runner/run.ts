@@ -492,7 +492,7 @@ export async function runAgent(
     }
 
     const runResult: RunAgentResult = {
-      status: 'completed',
+      status: incomplete ? 'failed' : 'completed',
       ...(incomplete && { incomplete }),
       text: result.text,
       ...(result.usage && { usage: result.usage }),

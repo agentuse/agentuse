@@ -122,6 +122,22 @@ describe("record_metric tool", () => {
     expect(items[0]!.data.count).toBe(8);
   });
 
+  it("re-recording replaces omitted optional fields instead of retaining stale values", async () => {
+    const tool = createRecordMetricTool({ projectRoot: tempDir, sessionId: "ses_1", agentId: "a" });
+    await run(tool, { metric: "revenue_processed", count: 4, value: 11200, unit: "usd", note: "first" });
+    await run(tool, { metric: "revenue_processed", count: 5 });
+
+    const items = await metricsStore().list();
+    expect(items).toHaveLength(1);
+    expect(items[0]!.title).toBe("revenue_processed · 5");
+    expect(items[0]!.data).toEqual({
+      metric: "revenue_processed",
+      count: 5,
+      sessionId: "ses_1",
+      agent: "a",
+    });
+  });
+
   it("different sessions and metrics create separate records", async () => {
     const run1 = createRecordMetricTool({ projectRoot: tempDir, sessionId: "ses_1", agentId: "a" });
     const run2 = createRecordMetricTool({ projectRoot: tempDir, sessionId: "ses_2", agentId: "a" });

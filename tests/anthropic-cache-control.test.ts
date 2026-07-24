@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { SuspendSignal } from '../src/runner/suspend';
+import { aiSdkErrorMocks } from './helpers/ai-sdk-mock';
 
 const streamTextMock = mock(() => ({
   stream: (async function* () {
@@ -18,16 +19,17 @@ const streamTextMock = mock(() => ({
 const stepCountIsMock = mock((steps: number) => ({ steps }));
 const createModelMock = mock(async () => ({ modelId: 'mock-model' }));
 const generateTextMock = mock(async () => ({ text: 'compacted' }));
+const codexAccessMock = mock(async (): Promise<string | null> => null);
+
+mock.module('../src/auth/codex', () => ({
+  CodexAuth: { access: codexAccessMock },
+}));
 
 mock.module('ai', () => ({
   generateText: generateTextMock,
   streamText: streamTextMock,
   isStepCount: stepCountIsMock,
-  // execution.ts pulls in api-error.ts, which imports APICallError and
-  // RetryError from 'ai'; the mock must provide both (with isInstance) or
-  // module load fails when this file runs in isolation.
-  APICallError: { isInstance: () => false },
-  RetryError: { isInstance: () => false },
+  ...aiSdkErrorMocks(),
 }));
 
 mock.module('../src/models', () => ({
@@ -46,6 +48,7 @@ beforeEach(() => {
   stepCountIsMock.mockClear();
   createModelMock.mockClear();
   generateTextMock.mockClear();
+  codexAccessMock.mockImplementation(async () => null);
 });
 
 describe('executeAgentCore Anthropic cache control', () => {
@@ -234,6 +237,31 @@ describe('executeAgentCore Anthropic cache control', () => {
       messages: streamConfig.messages,
     })).messages;
     expect(stepMessages[0].providerOptions).toBeUndefined();
+  });
+
+  it('treats a bare OpenAI ID as first-class primary execution on Codex', async () => {
+    codexAccessMock.mockImplementation(async () => 'oauth-token');
+    for await (const _ of executeAgentCore(
+      {
+        name: 'bare-openai',
+        config: { model: 'gpt-5' },
+      } as any,
+      {},
+      {
+        userMessage: 'Run',
+        systemMessages: [{ role: 'system', content: 'primary instructions' }],
+        maxSteps: 3,
+      }
+    )) {
+      // Consume the stream.
+    }
+
+    const streamConfig = streamTextMock.mock.calls[0][0] as any;
+    expect(streamConfig.maxOutputTokens).toBeUndefined();
+    expect(streamConfig.providerOptions.openai).toMatchObject({
+      instructions: 'primary instructions',
+      store: false,
+    });
   });
 
   it('preserves explicit OpenAI prompt cache options', async () => {

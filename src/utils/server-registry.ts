@@ -45,21 +45,24 @@ export interface ServerEntry {
   logFile?: string;
 }
 
-const REGISTRY_DIR = join(getXdgDataDir(), "agentuse", "servers");
+function getRegistryDir(): string {
+  return join(getXdgDataDir(), "agentuse", "servers");
+}
 
 /**
  * Default flat-log path for a given PID (no rotation, one file per process).
  */
 export function getDefaultLogFilePath(pid: number): string {
-  return join(REGISTRY_DIR, `${pid}.log`);
+  return join(getRegistryDir(), `${pid}.log`);
 }
 
 /**
  * Ensure the registry directory exists.
  */
 function ensureRegistryDir(): void {
-  if (!existsSync(REGISTRY_DIR)) {
-    mkdirSync(REGISTRY_DIR, { recursive: true });
+  const registryDir = getRegistryDir();
+  if (!existsSync(registryDir)) {
+    mkdirSync(registryDir, { recursive: true });
   }
 }
 
@@ -98,7 +101,7 @@ function isServerEntryAlive(entry: ServerEntry): boolean {
  * Get the file path for a server entry.
  */
 function getEntryPath(pid: number): string {
-  return join(REGISTRY_DIR, `${pid}.json`);
+  return join(getRegistryDir(), `${pid}.json`);
 }
 
 /**
@@ -152,12 +155,13 @@ export function unregisterServer(): void {
  */
 export function listServers(): ServerEntry[] {
   ensureRegistryDir();
+  const registryDir = getRegistryDir();
 
   const entries: ServerEntry[] = [];
-  const files = readdirSync(REGISTRY_DIR).filter((f) => f.endsWith(".json"));
+  const files = readdirSync(registryDir).filter((f) => f.endsWith(".json"));
 
   for (const file of files) {
-    const filePath = join(REGISTRY_DIR, file);
+    const filePath = join(registryDir, file);
     try {
       const entry = JSON.parse(readFileSync(filePath, "utf-8")) as ServerEntry;
 

@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { validateModel, getSuggestions, warnIfModelNotInRegistry, loadCustomProviderNames } from "../src/utils/model-utils";
+import {
+  validateModel,
+  getSuggestions,
+  warnIfModelNotInRegistry,
+  loadCustomProviderNames,
+  resolveModelProvider,
+  toRegistryKey,
+} from "../src/utils/model-utils";
 import { getProviderModels, MODELS } from "../src/generated/models";
 import fs from "fs/promises";
 import path from "path";
@@ -7,6 +14,12 @@ import os from "os";
 import { AuthStorage } from "../src/auth/storage";
 
 describe("validateModel", () => {
+  it("normalizes bare model IDs as OpenAI across provider and registry resolution", () => {
+    expect(resolveModelProvider("gpt-5")).toBe("openai");
+    expect(toRegistryKey("gpt-5")).toBe("openai:gpt-5");
+    expect(validateModel("gpt-5").valid).toBe(true);
+  });
+
   it("returns valid for a known model", () => {
     const result = validateModel("anthropic:claude-sonnet-5");
     expect(result.valid).toBe(true);

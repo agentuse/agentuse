@@ -12,7 +12,7 @@ import { loadGlobalDefaults } from "../utils/global-config";
 import { logger, LogLevel } from "../utils/logger";
 import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
-import { applyResumeToolResult, restoreResumeToolResult, runAgent, describeErrorPart } from "../runner";
+import { applyResumeToolResult, restoreResumeToolResult, runAgent, describeErrorPart, classifyRunResult } from "../runner";
 import { describeLearningOutcome, saveManualLearning, type LearningSource, type LearningConfig } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
 
@@ -1595,16 +1595,19 @@ async function resumeSession(
       // Learning capture (execution + any reviewer comments) runs once inside
       // runAgent's post-run lifecycle, so nothing extra is needed here.
 
+      const disposition = classifyRunResult(result);
       process.stdout.write(JSON.stringify({
-        success: true,
+        success: disposition.success,
         sessionId: summary.id,
-        status: result.status ?? "completed",
+        status: disposition.status,
+        ...(disposition.kind === 'incomplete' && { error: disposition.error }),
         result: {
           text: result.text,
           finishReason: result.finishReason,
           toolCalls: result.toolCallCount
         }
       }, null, 2) + "\n");
+      if (!disposition.success) process.exitCode = disposition.exitCode;
     } catch (err) {
       await restoreResumeToolResult({ sessionManager, rollback: resumed.rollback }).catch((restoreErr) => {
         logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
@@ -1654,14 +1657,17 @@ async function resumeSession(
     true
   );
 
+  const disposition = classifyRunResult(result);
   process.stdout.write(JSON.stringify({
-    success: true,
+    success: disposition.success,
     continuedFrom: summary.id,
-    status: result.status ?? "completed",
+    status: disposition.status,
+    ...(disposition.kind === 'incomplete' && { error: disposition.error }),
     result: {
       text: result.text,
       finishReason: result.finishReason,
       toolCalls: result.toolCallCount
     }
   }, null, 2) + "\n");
+  if (!disposition.success) process.exitCode = disposition.exitCode;
 }

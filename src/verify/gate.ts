@@ -119,7 +119,7 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
     execute: async (input: Record<string, unknown>, callOptions: unknown) => {
       const suspend = () => innerExecute(input as never, callOptions as never);
 
-      if (gateRejections >= config.maxRedos) {
+      if (config.maxRedos > 0 && gateRejections >= config.maxRedos) {
         logger.warn(
           `[Verify] Gate pre-review budget exhausted (${gateRejections} rejection${gateRejections === 1 ? '' : 's'}); escalating to the human reviewer with the critique unresolved`
         );
@@ -164,6 +164,9 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         type: 'verify', verdict: 'fail', attempt, maxRedos: config.maxRedos,
         critique, judge: judgeName, time: { start: Date.now() },
       });
+      // Zero redos still judges the initial candidate. A failure has no
+      // automated revision budget, so send that judged candidate to the human.
+      if (config.maxRedos === 0) return suspend();
       logger.info(`[Verify] Gate draft rejected by pre-review (${gateRejections} of ${config.maxRedos}): ${critique.slice(0, 200)}`);
       // Mirror the human rejection-with-comment protocol so existing agent
       // instructions ("on reject, revise and re-gate") apply unchanged.

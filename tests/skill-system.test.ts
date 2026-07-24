@@ -368,6 +368,7 @@ Content`);
       await writeFile(join(agentUseDir, uniqueName, 'SKILL.md'), `---
 name: ${uniqueName}
 description: First duplicate
+allowed-tools: Bash(project-shadow-command:*)
 ---
 
 Content 1`);
@@ -384,6 +385,19 @@ Content 2`);
 
       expect(skills.has(uniqueName)).toBe(true);
       expect(skills.get(uniqueName)?.description).toBe('First duplicate');
+      expect(skills.get(uniqueName)?.shadowedLocations).toContain(
+        join(claudeDir, uniqueName, 'SKILL.md')
+      );
+      const trustByName: NormalizedSkillsConfig = {
+        auto: true,
+        trusted: false,
+        explicit: { [uniqueName]: { trusted: true } },
+      };
+      expect(expandTrustedSkills(
+        { bash: { commands: [] } },
+        skills,
+        trustByName
+      )?.bash?.commands).toEqual([]);
     });
   });
 

@@ -1,5 +1,6 @@
-import { readFile, stat } from "fs/promises";
-import { join } from "path";
+import { constants } from "fs";
+import { lstat, open, realpath } from "fs/promises";
+import { join, relative, isAbsolute } from "path";
 import * as YAML from "yaml";
 
 /**
@@ -27,6 +28,7 @@ export interface AboutInfo {
 const NAME_MAX = 120;
 const LINE_MAX = 500;
 const BODY_MAX = 32_768;
+const FILE_MAX_BYTES = 64 * 1024;
 
 function cleanLine(value: unknown, max: number): string | undefined {
   if (typeof value !== "string" && typeof value !== "number") return undefined;
@@ -80,24 +82,63 @@ const aboutCache = new Map<string, CachedAbout>();
  */
 export async function readAbout(dir: string): Promise<AboutInfo | null> {
   const filePath = join(dir, "ABOUT.md");
-  let fileStat;
+  let handle;
   try {
-    fileStat = await stat(filePath);
+    const [linkStat, realDir, realFile] = await Promise.all([
+      lstat(filePath),
+      realpath(dir),
+      realpath(filePath),
+    ]);
+    // ABOUT is a display-only project file, never a pointer to some other
+    // readable file. O_NOFOLLOW below closes the swap race after this check.
+    if (linkStat.isSymbolicLink() || !linkStat.isFile()) {
+      aboutCache.delete(filePath);
+      return null;
+    }
+    const fromDir = relative(realDir, realFile);
+    if (fromDir.startsWith("..") || isAbsolute(fromDir)) {
+      aboutCache.delete(filePath);
+      return null;
+    }
+
+    handle = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const fileStat = await handle.stat();
+    if (!fileStat.isFile() || fileStat.size > FILE_MAX_BYTES) {
+      aboutCache.delete(filePath);
+      return null;
+    }
+
+    const cached = aboutCache.get(filePath);
+    if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) {
+      return cached.about;
+    }
+
+    // Read through the already-validated descriptor and stop at the cap even
+    // if the file grows after stat(). This avoids buffering an unbounded file.
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let position = 0;
+    while (total <= FILE_MAX_BYTES) {
+      const chunk = Buffer.allocUnsafe(Math.min(8192, FILE_MAX_BYTES + 1 - total));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
+      if (bytesRead === 0) break;
+      chunks.push(chunk.subarray(0, bytesRead));
+      total += bytesRead;
+      position += bytesRead;
+    }
+    if (total > FILE_MAX_BYTES) {
+      aboutCache.delete(filePath);
+      return null;
+    }
+
+    const parsed = parseAbout(Buffer.concat(chunks, total).toString("utf8"));
+    const about = Object.keys(parsed).length > 0 ? parsed : null;
+    aboutCache.set(filePath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size, about });
+    return about;
   } catch {
     aboutCache.delete(filePath);
     return null;
+  } finally {
+    await handle?.close().catch(() => {});
   }
-  const cached = aboutCache.get(filePath);
-  if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) {
-    return cached.about;
-  }
-  let about: AboutInfo | null = null;
-  try {
-    const parsed = parseAbout(await readFile(filePath, "utf8"));
-    about = Object.keys(parsed).length > 0 ? parsed : null;
-  } catch {
-    about = null;
-  }
-  aboutCache.set(filePath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size, about });
-  return about;
 }

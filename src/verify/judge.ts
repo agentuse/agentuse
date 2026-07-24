@@ -138,7 +138,8 @@ export function extractVerdict(text: string): VerifyVerdict | null {
 async function judgeBuiltin(
   input: JudgeInput,
   config: CanonicalVerifyConfig,
-  agentModel: string
+  agentModel: string,
+  abortSignal: AbortSignal | undefined
 ): Promise<JudgeOutcome> {
   const judgeModel = config.model ?? agentModel;
   const prompt = buildJudgePrompt(input, config.criteria ?? GENERIC_CRITERIA, VERDICT_FORMAT_INSTRUCTIONS);
@@ -155,6 +156,7 @@ async function judgeBuiltin(
     // Room for rubric-by-rubric reasoning before the trailing verdict object;
     // a too-small cap truncates the response before the JSON ever appears.
     maxOutputTokens: 2500,
+    ...(abortSignal && { abortSignal }),
   });
 
   const verdict = extractVerdict(responseText);
@@ -296,21 +298,20 @@ async function judgeViaAgent(
       }
     );
 
-    let result: Awaited<ReturnType<typeof runJudge>>;
-    try {
-      result = logSink ? await runWithLogSink(logSink.capture, runJudge) : await runJudge();
-    } finally {
-      if (logSink) await logSink.flush();
-    }
+    let result: Awaited<ReturnType<typeof runJudge>> | undefined;
+    let terminalOutcome: 'completed' | { code: string; message: string } = {
+      code: 'JUDGE_ERROR',
+      message: 'judge execution ended before producing a terminal outcome',
+    };
 
-    // Finalize the judge's child session (best-effort) so it doesn't linger as
-    // "running": completed on a clean verdict, error otherwise.
+    // Finalize the judge's child session (best-effort) so it never lingers as
+    // "running". This is called only from the lifecycle finally below.
     const finalizeJudgeSession = async (
       outcome: 'completed' | { code: string; message: string }
     ): Promise<void> => {
       if (!judgeSessionManager || !judgeSessionID || !judgeAgentId) return;
       try {
-        if (judgeMsgID && result.usage) {
+        if (judgeMsgID && result?.usage) {
           await judgeSessionManager.updateMessage(judgeSessionID, judgeAgentId, judgeMsgID, {
             time: { completed: Date.now() },
             assistant: {
@@ -326,24 +327,43 @@ async function judgeViaAgent(
       }
     };
 
-    if (result.suspended) {
-      await finalizeJudgeSession({ code: 'JUDGE_SUSPENDED', message: 'judge suspended on an approval gate' });
-      return { status: 'error', detail: `judge agent ${judgeAgent.name} suspended on an approval gate; judges cannot suspend` };
-    }
+    try {
+      result = logSink ? await runWithLogSink(logSink.capture, runJudge) : await runJudge();
 
-    // Prefer the structured submit_verdict tool call; fall back to scraping a
-    // trailing JSON object from the text for a judge that answered in prose.
-    const verdict = submittedVerdict ?? extractVerdict(result.text ?? '');
-    if (!verdict) {
-      await finalizeJudgeSession({ code: 'JUDGE_NO_VERDICT', message: 'judge did not call submit_verdict or return a parseable verdict' });
-      return { status: 'error', detail: `judge agent ${judgeAgent.name} did not call submit_verdict or return a parseable verdict` };
+      if (result.suspended) {
+        terminalOutcome = { code: 'JUDGE_SUSPENDED', message: 'judge suspended on an approval gate' };
+        return { status: 'error', detail: `judge agent ${judgeAgent.name} suspended on an approval gate; judges cannot suspend` };
+      }
+
+      // Prefer the structured submit_verdict tool call; fall back to scraping a
+      // trailing JSON object from the text for a judge that answered in prose.
+      const verdict = submittedVerdict ?? extractVerdict(result.text ?? '');
+      if (!verdict) {
+        terminalOutcome = { code: 'JUDGE_NO_VERDICT', message: 'judge did not call submit_verdict or return a parseable verdict' };
+        return { status: 'error', detail: `judge agent ${judgeAgent.name} did not call submit_verdict or return a parseable verdict` };
+      }
+      if (!verdict.pass && !verdict.critique) {
+        terminalOutcome = { code: 'JUDGE_NO_CRITIQUE', message: 'judge failed the output without a critique' };
+        return { status: 'error', detail: `judge agent ${judgeAgent.name} failed the output without a critique` };
+      }
+      terminalOutcome = 'completed';
+      return { status: 'verdict', verdict };
+    } catch (error) {
+      const cancelled = abortSignal?.aborted || (error instanceof Error && error.name === 'AbortError');
+      terminalOutcome = {
+        code: cancelled ? 'JUDGE_CANCELLED' : 'JUDGE_ERROR',
+        message: cancelled
+          ? 'judge execution was cancelled'
+          : `judge execution failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+      throw error;
+    } finally {
+      try {
+        if (logSink) await logSink.flush();
+      } finally {
+        await finalizeJudgeSession(terminalOutcome);
+      }
     }
-    if (!verdict.pass && !verdict.critique) {
-      await finalizeJudgeSession({ code: 'JUDGE_NO_CRITIQUE', message: 'judge failed the output without a critique' });
-      return { status: 'error', detail: `judge agent ${judgeAgent.name} failed the output without a critique` };
-    }
-    await finalizeJudgeSession('completed');
-    return { status: 'verdict', verdict };
   } finally {
     if (loadedTools.store) {
       await loadedTools.store.releaseLock();
@@ -378,8 +398,13 @@ export async function judgeOutput(params: {
     if (config.judge) {
       return await judgeViaAgent(input, config.judge, agentFilePath, projectContext, abortSignal, parentSession);
     }
-    return await judgeBuiltin(input, config, agentModel);
+    return await judgeBuiltin(input, config, agentModel, abortSignal);
   } catch (error) {
+    if (abortSignal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+      const abortError = error instanceof Error ? error : new Error('Verification cancelled');
+      abortError.name = 'AbortError';
+      throw abortError;
+    }
     return { status: 'error', detail: (error as Error).message };
   }
 }

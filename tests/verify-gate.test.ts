@@ -105,6 +105,19 @@ describe('withGateVerify', () => {
     expect(suspend).toHaveBeenCalledTimes(1);
   });
 
+  it('judges the initial candidate when maxRedos is zero, then escalates a failure', async () => {
+    judgeOutputMock.mockImplementation(async () => ({
+      status: 'verdict',
+      verdict: { pass: false, critique: 'Initial draft misses the requirement.' },
+    }));
+    const { tool, suspend } = makeGateTool();
+    const wrapped = withGateVerify(tool, { ...baseOptions, config: { criteria: 'q', maxRedos: 0 } });
+
+    await expect((wrapped.execute as any)(gateInput, {})).rejects.toThrow('SUSPENDED');
+    expect(judgeOutputMock).toHaveBeenCalledTimes(1);
+    expect(suspend).toHaveBeenCalledTimes(1);
+  });
+
   it('fails open to the human on a judge error', async () => {
     judgeOutputMock.mockImplementation(async () => ({ status: 'error', detail: 'auth expired' }));
     const { tool, suspend } = makeGateTool();

@@ -12,3 +12,10 @@ export type { ReopenGateResult, ReconciledOrphan } from './runner/resume';
 export { recordLearningMarker, recordLearningMarkerForLatestMessage, recordErrorMarker, recordErrorMarkerForLatestMessage, describeErrorPart, createSessionLogSink, describeLogPart, gatherApprovalContext } from './runner/session-helper';
 export type { SessionLogSink, LogPartView, ApprovalContext } from './runner/session-helper';
 export type { PrepareAgentOptions, PreparedAgentExecution, AgentChunk, RunAgentResult } from './runner/types';
+export {
+  classifyRunResult,
+  executionOutcomeFields,
+  runResultJson,
+  workerRunResponse,
+  type RunResultDisposition,
+} from './runner/outcome';

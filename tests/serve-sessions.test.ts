@@ -48,13 +48,81 @@ describe('session view token', () => {
 });
 
 describe('header-gate exemption (capability routes)', () => {
+  const capabilityRoutes = [
+    '/sessions/abc',
+    '/sessions/abc/decision',
+    '/sessions/abc/continue',
+    '/sessions/abc/status',
+    '/sessions/abc/stop',
+    '/sessions/abc/started',
+    '/sessions/abc/finished',
+    '/sessions/abc/reopen',
+    '/sessions/abc/events',
+    '/sessions/abc/learnings',
+    '/sessions/abc/learnings/rule-1/discard',
+    '/sessions/abc/artifacts-list',
+    '/sessions/abc/artifacts/review%2Fplan.md',
+    '/sessions/abc/tool-artifacts/session%2Fmessage%2Fartifact%2Ftool-output.txt',
+  ];
+
   it('exempts the session page and its action subroutes on the non-API surface', () => {
-    expect(__testing.isHeaderGateExemptRoute('/sessions/abc', false)).toBe(true);
-    expect(__testing.isHeaderGateExemptRoute('/sessions/abc/decision', false)).toBe(true);
-    expect(__testing.isHeaderGateExemptRoute('/sessions/abc/continue', false)).toBe(true);
-    expect(__testing.isHeaderGateExemptRoute('/sessions/abc/status', false)).toBe(true);
-    expect(__testing.isHeaderGateExemptRoute('/sessions/abc/stop', false)).toBe(true);
-    expect(__testing.isHeaderGateExemptRoute('/sessions/abc/tool-artifacts/session%2Fmessage%2Fartifact%2Ftool-output.txt', false)).toBe(true);
+    for (const route of capabilityRoutes) {
+      expect(__testing.isHeaderGateExemptRoute(route, false)).toBe(true);
+    }
+  });
+
+  it('applies local, API-key, session-token, missing, and wrong-session auth consistently', () => {
+    const apiKey = 'operator-secret';
+    const sessionToken = sessionViewToken('abc', apiKey);
+    const wrongSessionToken = sessionViewToken('different-session', apiKey);
+
+    for (const route of capabilityRoutes) {
+      expect(__testing.isHeaderGateExemptRoute(route, false)).toBe(true);
+      expect(__testing.isSessionCapabilityAuthorized({ sessionId: 'abc' })).toBe(true);
+      expect(__testing.isSessionCapabilityAuthorized({
+        sessionId: 'abc',
+        apiKey,
+        authorization: `Bearer ${apiKey}`,
+      })).toBe(true);
+      expect(__testing.isSessionCapabilityAuthorized({
+        sessionId: 'abc',
+        apiKey,
+        sessionToken,
+      })).toBe(true);
+      expect(__testing.isSessionCapabilityAuthorized({ sessionId: 'abc', apiKey })).toBe(false);
+      expect(__testing.isSessionCapabilityAuthorized({
+        sessionId: 'abc',
+        apiKey,
+        sessionToken: wrongSessionToken,
+      })).toBe(false);
+    }
+  });
+
+  it('rejects an explicitly wrong project even when the session token is valid', () => {
+    const apiKey = 'operator-secret';
+    const sessionToken = sessionViewToken('abc', apiKey);
+    expect(__testing.isSessionCapabilityAuthorized({
+      sessionId: 'abc',
+      apiKey,
+      sessionToken,
+    })).toBe(true);
+
+    expect(__testing.selectSessionProjects(
+      [{ id: 'project-a' }, { id: 'project-b' }],
+      'project-other'
+    )).toEqual({
+      success: false,
+      status: 404,
+      code: 'PROJECT_NOT_FOUND',
+      message: 'Project not found: project-other',
+    });
+    expect(__testing.selectSessionProjects(
+      [{ id: 'project-a' }, { id: 'project-b' }],
+      'project-b'
+    )).toEqual({
+      success: true,
+      projects: [{ id: 'project-b' }],
+    });
   });
 
   it('keeps the /sessions LIST page header-gated', () => {
@@ -64,8 +132,9 @@ describe('header-gate exemption (capability routes)', () => {
   it('keeps the JSON twins header-gated (security boundary)', () => {
     // /api/sessions/:id and /api/sessions normalize to these routePaths with
     // isApi=true; they must NOT be exempt or they become unauthenticated.
-    expect(__testing.isHeaderGateExemptRoute('/sessions/abc', true)).toBe(false);
-    expect(__testing.isHeaderGateExemptRoute('/sessions/abc/decision', true)).toBe(false);
+    for (const route of capabilityRoutes) {
+      expect(__testing.isHeaderGateExemptRoute(route, true)).toBe(false);
+    }
     expect(__testing.isHeaderGateExemptRoute('/sessions', true)).toBe(false);
   });
 
@@ -143,6 +212,34 @@ describe('session list helpers', () => {
   it('keeps individual session SSE fast only while live', () => {
     expect(SESSION_SSE_LIVE_INTERVAL_MS).toBe(500);
     expect(SESSION_SSE_IDLE_INTERVAL_MS).toBe(10_000);
+  });
+});
+
+describe('incomplete API response', () => {
+  it('returns 422, failure status, stable error code, and useful final output', () => {
+    expect(__testing.workerExecutionErrorResponse({
+      success: false,
+      error: { code: 'INCOMPLETE', message: 'Login expired' },
+      result: {
+        text: 'Partial diagnostic output',
+        duration: 125,
+        toolCalls: 2,
+        sessionId: 'session-1',
+      },
+    })).toEqual({
+      status: 422,
+      body: {
+        success: false,
+        status: 'incomplete',
+        error: { code: 'INCOMPLETE', message: 'Login expired' },
+        result: {
+          text: 'Partial diagnostic output',
+          duration: 125,
+          toolCalls: 2,
+          sessionId: 'session-1',
+        },
+      },
+    });
   });
 });
 

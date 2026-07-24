@@ -100,6 +100,7 @@ describe('resolveMaxOutputTokens', () => {
 
   it('leaves OpenAI alone by default so the SDK uses the model max', () => {
     expect(resolveMaxOutputTokens(agent('model: openai:gpt-5'))).toBeUndefined();
+    expect(resolveMaxOutputTokens(agent('model: gpt-5'))).toBeUndefined();
   });
 
   it("applies an override to non-Anthropic providers too, clamped to the model's limit", () => {

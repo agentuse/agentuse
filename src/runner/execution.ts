@@ -4,7 +4,7 @@ import { createHash } from 'crypto';
 import type { ParsedAgent } from '../parser';
 import { createModel } from '../models';
 import { getModelFromRegistry } from '../generated/models';
-import { toRegistryKey } from '../utils/model-utils';
+import { resolveModelProvider, toRegistryKey } from '../utils/model-utils';
 import { BUILTIN_PROVIDERS } from '../providers/registry-sources';
 import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
 import { CodexAuth } from '../auth/codex';
@@ -63,7 +63,7 @@ const CUSTOM_PROVIDER_MAX_OUTPUT_TOKENS = 16384;
 //   5. Everything else (OpenAI/Google, model unknown to the registry) — return
 //      undefined so the SDK uses its own (correct, model-max) default.
 export function resolveMaxOutputTokens(agent: ParsedAgent): number | undefined {
-  const provider = agent.config.model.split(':')[0];
+  const provider = resolveModelProvider(agent.config.model);
   const isCustomProvider =
     !BUILTIN_PROVIDERS.includes(provider) || provider === OPENCODE_GO_PROVIDER_ID;
 
@@ -92,7 +92,7 @@ export function resolveMaxOutputTokens(agent: ParsedAgent): number | undefined {
 }
 
 function isAnthropicModel(model: string): boolean {
-  return model.split(':')[0] === 'anthropic';
+  return resolveModelProvider(model) === 'anthropic';
 }
 
 function defaultOpenAIPromptCacheKey(agent: ParsedAgent): string {
@@ -159,7 +159,7 @@ export function resolveReasoning(agent: ParsedAgent): {
 } {
   const reasoning = agent.config.reasoning;
   if (reasoning) return { reasoning };
-  const provider = agent.config.model.split(':')[0];
+  const provider = resolveModelProvider(agent.config.model);
   const anthropicThinkingBudget =
     provider === 'anthropic' ? resolveAnthropicThinking(agent)?.budgetTokens : undefined;
   return anthropicThinkingBudget ? { anthropicThinkingBudget } : {};
@@ -464,6 +464,7 @@ export async function* executeAgentCore(
     }
   }
 
+  try {
   // Initialize context manager if enabled
   let contextManager: ContextManager | null = null;
   const usesAnthropicCacheControl = isAnthropicModel(agent.config.model);
@@ -492,7 +493,7 @@ export async function* executeAgentCore(
   if (ContextManager.isEnabled()) {
     contextManager = new ContextManager(
       agent.config.model,
-      async (messagesToCompact) => compactMessages(messagesToCompact, agent.config.model)
+      async (messagesToCompact) => compactMessages(messagesToCompact, agent.config.model, options.abortSignal)
     );
     await contextManager.initialize();
 
@@ -634,6 +635,7 @@ export async function* executeAgentCore(
   // below can stamp those siblings postSuspend; a resume starts a fresh
   // executeAgentCore, so it never leaks past the suspend.
   let gateBarrierActive = false;
+  let gateBarrierCallId: string | undefined;
 
   // Function to create stream with current messages
   const createStream = async () => {
@@ -657,7 +659,7 @@ export async function* executeAgentCore(
     }
 
     // Extract provider options based on model provider
-    const provider = agent.config.model.split(':')[0];
+    const provider = resolveModelProvider(agent.config.model);
 
     // Reasoning config. The top-level `reasoning` (provider-agnostic) becomes the
     // SDK's `reasoning` param; the legacy `anthropic.thinking.budgetTokens` is
@@ -804,6 +806,7 @@ export async function* executeAgentCore(
           }
           gatePendingThisStep = true;
           gateBarrierActive = true;
+          gateBarrierCallId = callId;
           return undefined;
         }
 
@@ -1069,7 +1072,7 @@ Error: ${errorMessage}`);
             toolInput: (chunk as any).input || (chunk as any).args,
             toolStartTime: startTime,
             ...(options.subAgentNames?.has(chunk.toolName!) && { isSubAgent: true }),
-            ...((suspendState || gateBarrierActive) && { postSuspend: true })
+            ...((suspendState || (gateBarrierActive && toolCallId !== gateBarrierCallId)) && { postSuspend: true })
           };
           break;
         }
@@ -1113,7 +1116,7 @@ Error: ${errorMessage}`);
             toolResultRaw: stripInlineMediaData((chunk as any).result || (chunk as any).output),
             ...(startTime && { toolStartTime: startTime }),
             ...(duration !== undefined && { toolDuration: duration }),
-            ...((suspendState || gateBarrierActive) && { postSuspend: true })
+            ...((suspendState || (gateBarrierActive && toolCallId !== gateBarrierCallId)) && { postSuspend: true })
           };
 
           // Clean up
@@ -1200,7 +1203,7 @@ Error: ${errorMessage}`);
             toolResultRaw: { error: errorMessage },
             ...(startTime && { toolStartTime: startTime }),
             ...(duration !== undefined && { toolDuration: duration }),
-            ...((suspendState || gateBarrierActive) && { postSuspend: true })
+            ...((suspendState || (gateBarrierActive && toolCallId !== gateBarrierCallId)) && { postSuspend: true })
           };
 
           // Clean up
@@ -1401,7 +1404,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
             toolResultRaw: { denied: true, reason },
             ...(startTime && { toolStartTime: startTime }),
             ...(duration !== undefined && { toolDuration: duration }),
-            ...((suspendState || gateBarrierActive) && { postSuspend: true })
+            ...((suspendState || (gateBarrierActive && toolCallId !== gateBarrierCallId)) && { postSuspend: true })
           };
           if (startTime) {
             toolStartTimes.delete(toolCallId);
@@ -1643,6 +1646,14 @@ Error: ${errorMessage}`);
     } catch (err) {
       logger.debug(`Failed to persist end-of-run media context snapshot: ${(err as Error).message}`);
     }
+  }
+
+  } finally {
+    // An approval authorizes only the execution segment resumed from that gate.
+    // Consume it on every exit — success, suspension, cancellation, provider
+    // failure, or an exception during context/bootstrap work — so a later
+    // continuation can never inherit authority from an earlier human decision.
+    leaseStore.revoke();
   }
 }
 
