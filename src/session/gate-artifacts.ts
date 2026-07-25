@@ -179,9 +179,32 @@ export async function snapshotGateArtifacts(
   return snapshots;
 }
 
+/** Look for `<hash>` in this session dir's gate store, then in its descendants. */
+async function findSnapshotUnder(dir: string, hash: string): Promise<string | null> {
+  const gateDir = path.join(dir, GATE_MEDIA_DIR);
+  const gateEntries = await fs.readdir(gateDir).catch(() => null);
+  if (gateEntries) {
+    const name = gateEntries.find((e) => e.startsWith(`${hash}.`) || e === hash);
+    if (name) return path.join(gateDir, name);
+  }
+  const children = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+  for (const entry of children) {
+    if (!entry.isDirectory() || entry.name === '.index' || entry.name === 'media') continue;
+    const found = await findSnapshotUnder(path.join(dir, entry.name), hash);
+    if (found) return found;
+  }
+  return null;
+}
+
 /**
  * Locate a snapshot file for serving. The hash doubles as the filename, so
  * lookups cannot traverse; a malformed hash simply finds nothing.
+ *
+ * The search covers the session's own gate store AND its delegated sub-agents'.
+ * A sub-agent's gate is surfaced and decided on its PARENT's approval page, so
+ * the link carries the parent's session id while the snapshot lives in the
+ * child's storage. Looking only at the session's own dir fails those closed
+ * ("snapshot unavailable") even though the bytes are right there.
  */
 export async function findGateSnapshotFile(
   projectRoot: string,
@@ -191,13 +214,5 @@ export async function findGateSnapshotFile(
   if (!/^[a-f0-9]{16}$/.test(hash)) return null;
   const sessionDir = await findSessionDir(projectRoot, sessionId);
   if (!sessionDir) return null;
-  const dir = path.join(sessionDir, GATE_MEDIA_DIR);
-  let entries: string[];
-  try {
-    entries = await fs.readdir(dir);
-  } catch {
-    return null;
-  }
-  const name = entries.find((e) => e.startsWith(`${hash}.`) || e === hash);
-  return name ? path.join(dir, name) : null;
+  return findSnapshotUnder(sessionDir, hash);
 }
