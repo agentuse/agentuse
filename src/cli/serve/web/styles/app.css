@@ -1502,6 +1502,46 @@ a, button, select, summary, label, input, textarea,
   color: var(--muted-3);
   overflow: hidden;
 }
+/* Live tail of a running tool call. Height-capped with its own scroller so a
+   command that prints for ten minutes never grows the page (the feed follows
+   its own bottom while a run is live). */
+.log-detail-live .log-detail-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.live-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  letter-spacing: 0.12em;
+  color: var(--amber);
+}
+.live-tag::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--amber);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.live-output {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 11.5em;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--muted-3);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  /* Short viewport: a taller box would be most of the screen. */
+  .live-output { max-height: 7.5em; }
+}
 .content-code {
   margin: 0;
   padding: 10px 12px;
@@ -5092,6 +5132,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .log-item.streaming[data-log-type="reasoning"] .log-marker,
   .approval-toast,
   .approval-toast-dot,
+  .live-tag::before,
   .log-dots::after { animation: none !important; }
   .log-spinner,
   .btn-spinner,

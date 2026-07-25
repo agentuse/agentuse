@@ -125,6 +125,46 @@ export interface ToolOutputArtifactSink {
 }
 
 /**
+ * Live view of a long-running tool call's output, for human surfaces only.
+ *
+ * The tail is bounded and lossy by design: it never reaches the model, and the
+ * durable record stays the tool's final output (plus its full-output artifact).
+ * Publishing must never throw and must never block the tool.
+ */
+export interface LiveToolOutputSink {
+  /** Latest bounded tail of `callID`'s output so far. */
+  publish(callID: string, tail: string): void;
+}
+
+/**
+ * Tool-state metadata key holding a running call's latest output tail. It lives
+ * in metadata rather than output so it never reaches the model: rehydration
+ * only replays completed/error states.
+ */
+export const LIVE_OUTPUT_METADATA_KEY = 'liveOutput';
+
+/**
+ * Minimum gap between two live-output writes for one call. Matches the session
+ * stream's live poll cadence: writing faster only churns the part file.
+ */
+export const LIVE_OUTPUT_INTERVAL_MS = 500;
+
+/**
+ * How much of the tail to keep. A long build prints megabytes and the part file
+ * is rewritten whole on every update, so this is the real cost knob. The
+ * complete output still reaches the model (bounded by the tool's own limits)
+ * and, when truncated, the full-output artifact.
+ */
+export const LIVE_OUTPUT_MAX_CHARS = 4_000;
+
+/**
+ * How long a call must run before it publishes anything. Most bash calls finish
+ * in well under a second, and previewing those would flash a tail into the
+ * session view only to replace it with the real output a moment later.
+ */
+export const LIVE_OUTPUT_MIN_RUNTIME_MS = 2_000;
+
+/**
  * Synchronous append-only sink for effect-layer audit records (tool execute
  * entry/exit, bash spawn/exit). Implemented by the runner's EffectWAL; the
  * append must never throw and must not depend on the stream consumer, so

@@ -13,6 +13,7 @@ import type { PrepareAgentOptions, PreparedAgentExecution } from './types';
 import type { ToolSet } from 'ai';
 import { loadAgentTools } from './tools-loader';
 import { EffectWAL } from './effect-wal';
+import { createLiveToolOutputRelay } from './live-tool-output';
 import { buildSystemMessages, buildLearningPrompt } from './system-messages';
 import { createSessionAndMessage } from './session-helper';
 import { bindToolsToSnapshot, createToolsSnapshot } from './tool-snapshot';
@@ -224,6 +225,10 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   // spawn/exit records, written synchronously at the effect layer so it stays
   // complete even when a suspension abandons the stream consumer mid-step.
   const effectWal = new EffectWAL();
+  // Live tool output (bash tails) for the session view. Created here because
+  // tools are built now, bound later by the stream consumer that owns the tool
+  // parts; unbound consumers simply drop tails.
+  const liveToolOutput = createLiveToolOutputRelay();
   if (sessionManager && sessionID) {
     try {
       effectWal.bind(await sessionManager.getSessionDirectory(sessionID, agentId));
@@ -240,6 +245,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     sessionId: sessionID,
     toolOutputArtifacts,
     effectAudit: effectWal,
+    liveToolOutput,
   });
 
   // Load sub-agent tools if configured
@@ -350,6 +356,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     runOutcome: loadedTools.runOutcome,
     doomLoopDetector,
     effectWal,
+    liveToolOutput,
     cleanup,
     releaseStoreLock,
     learningsApplied

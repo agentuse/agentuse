@@ -477,6 +477,45 @@ describe('LogEntry component', () => {
     expect(html).toContain('<div class="content-render">');
     expect(html).toContain('<div class="content-markdown">');
   });
+
+  const bashCall = (status: string, details: NonNullable<ApprovalLogEntry['details']>): ApprovalLogEntry => ({
+    id: 'tool-live',
+    type: 'tool',
+    tool: 'tools__bash',
+    title: `tools__bash ${status}`,
+    status,
+    details,
+  });
+
+  it('opens a running tool row by default and closes it once it completes', () => {
+    const running = renderEntry(bashCall('running', { input: '{ "command": "pnpm run deploy" }' }), { expanded: undefined });
+    const completed = renderEntry(bashCall('completed', { input: '{ "command": "pnpm run deploy" }', output: 'done' }), { expanded: undefined });
+
+    expect(running).toContain('aria-expanded="true"');
+    // Untouched rows tidy themselves up rather than leaving a finished
+    // command's output wedged open in the stream.
+    expect(completed).toContain('aria-expanded="false"');
+  });
+
+  it('lets the reviewer override the default in both directions', () => {
+    const collapsedWhileRunning = renderEntry(bashCall('running', { input: '{}' }), { expanded: false });
+    const expandedAfterFinish = renderEntry(bashCall('completed', { input: '{}', output: 'done' }), { expanded: true });
+
+    expect(collapsedWhileRunning).toContain('aria-expanded="false"');
+    expect(expandedAfterFinish).toContain('aria-expanded="true"');
+  });
+
+  it('renders a live output tail for a running tool call', () => {
+    const html = renderEntry(
+      bashCall('running', { input: '{}', liveOutput: '[12/60] compiling module-12.ts\n' }),
+      { expanded: undefined }
+    );
+
+    expect(html).toContain('log-detail-live');
+    expect(html).toContain('class="live-tag"');
+    expect(html).toContain('<pre class="live-output"');
+    expect(html).toContain('[12/60] compiling module-12.ts');
+  });
 });
 
 describe('StoreTable component', () => {

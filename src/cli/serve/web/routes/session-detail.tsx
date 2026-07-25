@@ -191,7 +191,10 @@ export default function SessionDetail() {
   const [approval, setApproval] = useState<ApprovalHeader | null>(null);
   const [status, setStatus] = useState<string>('loading');
   const [logsVersion, setLogsVersion] = useState(0);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  // Explicit expand/collapse per log row. Absent = follow the row's own default
+  // (open while running, closed when finished), so a reviewer's choice survives
+  // the tool completing but an untouched row tidies itself up.
+  const [expandOverrides, setExpandOverrides] = useState<Map<string, boolean>>(() => new Map());
   const [pendingActionable, setPendingActionable] = useState(false);
   const [submittingDecision, setSubmittingDecision] = useState<'approve' | 'reject' | 'comment' | null>(null);
   // Reviewer's pick on a pick-among-options gate. null = no explicit pick yet;
@@ -320,7 +323,7 @@ export default function SessionDetail() {
     setStatus('loading');
     setPendingActionable(false);
     setSelectedChoice(null);
-    setExpandedIds(new Set());
+    setExpandOverrides(new Map());
     setResult({ text: '', error: false });
     setFatalError(null);
     setLogsVersion((v) => v + 1);
@@ -968,7 +971,7 @@ export default function SessionDetail() {
               isNew={isNewLog(entry.id)}
               repeatCount={entry.repeatCount}
               warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
-              expanded={expandedIds.has(entry.id)}
+              expanded={expandOverrides.get(entry.id)}
               showActions={entryActionable}
               parentApproveHref={showParentApproveCta ? parentLink : undefined}
               parentApproveLabel={parentLabel}
@@ -979,13 +982,8 @@ export default function SessionDetail() {
               token={token}
               selectedChoice={entryActionable ? effectiveChoice : undefined}
               onSelectChoice={entryActionable ? setSelectedChoice : undefined}
-              onToggle={(id) => {
-                setExpandedIds((current) => {
-                  const next = new Set(current);
-                  if (next.has(id)) next.delete(id);
-                  else next.add(id);
-                  return next;
-                });
+              onToggle={(id, next) => {
+                setExpandOverrides((current) => new Map(current).set(id, next));
               }}
               onAction={onAction}
             />

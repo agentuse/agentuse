@@ -11,6 +11,7 @@ import { computeAgentId } from './utils/agent-id';
 import { SessionManager } from './session/manager';
 import { loadAgentTools } from './runner/tools-loader';
 import { EffectWAL } from './runner/effect-wal';
+import { createLiveToolOutputRelay } from './runner/live-tool-output';
 import { buildSystemMessages, buildLearningPrompt } from './runner/system-messages';
 import { createSessionAndMessage } from './runner/session-helper';
 import { isApprovalEnabled, appendApprovalInstructions, approvalToolDefaults } from './runner/approval';
@@ -150,6 +151,9 @@ export async function createSubAgentTool(
       let subagentMsgID: string | undefined;
       let subagentSessionManager: SessionManager | undefined;
       let subagentLogSink: SessionLogSink | undefined;
+      // Live bash tails for this child's own session view; bound below, once its
+      // stream consumer (which owns the child's tool parts) starts.
+      const liveToolOutput = createLiveToolOutputRelay();
       const toolOutputArtifacts = {
         createStream: (toolName: string, metadata?: Record<string, unknown>) => {
           if (!subagentSessionManager || !subagentSessionID || !subagentMsgID) {
@@ -189,6 +193,7 @@ export async function createSubAgentTool(
           logPrefix: '[SubAgent] ',
           toolOutputArtifacts,
           effectAudit: effectWal,
+          liveToolOutput,
         });
 
         // Load nested sub-agents if within depth limit (will be populated after session creation)
@@ -412,7 +417,8 @@ export async function createSubAgentTool(
                 messageID: subagentMsgID,
                 collectToolCalls: true,
                 logPrefix: '[SubAgent] ',
-                doomLoopDetector
+                doomLoopDetector,
+                liveToolOutput
               } : {
                 collectToolCalls: true,
                 logPrefix: '[SubAgent] ',

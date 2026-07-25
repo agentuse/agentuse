@@ -5,6 +5,7 @@ import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeTo
 import { describeLearningOutcome } from './learning';
 import { isApprovalEnabled } from './runner/approval';
 import { extractToolIntent, withoutToolIntent } from './runner/tool-intent';
+import { LIVE_OUTPUT_METADATA_KEY } from './tools/types';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
 import { contextUsageFromSnapshot } from './session/usage';
 import { repairEscapedText } from './utils/display-text';
@@ -1019,6 +1020,8 @@ async function runInternalWorker() {
     intent?: string;
     input?: string;
     output?: string;
+    /** Bounded tail of a still-running tool call, replaced by `output` when it finishes. */
+    liveOutput?: string;
     tokenUsage?: {
       input: number;
       output: number;
@@ -1576,6 +1579,14 @@ async function runInternalWorker() {
       && intent !== undefined;
     const input = inputIsEmpty ? undefined : formatApprovalLogValue(inputWithoutIntent);
     if (input !== undefined) fields.input = input;
+
+    if (state?.status === 'running') {
+      // Live tail of a call still in flight. Written by the runner on a throttle
+      // and dropped the moment the call settles, so a finished row never carries
+      // one (see persistToolState).
+      const live = valueAsRecord(state?.metadata)[LIVE_OUTPUT_METADATA_KEY];
+      if (typeof live === 'string' && live.trim()) fields.liveOutput = live;
+    }
 
     if (state?.status === 'completed') {
       const output = formatApprovalLogValue(state.output);

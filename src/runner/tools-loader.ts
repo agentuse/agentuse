@@ -20,7 +20,7 @@ import { resolveMediaToolResultSupport } from '../models.js';
 import { logger } from '../utils/logger';
 import type { ParsedAgent } from '../parser';
 import { approvalToolDefaults, isApprovalEnabled } from './approval';
-import { ToolConfigError, type EffectAuditSink, type ToolOutputArtifactSink } from '../tools/types.js';
+import { ToolConfigError, type EffectAuditSink, type LiveToolOutputSink, type ToolOutputArtifactSink } from '../tools/types.js';
 import { isMockMode, wrapToolsWithLLMMock } from './mock-tools';
 import { withIntentParam } from './tool-intent';
 
@@ -46,6 +46,8 @@ export interface LoadAgentToolsOptions {
   toolOutputArtifacts?: ToolOutputArtifactSink | undefined;
   /** Optional effect-layer audit journal (bash spawn/exit records). */
   effectAudit?: EffectAuditSink | undefined;
+  /** Optional live-output sink so long-running tools can show a tail while they run. */
+  liveToolOutput?: LiveToolOutputSink | undefined;
 }
 
 /**
@@ -99,6 +101,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     sessionId,
     toolOutputArtifacts,
     effectAudit,
+    liveToolOutput,
   } = options;
 
   // Compute agentId relative to the agent's own project (stateRoot) so the
@@ -159,6 +162,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
         agentId,
         toolOutputArtifacts,
         effectAudit,
+        liveToolOutput,
         approval: approvalToolDefaults(agent.config),
         modelId: agent.config.model,
         modelInputModalities,

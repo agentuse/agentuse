@@ -277,6 +277,12 @@ export interface ApprovalLogDetails {
   intent?: string;
   input?: string;
   output?: string;
+  /**
+   * Bounded tail of a tool call that is still running (bash today), refreshed
+   * as it prints and replaced by `output` once the call finishes. Never part of
+   * the model's view of the run.
+   */
+  liveOutput?: string;
   tokenUsage?: ToolTokenUsage;
   summary?: string;
   context?: string;

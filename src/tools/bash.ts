@@ -5,7 +5,14 @@ import { StringDecoder } from 'string_decoder';
 import * as path from 'path';
 import * as os from 'os';
 import { CommandValidator, getBuiltinPayloadCommandInvocation } from './command-validator.js';
-import { ToolConfigError, type BashConfig, type ToolOutput, type ToolErrorOutput } from './types.js';
+import {
+  LIVE_OUTPUT_MAX_CHARS,
+  LIVE_OUTPUT_MIN_RUNTIME_MS,
+  ToolConfigError,
+  type BashConfig,
+  type ToolOutput,
+  type ToolErrorOutput,
+} from './types.js';
 import { resolveRealPath, type PathResolverContext } from './path-validator.js';
 import { createBoundedAccumulator, getToolOutputLimits } from './tool-output-limits.js';
 import { logger } from '../utils/logger.js';
@@ -213,6 +220,7 @@ export function createBashTool(
     : DEFAULT_TIMEOUT;
   const { maxBytes: maxOutputBytes, headRatio } = getToolOutputLimits();
   const artifactSink = resolverContext.toolOutputArtifacts;
+  const liveSink = resolverContext.liveToolOutput;
 
   function modelToolOutputArtifactRef(artifact: ToolOutputArtifactRef): ModelToolOutputArtifactRef {
     return {
@@ -495,6 +503,30 @@ Commands not matching these patterns will be rejected.`;
           }
         }, timeoutMs);
 
+        // Live tail for human surfaces: stdout and stderr interleaved in arrival
+        // order, the way the same command reads in a terminal. Bounded to the
+        // last LIVE_OUTPUT_MAX_CHARS; the model's copy is unaffected.
+        let liveTail = '';
+        const publishLiveTail = (): void => {
+          if (!liveSink || !callId || !liveTail) return;
+          liveSink.publish(callId, liveTail);
+        };
+        // A command that prints early and then hangs (installers, builds waiting
+        // on a lock) would otherwise never publish, since every chunk arrived
+        // before the min-runtime gate opened.
+        const liveTailOpensAt = liveSink && callId
+          ? setTimeout(publishLiveTail, LIVE_OUTPUT_MIN_RUNTIME_MS)
+          : undefined;
+        liveTailOpensAt?.unref?.();
+        const appendLiveTail = (chunk: string): void => {
+          if (!liveSink || !callId) return;
+          liveTail = (liveTail + chunk).slice(-LIVE_OUTPUT_MAX_CHARS);
+          // Below the gate the tail still accumulates; the timer above publishes
+          // it the moment the call is long enough to be worth watching.
+          if (Date.now() - spawnedAt < LIVE_OUTPUT_MIN_RUNTIME_MS) return;
+          publishLiveTail();
+        };
+
         // Decode as UTF-8 across chunk boundaries. A bare data.toString() per
         // ~64KB chunk corrupts any multi-byte character (emoji/CJK/accents)
         // that straddles a boundary; StringDecoder buffers the partial bytes.
@@ -507,6 +539,7 @@ Commands not matching these patterns will be rejected.`;
           if (chunk) {
             stdoutAcc.append(chunk);
             writeArtifactChunk('stdout', chunk);
+            appendLiveTail(chunk);
           }
         });
 
@@ -516,12 +549,14 @@ Commands not matching these patterns will be rejected.`;
           if (chunk) {
             stderrAcc.append(chunk);
             writeArtifactChunk('stderr', chunk);
+            appendLiveTail(chunk);
           }
         });
 
         // Handle process exit
         child.on('close', async (code) => {
           clearTimeout(timeoutHandle);
+          if (liveTailOpensAt) clearTimeout(liveTailOpensAt);
           abortSignal?.removeEventListener('abort', onAbort);
           audit?.append({
             event: 'bash-exit',

@@ -8,6 +8,7 @@ import type { ActiveContextUsage, ContextSnapshot, SessionTrigger } from '../ses
 import type { AssistantTokens } from '../session/usage';
 import type { RunOutcome } from '../tools/report-incomplete.js';
 import type { EffectWAL } from './effect-wal';
+import type { LiveToolOutputRelay } from './live-tool-output';
 
 export type UsageKind = 'cumulative' | 'step';
 
@@ -69,6 +70,13 @@ export interface PreparedAgentExecution {
    * (tests) stay valid; prepareAgentExecution always sets it.
    */
   effectWal?: EffectWAL | undefined;
+  /**
+   * Relay carrying a running tool's output tail to the session view, already
+   * threaded into the tools. Pass into processAgentStream so it binds the
+   * consumer that owns the tool parts; without it, tails are dropped and the
+   * session view just shows the call as running (pre-existing behavior).
+   */
+  liveToolOutput?: LiveToolOutputRelay | undefined;
   /** Cleanup function to release resources (store locks, etc.) - call when agent execution completes */
   cleanup: () => Promise<void>;
   /**

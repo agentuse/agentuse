@@ -1,5 +1,5 @@
 import { memo } from 'preact/compat';
-import { useState } from 'preact/hooks';
+import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useSmoothText } from '../hooks/use-smooth-text';
 import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalOption, ApprovalReference, LogSubagentSession } from '../../types';
 import { formatLogTime, isJsonLikeContent, logEntrySignature, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
@@ -537,6 +537,36 @@ function ToolTokenUsageStrip(props: { usage: NonNullable<ApprovalLogDetails['tok
   );
 }
 
+/**
+ * Tail of a tool call still in flight. Fixed height with its own scroller: the
+ * page follows the bottom of the feed while a run is live, so a block that grew
+ * with the output would shove the rest of the log off-screen. Sticks to the
+ * newest line unless the reader scrolls up to read something.
+ */
+function LiveOutput(props: { value: string }) {
+  const ref = useRef<HTMLPreElement>(null);
+  const stuck = useRef(true);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !stuck.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [props.value]);
+
+  return (
+    <pre
+      class="live-output"
+      ref={ref}
+      onScroll={() => {
+        const el = ref.current;
+        if (!el) return;
+        // Re-stick as soon as the reader comes back to the bottom.
+        stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+      }}
+    >{props.value}</pre>
+  );
+}
+
 function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; token: string | undefined }) {
   const details = props.details;
   const rows = [
@@ -545,7 +575,7 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
     details.errorMessage ? { label: 'Error', value: details.errorMessage } : undefined,
   ].filter((row): row is { label: string; value: string } => Boolean(row));
   const artifact = details.toolOutputArtifact;
-  if (rows.length === 0 && !artifact && !details.tokenUsage) return null;
+  if (rows.length === 0 && !artifact && !details.tokenUsage && !details.liveOutput) return null;
   return (
     <div class="log-details">
       {details.tokenUsage && <ToolTokenUsageStrip usage={details.tokenUsage} />}
@@ -555,6 +585,12 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
           <div class="log-detail-value"><LogContent value={row.value} /></div>
         </div>
       ))}
+      {details.liveOutput && (
+        <div class="log-detail log-detail-live">
+          <div class="log-detail-label">Output<span class="live-tag">live</span></div>
+          <div class="log-detail-value"><LiveOutput value={details.liveOutput} /></div>
+        </div>
+      )}
       {artifact && (
         <div class="log-detail">
           <div class="log-detail-label">Full output</div>
@@ -614,7 +650,10 @@ export interface LogEntryProps {
   /** Number of consecutive identical operational log lines collapsed into this
    *  row (>1 renders an xN badge). Undefined/1 renders no badge. */
   repeatCount?: number | undefined;
-  expanded: boolean;
+  /** Reviewer's explicit expand/collapse for this row. Undefined means "no
+   *  opinion", which leaves the row on its default: open while the tool runs,
+   *  closed once it finishes. */
+  expanded: boolean | undefined;
   showActions: boolean;
   actionsDisabled: boolean;
   /** The decision currently being submitted; renders a specific pending label
@@ -631,7 +670,7 @@ export interface LogEntryProps {
    *  Only passed to the entry that owns the pending gate. */
   selectedChoice?: string | undefined;
   onSelectChoice?: ((id: string) => void) | undefined;
-  onToggle: (id: string) => void;
+  onToggle: (id: string, expanded: boolean) => void;
   onAction: (action: 'approve' | 'reject' | 'comment') => void;
 }
 
@@ -667,7 +706,11 @@ function LogEntryImpl(props: LogEntryProps) {
   const savedArtifact = entry.details?.savedArtifact;
   // A saved-artifact row shows its tile inline; there's nothing to expand into.
   const expandable = entry.type === 'tool' && !isApprovalEntry && !savedArtifact;
-  const expanded = !expandable || entry.status === 'running' || props.expanded;
+  // A running tool opens itself (its live output is the point of watching), but
+  // that is a default, not a lock: the reviewer can collapse it mid-run, and a
+  // row they never touched closes again when the call completes rather than
+  // leaving a finished command's output wedged in the stream.
+  const expanded = !expandable || (props.expanded ?? entry.status === 'running');
   const storeEvent = storeToolEvent(entry, props.projectId);
   const spinning = entry.status === 'streaming' || entry.status === 'running';
   // A failed tool call must read as failure without relying on color alone.
@@ -700,7 +743,7 @@ function LogEntryImpl(props: LogEntryProps) {
   ].filter(Boolean).join(' ');
 
   const toggle = () => {
-    if (expandable) props.onToggle(entry.id);
+    if (expandable) props.onToggle(entry.id, !expanded);
   };
 
   return (

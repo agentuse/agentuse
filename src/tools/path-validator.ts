@@ -7,6 +7,7 @@ import {
   type EffectAuditSink,
   type FilesystemPathConfig,
   type FilesystemPermission,
+  type LiveToolOutputSink,
   type PathValidationResult,
   type ToolOutputArtifactSink
 } from './types.js';
@@ -37,6 +38,8 @@ export interface PathResolverContext {
   toolOutputArtifacts?: ToolOutputArtifactSink | undefined;
   /** Effect-layer audit journal; bash spawn/exit records land here (effect WAL). */
   effectAudit?: EffectAuditSink | undefined;
+  /** Human-only live tail of a still-running tool call (session view). */
+  liveToolOutput?: LiveToolOutputSink | undefined;
   /** Current session id, for tools that link output to the run (e.g. artifacts). */
   sessionId?: string | undefined;
   /** Stable agent id, for tools that record provenance (e.g. artifacts). */

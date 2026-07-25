@@ -13,6 +13,8 @@ import { formatToolResultForDisplay } from '../utils/format-tool-result';
 import { sendSlackApprovalRequest, sendSlackApprovalRequestToThread } from '../slack/approval';
 import type { AgentChunk } from './types';
 import { SessionRecorder } from './session-recorder';
+import type { LiveToolOutputRelay } from './live-tool-output';
+import { LIVE_OUTPUT_INTERVAL_MS, LIVE_OUTPUT_METADATA_KEY } from '../tools/types';
 import { withoutToolIntent } from './tool-intent';
 import { defaultTerminalPresenter, type TerminalPresenter } from './terminal-presenter';
 
@@ -175,6 +177,9 @@ export async function processAgentStream(
     /** Display name for Slack approval cards. */
     agentName?: string;
     doomLoopDetector?: DoomLoopDetector;
+    /** Relay from long-running tools; bound here so their output tail lands on
+     *  the running tool part and streams to the session view. */
+    liveToolOutput?: LiveToolOutputRelay;
     slackRunChannelHandles?: SlackRunChannelHandle[];
     /** Cumulative tokens from prior invocations (resume); folded into usage writes. */
     priorTokens?: AssistantTokens;
@@ -225,12 +230,65 @@ export async function processAgentStream(
   const persistToolState = async (callID: string, nextState: ToolState): Promise<boolean> => {
     const previousMetadata = toolStates.get(callID)?.metadata;
     const metadata = { ...previousMetadata, ...nextState.metadata };
+    // A live tail only describes a call in flight. The moment the state leaves
+    // `running`, drop the queued write and strip the key the merge above would
+    // otherwise carry into the finished part forever (where it would ship in
+    // the session log and the approval payload as a stale partial output).
+    if (nextState.status !== 'running') {
+      clearLiveOutput(callID);
+      delete metadata[LIVE_OUTPUT_METADATA_KEY];
+    }
     const state = Object.keys(metadata).length > 0
       ? { ...nextState, metadata } as ToolState
       : nextState;
     toolStates.set(callID, state);
     return recorder.updateTool(callID, state);
   };
+
+  // Live tool output: the latest bounded tail of a still-running call, written
+  // onto its tool part so the session view can show progress instead of a bare
+  // spinner. Cosmetic and lossy by design: the model only ever sees the tool's
+  // final output, and a dropped tail costs nothing.
+  const liveOutputTimers = new Map<string, NodeJS.Timeout>();
+  const liveOutputPending = new Map<string, string>();
+  const liveOutputWrites = new Set<Promise<unknown>>();
+
+  const clearLiveOutput = (callID: string): void => {
+    const timer = liveOutputTimers.get(callID);
+    if (timer) clearTimeout(timer);
+    liveOutputTimers.delete(callID);
+    liveOutputPending.delete(callID);
+  };
+
+  const flushLiveOutput = async (callID: string): Promise<void> => {
+    const tail = liveOutputPending.get(callID);
+    liveOutputPending.delete(callID);
+    const state = toolStates.get(callID);
+    // The call finished (or was aborted) while this write was queued: writing
+    // now would flip a settled part back to running.
+    if (tail === undefined || state?.status !== 'running') return;
+    await persistToolState(callID, {
+      ...state,
+      metadata: { ...state.metadata, [LIVE_OUTPUT_METADATA_KEY]: tail },
+    } as ToolState);
+  };
+
+  options?.liveToolOutput?.bind((callID, tail) => {
+    if (toolStates.get(callID)?.status !== 'running') return;
+    liveOutputPending.set(callID, tail);
+    // Throttle rather than debounce: a command that never stops printing must
+    // still repaint, and a write per chunk would rewrite the part file dozens
+    // of times a second for no visible gain (the session stream polls at
+    // SESSION_SSE_LIVE_INTERVAL_MS anyway).
+    if (liveOutputTimers.has(callID)) return;
+    liveOutputTimers.set(callID, setTimeout(() => {
+      liveOutputTimers.delete(callID);
+      const write = flushLiveOutput(callID)
+        .catch((error) => logger.debug(`Failed to persist live tool output: ${(error as Error).message}`));
+      liveOutputWrites.add(write);
+      void write.finally(() => liveOutputWrites.delete(write));
+    }, LIVE_OUTPUT_INTERVAL_MS));
+  });
 
   const persistCurrentStepToolUsage = async (chunk: AgentChunk): Promise<void> => {
     if (chunk.usageKind !== 'step' || !chunk.usage || currentStepToolCallIds.size === 0) return;
@@ -692,6 +750,11 @@ export async function processAgentStream(
       }
     }
   } finally {
+    // Stop taking tails first (a suspended run leaves its tool executing), then
+    // drain the writes already queued so none lands after recorder.flush().
+    options?.liveToolOutput?.unbind();
+    for (const callID of [...liveOutputTimers.keys()]) clearLiveOutput(callID);
+    if (liveOutputWrites.size > 0) await Promise.allSettled([...liveOutputWrites]);
     await recorder.flush();
   }
 

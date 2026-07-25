@@ -215,7 +215,8 @@ export async function runAgent(
       priorTokens,
       agentId: prepAgentId,
       doomLoopDetector,
-      effectWal
+      effectWal,
+      liveToolOutput
     } = preparation;
 
     // Set outer scope variables for error logging
@@ -299,6 +300,7 @@ export async function runAgent(
       ...(priorTokens && { priorTokens }),
       doomLoopDetector,
       slackRunChannelHandles: runChannelHandles,
+      ...(liveToolOutput && { liveToolOutput }),
       quiet
     } : {
       collectToolCalls: true,
