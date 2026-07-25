@@ -184,3 +184,60 @@ describe('tools__artifact_list', () => {
     }
   });
 });
+
+describe('late session binding (delegated sub-agents)', () => {
+  // Regression: a delegated sub-agent loads its tools before its child session
+  // exists, so the tool context carries sessionId=undefined at construction and
+  // the id is bound afterwards (LoadedAgentTools.bindSessionId, called from
+  // subagent.ts). Snapshotting sessionId at construction orphaned every
+  // sub-agent artifact: no manifest sessionId, so the session artifacts list
+  // filtered it out and the model got no viewable URL back.
+  it('picks up a sessionId bound after the tool was constructed', async () => {
+    const projectRoot = await makeProject();
+    try {
+      // Mirrors the shape getTools() builds: a live view over a mutable context.
+      const shared: { sessionId?: string | undefined } = {};
+      const ctx = {
+        projectRoot,
+        get sessionId() { return shared.sessionId; },
+        agentId: 'agents/blog/blog-write',
+      };
+      const save = createArtifactTool(ctx);
+
+      // Session bound only after construction, as subagent.ts does.
+      shared.sessionId = 'sess-late';
+
+      const out = await run(save, { name: 'draft.md', content: 'body', group: 'post' });
+      expect(out.success).toBe(true);
+
+      const entries = await readManifest(projectRoot);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.sessionId).toBe('sess-late');
+
+      // The same live context makes session-scoped listing work too.
+      const listed = await run(createListArtifactsTool(ctx), { session: 'current' });
+      expect(listed.count).toBe(1);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('still records no sessionId when none is ever bound', async () => {
+    const projectRoot = await makeProject();
+    try {
+      const shared: { sessionId?: string | undefined } = {};
+      const save = createArtifactTool({
+        projectRoot,
+        get sessionId() { return shared.sessionId; },
+      });
+      const out = await run(save, { name: 'draft.md', content: 'body', group: 'post' });
+
+      expect(out.success).toBe(true);
+      expect(out.url).toBeUndefined();
+      const entries = await readManifest(projectRoot);
+      expect(entries[0]?.sessionId).toBeUndefined();
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+});

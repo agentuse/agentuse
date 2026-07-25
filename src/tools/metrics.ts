@@ -25,7 +25,14 @@ export const METRIC_ITEM_TYPE = 'metric';
 
 export interface MetricToolContext {
   projectRoot: string;
-  /** Current session id: the idempotency key. Absent (e.g. bare CLI runs without a session) means no dedupe is possible and each call creates a record. */
+  /**
+   * Current session id: the idempotency key. Absent (e.g. bare CLI runs without
+   * a session) means no dedupe is possible and each call creates a record.
+   *
+   * Read at execute time, not at construction: a delegated sub-agent builds its
+   * tools before its child session exists and binds the id afterwards, so the
+   * caller may supply this as a live getter.
+   */
   sessionId?: string | undefined;
   /** Stable agent id, recorded as provenance. */
   agentId?: string | undefined;
@@ -64,7 +71,7 @@ function metricTitle({ metric, value, unit, count }: RecordMetricArgs): string {
  * instance for the run has no lock-lifecycle cost.
  */
 export function createRecordMetricTool(context: MetricToolContext): Tool {
-  const { projectRoot, sessionId, agentId } = context;
+  const { projectRoot, agentId } = context;
   const store = new Store(projectRoot, METRICS_STORE_NAME, agentId);
 
   return {
@@ -77,6 +84,9 @@ export function createRecordMetricTool(context: MetricToolContext): Tool {
     inputSchema: RecordMetricInput,
     execute: async (args: RecordMetricArgs) => {
       const { metric, value, unit, count, note } = args;
+      // Resolved per call so a session bound after tool construction still keys
+      // the upsert (see MetricToolContext.sessionId).
+      const sessionId = context.sessionId;
       const data: Record<string, unknown> = {
         metric,
         ...(value !== undefined && { value }),

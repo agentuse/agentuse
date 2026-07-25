@@ -66,11 +66,18 @@ export function getTools(
 
   // Create artifact tools if configured. The artifact tool owns its write path
   // (under .agentuse/artifacts/), so it does not depend on a filesystem grant.
+  //
+  // sessionId/agentId are read through getters, not copied: a delegated
+  // sub-agent loads its tools BEFORE its child session exists (subagent.ts) and
+  // binds the id afterwards via LoadedAgentTools.bindSessionId. Snapshotting the
+  // value here would freeze it at undefined, and every artifact the sub-agent
+  // saved would land in the manifest with no session link - invisible to
+  // /sessions/:id/artifacts-list and with no viewable URL returned to the model.
   if (config.artifacts) {
     const artifactCtx: ArtifactToolContext = {
       projectRoot: context.projectRoot,
-      sessionId: context.sessionId,
-      agentId: context.agentId,
+      get sessionId() { return context.sessionId; },
+      get agentId() { return context.agentId; },
       ...(typeof config.artifacts === 'object' && config.artifacts.dir
         ? { dir: config.artifacts.dir }
         : {}),
@@ -80,12 +87,15 @@ export function getTools(
   }
 
   // Metric recording writes to the reserved "metrics" store; like artifacts it
-  // owns its write path and needs no filesystem or store grant.
+  // owns its write path and needs no filesystem or store grant. sessionId is
+  // read lazily for the same reason as artifacts above - it is the upsert
+  // idempotency key, so a frozen `undefined` makes every sub-agent retry append
+  // a duplicate record instead of updating the existing one.
   if (config.metrics) {
     tools['tools__record_metric'] = createRecordMetricTool({
       projectRoot: context.projectRoot,
-      sessionId: context.sessionId,
-      agentId: context.agentId,
+      get sessionId() { return context.sessionId; },
+      get agentId() { return context.agentId; },
     });
   }
 

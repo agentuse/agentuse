@@ -325,6 +325,16 @@ export async function createSubAgentTool(
             tools = { ...loadedTools.all, ...nestedSubAgentTools };
           }
 
+          // Attach the child session to the session-aware tools built before it
+          // existed. artifact_save/artifact_list/record_metric read sessionId at
+          // execute time, so this is a context mutation rather than a rebuild -
+          // it keeps the intent/mock wrappers and the tools snapshot intact.
+          // Without it, a delegated leaf's artifacts are written but orphaned:
+          // no manifest sessionId, so they never surface in the session viewer.
+          if (subagentSessionID) {
+            loadedTools.bindSessionId(subagentSessionID);
+          }
+
           // Bind the leaf's approval gate to the child session. loadAgentTools built
           // await_human before the session existed (sessionId undefined → no approval
           // URL/resume token), so rebuild it now that subagentSessionID is known. This

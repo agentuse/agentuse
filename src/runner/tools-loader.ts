@@ -69,6 +69,18 @@ export interface LoadedAgentTools {
   store?: Store | undefined;
   /** Sandbox instance (if configured) - caller must call sandboxInstance.kill() when done */
   sandboxInstance?: SandboxInstance | undefined;
+  /**
+   * Attach the run's session id to tools that resolve it at execute time
+   * (artifact_save / artifact_list / record_metric).
+   *
+   * A delegated sub-agent must load its tools before its child session exists,
+   * so it calls this once the id is known (subagent.ts). Without it those tools
+   * stay session-less: artifacts land in the manifest with no `sessionId`, which
+   * hides them from `/sessions/:id/artifacts-list` and returns no viewable URL,
+   * and metrics lose their upsert key. Top-level runs already pass `sessionId`
+   * up front, so calling this is a no-op for them.
+   */
+  bindSessionId(sessionId: string): void;
 }
 
 /**
@@ -121,6 +133,12 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
 
   // Get configured builtin tools (filesystem, bash)
   let configuredTools: Record<string, Tool> = {};
+  // Hoisted so `bindSessionId` can attach the session after the fact. Tools that
+  // read `sessionId` at execute time (artifacts, metrics) hold this object by
+  // reference, so mutating it here reaches them without rebuilding - which
+  // matters because rebuilding would drop the intent/mock wrappers applied at
+  // the merge point below, and diverge from the persisted tools snapshot.
+  let toolContext: PathResolverContext | undefined;
   if ((effectiveToolsConfig || isApprovalEnabled(agent.config)) && projectContext) {
     try {
       const toolsConfig = {
@@ -134,7 +152,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
       // string would miss the registry and silently disable media reads.
       const modelInputModalities = getModelFromRegistry(toRegistryKey(agent.config.model))?.modalities.input;
       const mediaToolResultSupport = await resolveMediaToolResultSupport(agent.config.model);
-      configuredTools = getConfiguredTools(toolsConfig, {
+      toolContext = {
         projectRoot: projectContext.projectRoot,
         agentDir,
         sessionId,
@@ -145,7 +163,8 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
         modelId: agent.config.model,
         modelInputModalities,
         mediaToolResultSupport,
-      } as PathResolverContext);
+      } as PathResolverContext;
+      configuredTools = getConfiguredTools(toolsConfig, toolContext);
       if (Object.keys(configuredTools).length > 0) {
         logger.debug(`${logPrefix}Loaded ${Object.keys(configuredTools).length} configured tool(s): ${Object.keys(configuredTools).join(', ')}`);
       }
@@ -272,6 +291,9 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     runOutcome,
     store,
     sandboxInstance,
+    bindSessionId: (id: string) => {
+      if (toolContext) toolContext.sessionId = id;
+    },
   };
 }
 
