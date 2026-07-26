@@ -55,6 +55,10 @@ For agents with an [approval gate](/guides/approval-gates), verify defaults to `
 
 The judge receives the full approval payload (draft, exact on-approval content, target reference/excerpt, context), so write criteria against what the reviewer would see. Because the check runs before anything posts, this placement is the quality gate; `at: output` is a post-run audit. Gate placement also works for delegated sub-agents: a leaf's gate is judged in the leaf, before the request cascades to the root.
 
+<Warning>
+  The payload is **all** the built-in judge sees. It runs without tools, so a criterion about a file on disk is really judged against the agent's *account* of that file. A payload that paraphrases its own artifact gets rejected even when the artifact is correct, and a payload that flatters a broken artifact passes silently. When the criteria describe something on disk, use a [judge agent](#using-a-judge-agent) that can open it.
+</Warning>
+
 ## Using a Judge Agent
 
 When a one-line rubric isn't enough, the evaluation needs its own files, tools, or a stronger model, point `judge` at another agent file:
@@ -65,15 +69,21 @@ verify:
   maxRedos: 1
 ```
 
-The judge is a normal agent: its own frontmatter controls its model, reasoning effort, and tools (e.g. read access to rubric files). It receives the task and the candidate output, and must end its response with a JSON verdict on its own line:
+The path resolves relative to the agent file that declares it. `judge` and `criteria` are mutually exclusive, and `model` is invalid alongside `judge` (the judge agent declares its own).
+
+**The judge's body is the rubric.** Where the built-in judge gets your `criteria`, an agent judge is handed `Apply the evaluation standard defined in your own instructions.` in that slot, so the standard has to live in the judge agent itself. Everything else it needs, the task and the candidate output, arrives around it.
+
+The judge is otherwise a normal agent: its own frontmatter controls its model, reasoning effort, and tools. That is the point of using one. Grant it read access to the rubric files, exemplars, or the artifact under review, and it evaluates what is actually on disk instead of what the payload claims. It runs as an inspectable child session, so which files it opened and why it decided are visible in the session log, not just the one-line verdict.
+
+It records its decision by calling `submit_verdict`, a tool injected into every judge agent, exactly once:
 
 ```json
 {"pass": false, "critique": "The reply restates the target's framing. Add one distinct layer: a concrete example from practice."}
 ```
 
-When `pass` is `false`, `critique` is required and must be actionable in one revision, it is injected verbatim into the redo turn. Everything else the judge writes stays in its own reasoning; only the verdict object affects the run.
+The tool call **is** the verdict; a judge should not also write a JSON object in its text. (A trailing JSON object is still parsed as a fallback, which is how the built-in judge reports, but new judge agents should call the tool.) When `pass` is `false`, `critique` is required and must be actionable in one revision, it is injected verbatim into the redo turn. Everything else the judge writes stays in its own reasoning.
 
-Judges conventionally stay read-only (they evaluate, the parent revises), but this is not enforced, a judge that runs your test suite is a legitimate design. Judges cannot suspend on approval gates; a suspended judge counts as a judge error.
+Judges conventionally stay read-only (they evaluate, the parent revises), but this is not enforced, a judge that runs your test suite is a legitimate design. Judges cannot suspend on approval gates, so never give a judge agent `approval: true`; a suspended judge counts as a judge error. A nested `verify:` on a judge is ignored.
 
 ## What Happens on Failure
 
