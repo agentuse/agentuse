@@ -34,6 +34,7 @@ timeout: 600         # run ceiling: bare number = SECONDS, or "10m"
 maxSteps: 100
 reasoning: high        # provider-agnostic thinking effort: none|minimal|low|medium|high|xhigh. Opt-in, billed at OUTPUT rates; omit for the model default. (Advanced, exact control: anthropic.thinking.budgetTokens / openai.reasoningEffort.)
 schedule: "0 9 * * *"
+verify: true         # judge the output before it ships; string = rubric shorthand, or { criteria | judge, at, maxRedos }. See the judge gotcha below.
 metadata:            # free-form annotations; framework never interprets them
   draft: true
   owner: leon
@@ -289,6 +290,21 @@ these. This shapes where a rule belongs:
 - **Approval gates are async.** `approval: true` / `await_human` gates suspend
   the run; `timeout:` does not tick during the wait. Size `timeout:` for the
   active work between gates, not human response time.
+
+- **The built-in verify judge has no tools and sees only the output text.** At
+  `at: gate` (the default when the agent has an approval gate) that text is the
+  rendered `await_human` payload, so any criterion about an artifact on disk is
+  really judged against the author's *account* of it. A faithful payload passes
+  and a paraphrasing one fails on an artifact that was correct all along; worse,
+  a flattering payload passes a broken artifact silently. When the criteria
+  describe a file, point `judge:` at a `.agentuse` file instead of writing
+  `criteria:` (the two are mutually exclusive, and `model:` is invalid with
+  `judge`). That judge gets its own model and tools per its frontmatter, so give
+  it read-only filesystem access and let it open the artifact. Put its rubric in
+  its body: the runtime passes it `Apply the evaluation standard defined in your
+  own instructions.` as the criteria. It records its verdict by calling the
+  injected `submit_verdict` tool, and it must not carry `approval:` (a suspended
+  judge counts as a judge error).
 
 - **Timeout units: bare numbers are seconds on every field EXCEPT
   `tools.bash.timeout`, where they are rejected entirely** (the field was
