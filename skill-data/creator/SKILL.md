@@ -302,9 +302,11 @@ these. This shapes where a rule belongs:
   `judge`). That judge gets its own model and tools per its frontmatter, so give
   it read-only filesystem access and let it open the artifact. Put its rubric in
   its body: the runtime passes it `Apply the evaluation standard defined in your
-  own instructions.` as the criteria. It records its verdict by calling the
-  injected `submit_verdict` tool, and it must not carry `approval:` (a suspended
-  judge counts as a judge error).
+  own instructions.` as the criteria. The runtime also injects a `submit_verdict`
+  tool and the instructions for calling it, so do NOT restate that protocol in
+  the judge body (same rule as `report_incomplete` below) - write only the
+  domain bar the runtime cannot know. A judge must not carry `approval:` (a
+  suspended judge counts as a judge error).
 
 - **Timeout units: bare numbers are seconds on every field EXCEPT
   `tools.bash.timeout`, where they are rejected entirely** (the field was
