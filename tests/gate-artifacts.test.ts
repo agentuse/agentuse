@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -58,6 +58,28 @@ describe('immutable gate artifacts', () => {
     await expect(snapshotGateArtifacts(projectRoot, sessionId, {
       artifact_paths: ['review/present.txt', 'review/missing.txt'],
     })).rejects.toThrow('review/missing.txt');
+  });
+
+  test('refuses blocked project paths reached through in-project symlinks', async () => {
+    await writeFile(join(projectRoot, '.env'), 'DOTENV_SECRET=shh');
+    await mkdir(join(projectRoot, '.git'), { recursive: true });
+    await writeFile(join(projectRoot, '.git/config'), 'GIT_SECRET=shh');
+    await mkdir(join(projectRoot, '.agentuse/store'), { recursive: true });
+    await writeFile(join(projectRoot, '.agentuse/store/data.json'), 'STORE_SECRET=shh');
+    await mkdir(join(projectRoot, 'review'), { recursive: true });
+
+    const aliases = [
+      ['review/env.md', '.env'],
+      ['review/git.md', '.git/config'],
+      ['review/store.md', '.agentuse/store/data.json'],
+    ] as const;
+    for (const [alias, target] of aliases) {
+      await symlink(join(projectRoot, target), join(projectRoot, alias));
+    }
+
+    await expect(snapshotGateArtifacts(projectRoot, sessionId, {
+      artifact_paths: aliases.map(([alias]) => alias),
+    })).rejects.toThrow('path is blocked from approval disclosure');
   });
 
   // Regression: a delegated sub-agent's gate is surfaced and decided on its

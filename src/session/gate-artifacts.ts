@@ -142,7 +142,7 @@ export async function snapshotGateArtifacts(
       if (!isPathInside(realProjectRoot, real)) {
         throw new Error('resolved path is outside the project');
       }
-      if (isBlockedProjectPath(projectRoot, resolved)) {
+      if (isBlockedProjectPath(realProjectRoot, real)) {
         throw new Error('path is blocked from approval disclosure');
       }
       const fileStat = await fs.stat(real);
