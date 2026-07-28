@@ -95,6 +95,23 @@ describe('PluginManager', () => {
       expect(tsPlugin?.handlers['agent:complete']).toBeDefined();
     });
 
+    test('should load multiple TypeScript plugins from isolated temp directories', async () => {
+      const pluginPaths = [
+        join(__dirname, '__fixtures__', 'plugin', 'valid-plugin.ts'),
+        join(__dirname, '__fixtures__', 'plugin', 'ts-with-imports.ts'),
+      ];
+      const mockGlob = mock((pattern: string) =>
+        Promise.resolve(pattern.includes('./.agentuse') ? pluginPaths : [])
+      );
+      mock.module('glob', () => ({ glob: mockGlob }));
+
+      const testManager = new PluginManager();
+      await testManager.loadPlugins();
+
+      const loaded = (testManager as any).plugins.map((plugin: any) => plugin.path);
+      expect(loaded).toEqual(pluginPaths);
+    });
+
     test('should load JavaScript plugins with cache busting', async () => {
       const jsPluginPath = join(__dirname, '__fixtures__', 'plugin', 'valid-plugin.js');
       const mockGlob = mock((pattern: string) => {

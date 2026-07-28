@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'fs';
 import { join, relative } from 'path';
 import { tmpdir } from 'os';
 import { __testing } from '../src/cli/serve';
@@ -257,6 +257,33 @@ describe('serveSessionArtifact', () => {
       const store = fakeResponse();
       await __testing.serveSessionArtifact(store.res, root, '.agentuse/store/data.json');
       expect(store.captured.status).toBe(403);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses secret and internal paths reached through in-project symlinks', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-'));
+    try {
+      writeFileSync(join(root, '.env'), 'DOTENV_SECRET=shh');
+      mkdirSync(join(root, '.git'), { recursive: true });
+      writeFileSync(join(root, '.git/config'), 'GIT_SECRET=shh');
+      mkdirSync(join(root, '.agentuse/store'), { recursive: true });
+      writeFileSync(join(root, '.agentuse/store/data.json'), 'STORE_SECRET=shh');
+      mkdirSync(join(root, 'review'), { recursive: true });
+
+      const aliases = [
+        ['review/env.md', '.env'],
+        ['review/git.md', '.git/config'],
+        ['review/store.md', '.agentuse/store/data.json'],
+      ] as const;
+      for (const [alias, target] of aliases) {
+        symlinkSync(join(root, target), join(root, alias));
+        const { res, captured } = fakeResponse();
+        await __testing.serveSessionArtifact(res, root, alias);
+        expect(captured.status).toBe(403);
+        expect(captured.body).not.toContain('SECRET=shh');
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

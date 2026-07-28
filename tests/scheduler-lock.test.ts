@@ -121,6 +121,7 @@ describe('scheduler lock', () => {
     if (!result.acquired) {
       expect(result.holder?.pid).toBe(1);
       expect(result.error).toContain('reclamation');
+      expect(result.error).toContain(schedulerLockReclaimPath(projectRoot));
     }
     expect(existsSync(schedulerLockPath(projectRoot))).toBe(false);
   });

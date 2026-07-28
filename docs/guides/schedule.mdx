@@ -129,6 +129,21 @@ Enable debug mode for detailed logs:
 agentuse serve --debug
 ```
 
+## Scheduler Ownership and Recovery
+
+Only one `agentuse serve` process arms schedules for a project. The daemon
+records that ownership in `.agentuse/scheduler.lock`; other daemons keep serving
+the project but skip its schedules to prevent duplicate side effects.
+
+Lock and filesystem errors fail closed: AgentUse skips schedules rather than
+risking two daemons running them. A stale daemon lock is reclaimed
+automatically. Reclamation itself uses the short-lived
+`.agentuse/scheduler.lock.reclaim` guard. If a process is killed during that
+critical section, the guard can be left behind and scheduling stays disabled.
+After confirming no daemon is currently reclaiming the lock, remove
+`.agentuse/scheduler.lock.reclaim`, then touch an agent file or restart
+`agentuse serve`. The warning prints the exact file path to remove.
+
 ## Next Steps
 
 <CardGroup cols={2}>

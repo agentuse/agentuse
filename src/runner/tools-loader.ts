@@ -114,8 +114,8 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
 
   // Trust expansion (agentuse-lab#168): a trusted skill grants the bash commands
   // it declares in `allowed-tools`. Discover skills up front so their grants can
-  // be folded into the tools config BEFORE the bash tool is built; irreversible-
-  // looking grants are auto-gated inside expandTrustedSkills.
+  // be folded into the tools config BEFORE the bash tool is built. Trust only
+  // grants commands; gating remains an explicit author decision.
   let effectiveToolsConfig = agent.config.tools;
   if (projectContext) {
     try {
@@ -126,7 +126,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     }
   }
   if (trustsAllSkills(agent.config.skills)) {
-    logger.warn(`${logPrefix}Skill configuration uses skills: trusted - every discovered skill is granted the commands it declares in allowed-tools. Irreversible-looking commands are gated; review with 'agentuse doctor'.`);
+    logger.warn(`${logPrefix}Skill configuration uses skills: trusted - every discovered skill is granted the commands it declares in allowed-tools. Irreversible-looking commands are not automatically gated; review with 'agentuse doctor' and add tools.bash.gated entries explicitly.`);
   } else {
     const trusted = getTrustedSkillNames(agent.config.skills);
     if (trusted.length > 0) {

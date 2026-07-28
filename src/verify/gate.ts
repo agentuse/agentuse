@@ -65,7 +65,7 @@ async function renderLocalArtifacts(
     try {
       const resolved = resolve(projectRoot, artifactPath);
       const real = await realpath(resolved);
-      if (!isInside(realRoot, real) || isBlockedArtifactPath(projectRoot, resolved)) {
+      if (!isInside(realRoot, real) || isBlockedArtifactPath(realRoot, real)) {
         throw new Error('path is outside the reviewable project surface');
       }
       const fileStat = await stat(real);

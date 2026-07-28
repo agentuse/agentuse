@@ -146,7 +146,10 @@ export function acquireSchedulerLock(projectRoot: string): SchedulerLockResult {
   // before the guard was created is still safe: the reclaimer re-reads the
   // canonical holder after acquiring the guard and never removes a live one.
   if (existsSync(reclaimPath)) {
-    return denied(reclaimPath, 'scheduler lock reclamation is already in progress');
+    return denied(
+      reclaimPath,
+      `scheduler lock reclamation is already in progress; if no daemon is reclaiming, remove ${reclaimPath}`
+    );
   }
 
   try {
@@ -171,7 +174,10 @@ export function acquireSchedulerLock(projectRoot: string): SchedulerLockResult {
     writeLockExclusive(reclaimPath, payload);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      return denied(reclaimPath, 'scheduler lock reclamation is already in progress');
+      return denied(
+        reclaimPath,
+        `scheduler lock reclamation is already in progress; if no daemon is reclaiming, remove ${reclaimPath}`
+      );
     }
     return denied(path, `cannot claim scheduler lock reclamation: ${(error as Error).message}`);
   }

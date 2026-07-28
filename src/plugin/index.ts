@@ -2,7 +2,7 @@ import { glob } from 'glob';
 import { homedir, tmpdir } from 'os';
 import { join, dirname, extname } from 'path';
 import { pathToFileURL } from 'url';
-import { stat, writeFile, rm } from 'fs/promises';
+import { mkdtemp, stat, writeFile, rm } from 'fs/promises';
 import * as esbuild from 'esbuild';
 import { createHash, randomBytes } from 'crypto';
 import type { AgentCompleteEvent, PluginHandlers } from './types';
@@ -44,25 +44,26 @@ export class PluginManager {
               });
 
               const code = result.outputFiles[0].text;
-              // Unique per load: a random component (not just the path hash) so
-              // concurrent loads of the same plugin don't race on the same file
-              // (write vs rm → ENOENT) and the temp name isn't a predictable
-              // symlink target in the shared tmpdir.
+              // Give every compile its own directory. Besides preventing
+              // write/remove races and predictable symlink targets, this avoids
+              // Bun caching failed dynamic-import resolution for later files in
+              // one shared os.tmpdir() directory.
               const hash = createHash('md5').update(file).digest('hex').substring(0, 8);
               const nonce = randomBytes(6).toString('hex');
-              const tempFile = join(tmpdir(), `agentuse-plugin-${hash}-${nonce}.mjs`);
-
-              // Write the compiled code to temp file (exclusive: never follow or
-              // clobber an existing path).
-              await writeFile(tempFile, code, { flag: 'wx' });
+              const tempDir = await mkdtemp(join(tmpdir(), 'agentuse-plugin-'));
+              const tempFile = join(tempDir, `${hash}-${nonce}.mjs`);
 
               try {
+                // Write the compiled code to temp file (exclusive: never follow
+                // or clobber an existing path).
+                await writeFile(tempFile, code, { flag: 'wx' });
+
                 // Import from the temp file
                 const tempUrl = pathToFileURL(tempFile).href + '?t=' + Date.now();
                 module = await import(tempUrl);
               } finally {
-                // Clean up temp file
-                await rm(tempFile, { force: true }).catch(() => {});
+                // Clean up the complete per-load directory.
+                await rm(tempDir, { recursive: true, force: true }).catch(() => {});
               }
             } else {
               // JavaScript: Dynamic import with cache busting

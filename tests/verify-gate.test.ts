@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, mock } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -108,6 +108,28 @@ describe('renderGatePayload', () => {
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
       await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not embed secret and internal paths reached through in-project symlinks', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-verify-root-'));
+    try {
+      await writeFile(join(projectRoot, '.env'), 'DOTENV_SECRET=shh');
+      await mkdir(join(projectRoot, '.git'), { recursive: true });
+      await writeFile(join(projectRoot, '.git/config'), 'GIT_SECRET=shh');
+      await mkdir(join(projectRoot, '.agentuse/store'), { recursive: true });
+      await writeFile(join(projectRoot, '.agentuse/store/data.json'), 'STORE_SECRET=shh');
+      await symlink(join(projectRoot, '.env'), join(projectRoot, 'env.md'));
+      await symlink(join(projectRoot, '.git/config'), join(projectRoot, 'git.md'));
+      await symlink(join(projectRoot, '.agentuse/store/data.json'), join(projectRoot, 'store.md'));
+
+      const text = await renderGatePayload({
+        artifact_paths: ['env.md', 'git.md', 'store.md'],
+      }, projectRoot);
+      expect(text).not.toContain('SECRET=shh');
+      expect(text.match(/content unavailable/g)).toHaveLength(3);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
     }
   });
 });

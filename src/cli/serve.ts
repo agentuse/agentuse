@@ -1510,7 +1510,12 @@ async function serveSessionArtifact(
     sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This artifact path is outside the project.</p>');
     return;
   }
-  const rel = relative(projectRoot, resolved);
+  // Apply the secret/internal-state denylist to the canonical target too. A
+  // lexical in-project alias must not make .env, .git, or .agentuse state
+  // reviewable through a symlink.
+  const policyRoot = realResolved ? realRoot : projectRoot;
+  const policyPath = realResolved ?? resolved;
+  const rel = relative(policyRoot, policyPath);
   const segments = rel.split(/[\\/]+/);
   const blockedRoots = new Set(['.git', 'node_modules']);
   const isBlocked = segments.some((seg) => seg.startsWith('.env'))
@@ -2537,9 +2542,8 @@ export function createServeCommand(): Command {
           schedulerLockWarned.delete(projectId);
           return true;
         }
-        const lockOwner = result.holder
-          ? `PID ${result.holder.pid}`
-          : result.error ?? 'an unknown lock owner';
+        const lockOwner = result.error
+          ?? (result.holder ? `PID ${result.holder.pid}` : 'an unknown lock owner');
         if (schedulerLockWarned.get(projectId) !== lockOwner) {
           schedulerLockWarned.set(projectId, lockOwner);
           console.error(chalk.yellow(
