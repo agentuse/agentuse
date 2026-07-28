@@ -21,6 +21,27 @@ function filterUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> 
   return result;
 }
 
+const STORE_ENVELOPE_KEYS = ['type', 'title', 'status', 'data'] as const;
+
+/**
+ * Detect the common model slip where the complete `store_create` input is
+ * wrapped inside `data`. Writing that shape would create a metadata-less item
+ * that later type/status-filtered queries cannot find.
+ */
+function nestedEnvelopeKeys(
+  metadata: {
+    type?: string | undefined;
+    title?: string | undefined;
+    status?: string | undefined;
+  },
+  data: Record<string, unknown>
+): string[] {
+  if (metadata.type !== undefined || metadata.title !== undefined || metadata.status !== undefined) {
+    return [];
+  }
+  return STORE_ENVELOPE_KEYS.filter((key) => Object.hasOwn(data, key));
+}
+
 /** A store item with its `data` payload optionally omitted or narrowed. */
 type ProjectedItem = Omit<StoreItem, 'data'> & { data?: Record<string, unknown> };
 
@@ -85,7 +106,9 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         type: z.string().optional().describe('Item type (e.g., "keyword", "outline", "draft")'),
         title: z.string().optional().describe('Human-readable title'),
         status: z.string().optional().describe('Status (e.g., "pending", "in_progress", "done")'),
-        data: z.record(z.unknown()).describe('The item data payload'),
+        data: z.record(z.unknown()).describe(
+          'The item data payload only. Put type, title, status, parentId, and tags at the top level; do not wrap the full item inside data.'
+        ),
         parentId: z.string().optional().describe('ID of parent item to link to'),
         tags: z.array(z.string()).optional().describe('Tags for categorization'),
       }),
@@ -97,6 +120,16 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         parentId?: string;
         tags?: string[];
       }) => {
+        const wrappedKeys = nestedEnvelopeKeys({ type, title, status }, data);
+        if (wrappedKeys.length > 0) {
+          return {
+            success: false,
+            error:
+              `store_create rejected a likely double-wrapped item: ${wrappedKeys.map((key) => `"${key}"`).join(', ')} ` +
+              `must not be nested inside "data" when top-level type, title, and status are all missing. ` +
+              `Move item metadata to the top level, e.g. { type: "task", status: "done", data: { ... } }.`,
+          };
+        }
         const options: StoreCreateOptions = {
           data,
           ...filterUndefined({ type, title, status, parentId, tags }),
@@ -117,6 +150,13 @@ export function createStoreTools(store: Store): Record<string, Tool> {
           store: storeName,
           id: item.id,
           item: projectItem(item),
+          ...(item.type === undefined
+            ? {
+                warning:
+                  'Created item has no type, so type-filtered store_list calls will not find it. ' +
+                  'If this was unintended, pass type at the top level of store_create.',
+              }
+            : {}),
         };
       },
     },

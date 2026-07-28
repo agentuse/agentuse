@@ -703,11 +703,44 @@ describe("createStoreTools", () => {
   });
 
   it("store_create echoes id and metadata but not the data payload", async () => {
-    const res = await call(tools.store_create, { type: "task", data: { secret: "x".repeat(500) } });
+    const res = await call(tools.store_create, {
+      type: "task",
+      title: "Created task",
+      status: "open",
+      data: { status: "payload status", secret: "x".repeat(500) },
+    });
 
     expect(res.success).toBe(true);
     expect(typeof res.id).toBe("string");
+    expect(res.warning).toBeUndefined();
+    expect(res.item).toMatchObject({ type: "task", title: "Created task", status: "open" });
     expect((res.item as Record<string, unknown>).data).toBeUndefined();
+  });
+
+  it("store_create rejects double-wrapped envelope keys without writing an item", async () => {
+    const before = (await store.query({})).total;
+
+    for (const key of ["type", "title", "status", "data"] as const) {
+      const res = await call(tools.store_create, {
+        data: { [key]: key === "data" ? { value: 1 } : "nested value" },
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.error).toContain("likely double-wrapped item");
+      expect(res.error).toContain(`"${key}"`);
+      expect(res.error).toContain("top level");
+    }
+
+    expect((await store.query({})).total).toBe(before);
+  });
+
+  it("store_create warns when a deliberately untyped item will be absent from type filters", async () => {
+    const res = await call(tools.store_create, { data: { message: "untyped payload" } });
+
+    expect(res.success).toBe(true);
+    expect(res.warning).toContain("has no type");
+    expect(res.warning).toContain("type-filtered store_list");
+    expect((await store.get(res.id as string))?.data).toEqual({ message: "untyped payload" });
   });
 
   it("store_get returns full data, or only requested fields", async () => {
