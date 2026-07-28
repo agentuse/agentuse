@@ -2366,6 +2366,7 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
 .push-bell-dialog .dialog-close,
 .page-approval-detail .dialog-close,
 .page-agents .run-dialog .dialog-close,
+.page-agent-detail .run-dialog .dialog-close,
 .cca-dialog .dialog-close {
   min-height: 0; padding: 4px 8px;
   background: transparent; border: 0;
@@ -2375,6 +2376,7 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
 .push-bell-dialog .dialog-close:hover,
 .page-approval-detail .dialog-close:hover,
 .page-agents .run-dialog .dialog-close:hover,
+.page-agent-detail .run-dialog .dialog-close:hover,
 .cca-dialog .dialog-close:hover { background: var(--panel-hover); color: var(--fg); border: 0; }
 .dialog-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -3973,10 +3975,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .menu-item .menu-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--cyan); }
 
 /* --- Run with Custom Instruction dialog --- */
-/* Unscoped: opened from the agents list/menu and from the session view's ⋯
-   menu (.page-approval-detail), so the shell can't hang off .page-agents. The
-   foot-button block below stays scoped — the session page already styles bare
-   dialog buttons via its broad `.page-approval-detail button` rules. */
+/* Unscoped: opened from the agents list/menu, the agent detail hero, and the
+   session view's ⋯ menu (.page-approval-detail), so the shell can't hang off
+   .page-agents. The foot-button block below stays scoped to the pages that
+   need it — the session page already styles bare dialog buttons via its broad
+   `.page-approval-detail button` rules. */
 .run-dialog {
   width: min(520px, calc(100vw - 32px));
   max-width: 100%;
@@ -3991,16 +3994,21 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .run-dialog .dialog-description strong { color: var(--fg); font-weight: 600; }
 .run-dialog .dialog-error { margin: 0; padding: 0 18px 4px; color: var(--red); font-size: 12.5px; }
 .run-dialog .dialog-foot .actions { display: inline-flex; gap: 8px; }
-.page-agents .run-dialog .dialog-foot button {
+.page-agents .run-dialog .dialog-foot button,
+.page-agent-detail .run-dialog .dialog-foot button {
   font-family: var(--mono); font-size: 13px; font-weight: 500; letter-spacing: 0.02em;
   border: 1px solid var(--line-strong); background: transparent; color: var(--fg);
   border-radius: 8px; min-height: 36px; padding: 0 16px; cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease;
 }
-.page-agents .run-dialog .dialog-foot button:hover { background: var(--panel-hover); }
-.page-agents .run-dialog .dialog-foot button.primary { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
-.page-agents .run-dialog .dialog-foot button.primary:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
-.page-agents .run-dialog .dialog-foot button:disabled { opacity: 0.45; cursor: not-allowed; }
+.page-agents .run-dialog .dialog-foot button:hover,
+.page-agent-detail .run-dialog .dialog-foot button:hover { background: var(--panel-hover); }
+.page-agents .run-dialog .dialog-foot button.primary,
+.page-agent-detail .run-dialog .dialog-foot button.primary { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
+.page-agents .run-dialog .dialog-foot button.primary:hover,
+.page-agent-detail .run-dialog .dialog-foot button.primary:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
+.page-agents .run-dialog .dialog-foot button:disabled,
+.page-agent-detail .run-dialog .dialog-foot button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ===== Agent detail hub (/agents/:project/:agent*) ===== */
 .page-agent-detail main { width: min(960px, calc(100vw - 32px)); margin: 0 auto; padding: 26px 0 80px; }
@@ -4037,6 +4045,17 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agent-detail .run-cta:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
 .page-agent-detail .run-cta:disabled { opacity: 0.5; cursor: not-allowed; }
+.page-agent-detail .run-cta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+/* Secondary to "Run agent": same run action, one-off instruction appended. */
+.page-agent-detail .run-cta-alt {
+  font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.02em;
+  padding: 9px 14px; border-radius: 8px; cursor: pointer;
+  background: transparent; border: 1px solid var(--line-strong); color: var(--muted-3);
+  white-space: nowrap;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.page-agent-detail .run-cta-alt:hover { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+.page-agent-detail .run-cta-alt:disabled { opacity: 0.5; cursor: not-allowed; }
 .page-agent-detail .run-err { color: var(--red); font-size: 12px; max-width: 220px; text-align: right; }
 
 /* capabilities: plain sentences first (#156), the raw chip grid one expand away */
@@ -4234,6 +4253,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 @media (max-width: 640px) {
   .page-agent-detail .hero { flex-direction: column; gap: 16px; }
   .page-agent-detail .hero-actions { align-items: flex-start; }
+  .page-agent-detail .run-cta-row { justify-content: flex-start; }
   .page-agent-detail .run-err { text-align: left; }
   .page-agent-detail .cap-row { grid-template-columns: 1fr; gap: 6px; }
 }

@@ -11,6 +11,7 @@ import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { AgentLearningsPanel } from '../components/learnings-panel';
 import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
+import { RunInstructionDialog } from '../components/run-instruction-dialog';
 import { LogContent } from '../components/content';
 import { formatApprovalTime, displayStatusLabel } from '../lib/format';
 import { pageTitle } from '../lib/brand';
@@ -328,6 +329,7 @@ export default function AgentDetail() {
   const project = decodeURIComponent(params.project ?? '');
   const runPath = (params.agent ?? '').split('/').map(decodeURIComponent).join('/');
   const [tab, setTab] = useState<AgentTab>('history');
+  const [runOpen, setRunOpen] = useState(false);
 
   const { data, error, loading } = useFetch(
     `agent-detail:${project}:${runPath}`,
@@ -359,10 +361,21 @@ export default function AgentDetail() {
                 <div class="hero-path"><code>{data.path}</code></div>
               </div>
               <div class="hero-actions">
-                <button type="button" class={`run-cta${busy ? ' btn-busy' : ''}`} disabled={busy} aria-busy={busy} onClick={() => void run()}>
-                  {busy ? <><span class="btn-spinner" aria-hidden="true" />Starting…</> : '▶ Run agent'}
-                </button>
-                {runError && <span class="run-err">{runError}</span>}
+                <div class="run-cta-row">
+                  <button type="button" class={`run-cta${busy ? ' btn-busy' : ''}`} disabled={busy} aria-busy={busy} onClick={() => void run()}>
+                    {busy ? <><span class="btn-spinner" aria-hidden="true" />Starting…</> : '▶ Run agent'}
+                  </button>
+                  <button
+                    type="button"
+                    class="run-cta-alt"
+                    disabled={busy}
+                    title="Start a run with a one-off instruction appended to the agent's prompt"
+                    onClick={() => setRunOpen(true)}
+                  >
+                    Run with instruction…
+                  </button>
+                </div>
+                {runError && !runOpen && <span class="run-err">{runError}</span>}
               </div>
             </header>
 
@@ -395,6 +408,15 @@ export default function AgentDetail() {
                 <SourcePanel source={data.source} runPath={data.runPath} project={data.projectId} path={data.path} />
               </div>
             )}
+
+            <RunInstructionDialog
+              open={runOpen}
+              agentName={data.name}
+              busy={busy}
+              error={runError}
+              onSubmit={(instruction) => { void run(instruction); }}
+              onClose={() => { if (!busy) setRunOpen(false); }}
+            />
           </>
         )}
       </main>
