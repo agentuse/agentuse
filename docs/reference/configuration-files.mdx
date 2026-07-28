@@ -15,6 +15,7 @@ AgentUse reads configuration from agent files, environment files, global default
 | `--env-file <path>` | Run command | Load a specific environment file for `agentuse run` |
 | `~/.agentuse/config.json` | User | Global `agentuse serve` defaults and an `env` block of variable defaults |
 | `AGENTUSE_CONFIG=/path/to/config.json` | Process | Override the global config file path |
+| `ABOUT.md` | Directory | Optional dashboard identity and description for the project or folder containing it |
 | `.agentuse/plugins/*.{ts,js}` | Project | Project-local plugins |
 | `~/.agentuse/plugins/*.{ts,js}` | User | User-global plugins |
 | `.agentuse/skills/` | Project | Project-local skills |
@@ -93,7 +94,13 @@ Put long-lived `agentuse serve` defaults in `~/.agentuse/config.json`:
     "port": 12233,
     "host": "127.0.0.1",
     "auth": true,
-    "logFile": true
+    "logFile": true,
+    "hideAgentSource": false,
+    "brand": { "name": "Acme Operations" },
+    "terms": {
+      "project": "workspace",
+      "folder": "team|teams"
+    }
   }
 }
 ```
@@ -112,6 +119,8 @@ AgentUse runs one serve daemon at a time. Put every project that should accept `
 | `serve.logFile` | boolean | Write serve logs to a file |
 | `serve.hideAgentSource` | boolean | Hide raw `.agentuse` source in the dashboard and `/api/agents/detail`; capability summaries (model, tools, schedule) stay visible. For deployments where visitors may run and observe agents but should not read their instructions (demos, client sandboxes) |
 | `serve.brand.name` | string | Your company name, shown beside the AgentUse wordmark, in page titles, and as the installed app name (max 60 chars) |
+| `serve.terms.project` | string | Dashboard display noun for a project. Routes, API fields, and CLI output keep the technical name |
+| `serve.terms.folder` | string | Dashboard display noun for a folder. Add an explicit plural as `singular|plural` for irregular nouns |
 
 CLI flags override config values:
 
@@ -128,6 +137,40 @@ CLI flags override config values:
 `AGENTUSE_API_KEY` remains env-only and is not read from config.
 
 See [Webhooks](/guides/webhooks) and [CLI Commands](/reference/cli-commands#agentuse-serve) for serve usage.
+
+## Directory identity with `ABOUT.md`
+
+Place an optional `ABOUT.md` in a served project root or a directory containing
+agents. The dashboard uses the file to label and describe that directory. It
+does not alter agent prompts, API routes, or scheduling.
+
+Plain Markdown becomes the longer body shown on the directory detail surface:
+
+```md
+Automations owned by the Revenue Operations team.
+```
+
+Optional YAML frontmatter supplies compact display fields:
+
+```md
+---
+name: Revenue Operations
+description: Pipeline and renewal automations
+owner: Operations Platform
+---
+
+These agents reconcile CRM events and prepare renewal follow-ups.
+```
+
+Recognized frontmatter keys are `name`, `description`, and `owner`; scalar
+string or numeric values are normalized for display. Unknown keys and other
+value types are ignored. The body remains the longer description. AgentUse
+rejects symlinked and oversized `ABOUT.md` files so directory identity cannot
+disclose an unrelated local file or inflate API responses.
+
+`serve.brand.name` labels the whole deployment; `ABOUT.md` labels one served
+directory within it. Use `serve.terms` when the deployment calls projects or
+folders by different nouns.
 
 ## Global env defaults
 

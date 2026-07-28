@@ -1,0 +1,141 @@
+---
+title: Operations Dashboard
+description: Monitor runs, approvals, results, metrics, and notifications in the AgentUse serve web app
+tag: Experimental
+---
+
+<Warning>
+  The dashboard, JSON API, approval UI, and Web Push integration are
+  experimental. Route and response details may evolve from production feedback.
+</Warning>
+
+`agentuse serve` includes an operations dashboard for the agents loaded from
+your served projects:
+
+```bash
+agentuse serve
+```
+
+Open `http://127.0.0.1:12233`. The Home page streams:
+
+- agents running now, with recent output tickers
+- sessions waiting for approval
+- failed or verification-failed runs that need review
+- recent outcomes and upcoming schedules
+- deterministic metrics written through `record_metric`
+
+Sessions, Agents, Approvals, Schedules, Stores, and Settings remain directly
+addressable routes. A session page is the durable record for one run: its
+activity, approval gate, tool output, result, metrics, verification verdict,
+and follow-up controls stay together.
+
+## Viewer preferences
+
+Dashboard preferences are local to each browser. They do not change agents or
+server configuration.
+
+- Home sections and metric tiles can be hidden and reordered
+- Results can use 1, 7, 14, or 30-day windows
+- Metric tiles can render as a number, bars, or line chart
+- Agents can use cards, tables, metadata columns, grouping, and filters
+- Sessions can use list or feed views and combine status, agent, trigger,
+  triage, and time-window filters
+
+Preferences are stored in `localStorage` and synchronize between tabs through
+browser storage events. Clearing site data resets them.
+
+## Install as a web app
+
+The dashboard ships a manifest, home-screen icons, self-hosted fonts, and a
+cache-first service worker.
+
+- **iPhone/iPad:** open the dashboard in Safari, use Share → **Add to Home
+  Screen**, then launch the installed app
+- **Android/desktop Chromium:** use the browser's Install action when offered
+
+The manifest and icons are available before operator authentication so a
+token-only session link can still be installed. Cached static assets make repeat
+loads fast and tolerate a temporary network outage; live data and actions still
+require the daemon.
+
+If a deployment leaves a stale cached bundle after an update, open Settings and
+use **Clear cache & reload**. The service worker activates updates on the next
+open, and stale chunk failures trigger one controlled reload automatically.
+
+## Web Push notifications
+
+Notification bells on Approvals, Sessions, and Settings control two independent
+categories:
+
+- approval requests
+- session completions and failures
+
+The first enable action registers the service worker, requests browser
+permission, creates a push subscription, and stores that subscription in the
+daemon. Later toggles update only the category preference. Turning off the last
+category removes the server record and unsubscribes the browser.
+
+Subscriptions and VAPID keys persist under the AgentUse XDG data directory.
+Endpoints reported gone by the push provider are removed automatically. Push
+delivery is best-effort; the dashboard and session log remain the source of
+truth.
+
+<Note>
+  iOS Web Push works only from an installed Home Screen app. A normal Safari tab
+  shows installation guidance instead of requesting a permission it cannot use.
+</Note>
+
+If permission is denied, AgentUse cannot reopen the browser prompt. Re-enable
+notifications in the browser or operating-system site settings, then return to
+Settings.
+
+## Badges and notification links
+
+Approval pushes carry the current pending count as an app badge. The dashboard
+resynchronizes the badge when the approvals list changes or a reviewer decides a
+gate, correcting any race between the run and the push.
+
+Notification taps open the associated session:
+
+- a warm installed app focuses an existing matching session window when possible
+- a cold iOS launch uses Declarative Web Push navigation and a short-lived
+  cached target so the app can recover the requested session
+- the cached cold-launch target expires after two minutes
+
+## Live updates and recovery
+
+The dashboard uses Server-Sent Events for live session and list updates. When a
+mobile tab returns to the foreground it reconnects automatically. An immediate
+HTTP status fetch paints a session before the event stream catches up, so a
+buffered or remote connection does not leave the page on an indefinite loading
+state.
+
+Long-running bash calls publish a bounded recent stdout/stderr tail after about
+two seconds. This preview is for people only: it is not added to model context,
+is removed when the call settles, and does not replace the final durable output.
+
+## Security and deployment
+
+Local loopback deployments are open by default. Exposed hosts require
+`AGENTUSE_API_KEY` unless auth is explicitly disabled. Session capability links
+carry a token scoped to one session; operator pages and APIs still require the
+operator credential.
+
+For client-facing or demo deployments:
+
+```json
+{
+  "serve": {
+    "hideAgentSource": true,
+    "brand": { "name": "Acme Operations" },
+    "terms": {
+      "project": "workspace",
+      "folder": "team|teams"
+    }
+  }
+}
+```
+
+See [Configuration Files](/reference/configuration-files) for these keys,
+[Approval Gates](/guides/approval-gates) for review behavior, and
+[Self-Hosting](/guides/self-hosting) for reverse-proxy deployment.

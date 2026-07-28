@@ -211,7 +211,7 @@ tools:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `commands` | `string[]` | Required | Auto-run allowlist of command patterns (supports `*` wildcard) |
+| `commands` | `string[]` | `[]` | Auto-run allowlist of command patterns (supports `*` wildcard). May be omitted when every allowed command comes from `gated` or trusted skills |
 | `gated` | `string[]` | `[]` | Command patterns that run only after human approval, enforced by a per-action lease. Also runnable (the effective allowlist is `commands` plus `gated`); a match in both is gated. Declaring `gated` implies the approval gate. See [Gated commands](/guides/approval-gates#gated-commands-mechanical-enforcement). |
 | `allowedPaths` | `string[]` | `[]` | Additional directories beyond project root |
 | `timeout` | `string` | `"2m"` | Command timeout as a duration string (`"30s"`, `"2m"`, `"500ms"`). Bare numbers are **rejected** with a corrective error: this field was historically milliseconds while every other timeout field is seconds, so a bare number is ambiguous by construction |
@@ -261,7 +261,7 @@ bash:
   commands:
     - "npm test"
     - "npm run build"
-  timeout: 300000
+  timeout: 5m
 
 # Multi-project setup
 bash:

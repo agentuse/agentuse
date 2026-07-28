@@ -200,6 +200,18 @@ offers hands-on setup, custom agent development, and ongoing support.
 - [Report bugs](https://github.com/agentuse/agentuse/issues)
 - [Share ideas](https://github.com/agentuse/agentuse/discussions)
 
+Local release validation:
+
+```bash
+bun run test             # isolated unit/integration suite
+bun run test:coverage    # same isolation, merged 55% line / 65% function gate
+bun run test:e2e         # real dashboard smoke; requires agent-browser
+bun run test:release     # typecheck, build, coverage, and browser smoke
+```
+
+The dashboard smoke test creates a disposable project, daemon, browser session,
+and XDG state directory. It never starts a scheduled agent or calls a model.
+
 ## License
 
 Apache 2.0

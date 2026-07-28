@@ -85,7 +85,7 @@ sandbox: true                  # defaults
 sandbox:                       # full config
   provider: docker
   image: python:3.12-slim     # default: node:22-slim
-  timeout: 600                # seconds, default: 300
+  timeout: 10m               # default: 300 seconds
   setup:                      # run after container starts
     - pip install pandas numpy
 ```
@@ -94,7 +94,7 @@ sandbox:                       # full config
 |-------|------|---------|-------------|
 | `provider` | `string` | — | Must be `docker` |
 | `image` | `string` | `node:22-slim` | Docker image (auto-pulled if missing) |
-| `timeout` | `number` | `300` | Max container lifetime in seconds |
+| `timeout` | `number \| string` | `300` | Max container lifetime. Bare numbers mean seconds; duration strings such as `"10m"` are accepted |
 | `setup` | `string \| string[]` | — | Commands to run before agent starts |
 | `env` | `string[]` | — | Host env var names to forward into the container |
 

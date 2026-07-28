@@ -223,6 +223,29 @@ Additional instructions or context.
   ```
 </ParamField>
 
+<ParamField path="dependsOn" type="string | string[]" required={false}>
+  Declare agents whose output this agent consumes, usually through a shared
+  store. Paths resolve relative to the current agent file, using the same path
+  rules as `subagents`.
+
+  ```yaml
+  dependsOn:
+    - ./collect-sources.agentuse
+    - ./normalize-records.agentuse
+  ```
+
+  `dependsOn` is advisory metadata. AgentUse exposes the relationship through
+  the agents API and relationship graph, but it does **not** serialize runs or
+  delay schedules. Use compatible schedules or a manager agent when execution
+  order must be enforced.
+
+  A single dependency can use the string shorthand:
+
+  ```yaml
+  dependsOn: ./collect-sources.agentuse
+  ```
+</ParamField>
+
 <ParamField path="reasoning" type='"none" | "minimal" | "low" | "medium" | "high" | "xhigh"' required={false}>
   Provider-agnostic reasoning effort, the recommended knob. AgentUse passes it to
   the AI SDK as the top-level `reasoning` level, which each provider maps to its
@@ -326,11 +349,13 @@ Additional instructions or context.
   ```yaml
   skills:
     auto: true
-    linkedin:
-      allow: [agent-browser]
+    linkedin:          # preload, but grant no commands
+    x-personal: trusted
   ```
 
-  Use `allow: ["*"]` only for trusted skills that may use all tools already configured for the agent.
+  Per-skill entries accept only the `trusted` grant. To grant a command without
+  trusting the skill, list the command explicitly in `tools.bash.commands`.
+  The removed `allow` key is invalid.
 
   <Tip>
     Run `agentuse doctor <agent-file>` to inspect skill grants.
@@ -461,6 +486,7 @@ tools:
     gated:                         # run only after human approval (per-action lease)
       - "npm publish *"
   artifacts: true                  # enables artifact_save and artifact_list
+  metrics: true                    # enables record_metric
 ```
 
 `tools.bash.gated` lists commands that need human sign-off: they run only after an approval covering the exact action, and declaring `gated` enables the approval gate automatically. See [Gated commands](/guides/approval-gates#gated-commands-mechanical-enforcement).

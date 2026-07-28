@@ -177,11 +177,15 @@ The session page shows the best available review details from the agent:
 - `prompt`: the reviewer-facing decision prompt
 - `changes`: the exact actions taken on approval, one `{ label, content }` entry per discrete action. Each renders as a highlighted "On approval" box with a copy button and character count, so the reviewer skims the verbatim payload first
 - `reference`: the original item the action responds to (`{ label, author, title, url, excerpt }`), such as the post being commented on or the message being replied to. Renders as a quoted card directly above the changes
+- `options`: two or more choices for the reviewer, each with an `id`, `label`,
+  and optional `description` / `recommended`. The session page renders a
+  single-choice picker before the decision controls. On approval, the selected
+  id reaches the agent as `toolResult.choice`
 - `summary`: what changed and what is being approved
 - `draft`: inline draft content. When `changes` carries the verbatim payload, the draft renders collapsed as supporting detail
 - `draft_url`: URL to a draft artifact
 - `artifact_url`: URL to the primary review artifact, such as a PR, preview, document, or generated artifact
-- `artifact_path` / `artifact_paths`: project-relative local files the session page can open in the artifact viewer. Images, HTML, and PDF artifacts also render as inline previews in the approval card
+- `artifact_path` / `artifact_paths`: project-relative local files the session page can open in the artifact viewer. Images, HTML, and PDF artifacts render inline; MP4/WebM/MOV/M4V video and MP3/M4A/WAV/OGG audio use native players. Files are snapshotted at gate time so the reviewer approves immutable bytes
 - `context`: background the other fields do not already carry (constraints, inputs used, process notes); agents are steered to omit it rather than repeat the reference, changes, or summary
 - `risk`: known risks, unresolved questions, or reviewer attention areas
 - Session logs before and after the decision
@@ -191,6 +195,21 @@ Reviewer actions are fixed:
 - `Approve`: resumes the agent with `status: "approve"`
 - `Reject`: resumes the agent with `status: "reject"`
 - `Comment`: resumes the agent with `status: "comment"` and the reviewer comment
+
+For a choice gate, AgentUse preselects the recommended option, or the first
+option when none is recommended. The reviewer can change that selection before
+approving. The result retains the normal approval status and adds the selected
+option id:
+
+```json
+{
+  "status": "approve",
+  "choice": "ship_tuesday"
+}
+```
+
+Use stable machine-readable ids. Labels and descriptions may change without
+breaking the agent logic that consumes `toolResult.choice`.
 
 On reject, AgentUse passes the decision back to the agent instead of applying a
 universal workflow state change. If the agent tracks drafts, queue items, or

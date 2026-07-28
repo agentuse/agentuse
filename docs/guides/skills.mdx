@@ -135,8 +135,9 @@ Only builtin tools are validated against the agent's configuration:
 | Field | Type | Description |
 |-------|------|-------------|
 | `commands` | `string[]` | Allowlist of command patterns (supports `*` wildcard) |
+| `gated` | `string[]` | Command patterns that require an approved per-action lease |
 | `allowedPaths` | `string[]` | Additional directories accessible beyond project root. Supports `~` for home directory. |
-| `timeout` | `number` | Command timeout in milliseconds (default: 120000)
+| `timeout` | `string` | Command timeout as a suffixed duration such as `"30s"`, `"2m"`, or `"500ms"`; bare numbers are rejected |
 
 Other tool names (like MCP tools) are accepted but not validated - they serve as documentation only.
 
@@ -202,6 +203,10 @@ skills:
 ```
 
 Because hiding skills is the rarer, higher-consequence choice, it is loud (`auto: false`) rather than a silent side effect of listing.
+
+Per-skill map values may be empty or `trusted` (including the object form
+`{ trusted: true }`). The pre-0.16 `allow` key has been removed. Grant
+individual commands through `tools.bash.commands` instead.
 
 ### Skill config forms
 
