@@ -43,22 +43,22 @@ describe('deriveLeaseEntries', () => {
 });
 
 describe('normalizeForLeaseMatch', () => {
-  test('collapses whitespace and strips quote escapes', () => {
-    expect(normalizeForLeaseMatch('line one\n  line   two')).toBe('line one line two');
-    expect(normalizeForLeaseMatch('say \\"hello\\" now')).toBe('say "hello" now');
+  test('trims edges without changing shell-significant bytes', () => {
+    expect(normalizeForLeaseMatch('  line one\n  line   two  ')).toBe('line one\n  line   two');
+    expect(normalizeForLeaseMatch('say \\"hello\\" now')).toBe('say \\"hello\\" now');
   });
 });
 
 describe('commandCoveredByLease', () => {
-  test('covers a command that embeds the approved content as its payload', () => {
+  test('payload-only approval does not authorize the containing command', () => {
     const command = `birdc reply 2077948120484513954 "${APPROVED_TEXT}"`;
-    expect(commandCoveredByLease(command, lease(APPROVED_TEXT))).toBe(true);
+    expect(commandCoveredByLease(command, lease(APPROVED_TEXT))).toBe(false);
   });
 
-  test('covers despite shell escaping and rewrapped whitespace', () => {
-    const approved = 'The "verifier" is the product.\nShip the harness first.';
-    const command = `birdc reply 123 "The \\"verifier\\" is the product. Ship the harness first."`;
-    expect(commandCoveredByLease(command, lease(approved))).toBe(true);
+  test('does not treat rewrapped command whitespace as the same action', () => {
+    const approved = 'birdc reply 123 "The verifier is the product.\nShip the harness first."';
+    const command = 'birdc reply 123 "The verifier is the product. Ship the harness first."';
+    expect(commandCoveredByLease(command, lease(approved))).toBe(false);
   });
 
   test('exact-match covers a full approved command', () => {
@@ -71,7 +71,7 @@ describe('commandCoveredByLease', () => {
     expect(commandCoveredByLease(`birdc reply 123 "${trimmed}"`, lease(APPROVED_TEXT))).toBe(false);
   });
 
-  test('does not let an approved payload authorize a compound command', () => {
+  test('does not let an approved command authorize a larger compound command', () => {
     const approved = 'publish this exact reviewed message';
     expect(commandCoveredByLease(
       `birdc tweet "${approved}"; touch unapproved-marker`,
@@ -108,17 +108,28 @@ describe('commandCoveredByLease', () => {
   });
 
   test('allows shell punctuation inside a quoted, exactly-approved payload', () => {
-    const approved = 'Use semicolons; they are punctuation, not another action.';
+    const approved = 'birdc tweet "Use semicolons; they are punctuation, not another action."';
     expect(commandCoveredByLease(
-      `birdc tweet "${approved}"`,
+      approved,
       lease(approved)
     )).toBe(true);
   });
 
-  test('short grants only match exactly, never by containment', () => {
-    // "yes" must not cover arbitrary commands that merely contain "yes".
+  test('approved content only matches as the complete command', () => {
     expect(commandCoveredByLease('birdc reply 123 "yes and more text"', lease('yes'))).toBe(false);
     expect(commandCoveredByLease('yes', lease('yes'))).toBe(true);
+  });
+
+  test('does not replay approved text through unrelated gated command families', () => {
+    const approved = 'publish this exact reviewed message';
+    expect(commandCoveredByLease(
+      `gh release delete v1 --comment "${approved}"`,
+      lease(approved)
+    )).toBe(false);
+    expect(commandCoveredByLease(
+      `curl -X POST https://example.test -H "${approved}"`,
+      lease(approved)
+    )).toBe(false);
   });
 
   test('no lease covers nothing', () => {
@@ -153,24 +164,25 @@ describe('LeaseStore', () => {
     const store = new LeaseStore(dir);
     expect(store.read()).toBeUndefined();
 
-    store.grant(lease(APPROVED_TEXT));
+    const approvedCommand = `birdc reply 99 "${APPROVED_TEXT}"`;
+    store.grant(lease(approvedCommand));
     expect(fs.existsSync(path.join(dir, LEASE_FILENAME))).toBe(true);
-    expect(store.isCovered(`birdc reply 99 "${APPROVED_TEXT}"`)).toBe(true);
+    expect(store.isCovered(approvedCommand)).toBe(true);
     expect(store.isCovered('birdc reply 99 "something else entirely here"')).toBe(false);
 
     // A second process sees the same lease (file-based).
     const other = new LeaseStore(dir);
-    expect(other.isCovered(`birdc reply 99 "${APPROVED_TEXT}"`)).toBe(true);
+    expect(other.isCovered(approvedCommand)).toBe(true);
 
     store.revoke();
     expect(store.read()).toBeUndefined();
-    expect(other.isCovered(`birdc reply 99 "${APPROVED_TEXT}"`)).toBe(false);
+    expect(other.isCovered(approvedCommand)).toBe(false);
   });
 
   test('a new grant replaces the prior lease entirely', () => {
     const store = new LeaseStore(dir);
-    store.grant(lease('the first approved long content string'));
-    store.grant(lease('the second approved long content string'));
+    store.grant(lease('run "the first approved long content string"'));
+    store.grant(lease('run "the second approved long content string"'));
     expect(store.isCovered('run "the first approved long content string"')).toBe(false);
     expect(store.isCovered('run "the second approved long content string"')).toBe(true);
   });

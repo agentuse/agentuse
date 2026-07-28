@@ -14,6 +14,8 @@ import type { CanonicalVerifyConfig, VerifyPlacement } from './types.js';
 import { logger } from '../utils/logger.js';
 import type { SessionManager } from '../session/manager.js';
 import type { Part, VerifyPart } from '../session/types.js';
+import { open, realpath, stat } from 'fs/promises';
+import { isAbsolute, relative, resolve } from 'path';
 
 /** Resolve which placements are active. Default: gate when the agent carries
  * an approval gate, output otherwise. */
@@ -25,9 +27,87 @@ export function resolveVerifyPlacements(
   return new Set(at === 'both' ? (['gate', 'output'] as const) : ([at] as const));
 }
 
-/** Render the await_human payload into judge-readable text. Field order mirrors
- * what the human reviewer sees on the approval page. */
-export function renderGatePayload(input: Record<string, unknown>): string {
+const MAX_EMBEDDED_ARTIFACT_BYTES = 12_000;
+const MAX_TOTAL_ARTIFACT_BYTES = 24_000;
+
+function isInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+function isBlockedArtifactPath(projectRoot: string, artifactPath: string): boolean {
+  const segments = relative(projectRoot, artifactPath).split(/[\\/]+/);
+  return segments.some((segment) => segment.startsWith('.env'))
+    || segments[0] === '.git'
+    || segments[0] === 'node_modules'
+    || (segments[0] === '.agentuse'
+      && (segments[1] === 'store' || segments[1] === 'sessions' || segments[1] === 'env'));
+}
+
+async function renderLocalArtifacts(
+  paths: string[],
+  projectRoot: string | undefined
+): Promise<string | undefined> {
+  if (paths.length === 0) return undefined;
+  if (!projectRoot) {
+    return paths.map((artifactPath) => `- ${artifactPath} (content unavailable: no project root)`).join('\n');
+  }
+
+  let remaining = MAX_TOTAL_ARTIFACT_BYTES;
+  const realRoot = await realpath(projectRoot).catch(() => undefined);
+  const rendered: string[] = [];
+
+  for (const artifactPath of paths) {
+    if (!realRoot || remaining <= 0) {
+      rendered.push(`### ${artifactPath}\n[content not embedded: verification preview limit reached]`);
+      continue;
+    }
+    try {
+      const resolved = resolve(projectRoot, artifactPath);
+      const real = await realpath(resolved);
+      if (!isInside(realRoot, real) || isBlockedArtifactPath(projectRoot, resolved)) {
+        throw new Error('path is outside the reviewable project surface');
+      }
+      const fileStat = await stat(real);
+      if (!fileStat.isFile()) throw new Error('path is not a regular file');
+
+      const bytesToRead = Math.min(fileStat.size, MAX_EMBEDDED_ARTIFACT_BYTES, remaining);
+      const handle = await open(real, 'r');
+      let content: Buffer;
+      try {
+        content = Buffer.alloc(bytesToRead);
+        const result = await handle.read(content, 0, bytesToRead, 0);
+        content = content.subarray(0, result.bytesRead);
+      } finally {
+        await handle.close();
+      }
+
+      let text: string;
+      try {
+        text = new TextDecoder('utf-8', { fatal: true }).decode(content);
+      } catch {
+        rendered.push(`### ${artifactPath}\n[${fileStat.size} byte binary artifact; content cannot be embedded in the text judge prompt]`);
+        continue;
+      }
+      remaining -= content.length;
+      const truncation = fileStat.size > content.length
+        ? `\n\n[artifact truncated: showing ${content.length} of ${fileStat.size} bytes]`
+        : '';
+      rendered.push(`### ${artifactPath}\n${text}${truncation}`);
+    } catch (error) {
+      rendered.push(`### ${artifactPath}\n[content unavailable: ${(error as Error).message}]`);
+    }
+  }
+  return rendered.join('\n\n');
+}
+
+/** Render the complete await_human review surface into judge-readable text.
+ * Local UTF-8 artifacts are embedded with bounded previews when projectRoot is
+ * available; binary/external artifacts remain explicit references. */
+export async function renderGatePayload(
+  input: Record<string, unknown>,
+  projectRoot?: string
+): Promise<string> {
   const sections: string[] = [];
   const str = (v: unknown): string | undefined =>
     typeof v === 'string' && v.trim() ? v.trim() : undefined;
@@ -66,6 +146,33 @@ export function renderGatePayload(input: Record<string, unknown>): string {
 
   const risk = str(input.risk);
   if (risk) sections.push(`## Risk\n${risk}`);
+
+  const options = input.options as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(options)) {
+    const rendered = options
+      .map((option, index) => {
+        const id = str(option?.id) ?? `option-${index + 1}`;
+        const label = str(option?.label) ?? id;
+        const description = str(option?.description);
+        const recommended = option?.recommended === true ? ' (recommended)' : '';
+        return `- ${label}${recommended} [${id}]${description ? `: ${description}` : ''}`;
+      })
+      .join('\n');
+    if (rendered) sections.push(`## Reviewer choices\n${rendered}`);
+  }
+
+  const links = [
+    str(input.artifact_url) && `Primary artifact: ${str(input.artifact_url)}`,
+    str(input.draft_url) && `Draft artifact: ${str(input.draft_url)}`,
+  ].filter((line): line is string => Boolean(line));
+  if (links.length > 0) sections.push(`## External review artifacts\n${links.join('\n')}`);
+
+  const artifactPaths = [
+    str(input.artifact_path),
+    ...(Array.isArray(input.artifact_paths) ? input.artifact_paths.map(str) : []),
+  ].filter((artifactPath): artifactPath is string => Boolean(artifactPath));
+  const localArtifacts = await renderLocalArtifacts([...new Set(artifactPaths)], projectRoot);
+  if (localArtifacts) sections.push(`## Local review artifacts\n${localArtifacts}`);
 
   return sections.join('\n\n');
 }
@@ -127,8 +234,9 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       }
 
       const attempt = gateRejections;
+      const renderedPayload = await renderGatePayload(input, projectContext?.projectRoot);
       const outcome = await judgeOutput({
-        input: { task, output: renderGatePayload(input), attempt },
+        input: { task, output: renderedPayload, attempt },
         config,
         agentModel,
         agentFilePath,

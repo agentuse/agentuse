@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, mock } from 'bun:test';
+import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 // Ensure no module mocks leak from other files
 mock.restore();
@@ -57,11 +60,55 @@ describe('resolveVerifyPlacements', () => {
 });
 
 describe('renderGatePayload', () => {
-  it('renders reference excerpt and changes content for the judge', () => {
-    const text = renderGatePayload(gateInput);
+  it('renders reference excerpt and changes content for the judge', async () => {
+    const text = await renderGatePayload(gateInput);
     expect(text).toContain('Original tweet text.');
     expect(text).toContain('The draft reply text.');
     expect(text).toContain('Approve this reply?');
+  });
+
+  it('renders URLs, reviewer choices, and local artifact content', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-verify-gate-'));
+    try {
+      await writeFile(join(projectRoot, 'review.md'), '# Actual review artifact\nShip the complete surface.');
+      const text = await renderGatePayload({
+        prompt: 'Choose and approve?',
+        artifact_url: 'https://example.test/primary',
+        draft_url: 'https://example.test/draft',
+        artifact_path: 'review.md',
+        artifact_paths: ['review.md'],
+        options: [
+          { id: 'a', label: 'Candidate A', description: 'Faster', recommended: true },
+          { id: 'b', label: 'Candidate B' },
+        ],
+      }, projectRoot);
+
+      expect(text).toContain('Primary artifact: https://example.test/primary');
+      expect(text).toContain('Draft artifact: https://example.test/draft');
+      expect(text).toContain('Candidate A (recommended) [a]: Faster');
+      expect(text).toContain('Candidate B [b]');
+      expect(text).toContain('# Actual review artifact');
+      expect(text.match(/### review\.md/g)).toHaveLength(1);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not read local artifacts outside the project root', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-verify-root-'));
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'agentuse-verify-outside-'));
+    try {
+      const outside = join(outsideRoot, 'secret.txt');
+      await writeFile(outside, 'must-not-appear');
+      const text = await renderGatePayload({
+        artifact_path: outside,
+      }, projectRoot);
+      expect(text).not.toContain('must-not-appear');
+      expect(text).toContain('content unavailable');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
   });
 });
 

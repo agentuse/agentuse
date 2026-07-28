@@ -122,12 +122,12 @@ Declaring `gated` enables the approval machinery automatically, you do not also 
 The guarantee is two-fold, enforced per action (not once per session):
 
 1. A gated command never runs before approval.
-2. A gated command never runs anything other than what you approved. Approval binds to the exact content the reviewer saw (the tweet text, the command); if the agent revises it, the old approval no longer covers it and it must re-gate.
+2. A gated command never runs anything other than what you approved. Approval binds to the exact complete shell command shown in `changes[]`; payload text by itself grants nothing. If the agent revises the command or its payload, the old approval no longer covers it and it must re-gate.
 
 Notes:
 
 - **You rarely hand-write this.** Skills that ship posting commands, the interactive command prompt, and generated agent files add `gated` for you. `agentuse doctor <file>` also flags an allowlisted command that looks irreversible (`reply`, `post`, `delete`, `git push`, `curl -X POST`, ...) but is not gated. AgentUse never auto-gates from a keyword guess, it only suggests.
-- **Gate the content-bearing step.** The verbatim-content guarantee works when the approved content is in the command itself (`birdc reply "text"`). For browser automation, gate the step that carries the words (`agent-browser type "..."`), not a contentless click.
+- **Show the complete command.** Put the exact executable command (`birdc reply "text"`) in `changes[]`. You can show the reply text separately for readability, but only the complete-command entry creates the lease. For browser automation, gate and show the step that carries the words (`agent-browser type "..."`), not a contentless click.
 - **Unattended runs suspend only on a declared gate**, never on a tooling question. You approve outcomes, not commands.
 
 ## Start the Server

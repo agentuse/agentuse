@@ -29,80 +29,9 @@ export interface ApprovalLease {
   entries: LeaseEntry[];
 }
 
-/**
- * Normalize for lease matching: collapse whitespace runs (shell commands and
- * drafts wrap differently) and drop backslash escapes before quotes (the model
- * shell-quotes the approved text when embedding it in a command).
- */
+/** Trim transport-level edge whitespace without changing shell semantics. */
 export function normalizeForLeaseMatch(value: string): string {
-  return value
-    .replace(/\\(["'`])/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
- * Parse one shell command into argument values without executing or expanding
- * it. Any unquoted shell control operator marks the command as compound. Lease
- * payloads may match a complete argv value, never an arbitrary substring.
- */
-function shellArguments(command: string): { args: string[]; compound: boolean } {
-  const args: string[] = [];
-  let current = '';
-  let quote: "'" | '"' | null = null;
-  let escaped = false;
-  let compound = false;
-
-  const push = () => {
-    if (current.length > 0) args.push(current);
-    current = '';
-  };
-
-  for (let i = 0; i < command.length; i++) {
-    const char = command[i]!;
-    if (escaped) {
-      current += char;
-      escaped = false;
-      continue;
-    }
-    if (char === '\\' && quote !== "'") {
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) quote = null;
-      else {
-        // Double quotes still execute command substitutions. Single quotes do
-        // not. Mark these as compound before treating the bytes as one argv
-        // value, otherwise a separate effect can hide beside an approved arg.
-        if (
-          quote === '"'
-          && (char === '`' || (char === '$' && command[i + 1] === '('))
-        ) {
-          compound = true;
-        }
-        current += char;
-      }
-      continue;
-    }
-    if (char === "'" || char === '"') {
-      quote = char;
-      continue;
-    }
-    if (/\s/.test(char)) {
-      push();
-      if (char === '\n' || char === '\r') compound = true;
-      continue;
-    }
-    if (';&|<>`'.includes(char) || (char === '$' && command[i + 1] === '(')) {
-      compound = true;
-    }
-    current += char;
-  }
-  if (escaped) current += '\\';
-  push();
-  if (quote) compound = true;
-  return { args, compound };
+  return value.trim();
 }
 
 /**
@@ -133,23 +62,17 @@ export function isEffectful(command: string, effectPatterns: string[]): boolean 
 }
 
 /**
- * Whether a command is covered by a lease: the normalized command equals the
- * full approved entry, or one complete shell argument equals an approved
- * payload. Arbitrary substring containment is intentionally forbidden: it let
- * `approved-effect ; unapproved-effect` inherit the first effect's grant.
+ * Whether a command is covered by a lease. Authorization is an exact match
+ * against a complete command shown in `changes[]`; payload-only entries grant
+ * nothing. Binding the lease to the whole action prevents approved text from
+ * being replayed as an unused argument to an unrelated gated command.
  */
 export function commandCoveredByLease(command: string, lease: ApprovalLease | undefined): boolean {
   if (!lease || lease.entries.length === 0) return false;
   const normalizedCommand = normalizeForLeaseMatch(command);
-  const parsed = shellArguments(command);
   return lease.entries.some((entry) => {
     const normalizedContent = normalizeForLeaseMatch(entry.content);
-    if (!normalizedContent) return false;
-    if (normalizedCommand === normalizedContent) return true;
-    if (parsed.compound) return false;
-    return parsed.args.some((argument) =>
-      normalizeForLeaseMatch(argument) === normalizedContent
-    );
+    return normalizedContent.length > 0 && normalizedCommand === normalizedContent;
   });
 }
 

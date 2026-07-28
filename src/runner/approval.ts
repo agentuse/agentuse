@@ -52,8 +52,8 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
   // Lease enforcement note (agentuse-lab#165, Phase 2): when the agent declares
   // effectful command patterns, the runtime mechanically matches each matching
   // command against the latest APPROVED changes[] before it may execute. The
-  // model must therefore put the exact final content/command in changes[] and
-  // must never run a gated command before its gate is approved.
+  // model must therefore put the exact complete command in changes[] and must
+  // never run a gated command before its gate is approved.
   const effectPatterns = config.tools?.bash?.gated ?? [];
   const effectsNote = effectPatterns.length > 0
     ? [
@@ -62,10 +62,10 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
         '',
         `These bash command patterns are GATED and mechanically blocked until covered by an approved plan: ${effectPatterns.map((p: string) => `\`${p}\``).join(', ')}.`,
         '',
-        '- Before running any matching command, call `await_human` and put the exact final content (or the exact command) in `changes[].content`, verbatim. On approve, the runtime derives the grant from those entries; a matching command runs only when it equals or contains an approved entry.',
+        '- Before running any matching command, call `await_human` and put the exact complete shell command in `changes[].content`, verbatim. You may include the human-readable payload as a separate change, but payload text alone grants nothing. On approve, the runtime runs a gated command only when the whole command exactly matches an approved entry.',
         '- Never emit a matching command before the gate returns approve: it is auto-denied, never executed.',
-        '- If a matching command is denied, do NOT retry or reword it. Revise the plan, re-gate via `await_human` with the exact new content in `changes[]`, and run it only after approval.',
-        '- If you revise approved content (e.g. trim for a length limit), the old approval no longer covers it: re-gate with the revised version.',
+        '- If a matching command is denied, do NOT retry or reword it. Revise the plan, re-gate via `await_human` with the exact new command in `changes[]`, and run it only after approval.',
+        '- If you revise the command or its payload (e.g. trim for a length limit), the old approval no longer covers it: re-gate with the complete revised command.',
       ].join('\n')
     : '';
 

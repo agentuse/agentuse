@@ -834,7 +834,7 @@ export async function* executeAgentCore(
             });
             return {
               type: 'denied' as const,
-              reason: 'This command is gated and is not covered by an approved plan. Do NOT retry or reword it. Call await_human with the full plan, putting the exact final content/command in changes[] (verbatim), and run the command only after the reviewer approves. If a reviewer already approved a different version, re-gate with this exact version.',
+              reason: 'This command is gated and is not covered by an approved plan. Do NOT retry or reword it. Call await_human with the full plan, putting the exact complete shell command in changes[] (verbatim), and run it only after the reviewer approves. Payload text by itself does not authorize a command. If a reviewer already approved a different version, re-gate with this exact command.',
             };
           }
         }

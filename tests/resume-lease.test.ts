@@ -56,6 +56,7 @@ const GATE_INPUT = {
   prompt: 'Approve this reply?',
   changes: [
     { label: 'Reply to post', content: APPROVED_REPLY },
+    { label: 'Exact gated command', content: `birdc reply 2077948120484513954 "${APPROVED_REPLY}"` },
     { label: 'Then: update store', content: 'store item-1 status=posted note=done' },
   ],
 };
@@ -74,7 +75,7 @@ describe('resume lease lifecycle', () => {
       const store = new LeaseStore(sessionDir);
       const lease = store.read();
       expect(lease).toBeDefined();
-      expect(lease!.entries).toHaveLength(2);
+      expect(lease!.entries).toHaveLength(3);
       expect(lease!.entries[0].content).toBe(APPROVED_REPLY);
       expect(store.isCovered(`birdc reply 2077948120484513954 "${APPROVED_REPLY}"`)).toBe(true);
       expect(store.isCovered('birdc reply 123 "a different unapproved draft entirely"')).toBe(false);

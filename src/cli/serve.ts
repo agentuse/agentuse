@@ -2528,7 +2528,7 @@ export function createServeCommand(): Command {
       // are re-checked on every attempt (the holder may have exited), and a
       // denial disables scheduling for that project only, never serving.
       const schedulerLocksHeld = new Set<string>();
-      const schedulerLockWarned = new Map<string, number>();
+      const schedulerLockWarned = new Map<string, string>();
       const canArmSchedules = (projectId: string, projectRoot: string): boolean => {
         if (schedulerLocksHeld.has(projectId)) return true;
         const result = acquireSchedulerLock(projectRoot);
@@ -2537,11 +2537,14 @@ export function createServeCommand(): Command {
           schedulerLockWarned.delete(projectId);
           return true;
         }
-        if (schedulerLockWarned.get(projectId) !== result.holder.pid) {
-          schedulerLockWarned.set(projectId, result.holder.pid);
+        const lockOwner = result.holder
+          ? `PID ${result.holder.pid}`
+          : result.error ?? 'an unknown lock owner';
+        if (schedulerLockWarned.get(projectId) !== lockOwner) {
+          schedulerLockWarned.set(projectId, lockOwner);
           console.error(chalk.yellow(
-            `Warning: schedules for ${projectId} are owned by another serve daemon (PID ${result.holder.pid}). ` +
-            `Skipping scheduling here to prevent duplicate runs. Stop that daemon and touch an agent file (or restart) to take over.`
+            `Warning: schedules for ${projectId} are unavailable (${lockOwner}). ` +
+            `Skipping scheduling here to prevent duplicate runs. Stop the owning daemon and touch an agent file (or restart) to take over.`
           ));
         }
         return false;

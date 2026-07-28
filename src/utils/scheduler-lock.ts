@@ -17,7 +17,8 @@
  * taken over automatically. Single-machine only by design: schedules run where
  * the project checkout lives.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { appendFileSync, existsSync, linkSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { randomUUID } from 'crypto';
 import { dirname, join } from 'path';
 import { getCurrentProcessStartTime, isProcessRefAlive } from './process-info';
 
@@ -30,13 +31,21 @@ export interface SchedulerLockHolder {
 
 export type SchedulerLockResult =
   | { acquired: true }
-  | { acquired: false; holder: SchedulerLockHolder };
+  | { acquired: false; holder?: SchedulerLockHolder; error?: string };
 
 export function schedulerLockPath(projectRoot: string): string {
   return join(projectRoot, '.agentuse', 'scheduler.lock');
 }
 
-const GIT_EXCLUDE_PATTERN = '.agentuse/scheduler.lock';
+export function schedulerLockReclaimPath(projectRoot: string): string {
+  return `${schedulerLockPath(projectRoot)}.reclaim`;
+}
+
+const GIT_EXCLUDE_PATTERNS = [
+  '.agentuse/scheduler.lock',
+  '.agentuse/scheduler.lock.reclaim',
+  '.agentuse/scheduler.lock.*.tmp',
+];
 
 /**
  * Keep the lock out of git status without touching the repo's committed
@@ -50,23 +59,74 @@ function ensureLocalGitExclude(projectRoot: string): void {
     if (!existsSync(gitDir) || !statSync(gitDir).isDirectory()) return;
     const excludePath = join(gitDir, 'info', 'exclude');
     const current = existsSync(excludePath) ? readFileSync(excludePath, 'utf-8') : '';
-    if (current.split('\n').some((line) => line.trim() === GIT_EXCLUDE_PATTERN)) return;
+    const existing = new Set(current.split('\n').map((line) => line.trim()));
+    const missing = GIT_EXCLUDE_PATTERNS.filter((pattern) => !existing.has(pattern));
+    if (missing.length === 0) return;
     mkdirSync(dirname(excludePath), { recursive: true });
-    appendFileSync(excludePath, `${current.endsWith('\n') || current === '' ? '' : '\n'}${GIT_EXCLUDE_PATTERN}\n`);
+    appendFileSync(
+      excludePath,
+      `${current.endsWith('\n') || current === '' ? '' : '\n'}${missing.join('\n')}\n`
+    );
   } catch {
     // Ignore: purely cosmetic.
+  }
+}
+
+function readHolder(path: string): SchedulerLockHolder | undefined {
+  try {
+    const holder = JSON.parse(readFileSync(path, 'utf-8')) as SchedulerLockHolder;
+    return typeof holder.pid === 'number' && typeof holder.acquiredAt === 'number'
+      ? holder
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function denied(path: string, error?: string): SchedulerLockResult {
+  const holder = readHolder(path);
+  return {
+    acquired: false,
+    ...(holder && { holder }),
+    ...(error && { error }),
+  };
+}
+
+/**
+ * Publish a fully-written lock payload without ever exposing a partially
+ * written canonical file. Hard-link creation is atomic and fails with EEXIST
+ * when another owner already published the same path.
+ */
+function writeLockExclusive(path: string, payload: string): void {
+  const candidate = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(candidate, payload, { flag: 'wx' });
+  try {
+    linkSync(candidate, path);
+  } finally {
+    try {
+      rmSync(candidate);
+    } catch {
+      // A leaked candidate grants no authority; only the canonical link does.
+    }
   }
 }
 
 /**
  * Try to take the scheduler lock for a project. Returns the live holder when
  * another daemon owns it; a lock held by a dead process (or a recycled PID) is
- * removed and taken over. Re-acquiring a lock this process already holds
- * succeeds. Filesystem failures fail open (scheduling must not break on a
- * read-only or exotic checkout); the registry guard still applies there.
+ * removed and taken over under an exclusive reclamation guard. Re-acquiring a
+ * lock this process already holds succeeds. Filesystem and ambiguous ownership
+ * failures fail closed: skipping schedules is safer than double-running their
+ * side effects.
+ *
+ * The reclaim guard deliberately is not auto-swept. It exists only across a
+ * short synchronous critical section and is removed in `finally`; if a process
+ * is killed inside that section, a future daemon refuses to guess at ownership
+ * until an operator removes the orphaned `.reclaim` file.
  */
 export function acquireSchedulerLock(projectRoot: string): SchedulerLockResult {
   const path = schedulerLockPath(projectRoot);
+  const reclaimPath = schedulerLockReclaimPath(projectRoot);
   const procStartedAt = getCurrentProcessStartTime();
   const entry: SchedulerLockHolder = {
     pid: process.pid,
@@ -77,56 +137,77 @@ export function acquireSchedulerLock(projectRoot: string): SchedulerLockResult {
 
   try {
     mkdirSync(dirname(path), { recursive: true });
-  } catch {
-    return { acquired: true };
+  } catch (error) {
+    return denied(path, `cannot create scheduler lock directory: ${(error as Error).message}`);
   }
 
-  // Two attempts: exclusive create, and on EEXIST evaluate the holder, sweep a
-  // stale lock, then create exclusively again. The wx flag makes the create
-  // atomic, so two daemons racing here cannot both win.
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // Nobody may create or reclaim the canonical lock while another process is
+  // inside stale-lock reclamation. A contender that passed this check just
+  // before the guard was created is still safe: the reclaimer re-reads the
+  // canonical holder after acquiring the guard and never removes a live one.
+  if (existsSync(reclaimPath)) {
+    return denied(reclaimPath, 'scheduler lock reclamation is already in progress');
+  }
+
+  try {
+    writeLockExclusive(path, payload);
+    ensureLocalGitExclude(projectRoot);
+    return { acquired: true };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+      return denied(path, `cannot create scheduler lock: ${(error as Error).message}`);
+    }
+  }
+
+  const initialHolder = readHolder(path);
+  if (initialHolder?.pid === process.pid) return { acquired: true };
+  if (initialHolder && isProcessRefAlive(initialHolder)) {
+    return { acquired: false, holder: initialHolder };
+  }
+
+  // Serialize the stale check + removal. The canonical holder is re-read only
+  // after this exclusive guard is held, closing the check-then-unlink race.
+  try {
+    writeLockExclusive(reclaimPath, payload);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      return denied(reclaimPath, 'scheduler lock reclamation is already in progress');
+    }
+    return denied(path, `cannot claim scheduler lock reclamation: ${(error as Error).message}`);
+  }
+
+  try {
+    const currentHolder = readHolder(path);
+    if (currentHolder?.pid === process.pid) return { acquired: true };
+    if (currentHolder && isProcessRefAlive(currentHolder)) {
+      return { acquired: false, holder: currentHolder };
+    }
+
     try {
-      writeFileSync(path, payload, { flag: 'wx' });
-      ensureLocalGitExclude(projectRoot);
-      return { acquired: true };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-        return { acquired: true };
+      rmSync(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        return denied(path, `cannot remove stale scheduler lock: ${(error as Error).message}`);
       }
     }
 
-    let holder: SchedulerLockHolder | null = null;
-    let holderRaw: string | null = null;
     try {
-      holderRaw = readFileSync(path, 'utf-8');
-      holder = JSON.parse(holderRaw) as SchedulerLockHolder;
-    } catch {
-      // Corrupt or vanished mid-read: treat as stale.
+      writeLockExclusive(path, payload);
+      ensureLocalGitExclude(projectRoot);
+      return { acquired: true };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        return denied(path, 'another daemon acquired the scheduler lock during reclamation');
+      }
+      return denied(path, `cannot create scheduler lock after reclamation: ${(error as Error).message}`);
     }
-    if (holder && holder.pid === process.pid) return { acquired: true };
-    if (holder && isProcessRefAlive(holder)) return { acquired: false, holder };
-
+  } finally {
     try {
-      // Between judging the holder stale and this rm, another daemon may have
-      // swept the stale file and wx-created its own live lock; an unconditional
-      // unlink would destroy that fresh lock and let both daemons arm schedules
-      // (the exact double-run this lock exists to prevent). Only remove the
-      // exact bytes we judged stale; on any change, loop and re-evaluate.
-      if (holderRaw !== null && readFileSync(path, 'utf-8') !== holderRaw) continue;
-      rmSync(path);
+      if (readFileSync(reclaimPath, 'utf-8') === payload) rmSync(reclaimPath);
     } catch {
-      // Lost a race to another sweeper; the retry's wx create decides.
+      // Fail closed on the next acquisition if cleanup did not complete.
     }
   }
-
-  // Both creates lost to concurrent writers: report whoever holds it now.
-  try {
-    const holder = JSON.parse(readFileSync(path, 'utf-8')) as SchedulerLockHolder;
-    if (holder.pid !== process.pid) return { acquired: false, holder };
-  } catch {
-    // Unreadable again: fail open rather than brick scheduling.
-  }
-  return { acquired: true };
 }
 
 /** Remove the lock if this process owns it. */
