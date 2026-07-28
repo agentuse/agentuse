@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.16.0] - Unreleased
+## [0.16.0] - 2026-07-28
 
 This release turns `serve` into a live operations dashboard: installable and push-capable on mobile, centered on outcomes and recorded business metrics, with failed-run triage, agent relationship graphs, richer approval review, and an experimental verification loop that can critique and redo work before delivery. Under the hood, the model registry now carries real context and output limits for every provider (fixing premature compaction and silently truncated responses), `filesystem_read` gains image/PDF input, and a failed compaction no longer silently ends a run. Timeout units are unified: every timeout field accepts duration strings (`"30s"`, `"10m"`, `"24h"`), and the one milliseconds-based config field, `tools.bash.timeout`, no longer accepts bare numbers (**breaking**; one-line migration, see Changed). Approval gates, verify, the session/approval web UI, the JSON API, channels/Slack, and web push remain **experimental**: configuration, route shapes, UI details, and API response formats may still evolve based on production feedback.
 

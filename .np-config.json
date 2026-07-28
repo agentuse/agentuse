@@ -1,5 +1,4 @@
 {
-  "yarn": false,
   "cleanup": false,
   "tests": true,
   "2fa": true,
@@ -9,11 +8,5 @@
   "branch": "main",
   "releaseDraft": false,
   "testScript": "test",
-  "buildScript": "build",
-  "message": "v%s",
-  "git": {
-    "commitMessage": "Release v%s",
-    "tagName": "v%s",
-    "requireBranch": "main"
-  }
+  "message": "Release v%s"
 }
