@@ -12,9 +12,10 @@ import { isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli
 import { hasActionableApproval, headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
 import { FeedResponse, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
-import type { ApprovalsListPayload, SessionRow } from '../src/cli/serve/web/lib/api';
+import type { AgentRow, ApprovalsListPayload, SessionRow } from '../src/cli/serve/web/lib/api';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 import { term, termTitle } from '../src/cli/serve/web/lib/terms';
+import { AgentGraphView } from '../src/cli/serve/web/components/agent-graph-view';
 
 const noop = () => {};
 
@@ -978,5 +979,72 @@ describe('Home activity feed labels', () => {
     const gates = suspendedGateKinds(payload({}));
     expect(labelFor(row({ status: 'running' }), true, gates)).toBe('started');
     expect(labelFor(row({ status: 'completed' }), false, gates)).toBe('completed');
+  });
+});
+
+describe('AgentGraphView filtering', () => {
+  const agent = (partial: Partial<AgentRow> & { path: string }): AgentRow => ({
+    projectId: 'demo',
+    runPath: partial.path,
+    name: partial.path.split('/').pop()!.replace(/\.agentuse$/, ''),
+    model: 'anthropic:claude-sonnet-4-0',
+    ...partial,
+  });
+  const agents = [
+    agent({ path: 'agents/news/manager.agentuse', subagents: ['agents/news/writer.agentuse'] }),
+    agent({ path: 'agents/news/writer.agentuse' }),
+    agent({ path: 'agents/ops/deploy.agentuse', subagents: ['agents/ops/verify.agentuse'] }),
+    agent({ path: 'agents/ops/verify.agentuse' }),
+    agent({ path: 'agents/solo.agentuse' }),
+  ];
+
+  it('renders every cluster and standalone card with no filter', () => {
+    const html = renderToString(<AgentGraphView agents={agents} query="" />);
+    expect(html).toContain('>manager<');
+    expect(html).toContain('>deploy<');
+    expect(html).toContain('>solo<');
+  });
+
+  it('hides clusters with no matching agent and keeps context inside matching ones', () => {
+    const html = renderToString(<AgentGraphView agents={agents} query="writer" />);
+    // The matching tile survives whole: its non-matching nodes stay (dimmed) so
+    // the edges still read.
+    expect(html).toContain('>manager<');
+    expect(html).toContain('>writer<');
+    expect(html).toContain('agent-graph-node entry dim');
+    // The unrelated DAG and the unrelated standalone card are gone entirely.
+    expect(html).not.toContain('>deploy<');
+    expect(html).not.toContain('>verify<');
+    expect(html).not.toContain('>solo<');
+  });
+
+  it('does not let a borrowed shared agent keep unrelated clusters on screen', () => {
+    // `judge` is copied into both fleets; its description names news, which must
+    // not drag the ops DAG along.
+    const shared = [
+      agent({ path: 'agents/news/manager.agentuse', subagents: ['agents/shared/judge.agentuse'] }),
+      agent({ path: 'agents/ops/deploy.agentuse', subagents: ['agents/shared/judge.agentuse'] }),
+      agent({ path: 'agents/shared/judge.agentuse', description: 'verifies news drafts' }),
+    ];
+    const html = renderToString(<AgentGraphView agents={shared} query="news" />);
+    expect(html).toContain('>manager<');
+    expect(html).not.toContain('>deploy<');
+  });
+
+  it('falls back to shared copies when nothing else matches, so the hit stays visible', () => {
+    const shared = [
+      agent({ path: 'agents/news/manager.agentuse', subagents: ['agents/shared/judge.agentuse'] }),
+      agent({ path: 'agents/ops/deploy.agentuse', subagents: ['agents/shared/judge.agentuse'] }),
+      agent({ path: 'agents/shared/judge.agentuse' }),
+    ];
+    const html = renderToString(<AgentGraphView agents={shared} query="judge" />);
+    expect(html).toContain('>judge<');
+  });
+
+  it('keeps a standalone agent that matches on a field only the list views searched', () => {
+    const rows = [agent({ path: 'agents/solo.agentuse', description: 'weekly newsletter digest' })];
+    const html = renderToString(<AgentGraphView agents={rows} query="newsletter" />);
+    expect(html).toContain('>solo<');
+    expect(html).not.toContain('agent-graph-node static dim');
   });
 });

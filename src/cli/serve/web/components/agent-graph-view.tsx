@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { AgentRow, SessionRow } from '../lib/api';
 import { buildAgentGraph, type AgentGraph, type GraphEdge, type GraphNode } from '../lib/agent-graph';
 import { formatRelativeTime, runTone } from '../lib/format';
+import { matchesAgentFilter } from '../lib/agent-filter';
 import { useRunAgent } from '../hooks/use-run-agent';
 import { agentDetailHref } from '../routes/agent-detail';
 
@@ -28,14 +29,6 @@ function nodeX(n: GraphNode): number { return PAD + n.rank * (NODE_W + COL_GAP);
 function shortModel(model: string): string {
   const i = model.indexOf(':');
   return i === -1 ? model : model.slice(i + 1);
-}
-
-/** Filter match mirroring the list views: dim, never remove, so edges survive. */
-function matches(agent: AgentRow | undefined, query: string): boolean {
-  if (!query) return true;
-  if (!agent) return false;
-  return [agent.name, agent.path, agent.model, agent.description ?? '']
-    .some((v) => v.toLowerCase().includes(query));
 }
 
 /**
@@ -231,7 +224,7 @@ function ClusterTile(props: {
             })}
           </svg>
           {nodes.map((n) => {
-            const queryMiss = Boolean(query) && !matches(n.agent, query);
+            const queryMiss = Boolean(query) && !matchesAgentFilter(n.agent, query);
             const hoverMiss = hovered !== null && !neighbors.has(n.id);
             const cls = [
               'agent-graph-node',
@@ -306,12 +299,32 @@ export function AgentGraphView(props: {
   // One arrowhead marker per project section (markers resolve by document id,
   // so tiles share a single hidden defs svg instead of colliding per tile).
   const markerId = 'agent-graph-arrow';
-  const clusters: GraphNode[][] = [];
+  const allClusters: GraphNode[][] = [];
   for (const n of graph.nodes) {
-    (clusters[n.component] ??= []).push(n);
+    (allClusters[n.component] ??= []).push(n);
   }
-  const memberIds = clusters.map((c) => new Set(c.map((n) => n.id)));
+  const memberIds = allClusters.map((c) => new Set(c.map((n) => n.id)));
   const clusterEdges = (k: number) => graph.edges.filter((e) => memberIds[k]!.has(e.from));
+  // A filter hides whole tiles, not just nodes: a DAG with nothing matching is
+  // pure noise between the hits. Inside a surviving tile non-matching nodes stay
+  // dimmed rather than removed, because dropping them would sever its edges.
+  //
+  // A tile qualifies on its OWN members only: a borrowed utility (one judge
+  // copied into every fleet) whose description happens to name the query would
+  // otherwise keep every unrelated fleet on screen. Shared copies are the only
+  // place such an agent renders, though, so if nothing owns a match the tiles
+  // holding it come back rather than dropping the hit off the page entirely.
+  const clusters = props.query
+    ? (() => {
+      const hit = (nodes: GraphNode[], own: boolean) =>
+        nodes.some((n) => (own ? !n.shared : true) && matchesAgentFilter(n.agent, props.query));
+      const owned = allClusters.filter((nodes) => hit(nodes, true));
+      return owned.length > 0 ? owned : allClusters.filter((nodes) => hit(nodes, false));
+    })()
+    : allClusters;
+  const isolated = props.query
+    ? graph.isolated.filter((a) => matchesAgentFilter(a, props.query))
+    : graph.isolated;
 
   return (
     <div class="agent-graph">
@@ -329,11 +342,13 @@ export function AgentGraphView(props: {
       </svg>
       {clusters.length > 0 && (
         <div class="agent-graph-grid">
-          {clusters.map((nodes, k) => (
+          {clusters.map((nodes) => (
             <ClusterTile
               key={nodes[0]!.id}
               nodes={nodes}
-              edges={clusterEdges(k)}
+              // Index by the node's own component, not the array position:
+              // filtering drops tiles, so the two diverge.
+              edges={clusterEdges(nodes[0]!.component)}
               markerId={markerId}
               query={props.query}
               hovered={hovered}
@@ -343,17 +358,17 @@ export function AgentGraphView(props: {
           ))}
         </div>
       )}
-      {graph.isolated.length > 0 && (
+      {isolated.length > 0 && (
         <div class="agent-graph-standalone">
           <div class="agent-graph-cluster-head">
             <span class="agent-graph-cluster-title">standalone</span>
-            <span class="agent-graph-cluster-count">{graph.isolated.length}</span>
+            <span class="agent-graph-cluster-count">{isolated.length}</span>
           </div>
           <div class="agent-graph-standalone-grid">
-            {graph.isolated.map((a) => (
+            {isolated.map((a) => (
               <a
                 key={a.path}
-                class={`agent-graph-node static${props.query && !matches(a, props.query) ? ' dim' : ''}`}
+                class="agent-graph-node static"
                 href={agentDetailHref(a.projectId, a.runPath)}
                 title={nodeTitle(a.path, a)}
               >

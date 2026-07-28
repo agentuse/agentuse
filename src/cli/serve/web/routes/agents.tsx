@@ -5,6 +5,7 @@ import type { AboutInfo, AgentRow, SessionRow, SessionsPayload } from '../lib/ap
 import { fetchAgents, fetchSessions } from '../lib/api';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
 import { term, termTitle } from '../lib/terms';
+import { matchesAgentFilter } from '../lib/agent-filter';
 import { LogContent } from '../components/content';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
@@ -621,14 +622,6 @@ function metadataKeys(agents: AgentRow[]): string[] {
   return [...keys].sort();
 }
 
-/** Flatten metadata scalars into a search string (keys always, scalar values too). */
-function metadataText(metadata: Record<string, unknown> | undefined): string {
-  if (!metadata) return '';
-  return Object.entries(metadata)
-    .map(([k, v]) => (v == null || typeof v === 'object' ? k : `${k} ${v}`))
-    .join(' ');
-}
-
 /**
  * One metadata value rendered for a cell: booleans as a chip/muted flag,
  * scalars as truncated text, missing or non-scalar values as a muted dash.
@@ -692,13 +685,6 @@ function ColumnCell({ id, agent, ctx }: { id: string; agent: AgentRow; ctx: RowC
 /** Grid template for a tree/pin grid: Tree(1fr) + one auto per column + menu. */
 function columnsGridTemplate(columns: string[]): string {
   return ['minmax(0, 1fr)', ...columns.map(() => 'auto'), 'auto'].join(' ');
-}
-
-/** Case-insensitive substring match across the fields a user is likely to type. */
-function matchesFilter(agent: AgentRow, query: string): boolean {
-  if (!query) return true;
-  const haystack = `${agent.name} ${agent.path} ${agent.description ?? ''} ${agent.projectId} ${agent.model} ${agent.schedule ?? ''} ${metadataText(agent.metadata)}`.toLowerCase();
-  return query.split(/\s+/).filter(Boolean).every((term) => haystack.includes(term));
 }
 
 export default function Agents({ project }: { project?: string } = {}) {
@@ -783,7 +769,7 @@ export default function Agents({ project }: { project?: string } = {}) {
   const runsFor = runHistoryFinder(allLoaded, sessionRows);
   const lastRunFor = (a: AgentRow) => runsFor(a)[0];
   const rowCtx: RowCtx = { pins, columns: renderColumns, runsFor, lastRunFor };
-  const allAgents = query ? loadedAgents.filter((a) => matchesFilter(a, query)) : loadedAgents;
+  const allAgents = query ? loadedAgents.filter((a) => matchesAgentFilter(a, query)) : loadedAgents;
   const byProject = new Map<string, AgentRow[]>();
   for (const agent of allAgents) {
     const list = byProject.get(agent.projectId);
@@ -981,8 +967,9 @@ export default function Agents({ project }: { project?: string } = {}) {
                 ? <AgentDirectoryGroups agents={agents} ctx={rowCtx} projectId={projectId} aboutFor={(dir) => aboutOf(projectId, dir)} />
                 : view === 'graph'
                   // The graph gets the project's FULL row set (not the filtered
-                  // slice): removing rows would sever edges, so the filter dims
-                  // non-matching nodes inside the view instead.
+                  // slice): removing rows would sever edges. It applies the same
+                  // query itself, hiding tiles with no match outright and dimming
+                  // non-matching nodes inside the tiles that survive.
                   ? <AgentGraphView agents={loadedAgents.filter((a) => a.projectId === projectId)} query={query} lastRunFor={lastRunFor} />
                   : <div class="panel">
                       <div class="tree" style={{ gridTemplateColumns: gridTemplate }}>
