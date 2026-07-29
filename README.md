@@ -1,212 +1,270 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./static/agentuse-logo-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="./static/agentuse-logo.png">
-  <img alt="AgentUse Logo" src="./static/agentuse-logo.png" width="full">
+  <img alt="AgentUse" src="./static/agentuse-logo.png" width="100%">
 </picture>
 
-<h1 align="center">Autonomous Agents That Work Without You</h1>
+<p align="center"><strong>OPEN-SOURCE AGENT RUNTIME</strong></p>
+
+<h1 align="center">AI agents that handle recurring work without you.</h1>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/agentuse"><img alt="NPM Version" src="https://img.shields.io/npm/v/agentuse?style=flat-square&color=00DC82&label=version"></a>
-  <a href="https://www.npmjs.com/package/agentuse"><img alt="NPM Downloads" src="https://img.shields.io/npm/dm/agentuse?style=flat-square&color=00DC82"></a>
-  <a href="https://github.com/agentuse/agentuse"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/agentuse/agentuse?style=flat-square&color=00DC82"></a>
-  <a href="https://github.com/agentuse/agentuse/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/npm/l/agentuse?style=flat-square&color=00DC82"></a>
+  Define agents in Markdown. Run them locally or on your own infrastructure with Claude, OpenAI, or open models.<br>
+  No SDK. No workflow builder. Your agents are files you can diff, review, and own.
 </p>
 
 <p align="center">
-  <strong>Any model.</strong> Works with Claude, GPT, and open-source models.<br/>
-  <strong>Run anywhere.</strong> Webhooks, built-in cron, approvals, CI/CD, Mac, Linux, Windows or Docker.<br/>
-  <strong>No SDK required.</strong> Define your agent in Markdown.
+  <a href="https://www.npmjs.com/package/agentuse"><img alt="NPM version" src="https://img.shields.io/npm/v/agentuse?style=flat-square&color=00DC82&label=version"></a>
+  <a href="https://www.npmjs.com/package/agentuse"><img alt="NPM downloads" src="https://img.shields.io/npm/dm/agentuse?style=flat-square&color=00DC82"></a>
+  <a href="https://github.com/agentuse/agentuse"><img alt="GitHub stars" src="https://img.shields.io/github/stars/agentuse/agentuse?style=flat-square&color=00DC82"></a>
+  <a href="https://github.com/agentuse/agentuse/blob/main/LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/npm/l/agentuse?style=flat-square&color=00DC82"></a>
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#example">Example</a> •
-  <a href="#deploy">Deploy</a> •
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#define-the-agent-in-markdown">Define an agent</a> ·
+  <a href="#operate-agents-not-prompts">Operations</a> ·
   <a href="https://docs.agentuse.io">Documentation</a>
 </p>
 
-## Quick Start
+AgentUse owns the agent loop, tools, sessions, approvals, schedules, and server.
+Model providers supply the intelligence. You keep the agent definition and run
+it on infrastructure you control.
+
+## Quick start
+
+Try AgentUse without installing it or configuring an API key:
 
 ```bash
-# Try it now - no install needed
-ANTHROPIC_API_KEY=sk-ant-... npx agentuse@latest run https://agentuse.io/hello.agentuse
+npx -y agentuse@latest run https://agentuse.io/hello.agentuse
 ```
 
-Create `my-agent.agentuse`:
+For real agents, install the CLI and connect a model provider:
+
+```bash
+npm install -g agentuse
+agentuse provider login
+```
+
+API keys also work through environment variables such as
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `OPENROUTER_API_KEY`.
+
+## Define the agent in Markdown
+
+An agent is a Markdown file with YAML configuration and plain-English
+instructions. The filename is its default id.
+
+```markdown
+<!-- morning-repo-brief.agentuse -->
+---
+model: anthropic:claude-sonnet-5
+description: Summarizes repository activity and flags work that needs attention
+schedule: "0 8 * * 1-5"
+tools:
+  filesystem:
+    - path: "${root}"
+      permissions: [read]
+  bash:
+    commands:
+      - "git status *"
+      - "git log *"
+      - "git show *"
+      - "git diff *"
+---
+
+Create a concise repository brief for the last 24 hours.
+
+1. Summarize meaningful changes.
+2. Flag risky changes, failed work, and documentation drift.
+3. Recommend the next actions in priority order.
+
+Cite commit hashes and file paths for every finding.
+If nothing meaningful changed, say so.
+```
+
+Run it directly:
+
+```bash
+agentuse run morning-repo-brief.agentuse
+```
+
+Start `agentuse serve` to activate its schedule:
+
+```bash
+agentuse serve
+```
+
+The same file can run from a developer machine, a server, CI, or a container.
+Configuration changes the trigger and environment, not the agent definition.
+
+## Run it your way
+
+| Trigger | How |
+| --- | --- |
+| [Command line](https://docs.agentuse.io/reference/cli-commands) | `agentuse run my-agent.agentuse` |
+| [Schedule](https://docs.agentuse.io/guides/schedule) | Add `schedule` to frontmatter and keep `agentuse serve` running |
+| [HTTP](https://docs.agentuse.io/guides/webhooks) | `POST /api/run` to an `agentuse serve` daemon |
+| [CI/CD](https://docs.agentuse.io/guides/cicd) | Run the same CLI command inside your pipeline |
+| [Docker](https://docs.agentuse.io/guides/self-hosting) | Mount or copy agent files into the AgentUse image |
+
+Webhook example:
+
+```bash
+agentuse serve
+
+curl http://127.0.0.1:12233/api/run \
+  -H "Content-Type: application/json" \
+  -d '{"agent":"morning-repo-brief"}'
+```
+
+One daemon can serve several projects:
+
+```bash
+agentuse serve -C ./project-a -C ./project-b
+```
+
+## Operate agents, not prompts
+
+`agentuse serve` includes an operations dashboard at
+`http://127.0.0.1:12233`. It keeps the outcome and operational state of every
+run in one place:
+
+- running agents and recent output
+- sessions waiting for approval
+- failed and incomplete work that needs review
+- completed results and recorded metrics
+- upcoming schedules, agent relationships, and project health
+
+<p align="center">
+  <img
+    src="./static/readme/dashboard.webp"
+    alt="AgentUse operations dashboard showing agent health, pending approvals, recent failures, and result metrics"
+    width="900"
+  >
+</p>
+
+Every run is a durable session. Inspect the result, tool calls, token usage,
+artifacts, verification verdicts, and follow-up context without reconstructing
+the run from terminal logs.
+
+## Put consequential actions behind approval
+
+Agents can prepare work autonomously and pause before sending, publishing,
+deploying, deleting, or changing external state.
+
+Add `approval: true` to give the agent a human review gate:
 
 ```markdown
 ---
 model: anthropic:claude-sonnet-5
+approval: true
 ---
 
-Generate a daily motivation quote with a tech fact.
-Format as JSON with 'quote' and 'fact' fields.
+Draft the customer announcement from the supplied release notes.
+
+You may research, write, and revise the draft without approval.
+Before sending or publishing it, ask for approval with the final text,
+target audience, delivery channel, and any unresolved risks.
 ```
 
-Run it:
+When the agent reaches that boundary, AgentUse suspends the session. A reviewer
+can approve, reject, or comment from the session page, and the agent resumes
+with that decision. Slack notifications are optional; AgentUse remains the
+source of truth for the review and session state.
+
+<p align="center">
+  <img
+    src="./static/readme/mobile-approval.webp"
+    alt="AgentUse mobile approval screen with approve, reject, and comment actions"
+    width="320"
+  >
+</p>
+
+See [Approval Gates](https://docs.agentuse.io/guides/approval-gates) for
+complete configuration, reviewer flows, and enforcement details.
+
+## Runtime primitives
+
+| Primitive | What AgentUse provides |
+| --- | --- |
+| [Markdown agent files](https://docs.agentuse.io/guides/creating-agents) | Readable instructions and configuration that work with Git |
+| [Model choice](https://docs.agentuse.io/guides/model-configuration) | Anthropic, OpenAI, OpenRouter, OpenCode Go, Amazon Bedrock, and compatible local endpoints |
+| [Tools](https://docs.agentuse.io/reference/builtin-tools) | Allowlisted filesystem and shell access plus built-in runtime tools |
+| [MCP](https://docs.agentuse.io/reference/agent-syntax#mcp-servers) | Connect databases, APIs, browsers, and external services through Model Context Protocol servers |
+| [Skills](https://docs.agentuse.io/guides/skills) | Discover and load reusable `SKILL.md` instruction packages |
+| [Sessions](https://docs.agentuse.io/guides/session-logs) | Persistent run history, usage, artifacts, resume, and failure visibility |
+| [Subagents](https://docs.agentuse.io/guides/subagents) | Delegate bounded work to specialized child agents |
+| [Stores](https://docs.agentuse.io/guides/store) | Persistent, structured state shared across runs and cooperating agents |
+
+List the currently recommended models:
 
 ```bash
-agentuse run my-agent.agentuse
+agentuse models
 ```
 
-## AI Coding Assistants
+Run with a different supported model without editing the file:
 
-Install the AgentUse assistant skill:
+```bash
+agentuse run my-agent.agentuse --model openai:gpt-5.6
+agentuse run my-agent.agentuse --model ollama:<local-model>
+```
+
+Provider support means AgentUse can execute its own agent files with those model
+APIs. It does not claim that `.agentuse` files deploy directly into each
+provider's managed-agent platform.
+
+## Author with AI coding assistants
+
+Install the AgentUse skill for Claude Code, Codex, Cursor, Gemini CLI, GitHub
+Copilot, Goose, OpenCode, Windsurf, and other assistants that support Agent
+Skills:
 
 ```bash
 npx skills add agentuse/agentuse
 ```
 
-This installs a thin `agentuse` discovery stub for Claude Code, Codex, Cursor,
-Gemini CLI, GitHub Copilot, Goose, OpenCode, Windsurf, and other assistants
-that support Agent Skills. The stub loads current instructions from your
-installed AgentUse CLI:
+The installed discovery skill loads version-matched guidance from the CLI:
 
 ```bash
 agentuse skills get core
+agentuse skills get creator
 ```
 
-For local development from this checkout:
+Validate an agent's configuration before running it:
 
 ```bash
-npx skills add .
-```
-
-## Example
-
-A real-world agent with MCP tools:
-
-```yaml
----
-model: anthropic:claude-sonnet-5
-mcpServers:
-  postgres:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-postgres"]
-    requiredEnvVars: [DATABASE_URL]
----
-
-Query the sales table for yesterday's metrics.
-Generate an executive summary with trends.
-```
-
-## Deploy
-
-**Webhook Server** - Trigger agents via HTTP:
-```bash
-agentuse serve
-curl -X POST http://localhost:12233/api/run -d '{"agent": "my-agent"}'
-
-# Serve multiple projects from one process:
-agentuse serve -C ./projA -C ./projB
-curl -X POST http://localhost:12233/api/run -d '{"project":"projA","agent":"my-agent"}'
-```
-
-JSON endpoints live under the `/api/*` prefix (`/api`, `/api/agents`, `/api/schedules`, `/api/sessions`); the root and `/agents`, `/schedules`, `/sessions` paths serve a browser dashboard. `POST /run` and the other un-prefixed routes still work for backward compatibility but are deprecated.
-
-**Global config** - put serve defaults in `~/.agentuse/config.json`:
-```jsonc
-{
-  "serve": {
-    "projects": [
-      { "path": "~/work/projA" },
-      { "id": "b", "path": "~/work/projB" }
-    ],
-    "default": "projA",
-    "port": 12233,
-    "host": "127.0.0.1",
-    "auth": true,
-    "logFile": true,
-    "hideAgentSource": false // true: dashboard/API stop exposing raw .agentuse source (demos, client-facing sandboxes)
-  }
-}
-```
-CLI flags override config. `-C` replaces `serve.projects`; `AGENTUSE_CONFIG=/path/to/config.json` uses another file. `AGENTUSE_API_KEY` remains env-only.
-
-**Scheduled Agents** - Run on a schedule:
-```yaml
----
-schedule: "0 9 * * *"
----
-```
-
-**Approval Gates** - Pause before external side effects:
-```yaml
----
-model: anthropic:claude-sonnet-5
-approval: true
-channels:
-  slack:
-    events: [approval]
----
-```
-
-Open the dashboard at `http://127.0.0.1:12233/` and review a run on its session page (`/sessions/:id`), where pending gates can be approved, rejected, or continued. Approval gates, the web UI, and Slack channels are experimental in this pre-1.0 release.
-
-## Features
-
-### 🤖 Multi-Provider Support
-Works with Anthropic (Claude), OpenAI (GPT), OpenRouter, OpenCode Go open coding models, and Amazon Bedrock. Switch models with a single line change.
-
-### 🌐 Webhooks & HTTP API
-Trigger agents via HTTP webhooks. Integrate with Zapier, Make, GitHub Actions, or any system that can POST. Supports streaming responses for real-time output.
-
-### ✅ Human Approval Gates
-Pause an agent before publishing, sending, deploying, or changing external state. Reviewers can approve, reject, or comment from the web approval dashboard, with optional Slack notifications and threaded review context. Experimental while the API and channel configuration settle.
-
-### ⏰ Cron Scheduling
-Schedule agents to run automatically with built-in cron support. Use intervals for sub-daily (`5m`, `2h`) or cron expressions for daily+ (`0 9 * * *`).
-
-### 📝 Markdown-Based Agents
-Define agents as `.agentuse` files with YAML frontmatter and plain English instructions. Version control, code review, and collaborate on agents like any other code.
-
-### 🔌 MCP Integration
-Connect to any [Model Context Protocol](https://modelcontextprotocol.io) server. Access databases, APIs, file systems, and external services through a standardized tool interface.
-
-### 🎭 Sub-Agents
-Compose complex workflows by delegating tasks to specialized child agents. Parent agents can spawn sub-agents with isolated contexts and step limits.
-
-### ⚡ Skills System
-Create reusable agent instructions as `SKILL.md` files. Reuse your existing Claude Code skills directly - AgentUse reads from the same `.claude/skills/` directories. List available skills with `agentuse skills`.
-
-### 📊 Session Tracking
-Full execution history with message logs, tool call traces, token usage, and timing metrics. Debug and audit agent runs with `agentuse sessions` on the CLI, or browse them in the `serve` web dashboard. Run `agentuse doctor` to diagnose project, auth, sandbox, and skill setup.
-
-## Install
-
-```bash
-npm install -g agentuse
-```
-
-Set your API key:
-
-```bash
-agentuse auth login
+agentuse doctor my-agent.agentuse
 ```
 
 ## Documentation
 
-Full guides and API reference at **[docs.agentuse.io](https://docs.agentuse.io)**
+- [Quick start](https://docs.agentuse.io/quickstart)
+- [Creating agents](https://docs.agentuse.io/guides/creating-agents)
+- [Agent syntax](https://docs.agentuse.io/reference/agent-syntax)
+- [Model configuration](https://docs.agentuse.io/guides/model-configuration)
+- [Operations dashboard](https://docs.agentuse.io/guides/serve-dashboard)
+- [Approval gates](https://docs.agentuse.io/guides/approval-gates)
+- [Self-hosting](https://docs.agentuse.io/guides/self-hosting)
 
-## Commercial Support
+## Commercial support
 
-AgentUse is free and open source. If your team wants it implemented,
-customized, or supported in production, **[AgentUse Studio](https://agentuse.io/studio)**
-offers hands-on setup, custom agent development, and ongoing support.
+AgentUse is free and open source. If your team wants the runtime implemented,
+customized, or operated in production,
+[AgentUse Studio](https://agentuse.io/studio) offers hands-on setup, custom
+agent development, and ongoing support.
 
 ## Contributing
 
 - [Report bugs](https://github.com/agentuse/agentuse/issues)
 - [Share ideas](https://github.com/agentuse/agentuse/discussions)
 
-Local release validation:
+Local validation:
 
 ```bash
-bun run test             # isolated unit/integration suite
-bun run test:coverage    # same isolation, merged 55% line / 65% function gate
-bun run test:e2e         # real dashboard smoke; requires agent-browser
-bun run test:release     # typecheck, build, coverage, and browser smoke
+bun run test
+bun run test:coverage
+bun run test:e2e
+bun run test:release
 ```
 
 The dashboard smoke test creates a disposable project, daemon, browser session,
@@ -214,4 +272,4 @@ and XDG state directory. It never starts a scheduled agent or calls a model.
 
 ## License
 
-Apache 2.0
+[Apache 2.0](./LICENSE)
