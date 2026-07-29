@@ -12,7 +12,7 @@ import { resolveProjectContext } from '../utils/project.js';
 import { computeAgentId } from '../utils/agent-id.js';
 import { getSessionStorageDir } from '../storage/paths.js';
 import { parseBashCommand } from '../tools/bash-parser.js';
-import { looksEffectful } from '../tools/effectful-heuristic.js';
+import { looksEffectful, grantsUnnamedSubcommands, commandHead } from '../tools/effectful-heuristic.js';
 import { isEffectful } from '../runner/approval-lease.js';
 import type { Message, Part, SessionInfo, ToolPart } from '../session/types.js';
 
@@ -440,6 +440,37 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
       console.log(`      - "${cmd}"`);
     }
     console.log(chalk.gray('Advisory only: AgentUse never auto-gates from a keyword guess.'));
+  }
+
+  // Wildcard-tail grants (advisory): the verb heuristic above reads the literal
+  // pattern text, so it flags `birdc reply *` but not the strictly broader
+  // `birdc *` - the wider grant drew the weaker warning. Report the blind spot
+  // itself: we cannot see what subcommands these authorize.
+  // Stay quiet about a head the author has already reasoned about: a gated entry
+  // naming that same program, or any substring-style gated pattern (leading `*`,
+  // which cannot be attributed to a head - browser posting is usually written
+  // that way). An agent that gates `git push *` still gets nudged about `birdc *`.
+  const gatedHeads = new Set(gatedPatterns.map((p) => commandHead(p)));
+  const gatedIsUnattributable = gatedPatterns.some((p) => commandHead(p) === undefined);
+  const unnamedNotGated = bashCommands.filter(
+    (cmd) => grantsUnnamedSubcommands(cmd)
+      && !looksEffectful(cmd)
+      && !gatedIsUnattributable
+      && !gatedHeads.has(commandHead(cmd))
+  );
+  if (unnamedNotGated.length > 0) {
+    console.log(chalk.yellow('\nWildcard command grants (heuristic):'));
+    for (const cmd of unnamedNotGated) {
+      console.log(`- \`${cmd}\` grants every subcommand, including any this pattern never names.`);
+    }
+    console.log(chalk.gray('\nIf any of those subcommands is irreversible, list it under tools.bash.gated. Gated wins over commands, so the broad entry above stays usable for reads while the effectful verb needs approval:'));
+    console.log('tools:');
+    console.log('  bash:');
+    console.log('    gated:');
+    for (const cmd of unnamedNotGated) {
+      console.log(`      - "${cmd.replace(/\*\s*$/, '<subcommand> *')}"`);
+    }
+    console.log(chalk.gray('Advisory only: a wildcard grant is often correct (read-only CLIs).'));
   }
 
   console.log(chalk.gray('\nFor runtime-accurate diagnosis, run `agentuse doctor <agent-file> --last-run`.'));

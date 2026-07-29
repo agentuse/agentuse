@@ -38,6 +38,12 @@ verify: true         # judge the output before it ships; string = rubric shortha
 metadata:            # free-form annotations; framework never interprets them
   draft: true
   owner: leon
+tools:
+  bash:
+    commands:        # auto-run, no approval
+      - "birdc read *"
+    gated:           # runs only once a human approves the exact command
+      - "birdc reply *"
 skills:
   auto: false        # prefer a closed catalog when the required skills are known
   creator:           # preload this specific skill
@@ -108,6 +114,8 @@ high: latency and cost with no lift. Start moderate, tune on observed output.
 - Thinking budget decided, not defaulted: on for judgment/drafting/planning
   agents, off for mechanical/read-only ones.
 - Tools and MCP servers declared in frontmatter, not assumed ambient.
+- Irreversible bash commands (post, send, delete, deploy) listed under
+  `tools.bash.gated`, not just fenced off in the prompt.
 - Known skills listed explicitly; prefer `auto: false` when the agent does not
   need to discover arbitrary skills at runtime.
 - Inputs, outputs, destinations, and success criteria stated in the body.
@@ -144,6 +152,17 @@ The same split applies to tools: the frontmatter allowlist is the real
 capability ceiling, and no prompt wording can widen it. Scope a compliance
 agent tightly; give a judgment agent the read surface and search commands it
 needs to explore (see the grep gotcha below).
+
+Prompt wording cannot *enforce* a boundary either. "Never post without
+approval" in the body is guidance the model usually follows; listing the
+posting command under `tools.bash.gated` makes it mechanically impossible,
+blocked pre-dispatch until a human approves that exact command. Gate the
+irreversible verbs (post, send, delete, deploy) and leave the reads auto-run.
+Note that a wildcard tail grants what it does not name: `birdc *` grants
+`birdc reply`, so gate the effectful subcommands explicitly (gated wins over
+`commands`, so the broad entry cannot un-gate them). You do not restate the
+approval protocol in the body; declaring `gated` injects it, and implies
+`approval:`.
 
 ## Write Lean: Hard-Code Invariants, Delegate Judgment
 
