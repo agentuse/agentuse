@@ -6,11 +6,11 @@
 
 <p align="center"><strong>OPEN-SOURCE AGENT RUNTIME</strong></p>
 
-<h1 align="center">AI agents that handle recurring work without you.</h1>
+<h1 align="center">Own the agents doing your company’s work.</h1>
 
 <p align="center">
-  Define agents in Markdown. Run them locally or on your own infrastructure with Claude, OpenAI, or open models.<br>
-  No SDK. No workflow builder. Your agents are files you can diff, review, and own.
+  Define agents in Markdown. Run them with Claude, OpenAI, or open models on infrastructure you control.<br>
+  Let them work autonomously. Put consequential actions behind human approval.
 </p>
 
 <p align="center">
@@ -27,9 +27,12 @@
   <a href="https://docs.agentuse.io">Documentation</a>
 </p>
 
-AgentUse owns the agent loop, tools, sessions, approvals, schedules, and server.
-Model providers supply the intelligence. You keep the agent definition and run
-it on infrastructure you control.
+AgentUse provides the agent loop, tools, durable sessions, schedules, approvals,
+and operations dashboard. Your agents remain plain files in your repo: readable,
+reviewable, versionable, and easy to take elsewhere.
+
+Managed platforms own the runtime. Frameworks make you build it. AgentUse gives
+you the runtime while keeping the agent under your control.
 
 ## Quick start
 
