@@ -18,7 +18,7 @@
 
 ### Fixed
 
-- **A skill's `metadata` no longer has to be flat strings.** Skill frontmatter `metadata` now accepts nested values (`Record<string, unknown>`), matching what `AgentSchema` has always allowed for agent frontmatter. Both are opaque annotations the runtime preserves and surfaces but never interprets, so holding skills to the stricter shape only produced false rejections: because we also discover `.claude/skills/` and `~/.claude/skills/` for Claude-ecosystem compatibility, a skill carrying another tool's nested config under `metadata` (e.g. `metadata.openclaw`) failed validation and became invisible to **every** agent, with nothing but a `[WARN] Invalid skill` line to explain the absence.
+- **A skill's `metadata` no longer has to be flat strings.** Skill frontmatter `metadata` now accepts nested values (`Record<string, unknown>`), matching what `AgentSchema` has always allowed for agent frontmatter. This is deliberately laxer than the Agent Skills spec, which defines `metadata` as "a map from string keys to string values": because we also discover `.claude/skills/` and `~/.claude/skills/` for Claude-ecosystem compatibility, we inherit skills that park another tool's nested config there (e.g. `metadata.openclaw`) and that Claude Code itself loads without complaint. Since rejection was all-or-nothing, holding an opaque annotation we never read to the strict shape made the **whole skill invisible to every agent**, with nothing but a `[WARN] Invalid skill` line to explain the absence. Being liberal in what we accept for a field the runtime never interprets costs nothing.
 
 ## [0.16.0] - 2026-07-28
 
