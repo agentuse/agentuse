@@ -19,49 +19,57 @@ agentuse doctor <file>   # ~1s static validation, no tokens
 
 Catches frontmatter/config errors before any token-heavy run.
 
-## Pick the Mock Mode
+## Run the Test
 
 ```bash
-# Everything fabricated: no tool executes at all. Tests flow/prompt logic only.
-agentuse run agent.agentuse --mock --mock-model anthropic:claude-haiku-4-5
-
-# Closed loop (preferred for gated agents): ONLY tools.bash.gated commands are
-# fabricated; reads, non-gated bash, MCP, skills, stores all run for REAL.
-# Implies --mock-approval approve, so gated flows complete unattended.
-agentuse run agent.agentuse --mock-gated --mock-model anthropic:claude-haiku-4-5
+agentuse test agent.agentuse --mock-model anthropic:claude-haiku-4-5
 ```
+
+Scope is adaptive: agents declaring `tools.bash.gated` get **gated scope**
+(only those commands are fabricated; reads, non-gated bash, MCP, and skills
+run for REAL, so the run grounds itself in real project state); agents without
+gated patterns get **full mock** (every tool result fabricated, nothing
+executes). Override with `--scope gated|all`.
 
 - `--mock-model` is required (fabrication runs on it; use the cheapest
-  reachable model, e.g. `anthropic:claude-haiku-4-5`).
-- `--mock` and `--mock-gated` are mutually exclusive.
-- Under `--mock-gated`, an agent with no `tools.bash.gated` patterns mocks
+  reachable model, e.g. `anthropic:claude-haiku-4-5`). Set `AGENTUSE_MOCK_MODEL`
+  once in `~/.agentuse/.env` to omit the flag.
+- Stores are isolated automatically: reads seeded from the real store, writes
+  land in `<projectRoot>/.agentuse/store-mock/<run-id>/` (kept for inspection),
+  and the real store, including the reserved `metrics` store, is never touched.
+- Under gated scope, an agent with no `tools.bash.gated` patterns mocks
   NOTHING (warning printed): everything runs real with gates auto-approved.
-  Only use it on agents whose irreversible commands are actually gated.
+- Low-level plumbing: `agentuse run --mock --mock-model <m>` is full mock with
+  a REAL suspending gate, useful to verify the agent actually pauses for
+  approval. Env equivalents: `AGENTUSE_MOCK_MODE`, `AGENTUSE_MOCK_SCOPE`,
+  `AGENTUSE_MOCK_APPROVAL`, `AGENTUSE_MOCK_MODEL`.
 
-## Approval Gates Under Mock
+## Approval Gates Under Test
 
-By default (`--mock` alone) `await_human` stays real and the run suspends, so
-you can verify the agent gates at the right moment. For unattended runs,
-resolve the gate deterministically (never an LLM playing reviewer):
+`agentuse test` resolves every gate deterministically (never an LLM playing
+reviewer) and needs no `agentuse serve` daemon:
 
 ```bash
---mock-approval            # approve (default): grants the gated-command lease
-                           # from the gate's changes[], exactly like a real
-                           # reviewer approval; pick gates auto-select the
-                           # recommended option and return it as `choice`
---mock-approval reject     # forces the terminal reject branch (gate seals);
-                           # tests the agent's cleanup path
---mock-approval comment:"tighten the summary"   # forces revise-and-re-gate
+agentuse test a.agentuse                      # approve (default): grants the
+                                              # gated-command lease from the
+                                              # gate's changes[], exactly like
+                                              # a real reviewer approval; pick
+                                              # gates auto-select the
+                                              # recommended option -> `choice`
+agentuse test a.agentuse --approval reject    # terminal reject branch (gate
+                                              # seals); tests the cleanup path
+agentuse test a.agentuse --approval comment:"tighten the summary"   # forces
+                                              # the revise-and-re-gate branch
 ```
 
-Mocked-approval runs need no `agentuse serve` daemon (nothing suspends).
 Gate enforcement stays production-faithful: a gated command issued WITHOUT an
 approved gate is still denied pre-dispatch with the re-gate redirect.
 
 ## The Closed Loop
 
 1. `agentuse doctor <file>`.
-2. `agentuse run <file> --mock-gated --mock-model <cheap-model> --no-tty`.
+2. `agentuse test <file> --no-tty` (with `--mock-model <cheap-model>` unless
+   `AGENTUSE_MOCK_MODEL` is set globally).
 3. Inspect: `agentuse sessions show <session-id> --full` (or the serve UI
    `/sessions/<id>`). Judge: did the agent gate the right commands, with the
    exact verbatim commands in `changes[]`? Did the flow complete? Is the final
@@ -80,9 +88,10 @@ approved gate is still denied pre-dispatch with the re-gate redirect.
 - A fabricated command changes nothing on disk, so a later REAL command that
   checks its effect (`git log` after a fabricated `git push`) sees unchanged
   state; agents that verify their own effects will notice and may retry.
-- Under `--mock-gated`, effectful non-bash tools (MCP writes, channel posts)
-  still run for real. Point the run at a scratch copy of the project when the
-  agent writes through those.
+- Under gated scope, effectful non-bash tools (MCP writes, channel posts)
+  still run for real. Stores are the exception (isolated automatically); point
+  the run at a scratch copy of the project when the agent writes through MCP
+  or channels.
 - Mock tool outputs are non-deterministic (LLM-fabricated); approval decisions
   are deterministic. Judge outcomes, not exact transcripts.
 

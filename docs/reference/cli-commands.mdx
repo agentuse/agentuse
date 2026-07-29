@@ -37,7 +37,6 @@ agentuse run <agent-file> [prompt...] [options]
 --mock                  Mock all tool outputs with the LLM instead of executing them (no real side effects). Requires --mock-model.
 --mock-model <model>    Model that generates mock tool outputs (required with --mock; pick a cheap, reachable model)
 --mock-approval [d]     Resolve the await_human gate deterministically instead of suspending: approve (default), reject, or comment:<text>
---mock-gated            Mock ONLY bash commands matching tools.bash.gated; everything else runs real. Implies --mock-approval approve. Requires --mock-model.
 ```
 
 <Note>
@@ -137,14 +136,45 @@ agentuse run agent.agentuse --model anthropic:claude-sonnet-5:ANTHROPIC_API_KEY_
   are defined in their individual agent files.
 </Info>
 
-### Testing with Mocked Tools
+## agentuse test
 
-`--mock` runs an agent with **no real tool side effects**: each tool call is answered by an
-LLM-generated result instead of executing. The agent runs for real; only tool execution is faked.
+Test an agent in mock mode: side effects fabricated, approval gates auto-resolved, stores isolated. This is the recommended way to validate a new or changed agent before letting it run for real.
+
+```bash
+agentuse test <file> [prompt...]
+
+Options:
+--scope <scope>         What to mock: "gated" (only tools.bash.gated commands; everything else real)
+                        or "all" (every tool result). Default: adaptive, "gated" when the agent
+                        declares tools.bash.gated patterns, else "all".
+--approval <decision>   Gate decision: approve (default), reject, or comment:<text>
+--mock-model <model>    Model that fabricates mock results (or set AGENTUSE_MOCK_MODEL once)
+```
+
+Plus the common run options (`--quiet`, `--debug`, `--no-tty`, `--compact`, `--timeout`, `-C`, `--env-file`, `-m/--model`, `--json`).
+
+```bash
+agentuse test my-agent.agentuse                          # adaptive scope, auto-approve
+agentuse test my-agent.agentuse --approval reject        # exercise the cleanup branch
+agentuse test my-agent.agentuse --scope all              # fabricate everything
+```
+
+**Gated scope is the closed-loop testing mode**: only the bash commands matching the agent's [`tools.bash.gated`](/guides/approval-gates) patterns (the irreversible subset the author already fenced off) are fabricated, and the gates guarding them auto-approve. Every other tool (reads, non-gated bash, MCP, skills) runs **for real**, so the agent grounds itself in real project state. The run completes end-to-end, unattended, with zero irreversible side effects, and the session log shows the full gate flow (the `await_human` call with its `changes[]`, the deterministic approval, the fabricated command result) for review.
+
+- **Stores are isolated under mock**: reads are seeded by copying the real store, writes land in `<projectRoot>/.agentuse/store-mock/<run-id>/` (kept for inspection), and the real store, including the reserved `metrics` store behind dashboards, is never touched.
+- In the effect WAL, a fabricated gated command has a `lease-approved` entry but **no** `bash-spawn` entry; that absence is the audit signal it never executed.
+- An agent with no `tools.bash.gated` patterns under gated scope gets a warning: nothing is mocked, everything runs real (with gates auto-resolved).
+
+<Warning>
+  Only gated **bash** commands are fabricated under gated scope. Effectful MCP tools or channel posts still run for real; pair with a scratch copy of the project when the agent writes through those. And a fabricated command changes nothing on disk, so a later real command that checks its effect (e.g. `git log` after a fabricated `git push`) will see the unchanged state.
+</Warning>
+
+### Full mock (`--scope all`, or `run --mock`)
+
+Full-scope mock answers **every** tool call with an LLM-generated result instead of executing it. The agent runs for real; only tool execution is faked. The same mode is available as low-level plumbing on `run`:
 
 ```bash
 agentuse run agent.agentuse --mock --mock-model anthropic:claude-haiku-4-5
-agentuse run agent.agentuse --mock --mock-model openai:gpt-5.4-nano
 ```
 
 <Tip>
@@ -163,7 +193,7 @@ agentuse run agent.agentuse --mock --mock-model openai:gpt-5.4-nano
 
 - **A mock model is required.** Mock fires an LLM call for *every* tool result, so it must run on a model you can reach. It is deliberately **not** defaulted to the agent's own model: that ran mock onto the agent's premium, rate-limited token and produced opaque `429`s. Provide it per run with `--mock-model`, or set a global default once via `AGENTUSE_MOCK_MODEL` in the shell, `~/.agentuse/.env`, or the [`env` block of `~/.agentuse/config.json`](/reference/configuration-files#global-env-defaults). The flag wins over all of them.
 - **Sub-agents run for real**; their leaf tools are mocked.
-- **The approval gate stays real**: `await_human` still suspends so you can verify the agent pauses for approval. Pass `--mock-approval` for fully-unattended runs: the gate resolves **deterministically** (no LLM plays the reviewer) instead of suspending.
+- **The approval gate stays real under `run --mock`**: `await_human` still suspends so you can verify the agent pauses for approval. Pass `--mock-approval` for fully-unattended runs (`agentuse test` defaults to this): the gate resolves **deterministically** (no LLM plays the reviewer) instead of suspending.
   - `--mock-approval` (or `--mock-approval approve`) auto-approves. The approval grants the [gated-command lease](/guides/approval-gates) derived from the gate's `changes[]` exactly like a real reviewer approval, so `tools.bash.gated` flows complete end-to-end. On a pick gate the recommended option is chosen (else the first), returned as `choice`.
   - `--mock-approval reject` forces the reject branch: the gate seals (terminal for the run) so you can test the agent's cleanup path.
   - `--mock-approval comment:<text>` forces the revise-and-re-gate branch with `<text>` as the reviewer comment.
@@ -171,25 +201,6 @@ agentuse run agent.agentuse --mock --mock-model openai:gpt-5.4-nano
 <Note>
   MCP servers still connect at startup for tool discovery, but no tool executes (no mutations). Mock outputs are non-deterministic; mocked approval decisions are deterministic.
 </Note>
-
-### Gated-scope mock (`--mock-gated`)
-
-`--mock-gated` inverts the coverage: instead of mocking everything, it mocks **only** the bash commands matching the agent's [`tools.bash.gated`](/guides/approval-gates) patterns, the irreversible subset the author already fenced off, and auto-approves the gates guarding them. Every other tool (reads, non-gated bash, MCP, skills, stores) runs **for real**, so the agent grounds itself in real project state instead of inventing it.
-
-This is the closed-loop testing mode: a run completes end-to-end, unattended, with real data and zero irreversible side effects, and the session log still shows the full gate flow (the `await_human` call with its `changes[]`, the auto-approval, the fabricated command result) for review.
-
-```bash
-agentuse run my-agent.agentuse --mock-gated --mock-model anthropic:claude-haiku-4-5
-```
-
-- Implies `--mock-approval approve`; pass an explicit `--mock-approval reject` / `comment:<text>` to exercise those branches instead.
-- Mutually exclusive with `--mock`.
-- An agent with no `tools.bash.gated` patterns gets a warning: nothing is mocked, everything runs real (with gates auto-resolved).
-- In the effect WAL, a fabricated gated command has a `lease-approved` entry but **no** `bash-spawn` entry, that absence is the audit signal it never executed.
-
-<Warning>
-  Only gated **bash** commands are fabricated. Effectful MCP tools or channel posts still run for real under `--mock-gated`, pair it with a scratch copy of the project when the agent writes through those. And a fabricated command changes nothing on disk, so a later real command that checks its effect (e.g. `git log` after a fabricated `git push`) will see the unchanged state.
-</Warning>
 
 ### Remote Agent Security
 

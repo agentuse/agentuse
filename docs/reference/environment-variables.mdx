@@ -239,7 +239,7 @@ Mock all tool outputs with the LLM instead of executing them. Mirror the `--mock
 </ParamField>
 
 <ParamField path="AGENTUSE_MOCK_SCOPE" type="string">
-  What mock mode covers. Unset (or `all`) mocks every tool result, same as `--mock`. `gated` mocks only bash commands matching the agent's `tools.bash.gated` patterns and leaves every other tool real, same as `--mock-gated`. Only read when mock mode is on.
+  What mock mode covers. Unset (or `all`) mocks every tool result, same as `--mock`. `gated` mocks only bash commands matching the agent's `tools.bash.gated` patterns and leaves every other tool real, same as `agentuse test --scope gated`. Only read when mock mode is on.
 </ParamField>
 
 <ParamField path="AGENTUSE_MOCK_APPROVAL" type="string">

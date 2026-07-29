@@ -117,9 +117,9 @@ high: latency and cost with no lift. Start moderate, tune on observed output.
   only place custom keys survive parsing; `agentuse agents` shows them as chips
   and `--json` exposes them under `.metadata` for filtering. Metadata is an
   annotation, not runtime input (it is not injected into the prompt).
-- Validated before real use: `agentuse doctor <file>`, then a mock run
-  (`--mock-gated` for agents with `tools.bash.gated`, `--mock` otherwise) and a
-  session-log review. Load the `tester` builtin skill for the workflow.
+- Validated before real use: `agentuse doctor <file>`, then `agentuse test
+  <file>` and a session-log review. Load the `tester` builtin skill for the
+  workflow.
 
 ## Goals for Judgment Agents, Procedures for Compliance Agents
 
@@ -332,7 +332,7 @@ these. This shapes where a rule belongs:
   opening `---` - a `#` heading OR an HTML `<!-- -->` comment - makes the parser
   (`gray-matter`) miss the frontmatter and fail with `Invalid agent
   configuration: model: Required`. `agentuse doctor <file>` catches this in ~1s
-  for free; run it before any token-heavy `--mock`.
+  for free; run it before any token-heavy `agentuse test` / `--mock` run.
 
 - **The body IS the prompt; nothing strips comments.** `matter()` splits off
   only the frontmatter; everything after becomes the agent's `instructions`

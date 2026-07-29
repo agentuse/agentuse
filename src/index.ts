@@ -195,8 +195,62 @@ program
   .option('--mock', 'Mock all tool outputs with the LLM instead of executing them (for testing; no real side effects). Requires --mock-model.')
   .option('--mock-model <model>', 'Model that generates mock tool outputs (required with --mock; pick a cheap, reachable model)')
   .option('--mock-approval [decision]', 'Resolve the await_human approval gate deterministically instead of suspending (for fully-unattended mock runs): approve (default), reject, or comment:<text>. An approve grants the gated-command lease exactly like a real approval.')
-  .option('--mock-gated', 'Mock ONLY bash commands matching tools.bash.gated; every other tool runs for real. Implies --mock-approval approve (override with an explicit --mock-approval). Requires --mock-model.')
-  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string, sessionId?: string, json?: boolean, mock?: boolean, mockModel?: string, mockApproval?: boolean | string, mockGated?: boolean }) => {
+  .action((file: string, promptArgs: string[], options: RunCommandOptions) => runCommandAction(file, promptArgs, options));
+
+// `agentuse test`: sugar over the run pipeline for mock/test runs. Maps to the
+// same option shape (mock/mockGated/mockApproval), so validation, env setup,
+// banner, and execution are shared with `run`.
+program
+  .command('test <file> [prompt...]')
+  .description('Test an agent in mock mode: side effects fabricated, approval gates auto-resolved, stores isolated. Scope defaults to "gated" when the agent declares tools.bash.gated, else "all".')
+  .option('--scope <scope>', 'What to mock: "gated" (only tools.bash.gated commands; everything else real) or "all" (every tool result). Default: adaptive.')
+  .option('--approval <decision>', 'Gate decision: approve (default), reject, or comment:<text>')
+  .option('--mock-model <model>', 'Model that fabricates mock results (or set AGENTUSE_MOCK_MODEL once, e.g. in ~/.agentuse/.env)')
+  .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
+  .option('-d, --debug', 'Enable debug mode with detailed logging and full error messages')
+  .option('--no-tty', 'Disable TUI output (spinners, badges) for non-interactive use')
+  .option('--compact', 'Use compact single-line header instead of ASCII logo')
+  .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
+  .option('-C, --directory <path>', 'Run as if agentuse was started in <path> instead of the current directory')
+  .option('--env-file <path>', 'Path to custom .env file')
+  .option('-m, --model <model>', 'Override the model specified in the agent file')
+  .option('--json', 'Output result as JSON (implies --quiet --no-tty)')
+  .action(async (file: string, promptArgs: string[], options: {
+    scope?: string; approval?: string; mockModel?: string;
+    quiet: boolean; debug: boolean; tty?: boolean; noTty?: boolean; compact: boolean;
+    timeout: string; directory?: string; envFile?: string; model?: string; json?: boolean;
+  }) => {
+    let scope = options.scope;
+    if (scope !== undefined && scope !== 'all' && scope !== 'gated') {
+      logger.error(`Invalid --scope "${scope}". Use "gated" or "all".`);
+      process.exit(1);
+    }
+    if (!scope) {
+      // Adaptive default: gated scope when the agent fences off commands, so
+      // the run grounds itself in real state; full mock otherwise. Parse
+      // failures fall back to "all" and surface properly inside the run.
+      scope = 'all';
+      try {
+        const probePath = options.directory ? resolve(options.directory, file) : file;
+        const probe = await parseAgent(probePath);
+        if ((probe.config.tools?.bash?.gated?.length ?? 0) > 0) scope = 'gated';
+      } catch { /* remote URL or invalid file: let the run pipeline report it */ }
+    }
+    const { scope: _scope, approval, ...passthrough } = options;
+    await runCommandAction(file, promptArgs, {
+      ...passthrough,
+      ...(scope === 'all' ? { mock: true } : { mockGated: true }),
+      mockApproval: approval ?? 'approve',
+    });
+  });
+
+interface RunCommandOptions {
+  quiet: boolean; debug: boolean; tty?: boolean; noTty?: boolean; compact: boolean;
+  timeout: string; directory?: string; envFile?: string; model?: string; sessionId?: string;
+  json?: boolean; mock?: boolean; mockModel?: string; mockApproval?: boolean | string; mockGated?: boolean;
+}
+
+async function runCommandAction(file: string, promptArgs: string[], options: RunCommandOptions): Promise<void> {
     const startTime = Date.now();
     let originalCwd: string | undefined;
 
@@ -272,15 +326,12 @@ program
       // --mock-model flag (which wins) or AGENTUSE_MOCK_MODEL from the shell,
       // ~/.agentuse/.env, or the config.json `env` block (resolved just above).
       if (options.mock && options.mockGated) {
-        throw new Error(
-          '--mock and --mock-gated are mutually exclusive: --mock mocks every tool result, ' +
-            '--mock-gated mocks only tools.bash.gated commands and runs everything else for real.',
-        );
+        throw new Error('Mock scope conflict: "all" and "gated" cannot both be set. Use `agentuse test --scope all|gated`.');
       }
       if (options.mockModel) process.env.AGENTUSE_MOCK_MODEL = options.mockModel;
       if ((options.mock || options.mockGated) && !process.env.AGENTUSE_MOCK_MODEL) {
         throw new Error(
-          `--${options.mockGated ? 'mock-gated' : 'mock'} requires a mock model. Pass --mock-model <model>, or set AGENTUSE_MOCK_MODEL ` +
+          'Mock runs require a mock model. Pass --mock-model <model>, or set AGENTUSE_MOCK_MODEL ' +
             '(in the shell, ~/.agentuse/.env, or the `env` block of ~/.agentuse/config.json). ' +
             'Mock generates fabricated tool results via that model, so use the lowest-end model you can ' +
             'reach (e.g. anthropic:claude-haiku-4-5 or openai:gpt-5.4-nano).',
@@ -297,7 +348,7 @@ program
       }
       if (options.mockApproval) {
         if (!isMockMode()) {
-          throw new Error('--mock-approval only applies to mock runs. Pass --mock or --mock-gated (or set AGENTUSE_MOCK_MODE).');
+          throw new Error('--mock-approval only applies to mock runs. Pass --mock, use `agentuse test`, or set AGENTUSE_MOCK_MODE.');
         }
         process.env.AGENTUSE_MOCK_APPROVAL = options.mockApproval === true ? 'approve' : options.mockApproval;
       }
@@ -936,7 +987,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       }
       process.exit(1);
     }
-  });
+}
 
 
 // Handle internal worker mode (used by serve command)

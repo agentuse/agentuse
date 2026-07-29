@@ -28,9 +28,9 @@ agentuse serve schedules             # schedules the daemon actually loaded (liv
 
 agentuse skills installed            # only when inspecting project/user skills
 
-agentuse run <file> --mock --mock-model <m>        # fabricate ALL tool results
-agentuse run <file> --mock-gated --mock-model <m>  # fabricate only gated bash
-agentuse run <file> --mock-gated --mock-approval reject   # force a gate branch
+agentuse test <file> --mock-model <m>          # mock test run, adaptive scope
+agentuse test <file> --approval reject         # force a gate branch
+agentuse run <file> --mock --mock-model <m>    # plumbing: full mock, real gate
 ```
 
 For testing workflow and mock-mode selection, load the `tester` builtin skill.

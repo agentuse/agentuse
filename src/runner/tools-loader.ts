@@ -286,8 +286,8 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
       const gatedPatterns = agent.config.tools?.bash?.gated ?? [];
       if (gatedPatterns.length === 0) {
         logger.warn(
-          `${logPrefix}--mock-gated: agent declares no tools.bash.gated patterns, so NOTHING is mocked: ` +
-            'all tools run for real (with approval gates auto-resolved).'
+          `${logPrefix}Gated-scope mock: agent declares no tools.bash.gated patterns, so NOTHING is mocked: ` +
+            'all tools run for real (with approval gates auto-resolved). Use --scope all to fabricate everything.'
         );
       }
       withMocks = wrapToolsWithGatedMock(mergedTools, gatedPatterns);
