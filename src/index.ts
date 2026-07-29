@@ -4,6 +4,7 @@ import { connectMCP } from './mcp';
 import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, reopenSuspendedGate, reconcileOrphanedSessions, describeErrorPart, describeLogPart, classifyRunResult, executionOutcomeFields, runResultJson, workerRunResponse, type PreparedAgentExecution } from './runner';
 import { describeLearningOutcome } from './learning';
 import { isApprovalEnabled } from './runner/approval';
+import { isMockMode, resolveMockApprovalDecision } from './runner/mock-tools';
 import { extractToolIntent, withoutToolIntent } from './runner/tool-intent';
 import { LIVE_OUTPUT_METADATA_KEY } from './tools/types';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
@@ -193,8 +194,8 @@ program
   .option('--json', 'Output result as JSON (implies --quiet --no-tty)')
   .option('--mock', 'Mock all tool outputs with the LLM instead of executing them (for testing; no real side effects). Requires --mock-model.')
   .option('--mock-model <model>', 'Model that generates mock tool outputs (required with --mock; pick a cheap, reachable model)')
-  .option('--mock-approval', 'Also mock the await_human approval gate instead of suspending (for fully-unattended mock runs)')
-  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string, sessionId?: string, json?: boolean, mock?: boolean, mockModel?: string, mockApproval?: boolean }) => {
+  .option('--mock-approval [decision]', 'Resolve the await_human approval gate deterministically instead of suspending (for fully-unattended mock runs): approve (default), reject, or comment:<text>. An approve grants the gated-command lease exactly like a real approval.')
+  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string, sessionId?: string, json?: boolean, mock?: boolean, mockModel?: string, mockApproval?: boolean | string }) => {
     const startTime = Date.now();
     let originalCwd: string | undefined;
 
@@ -279,7 +280,13 @@ program
         );
       }
       if (options.mock) process.env.AGENTUSE_MOCK_MODE = '1';
-      if (options.mockApproval) process.env.AGENTUSE_MOCK_APPROVAL = '1';
+      if (options.mockApproval) {
+        if (!isMockMode()) {
+          throw new Error('--mock-approval only applies to mock runs. Pass --mock (or set AGENTUSE_MOCK_MODE).');
+        }
+        process.env.AGENTUSE_MOCK_APPROVAL = options.mockApproval === true ? 'approve' : options.mockApproval;
+        resolveMockApprovalDecision(); // fail fast on an invalid decision value
+      }
 
       // Initialize telemetry
       await telemetry.init(packageVersion);
@@ -300,8 +307,11 @@ program
       if (options.mock && !effectiveQuiet) {
         logger.warn('⚠ Mock mode: tool outputs are LLM-generated; no real tools will run.');
         logger.warn(`  Mock model: ${process.env.AGENTUSE_MOCK_MODEL}`);
-        if (!process.env.AGENTUSE_MOCK_APPROVAL) {
-          logger.warn('  Approval gate (await_human) stays real; pass --mock-approval to mock it too.');
+        const mockDecision = resolveMockApprovalDecision();
+        if (mockDecision) {
+          logger.warn(`  Approval gate (await_human): auto-resolved as "${mockDecision.kind}" (deterministic, no reviewer).`);
+        } else {
+          logger.warn('  Approval gate (await_human) stays real; pass --mock-approval to auto-resolve it (approve, reject, or comment:<text>).');
         }
       }
 
@@ -499,7 +509,11 @@ program
         logger.warn(formatEnvValidationError(envValidation));
       }
 
-      if (isApprovalEnabled(agent.config) && !hasServeForApprovalRun(projectContext.projectRoot, agentFilePath)) {
+      // Mocked approval resolves every gate inline (never suspends), so those
+      // runs need no serve daemon — that is the whole point of unattended mock.
+      const approvalNeedsServe = isApprovalEnabled(agent.config)
+        && !(isMockMode() && resolveMockApprovalDecision());
+      if (approvalNeedsServe && !hasServeForApprovalRun(projectContext.projectRoot, agentFilePath)) {
         const serveRoot = agentFilePath ? dirname(agentFilePath) : projectContext.projectRoot;
         throw new Error(
           [

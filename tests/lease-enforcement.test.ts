@@ -30,6 +30,7 @@ import { executeAgentCore } from '../src/runner/execution';
 import { EffectWAL, EFFECT_WAL_FILENAME } from '../src/runner/effect-wal';
 import { LeaseStore, LEASE_FILENAME } from '../src/runner/approval-lease';
 import { createAwaitHumanTool } from '../src/tools/await-human';
+import { maybeMockAwaitHuman } from '../src/runner/mock-tools';
 import { createBashTool } from '../src/tools/bash';
 import type { AgentChunk } from '../src/runner/types';
 
@@ -327,5 +328,89 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
 
     expect(chunks[chunks.length - 1].type).toBe('suspended');
     expect(fs.existsSync(path.join(sessionDir, LEASE_FILENAME))).toBe(false);
+  });
+
+  describe('mocked approval (--mock-approval)', () => {
+    beforeEach(() => {
+      process.env.AGENTUSE_MOCK_MODE = '1';
+      process.env.AGENTUSE_MOCK_MODEL = 'anthropic:mock';
+      process.env.AGENTUSE_MOCK_APPROVAL = 'approve';
+    });
+    afterEach(() => {
+      delete process.env.AGENTUSE_MOCK_MODE;
+      delete process.env.AGENTUSE_MOCK_MODEL;
+      delete process.env.AGENTUSE_MOCK_APPROVAL;
+    });
+
+    function makeMockedTools() {
+      const tools = makeTools();
+      // Production wraps via wrapToolsWithLLMMock's await_human special case;
+      // maybeMockAwaitHuman is the same deterministic wrapper (also used on the
+      // sub-agent rebuild path). Bash stays real here to prove the granted
+      // lease actually lets the gated command through.
+      return { ...tools, await_human: maybeMockAwaitHuman(tools.await_human) };
+    }
+
+    test('auto-approve grants the lease from changes[] and the gated flow completes end-to-end', async () => {
+      const marker = path.join(projectRoot, 'mock-approved.txt');
+      const command = `touch ${marker}`;
+      const { model, calls } = makeModel([
+        turn([toolCallPart('gate-1', 'await_human', { prompt: 'Run it?', changes: [{ label: 'Touch', content: command }] })]),
+        turn([toolCallPart('bash-1', 'tools__bash', { command })]),
+        turn([
+          { type: 'text-start', id: 't1' },
+          { type: 'text-delta', id: 't1', delta: 'done' },
+          { type: 'text-end', id: 't1' },
+        ], 'stop'),
+      ]);
+      currentModel = model;
+
+      const chunks = await runCore(makeMockedTools());
+
+      // Never suspended: the gate resolved inline with a deterministic approve.
+      expect(chunks.some((c) => c.type === 'suspended')).toBe(false);
+      expect(calls()).toBe(3);
+      // The gated command really ran, covered by the mock-granted lease.
+      expect(fs.existsSync(marker)).toBe(true);
+      // The model saw a real decision payload.
+      const gateResult = chunks.find((c) => c.type === 'tool-result' && c.toolName === 'await_human');
+      expect(gateResult).toBeDefined();
+      expect(String((gateResult as any).toolResult)).toContain('approved');
+
+      const records = readWAL();
+      expect(records.some((r) => r.event === 'mock-gate-decision' && r.status === 'approved')).toBe(true);
+      expect(records.some((r) => r.event === 'lease-approved' && r.callId === 'bash-1')).toBe(true);
+      expect(records.some((r) => r.event === 'lease-denied')).toBe(false);
+    });
+
+    test('forced reject seals the gate: gated commands stay denied and a re-gate hits the terminal denial', async () => {
+      process.env.AGENTUSE_MOCK_APPROVAL = 'reject';
+      const marker = path.join(projectRoot, 'mock-rejected.txt');
+      const command = `touch ${marker}`;
+      const { model, calls } = makeModel([
+        turn([toolCallPart('gate-1', 'await_human', { prompt: 'Run it?', changes: [{ content: command }] })]),
+        turn([toolCallPart('bash-1', 'tools__bash', { command })]),
+        turn([toolCallPart('gate-2', 'await_human', { prompt: 'Please?' })]),
+        turn([
+          { type: 'text-start', id: 't1' },
+          { type: 'text-delta', id: 't1', delta: 'cleaning up' },
+          { type: 'text-end', id: 't1' },
+        ], 'stop'),
+      ]);
+      currentModel = model;
+
+      const chunks = await runCore(makeMockedTools());
+
+      expect(chunks.some((c) => c.type === 'suspended')).toBe(false);
+      expect(calls()).toBe(4);
+      expect(fs.existsSync(marker)).toBe(false);
+
+      const records = readWAL();
+      expect(records.some((r) => r.event === 'mock-gate-decision' && r.status === 'rejected')).toBe(true);
+      // The gated command was never authorized...
+      expect(records.some((r) => r.event === 'lease-denied' && r.callId === 'bash-1')).toBe(true);
+      // ...and the re-gate hit the terminal seal, exactly like a human reject.
+      expect(records.some((r) => r.event === 'gate-sealed-denied' && r.callId === 'gate-2')).toBe(true);
+    });
   });
 });

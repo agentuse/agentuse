@@ -118,16 +118,16 @@ describe("approval gate exclusion", () => {
     expect(wrapped.tools__bash).not.toBe(bash);
   });
 
-  it("wraps await_human when AGENTUSE_MOCK_APPROVAL is set", async () => {
+  it("resolves await_human deterministically (no LLM) when AGENTUSE_MOCK_APPROVAL is set", async () => {
     process.env.AGENTUSE_MOCK_APPROVAL = "1";
     const real = mock(() => {
       throw new Error("await_human execute must not run when mocked");
     });
-    completeTextMock.mockImplementation(async () => "approved");
     const wrapped = mod.wrapToolsWithLLMMock({ await_human: fakeTool(real) });
     const result = await (wrapped.await_human as any).execute({ prompt: "ok?" }, {});
-    expect(result).toBe("approved");
+    expect(result).toEqual({ status: "approved" });
     expect(real).toHaveBeenCalledTimes(0);
+    expect(completeTextMock).toHaveBeenCalledTimes(0);
   });
 });
 
@@ -136,5 +136,80 @@ describe("mockExclusions", () => {
     expect(mod.mockExclusions().has("await_human")).toBe(true);
     process.env.AGENTUSE_MOCK_APPROVAL = "1";
     expect(mod.mockExclusions().size).toBe(0);
+  });
+});
+
+describe("resolveMockApprovalDecision", () => {
+  it("returns undefined when unset", () => {
+    expect(mod.resolveMockApprovalDecision()).toBeUndefined();
+  });
+  it("treats the legacy boolean spellings and approve as approve", () => {
+    for (const value of ["1", "true", "approve", "approved"]) {
+      process.env.AGENTUSE_MOCK_APPROVAL = value;
+      expect(mod.resolveMockApprovalDecision()).toEqual({ kind: "approve" });
+    }
+  });
+  it("parses reject and comment with text", () => {
+    process.env.AGENTUSE_MOCK_APPROVAL = "reject";
+    expect(mod.resolveMockApprovalDecision()).toEqual({ kind: "reject" });
+    process.env.AGENTUSE_MOCK_APPROVAL = "comment:tighten the summary";
+    expect(mod.resolveMockApprovalDecision()).toEqual({ kind: "comment", comment: "tighten the summary" });
+  });
+  it("defaults the comment text when none is given", () => {
+    process.env.AGENTUSE_MOCK_APPROVAL = "comment";
+    const decision = mod.resolveMockApprovalDecision();
+    expect(decision?.kind).toBe("comment");
+    expect((decision as { comment: string }).comment.length).toBeGreaterThan(0);
+  });
+  it("throws on an unknown value", () => {
+    process.env.AGENTUSE_MOCK_APPROVAL = "maybe";
+    expect(() => mod.resolveMockApprovalDecision()).toThrow(/Invalid --mock-approval value/);
+  });
+});
+
+describe("mockGateDecisionResult", () => {
+  it("approves plain yes/no gates without a choice", () => {
+    process.env.AGENTUSE_MOCK_APPROVAL = "approve";
+    expect(mod.mockGateDecisionResult({ prompt: "ok?" })).toEqual({ status: "approved" });
+  });
+  it("picks the recommended option on a pick gate, else the first", () => {
+    process.env.AGENTUSE_MOCK_APPROVAL = "approve";
+    const options = [
+      { id: "a", label: "A" },
+      { id: "b", label: "B", recommended: true },
+    ];
+    expect(mod.mockGateDecisionResult({ prompt: "pick", options })).toEqual({ status: "approved", choice: "b" });
+    expect(mod.mockGateDecisionResult({ prompt: "pick", options: [{ id: "a", label: "A" }, { id: "c", label: "C" }] }))
+      .toEqual({ status: "approved", choice: "a" });
+  });
+  it("returns rejected / commented payloads for forced outcomes", () => {
+    process.env.AGENTUSE_MOCK_APPROVAL = "reject";
+    expect(mod.mockGateDecisionResult({})).toEqual({ status: "rejected" });
+    process.env.AGENTUSE_MOCK_APPROVAL = "comment:needs work";
+    expect(mod.mockGateDecisionResult({})).toEqual({ status: "commented", comment: "needs work" });
+  });
+});
+
+describe("maybeMockAwaitHuman", () => {
+  it("is identity when mock mode or the decision is off", () => {
+    const tool = fakeTool(() => "real");
+    // Decision set but mock mode off
+    process.env.AGENTUSE_MOCK_APPROVAL = "approve";
+    expect(mod.maybeMockAwaitHuman(tool)).toBe(tool);
+    // Mock mode on but no decision
+    process.env.AGENTUSE_MOCK_MODE = "1";
+    delete process.env.AGENTUSE_MOCK_APPROVAL;
+    expect(mod.maybeMockAwaitHuman(tool)).toBe(tool);
+  });
+  it("swaps execute for the deterministic decision when both are active", async () => {
+    process.env.AGENTUSE_MOCK_MODE = "1";
+    process.env.AGENTUSE_MOCK_APPROVAL = "approve";
+    const real = mock(() => {
+      throw new Error("real await_human must not run");
+    });
+    const wrapped = mod.maybeMockAwaitHuman(fakeTool(real));
+    const result = await (wrapped as any).execute({ prompt: "ok?" });
+    expect(result).toEqual({ status: "approved" });
+    expect(real).toHaveBeenCalledTimes(0);
   });
 });

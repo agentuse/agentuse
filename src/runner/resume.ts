@@ -1,8 +1,9 @@
 import type { SessionManager } from '../session';
 import type { ToolState } from '../session/types';
 import { isProcessRefAlive } from '../utils/process-info';
-import { LeaseStore, deriveLeaseEntries } from './approval-lease';
+import { LeaseStore } from './approval-lease';
 import { GateSealStore } from './gate-seal';
+import { applyGateDecisionEffects } from './gate-decision';
 import { logger } from '../utils/logger';
 import { join } from 'node:path';
 import { withOwnershipLock } from '../utils/ownership-lock';
@@ -133,37 +134,24 @@ async function applyClaimedResumeToolResult(options: {
   // Lease lifecycle (agentuse-lab#165, Phase 2): an APPROVE derives a
   // machine-readable lease from the gate's changes[] - the only grant that
   // lets `tools.bash.gated`-declared commands run. Any other decision (reject,
-  // comment) revokes: nothing gated may run until a fresh plan is approved.
-  // Best-effort: a lease failure must not block the resume, it just means
-  // gated commands stay denied.
+  // comment) revokes, and reject additionally seals the gate - see
+  // applyGateDecisionEffects for the full lifecycle. Only a human reject
+  // reaches here: the verify pre-review rejection is returned inline without
+  // suspending, so it never resumes. Best-effort: a lease failure must not
+  // block the resume, it just means gated commands stay denied.
   try {
     const sessionDir = await sessionManager.getSessionDirectory(sessionId, found.agentId);
-    const leaseStore = new LeaseStore(sessionDir);
     const decisionStatus = toolResult && typeof toolResult === 'object'
       ? (toolResult as { status?: unknown }).status
       : undefined;
-    // Decision payloads carry either spelling depending on surface: the CLI
-    // sends 'approve', Slack/serve send 'approved' (see the normalization in
-    // src/index.ts and src/cli/serve.ts). Both must grant.
-    if (decisionStatus === 'approved' || decisionStatus === 'approve') {
-      const entries = deriveLeaseEntries(input);
-      if (entries.length > 0) {
-        leaseStore.grant({ version: 1, grantedAt: now, entries });
-      } else {
-        leaseStore.revoke();
-      }
-    } else {
-      leaseStore.revoke();
-    }
-
-    // Reject is terminal: seal the gate so no further await_human can suspend
-    // this run (it may still resume for its own cleanup, but can never re-ask
-    // the human). Only a human reject reaches here - the verify pre-review
-    // rejection is returned inline without suspending, so it never resumes.
-    // `comment` is the revise-and-re-gate path and deliberately does NOT seal.
-    if (decisionStatus === 'rejected' || decisionStatus === 'reject') {
-      new GateSealStore(sessionDir).seal('human reviewer rejected an await_human gate', now);
-    }
+    applyGateDecisionEffects({
+      leaseStore: new LeaseStore(sessionDir),
+      gateSealStore: new GateSealStore(sessionDir),
+      status: decisionStatus,
+      gateInput: input,
+      now,
+      sealReason: 'human reviewer rejected an await_human gate',
+    });
   } catch (error) {
     logger.debug(`[Lease] resume lease update failed: ${(error as Error).message}`);
   }

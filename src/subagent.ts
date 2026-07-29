@@ -16,6 +16,7 @@ import { buildSystemMessages, buildLearningPrompt } from './runner/system-messag
 import { createSessionAndMessage } from './runner/session-helper';
 import { isApprovalEnabled, appendApprovalInstructions, approvalToolDefaults } from './runner/approval';
 import { createAwaitHumanTool } from './tools/await-human';
+import { maybeMockAwaitHuman } from './runner/mock-tools';
 import { createToolsSnapshot } from './runner/tool-snapshot';
 import { SuspendSignal, isSuspendSignal } from './runner/suspend';
 import { extractApiErrorDetail } from './runner/api-error';
@@ -345,10 +346,13 @@ export async function createSubAgentTool(
           // URL/resume token), so rebuild it now that subagentSessionID is known. This
           // is what makes a delegated leaf gate addressable and resumable at the root.
           if (subagentSessionID && (isApprovalEnabled(agent.config) || agent.config.tools?.await_human === true)) {
-            tools.await_human = createAwaitHumanTool(subagentSessionID, {
+            // maybeMockAwaitHuman: this rebuild happens AFTER loadAgentTools'
+            // mock chokepoint, so without re-wrapping it would silently restore
+            // the real suspending gate under --mock-approval.
+            tools.await_human = maybeMockAwaitHuman(createAwaitHumanTool(subagentSessionID, {
               ...approvalToolDefaults(agent.config),
               ...(projectContext?.projectRoot && { projectRoot: projectContext.projectRoot }),
-            });
+            }));
             // Verify gate placement for a delegated leaf: judge each gate
             // payload pre-suspension, same as the top-level path.
             if (agent.config.verify) {

@@ -17,6 +17,8 @@ import { isSuspendSignal } from './suspend';
 import { wrapToolsWithWAL, sanitizeWALInput, type EffectWAL } from './effect-wal';
 import { LeaseStore, isEffectful } from './approval-lease';
 import { GateSealStore } from './gate-seal';
+import { applyGateDecisionEffects } from './gate-decision';
+import { isMockMode, resolveMockApprovalDecision, mockGateDecisionResult } from './mock-tools';
 import { registerSDKTelemetryOnce } from '../telemetry/sdk-telemetry';
 import { recordErrorMarker } from './session-helper';
 import { extractApiErrorDetail } from './api-error';
@@ -803,6 +805,35 @@ export async function* executeAgentCore(
               type: 'denied' as const,
               reason: 'The human reviewer REJECTED this request, which is terminal: the approval gate is closed for this run. Do not call await_human again. Perform any required cleanup (for example status updates) and end the run with a short summary of the rejection. (A reviewer who wanted changes rather than a stop would have used Comment, not Reject.)',
             };
+          }
+          // Mocked approval (--mock-approval): the gate resolves inline with a
+          // deterministic decision instead of suspending. Apply the decision's
+          // durable side effects HERE, pre-dispatch — the mocked execute only
+          // returns the payload the model sees — so an approve grants the lease
+          // from changes[] exactly like a real resume and the next gated
+          // command is covered. The seal check above stays first: a mocked
+          // reject seals, and any later gate hits the terminal denial, same as
+          // production. Skip the gate-rides-alone flags: they assume the gate
+          // suspends (the stream dies, so they are never reset) — setting them
+          // for a non-suspending gate would leave the barrier stuck on and
+          // deny every subsequent tool call in this stream.
+          if (isMockMode() && resolveMockApprovalDecision()) {
+            const decision = mockGateDecisionResult(input);
+            applyGateDecisionEffects({
+              leaseStore,
+              gateSealStore,
+              status: decision.status,
+              gateInput: input,
+              now: Date.now(),
+              sealReason: 'mock reviewer rejected the gate (--mock-approval reject)',
+            });
+            options.effectWal?.append({
+              event: 'mock-gate-decision',
+              ...(callId && { callId }),
+              tool: 'await_human',
+              status: decision.status,
+            });
+            return undefined;
           }
           gatePendingThisStep = true;
           gateBarrierActive = true;
