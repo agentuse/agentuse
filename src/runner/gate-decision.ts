@@ -8,7 +8,7 @@ import { GateSealStore } from './gate-seal';
  *
  * - approve: derive a lease from the gate's `changes[]` and grant it,
  *   REPLACING any prior lease (the latest approved plan is the only active
- *   grant). An approve with no derivable entries revokes instead — approval of
+ *   grant). An approve with no derivable entries revokes instead: approval of
  *   a plan without verbatim commands authorizes nothing.
  * - comment: revoke. This is the revise-and-re-gate path; nothing gated may
  *   run until a fresh plan is approved. Deliberately does NOT seal.

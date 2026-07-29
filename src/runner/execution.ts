@@ -808,13 +808,13 @@ export async function* executeAgentCore(
           }
           // Mocked approval (--mock-approval): the gate resolves inline with a
           // deterministic decision instead of suspending. Apply the decision's
-          // durable side effects HERE, pre-dispatch — the mocked execute only
-          // returns the payload the model sees — so an approve grants the lease
+          // durable side effects HERE, pre-dispatch (the mocked execute only
+          // returns the payload the model sees), so an approve grants the lease
           // from changes[] exactly like a real resume and the next gated
           // command is covered. The seal check above stays first: a mocked
           // reject seals, and any later gate hits the terminal denial, same as
           // production. Skip the gate-rides-alone flags: they assume the gate
-          // suspends (the stream dies, so they are never reset) — setting them
+          // suspends (the stream dies, so they are never reset); setting them
           // for a non-suspending gate would leave the barrier stuck on and
           // deny every subsequent tool call in this stream.
           if (isMockMode() && resolveMockApprovalDecision()) {

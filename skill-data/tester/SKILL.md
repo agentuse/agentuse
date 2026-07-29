@@ -7,7 +7,9 @@ description: Test and validate AgentUse agents without real side effects. Use wh
 
 Validate a `.agentuse` agent end-to-end before a real run. All mock flags
 belong to `agentuse run`; a mocked session is stored and inspectable like any
-other (marked `mock` in session data).
+other, and is visibly marked: `agentuse sessions` shows a `· mock` status
+suffix, `sessions show` prints a `Mock:` line, and the JSON API carries
+`mock: true`.
 
 ## Always Start With Doctor
 

@@ -29,8 +29,8 @@ export function isMockMode(): boolean {
 /**
  * What mock mode covers. `all` (default, `--mock`) mocks every tool's execute.
  * `gated` (`--mock-gated`, env `AGENTUSE_MOCK_SCOPE=gated`) mocks ONLY bash
- * commands matching the agent's human-authored `tools.bash.gated` patterns —
- * the effectful/irreversible subset the author already fenced off — plus the
+ * commands matching the agent's human-authored `tools.bash.gated` patterns
+ * (the effectful/irreversible subset the author already fenced off), plus the
  * approval gate; every other tool runs for real, so the run grounds itself in
  * real project state instead of inventing it.
  */
@@ -126,7 +126,7 @@ export function mockGateDecisionResult(input: unknown): {
  * sub-agent path rebuilds it to bind the child session id), which would
  * otherwise silently restore the real suspending gate under `--mock-approval`.
  * The decision's durable side effects (lease grant, gate seal) are applied by
- * the execution loop's toolApproval barrier, which owns the stores — this
+ * the execution loop's toolApproval barrier, which owns the stores; this
  * wrapper only returns the payload the model sees.
  */
 export function maybeMockAwaitHuman(tool: Tool): Tool {
@@ -255,14 +255,14 @@ export function wrapToolsWithLLMMock(
 
 /**
  * Gated-scope mock (`--mock-gated`): mock ONLY bash commands matching the
- * agent's `tools.bash.gated` patterns; every other tool — including non-gated
- * bash — keeps its real execute. The approval gate resolves deterministically
+ * agent's `tools.bash.gated` patterns; every other tool, including non-gated
+ * bash, keeps its real execute. The approval gate resolves deterministically
  * (the CLI defaults the decision to approve for this scope), so gated flows
  * complete unattended while the rest of the run works against real state.
  *
  * Fidelity note: the toolApproval barrier still governs dispatch. A gated
  * command issued WITHOUT an approved gate is denied pre-dispatch with the
- * re-gate redirect, exactly as in production — this wrapper only decides what
+ * re-gate redirect, exactly as in production. This wrapper only decides what
  * happens after a covered command is allowed through: fabricate its result
  * instead of executing it.
  */

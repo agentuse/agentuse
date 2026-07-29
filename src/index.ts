@@ -529,7 +529,7 @@ program
       }
 
       // Mocked approval resolves every gate inline (never suspends), so those
-      // runs need no serve daemon — that is the whole point of unattended mock.
+      // runs need no serve daemon; that is the whole point of unattended mock.
       const approvalNeedsServe = isApprovalEnabled(agent.config)
         && !(isMockMode() && resolveMockApprovalDecision());
       if (approvalNeedsServe && !hasServeForApprovalRun(projectContext.projectRoot, agentFilePath)) {

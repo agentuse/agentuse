@@ -33,6 +33,8 @@ interface SessionSummary {
   /** Suspended parent parked on a running delegated child; renders as
    *  "running · subagent" rather than bare "suspended". Derived at list time. */
   subagentActive?: boolean;
+  /** Run under --mock/--mock-gated: some or all tool results were fabricated. */
+  mock?: boolean;
 }
 
 interface SessionScope {
@@ -143,6 +145,7 @@ function sessionSummaryFromInfo(sessionInfo: SessionInfo & { agent: { id?: strin
     status: sessionInfo.status,
     ...(sessionInfo.error?.code && { errorCode: sessionInfo.error.code }),
     ...(sessionInfo.error?.message && { errorMessage: sessionInfo.error.message }),
+    ...(sessionInfo.mock && { mock: true }),
   };
 }
 
@@ -394,10 +397,11 @@ function statusLabel(status?: SessionStatus, errorCode?: string): string {
 }
 
 /** Display status for a summary row, folding in the "running · subagent" state
- *  (a suspended parent parked on a running delegated child). */
-function sessionStatusText(session: Pick<SessionSummary, 'status' | 'errorCode' | 'subagentActive'>): string {
-  if (session.subagentActive) return 'running · subagent';
-  return statusLabel(session.status, session.errorCode);
+ *  (a suspended parent parked on a running delegated child) and the mock
+ *  marker, so a fabricated test run never reads as a real one. */
+function sessionStatusText(session: Pick<SessionSummary, 'status' | 'errorCode' | 'subagentActive' | 'mock'>): string {
+  const base = session.subagentActive ? 'running · subagent' : statusLabel(session.status, session.errorCode);
+  return session.mock ? `${base} · mock` : base;
 }
 
 /** Live runs (actively running, or a parent whose delegated child is running)
@@ -792,9 +796,10 @@ async function listSessionsCommand(
 
   // Calculate column widths
   const idWidth = 12; // First 12 chars of ULID
-  // Base 10 ("incomplete"); grow to fit "running · subagent" when present so the
-  // wider label doesn't push the table out of alignment.
-  const statusWidth = Math.min(18, Math.max(10, ...sessions.map((s) => sessionStatusText(s).length)));
+  // Base 10 ("incomplete"); grow to fit the widest composite label present
+  // ("running · subagent · mock" = 25) so it doesn't push the table out of
+  // alignment.
+  const statusWidth = Math.min(25, Math.max(10, ...sessions.map((s) => sessionStatusText(s).length)));
   const projectWidth = scope.kind === "all"
     ? Math.min(28, Math.max(...sessions.map((s) => projectLabel(s.projectRoot).length)))
     : 0;
@@ -903,6 +908,9 @@ async function showSession(
     : '⋯';
   const statusText = isIncomplete ? 'incomplete' : subagentActive ? 'running · subagent' : (s.status || 'unknown');
   process.stdout.write(`Status:      ${statusIcon} ${statusText}\n`);
+  if (s.mock) {
+    process.stdout.write(`Mock:        ⚠ mock run: some or all tool results were fabricated, not executed\n`);
+  }
 
   if (s.config.mcpServers && s.config.mcpServers.length > 0) {
     process.stdout.write(`MCP Servers: ${s.config.mcpServers.join(", ")}\n`);
