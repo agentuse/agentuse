@@ -13,6 +13,9 @@ tmp/
 test-env.ts
 test-performance.ts
 
+# Local UI/audit capture output (screenshots leak local paths and project names)
+artifacts/
+
 # IDE
 .vscode/
 .idea/
