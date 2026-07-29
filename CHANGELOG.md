@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **`--mock-approval` is now deterministic and completes gated flows end-to-end.** Instead of letting the mock LLM improvise a reviewer reply, the `await_human` gate resolves inline with a scripted decision. `--mock-approval` (or `--mock-approval approve`) auto-approves and grants the gated-command lease derived from the gate's `changes[]` exactly like a real reviewer approval, so `tools.bash.gated` flows now run to completion under `--mock` (previously the fabricated approval granted no lease, leaving gated commands denied with no reviewer to ever satisfy). `--mock-approval reject` seals the gate terminally to exercise the agent's cleanup path, and `--mock-approval comment:<text>` forces the revise-and-re-gate branch. Pick gates auto-select the recommended option (else the first) and return it as `choice`. Decisions are journaled to the effect WAL as `mock-gate-decision`, mocked-approval runs no longer require a running `serve` daemon (nothing ever suspends), and sub-agent gates resolve the same way (previously the sub-agent rebuild silently restored a real suspending gate).
+
 ## [0.16.0] - 2026-07-28
 
 This release turns `serve` into a live operations dashboard: installable and push-capable on mobile, centered on outcomes and recorded business metrics, with failed-run triage, agent relationship graphs, richer approval review, and an experimental verification loop that can critique and redo work before delivery. Under the hood, the model registry now carries real context and output limits for every provider (fixing premature compaction and silently truncated responses), `filesystem_read` gains image/PDF input, and a failed compaction no longer silently ends a run. Timeout units are unified: every timeout field accepts duration strings (`"30s"`, `"10m"`, `"24h"`), and the one milliseconds-based config field, `tools.bash.timeout`, no longer accepts bare numbers (**breaking**; one-line migration, see Changed). Approval gates, verify, the session/approval web UI, the JSON API, channels/Slack, and web push remain **experimental**: configuration, route shapes, UI details, and API response formats may still evolve based on production feedback.
