@@ -52,13 +52,67 @@ const READ_ONLY_HEADS = new Set([
 ]);
 
 // Programs whose first argument is NOT a subcommand: interpreters take a script,
-// coreutils take operands. A wildcard there is still a broad grant (`python3 *`
-// runs arbitrary code) but it is a different failure mode than an unnamed
-// subcommand, and this advisory's wording would misdescribe it.
+// coreutils take operands. A wildcard there is still a broad grant but it is a
+// different failure mode than an unnamed subcommand (see grantsArbitraryCode),
+// and the unnamed-subcommand wording would misdescribe it.
 const NO_SUBCOMMAND_HEADS = new Set([
   'python', 'python3', 'node', 'npx', 'bun', 'deno', 'ruby', 'perl',
   'sh', 'bash', 'zsh', 'osascript', 'cp', 'mv', 'ln', 'chmod', 'chown', 'dd', 'tee',
 ]);
+
+// Interpreters and package runners: what follows is CODE, not a subcommand.
+const INTERPRETER_HEADS = new Set([
+  'python', 'python3', 'node', 'npx', 'bun', 'deno', 'ruby', 'perl',
+  'sh', 'bash', 'zsh', 'osascript', 'uv', 'uvx',
+]);
+
+// Flags whose operand is inline code rather than a script path.
+const INLINE_CODE_FLAGS = new Set(['-c', '-e', '--eval', '--command']);
+
+// Runners that fetch and execute a named package.
+const PACKAGE_RUNNERS = new Set(['uv', 'uvx', 'npx', 'bunx']);
+const RUNNER_SUBCOMMANDS = new Set(['run', 'tool', 'x', 'exec']);
+
+/** A concrete (non-wildcard) script the grant pins execution to. */
+function looksLikeScriptPath(token: string): boolean {
+  if (token.includes('*')) return false;
+  return token.includes('/') || /\.(py|js|mjs|cjs|ts|rb|pl|sh|scpt)$/i.test(token);
+}
+
+/**
+ * True when an interpreter grant does not pin what it executes, so it authorizes
+ * ARBITRARY code: `python3 *`, `uv run *`, `bash -c *`.
+ *
+ * This is the one grant that silently voids the rest of the allowlist. Enumerating
+ * commands only means something if the agent cannot write its own: `python3 *` can
+ * POST, delete, or spawn anything the allowlist carefully withheld. Pinning the
+ * script (`python3 scripts/report.py *`) restores the ceiling, which is why the
+ * distinction here is pinned-vs-unpinned rather than interpreter-vs-not.
+ */
+export function grantsArbitraryCode(commandPattern: string): boolean {
+  const tokens = commandPattern.trim().split(/\s+/).filter(Boolean);
+  const head = effectiveHead(tokens);
+  if (!head || head.includes('*')) return false;
+  const program = head.replace(/.*\//, '');
+  if (!INTERPRETER_HEADS.has(program)) return false;
+
+  let rest = tokens.slice(tokens.indexOf(head) + 1);
+  if (rest.length === 0) return false;
+  if (rest.some((tok) => INLINE_CODE_FLAGS.has(tok))) return true;
+
+  // Package runners name a PACKAGE, not a script path (`uvx ruff *`), so a bare
+  // concrete operand pins them. Drop the runner's own subcommand first, or
+  // `uv run *` would look pinned by the word "run".
+  if (PACKAGE_RUNNERS.has(program)) {
+    if (rest[0] && RUNNER_SUBCOMMANDS.has(rest[0])) rest = rest.slice(1);
+    // A concrete token that FOLLOWS a flag is that flag's value (`--python 3.13`),
+    // not the thing being run.
+    return !rest.some((tok, i) =>
+      !tok.startsWith('-') && !tok.includes('*') && !(i > 0 && rest[i - 1].startsWith('-')));
+  }
+
+  return !rest.some(looksLikeScriptPath);
+}
 
 // Wrappers that prefix a real command without changing what it does. The head
 // that matters is the first token past them (`env -u AUTH_TOKEN birdc *` is a

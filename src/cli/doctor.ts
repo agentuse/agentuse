@@ -12,7 +12,7 @@ import { resolveProjectContext } from '../utils/project.js';
 import { computeAgentId } from '../utils/agent-id.js';
 import { getSessionStorageDir } from '../storage/paths.js';
 import { parseBashCommand } from '../tools/bash-parser.js';
-import { looksEffectful, grantsUnnamedSubcommands, commandHead } from '../tools/effectful-heuristic.js';
+import { looksEffectful, grantsUnnamedSubcommands, grantsArbitraryCode, commandHead } from '../tools/effectful-heuristic.js';
 import { isEffectful } from '../runner/approval-lease.js';
 import type { Message, Part, SessionInfo, ToolPart } from '../session/types.js';
 
@@ -471,6 +471,23 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
       console.log(`      - "${cmd.replace(/\*\s*$/, '<subcommand> *')}"`);
     }
     console.log(chalk.gray('Advisory only: a wildcard grant is often correct (read-only CLIs).'));
+  }
+
+  // Unpinned interpreter grants: the one entry that voids the rest of the
+  // allowlist, since an agent that can write code can do anything the allowlist
+  // withheld. Not folded into the advisories above - the remedy is to pin the
+  // script, not to gate a verb.
+  const arbitraryCode = bashCommands.filter(
+    (cmd) => grantsArbitraryCode(cmd) && !isEffectful(cmd, gatedPatterns)
+  );
+  if (arbitraryCode.length > 0) {
+    console.log(chalk.yellow('\nArbitrary code grants (heuristic):'));
+    for (const cmd of arbitraryCode) {
+      console.log(`- \`${cmd}\` runs code the pattern does not pin, so it can do anything the rest of the allowlist withholds.`);
+    }
+    console.log(chalk.gray('\nPin what executes, so the allowlist keeps meaning something:'));
+    console.log(chalk.gray('    - "python3 scripts/report.py *"     # not "python3 *"'));
+    console.log(chalk.gray('If the agent genuinely needs to write its own code, that is a deliberate choice - gate it, or scope the run with sandbox:.'));
   }
 
   console.log(chalk.gray('\nFor runtime-accurate diagnosis, run `agentuse doctor <agent-file> --last-run`.'));
