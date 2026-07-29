@@ -11,7 +11,13 @@ export const SkillFrontmatterSchema = z.object({
     .default(''),
   license: z.string().optional(),
   compatibility: z.string().max(500).optional(),
-  metadata: z.record(z.string(), z.string()).optional(),
+  // Free-form annotations, never interpreted by the runtime - only preserved
+  // and surfaced (`agentuse skills installed list --json`). Values are
+  // `unknown`, matching the agent frontmatter's `metadata` (parser.ts), because
+  // we also discover `.claude/skills/` for Claude-ecosystem compatibility and
+  // other tools park nested config here (e.g. OpenClaw's `metadata.openclaw`).
+  // Requiring flat strings rejected the WHOLE skill over a key we never read.
+  metadata: z.record(z.string(), z.unknown()).optional(),
   'allowed-tools': z.string().optional(),
 });
 
@@ -39,8 +45,8 @@ export interface SkillInfo {
   license?: string | undefined;
   /** Compatibility/environment requirements */
   compatibility?: string | undefined;
-  /** Additional metadata */
-  metadata?: Record<string, string> | undefined;
+  /** Additional metadata: free-form, never interpreted, values may be nested */
+  metadata?: Record<string, unknown> | undefined;
 }
 
 /**

@@ -240,6 +240,40 @@ Content`);
         version: '1.0.0',
       });
     });
+
+    it('accepts nested (non-string) metadata values', async () => {
+      // We discover `.claude/skills/` for Claude-ecosystem compatibility, and
+      // other tools park nested config under `metadata` (e.g. OpenClaw's
+      // `metadata.openclaw`). The runtime never reads these keys, so requiring
+      // flat strings here rejected the ENTIRE skill over an annotation.
+      const skillPath = join(testDir, 'nested-meta-skill', 'SKILL.md');
+      await mkdir(join(testDir, 'nested-meta-skill'));
+      await writeFile(skillPath, `---
+name: nested-meta-skill
+description: Carries a foreign tool's nested annotation
+metadata:
+  author: Test Author
+  openclaw:
+    emoji: "📰"
+    requires:
+      optionalEnv:
+        - SOME_API_KEY
+---
+
+Content`);
+
+      const skill = await parseSkillFrontmatter(skillPath);
+
+      expect(skill).toBeDefined();
+      expect(skill?.name).toBe('nested-meta-skill');
+      expect(skill?.metadata).toEqual({
+        author: 'Test Author',
+        openclaw: {
+          emoji: '📰',
+          requires: { optionalEnv: ['SOME_API_KEY'] },
+        },
+      });
+    });
   });
 
   describe('parseSkillContent', () => {

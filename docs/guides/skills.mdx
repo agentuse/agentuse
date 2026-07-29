@@ -97,7 +97,14 @@ Below the frontmatter, add your skill instructions in markdown.
 | `allowed-tools` | No | Space-delimited list of required tools |
 | `license` | No | Skill license (e.g., MIT, Apache-2.0) |
 | `compatibility` | No | Version requirements or environment notes |
-| `metadata` | No | Custom key-value metadata |
+| `metadata` | No | Custom annotations. Values may be strings or nested objects; the runtime never interprets them |
+
+<Note>
+`metadata` is free-form on purpose. AgentUse preserves and surfaces these keys
+(`agentuse skills installed list --json`) but never reads them, so a skill shared
+with another tool can carry that tool's nested config here without AgentUse
+rejecting the skill.
+</Note>
 
 ### Name Requirements
 
