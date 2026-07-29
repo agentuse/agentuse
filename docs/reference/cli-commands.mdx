@@ -37,6 +37,7 @@ agentuse run <agent-file> [prompt...] [options]
 --mock                  Mock all tool outputs with the LLM instead of executing them (no real side effects). Requires --mock-model.
 --mock-model <model>    Model that generates mock tool outputs (required with --mock; pick a cheap, reachable model)
 --mock-approval [d]     Resolve the await_human gate deterministically instead of suspending: approve (default), reject, or comment:<text>
+--mock-gated            Mock ONLY bash commands matching tools.bash.gated; everything else runs real. Implies --mock-approval approve. Requires --mock-model.
 ```
 
 <Note>
@@ -170,6 +171,25 @@ agentuse run agent.agentuse --mock --mock-model openai:gpt-5.4-nano
 <Note>
   MCP servers still connect at startup for tool discovery, but no tool executes (no mutations). Mock outputs are non-deterministic; mocked approval decisions are deterministic.
 </Note>
+
+### Gated-scope mock (`--mock-gated`)
+
+`--mock-gated` inverts the coverage: instead of mocking everything, it mocks **only** the bash commands matching the agent's [`tools.bash.gated`](/guides/approval-gates) patterns, the irreversible subset the author already fenced off, and auto-approves the gates guarding them. Every other tool (reads, non-gated bash, MCP, skills, stores) runs **for real**, so the agent grounds itself in real project state instead of inventing it.
+
+This is the closed-loop testing mode: a run completes end-to-end, unattended, with real data and zero irreversible side effects, and the session log still shows the full gate flow (the `await_human` call with its `changes[]`, the auto-approval, the fabricated command result) for review.
+
+```bash
+agentuse run my-agent.agentuse --mock-gated --mock-model anthropic:claude-haiku-4-5
+```
+
+- Implies `--mock-approval approve`; pass an explicit `--mock-approval reject` / `comment:<text>` to exercise those branches instead.
+- Mutually exclusive with `--mock`.
+- An agent with no `tools.bash.gated` patterns gets a warning: nothing is mocked, everything runs real (with gates auto-resolved).
+- In the effect WAL, a fabricated gated command has a `lease-approved` entry but **no** `bash-spawn` entry, that absence is the audit signal it never executed.
+
+<Warning>
+  Only gated **bash** commands are fabricated. Effectful MCP tools or channel posts still run for real under `--mock-gated`, pair it with a scratch copy of the project when the agent writes through those. And a fabricated command changes nothing on disk, so a later real command that checks its effect (e.g. `git log` after a fabricated `git push`) will see the unchanged state.
+</Warning>
 
 ### Remote Agent Security
 

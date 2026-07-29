@@ -238,6 +238,10 @@ Mock all tool outputs with the LLM instead of executing them. Mirror the `--mock
   Set it for one run with `--mock-model`, or as a global default in the shell, `~/.agentuse/.env`, or the [`env` block of `~/.agentuse/config.json`](/reference/configuration-files#global-env-defaults). `--mock-model` overrides whichever source supplies it.
 </ParamField>
 
+<ParamField path="AGENTUSE_MOCK_SCOPE" type="string">
+  What mock mode covers. Unset (or `all`) mocks every tool result, same as `--mock`. `gated` mocks only bash commands matching the agent's `tools.bash.gated` patterns and leaves every other tool real, same as `--mock-gated`. Only read when mock mode is on.
+</ParamField>
+
 <ParamField path="AGENTUSE_MOCK_APPROVAL" type="string">
   Resolve the `await_human` approval gate deterministically instead of suspending (mock mode only). Same as `--mock-approval`. Values: `approve` (also `1`/`true`), `reject`, or `comment:<text>`. An approve grants the gated-command lease from the gate's `changes[]` exactly like a real reviewer approval; a reject seals the gate (terminal), and a comment forces the revise-and-re-gate branch.
 </ParamField>
