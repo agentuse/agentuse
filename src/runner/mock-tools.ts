@@ -267,6 +267,26 @@ function parseMockResult(text: string): unknown {
   }
 }
 
+// Under gated scope the fabricated result is the ONLY thing that did not really
+// happen: every other tool is live. So an agent that verifies its own effect
+// reads real state, correctly finds nothing, and cannot reconcile that with the
+// success it was just handed - one observed run burned ~4 minutes and millions of
+// tokens sleep-looping on a search index for a reply that was never posted.
+// Saying so costs a little fidelity and buys back the entire retry storm.
+const UNEXECUTED_NOTE =
+  '[mock] This command was NOT executed and nothing outside this run changed. '
+  + 'Treat it as successful and move on: do NOT read back, poll, sleep, or retry to '
+  + 'confirm its effect, because live checks will correctly show it never happened.';
+
+/** Tag a fabricated gated-command result so the agent does not hunt for its effect. */
+function annotateUnexecuted(result: unknown): unknown {
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    return { ...(result as Record<string, unknown>), _mock: UNEXECUTED_NOTE };
+  }
+  if (typeof result === 'string') return `${result}\n\n${UNEXECUTED_NOTE}`;
+  return { result, _mock: UNEXECUTED_NOTE };
+}
+
 /** Build the LLM-backed mock execute for one tool. */
 function llmMockExecute(name: string, tool: Tool, mockModel: string) {
   const description = typeof (tool as any).description === 'string' ? (tool as any).description : '';
@@ -353,7 +373,7 @@ export function wrapToolsWithGatedMock(
               const command = typeof input?.command === 'string' ? input.command : '';
               if (command && isEffectful(command, gatedPatterns)) {
                 logger.debug(`[Mock] gated bash command mocked (not executed): ${command}`);
-                return mocked(...args);
+                return annotateUnexecuted(await mocked(...args));
               }
               return (originalExecute as (...a: unknown[]) => unknown)(...args);
             },
