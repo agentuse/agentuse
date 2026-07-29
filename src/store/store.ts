@@ -3,12 +3,13 @@
  */
 
 import { readFile, mkdir, rename, open } from 'fs/promises';
-import { existsSync, lstatSync } from 'fs';
+import { existsSync, lstatSync, cpSync, rmSync, readdirSync, statSync } from 'fs';
 import { join, dirname, resolve, relative, isAbsolute } from 'path';
 import { randomBytes } from 'crypto';
 import { ulid } from 'ulid';
 import { logger } from '../utils/logger';
 import { withOwnershipLock } from '../utils/ownership-lock';
+import { isMockMode } from '../runner/mock-tools';
 import { StoreFileSchema, isSafeStoreName } from './schema';
 import type {
   StoreItem,
@@ -47,6 +48,45 @@ function searchHaystack(item: StoreItem): string {
  */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Mock-run store isolation. Stores are cross-run agent memory (dedup keys,
+ * baselines, dashboard metrics), so a mock/test run writing to the REAL store
+ * would contaminate production state even though the run itself is fabricated.
+ * Under mock mode every Store in this process is rooted at a per-run scratch
+ * base, `<projectRoot>/.agentuse/store-mock/<timestamp>-<pid>/`, seeded by
+ * copying the real store dir on first use. Reads therefore see real state,
+ * writes read back consistently, and nothing persists into the real store; the
+ * scratch dir is left on disk for post-run inspection.
+ *
+ * One scratch base per process per project: a CLI run is one process, so this
+ * is exactly per-run isolation there. (A long-lived worker running many mock
+ * sessions would share one base across them, still fully isolated from the
+ * real store.)
+ */
+const MOCK_STORE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const mockStoreBases = new Map<string, string>();
+
+function mockStoreBase(projectRoot: string): string {
+  const key = resolve(projectRoot);
+  let base = mockStoreBases.get(key);
+  if (!base) {
+    const parent = resolve(key, '.agentuse', 'store-mock');
+    // Best-effort sweep of scratch bases from old runs so they don't pile up.
+    try {
+      for (const entry of readdirSync(parent)) {
+        const dir = join(parent, entry);
+        if (Date.now() - statSync(dir).mtimeMs > MOCK_STORE_MAX_AGE_MS) {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }
+    } catch { /* parent may not exist yet */ }
+    base = join(parent, `${Date.now()}-${process.pid}`);
+    mockStoreBases.set(key, base);
+    logger.info(`[Mock] stores isolated at ${base} (real store untouched)`);
+  }
+  return base;
 }
 
 function assertNoSymlinkPathSegments(projectRoot: string, storeName: string): void {
@@ -168,12 +208,24 @@ export class Store {
       throw new Error(`Invalid store name: ${storeName}`);
     }
     const storeRoot = resolve(projectRoot, '.agentuse', 'store');
-    const storeDir = resolve(storeRoot, storeName);
+    let storeDir = resolve(storeRoot, storeName);
     const relativeStoreDir = relative(storeRoot, storeDir);
     if (relativeStoreDir.startsWith('..') || isAbsolute(relativeStoreDir)) {
       throw new Error(`Invalid store name: ${storeName}`);
     }
     assertNoSymlinkPathSegments(projectRoot, storeName);
+    // Mock-run isolation: re-root at the per-run scratch base, seeded from the
+    // real store dir so reads ground in real state while writes never touch it.
+    // Validation above ran against the REAL path first, so a hostile storeName
+    // cannot use the mock swap to escape containment.
+    if (isMockMode()) {
+      const realStoreDir = storeDir;
+      storeDir = join(mockStoreBase(projectRoot), storeName);
+      if (!existsSync(storeDir) && existsSync(realStoreDir)) {
+        cpSync(realStoreDir, storeDir, { recursive: true });
+        rmSync(join(storeDir, 'lock'), { force: true });
+      }
+    }
     this.storePath = join(storeDir, 'items.json');
     this.lockPath = join(storeDir, 'lock');
     this.storeName = storeName;
