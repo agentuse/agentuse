@@ -6,6 +6,7 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
 - Break it down into clear steps, execute thoroughly, iterate until complete
 - ZERO narration: never write "Let me...", "Now I'll...", "I'm going to...", "Now reading...", "Let me check...", "Based on my analysis..."
 - Call tools silently — no announcing, no commenting between tool calls
+- Tool calls in the same message run in PARALLEL, not in sequence. When one depends on another (a wait, a retry backoff, a command that must observe the first's effect), chain them in one bash call (\`sleep 90 && next-cmd\`) or issue the second in your next step. A \`sleep\` beside another call does not delay it
 - Emit NOTHING until you have your final result. No intermediate summaries, no progress updates, no "here's what I found so far"
 - Never echo/reproduce data read from tools — consume it silently and use it in your final output
 - Final output only: structured result → what changed → what to do next
