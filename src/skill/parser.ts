@@ -13,16 +13,45 @@ function formatZodError(error: ZodError): string {
 }
 
 /**
- * Parse allowed-tools string into array of patterns
- * Supports both space-separated and comma-separated formats
+ * Split on top-level separators only: a comma or whitespace that is NOT inside
+ * a `Bash(...)` pattern's parentheses.
  */
-function parseAllowedTools(allowedTools: string | undefined): string[] | undefined {
+function splitTopLevel(value: string): string[] {
+  const out: string[] = [];
+  let current = '';
+  let depth = 0;
+  for (const ch of value) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    else if (depth === 0 && (ch === ',' || /\s/.test(ch))) {
+      if (current) out.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current) out.push(current);
+  return out;
+}
+
+/**
+ * Parse allowed-tools into an array of patterns.
+ *
+ * Accepts all three shapes Claude Code documents: a space-separated string, a
+ * comma-separated string, or a YAML list. (The Agent Skills spec documents only
+ * the space-separated form; we take the superset because we also discover
+ * `.claude/skills/`.)
+ *
+ * Splitting is paren-aware because a `Bash(...)` pattern may contain spaces:
+ * `Bash(git commit *)` and `Bash(npm run *)` are the documented norm, and the
+ * Claude Code permission dialog writes that space form by default. A naive
+ * `/[,\s]+/` split shredded every such pattern into unusable fragments
+ * ("Bash(npm", "run", "*)"), silently dropping the grant.
+ */
+function parseAllowedTools(allowedTools: string | string[] | undefined): string[] | undefined {
   if (!allowedTools) return undefined;
-  // Split by comma or whitespace, trim each, filter empty
-  const tools = allowedTools
-    .split(/[,\s]+/)
-    .map(t => t.trim())
-    .filter(Boolean);
+  const raw = Array.isArray(allowedTools) ? allowedTools : splitTopLevel(allowedTools);
+  const tools = raw.map(t => t.trim()).filter(Boolean);
   return tools.length > 0 ? tools : undefined;
 }
 

@@ -94,7 +94,7 @@ Below the frontmatter, add your skill instructions in markdown.
 |-------|----------|-------------|
 | `name` | Yes | Skill identifier (1-64 chars, lowercase, hyphens allowed) |
 | `description` | Yes | What the skill does and when to use it (max 1024 chars) |
-| `allowed-tools` | No | Space-delimited list of required tools |
+| `allowed-tools` | No | Required tools: a space- or comma-separated string, or a YAML list |
 | `license` | No | Skill license (e.g., MIT, Apache-2.0) |
 | `compatibility` | No | Version requirements or environment notes |
 | `metadata` | No | Custom annotations. Values may be strings or nested objects; the runtime never interprets them |
@@ -121,11 +121,33 @@ Skill names must:
 
 ## Allowed Tools
 
-The `allowed-tools` field documents which tools your skill needs. It's a space-separated list of tool names for **documentation purposes**.
+The `allowed-tools` field documents which tools your skill needs, for **documentation purposes** and to drive [skill trust](#trusting-a-skill).
+
+Write it as a space-separated string, a comma-separated string, or a YAML list. All three are accepted:
 
 ```yaml
 allowed-tools: Read Write Bash(git:*) mcp__github
 ```
+
+```yaml
+allowed-tools: Bash(agent-browser:*), Bash(npx agent-browser:*)
+```
+
+```yaml
+allowed-tools:
+  - Bash(npm run *)
+  - Read
+```
+
+A `Bash(...)` pattern may contain spaces, so multi-word command prefixes work:
+`Bash(git commit *)` and `Bash(npm run *)` are split as single patterns, not on
+their internal spaces.
+
+The two trailing-wildcard spellings are equivalent, matching Claude Code's
+permission syntax: `Bash(ls:*)` and `Bash(ls *)` mean the same thing. A wildcard
+anywhere other than the end (`Bash(git * main)`) is kept as documentation but
+grants nothing, because narrowing it to a prefix would grant more than the
+pattern describes.
 
 <Note>
 Skills use whatever tools the **agent** has configured. The `allowed-tools` field documents dependencies and provides validation warnings for builtin tools.

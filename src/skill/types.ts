@@ -23,7 +23,12 @@ export const SkillFrontmatterSchema = z.object({
   // to the strict shape made the WHOLE skill invisible to every agent. Matches
   // the agent frontmatter's `metadata` (parser.ts), which is already `unknown`.
   metadata: z.record(z.string(), z.unknown()).optional(),
-  'allowed-tools': z.string().optional(),
+  // A space- or comma-separated string, or a YAML list (all three are valid per
+  // Claude Code; the Agent Skills spec documents only the space-separated
+  // string). Accepting the list form matters for the same reason as `metadata`
+  // above: rejection is all-or-nothing, so a skill written as a YAML list would
+  // otherwise fail validation entirely over a field we only read advisorily.
+  'allowed-tools': z.union([z.string(), z.array(z.string())]).optional(),
 });
 
 export type SkillFrontmatter = z.infer<typeof SkillFrontmatterSchema>;

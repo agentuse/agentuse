@@ -82,4 +82,33 @@ describe('skill trust expansion (agentuse-lab#168)', () => {
     expect(trustedSkillGrants(skills, perSkillTrust('x-personal'))).toEqual(['birdc *']);
     expect(trustedSkillGrants(skills, AUTO)).toEqual([]);
   });
+
+  test('trailing-wildcard spellings are equivalent: Bash(ls *) === Bash(ls:*)', () => {
+    // Per the Claude Code permissions spec, and the space form is what the
+    // permission dialog writes by default - previously it granted nothing.
+    const spaced = skillsMap(skill('a', ['Bash(ls *)']));
+    const colon = skillsMap(skill('a', ['Bash(ls:*)']));
+    expect(trustedSkillGrants(spaced, perSkillTrust('a'))).toEqual(['ls *']);
+    expect(trustedSkillGrants(colon, perSkillTrust('a'))).toEqual(['ls *']);
+  });
+
+  test('a multi-word prefix grants exactly that prefix, not the whole family', () => {
+    const skills = skillsMap(skill('a', ['Bash(npm run *)', 'Bash(npx agent-browser:*)']));
+    expect(trustedSkillGrants(skills, perSkillTrust('a'))).toEqual([
+      'npm run *',
+      'npx agent-browser *',
+    ]);
+  });
+
+  test('a non-tail wildcard grants nothing rather than widening', () => {
+    // Bash(git * main) is a legal Claude Code pattern, but it is not a prefix.
+    // Collapsing it to `git *` would hand over every git subcommand.
+    const skills = skillsMap(skill('a', ['Bash(git * main)']));
+    expect(trustedSkillGrants(skills, perSkillTrust('a'))).toEqual([]);
+  });
+
+  test('shell metacharacters in a pattern grant nothing', () => {
+    const skills = skillsMap(skill('a', ['Bash(echo $(whoami) *)', 'Bash(a && b *)']));
+    expect(trustedSkillGrants(skills, perSkillTrust('a'))).toEqual([]);
+  });
 });

@@ -219,6 +219,64 @@ Content`);
       expect(skill?.allowedTools).toEqual(['Read', 'Write', 'Bash']);
     });
 
+    it('keeps spaces inside Bash() patterns when splitting', async () => {
+      // `Bash(git commit *)` is the documented norm and the form Claude Code's
+      // permission dialog writes by default. A naive /[,\s]+/ split shredded it
+      // into "Bash(git", "commit", "*)" and silently dropped the grant.
+      const skillPath = join(testDir, 'spaced-tools', 'SKILL.md');
+      await mkdir(join(testDir, 'spaced-tools'));
+      await writeFile(skillPath, `---
+name: spaced-tools
+description: Multi-word Bash patterns
+allowed-tools: Bash(git add *) Bash(git commit *) Read
+---
+
+Content`);
+
+      const skill = await parseSkillFrontmatter(skillPath);
+      expect(skill?.allowedTools).toEqual([
+        'Bash(git add *)',
+        'Bash(git commit *)',
+        'Read',
+      ]);
+    });
+
+    it('splits comma-separated patterns that themselves contain spaces', async () => {
+      const skillPath = join(testDir, 'comma-spaced-tools', 'SKILL.md');
+      await mkdir(join(testDir, 'comma-spaced-tools'));
+      await writeFile(skillPath, `---
+name: comma-spaced-tools
+description: Claude Code's comma form with multi-word patterns
+allowed-tools: Bash(agent-browser:*), Bash(npx agent-browser:*)
+---
+
+Content`);
+
+      const skill = await parseSkillFrontmatter(skillPath);
+      expect(skill?.allowedTools).toEqual([
+        'Bash(agent-browser:*)',
+        'Bash(npx agent-browser:*)',
+      ]);
+    });
+
+    it('accepts allowed-tools written as a YAML list', async () => {
+      const skillPath = join(testDir, 'list-tools', 'SKILL.md');
+      await mkdir(join(testDir, 'list-tools'));
+      await writeFile(skillPath, `---
+name: list-tools
+description: Tools as a YAML list
+allowed-tools:
+  - Bash(npm run *)
+  - Read
+---
+
+Content`);
+
+      const skill = await parseSkillFrontmatter(skillPath);
+      expect(skill).toBeDefined();
+      expect(skill?.allowedTools).toEqual(['Bash(npm run *)', 'Read']);
+    });
+
     it('handles optional metadata fields', async () => {
       const skillPath = join(testDir, 'meta-skill', 'SKILL.md');
       await mkdir(join(testDir, 'meta-skill'));

@@ -135,9 +135,28 @@ function extractCommandSubstitutionHeads(snippet: string): string[] {
   return commands;
 }
 
+/**
+ * The literal command prefix of a `Bash(...)` allowed-tools pattern, or
+ * undefined when the pattern is not a simple prefix grant.
+ *
+ * Per the Claude Code permissions spec the trailing-wildcard forms are
+ * equivalent (`Bash(ls:*)` matches the same commands as `Bash(ls *)`) and `:*`
+ * is recognized ONLY at the end of a pattern. Multi-word prefixes are legal and
+ * documented: `Bash(git commit *)`, `Bash(npm run *)`.
+ *
+ * A wildcard anywhere but the tail (`Bash(git * main)`) deliberately yields
+ * nothing. Collapsing it to `git` would hand over the entire `git` family when
+ * the skill asked for one narrow shape - a trust grant must never widen.
+ */
 export function extractCommandFromAllowedTool(tool: string): string | undefined {
-  const match = tool.match(/^Bash\(([^:*()\s]+)(?::\*)?\)$/);
-  return match?.[1];
+  const match = tool.match(/^Bash\(([^()]+)\)$/);
+  if (!match) return undefined;
+  // Strip an equivalent trailing wildcard in either spelling.
+  const prefix = match[1].trim().replace(/(?::\*|\s+\*)$/, '').trim();
+  if (!prefix || prefix.includes('*')) return undefined;
+  // Shell-safe words only: no quoting, redirection, substitution, or operators.
+  if (!/^[A-Za-z0-9_./-]+(?: [A-Za-z0-9_./-]+)*$/.test(prefix)) return undefined;
+  return prefix;
 }
 
 function addCommand(commands: Set<string>, command: string | undefined): void {

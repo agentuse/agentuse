@@ -1,5 +1,6 @@
 import type { ToolsConfig } from '../tools/types.js';
 import type { ToolValidationResult } from './types.js';
+import { extractCommandFromAllowedTool } from './command-extract.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -12,12 +13,14 @@ const TOOL_ALIASES: Record<string, string> = {
 };
 
 /**
- * Parse a Bash pattern like "Bash(git:*)" or "Bash(python3:*)"
- * Returns the command name or null if not a bash pattern
+ * Parse a Bash pattern like "Bash(git:*)", "Bash(git *)" or "Bash(npm run *)".
+ * Returns the command prefix or null if not a prefix-shaped bash pattern.
+ *
+ * Shares one parser with the trust-grant path so validation and granting can
+ * never disagree about what a pattern means.
  */
 function parseBashPattern(pattern: string): string | null {
-  const match = pattern.match(/^Bash\(([^:]+):\*\)$/);
-  return match ? match[1] : null;
+  return extractCommandFromAllowedTool(pattern) ?? null;
 }
 
 /**
