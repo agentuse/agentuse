@@ -6,7 +6,8 @@ import { parseAgent } from '../parser.js';
 import { discoverSkills } from '../skill/discovery.js';
 import { getExplicitSkillNames, isSkillTrusted, trustsAllSkills } from '../skill/config.js';
 import { extractCommandFromAllowedTool } from '../skill/command-extract.js';
-import { estimateSkillCatalogTokens } from '../skill/tool.js';
+import { estimateSkillCatalogTokens, loadSkillPromptOutputs } from '../skill/tool.js';
+import { expandTrustedSkills } from '../skill/capabilities.js';
 import { resolveProjectContext } from '../utils/project.js';
 import { computeAgentId } from '../utils/agent-id.js';
 import { getSessionStorageDir } from '../storage/paths.js';
@@ -35,6 +36,13 @@ interface RuntimeProblem {
 const LARGE_AGENT_BODY_WORDS = 1500;
 const VERY_LARGE_AGENT_BODY_WORDS = 2500;
 const DENSE_INSTRUCTION_LINE_CHARS = 800;
+// The skill surface is a recurring per-request cost, not a one-time load: the
+// catalog ships one name + description per visible skill, and every preloaded
+// skill ships its whole body inside the instructions.
+const LARGE_SKILL_CATALOG_TOKENS = 1500;
+const VERY_LARGE_SKILL_CATALOG_TOKENS = 3000;
+const LARGE_PRELOADED_SKILL_TOKENS = 2000;
+const VERY_LARGE_PRELOADED_SKILL_TOKENS = 4000;
 
 function skillLooksReferenced(agent: Awaited<ReturnType<typeof parseAgent>>, skillName: string): boolean {
   const haystack = [
@@ -274,6 +282,22 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
   const estimatedInstructionTokens = estimateTextTokens(agent.instructions);
   const longestInstructionLine = longestLineLength(agent.instructions);
 
+  // Preloaded skills are appended to the instructions in full at run time (see
+  // buildRunnerContext in ../runner/preparation.ts), so the agent-body count
+  // alone hides them. Build the same text here, with the same trust expansion,
+  // so the reported cost matches what the model actually receives.
+  const preloadedOutputs = await loadSkillPromptOutputs(
+    projectContext.projectRoot,
+    expandTrustedSkills(agent.config.tools, skills, agent.config.skills),
+    explicitSkillNames.filter((name) => skills.has(name))
+  );
+  const preloadedCosts = preloadedOutputs
+    .map((skill) => ({ name: skill.name, tokens: estimateTextTokens(skill.output) }))
+    .sort((a, b) => b.tokens - a.tokens);
+  const estimatedPreloadedTokens = preloadedCosts.reduce((total, skill) => total + skill.tokens, 0);
+  const estimatedRequestTokens =
+    estimatedInstructionTokens + estimatedPreloadedTokens + estimatedCatalogTokens;
+
   console.log(chalk.bold('\nPrompt size'));
   console.log(`  agent body: ${instructionWords.toLocaleString()} words, ${formatEstimatedTokens(estimatedInstructionTokens)} tokens/model request`);
   console.log(`  longest line: ${longestInstructionLine.toLocaleString()} characters`);
@@ -285,6 +309,19 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
   if (longestInstructionLine > DENSE_INSTRUCTION_LINE_CHARS) {
     console.log(chalk.yellow('  Dense line: split it into one invariant or branch per line; preserve explicit scope and conditions.'));
   }
+  if (preloadedCosts.length > 0) {
+    console.log(`  preloaded skill bodies: ${preloadedCosts.length}, ${formatEstimatedTokens(estimatedPreloadedTokens)} tokens/model request`);
+    for (const skill of preloadedCosts) {
+      console.log(chalk.gray(`    ${skill.name}: ${formatEstimatedTokens(skill.tokens)} tokens`));
+    }
+    if (estimatedPreloadedTokens > VERY_LARGE_PRELOADED_SKILL_TOKENS) {
+      console.log(chalk.yellow('  Very large preloaded skills: their full text ships on every request, including runs that never use them.'));
+      console.log(chalk.gray('  Drop the situational ones from `skills:` and let the agent load them on demand.'));
+    } else if (estimatedPreloadedTokens > LARGE_PRELOADED_SKILL_TOKENS) {
+      console.log(chalk.yellow('  Large preloaded skills: preload only what every run needs; the rest can load on demand.'));
+    }
+  }
+  console.log(chalk.gray(`  total: ${formatEstimatedTokens(estimatedRequestTokens)} tokens/model request (agent body + preloaded skills + skill catalog)`));
 
   console.log(chalk.bold('\nSkill discovery'));
   console.log(`  mode: ${agent.config.skills!.auto ? 'open' : 'closed'}`);
@@ -292,7 +329,19 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
   console.log(`  visible: ${visibleSkills.length}`);
   console.log(`  preloaded: ${explicitSkillNames.length > 0 ? explicitSkillNames.join(', ') : 'none'}`);
   console.log(`  estimated catalog: ${formatEstimatedTokens(estimatedCatalogTokens)} tokens/model request`);
-  if (agent.config.skills!.auto && explicitSkillNames.length > 0) {
+  // The open-discovery hint below already prescribes `auto: false`; don't print
+  // that fix twice when both fire.
+  const explainsClosingDiscovery = agent.config.skills!.auto && explicitSkillNames.length > 0;
+  if (estimatedCatalogTokens > LARGE_SKILL_CATALOG_TOKENS) {
+    const severity = estimatedCatalogTokens > VERY_LARGE_SKILL_CATALOG_TOKENS ? 'Very large' : 'Large';
+    console.log(chalk.yellow(`  ${severity} catalog: ${visibleSkills.length} visible skills ship a name and description on every request.`));
+    if (!agent.config.skills!.auto) {
+      console.log(chalk.gray('  Shorten the listed skills to the ones this agent actually needs.'));
+    } else if (!explainsClosingDiscovery) {
+      console.log(chalk.gray('  Close discovery with `auto: false` and list only the skills this agent needs.'));
+    }
+  }
+  if (explainsClosingDiscovery) {
     console.log(chalk.yellow('  Listed skills are preloaded; they do not restrict discovery.'));
     console.log(chalk.gray('  Add `auto: false` to expose only the listed skills.'));
   }

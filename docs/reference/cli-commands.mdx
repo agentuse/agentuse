@@ -1030,6 +1030,7 @@ agentuse doctor <file> [--last-run]
 ### What It Checks
 
 Static mode:
+- Recurring prompt cost per model request: the agent body, the full text of each preloaded skill, and the visible skill catalog, with a total.
 - Explicit skills that don't exist on disk.
 - Explicit skills with no `allow` grants.
 - Commands mentioned in skill docs vs. what the agent has granted (advisory; not a permission manifest).

@@ -14,7 +14,11 @@ describe('agentuse doctor', () => {
   let originalConsoleLog: typeof console.log;
   let logs: string[];
 
-  async function writeSkill(name: string, description: string): Promise<void> {
+  async function writeSkill(
+    name: string,
+    description: string,
+    body = 'Follow the skill instructions.'
+  ): Promise<void> {
     const skillDir = join(testDir, '.agentuse', 'skills', name);
     await mkdir(skillDir, { recursive: true });
     await writeFile(join(skillDir, 'SKILL.md'), `---
@@ -24,7 +28,20 @@ description: ${description}
 
 # ${name}
 
-Follow the skill instructions.`);
+${body}`);
+  }
+
+  // A description long enough that a handful of skills push the catalog past the
+  // "large" threshold, so the warning fires regardless of how many real skills
+  // the host machine happens to have installed.
+  const FAT_DESCRIPTION = 'Handles a narrow slice of the workflow and explains exactly when to use it. '.repeat(12);
+
+  async function writeFatCatalog(count: number): Promise<string[]> {
+    const names = Array.from({ length: count }, (_, i) => `doctor-fixture-${i + 1}`);
+    for (const name of names) {
+      await writeSkill(name, FAT_DESCRIPTION);
+    }
+    return names;
   }
 
   beforeEach(async () => {
@@ -254,5 +271,110 @@ Use the preloaded skill.`);
     expect(output).toContain('visible: 1');
     expect(output).toContain('preloaded: preloaded');
     expect(output).not.toContain('Listed skills are preloaded');
+  });
+
+  it('counts preloaded skill bodies in the per-request prompt cost', async () => {
+    await writeSkill('heavy', 'A skill preloaded on every run.', 'Follow this rule exactly. '.repeat(700));
+    await writeSkill('light', 'A small preloaded skill.', 'Keep it short.');
+    const agentPath = join(testDir, 'preload.agentuse');
+    await writeFile(agentPath, `---
+name: Preload Agent
+model: demo:test
+skills:
+  auto: false
+  heavy:
+  light:
+---
+
+Use the preloaded skills.`);
+
+    await runDoctor(agentPath);
+
+    const output = logs.join('\n');
+    expect(output).toMatch(/preloaded skill bodies: 2, ~[\d.]+k tokens\/model request/);
+    expect(output).toMatch(/heavy: ~[\d.]+k tokens/);
+    expect(output).toMatch(/light: ~\d+ tokens/);
+    // Heaviest first, so the skill to drop is the one you read first.
+    expect(output.indexOf('heavy: ~')).toBeLessThan(output.indexOf('light: ~'));
+    expect(output).toContain('Very large preloaded skills');
+    expect(output).toMatch(/total: ~[\d.]+k tokens\/model request \(agent body \+ preloaded skills \+ skill catalog\)/);
+  });
+
+  it('reports the per-request total without a preloaded line when nothing is preloaded', async () => {
+    const agentPath = join(testDir, 'bare.agentuse');
+    await writeFile(agentPath, `---
+name: Bare Agent
+model: demo:test
+skills:
+  auto: false
+---
+
+Do the task.`);
+
+    await runDoctor(agentPath);
+
+    const output = logs.join('\n');
+    expect(output).not.toContain('preloaded skill bodies:');
+    expect(output).toContain('visible: 0');
+    expect(output).toContain('estimated catalog: ~0 tokens/model request');
+    expect(output).toMatch(/total: ~\d+ tokens\/model request/);
+  });
+
+  it('warns when open discovery makes the skill catalog expensive', async () => {
+    await writeFatCatalog(8);
+    const agentPath = join(testDir, 'fat-open.agentuse');
+    await writeFile(agentPath, `---
+name: Fat Catalog Agent
+model: demo:test
+---
+
+Do the task.`);
+
+    await runDoctor(agentPath);
+
+    const output = logs.join('\n');
+    expect(output).toMatch(/(Large|Very large) catalog: \d+ visible skills ship a name and description on every request\./);
+    expect(output).toContain('Close discovery with `auto: false`');
+  });
+
+  it('does not print the auto: false fix twice when the open-discovery hint also fires', async () => {
+    const names = await writeFatCatalog(8);
+    const agentPath = join(testDir, 'fat-listed.agentuse');
+    await writeFile(agentPath, `---
+name: Fat Listed Agent
+model: demo:test
+skills: [${names[0]}]
+---
+
+Do the task.`);
+
+    await runDoctor(agentPath);
+
+    const output = logs.join('\n');
+    expect(output).toMatch(/(Large|Very large) catalog: \d+ visible skills ship/);
+    expect(output).not.toContain('Close discovery with `auto: false`');
+    expect(output).toContain('Add `auto: false` to expose only the listed skills.');
+  });
+
+  it('warns about a large closed catalog without suggesting auto: false again', async () => {
+    const names = await writeFatCatalog(8);
+    const agentPath = join(testDir, 'fat-closed.agentuse');
+    await writeFile(agentPath, `---
+name: Fat Closed Agent
+model: demo:test
+skills:
+  auto: false
+${names.map((name) => `  ${name}:`).join('\n')}
+---
+
+Do the task.`);
+
+    await runDoctor(agentPath);
+
+    const output = logs.join('\n');
+    expect(output).toContain('visible: 8');
+    expect(output).toContain('Large catalog: 8 visible skills ship a name and description on every request.');
+    expect(output).toContain('Shorten the listed skills to the ones this agent actually needs.');
+    expect(output).not.toContain('Close discovery with `auto: false`');
   });
 });

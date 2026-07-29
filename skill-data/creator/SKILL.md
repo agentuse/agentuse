@@ -197,6 +197,16 @@ Size guidance is advisory, not a parser limit:
 - Over 2,500: split/reference or record why the complexity must stay inline.
 - Over 800 characters on one line: usually multiple rules; split it.
 
+The agent body is not the whole per-request prompt. `agentuse doctor` also
+prices the skill surface, which recurs on every model request:
+
+- Preloaded skills ship their full text. Over ~2,000 tokens: preload only what
+  every run needs. Over ~4,000: drop the situational ones and let the agent load
+  them on demand.
+- The visible catalog ships one name and description per discovered skill. Over
+  ~1,500 tokens: close discovery. Over ~3,000: the catalog likely costs more than
+  the agent body.
+
 Over-specification smells: the same rule in several layers, history embedded in
 an invariant, rationale longer than the rule, or a decision tree derivable from
 one sentence of intent. Write what a competent teammate needs, not a manual.
