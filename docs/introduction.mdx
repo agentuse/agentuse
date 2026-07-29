@@ -1,6 +1,6 @@
 ---
 title: Introduction
-description: Autonomous agents that work without you - define in markdown, run on cron, CI/CD, or serverless
+description: Own and operate Markdown-defined AI agents on infrastructure you control
 ---
 
 <img
@@ -16,9 +16,11 @@ description: Autonomous agents that work without you - define in markdown, run o
   width="480"
 />
 
-## Autonomous Agents That Work Without You
+## Own the agents doing your company's work
 
-**AgentUse** is a CLI framework for building autonomous AI agents. Define agents in markdown, run via cron, CI/CD, or serverless, and get results without babysitting. No SDK. No flowcharts. Just AI that works while you don't.
+**AgentUse** is an open-source agent runtime. Define agents in Markdown, run them with Claude, OpenAI, or open models on infrastructure you control, and keep every definition as a plain file in your repository.
+
+Let agents work autonomously. Put consequential actions behind human approval.
 
 <CardGroup cols={2}>
   <Card
@@ -26,67 +28,74 @@ description: Autonomous agents that work without you - define in markdown, run o
     icon="rocket"
     href="/quickstart"
   >
-    Get up and running with your first agent in under 5 minutes
+    Run your first agent without installing AgentUse or configuring an API key
   </Card>
   <Card
-    title="Examples"
-    icon="code"
-    href="https://github.com/agentuse/agentuse/tree/main/templates/agents"
+    title="Create an Agent"
+    icon="file-code"
+    href="/guides/creating-agents"
   >
-    Browse ready-to-use agent examples
+    Define instructions, models, tools, and runtime behavior in Markdown
+  </Card>
+  <Card
+    title="Approval Gates"
+    icon="user-check"
+    href="/guides/approval-gates"
+  >
+    Pause consequential actions for human review, then resume the same session
+  </Card>
+  <Card
+    title="Self-Hosting"
+    icon="server"
+    href="/guides/self-hosting"
+  >
+    Run AgentUse locally, on a server, in CI, or inside Docker
   </Card>
 </CardGroup>
 
 ## Why AgentUse?
 
-### The Problem
+Managed agent platforms provide a runtime but make their hosted environment the operational center. Agent frameworks provide flexible libraries but leave you to assemble the application and operations layer.
 
-AI tools today force you to choose:
-- **Interactive copilots** require your constant attention - great for pair programming, but can't run unattended
-- **Visual workflow tools** give you drag-and-drop simplicity but create version control nightmares and vendor lock-in
-- **SDK-heavy frameworks** offer power but require hundreds of lines of boilerplate just to say "hello world"
-
-### The Solution
-
-AgentUse creates autonomous agents that work without you. Define agents in markdown, run via cron, CI/CD, or serverless, and get results asynchronously.
+AgentUse starts with a plain agent file and supplies the runtime around it: the agent loop, tools, durable sessions, schedules, approvals, HTTP endpoints, and an operations dashboard.
 
 <AccordionGroup>
-  <Accordion title="Runs Unattended">
-    Run via cron jobs, CI/CD pipelines, and serverless functions. No babysitting required.
+  <Accordion title="Agents remain plain files">
+    Instructions are natural-language Markdown and configuration is readable YAML. Diff, review, version, and adapt agents using the tools you already use for source code.
   </Accordion>
-  <Accordion title="Version Control Just Works">
-    Diff, review, and merge agents like any other code. Your agents are text files that integrate seamlessly with Git.
+  <Accordion title="The operational runtime is included">
+    AgentUse manages tool calls, sessions, schedules, failures, approval waits, artifacts, and results without requiring you to build an SDK application.
   </Accordion>
-  <Accordion title="No SDK Required">
-    If you can write plain English, you can build an agent. No new syntax or programming required.
+  <Accordion title="Run on infrastructure you control">
+    Use the same agent file from the command line, a schedule, an HTTP trigger, CI/CD, or Docker. No hosted AgentUse control plane is required.
   </Accordion>
-  <Accordion title="Production Ready">
-    Built-in retries, streaming, error recovery, and MCP support. Sub-second startup times.
+  <Accordion title="Keep people at the consequential boundary">
+    Add `approval: true` when work should pause for review. A reviewer can approve, reject, or comment, and AgentUse resumes the durable session with that decision.
   </Accordion>
 </AccordionGroup>
 
-**Copilots assist you. AgentUse agents work for you.**
+Your agent definitions, runtime, and operational state stay under your control.
 
 ## Key Features
 
 <Steps>
-  <Step title="Autopilot Execution">
-    Run agents via cron jobs, CI/CD pipelines, and serverless functions. Sub-second startup times.
+  <Step title="Define the agent in Markdown">
+    Put model configuration and capabilities in YAML frontmatter, then describe the work in plain language.
   </Step>
-  <Step title="Multi-Provider Support">
-    Works with Anthropic Claude (including OAuth), OpenAI GPT, OpenRouter, OpenCode Go, and Amazon Bedrock with flexible API key management.
+  <Step title="Choose the model">
+    Use Anthropic, OpenAI, OpenRouter, OpenCode Go, Amazon Bedrock, or a compatible local endpoint. Override the model at runtime without rewriting the agent.
   </Step>
-  <Step title="MCP Integration">
-    Connect to any Model Context Protocol server for database, filesystem, and API access.
+  <Step title="Connect tools and context">
+    Use allowlisted filesystem and shell access, built-in runtime tools, reusable skills, subagents, stores, and Model Context Protocol servers.
   </Step>
-  <Step title="Sub-Agent Support">
-    Build complex workflows by composing multiple specialized agents.
+  <Step title="Run and review">
+    Trigger agents from the CLI, schedules, HTTP, CI/CD, or Docker. Inspect durable sessions and review consequential actions from the operations dashboard.
   </Step>
 </Steps>
 
 ## Try It Now
 
-No API keys needed - run this to see AgentUse in action:
+No API key is needed for this hosted example:
 
 ```bash
 npx -y agentuse@latest run https://agentuse.io/hello.agentuse
@@ -94,9 +103,9 @@ npx -y agentuse@latest run https://agentuse.io/hello.agentuse
 
 ## How It Works
 
-AgentUse agents are markdown files with YAML configuration and plain English instructions:
+An AgentUse agent is a Markdown file with YAML configuration and plain-English instructions:
 
-```yaml
+```markdown
 ---
 model: anthropic:claude-haiku-4-5
 ---
@@ -107,19 +116,19 @@ You are a helpful assistant.
 Say hello to the user and ask how you can help them today.
 ```
 
-That's it! Save this as `hello.agentuse` and run:
+Save the file as `hello.agentuse` and run:
 
 ```bash
 npx -y agentuse@latest run hello.agentuse
 ```
 
-The agent name is automatically derived from the filename, keeping configuration minimal.
+The filename becomes the default agent id. The same file can later gain tools, a schedule, approval requirements, skills, subagents, or persistent stores without becoming an application project.
 
 ## What Can You Build?
 
-- **MCP-Powered Tools** - Access databases, filesystems, and APIs through MCP servers
-- **Multi-Agent Systems** - Compose specialized agents for complex workflows
-- **Automation Scripts** - Replace complex bash scripts with intelligent agents
-- **Data Processing** - Transform and analyze data with natural language
-- **Content Generation** - Create content with consistent voice and style
-- **Integration Workflows** - Connect multiple services through MCP protocols
+- **Operational agents** that monitor systems, prepare reports, and surface work that needs attention
+- **Approval-gated agents** that draft, validate, and pause before sending, publishing, deploying, or deleting
+- **Repository and CI agents** that inspect changes, run checks, and produce reviewable artifacts
+- **MCP-powered agents** that work with databases, APIs, browsers, and business systems
+- **Multi-agent systems** that delegate bounded work to specialized child agents
+- **Stateful agents** that preserve structured knowledge and metrics across runs

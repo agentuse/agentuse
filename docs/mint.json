@@ -90,12 +90,12 @@
   },
   "backgroundImage": "/static/background.png",
   "metadata": {
-    "og:title": "AgentUse - Autonomous Agents That Work Without You",
-    "og:description": "Define in markdown. Run on cron, CI/CD, or serverless. No SDK. No flowcharts. Just autonomous AI agents.",
+    "og:title": "AgentUse: Open-source agent runtime",
+    "og:description": "Own the agents doing your company's work. Define them in Markdown and run them on infrastructure you control.",
     "og:image": "/static/agentuse-logo.png",
     "twitter:card": "summary_large_image",
     "twitter:title": "AgentUse Documentation",
-    "twitter:description": "Autonomous agents that work without you. Define in markdown, run on cron, CI/CD, or serverless.",
+    "twitter:description": "Define agents in Markdown, choose your models, and put consequential actions behind human approval.",
     "twitter:image": "/static/agentuse-logo.png"
   },
   "search": {
