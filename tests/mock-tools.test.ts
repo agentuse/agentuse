@@ -244,7 +244,9 @@ describe("wrapToolsWithGatedMock", () => {
     completeTextMock.mockImplementation(async () => "fabricated");
     const wrapped = mod.wrapToolsWithGatedMock({ tools__bash: fakeTool(real) }, GATED);
     const result = await (wrapped.tools__bash as any).execute({ command: "touch /tmp/x" }, {});
-    expect(result).toBe("fabricated");
+    // The fabricated text is tagged so the agent does not read back an effect that never happened.
+    expect(result).toStartWith("fabricated");
+    expect(result).toContain("[mock] This command was NOT executed");
     expect(real).toHaveBeenCalledTimes(0);
     expect(completeTextMock).toHaveBeenCalledTimes(1);
   });
