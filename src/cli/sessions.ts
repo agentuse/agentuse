@@ -669,9 +669,10 @@ export function createSessionsCommand(): Command {
     .option("-s, --subagents", "Include subagent sessions")
     .option("-n, --limit <n>", "Limit number of sessions to show", "10")
     .option("-j, --json", "Output as JSON")
+    .option("--no-mock", "Hide mock/test runs")
     .option("--all", "Show sessions across all projects")
     .option("--project [path]", "Show sessions for a project path; defaults to the current project")
-    .action(async (options: { subagents?: boolean; limit?: string; json?: boolean; all?: boolean; project?: string | boolean }) => runSessionsAction(async () => {
+    .action(async (options: { subagents?: boolean; limit?: string; json?: boolean; mock?: boolean; all?: boolean; project?: string | boolean }) => runSessionsAction(async () => {
       const scope = resolveSessionScope(options);
       await listSessionsCommand(scope, options);
     }));
@@ -750,7 +751,7 @@ export function createSessionsCommand(): Command {
 
 async function listSessionsCommand(
   scope: SessionScope,
-  options?: { subagents?: boolean; limit?: string; json?: boolean }
+  options?: { subagents?: boolean; limit?: string; json?: boolean; mock?: boolean }
 ): Promise<void> {
   let sessions = await sessionsForScope(scope);
 
@@ -762,6 +763,11 @@ async function listSessionsCommand(
   // Filter out subagents unless --subagents is specified
   if (!options?.subagents) {
     sessions = sessions.filter((s) => !s.isSubAgent);
+  }
+
+  // --no-mock hides mock/test runs (they stay listed by default, marked "· mock")
+  if (options?.mock === false) {
+    sessions = sessions.filter((s) => !s.mock);
   }
 
   // Re-order for display now that subagentActive is known: live runs first, then

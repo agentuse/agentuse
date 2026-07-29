@@ -427,6 +427,8 @@ export function fetchSessions(options: {
   limit?: number | undefined;
   cursor?: string | undefined;
   detail?: 'feed' | undefined;
+  /** Mock/test runs are excluded server-side by default; 'include' mixes them in, 'only' shows just them. */
+  mock?: 'include' | 'only' | undefined;
 } = {}): Promise<SessionsPayload> {
   return getJson('/api/sessions', {
     agent: options.agent,
@@ -438,6 +440,7 @@ export function fetchSessions(options: {
     ...(options.limit !== undefined && { limit: String(options.limit) }),
     cursor: options.cursor,
     detail: options.detail,
+    mock: options.mock,
   });
 }
 
@@ -480,6 +483,7 @@ export function sessionsEventUrl(options: {
   window?: string | undefined;
   limit?: number | undefined;
   detail?: 'feed' | undefined;
+  mock?: 'include' | 'only' | undefined;
 } = {}): string {
   const url = new URL('/sessions/events', location.origin);
   if (options.agent !== undefined) url.searchParams.set('agent', options.agent);
@@ -490,5 +494,6 @@ export function sessionsEventUrl(options: {
   if (options.window !== undefined) url.searchParams.set('window', options.window);
   if (options.limit !== undefined) url.searchParams.set('limit', String(options.limit));
   if (options.detail !== undefined) url.searchParams.set('detail', options.detail);
+  if (options.mock !== undefined) url.searchParams.set('mock', options.mock);
   return url.toString();
 }

@@ -1179,6 +1179,26 @@ function sessionMatchesTriageFilter(
   return filter === 'dismissed' ? session.dismissedAt !== undefined : session.dismissedAt === undefined;
 }
 
+type SessionMockFilter = 'exclude' | 'include' | 'only';
+
+function parseSessionMockFilter(value: string | undefined): SessionMockFilter {
+  return value === 'include' || value === 'only' ? value : 'exclude';
+}
+
+/**
+ * Mock/test runs are excluded from every list-backed surface (home aggregates,
+ * agent sparklines, the sessions view) unless explicitly requested, so ops
+ * views reflect only real runs. Session DETAIL routes are unaffected: a mock
+ * session's page stays reachable by id for test-loop inspection.
+ */
+function sessionMatchesMockFilter(
+  session: Pick<SessionSummary, 'mock'>,
+  filter: SessionMockFilter
+): boolean {
+  if (filter === 'include') return true;
+  return filter === 'only' ? session.mock === true : session.mock !== true;
+}
+
 function parseApprovalSessionFilter(value: string | undefined): ApprovalSessionFilter | undefined {
   return value === 'pending' || value === 'completed' || value === 'errored'
     ? value
@@ -3658,6 +3678,7 @@ export function createServeCommand(): Command {
             ? triggerFilterRaw
             : undefined;
         const approvalFilter = parseApprovalSessionFilter(requestUrl.searchParams.get('approval') ?? undefined);
+        const mockFilter = parseSessionMockFilter(requestUrl.searchParams.get('mock') ?? undefined);
         const createdAfter = sessionListCreatedAfter(requestUrl);
         const daysFilter = sessionDaysFilterValue(requestUrl);
 
@@ -3721,6 +3742,7 @@ export function createServeCommand(): Command {
             continue;
           }
           for (const session of result.sessions ?? []) {
+            if (!sessionMatchesMockFilter(session, mockFilter)) continue;
             if (!sessionMatchesStatusFilter(session, statusFilter)) continue;
             if (!sessionMatchesTriageFilter(session, triageFilter)) continue;
             if (triggerFilter && session.trigger !== triggerFilter) continue;
@@ -5201,6 +5223,13 @@ export function createServeCommand(): Command {
               sendJSON(res, 200, { success: true, status: "ignored", reason: `session is ${status}` });
               return;
             }
+            // Mock/test runs never push: a test loop would otherwise buzz the
+            // phone once per iteration. The list refresh above still happened,
+            // so dashboards stay current.
+            if (found.session.mock) {
+              sendJSON(res, 200, { success: true, status: "ignored", reason: "mock session" });
+              return;
+            }
             if (notifiedFinishedSessions.has(sessionId)) {
               sendJSON(res, 200, { success: true, status: "already-notified" });
               return;
@@ -6500,4 +6529,6 @@ export const __testing = {
   SESSION_LIST_SSE_INTERVAL_MS,
   sessionMatchesAgentFilter,
   sessionMatchesStatusFilter,
+  parseSessionMockFilter,
+  sessionMatchesMockFilter,
 };

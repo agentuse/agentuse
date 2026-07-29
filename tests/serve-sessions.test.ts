@@ -205,6 +205,25 @@ describe('session list helpers', () => {
     expect(__testing.sessionMatchesStatusFilter(incomplete, 'error')).toBe(true);
   });
 
+  it('excludes mock sessions by default and honors include/only', () => {
+    const real: { mock?: boolean } = {};
+    const mock = { mock: true };
+
+    // Default (no param / junk param) -> ops views show only real runs.
+    expect(__testing.parseSessionMockFilter(undefined)).toBe('exclude');
+    expect(__testing.parseSessionMockFilter('bogus')).toBe('exclude');
+    expect(__testing.sessionMatchesMockFilter(real, 'exclude')).toBe(true);
+    expect(__testing.sessionMatchesMockFilter(mock, 'exclude')).toBe(false);
+
+    expect(__testing.parseSessionMockFilter('include')).toBe('include');
+    expect(__testing.sessionMatchesMockFilter(real, 'include')).toBe(true);
+    expect(__testing.sessionMatchesMockFilter(mock, 'include')).toBe(true);
+
+    expect(__testing.parseSessionMockFilter('only')).toBe('only');
+    expect(__testing.sessionMatchesMockFilter(real, 'only')).toBe(false);
+    expect(__testing.sessionMatchesMockFilter(mock, 'only')).toBe(true);
+  });
+
   it('keeps the sessions SSE list refresh at the old page polling cadence', () => {
     expect(__testing.SESSION_LIST_SSE_INTERVAL_MS).toBe(10_000);
   });

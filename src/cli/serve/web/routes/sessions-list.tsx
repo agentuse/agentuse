@@ -28,6 +28,13 @@ const TRIAGE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'dismissed', label: 'dismissed' },
 ];
 const TRIGGERS = ['', 'manual', 'scheduled', 'slack', 'api'];
+// Mock/test runs are excluded server-side by default so ops views stay real;
+// this filter opts them back in (or isolates them) for test-loop inspection.
+const MOCK_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'hidden' },
+  { value: 'include', label: 'shown' },
+  { value: 'only', label: 'only mock' },
+];
 const LIVE_SESSION_STATUSES = new Set(['running', 'resuming', 'continuing']);
 
 function sessionRowKey(row: SessionRow): string {
@@ -254,6 +261,8 @@ export default function SessionsList() {
   const triggerFilter = q.trigger || '';
   const agentFilter = q.agent || undefined;
   const approvalFilter = q.approval || undefined;
+  const mockFilter = q.mock === 'include' || q.mock === 'only' ? q.mock : '';
+  const mockParam = mockFilter === '' ? undefined : mockFilter;
   const { view } = useSessionListView();
   const feedDetail = view === 'feed' ? 'feed' as const : undefined;
   // Default to 24h for the general feed, but widen to 30d when an agent or
@@ -274,6 +283,7 @@ export default function SessionsList() {
     statusFilter !== '',
     triageFilter !== '',
     triggerFilter !== '',
+    mockFilter !== '',
     Boolean(agentFilter),
     Boolean(approvalFilter),
   ].filter(Boolean).length;
@@ -288,6 +298,7 @@ export default function SessionsList() {
     ...(statusFilter ? [{ key: 'status', label: 'Status', value: statusFilter }] : []),
     ...(triageFilter ? [{ key: 'triage', label: 'Triage', value: triageFilter }] : []),
     ...(triggerFilter ? [{ key: 'trigger', label: 'Trigger', value: triggerFilter }] : []),
+    ...(mockFilter ? [{ key: 'mock', label: 'Mock runs', value: mockFilter === 'only' ? 'only mock' : 'shown' }] : []),
     ...(agentFilter ? [{ key: 'agent', label: 'Agent', value: agentFilter }] : []),
     ...(approvalFilter ? [{ key: 'approval', label: 'Approval', value: approvalFilter }] : []),
   ];
@@ -311,7 +322,7 @@ export default function SessionsList() {
     return [...byId.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   })();
 
-  const key = `sessions:${win}:${statusFilter}:${triageFilter}:${triggerFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}:${view}`;
+  const key = `sessions:${win}:${statusFilter}:${triageFilter}:${triggerFilter}:${mockFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}:${view}`;
   const [streamData, setStreamData] = useState<SessionsPayload | null>(null);
   const [streamError, setStreamError] = useState<Error | null>(null);
   const [streamFallback, setStreamFallback] = useState(false);
@@ -343,6 +354,7 @@ export default function SessionsList() {
       approval: approvalFilter,
       limit: 50,
       detail: feedDetail,
+      mock: mockParam,
     }),
     streamFallback ? { refreshMs: 10_000 } : {}
   );
@@ -360,6 +372,7 @@ export default function SessionsList() {
     approval: approvalFilter,
     limit: 50,
     detail: feedDetail,
+    mock: mockParam,
     enabled: !streamFallback,
     onData: (payload) => {
       setStreamData(payload);
@@ -397,7 +410,7 @@ export default function SessionsList() {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
     try {
-      const next = await fetchSessions({ window: win, status: statusFilter || undefined, triage: triageFilter || undefined, trigger: triggerFilter || undefined, agent: agentFilter, approval: approvalFilter, limit: 50, cursor: nextCursor, detail: feedDetail });
+      const next = await fetchSessions({ window: win, status: statusFilter || undefined, triage: triageFilter || undefined, trigger: triggerFilter || undefined, agent: agentFilter, approval: approvalFilter, limit: 50, cursor: nextCursor, detail: feedDetail, mock: mockParam });
       setLoadedMore((current) => [...current, ...next.sessions]);
       setPagedCursor({ ...(next.nextCursor && { cursor: next.nextCursor }) });
     } finally {
@@ -431,7 +444,7 @@ export default function SessionsList() {
   const withParam = (key: string, value: string): string => {
     const params = new URLSearchParams();
     const base: Record<string, string | undefined> = {
-      window: q.window, status: statusFilter, triage: triageFilter, trigger: triggerFilter, agent: agentFilter, approval: approvalFilter,
+      window: q.window, status: statusFilter, triage: triageFilter, trigger: triggerFilter, mock: mockFilter, agent: agentFilter, approval: approvalFilter,
     };
     base[key] = value;
     for (const [k, v] of Object.entries(base)) {
@@ -527,6 +540,11 @@ export default function SessionsList() {
             <label class="filter-field filter-field-trigger">trigger
               <select value={triggerFilter} onChange={onSelect('trigger')}>
                 {TRIGGERS.map((t) => <option value={t} key={t || 'any'}>{t || 'any'}</option>)}
+              </select>
+            </label>
+            <label class="filter-field filter-field-mock">mock runs
+              <select value={mockFilter} onChange={onSelect('mock')}>
+                {MOCK_OPTIONS.map((m) => <option value={m.value} key={m.value || 'hidden'}>{m.label}</option>)}
               </select>
             </label>
             <label class="filter-field filter-field-agent">agent

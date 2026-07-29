@@ -73,7 +73,10 @@ approved gate is still denied pre-dispatch with the re-gate redirect.
 3. Inspect: `agentuse sessions show <session-id> --full` (or the serve UI
    `/sessions/<id>`). Judge: did the agent gate the right commands, with the
    exact verbatim commands in `changes[]`? Did the flow complete? Is the final
-   output right?
+   output right? Note: mock runs are hidden from the serve dashboards and
+   sessions list by default (and never push-notify); use the sessions view's
+   "mock runs" filter (`?mock=include|only`) or the direct `/sessions/<id>`
+   link. The CLI lists them by default, marked `· mock`.
 4. Audit what would have executed: the session's `effect-wal.jsonl`. A
    fabricated gated command shows `mock-gate-decision` + `lease-approved` but
    NO `bash-spawn`; that absence proves it never ran.

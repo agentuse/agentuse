@@ -162,6 +162,7 @@ agentuse test my-agent.agentuse --scope all              # fabricate everything
 **Gated scope is the closed-loop testing mode**: only the bash commands matching the agent's [`tools.bash.gated`](/guides/approval-gates) patterns (the irreversible subset the author already fenced off) are fabricated, and the gates guarding them auto-approve. Every other tool (reads, non-gated bash, MCP, skills) runs **for real**, so the agent grounds itself in real project state. The run completes end-to-end, unattended, with zero irreversible side effects, and the session log shows the full gate flow (the `await_human` call with its `changes[]`, the deterministic approval, the fabricated command result) for review.
 
 - **Stores are isolated under mock**: reads are seeded by copying the real store, writes land in `<projectRoot>/.agentuse/store-mock/<run-id>/` (kept for inspection), and the real store, including the reserved `metrics` store behind dashboards, is never touched.
+- **Test runs stay out of the ops views**: mock sessions are excluded from the serve home dashboard (latest results, failure triage), agent health/sparklines, and the sessions list by default, and they never fire push notifications. Flip the sessions view's "mock runs" filter to `shown`/`only mock` (API: `?mock=include|only`) to see them; a mock session's detail page is always reachable by id.
 - In the effect WAL, a fabricated gated command has a `lease-approved` entry but **no** `bash-spawn` entry; that absence is the audit signal it never executed.
 - An agent with no `tools.bash.gated` patterns under gated scope gets a warning: nothing is mocked, everything runs real (with gates auto-resolved).
 
@@ -314,6 +315,7 @@ List options:
 -s, --subagents          Include subagent sessions
 -n, --limit <n>          Limit number of sessions to show
 -j, --json               Output as JSON
+--no-mock                Hide mock/test runs (listed by default, marked "· mock")
 --all                    Show sessions across all projects
 --project [path]         Show sessions for a project path; defaults to current project
 ```
