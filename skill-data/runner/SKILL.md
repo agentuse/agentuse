@@ -27,18 +27,24 @@ agentuse serve agents                # agents the daemon actually loaded (live)
 agentuse serve schedules             # schedules the daemon actually loaded (live)
 
 agentuse skills installed            # only when inspecting project/user skills
+
+agentuse run <file> --mock --mock-model <m>        # fabricate ALL tool results
+agentuse run <file> --mock-gated --mock-model <m>  # fabricate only gated bash
+agentuse run <file> --mock-gated --mock-approval reject   # force a gate branch
 ```
+
+For testing workflow and mock-mode selection, load the `tester` builtin skill.
 
 `serve agents` / `serve schedules` report live loaded data, not the cached
 `serve ps` counts.
 
 ## Serve Web UI
 
-- `/agents`, `/schedules` — what the daemon loaded.
-- `/sessions` — every run; filter with `?agent=` / `?trigger=`.
-- `/sessions/<id>` — run log, and the approve/reject/continue surface when a
+- `/agents`, `/schedules`, what the daemon loaded.
+- `/sessions`, every run; filter with `?agent=` / `?trigger=`.
+- `/sessions/<id>`, run log, and the approve/reject/continue surface when a
   run is suspended on an approval gate.
-- `/approvals` — sessions awaiting review.
+- `/approvals`, sessions awaiting review.
 
 ## Scheduled Agents
 

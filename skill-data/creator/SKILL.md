@@ -117,6 +117,9 @@ high: latency and cost with no lift. Start moderate, tune on observed output.
   only place custom keys survive parsing; `agentuse agents` shows them as chips
   and `--json` exposes them under `.metadata` for filtering. Metadata is an
   annotation, not runtime input (it is not injected into the prompt).
+- Validated before real use: `agentuse doctor <file>`, then a mock run
+  (`--mock-gated` for agents with `tools.bash.gated`, `--mock` otherwise) and a
+  session-log review. Load the `tester` builtin skill for the workflow.
 
 ## Goals for Judgment Agents, Procedures for Compliance Agents
 

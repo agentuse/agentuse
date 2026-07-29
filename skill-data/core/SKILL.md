@@ -24,8 +24,11 @@ agentuse skills installed [list|get|path] <name>   # project/user skills
 
 ## Load A Specialized Builtin Skill
 
-- `agentuse skills get runner` — running, listing, sessions, serve, schedules.
-- `agentuse skills get creator` — authoring, improving, reviewing `.agentuse`.
+- `agentuse skills get runner`, running, listing, sessions, serve, schedules.
+- `agentuse skills get creator`, authoring, improving, reviewing `.agentuse`.
+- `agentuse skills get tester`, validating agents with mock runs (no real
+  side effects), unattended approval-gate testing, the closed edit-run-inspect
+  loop.
 
 ## Entrypoints
 
