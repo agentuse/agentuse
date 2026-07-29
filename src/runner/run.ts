@@ -7,6 +7,7 @@ import { AuthenticationError } from '../models';
 import { logger, runWithLogSink } from '../utils/logger';
 import { toErrorMessage } from '../utils/error-message';
 import { extractLearnings } from '../learning/index.js';
+import { isMockMode } from './mock-tools';
 import { recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, gatherApprovalContext, type SessionLogSink } from './session-helper';
 import { usageToAssistantTokens, addAssistantTokens, type AssistantTokens } from '../session/usage';
 import {
@@ -667,7 +668,13 @@ export async function runPostLifecycle(options: {
     }
   }
 
-  if (agent.config.learning?.capture && agentFilePath) {
+  if (agent.config.learning?.capture && agentFilePath && isMockMode()) {
+    // A mock run's tool results are fabricated by the mock model, so anything
+    // learned from it is learned from fiction (and lands in the agent's REAL
+    // learnings file, since only stores are isolated). Skip the pass entirely.
+    // `gated` scope is skipped too: partial fabrication still poisons the well.
+    logger.info('[Learning] Skipped: mock run (fabricated tool results are not real experience).');
+  } else if (agent.config.learning?.capture && agentFilePath) {
     try {
       // Single learning pass over the whole run: execution traces AND any
       // reviewer comments left at approval gates. The reviews are read from the
