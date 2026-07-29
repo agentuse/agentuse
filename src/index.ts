@@ -195,7 +195,8 @@ program
   .option('--mock', 'Mock all tool outputs with the LLM instead of executing them (for testing; no real side effects). Requires --mock-model.')
   .option('--mock-model <model>', 'Model that generates mock tool outputs (required with --mock; pick a cheap, reachable model)')
   .option('--mock-approval [decision]', 'Resolve the await_human approval gate deterministically instead of suspending (for fully-unattended mock runs): approve (default), reject, or comment:<text>. An approve grants the gated-command lease exactly like a real approval.')
-  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string, sessionId?: string, json?: boolean, mock?: boolean, mockModel?: string, mockApproval?: boolean | string }) => {
+  .option('--mock-gated', 'Mock ONLY bash commands matching tools.bash.gated; every other tool runs for real. Implies --mock-approval approve (override with an explicit --mock-approval). Requires --mock-model.')
+  .action(async (file: string, promptArgs: string[], options: { quiet: boolean, debug: boolean, tty?: boolean, noTty?: boolean, compact: boolean, timeout: string, directory?: string, envFile?: string, model?: string, sessionId?: string, json?: boolean, mock?: boolean, mockModel?: string, mockApproval?: boolean | string, mockGated?: boolean }) => {
     const startTime = Date.now();
     let originalCwd: string | undefined;
 
@@ -270,23 +271,37 @@ program
       // opaque 429s this mode avoids. Force an explicit, reachable choice — the
       // --mock-model flag (which wins) or AGENTUSE_MOCK_MODEL from the shell,
       // ~/.agentuse/.env, or the config.json `env` block (resolved just above).
-      if (options.mockModel) process.env.AGENTUSE_MOCK_MODEL = options.mockModel;
-      if (options.mock && !process.env.AGENTUSE_MOCK_MODEL) {
+      if (options.mock && options.mockGated) {
         throw new Error(
-          '--mock requires a mock model. Pass --mock-model <model>, or set AGENTUSE_MOCK_MODEL ' +
+          '--mock and --mock-gated are mutually exclusive: --mock mocks every tool result, ' +
+            '--mock-gated mocks only tools.bash.gated commands and runs everything else for real.',
+        );
+      }
+      if (options.mockModel) process.env.AGENTUSE_MOCK_MODEL = options.mockModel;
+      if ((options.mock || options.mockGated) && !process.env.AGENTUSE_MOCK_MODEL) {
+        throw new Error(
+          `--${options.mockGated ? 'mock-gated' : 'mock'} requires a mock model. Pass --mock-model <model>, or set AGENTUSE_MOCK_MODEL ` +
             '(in the shell, ~/.agentuse/.env, or the `env` block of ~/.agentuse/config.json). ' +
-            'Mock generates every tool result via that model, so use the lowest-end model you can ' +
+            'Mock generates fabricated tool results via that model, so use the lowest-end model you can ' +
             'reach (e.g. anthropic:claude-haiku-4-5 or openai:gpt-5.4-nano).',
         );
       }
-      if (options.mock) process.env.AGENTUSE_MOCK_MODE = '1';
+      if (options.mock || options.mockGated) process.env.AGENTUSE_MOCK_MODE = '1';
+      if (options.mockGated) {
+        process.env.AGENTUSE_MOCK_SCOPE = 'gated';
+        // Gated scope exists for unattended closed-loop runs, so default the
+        // gate decision to approve; an explicit --mock-approval (or env) wins.
+        if (!options.mockApproval && !process.env.AGENTUSE_MOCK_APPROVAL) {
+          process.env.AGENTUSE_MOCK_APPROVAL = 'approve';
+        }
+      }
       if (options.mockApproval) {
         if (!isMockMode()) {
-          throw new Error('--mock-approval only applies to mock runs. Pass --mock (or set AGENTUSE_MOCK_MODE).');
+          throw new Error('--mock-approval only applies to mock runs. Pass --mock or --mock-gated (or set AGENTUSE_MOCK_MODE).');
         }
         process.env.AGENTUSE_MOCK_APPROVAL = options.mockApproval === true ? 'approve' : options.mockApproval;
-        resolveMockApprovalDecision(); // fail fast on an invalid decision value
       }
+      if (isMockMode()) resolveMockApprovalDecision(); // fail fast on an invalid decision value, whatever its source
 
       // Initialize telemetry
       await telemetry.init(packageVersion);
@@ -304,8 +319,12 @@ program
         }
       }
 
-      if (options.mock && !effectiveQuiet) {
-        logger.warn('⚠ Mock mode: tool outputs are LLM-generated; no real tools will run.');
+      if ((options.mock || options.mockGated) && !effectiveQuiet) {
+        if (options.mockGated) {
+          logger.warn('⚠ Mock mode (gated scope): only tools.bash.gated commands are mocked; EVERY other tool runs for real.');
+        } else {
+          logger.warn('⚠ Mock mode: tool outputs are LLM-generated; no real tools will run.');
+        }
         logger.warn(`  Mock model: ${process.env.AGENTUSE_MOCK_MODEL}`);
         const mockDecision = resolveMockApprovalDecision();
         if (mockDecision) {

@@ -24,13 +24,20 @@ mock.module('../src/models', () => ({
   createModel: async () => currentModel,
 }));
 
+// The gated-scope mock fabricates gated-command output via completeText; stub
+// it so these tests never hit a real model.
+const completeTextMock = mock(async () => 'fabricated-gated-output');
+mock.module('../src/complete-text', () => ({
+  completeText: completeTextMock,
+}));
+
 import { initStorage } from '../src/storage';
 import { SessionManager } from '../src/session';
 import { executeAgentCore } from '../src/runner/execution';
 import { EffectWAL, EFFECT_WAL_FILENAME } from '../src/runner/effect-wal';
 import { LeaseStore, LEASE_FILENAME } from '../src/runner/approval-lease';
 import { createAwaitHumanTool } from '../src/tools/await-human';
-import { maybeMockAwaitHuman } from '../src/runner/mock-tools';
+import { maybeMockAwaitHuman, wrapToolsWithGatedMock } from '../src/runner/mock-tools';
 import { createBashTool } from '../src/tools/bash';
 import type { AgentChunk } from '../src/runner/types';
 
@@ -411,6 +418,50 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
       expect(records.some((r) => r.event === 'lease-denied' && r.callId === 'bash-1')).toBe(true);
       // ...and the re-gate hit the terminal seal, exactly like a human reject.
       expect(records.some((r) => r.event === 'gate-sealed-denied' && r.callId === 'gate-2')).toBe(true);
+    });
+
+    test('gated scope (--mock-gated): gated command is fabricated, non-gated bash runs for real', async () => {
+      process.env.AGENTUSE_MOCK_SCOPE = 'gated';
+      completeTextMock.mockClear();
+      const marker = path.join(projectRoot, 'gated-scope-marker.txt');
+      const command = `touch ${marker}`;
+      const { model, calls } = makeModel([
+        turn([toolCallPart('gate-1', 'await_human', { prompt: 'Run it?', changes: [{ content: command }] })]),
+        turn([toolCallPart('bash-1', 'tools__bash', { command })]),
+        turn([toolCallPart('bash-2', 'tools__bash', { command: 'echo real-hello' })]),
+        turn([
+          { type: 'text-start', id: 't1' },
+          { type: 'text-delta', id: 't1', delta: 'done' },
+          { type: 'text-end', id: 't1' },
+        ], 'stop'),
+      ]);
+      currentModel = model;
+
+      try {
+        const chunks = await runCore(wrapToolsWithGatedMock(makeTools(), ['touch *', 'birdc reply *']));
+
+        expect(chunks.some((c) => c.type === 'suspended')).toBe(false);
+        expect(calls()).toBe(4);
+
+        // The gated command was lease-approved but FABRICATED: no file, no spawn.
+        expect(fs.existsSync(marker)).toBe(false);
+        expect(completeTextMock).toHaveBeenCalledTimes(1);
+        const gatedResult = chunks.find((c) => c.type === 'tool-result' && (c as any).toolCallId === 'bash-1');
+        expect(String((gatedResult as any).toolResult)).toContain('fabricated-gated-output');
+
+        // The non-gated command really executed.
+        const realResult = chunks.find((c) => c.type === 'tool-result' && (c as any).toolCallId === 'bash-2');
+        expect(String((realResult as any).toolResult)).toContain('real-hello');
+
+        const records = readWAL();
+        expect(records.some((r) => r.event === 'mock-gate-decision' && r.status === 'approved')).toBe(true);
+        expect(records.some((r) => r.event === 'lease-approved' && r.callId === 'bash-1')).toBe(true);
+        // bash-spawn only for the real command: the fabricated one never spawned.
+        expect(records.some((r) => r.event === 'bash-spawn' && String(r.command ?? '').includes('real-hello'))).toBe(true);
+        expect(records.some((r) => r.event === 'bash-spawn' && String(r.command ?? '').includes('gated-scope-marker'))).toBe(false);
+      } finally {
+        delete process.env.AGENTUSE_MOCK_SCOPE;
+      }
     });
   });
 });

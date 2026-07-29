@@ -29,12 +29,14 @@ beforeEach(() => {
   // Tests that exercise the missing-model guard delete it explicitly.
   process.env.AGENTUSE_MOCK_MODEL = "anthropic:mock";
   delete process.env.AGENTUSE_MOCK_APPROVAL;
+  delete process.env.AGENTUSE_MOCK_SCOPE;
 });
 
 afterEach(() => {
   delete process.env.AGENTUSE_MOCK_MODE;
   delete process.env.AGENTUSE_MOCK_MODEL;
   delete process.env.AGENTUSE_MOCK_APPROVAL;
+  delete process.env.AGENTUSE_MOCK_SCOPE;
 });
 
 describe("isMockMode", () => {
@@ -187,6 +189,60 @@ describe("mockGateDecisionResult", () => {
     expect(mod.mockGateDecisionResult({})).toEqual({ status: "rejected" });
     process.env.AGENTUSE_MOCK_APPROVAL = "comment:needs work";
     expect(mod.mockGateDecisionResult({})).toEqual({ status: "commented", comment: "needs work" });
+  });
+});
+
+describe("mockScope", () => {
+  it("defaults to all and honors AGENTUSE_MOCK_SCOPE=gated", () => {
+    expect(mod.mockScope()).toBe("all");
+    process.env.AGENTUSE_MOCK_SCOPE = "gated";
+    expect(mod.mockScope()).toBe("gated");
+    process.env.AGENTUSE_MOCK_SCOPE = "bogus";
+    expect(mod.mockScope()).toBe("all");
+  });
+});
+
+describe("wrapToolsWithGatedMock", () => {
+  const GATED = ["touch *", "birdc reply *"];
+
+  it("mocks a bash command matching a gated pattern and never runs the real execute", async () => {
+    const real = mock(() => {
+      throw new Error("gated command must not execute for real");
+    });
+    completeTextMock.mockImplementation(async () => "fabricated");
+    const wrapped = mod.wrapToolsWithGatedMock({ tools__bash: fakeTool(real) }, GATED);
+    const result = await (wrapped.tools__bash as any).execute({ command: "touch /tmp/x" }, {});
+    expect(result).toBe("fabricated");
+    expect(real).toHaveBeenCalledTimes(0);
+    expect(completeTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs non-gated bash commands for real with no LLM call", async () => {
+    const real = mock(() => "real-output");
+    const wrapped = mod.wrapToolsWithGatedMock({ tools__bash: fakeTool(real) }, GATED);
+    const result = await (wrapped.tools__bash as any).execute({ command: "echo hello" }, {});
+    expect(result).toBe("real-output");
+    expect(completeTextMock).toHaveBeenCalledTimes(0);
+  });
+
+  it("leaves every non-bash tool untouched (identity)", () => {
+    const fsRead = fakeTool(() => "real");
+    const wrapped = mod.wrapToolsWithGatedMock({ tools__filesystem_read: fsRead }, GATED);
+    expect(wrapped.tools__filesystem_read).toBe(fsRead);
+  });
+
+  it("leaves bash untouched when no gated patterns are declared", () => {
+    const bash = fakeTool(() => "real");
+    const wrapped = mod.wrapToolsWithGatedMock({ tools__bash: bash }, []);
+    expect(wrapped.tools__bash).toBe(bash);
+  });
+
+  it("resolves await_human deterministically when a decision is configured, else leaves it real", async () => {
+    const gate = fakeTool(() => "real-gate");
+    expect(mod.wrapToolsWithGatedMock({ await_human: gate }, GATED).await_human).toBe(gate);
+    process.env.AGENTUSE_MOCK_APPROVAL = "approve";
+    const wrapped = mod.wrapToolsWithGatedMock({ await_human: gate }, GATED);
+    expect(await (wrapped.await_human as any).execute({ prompt: "ok?" })).toEqual({ status: "approved" });
   });
 });
 

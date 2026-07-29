@@ -21,7 +21,7 @@ import { logger } from '../utils/logger';
 import type { ParsedAgent } from '../parser';
 import { approvalToolDefaults, isApprovalEnabled } from './approval';
 import { ToolConfigError, type EffectAuditSink, type LiveToolOutputSink, type ToolOutputArtifactSink } from '../tools/types.js';
-import { isMockMode, wrapToolsWithLLMMock } from './mock-tools';
+import { isMockMode, mockScope, wrapToolsWithLLMMock, wrapToolsWithGatedMock } from './mock-tools';
 import { withIntentParam } from './tool-intent';
 
 /**
@@ -277,8 +277,24 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   // the agent runs end-to-end without real side effects. Sub-agent tools are
   // merged outside this point (see preparation.ts), so they stay real while each
   // sub-agent's own leaf tools get mocked via its own loadAgentTools call.
+  // Gated scope (--mock-gated) instead mocks only this agent's declared
+  // `tools.bash.gated` commands (plus the gate itself); everything else is real.
   const mergedTools: Record<string, Tool> = Object.assign({}, ...toolSources);
-  const withMocks = isMockMode() ? wrapToolsWithLLMMock(mergedTools) : mergedTools;
+  let withMocks = mergedTools;
+  if (isMockMode()) {
+    if (mockScope() === 'gated') {
+      const gatedPatterns = agent.config.tools?.bash?.gated ?? [];
+      if (gatedPatterns.length === 0) {
+        logger.warn(
+          `${logPrefix}--mock-gated: agent declares no tools.bash.gated patterns, so NOTHING is mocked — ` +
+            'all tools run for real (with approval gates auto-resolved).'
+        );
+      }
+      withMocks = wrapToolsWithGatedMock(mergedTools, gatedPatterns);
+    } else {
+      withMocks = wrapToolsWithLLMMock(mergedTools);
+    }
+  }
   // Intent injection wraps LAST so its strip-execute sees exactly the args the
   // model sent, even when mock mode replaced the real execute underneath. This
   // runs before the tools snapshot in preparation.ts, so suspended sessions

@@ -1,5 +1,6 @@
 import type { Tool } from 'ai';
 import { completeText } from '../complete-text';
+import { isEffectful } from './approval-lease';
 import { logger } from '../utils/logger';
 
 /**
@@ -20,9 +21,21 @@ function envFlag(value: string | undefined): boolean {
   return value === '1' || value === 'true';
 }
 
-/** Whether `--mock` / `AGENTUSE_MOCK_MODE` is active. */
+/** Whether `--mock` / `--mock-gated` / `AGENTUSE_MOCK_MODE` is active. */
 export function isMockMode(): boolean {
   return envFlag(process.env.AGENTUSE_MOCK_MODE);
+}
+
+/**
+ * What mock mode covers. `all` (default, `--mock`) mocks every tool's execute.
+ * `gated` (`--mock-gated`, env `AGENTUSE_MOCK_SCOPE=gated`) mocks ONLY bash
+ * commands matching the agent's human-authored `tools.bash.gated` patterns —
+ * the effectful/irreversible subset the author already fenced off — plus the
+ * approval gate; every other tool runs for real, so the run grounds itself in
+ * real project state instead of inventing it.
+ */
+export function mockScope(): 'all' | 'gated' {
+  return process.env.AGENTUSE_MOCK_SCOPE === 'gated' ? 'gated' : 'all';
 }
 
 /**
@@ -193,6 +206,22 @@ function parseMockResult(text: string): unknown {
   }
 }
 
+/** Build the LLM-backed mock execute for one tool. */
+function llmMockExecute(name: string, tool: Tool, mockModel: string) {
+  const description = typeof (tool as any).description === 'string' ? (tool as any).description : '';
+  return async (...args: unknown[]) => {
+    const input = args[0];
+    const execOptions = args[1] as { abortSignal?: AbortSignal } | undefined;
+    const text = await completeText(mockModel, {
+      instructions: MOCK_SYSTEM_PROMPT,
+      prompt: buildMockPrompt(name, description, input),
+      ...(execOptions?.abortSignal && { abortSignal: execOptions.abortSignal }),
+    });
+    logger.debug(`[Mock] ${name} -> LLM-generated result`);
+    return parseMockResult(text);
+  };
+}
+
 /**
  * Replace every tool's `execute` with an LLM-backed mock. Returns a new tool map
  * (no mutation, mirroring `limitModelFacingToolOutputs`). Tools without an
@@ -219,25 +248,59 @@ export function wrapToolsWithLLMMock(
         return [name, withMockedGateExecute(tool)];
       }
 
-      const description = typeof (tool as any).description === 'string' ? (tool as any).description : '';
+      return [name, { ...tool, execute: llmMockExecute(name, tool, mockModel) }];
+    }),
+  ) as Record<string, Tool>;
+}
 
-      return [
-        name,
-        {
-          ...tool,
-          execute: async (...args: unknown[]) => {
-            const input = args[0];
-            const execOptions = args[1] as { abortSignal?: AbortSignal } | undefined;
-            const text = await completeText(mockModel, {
-              instructions: MOCK_SYSTEM_PROMPT,
-              prompt: buildMockPrompt(name, description, input),
-              ...(execOptions?.abortSignal && { abortSignal: execOptions.abortSignal }),
-            });
-            logger.debug(`[Mock] ${name} -> LLM-generated result`);
-            return parseMockResult(text);
+/**
+ * Gated-scope mock (`--mock-gated`): mock ONLY bash commands matching the
+ * agent's `tools.bash.gated` patterns; every other tool — including non-gated
+ * bash — keeps its real execute. The approval gate resolves deterministically
+ * (the CLI defaults the decision to approve for this scope), so gated flows
+ * complete unattended while the rest of the run works against real state.
+ *
+ * Fidelity note: the toolApproval barrier still governs dispatch. A gated
+ * command issued WITHOUT an approved gate is denied pre-dispatch with the
+ * re-gate redirect, exactly as in production — this wrapper only decides what
+ * happens after a covered command is allowed through: fabricate its result
+ * instead of executing it.
+ */
+export function wrapToolsWithGatedMock(
+  tools: Record<string, Tool>,
+  gatedPatterns: string[],
+): Record<string, Tool> {
+  const mockModel = resolveMockModel();
+
+  return Object.fromEntries(
+    Object.entries(tools).map(([name, tool]) => {
+      const originalExecute = (tool as any).execute;
+      if (typeof originalExecute !== 'function') return [name, tool];
+
+      if (name === 'await_human' && resolveMockApprovalDecision()) {
+        return [name, withMockedGateExecute(tool)];
+      }
+
+      if (name === 'tools__bash' && gatedPatterns.length > 0) {
+        const mocked = llmMockExecute(name, tool, mockModel);
+        return [
+          name,
+          {
+            ...tool,
+            execute: async (...args: unknown[]) => {
+              const input = args[0] as { command?: unknown } | undefined;
+              const command = typeof input?.command === 'string' ? input.command : '';
+              if (command && isEffectful(command, gatedPatterns)) {
+                logger.debug(`[Mock] gated bash command mocked (not executed): ${command}`);
+                return mocked(...args);
+              }
+              return (originalExecute as (...a: unknown[]) => unknown)(...args);
+            },
           },
-        },
-      ];
+        ];
+      }
+
+      return [name, tool];
     }),
   ) as Record<string, Tool>;
 }
