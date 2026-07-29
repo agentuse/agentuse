@@ -91,24 +91,85 @@ export function resolveMockApprovalDecision(): MockApprovalDecision | undefined 
   );
 }
 
+export type MockGateDecisionResult = {
+  status: 'approved' | 'rejected' | 'commented';
+  comment?: string;
+  choice?: string;
+};
+
+/**
+ * Decisions already handed out this process, keyed by tool call id. Every gate
+ * is resolved TWICE (the execution loop's toolApproval barrier applies the
+ * durable effects, then the mocked tool execute returns the payload), so the
+ * result must be memoized: without it the two halves of one gate could disagree
+ * and the gate sequence would advance twice per gate. Only the barrier knows
+ * the run, so this map is flat (call ids are unique) and bounded.
+ */
+const gateDecisionsByCallId = new Map<string, MockGateDecisionResult>();
+const MAX_MEMOIZED_GATES = 512;
+
+/**
+ * How many gates each run has resolved. Keyed by run so a long-lived process
+ * (a serve worker) cannot carry one run's gate sequence into the next.
+ */
+const gateCountByRun = new Map<string, number>();
+
+/** Test-only: forget the gate sequence so each case starts at gate 1. */
+export function __resetMockGateDecisions(): void {
+  gateDecisionsByCallId.clear();
+  gateCountByRun.clear();
+}
+
 /**
  * The decision payload a mocked `await_human` returns, shaped exactly like a
  * real reviewer decision (`{status, comment?, choice?}`) so the model branches
  * the same way it would in production. Approve on a pick gate carries `choice`
  * (the recommended option, else the first): serve enforces approve⇒choice on
  * gates with options, so the mock must too.
+ *
+ * `comment` applies to the FIRST gate only; later gates in the same run
+ * approve. A reviewer comment means "revise and come back", so an agent that
+ * obeys re-gates with the revision. Repeating the same comment forever would
+ * hang that loop until the agent gave up (observed: four identical re-gates,
+ * then `report_incomplete`), testing nothing but the agent's patience. One
+ * comment then approve exercises the revise branch AND lets the run finish.
  */
-export function mockGateDecisionResult(input: unknown): {
-  status: 'approved' | 'rejected' | 'commented';
-  comment?: string;
-  choice?: string;
-} {
+export function mockGateDecisionResult(
+  input: unknown,
+  gate?: { callId?: string; runKey?: string },
+): MockGateDecisionResult {
   const decision = resolveMockApprovalDecision();
   if (!decision) {
     throw new Error('mockGateDecisionResult requires AGENTUSE_MOCK_APPROVAL to be set');
   }
+  const callId = gate?.callId;
+  if (callId) {
+    const decided = gateDecisionsByCallId.get(callId);
+    if (decided) return decided;
+  }
+  const runKey = gate?.runKey ?? 'default';
+  const gateIndex = gateCountByRun.get(runKey) ?? 0;
+  const result = computeGateDecision(decision, input, gateIndex);
+  if (callId) {
+    gateCountByRun.set(runKey, gateIndex + 1);
+    gateDecisionsByCallId.set(callId, result);
+    if (gateDecisionsByCallId.size > MAX_MEMOIZED_GATES) {
+      const oldest = gateDecisionsByCallId.keys().next();
+      if (!oldest.done) gateDecisionsByCallId.delete(oldest.value);
+    }
+  }
+  return result;
+}
+
+function computeGateDecision(
+  decision: MockApprovalDecision,
+  input: unknown,
+  gateIndex: number,
+): MockGateDecisionResult {
   if (decision.kind === 'reject') return { status: 'rejected' };
-  if (decision.kind === 'comment') return { status: 'commented', comment: decision.comment };
+  if (decision.kind === 'comment' && gateIndex === 0) {
+    return { status: 'commented', comment: decision.comment };
+  }
   const options = input && typeof input === 'object'
     ? (input as { options?: Array<{ id?: unknown; recommended?: unknown }> }).options
     : undefined;
@@ -138,8 +199,8 @@ export function maybeMockAwaitHuman(tool: Tool): Tool {
 function withMockedGateExecute(tool: Tool): Tool {
   return {
     ...tool,
-    execute: async (input: unknown) => {
-      const result = mockGateDecisionResult(input);
+    execute: async (input: unknown, options?: { toolCallId?: string }) => {
+      const result = mockGateDecisionResult(input, { ...(options?.toolCallId && { callId: options.toolCallId }) });
       logger.debug(`[Mock] await_human -> deterministic ${result.status} (--mock-approval)`);
       return result;
     },

@@ -30,6 +30,7 @@ beforeEach(() => {
   process.env.AGENTUSE_MOCK_MODEL = "anthropic:mock";
   delete process.env.AGENTUSE_MOCK_APPROVAL;
   delete process.env.AGENTUSE_MOCK_SCOPE;
+  mod.__resetMockGateDecisions();
 });
 
 afterEach(() => {
@@ -189,6 +190,37 @@ describe("mockGateDecisionResult", () => {
     expect(mod.mockGateDecisionResult({})).toEqual({ status: "rejected" });
     process.env.AGENTUSE_MOCK_APPROVAL = "comment:needs work";
     expect(mod.mockGateDecisionResult({})).toEqual({ status: "commented", comment: "needs work" });
+  });
+
+  it("comments the first gate then approves the re-gate", () => {
+    process.env.AGENTUSE_MOCK_APPROVAL = "comment:tighten it";
+    expect(mod.mockGateDecisionResult({}, { callId: "call-1" }))
+      .toEqual({ status: "commented", comment: "tighten it" });
+    // An obedient agent revises and re-gates; repeating the comment would loop
+    // it until it gave up, so the second gate approves.
+    expect(mod.mockGateDecisionResult({}, { callId: "call-2" })).toEqual({ status: "approved" });
+    expect(mod.mockGateDecisionResult({}, { callId: "call-3" })).toEqual({ status: "approved" });
+  });
+
+  it("memoizes per call id so one gate resolved twice does not advance the sequence", () => {
+    process.env.AGENTUSE_MOCK_APPROVAL = "comment:tighten it";
+    // Every gate is resolved twice: the toolApproval barrier applies the
+    // durable effects, then the mocked execute returns the payload.
+    const barrier = mod.mockGateDecisionResult({}, { callId: "call-1" });
+    const execute = mod.mockGateDecisionResult({}, { callId: "call-1" });
+    expect(execute).toEqual(barrier);
+    expect(execute).toEqual({ status: "commented", comment: "tighten it" });
+    expect(mod.mockGateDecisionResult({}, { callId: "call-2" })).toEqual({ status: "approved" });
+  });
+
+  it("keeps approve and reject stable across gates", () => {
+    process.env.AGENTUSE_MOCK_APPROVAL = "reject";
+    expect(mod.mockGateDecisionResult({}, { callId: "r1" })).toEqual({ status: "rejected" });
+    expect(mod.mockGateDecisionResult({}, { callId: "r2" })).toEqual({ status: "rejected" });
+    mod.__resetMockGateDecisions();
+    process.env.AGENTUSE_MOCK_APPROVAL = "approve";
+    expect(mod.mockGateDecisionResult({}, { callId: "a1" })).toEqual({ status: "approved" });
+    expect(mod.mockGateDecisionResult({}, { callId: "a2" })).toEqual({ status: "approved" });
   });
 });
 

@@ -60,6 +60,8 @@ agentuse test a.agentuse --approval reject    # terminal reject branch (gate
                                               # seals); tests the cleanup path
 agentuse test a.agentuse --approval comment:"tighten the summary"   # forces
                                               # the revise-and-re-gate branch
+                                              # on gate 1, then approves the
+                                              # re-gate so the run finishes
 ```
 
 Gate enforcement stays production-faithful: a gated command issued WITHOUT an

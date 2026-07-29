@@ -194,7 +194,7 @@ program
   .option('--json', 'Output result as JSON (implies --quiet --no-tty)')
   .option('--mock', 'Mock all tool outputs with the LLM instead of executing them (for testing; no real side effects). Requires --mock-model.')
   .option('--mock-model <model>', 'Model that generates mock tool outputs (required with --mock; pick a cheap, reachable model)')
-  .option('--mock-approval [decision]', 'Resolve the await_human approval gate deterministically instead of suspending (for fully-unattended mock runs): approve (default), reject, or comment:<text>. An approve grants the gated-command lease exactly like a real approval.')
+  .option('--mock-approval [decision]', 'Resolve the await_human approval gate deterministically instead of suspending (for fully-unattended mock runs): approve (default), reject, or comment:<text> (commented on the first gate, approved after). An approve grants the gated-command lease exactly like a real approval.')
   .action((file: string, promptArgs: string[], options: RunCommandOptions) => runCommandAction(file, promptArgs, options));
 
 // `agentuse test`: sugar over the run pipeline for mock/test runs. Maps to the
@@ -204,7 +204,7 @@ program
   .command('test <file> [prompt...]')
   .description('Test an agent in mock mode: side effects fabricated, approval gates auto-resolved, stores isolated. Scope defaults to "gated" when the agent declares tools.bash.gated, else "all".')
   .option('--scope <scope>', 'What to mock: "gated" (only tools.bash.gated commands; everything else real) or "all" (every tool result). Default: adaptive.')
-  .option('--approval <decision>', 'Gate decision: approve (default), reject, or comment:<text>')
+  .option('--approval <decision>', 'Gate decision: approve (default), reject, or comment:<text> (comments the first gate, approves the re-gate)')
   .option('--mock-model <model>', 'Model that fabricates mock results (or set AGENTUSE_MOCK_MODEL once, e.g. in ~/.agentuse/.env)')
   .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
   .option('-d, --debug', 'Enable debug mode with detailed logging and full error messages')
@@ -379,7 +379,10 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         logger.warn(`  Mock model: ${process.env.AGENTUSE_MOCK_MODEL}`);
         const mockDecision = resolveMockApprovalDecision();
         if (mockDecision) {
-          logger.warn(`  Approval gate (await_human): auto-resolved as "${mockDecision.kind}" (deterministic, no reviewer).`);
+          const scopeNote = mockDecision.kind === 'comment'
+            ? ' on the first gate, approve after'
+            : '';
+          logger.warn(`  Approval gate (await_human): auto-resolved as "${mockDecision.kind}"${scopeNote} (deterministic, no reviewer).`);
         } else {
           logger.warn('  Approval gate (await_human) stays real; pass --mock-approval to auto-resolve it (approve, reject, or comment:<text>).');
         }

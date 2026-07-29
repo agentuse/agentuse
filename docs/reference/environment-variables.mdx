@@ -243,7 +243,7 @@ Mock all tool outputs with the LLM instead of executing them. Mirror the `--mock
 </ParamField>
 
 <ParamField path="AGENTUSE_MOCK_APPROVAL" type="string">
-  Resolve the `await_human` approval gate deterministically instead of suspending (mock mode only). Same as `--mock-approval`. Values: `approve` (also `1`/`true`), `reject`, or `comment:<text>`. An approve grants the gated-command lease from the gate's `changes[]` exactly like a real reviewer approval; a reject seals the gate (terminal), and a comment forces the revise-and-re-gate branch.
+  Resolve the `await_human` approval gate deterministically instead of suspending (mock mode only). Same as `--mock-approval`. Values: `approve` (also `1`/`true`), `reject`, or `comment:<text>`. An approve grants the gated-command lease from the gate's `changes[]` exactly like a real reviewer approval; a reject seals the gate (terminal), and a comment forces the revise-and-re-gate branch on the first gate then approves the re-gate.
 </ParamField>
 
 ## Context Management

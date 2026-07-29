@@ -37,7 +37,7 @@ import { executeAgentCore } from '../src/runner/execution';
 import { EffectWAL, EFFECT_WAL_FILENAME } from '../src/runner/effect-wal';
 import { LeaseStore, LEASE_FILENAME } from '../src/runner/approval-lease';
 import { createAwaitHumanTool } from '../src/tools/await-human';
-import { maybeMockAwaitHuman, wrapToolsWithGatedMock } from '../src/runner/mock-tools';
+import { maybeMockAwaitHuman, wrapToolsWithGatedMock, __resetMockGateDecisions } from '../src/runner/mock-tools';
 import { createBashTool } from '../src/tools/bash';
 import type { AgentChunk } from '../src/runner/types';
 
@@ -342,6 +342,9 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
       process.env.AGENTUSE_MOCK_MODE = '1';
       process.env.AGENTUSE_MOCK_MODEL = 'anthropic:mock';
       process.env.AGENTUSE_MOCK_APPROVAL = 'approve';
+      // Gate decisions memoize per call id and count per run; these cases reuse
+      // both, so each starts from an empty sequence.
+      __resetMockGateDecisions();
     });
     afterEach(() => {
       delete process.env.AGENTUSE_MOCK_MODE;
@@ -418,6 +421,37 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
       expect(records.some((r) => r.event === 'lease-denied' && r.callId === 'bash-1')).toBe(true);
       // ...and the re-gate hit the terminal seal, exactly like a human reject.
       expect(records.some((r) => r.event === 'gate-sealed-denied' && r.callId === 'gate-2')).toBe(true);
+    });
+
+    test('forced comment resolves the first gate, then approves the re-gate so the flow completes', async () => {
+      process.env.AGENTUSE_MOCK_APPROVAL = 'comment:tighten it';
+      const marker = path.join(projectRoot, 'mock-commented.txt');
+      const command = `touch ${marker}`;
+      const { model, calls } = makeModel([
+        turn([toolCallPart('gate-1', 'await_human', { prompt: 'Run it?', changes: [{ content: command }] })]),
+        // The agent revises and re-gates, which is what a comment asks for.
+        turn([toolCallPart('gate-2', 'await_human', { prompt: 'Revised, run it?', changes: [{ content: command }] })]),
+        turn([toolCallPart('bash-1', 'tools__bash', { command })]),
+        turn([
+          { type: 'text-start', id: 't1' },
+          { type: 'text-delta', id: 't1', delta: 'done' },
+          { type: 'text-end', id: 't1' },
+        ], 'stop'),
+      ]);
+      currentModel = model;
+
+      const chunks = await runCore(makeMockedTools());
+
+      expect(chunks.some((c) => c.type === 'suspended')).toBe(false);
+      expect(calls()).toBe(4);
+      // The re-gate approved, so the revised command ran: a repeated comment
+      // would have looped the agent instead of ever completing.
+      expect(fs.existsSync(marker)).toBe(true);
+
+      const records = readWAL();
+      const decisions = records.filter((r) => r.event === 'mock-gate-decision');
+      expect(decisions.map((r) => r.status)).toEqual(['commented', 'approved']);
+      expect(records.some((r) => r.event === 'lease-approved' && r.callId === 'bash-1')).toBe(true);
     });
 
     test('gated scope (--mock-gated): gated command is fabricated, non-gated bash runs for real', async () => {

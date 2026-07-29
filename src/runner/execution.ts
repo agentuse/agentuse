@@ -818,7 +818,10 @@ export async function* executeAgentCore(
           // for a non-suspending gate would leave the barrier stuck on and
           // deny every subsequent tool call in this stream.
           if (isMockMode() && resolveMockApprovalDecision()) {
-            const decision = mockGateDecisionResult(input);
+            const decision = mockGateDecisionResult(input, {
+              ...(callId && { callId }),
+              ...(options.sessionID && { runKey: options.sessionID }),
+            });
             applyGateDecisionEffects({
               leaseStore,
               gateSealStore,

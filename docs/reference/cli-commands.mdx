@@ -148,6 +148,7 @@ Options:
                         or "all" (every tool result). Default: adaptive, "gated" when the agent
                         declares tools.bash.gated patterns, else "all".
 --approval <decision>   Gate decision: approve (default), reject, or comment:<text>
+                        (comments the first gate, approves the re-gate)
 --mock-model <model>    Model that fabricates mock results (or set AGENTUSE_MOCK_MODEL once)
 ```
 
@@ -197,7 +198,7 @@ agentuse run agent.agentuse --mock --mock-model anthropic:claude-haiku-4-5
 - **The approval gate stays real under `run --mock`**: `await_human` still suspends so you can verify the agent pauses for approval. Pass `--mock-approval` for fully-unattended runs (`agentuse test` defaults to this): the gate resolves **deterministically** (no LLM plays the reviewer) instead of suspending.
   - `--mock-approval` (or `--mock-approval approve`) auto-approves. The approval grants the [gated-command lease](/guides/approval-gates) derived from the gate's `changes[]` exactly like a real reviewer approval, so `tools.bash.gated` flows complete end-to-end. On a pick gate the recommended option is chosen (else the first), returned as `choice`.
   - `--mock-approval reject` forces the reject branch: the gate seals (terminal for the run) so you can test the agent's cleanup path.
-  - `--mock-approval comment:<text>` forces the revise-and-re-gate branch with `<text>` as the reviewer comment.
+  - `--mock-approval comment:<text>` forces the revise-and-re-gate branch with `<text>` as the reviewer comment. The comment applies to the **first** gate only; the re-gate that follows is approved, so the run exercises the revision path and still finishes. (Repeating the comment on every gate would loop an obedient agent until it gave up.)
 
 <Note>
   MCP servers still connect at startup for tool discovery, but no tool executes (no mutations). Mock outputs are non-deterministic; mocked approval decisions are deterministic.
