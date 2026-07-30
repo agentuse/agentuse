@@ -19,6 +19,64 @@ This page lists recommended models for AgentUse, organized by provider.
 - **OpenRouter**: `openrouter:z-ai/glm-5.2` (open source)
 - **Amazon Bedrock**: `bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0`
 
+## Version Aliases
+
+Leave the version off a model id and you get whichever release is current, so an
+agent file does not need editing every time a new model ships:
+
+```yaml
+---
+model: anthropic:claude-sonnet   # -> anthropic:claude-sonnet-5 today
+---
+```
+
+Aliases follow the lineup below, which is refreshed per AgentUse release. An id
+that exists for real always wins, so nothing you pin can be reinterpreted.
+
+| Alias | Currently resolves to |
+|-------|----------------------|
+| `anthropic:claude-opus` | `anthropic:claude-opus-5` |
+| `anthropic:claude-fable` | `anthropic:claude-fable-5` |
+| `anthropic:claude-sonnet` | `anthropic:claude-sonnet-5` |
+| `anthropic:claude-haiku` | `anthropic:claude-haiku-4-5` |
+| `openai:gpt` | `openai:gpt-5.6` |
+| `openai:gpt-sol` | `openai:gpt-5.6-sol` |
+| `openai:gpt-luna` | `openai:gpt-5.6-luna` |
+| `openai:gpt-terra` | `openai:gpt-5.6-terra` |
+| `openai:gpt-pro` | `openai:gpt-5.5-pro` |
+| `openai:gpt-nano` | `openai:gpt-5.4-nano` |
+| `openai:gpt-mini` | `openai:gpt-5.4-mini` |
+| `openai:gpt-codex` | `openai:gpt-5.3-codex` |
+| `openai:gpt-codex-spark` | `openai:gpt-5.3-codex-spark` |
+| `openai:gpt-chat-latest` | `openai:gpt-5.3-chat-latest` |
+| `openrouter:z-ai/glm` | `openrouter:z-ai/glm-5.2` |
+| `openrouter:z-ai/glm-turbo` | `openrouter:z-ai/glm-5v-turbo` |
+| `openrouter:x-ai/grok` | `openrouter:x-ai/grok-4.5` |
+| `openrouter:deepseek/deepseek-pro` | `openrouter:deepseek/deepseek-v4-pro` |
+| `openrouter:deepseek/deepseek-flash` | `openrouter:deepseek/deepseek-v4-flash` |
+| `openrouter:qwen/qwen-max` | `openrouter:qwen/qwen3.7-max` |
+| `openrouter:google/gemini-flash` | `openrouter:google/gemini-3.6-flash` |
+| `openrouter:google/gemini-pro-preview` | `openrouter:google/gemini-3.1-pro-preview` |
+| `openrouter:minimax/minimax` | `openrouter:minimax/minimax-m3` |
+| `openrouter:moonshotai/kimi` | `openrouter:moonshotai/kimi-k3` |
+| `openrouter:google/gemini-flash-preview` | `openrouter:google/gemini-3-flash-preview` |
+
+Run `agentuse models` to see what each alias resolves to on your install, and
+`agentuse models unpin` to convert pinned ids in your agent files into aliases.
+
+To name your own, add a `models.aliases` block to `~/.agentuse/config.json` and
+reference it with the `@` sigil (see [Configuration Files](/reference/configuration-files#models)):
+
+```json
+{ "models": { "default": "anthropic:claude-sonnet", "aliases": { "fast": "anthropic:claude-haiku" } } }
+```
+
+```yaml
+---
+model: "@fast"
+---
+```
+
 ## Recommended Models
 
 
@@ -26,9 +84,9 @@ This page lists recommended models for AgentUse, organized by provider.
 
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
+| `anthropic:claude-opus-5` | Claude Opus 5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-fable-5` | Claude Fable 5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-sonnet-5` | Claude Sonnet 5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
-| `anthropic:claude-opus-4-8` | Claude Opus 4.8 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-haiku-4-5` | Claude Haiku 4.5 (latest) | 200,000 | 64,000 | Reasoning, Vision, Tools |
 
 ### OpenAI
@@ -40,23 +98,21 @@ This page lists recommended models for AgentUse, organized by provider.
 | `openai:gpt-5.6-luna` | GPT-5.6 Luna | 922,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.6-terra` | GPT-5.6 Terra | 922,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.5-pro` | GPT-5.5 Pro | 922,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.4-mini` | GPT-5.4 mini | 272,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.4-nano` | GPT-5.4 nano | 272,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.4-mini` | GPT-5.4 mini | 272,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.3-codex` | GPT-5.3 Codex | 272,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.3-chat-latest` | GPT-5.3 Chat (latest) | 128,000 | 16,384 | Vision, Tools |
 | `openai:gpt-5.3-codex-spark` | GPT-5.3 Codex Spark | 100,000 | 32,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.1-codex-max` | GPT-5.1 Codex Max | 272,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.1-codex-mini` | GPT-5.1 Codex mini | 272,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.3-chat-latest` | GPT-5.3 Chat (latest) | 128,000 | 16,384 | Vision, Tools |
 
 ### OpenRouter
 
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
-| `openrouter:z-ai/glm-5.2` | GLM-5.2 | 1,048,576 | 131,072 | Reasoning, Tools |
+| `openrouter:z-ai/glm-5.2` | GLM-5.2 | 1,048,576 | 128,000 | Reasoning, Tools |
 | `openrouter:z-ai/glm-5v-turbo` | GLM-5V-Turbo | 202,752 | 131,072 | Reasoning, Vision, Tools |
 | `openrouter:x-ai/grok-4.5` | Grok 4.5 | 500,000 | 500,000 | Reasoning, Vision, Tools |
 | `openrouter:deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1,048,576 | 384,000 | Reasoning, Tools |
-| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,576 | 65,536 | Reasoning, Tools |
+| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,576 | 393,216 | Reasoning, Tools |
 | `openrouter:qwen/qwen3.7-max` | Qwen3.7 Max | 1,000,000 | 65,536 | Reasoning, Tools |
 | `openrouter:qwen/qwen3.7-plus` | Qwen3.7 Plus | 1,000,000 | 65,536 | Reasoning, Vision, Tools |
 | `openrouter:google/gemini-3.6-flash` | Gemini 3.6 Flash | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
@@ -106,17 +162,27 @@ See [Model Configuration](/guides/model-configuration#custom-providers-local-llm
 
 ## Usage
 
-Specify a model in your agent file:
+Specify a model in your agent file, pinned to a version or tracking the line:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-5
+model: anthropic:claude-sonnet-5   # pinned
 ---
 ```
 
-Or override via CLI:
+```yaml
+---
+model: anthropic:claude-sonnet     # newest in this line
+---
+```
+
+Omit `model` entirely to use the configured default (`models.default` or
+`AGENTUSE_MODEL`).
+
+Or override via CLI, which accepts the same aliases:
 
 ```bash
 agentuse run agent.agentuse -m openai:gpt-5.6
+agentuse run agent.agentuse -m openai:gpt
 agentuse run agent.agentuse -m ollama:glm-5-flash:q4_K_M
 ```
