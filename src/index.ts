@@ -740,9 +740,14 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         // Count available tools from prepared execution (this is why we prepare early)
         const toolCount = Object.keys(preparedExecution.tools).length;
         metadataLines.push(`Tools: ${toolCount} available`);
-        // Show learnings count if any were applied
+        // Show learnings count if any were applied. Always name the stored total
+        // when it is larger: "10 applied" on a 57-learning file reads as "the file
+        // is in force" when 47 of those entries had no effect on this run.
         if (preparedExecution.learningsApplied > 0) {
-          metadataLines.push(`Learnings: ${preparedExecution.learningsApplied} applied`);
+          const { learningsApplied: applied, learningsStored: stored } = preparedExecution;
+          metadataLines.push(stored > applied
+            ? `Learnings: ${applied} of ${stored} applied (${stored - applied} dormant past the cap)`
+            : `Learnings: ${applied} applied`);
         }
         logger.metadata(metadataLines);
         logger.separator();

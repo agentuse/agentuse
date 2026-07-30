@@ -6,7 +6,7 @@ import { parseScheduleExpression, formatScheduleHuman } from '../scheduler/parse
 import { parseAgent, type ParsedAgent } from '../parser';
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
 import { logger } from '../utils/logger';
-import { LearningStore, type LearningSource } from '../learning/index.js';
+import { LearningStore, MAX_INJECTED_LEARNINGS, partitionLearnings } from '../learning/index.js';
 import { addAnthropicIdentity, isAnthropicModel } from '../utils/anthropic';
 
 /**
@@ -191,14 +191,26 @@ ${mountList}
  */
 export interface LearningPromptResult {
   prompt: string;
+  /** Learnings injected into this prompt. */
   count: number;
+  /** Learnings stored in the file, injected and dormant together. Reported
+   *  alongside `count` so a capped file never reads as fully in force. */
+  total: number;
 }
 
 /**
- * Build the learning prompt to append to agent instructions
- * Called when learning.apply is enabled
+ * Render the Learned Guidelines block, optionally recording that the injected
+ * learnings were used.
+ *
+ * Split from the two entry points below because static inspection (`agentuse
+ * doctor`) has to see exactly what a run would inject WITHOUT bumping any
+ * `appliedCount`: a diagnostic that mutates what it measures is worse than none.
  */
-export async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: string): Promise<LearningPromptResult | undefined> {
+async function renderLearningPrompt(
+  agent: ParsedAgent,
+  agentFilePath: string,
+  recordUsage: boolean,
+): Promise<LearningPromptResult | undefined> {
   try {
     const store = LearningStore.fromAgentFile(
       agentFilePath,
@@ -210,33 +222,48 @@ export async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: str
       return undefined;
     }
 
-    const maxLearnings = 10; // Prevent context bloat
-    // Explicit manual rules outrank approval-promoted and auto-extracted ones,
-    // then by confidence, so the highest-signal rules survive the cap.
-    const sourceRank = (source: LearningSource) =>
-      source === 'manual' ? 0 : source === 'approval' ? 1 : 2;
-    const ranked = [...learnings].sort((a, b) => {
-      const rankDelta = sourceRank(a.source) - sourceRank(b.source);
-      if (rankDelta !== 0) return rankDelta;
-      return b.confidence - a.confidence;
-    });
-    const toInject = ranked.slice(0, maxLearnings);
+    // Ranking (including the recency tiebreak that keeps a fresh correction from
+    // starving behind older equal-signal ones) lives in ../learning/ranking so
+    // the capture evaluator can partition the same way.
+    const { injected, dormant } = partitionLearnings(learnings);
 
     const prompt = `## Learned Guidelines (override skill defaults on conflict)
 
 Corrections captured from previous runs. These take precedence over Skills — if one contradicts a skill's default, follow the guideline:
 
-${toInject.map(l => `- [${l.category}] ${l.instruction}`).join('\n')}`;
+${injected.map(l => `- [${l.category}] ${l.instruction}`).join('\n')}`;
 
-    // Track usage (non-blocking)
-    store.incrementApplied(toInject.map(l => l.id)).catch(err => {
-      logger.debug(`[Learning] Failed to increment applied count: ${err.message}`);
-    });
+    if (recordUsage) {
+      // Track usage (non-blocking)
+      store.incrementApplied(injected.map(l => l.id)).catch(err => {
+        logger.debug(`[Learning] Failed to increment applied count: ${err.message}`);
+      });
+      logger.debug(
+        `[Learning] Injected ${injected.length} of ${learnings.length} learning(s)`
+        + (dormant.length > 0
+          ? `; ${dormant.length} dormant past the ${MAX_INJECTED_LEARNINGS}-learning cap`
+          : '')
+      );
+    }
 
-    logger.debug(`[Learning] Injected ${toInject.length} learning(s)`);
-    return { prompt, count: toInject.length };
+    return { prompt, count: injected.length, total: learnings.length };
   } catch (error) {
     logger.debug(`[Learning] Failed to load learnings: ${(error as Error).message}`);
     return undefined;
   }
+}
+
+/**
+ * Build the learning prompt to append to agent instructions
+ * Called when learning.apply is enabled
+ */
+export async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: string): Promise<LearningPromptResult | undefined> {
+  return renderLearningPrompt(agent, agentFilePath, true);
+}
+
+/**
+ * The exact block a run would inject, without recording usage. Inspection only.
+ */
+export async function previewLearningPrompt(agent: ParsedAgent, agentFilePath: string): Promise<LearningPromptResult | undefined> {
+  return renderLearningPrompt(agent, agentFilePath, false);
 }

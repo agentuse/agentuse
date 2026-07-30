@@ -14,6 +14,8 @@ import { getSessionStorageDir } from '../storage/paths.js';
 import { parseBashCommand } from '../tools/bash-parser.js';
 import { looksEffectful, grantsUnnamedSubcommands, grantsArbitraryCode, commandHead } from '../tools/effectful-heuristic.js';
 import { isEffectful } from '../runner/approval-lease.js';
+import { previewLearningPrompt } from '../runner/system-messages.js';
+import { MAX_INJECTED_LEARNINGS } from '../learning/index.js';
 import type { Message, Part, SessionInfo, ToolPart } from '../session/types.js';
 
 interface DoctorOptions {
@@ -295,8 +297,18 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
     .map((skill) => ({ name: skill.name, tokens: estimateTextTokens(skill.output) }))
     .sort((a, b) => b.tokens - a.tokens);
   const estimatedPreloadedTokens = preloadedCosts.reduce((total, skill) => total + skill.tokens, 0);
+
+  // Learned guidelines are appended to the instructions at run time too, and only
+  // the highest-ranked few are: the rest are stored but have no effect on any run.
+  // Report both numbers here, because a large learnings file otherwise looks
+  // healthy while most of its corrections never reach the model.
+  const learningPreview = agent.config.learning?.apply
+    ? await previewLearningPrompt(agent, agentFilePath)
+    : undefined;
+  const estimatedLearningTokens = learningPreview ? estimateTextTokens(learningPreview.prompt) : 0;
+
   const estimatedRequestTokens =
-    estimatedInstructionTokens + estimatedPreloadedTokens + estimatedCatalogTokens;
+    estimatedInstructionTokens + estimatedPreloadedTokens + estimatedCatalogTokens + estimatedLearningTokens;
 
   console.log(chalk.bold('\nPrompt size'));
   console.log(`  agent body: ${instructionWords.toLocaleString()} words, ${formatEstimatedTokens(estimatedInstructionTokens)} tokens/model request`);
@@ -321,7 +333,15 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
       console.log(chalk.yellow('  Large preloaded skills: preload only what every run needs; the rest can load on demand.'));
     }
   }
-  console.log(chalk.gray(`  total: ${formatEstimatedTokens(estimatedRequestTokens)} tokens/model request (agent body + preloaded skills + skill catalog)`));
+  if (learningPreview) {
+    const dormant = learningPreview.total - learningPreview.count;
+    console.log(`  learned guidelines: ${learningPreview.count} of ${learningPreview.total} applied, ${formatEstimatedTokens(estimatedLearningTokens)} tokens/model request`);
+    if (dormant > 0) {
+      console.log(chalk.yellow(`  ${dormant} stored learning${dormant === 1 ? '' : 's'} never reach the model: only the top ${MAX_INJECTED_LEARNINGS} are injected per run.`));
+      console.log(chalk.gray('  Merge near-duplicates and delete the stale ones, or a captured reviewer correction can sit in the file with no effect.'));
+    }
+  }
+  console.log(chalk.gray(`  total: ${formatEstimatedTokens(estimatedRequestTokens)} tokens/model request (agent body + preloaded skills + skill catalog${learningPreview ? ' + learned guidelines' : ''})`));
 
   console.log(chalk.bold('\nSkill discovery'));
   console.log(`  mode: ${agent.config.skills!.auto ? 'open' : 'closed'}`);

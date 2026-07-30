@@ -121,6 +121,33 @@ On next run or approval resume (when `apply: true`):
 
 This keeps learnings at the instruction level - where they have the most influence on agent behavior.
 
+### Only 10 apply per run, so keep the file small
+
+The cap bounds context growth, and everything past it is dormant: stored and
+visible, but with no effect on the run. Order of precedence:
+
+1. Rules you saved yourself (`--remember`), which always win
+2. Corrections captured from reviewer comments
+3. Learnings the agent extracted from its own execution
+
+Within each group the most recent applies first, so a fresh correction (or one a
+reviewer repeats) displaces the oldest rule of equal standing rather than
+queueing behind it.
+
+Recency keeps the newest corrections in force; it does not make room. A file with
+far more than 10 entries leaves most of them dormant no matter how they are
+ordered, and a reviewer correction can sit there having no effect. `agentuse
+doctor` reports the split:
+
+```
+learned guidelines: 10 of 57 applied, ~1.2k tokens/model request
+47 stored learnings never reach the model: only the top 10 are injected per run.
+```
+
+When you see that, merge near-duplicates and delete the stale entries. Repeating
+a correction a reviewer already gave refreshes the existing rule in place (it
+keeps its id and applied count) instead of adding a second copy.
+
 ## Learning Categories
 
 Learnings are categorized for context:

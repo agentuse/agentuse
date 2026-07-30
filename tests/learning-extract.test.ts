@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { AgentCompleteEvent } from "../src/plugin/types";
+import { LearningStore } from "../src/learning/store";
 
 // extractLearnings now goes through completeText() (streaming) instead of
 // generateText(), which is required for the ChatGPT Codex backend. Mock
@@ -114,6 +115,105 @@ describe("extractLearnings", () => {
     expect(succeedMock).toHaveBeenCalledWith("No new learnings extracted");
     expect(outcome.status).toBe("none");
     expect(outcome.count).toBe(0);
+  });
+
+  it("reports none when everything the evaluator proposed was redundant", async () => {
+    // The old code reported the evaluator's count before the store filtered
+    // similars, so the session marker could claim a lesson was learned while
+    // nothing was written.
+    const store = new LearningStore(join(tempDir, "agents", "demo.learnings.md"));
+    await store.save([{
+      id: "manual01",
+      category: "warning",
+      title: "Don't lecture",
+      instruction: "Rewrite instruction shaped phrasing as the author's own lived observation.",
+      confidence: 1,
+      appliedCount: 5,
+      extractedAt: "2026-06-02T00:00:00.000Z",
+      source: "manual",
+    }]);
+
+    completeTextMock.mockImplementation(async () => JSON.stringify([{
+      source: "auto",
+      category: "warning",
+      title: "Avoid lecturing",
+      instruction: "Rewrite instruction shaped phrasing as the author's own lived observation always.",
+      confidence: 0.9,
+    }]));
+
+    const outcome = await extractLearnings({
+      event,
+      agentInstructions: "Do things",
+      agentModel: "gpt-4",
+      agentFilePath,
+      config: { capture: true, apply: false },
+    });
+
+    expect(outcome.status).toBe("none");
+    expect(outcome.count).toBe(0);
+    expect(succeedMock).toHaveBeenCalledWith("No new learnings extracted");
+    expect(await store.load()).toHaveLength(1);
+  });
+
+  it("re-asserts a dormant correction a reviewer repeats, and never shows it as already in force", async () => {
+    // The regression: a correction stored past the injection cap has no effect on
+    // the run, but was still handed to the evaluator as a rule not to duplicate,
+    // so the reviewer repeating it produced nothing at all.
+    const store = new LearningStore(join(tempDir, "agents", "demo.learnings.md"));
+    const dormant = {
+      id: "dormant1",
+      category: "warning" as const,
+      title: "Cut teaching-mode lines",
+      instruction: "Rewrite instruction shaped phrasing as the author's own lived observation.",
+      confidence: 0.95,
+      appliedCount: 0,
+      extractedAt: "2026-06-02T00:00:00.000Z",
+      source: "approval" as const,
+    };
+    const fillers = Array.from({ length: 10 }, (_, i) => ({
+      ...dormant,
+      id: `filler${i}`,
+      title: `Filler ${i}`,
+      instruction: `Unrelated guidance covering separate territory numbered ${i} exactly.`,
+      extractedAt: `2026-07-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
+    }));
+    await store.save([dormant, ...fillers]);
+
+    completeTextMock.mockImplementation(async () => JSON.stringify([{
+      source: "approval",
+      category: "warning",
+      title: "Don't lecture the author",
+      instruction: "Rewrite instruction shaped phrasing as the author's own lived observation, never a rule.",
+      confidence: 0.95,
+    }]));
+
+    const outcome = await extractLearnings({
+      event,
+      agentInstructions: "Do things",
+      agentModel: "gpt-4",
+      agentFilePath,
+      config: { capture: true, apply: false },
+      reviews: [{ comment: "Don't lecture" }],
+      sessionId: "sess-repeat",
+    });
+
+    // The dormant rule was NOT presented to the evaluator as already in force.
+    const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
+    expect(prompt).toContain("Already In Force");
+    expect(prompt).toContain("Filler 9");
+    expect(prompt).not.toContain("Cut teaching-mode lines");
+
+    // And the repeat refreshed the existing entry rather than appending a near-copy.
+    expect(outcome.status).toBe("captured");
+    expect(outcome.count).toBe(1);
+    const loaded = await store.load();
+    expect(loaded).toHaveLength(11);
+    const updated = loaded.find((l) => l.id === "dormant1");
+    expect(updated?.title).toBe("Don't lecture the author");
+    // Refreshed to now, so it ranks as recent and is injected next run.
+    expect(updated?.extractedAt).not.toBe("2026-06-02");
+    expect(updated?.extractedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(updated?.sessionId).toBe("sess-repeat");
   });
 
   it("reports a failed outcome with detail when the model call throws", async () => {

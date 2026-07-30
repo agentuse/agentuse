@@ -8,6 +8,7 @@ import type { AgentCompleteEvent } from '../plugin/types';
 import type { ApprovalReview, LearningCategory, LearningConfig, LearningOutcome, LearningSource } from './types';
 import { evaluateExecution, refineManualLearning } from './evaluator';
 import { LearningStore } from './store';
+import { partitionLearnings } from './ranking';
 import { logger } from '../utils/logger';
 
 export interface ExtractLearningsOptions {
@@ -51,16 +52,23 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
   }).start();
 
   try {
-    // Load existing learnings to avoid duplicates
     const store = LearningStore.fromAgentFile(agentFilePath, config.file);
-    const existingLearnings = await store.load();
+    const stored = await store.load();
+
+    // Deduplicate against the learnings the model was ACTUALLY given, not the
+    // whole file. Anything past the injection cap is dormant: it had no effect on
+    // this run, so a reviewer re-asserting it is new information, not a
+    // duplicate. Passing the full file here is what silently discarded repeat
+    // corrections; addOrEscalate below then folds a genuine repeat onto the
+    // existing entry instead of appending a near-copy.
+    const { injected } = partitionLearnings(stored);
 
     const learnings = await evaluateExecution(
       event,
       agentInstructions,
       agentModel,
       config.criteria,
-      existingLearnings,
+      injected,
       reviews,
     );
 
@@ -72,16 +80,27 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     if (options.sessionId) {
       for (const l of learnings) l.sessionId = options.sessionId;
     }
-    await store.add(learnings);
-    spinner.succeed(`Extracted ${learnings.length} learning(s) → ${store.filePath}`);
+    const { inserted, escalated } = await store.addOrEscalate(learnings);
+    const persisted = [...inserted, ...escalated];
+
+    // Report what landed, not what the evaluator proposed. The old code reported
+    // the evaluator's count before the store dropped similars, so the session
+    // marker could claim "Learned 2 lessons" when nothing was written.
+    if (persisted.length === 0) {
+      spinner.succeed('No new learnings extracted');
+      return { status: 'none', source: hadReviews ? 'approval' : 'auto', count: 0, titles: [] };
+    }
+
+    const reasserted = escalated.length > 0 ? `, ${escalated.length} re-asserted` : '';
+    spinner.succeed(`Extracted ${persisted.length} learning(s)${reasserted} → ${store.filePath}`);
     // A run can yield both reviewer-sourced and execution-sourced learnings;
     // label the marker by the higher-signal source when any is present.
-    const source = learnings.some(l => l.source === 'approval') ? 'approval' : 'auto';
+    const source = persisted.some(l => l.source === 'approval') ? 'approval' : 'auto';
     return {
       status: 'captured',
       source,
-      count: learnings.length,
-      titles: learnings.map(l => l.title),
+      count: persisted.length,
+      titles: persisted.map(l => l.title),
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -196,5 +215,6 @@ export function describeLearningOutcome(o: {
 }
 
 export { LearningStore, resolveLearningFilePath, generateLearningId } from './store';
+export { MAX_INJECTED_LEARNINGS, learningSourceRank, partitionLearnings, rankLearnings } from './ranking';
 export type { ApprovalReview, Learning, LearningConfig, LearningOutcome, LearningSource } from './types';
 export { LearningConfigSchema } from './types';

@@ -6,7 +6,7 @@ import { writeFileSync } from "fs";
 import { LearningStore, resolveLearningFilePath } from "../src/learning/store";
 import type { Learning } from "../src/learning/types";
 import { saveManualLearning } from "../src/learning";
-import { buildLearningPrompt } from "../src/runner/system-messages";
+import { buildLearningPrompt, previewLearningPrompt } from "../src/runner/system-messages";
 
 const baseLearning: Learning = {
   id: "learn001",
@@ -299,5 +299,147 @@ Always wait for explicit approval before publishing.
     const prompt = result?.prompt ?? "";
     expect(prompt.indexOf("Manual rule")).toBeLessThan(prompt.indexOf("Approval rule"));
     expect(prompt.indexOf("Approval rule")).toBeLessThan(prompt.indexOf("Auto rule"));
+  });
+
+  it("reports the stored total alongside what it injected", async () => {
+    const agentFile = join(tempDir, "agent.md");
+    await store.save(Array.from({ length: 14 }, (_, i) => ({
+      ...baseLearning,
+      id: `appr${String(i).padStart(3, "0")}`,
+      instruction: `Correction number ${i} about a distinct subject ${i}`,
+      source: "approval" as const,
+      confidence: 0.95,
+      extractedAt: `2026-01-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
+    })));
+
+    const result = await buildLearningPrompt({
+      name: "agent",
+      instructions: "Do work.",
+      config: { model: "demo:test", skills: { auto: false, trusted: false, explicit: {} }, learning: { capture: true, apply: true } },
+    }, agentFile);
+
+    // count must not be mistaken for the file size: 4 of these never reach the
+    // model, and callers need to be able to say so.
+    expect(result?.count).toBe(10);
+    expect(result?.total).toBe(14);
+  });
+
+  it("previewLearningPrompt renders the same block without recording usage", async () => {
+    const agentFile = join(tempDir, "agent.md");
+    await store.save([{ ...baseLearning, id: "prev0001", appliedCount: 3 }]);
+    const agent = {
+      name: "agent",
+      instructions: "Do work.",
+      config: { model: "demo:test", skills: { auto: false, trusted: false, explicit: {} }, learning: { capture: true, apply: true } },
+    };
+
+    const preview = await previewLearningPrompt(agent as never, agentFile);
+    // A diagnostic must not mutate what it measures.
+    expect((await store.load())[0]!.appliedCount).toBe(3);
+
+    const applied = await buildLearningPrompt(agent as never, agentFile);
+    expect(preview?.prompt).toBe(applied?.prompt ?? "");
+  });
+
+  describe("addOrEscalate", () => {
+    const stored: Learning = {
+      ...baseLearning,
+      id: "dormant1",
+      title: "Cut teaching-mode lines",
+      instruction: "Rewrite instruction-shaped phrasing as the author's own lived observation.",
+      source: "approval",
+      confidence: 0.95,
+      appliedCount: 4,
+      extractedAt: "2026-06-02T00:00:00.000Z",
+    };
+
+    it("re-asserts a repeat correction in place instead of dropping it", async () => {
+      await store.save([stored]);
+
+      const { inserted, escalated } = await store.addOrEscalate([{
+        ...stored,
+        id: "fresh001",
+        title: "Don't lecture the author",
+        // Similar wording: the old add() would have silently discarded this.
+        instruction: "Rewrite instruction-shaped phrasing as the author's own lived observation, never a rule.",
+        appliedCount: 0,
+        extractedAt: "2026-07-28T00:00:00.000Z",
+        sessionId: "sess-repeat",
+      }]);
+
+      expect(inserted).toHaveLength(0);
+      expect(escalated).toHaveLength(1);
+
+      const loaded = await store.load();
+      expect(loaded).toHaveLength(1);
+      // Identity and usage history survive; wording, date and session refresh, so
+      // the rule ranks as recent and is injected on the next run.
+      expect(loaded[0]!.id).toBe("dormant1");
+      expect(loaded[0]!.appliedCount).toBe(4);
+      expect(loaded[0]!.title).toBe("Don't lecture the author");
+      expect(loaded[0]!.instruction).toContain("never a rule");
+      expect(loaded[0]!.extractedAt).toBe("2026-07-28");
+      expect(loaded[0]!.sessionId).toBe("sess-repeat");
+    });
+
+    it("inserts a genuinely new learning with a fresh id", async () => {
+      await store.save([stored]);
+
+      const { inserted, escalated } = await store.addOrEscalate([{
+        ...baseLearning,
+        id: "",
+        title: "Verify before posting",
+        instruction: "Confirm the published result from the page, never from the click succeeding.",
+      }]);
+
+      expect(escalated).toHaveLength(0);
+      expect(inserted).toHaveLength(1);
+      expect(inserted[0]!.id).toMatch(/^[0-9a-f]{8}$/);
+      expect(await store.load()).toHaveLength(2);
+    });
+
+    it("never lets a weaker source rewrite a stronger rule", async () => {
+      await store.save([{ ...stored, source: "manual", confidence: 1, instruction: "Human wording of the rule about lecturing the author." }]);
+
+      const { inserted, escalated } = await store.addOrEscalate([{
+        ...stored,
+        id: "auto0001",
+        source: "auto",
+        confidence: 0.9,
+        instruction: "Machine wording of the rule about lecturing the author.",
+      }]);
+
+      expect(inserted).toHaveLength(0);
+      expect(escalated).toHaveLength(0);
+      const loaded = await store.load();
+      expect(loaded[0]!.source).toBe("manual");
+      expect(loaded[0]!.instruction).toContain("Human wording");
+    });
+
+    it("upgrades an auto learning when a reviewer asserts the same thing", async () => {
+      await store.save([{ ...stored, source: "auto", confidence: 0.85 }]);
+
+      const { escalated } = await store.addOrEscalate([{
+        ...stored,
+        id: "appr0001",
+        source: "approval",
+        confidence: 0.95,
+      }]);
+
+      expect(escalated).toHaveLength(1);
+      const loaded = await store.load();
+      expect(loaded[0]!.source).toBe("approval");
+      expect(loaded[0]!.confidence).toBe(0.95);
+    });
+
+    it("writes nothing when every candidate is redundant", async () => {
+      await store.save([{ ...stored, source: "manual", confidence: 1 }]);
+      const before = await store.load();
+
+      const result = await store.addOrEscalate([{ ...stored, id: "auto0002", source: "auto", confidence: 0.9 }]);
+
+      expect(result).toEqual({ inserted: [], escalated: [] });
+      expect(await store.load()).toEqual(before);
+    });
   });
 });

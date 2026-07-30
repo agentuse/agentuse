@@ -198,8 +198,8 @@ ${consoleOutput || '(No console output)'}
 ${event.result.text || '(No text output)'}${reviewerSection}
 ${customCriteria}
 ${existingLearnings.length > 0 ? `
-## Existing Learnings (DO NOT DUPLICATE)
-The following learnings already exist. Do NOT extract learnings that cover the same concepts:
+## Learnings Already In Force (DO NOT DUPLICATE)
+These were injected into the agent's instructions for this run, so it already had them. Do NOT extract learnings that cover the same concepts. Note this list is only what was in force — the store may hold others that were NOT injected, so a reviewer restating one of those is genuinely new signal, not a duplicate:
 ${existingLearnings.map(l => `- [${l.category}] ${l.title}: ${l.instruction.slice(0, 150)}${l.instruction.length > 150 ? '...' : ''}`).join('\n')}
 ` : ''}
 

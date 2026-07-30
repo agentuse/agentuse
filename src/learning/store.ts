@@ -3,6 +3,7 @@ import { existsSync } from 'fs';
 import { join, dirname, resolve, basename } from 'path';
 import { randomUUID } from 'crypto';
 import type { Learning, LearningCategory, LearningSource } from './types';
+import { learningSourceRank } from './ranking';
 
 // Serialize read-modify-write sequences on the same learnings file so two
 // concurrent saves (e.g. two serve approval decisions on the same agent) can't
@@ -95,6 +96,73 @@ export class LearningStore {
         taken.add(l.id);
       }
       await this.save([...existing, ...toAdd]);
+    });
+  }
+
+  /**
+   * Persist captured learnings, RE-ASSERTING a repeat rather than discarding it.
+   *
+   * {@link add} drops anything resembling a stored learning, which silently threw
+   * away the highest-signal event the system gets: a human repeating a correction
+   * they already gave. A repeat almost always means the stored rule was not in
+   * force — it sat past the injection cap — so the right response is to refresh it
+   * (keep its id and appliedCount, take the newer wording, move it to the front
+   * of the recency ordering) rather than treat it as redundant. Observed case: a
+   * reviewer's "cut the teaching-mode phrasing" was captured, never injected, and
+   * when the reviewer said it again seven weeks later the repeat was dropped as a
+   * duplicate of a rule the agent had never seen.
+   *
+   * A weaker source never rewrites a stronger one: an auto-extracted learning
+   * that merely overlaps a human rule is genuinely redundant and is still
+   * dropped.
+   *
+   * @returns the learnings actually persisted, split by how they landed, so the
+   * caller can report a truthful count instead of what the evaluator proposed.
+   */
+  async addOrEscalate(
+    incoming: Learning[],
+  ): Promise<{ inserted: Learning[]; escalated: Learning[] }> {
+    return withFileLock(this.filePath, async () => {
+      const existing = await this.load();
+      const inserted: Learning[] = [];
+      const escalated: Learning[] = [];
+
+      for (const draft of incoming) {
+        const idx = existing.findIndex(e => this.similar(e.instruction, draft.instruction));
+
+        if (idx < 0) {
+          const taken = new Set(existing.map(l => l.id).filter(Boolean));
+          const id = draft.id && draft.id.length >= 4 && !taken.has(draft.id)
+            ? draft.id
+            : generateLearningId(taken);
+          const next = { ...draft, id };
+          existing.push(next);
+          inserted.push(next);
+          continue;
+        }
+
+        const prior = existing[idx]!;
+        if (learningSourceRank(draft.source) > learningSourceRank(prior.source)) continue;
+
+        const next: Learning = {
+          ...prior,
+          category: draft.category,
+          title: draft.title,
+          instruction: draft.instruction,
+          source: draft.source,
+          confidence: Math.max(prior.confidence, draft.confidence),
+          // Re-asserted now, so it ranks as recent and gets injected next run.
+          extractedAt: draft.extractedAt,
+          ...(draft.sessionId ? { sessionId: draft.sessionId } : {}),
+        };
+        existing[idx] = next;
+        escalated.push(next);
+      }
+
+      if (inserted.length > 0 || escalated.length > 0) {
+        await this.save(existing);
+      }
+      return { inserted, escalated };
     });
   }
 

@@ -251,7 +251,10 @@ Knowing that ladder does not place a rule. Ask three questions before typing one
 into an agent body:
 
 1. **Is it true of the job, or of the tool?** Of the job → the body. Of the tool
-   → the skill. A correction from one specific run → learnings.
+   → the skill. A correction from one specific run → learnings. Learnings hold
+   only ~10 entries per run, newest of equal standing first, so a rule the agent
+   must never lose belongs in the body or the skill, not in a crowded learnings
+   file where it goes dormant. `agentuse doctor` reports the applied/stored split.
 2. **Does the line only work by contradicting a lower layer?** Then it is not a
    rule, it is a patch over the wrong layer: fix the layer that says the
    opposite. (Body: "do not read the tool's docs." That tool's skill: "load the

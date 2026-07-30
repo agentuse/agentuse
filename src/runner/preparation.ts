@@ -90,12 +90,14 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   // Append learnings to instructions if apply is enabled. Resume uses the
   // persisted LLM state, so learning prompts are intentionally not re-derived.
   let learningsApplied = 0;
+  let learningsStored = 0;
   if (!existingSessionId && agent.config.learning?.apply && agentFilePath) {
     const learningResult = await buildLearningPrompt(agent, agentFilePath);
     if (learningResult) {
       resolvedInstructions = `${resolvedInstructions}\n\n${learningResult.prompt}`;
       learningsApplied = learningResult.count;
-      logger.debug(`[Learning] Appended ${learningsApplied} learning(s) to instructions`);
+      learningsStored = learningResult.total;
+      logger.debug(`[Learning] Appended ${learningsApplied} of ${learningsStored} learning(s) to instructions`);
     }
   }
 
@@ -373,6 +375,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     liveToolOutput,
     cleanup,
     releaseStoreLock,
-    learningsApplied
+    learningsApplied,
+    learningsStored
   };
 }
