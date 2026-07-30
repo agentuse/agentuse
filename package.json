@@ -36,6 +36,7 @@
   "files": [
     "bin/cli.js",
     "dist",
+    "!dist/**/*.map",
     "skills",
     "skill-data",
     "README.md",
