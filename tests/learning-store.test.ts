@@ -4,6 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { writeFileSync } from "fs";
 import { LearningStore, resolveLearningFilePath } from "../src/learning/store";
+import { partitionLearnings } from "../src/learning/ranking";
 import type { Learning } from "../src/learning/types";
 import { saveManualLearning } from "../src/learning";
 import { buildLearningPrompt, previewLearningPrompt } from "../src/runner/system-messages";
@@ -40,6 +41,20 @@ describe("LearningStore", () => {
 
     const customPath = resolveLearningFilePath(agentFile, "./notes/learnings.md");
     expect(customPath.endsWith("agents/notes/learnings.md")).toBe(true);
+  });
+
+  it("keeps a stored date stable across repeated save/load cycles", async () => {
+    // Every save re-serializes every entry. Re-parsing an already-local
+    // 'YYYY-MM-DD' as UTC midnight walked the day backwards on each write, so in
+    // a negative UTC offset the whole file aged one day per run.
+    await store.save([{ ...baseLearning, extractedAt: "2026-07-30T18:00:00.000Z" }]);
+    const first = (await store.load())[0]!.extractedAt;
+
+    for (let i = 0; i < 4; i++) {
+      await store.save(await store.load());
+    }
+
+    expect((await store.load())[0]!.extractedAt).toBe(first);
   });
 
   it("saves and loads learnings in markdown format", async () => {
@@ -380,6 +395,36 @@ Always wait for explicit approval before publishing.
       expect(loaded[0]!.instruction).toContain("never a rule");
       expect(loaded[0]!.extractedAt).toBe("2026-07-28");
       expect(loaded[0]!.sessionId).toBe("sess-repeat");
+    });
+
+    it("moves a re-asserted rule to the tail so a same-day tie cannot keep it dormant", async () => {
+      // Ranking breaks a same-day tie by file position. Rewriting the entry where
+      // it sat would leave the refreshed rule sorting last among that day's
+      // entries, still dormant, which defeats the point of re-asserting it.
+      const sameDay = "2026-07-28T00:00:00.000Z";
+      await store.save([
+        { ...stored, extractedAt: sameDay },
+        ...Array.from({ length: 10 }, (_, i) => ({
+          ...stored,
+          id: `peer${i}`,
+          title: `Peer ${i}`,
+          instruction: `Unrelated guidance covering separate territory numbered ${i} exactly.`,
+          extractedAt: sameDay,
+        })),
+      ]);
+
+      await store.addOrEscalate([{
+        ...stored,
+        id: "fresh002",
+        title: "Don't lecture the author",
+        instruction: "Rewrite instruction shaped phrasing as the author's own lived observation, never a rule.",
+        extractedAt: sameDay,
+      }]);
+
+      const loaded = await store.load();
+      expect(loaded[loaded.length - 1]!.id).toBe("dormant1");
+      const { injected } = partitionLearnings(loaded);
+      expect(injected.map((l) => l.id)).toContain("dormant1");
     });
 
     it("inserts a genuinely new learning with a fresh id", async () => {

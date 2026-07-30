@@ -28,6 +28,14 @@ export function generateLearningId(existing: Iterable<string> = []): string {
 /** Local-timezone YYYY-MM-DD (new Date().toISOString().slice(0,10) drifts to
  *  UTC, showing the wrong calendar day for non-UTC reviewers). */
 function toLocalDate(iso: string): string {
+  // An already-serialized date is local and must pass through untouched. `new
+  // Date('2026-07-30')` parses as UTC midnight, so re-converting it to local
+  // walks the day backwards in any negative UTC offset. Every save re-serializes
+  // every entry, so without this guard each write aged the whole file by a day:
+  // in PDT a learning saved on four runs read as four days older than it was.
+  // Harmless while dates were decorative; not once ranking sorts by them.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso.slice(0, 10);
   const y = d.getFullYear();
@@ -155,7 +163,14 @@ export class LearningStore {
           extractedAt: draft.extractedAt,
           ...(draft.sessionId ? { sessionId: draft.sessionId } : {}),
         };
-        existing[idx] = next;
+        // Move it to the tail rather than rewriting it in place. Dates persist to
+        // day precision, so a rule re-asserted on the same day as its peers ties
+        // with them and the ranking breaks that tie by file position. Left at its
+        // original (early) index, the refreshed rule would still sort last among
+        // that day's entries and stay dormant, which is exactly the outcome
+        // re-assertion is supposed to prevent.
+        existing.splice(idx, 1);
+        existing.push(next);
         escalated.push(next);
       }
 
