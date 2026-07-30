@@ -1935,6 +1935,36 @@ a, button, select, summary, label, input, textarea,
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
+.approval-command-detail {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 78%, var(--line));
+  color: var(--muted);
+}
+.approval-command-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.approval-command-content {
+  min-width: 0;
+  overflow-x: auto;
+  color: var(--muted-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+.approval-command-detail .approval-copy {
+  opacity: 0.72;
+}
 
 /* pick-among-options menu: the decision surface of an options gate */
 .approval-options .approval-options-list {
@@ -1943,19 +1973,23 @@ a, button, select, summary, label, input, textarea,
   padding: 10px 12px 12px;
 }
 .approval-option {
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.approval-option-choice,
+.approval-option-static-body {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--bg);
 }
-label.approval-option { cursor: pointer; }
-label.approval-option:hover { border-color: var(--cyan-border); }
+.approval-option-choice { cursor: pointer; }
+.approval-option.interactive:hover { border-color: var(--cyan-border); }
 /* Card-level focus cue: the native radio ring alone is easy to lose on the
    washed selected card, especially when arrowing through the group. */
-label.approval-option:focus-within {
+.approval-option:focus-within {
   border-color: var(--cyan-border);
   outline: 2px solid var(--cyan-border);
   outline-offset: -2px;
@@ -2013,6 +2047,21 @@ label.approval-option:focus-within {
   font-size: 12.5px;
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+.approval-option-action {
+  margin-top: 5px;
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.approval-option-action-label {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 /* the approve button names the pick so a click's commitment is explicit;
    the vw cap keeps the label from blowing out the flex:1 button row on phones */

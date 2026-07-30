@@ -371,7 +371,7 @@ describe('LogEntry component', () => {
     expect(html).toContain('Comment');
   });
 
-  it('renders structured reference and changes with the draft demoted', () => {
+  it('renders option-scoped business content with its command de-emphasized in the selectable option', () => {
     const html = renderEntry({
       id: 'log-structured',
       type: 'approval',
@@ -387,8 +387,23 @@ describe('LogEntry component', () => {
           excerpt: 'The economy did not contract, it reorganized.',
         },
         changes: [
-          { label: 'Comment to post', content: 'The electricity comparison is the right one.' },
+          {
+            label: 'Post reply A',
+            content: 'birdc reply 1 "Context cost is only half the problem."',
+            displayContent: 'Context cost is only half the problem.',
+            optionId: 'a',
+          },
+          {
+            label: 'Post reply B',
+            content: 'birdc reply 1 "The electricity comparison is the right one."',
+            displayContent: 'The electricity comparison is the right one.',
+            optionId: 'b',
+          },
           { content: 'Like the post' },
+        ],
+        options: [
+          { id: 'a', label: 'Candidate A', description: 'Precise correction' },
+          { id: 'b', label: 'Candidate B', description: 'Grounded example' },
         ],
         draft: 'Why this post: rationale lives here',
         context: 'background detail',
@@ -397,14 +412,18 @@ describe('LogEntry component', () => {
 
     expect(html).toContain('On approval');
     expect(html).toContain('approval-change');
-    expect(html).toContain('Comment to post');
+    expect(html).toContain('approval-option-action');
+    expect(html).toContain('approval-command-detail');
+    expect(html).toContain('approval-command-content');
     expect(html).toContain('The electricity comparison is the right one.');
-    expect(html).toContain('Action 2');
+    expect(html).toContain('birdc reply 1 &quot;The electricity comparison is the right one.&quot;');
+    expect(html).toContain('Action 1');
     expect(html).toContain('Replying to');
     expect(html).toContain('Alexandra Griffon');
     expect(html).toContain('approval-reference-quote');
-    // Draft demotes to a collapsed details block when changes carry the payload.
-    expect(html).toContain('<summary>Draft</summary>');
+    // Pick gates keep supporting detail readable above the selectable content.
+    expect(html).toContain('approval-primary');
+    expect(html).not.toContain('<summary>Draft</summary>');
     // Context also starts collapsed so the change boxes stay the focal point.
     expect(html).not.toContain('approval-context-open');
   });

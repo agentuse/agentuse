@@ -129,6 +129,27 @@ function CopyButton(props: { text: string }) {
   );
 }
 
+function changeDisplayContent(change: ApprovalChange): string {
+  return change.displayContent?.trim() || change.content;
+}
+
+function hasDistinctCommand(change: ApprovalChange): boolean {
+  return Boolean(change.displayContent?.trim()) && change.displayContent?.trim() !== change.content.trim();
+}
+
+/** Exact execution detail remains inspectable beside the business content, but
+ *  never competes with it for the reviewer's first read. */
+function CommandDetail(props: { change: ApprovalChange }) {
+  if (!hasDistinctCommand(props.change)) return null;
+  return (
+    <div class="approval-command-detail">
+      <span class="approval-command-label">Command</span>
+      <code class="approval-command-content">{props.change.content}</code>
+      <CopyButton text={props.change.content} />
+    </div>
+  );
+}
+
 /** The original being responded to, quoted above the changes so the reviewer
  *  reads original → reply in natural order. */
 function ReferenceBlock(props: { reference: ApprovalReference }) {
@@ -153,7 +174,7 @@ function ReferenceBlock(props: { reference: ApprovalReference }) {
 }
 
 /** The verbatim actions taken on approval: the first thing a reviewer skims. */
-function ChangesBlock(props: { changes: ApprovalChange[] }) {
+function ChangesBlock(props: { changes: ApprovalChange[]; options: ApprovalOption[] }) {
   return (
     <section class="approval-section approval-changes">
       <div class="approval-section-title">On approval</div>
@@ -162,10 +183,16 @@ function ChangesBlock(props: { changes: ApprovalChange[] }) {
           <div class="approval-change" key={index}>
             <div class="approval-change-head">
               <span class="approval-change-label">{change.label || `Action ${index + 1}`}</span>
-              <span class="approval-change-meta">{change.content.length} chars</span>
-              <CopyButton text={change.content} />
+              {change.optionId && (
+                <span class="approval-change-meta">
+                  Choice: {props.options.find((option) => option.id === change.optionId)?.label ?? change.optionId}
+                </span>
+              )}
+              <span class="approval-change-meta">{changeDisplayContent(change).length} chars</span>
+              <CopyButton text={changeDisplayContent(change)} />
             </div>
-            <div class="approval-change-content"><LogContent value={change.content} forceMarkdown /></div>
+            <div class="approval-change-content"><LogContent value={changeDisplayContent(change)} forceMarkdown /></div>
+            <CommandDetail change={change} />
           </div>
         ))}
       </div>
@@ -199,6 +226,7 @@ function detectPayloadImagePaths(details: ApprovalLogDetails, explicit: string[]
     details.context,
     details.risk,
     ...(details.changes ?? []).map((c) => c.content),
+    ...(details.changes ?? []).map((c) => c.displayContent),
   ].filter((v): v is string => typeof v === 'string');
   const seen = new Set(explicit.map((p) => p.replace(/^\.\//, '')));
   const out: string[] = [];
@@ -290,6 +318,7 @@ function ArtifactPreview(props: { path: string; href: string }) {
  */
 function OptionsBlock(props: {
   options: ApprovalOption[];
+  changes: ApprovalChange[];
   selected?: string | undefined;
   decided?: string | undefined;
   onSelect?: ((id: string) => void) | undefined;
@@ -302,30 +331,46 @@ function OptionsBlock(props: {
         {props.options.map((opt) => {
           const isDecided = props.decided === opt.id;
           const isSelected = interactive ? props.selected === opt.id : isDecided;
+          const changes = props.changes.filter((change) => change.optionId === opt.id);
           const body = (
-            <span class="approval-option-main">
-              <span class="approval-option-label">
+            <div class="approval-option-main">
+              <div class="approval-option-label">
                 {opt.label}
                 {opt.recommended && <span class="approval-option-badge">recommended</span>}
                 {isDecided && <span class="approval-option-badge picked">picked</span>}
-              </span>
-              {opt.description && <span class="approval-option-desc"><InlineMarkdown value={opt.description} /></span>}
-            </span>
+              </div>
+              {opt.description && <div class="approval-option-desc"><InlineMarkdown value={opt.description} /></div>}
+              {changes.map((change, index) => (
+                <div class="approval-option-action" key={index}>
+                  {changes.length > 1 && (
+                    <div class="approval-option-action-label">{change.label || `Action ${index + 1}`}</div>
+                  )}
+                  <LogContent value={changeDisplayContent(change)} forceMarkdown />
+                </div>
+              ))}
+            </div>
           );
+          const commandDetails = changes
+            .filter(hasDistinctCommand)
+            .map((change, index) => <CommandDetail change={change} key={index} />);
           return interactive ? (
-            <label class={`approval-option${isSelected ? ' selected' : ''}`} key={opt.id}>
-              <input
-                type="radio"
-                name="approval-option-pick"
-                value={opt.id}
-                checked={isSelected}
-                onChange={() => props.onSelect!(opt.id)}
-              />
-              {body}
-            </label>
+            <div class={`approval-option interactive${isSelected ? ' selected' : ''}`} key={opt.id}>
+              <label class="approval-option-choice">
+                <input
+                  type="radio"
+                  name="approval-option-pick"
+                  value={opt.id}
+                  checked={isSelected}
+                  onChange={() => props.onSelect!(opt.id)}
+                />
+                {body}
+              </label>
+              {commandDetails}
+            </div>
           ) : (
             <div class={`approval-option static${isSelected ? ' selected' : ''}`} role="listitem" key={opt.id}>
-              {body}
+              <div class="approval-option-static-body">{body}</div>
+              {commandDetails}
             </div>
           );
         })}
@@ -355,6 +400,9 @@ function ApprovalDetailCard(props: {
     : detectPayloadImagePaths(details, artifactPaths);
   const changes = details.changes ?? [];
   const options = details.options ?? [];
+  const optionIds = new Set(options.map((option) => option.id));
+  const optionChanges = changes.filter((change) => change.optionId && optionIds.has(change.optionId));
+  const standaloneChanges = changes.filter((change) => !change.optionId || !optionIds.has(change.optionId));
   const decidedOptionLabel = details.decisionChoice
     ? options.find((o) => o.id === details.decisionChoice)?.label ?? details.decisionChoice
     : undefined;
@@ -375,7 +423,7 @@ function ApprovalDetailCard(props: {
   // thing under review: collapse it so the change boxes stay the focal point.
   // An options menu does NOT demote the draft: on a pick gate the draft is the
   // evidence the reviewer reads before choosing.
-  const demotePrimary = changes.length > 0 && Boolean(primary);
+  const demotePrimary = options.length === 0 && standaloneChanges.length > 0 && Boolean(primary);
   const links = [
     details.draftUrl ? <a class="approval-link" href={details.draftUrl} target="_blank" rel="noopener noreferrer">Open draft</a> : null,
     details.artifactUrl ? <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact</a> : null,
@@ -387,7 +435,7 @@ function ApprovalDetailCard(props: {
     <div class="approval-card">
       {details.prompt && <div class="approval-question"><InlineMarkdown value={details.prompt} /></div>}
       {details.reference && <ReferenceBlock reference={details.reference} />}
-      {changes.length > 0 && <ChangesBlock changes={changes} />}
+      {standaloneChanges.length > 0 && <ChangesBlock changes={standaloneChanges} options={options} />}
       {(artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0) && (
         <section class="approval-section approval-artifact">
           <div class="approval-section-title">{artifactPaths.length + snapshotOnlyPaths.length + detectedImagePaths.length > 1 ? 'Artifacts' : 'Artifact'}</div>
@@ -458,6 +506,7 @@ function ApprovalDetailCard(props: {
         // Approve/Reject/Comment row it feeds. Evidence above, decision below.
         <OptionsBlock
           options={options}
+          changes={optionChanges}
           selected={props.selectedChoice}
           decided={details.decisionChoice}
           onSelect={props.onSelectChoice}
