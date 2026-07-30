@@ -15,11 +15,12 @@ const gateInput = {
   changes: [{ label: "Push", content: "git push origin main" }],
 };
 
-function apply(status: unknown, input: unknown = gateInput) {
+function apply(status: unknown, input: unknown = gateInput, choice?: unknown) {
   applyGateDecisionEffects({
     leaseStore,
     gateSealStore,
     status,
+    choice,
     gateInput: input,
     now: 1234,
     sealReason: "test reject",
@@ -51,6 +52,19 @@ describe("applyGateDecisionEffects", () => {
     apply("approved", { changes: [{ content: "npm publish" }] });
     expect(leaseStore.isCovered("npm publish")).toBe(true);
     expect(leaseStore.isCovered("git push origin main")).toBe(false);
+  });
+
+  it("approve with a choice grants only that option plus unconditional entries", () => {
+    apply("approved", {
+      changes: [
+        { content: "publish A", optionId: "a" },
+        { content: "publish B", optionId: "b" },
+        { content: "record decision" },
+      ],
+    }, "b");
+    expect(leaseStore.isCovered("publish A")).toBe(false);
+    expect(leaseStore.isCovered("publish B")).toBe(true);
+    expect(leaseStore.isCovered("record decision")).toBe(true);
   });
 
   it("approve with no derivable entries revokes instead of granting", () => {

@@ -109,6 +109,38 @@ describe('resume lease lifecycle', () => {
     }
   });
 
+  it('approve with a reviewer choice grants only matching option-scoped commands', async () => {
+    const input = {
+      prompt: 'Pick a reply?',
+      options: [
+        { id: 'a', label: 'Candidate A' },
+        { id: 'b', label: 'Candidate B' },
+      ],
+      changes: [
+        { content: 'birdc reply 1 "A"', optionId: 'a' },
+        { content: 'birdc reply 1 "B"', optionId: 'b' },
+        { content: 'store review complete' },
+      ],
+    };
+    const { projectRoot, sessionManager, sessionID, sessionDir } = await makeSuspendedSession(input);
+    try {
+      await applyResumeToolResult({
+        sessionManager,
+        sessionId: sessionID,
+        toolResult: { status: 'approved', choice: 'b', reviewer: { username: 'web' } },
+        resumeToken: 'tok-123',
+      });
+
+      const store = new LeaseStore(sessionDir);
+      expect(store.isCovered('birdc reply 1 "A"')).toBe(false);
+      expect(store.isCovered('birdc reply 1 "B"')).toBe(true);
+      expect(store.isCovered('store review complete')).toBe(true);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
   it('reject revokes any existing lease and grants nothing', async () => {
     const { projectRoot, sessionManager, sessionID, sessionDir } = await makeSuspendedSession(GATE_INPUT);
     try {

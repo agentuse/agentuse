@@ -144,10 +144,14 @@ async function applyClaimedResumeToolResult(options: {
     const decisionStatus = toolResult && typeof toolResult === 'object'
       ? (toolResult as { status?: unknown }).status
       : undefined;
+    const decisionChoice = toolResult && typeof toolResult === 'object'
+      ? (toolResult as { choice?: unknown }).choice
+      : undefined;
     applyGateDecisionEffects({
       leaseStore: new LeaseStore(sessionDir),
       gateSealStore: new GateSealStore(sessionDir),
       status: decisionStatus,
+      choice: decisionChoice,
       gateInput: input,
       now,
       sealReason: 'human reviewer rejected an await_human gate',

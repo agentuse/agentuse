@@ -23,13 +23,14 @@ export function applyGateDecisionEffects(options: {
   leaseStore: LeaseStore;
   gateSealStore: GateSealStore;
   status: unknown;
+  choice?: unknown;
   gateInput: unknown;
   now: number;
   sealReason: string;
 }): void {
-  const { leaseStore, gateSealStore, status, gateInput, now, sealReason } = options;
+  const { leaseStore, gateSealStore, status, choice, gateInput, now, sealReason } = options;
   if (status === 'approved' || status === 'approve') {
-    const entries = deriveLeaseEntries(gateInput);
+    const entries = deriveLeaseEntries(gateInput, choice);
     if (entries.length > 0) {
       leaseStore.grant({ version: 1, grantedAt: now, entries });
     } else {

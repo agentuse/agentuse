@@ -40,6 +40,22 @@ describe('deriveLeaseEntries', () => {
     expect(deriveLeaseEntries(undefined)).toEqual([]);
     expect(deriveLeaseEntries('not an object')).toEqual([]);
   });
+
+  test('a reviewer choice grants matching option entries plus unconditional entries', () => {
+    const input = {
+      changes: [
+        { content: 'birdc reply 1 "A"', optionId: 'a' },
+        { content: 'birdc reply 1 "B"', optionId: 'b' },
+        { content: 'store update reviewed=true' },
+      ],
+    };
+    expect(deriveLeaseEntries(input, 'b')).toEqual([
+      { content: 'birdc reply 1 "B"', optionId: 'b' },
+      { content: 'store update reviewed=true' },
+    ]);
+    // No choice preserves legacy behavior for plain approvals.
+    expect(deriveLeaseEntries(input)).toHaveLength(3);
+  });
 });
 
 describe('normalizeForLeaseMatch', () => {
@@ -199,5 +215,26 @@ describe('LeaseStore', () => {
     const store = new LeaseStore(dir);
     expect(store.read()).toBeUndefined();
     expect(store.isCovered('x')).toBe(false);
+  });
+
+  test('consume burns one matching entry and keeps a used tombstone', () => {
+    const store = new LeaseStore(dir);
+    store.grant(lease('birdc tweet "once"'));
+
+    expect(store.consume('birdc tweet "once"', 2000)).toBe('approved');
+    expect(store.isCovered('birdc tweet "once"')).toBe(false);
+    expect(store.read()!.entries[0].consumedAt).toBe(2000);
+    expect(store.consume('birdc tweet "once"', 3000)).toBe('already-used');
+    expect(store.consume('birdc tweet "never approved"')).toBe('not-covered');
+  });
+
+  test('duplicate entries are explicit execution counts', () => {
+    const store = new LeaseStore(dir);
+    store.grant(lease('browser click Post', 'browser click Post'));
+
+    expect(store.consume('browser click Post', 1)).toBe('approved');
+    expect(store.consume('browser click Post', 2)).toBe('approved');
+    expect(store.consume('browser click Post', 3)).toBe('already-used');
+    expect(store.read()!.entries.map((entry) => entry.consumedAt)).toEqual([1, 2]);
   });
 });

@@ -21,6 +21,12 @@ export const LEASE_FILENAME = 'approval-lease.json';
 export interface LeaseEntry {
   content: string;
   label?: string;
+  /** Optional originating reviewer choice. Retained for auditability after the
+   * grant is filtered to the selected option. */
+  optionId?: string;
+  /** One-shot authorization is burned before dispatch. Keeping the tombstone
+   * distinguishes an unapproved command from an approved command already used. */
+  consumedAt?: number;
 }
 
 export interface ApprovalLease {
@@ -39,11 +45,11 @@ export function normalizeForLeaseMatch(value: string): string {
  * item with non-empty content. Anything else in the gate (draft, summary,
  * context) is reviewer-facing and grants nothing.
  */
-export function deriveLeaseEntries(input: unknown): LeaseEntry[] {
+export function deriveLeaseEntries(input: unknown, choice?: unknown): LeaseEntry[] {
   if (!input || typeof input !== 'object') return [];
   const changes = (input as { changes?: unknown }).changes;
   if (!Array.isArray(changes)) return [];
-  return changes
+  const entries = changes
     .map((entry) => {
       const rec = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
       const content = typeof rec.content === 'string' ? rec.content.trim() : '';
@@ -51,9 +57,12 @@ export function deriveLeaseEntries(input: unknown): LeaseEntry[] {
       return {
         content,
         ...(typeof rec.label === 'string' && rec.label.trim() ? { label: rec.label.trim() } : {}),
+        ...(typeof rec.optionId === 'string' && rec.optionId.trim() ? { optionId: rec.optionId.trim() } : {}),
       };
     })
     .filter((entry): entry is LeaseEntry => entry !== undefined);
+  if (typeof choice !== 'string' || !choice.trim()) return entries;
+  return entries.filter((entry) => entry.optionId === undefined || entry.optionId === choice);
 }
 
 /** Whether a bash command matches any human-declared effect pattern. */
@@ -72,9 +81,17 @@ export function commandCoveredByLease(command: string, lease: ApprovalLease | un
   const normalizedCommand = normalizeForLeaseMatch(command);
   return lease.entries.some((entry) => {
     const normalizedContent = normalizeForLeaseMatch(entry.content);
-    return normalizedContent.length > 0 && normalizedCommand === normalizedContent;
+    return entry.consumedAt === undefined
+      && normalizedContent.length > 0
+      && normalizedCommand === normalizedContent;
   });
 }
+
+export type LeaseConsumptionResult =
+  | 'approved'
+  | 'already-used'
+  | 'not-covered'
+  | 'persistence-error';
 
 /**
  * Per-session lease persistence. File-based (in the session directory, next to
@@ -120,16 +137,22 @@ export class LeaseStore {
   }
 
   grant(lease: ApprovalLease): void {
+    this.write(lease);
+  }
+
+  private write(lease: ApprovalLease): boolean {
     const filePath = this.filePath;
     if (!filePath) {
       logger.debug('[Lease] grant dropped: no session dir bound');
-      return;
+      return false;
     }
     try {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, JSON.stringify(lease, null, 2));
+      return true;
     } catch (error) {
       logger.debug(`[Lease] grant failed: ${(error as Error).message}`);
+      return false;
     }
   }
 
@@ -145,5 +168,27 @@ export class LeaseStore {
 
   isCovered(command: string): boolean {
     return commandCoveredByLease(command, this.read());
+  }
+
+  /**
+   * Burn exactly one matching unused entry before command dispatch. Duplicate
+   * entries are intentional execution counts: two identical entries authorize
+   * two executions, and the third attempt returns `already-used`.
+   */
+  consume(command: string, now = Date.now()): LeaseConsumptionResult {
+    const lease = this.read();
+    if (!lease) return 'not-covered';
+    const normalizedCommand = normalizeForLeaseMatch(command);
+    const matching = lease.entries
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => (
+        normalizeForLeaseMatch(entry.content).length > 0
+        && normalizeForLeaseMatch(entry.content) === normalizedCommand
+      ));
+    const available = matching.find(({ entry }) => entry.consumedAt === undefined);
+    if (!available) return matching.length > 0 ? 'already-used' : 'not-covered';
+
+    lease.entries[available.index] = { ...available.entry, consumedAt: now };
+    return this.write(lease) ? 'approved' : 'persistence-error';
   }
 }
