@@ -163,6 +163,15 @@ describe('await_human approval URL', () => {
     }).success).toBe(false);
   });
 
+  it('defines actionable comments as revise-and-re-gate before choice ambiguity', () => {
+    const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
+    const description = tool.description ?? '';
+
+    expect(description).toContain('Comment is the revise-and-re-gate branch');
+    expect(description).toContain('takes precedence over missing-choice ambiguity');
+    expect(description).toContain('Only an explicit request to cancel, abandon, or stop is terminal');
+  });
+
   it('accepts a pick-among-options menu in the input schema', () => {
     const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
     const schema = tool.inputSchema as { safeParse: (v: unknown) => { success: boolean } };
@@ -190,6 +199,41 @@ describe('await_human approval URL', () => {
     expect(schema.safeParse({
       prompt: 'Pick?',
       options: [{ id: 'a' }, { id: 'b', label: 'B' }],
+    }).success).toBe(false);
+  });
+
+  it('validates option-scoped changes against unique option ids', () => {
+    const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
+    const schema = tool.inputSchema as { safeParse: (v: unknown) => { success: boolean } };
+    const options = [
+      { id: 'a', label: 'Candidate A' },
+      { id: 'b', label: 'Candidate B' },
+    ];
+
+    expect(schema.safeParse({
+      prompt: 'Pick a reply?',
+      options,
+      changes: [
+        { content: 'birdc reply 1 "A"', displayContent: 'A', optionId: 'a' },
+        { content: 'birdc reply 1 "B"', displayContent: 'B', optionId: 'b' },
+        { content: 'record review' },
+      ],
+    }).success).toBe(true);
+
+    expect(schema.safeParse({
+      prompt: 'Pick?',
+      options,
+      changes: [{ content: 'birdc reply 1 "C"', optionId: 'c' }],
+    }).success).toBe(false);
+
+    expect(schema.safeParse({
+      prompt: 'Pick?',
+      options: [{ id: 'a', label: 'A' }, { id: 'a', label: 'Duplicate A' }],
+    }).success).toBe(false);
+
+    expect(schema.safeParse({
+      prompt: 'Approve?',
+      changes: [{ content: 'birdc reply 1 "A"', optionId: 'a' }],
     }).success).toBe(false);
   });
 

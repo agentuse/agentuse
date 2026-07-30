@@ -90,15 +90,17 @@ export interface AwaitHumanDefaults {
 
 export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDefaults): Tool {
   return {
-    description: 'Suspend the current run while waiting for a reviewer decision or comment. The run resumes when a decision is submitted from the approval page or Approval API. Decide the SHAPE of the request first: a plain yes/no on one proposed action, or a pick among alternatives. A pick MUST carry its alternatives in `options` - that field is what renders the selector, so without it the reviewer gets an approve/reject card and no way to choose. Never present alternatives as prose, numbered blocks, or several `changes` entries and ask the reviewer to name their pick in a comment; that is a defect, not a formatting preference. The tool result carries the decision: `status` (approved/rejected/commented), optional `comment`, and (when you supplied `options`) `choice`, the id of the option the reviewer selected. Always branch on `choice` when present instead of parsing the comment.',
+    description: 'Suspend the current run while waiting for a reviewer decision or comment. The run resumes when a decision is submitted from the approval page or Approval API. Decide the SHAPE of the request first: a plain yes/no on one proposed action, or a pick among alternatives. A pick MUST carry its alternatives in `options` - that field is what renders the selector, so without it the reviewer gets an approve/reject card and no way to choose. Never present alternatives as prose, numbered blocks, or several `changes` entries and ask the reviewer to name their pick in a comment; that is a defect, not a formatting preference. The tool result carries the decision: `status` (approved/rejected/commented), optional `comment`, and (when you supplied `options`) `choice`, the id of the option the reviewer selected. Always branch on `choice` when present instead of parsing the comment. A human Comment is the revise-and-re-gate branch and takes precedence over missing-choice ambiguity: when its text supplies an actionable edit or replacement, apply it even if it names no option, then request approval again. Only an explicit request to cancel, abandon, or stop is terminal. A result with `source: "pre-review"` or `source: "gate-preflight"` is machine feedback, not a human rejection: revise the request and call await_human again.',
     inputSchema: z.object({
       prompt: z.string().describe('One short line: a direct yes/no question for the reviewer, or on a pick gate the single question the options answer. Do not put the content, headings, or lists here; use draft for that, and options for alternatives - never spell the choices out here.'),
       summary: z.string().optional().describe('A few sentences on what changed and what is being approved. Rendered as Markdown under "Why this request".'),
       draft: z.string().optional().describe('The full reviewable work itself, written in Markdown (headings, bullet lists, tables, fenced code). This is the primary artifact the reviewer reads, so make it complete, not a one-line summary. When the approved action is a short submission (a comment, an email, a post), put the verbatim content in changes instead and use draft for the supporting detail.'),
       changes: z.array(z.object({
         label: z.string().optional().describe('Short name for this action, e.g. "Comment to post", "Then: Like the post", "Email body"'),
-        content: z.string().describe('The exact, final content or action, verbatim: what will literally be submitted on approval')
-      })).optional().describe('The exact actions executed on approval, one entry per discrete action, in order. Rendered as highlighted "On approval" boxes the reviewer skims first, so put ONLY final verbatim content here; rationale belongs in summary or context.'),
+        content: z.string().describe('The exact, final content or action, verbatim: what will literally be submitted on approval'),
+        displayContent: z.string().optional().describe('Human-facing business content to feature above `content` when `content` must be an executable command. For a post, reply, email, or message, use the exact body without the CLI wrapper. The UI keeps the command visible but visually secondary.'),
+        optionId: z.string().min(1).optional().describe('For a pick gate, the options[].id that authorizes this action. Omit for an action that should run regardless of the selected option.')
+      })).optional().describe('The exact actions executed on approval, one entry per discrete action, in order. Rendered as highlighted "On approval" content. When `content` is an executable command, also provide `displayContent` so the reviewer sees the business content first and the exact command de-emphasized beneath it. Rationale belongs in summary or context.'),
       reference: z.object({
         label: z.string().optional().describe('Relationship of the original to this action, e.g. "Replying to" or "In response to"'),
         author: z.string().optional().describe('Who created the original, e.g. "Alexandra Griffon (CEO, BlueCargo)"'),
@@ -119,6 +121,27 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       context: z.string().optional().describe('Only background the other fields do not already carry: constraints, inputs used, process notes. Never repeat the reference, changes, or summary content (no restating the target, URL, or revision story). Omit entirely when nothing extra remains. Rendered as Markdown.'),
       risk: z.string().optional().describe('Concrete risks, unresolved questions, or areas needing reviewer attention. Rendered as Markdown.')
     }).superRefine((val, ctx) => {
+      const optionIds = new Set<string>();
+      for (const [index, option] of (val.options ?? []).entries()) {
+        if (optionIds.has(option.id)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['options', index, 'id'],
+            message: `duplicate option id "${option.id}"`,
+          });
+        }
+        optionIds.add(option.id);
+      }
+      for (const [index, change] of (val.changes ?? []).entries()) {
+        if (change.optionId && !optionIds.has(change.optionId)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['changes', index, 'optionId'],
+            message: `optionId "${change.optionId}" does not reference an options[].id in this request`,
+          });
+        }
+      }
+
       // Approval cards are the one surface where XML-drifted input fails
       // silently (a human sees a garbled card instead of the model seeing an
       // error), so reject it at validation time. The runner's repairToolCall
@@ -138,7 +161,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       prompt: string;
       summary?: string;
       draft?: string;
-      changes?: Array<{ label?: string; content: string }>;
+      changes?: Array<{ label?: string; content: string; displayContent?: string; optionId?: string }>;
       reference?: { label?: string; author?: string; title?: string; url?: string; excerpt?: string };
       draft_url?: string;
       artifact_url?: string;

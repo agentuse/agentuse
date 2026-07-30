@@ -1083,6 +1083,8 @@ async function runInternalWorker() {
   interface ApprovalChange {
     label?: string;
     content: string;
+    displayContent?: string;
+    optionId?: string;
   }
 
   interface ApprovalReference {
@@ -1435,7 +1437,11 @@ async function runInternalWorker() {
       const content = typeof rec.content === 'string' ? repairEscapedText(rec.content) : '';
       if (!content.trim()) return [];
       const label = typeof rec.label === 'string' && rec.label.trim() ? rec.label.trim() : undefined;
-      return [{ ...(label && { label }), content }];
+      const displayContent = typeof rec.displayContent === 'string' && rec.displayContent.trim()
+        ? repairEscapedText(rec.displayContent)
+        : undefined;
+      const optionId = typeof rec.optionId === 'string' && rec.optionId.trim() ? rec.optionId.trim() : undefined;
+      return [{ ...(label && { label }), content, ...(displayContent && { displayContent }), ...(optionId && { optionId }) }];
     });
     return changes.length > 0 ? changes : undefined;
   }

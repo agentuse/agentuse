@@ -241,6 +241,9 @@ export interface LogSubagentSession extends ChildSessionSummary {
 export interface ApprovalChange {
   label?: string;
   content: string;
+  /** Exact business content shown prominently when `content` is a command. */
+  displayContent?: string;
+  optionId?: string;
 }
 
 /** The original item an approval's action responds to (post, message, document). */
