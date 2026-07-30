@@ -3371,11 +3371,13 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-family: var(--mono); font-size: 12px; color: var(--fg); font-variant-numeric: tabular-nums;
 }
 .page-home .runbar-failed { color: var(--red); }
-.page-home a.runbar-more {
+.page-home .runbar-more {
   align-self: flex-start;
-  font-size: 12px; color: var(--muted); text-decoration: none;
+  padding: 0; border: 0; background: none; cursor: pointer;
+  font-family: inherit; font-size: 12px; color: var(--muted);
 }
-.page-home a.runbar-more:hover { color: var(--muted-3); }
+.page-home .runbar-more:hover { color: var(--muted-3); }
+.page-home .runbar-more:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 3px; border-radius: 4px; }
 
 /* Coming up: the next few scheduled runs in plain terms. */
 .page-home a.up-row {

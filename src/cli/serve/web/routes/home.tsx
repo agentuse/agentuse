@@ -285,9 +285,11 @@ function RunBarRow(props: { bar: AgentRuns; max: number }) {
  *  agent, longest first. The qualitative half of outcome-first Home (the Results
  *  tiles above it are the quantitative half). */
 function RunsByAgent(props: { sessions: SessionRow[]; loading: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   const all = tallyRunsByAgent(props.sessions);
-  const bars = all.slice(0, TOP_AGENTS);
-  const max = Math.max(1, ...bars.map((b) => b.total));
+  const bars = expanded ? all : all.slice(0, TOP_AGENTS);
+  // Off the full list, so bar lengths don't rescale when the tail unfolds.
+  const max = Math.max(1, ...all.map((b) => b.total));
   const totals = RUN_TONES.map((t) => ({ ...t, n: all.reduce((sum, bar) => sum + bar.counts[t.tone], 0) }))
     .filter((t) => t.n > 0);
   return (
@@ -313,10 +315,10 @@ function RunsByAgent(props: { sessions: SessionRow[]; loading: boolean }) {
             <div class="runbar-rows">
               {bars.map((bar) => <RunBarRow key={bar.key} bar={bar} max={max} />)}
             </div>
-            {all.length > bars.length && (
-              <a class="runbar-more" href="/sessions">
-                {plural(all.length - bars.length, 'quieter agent')} not shown →
-              </a>
+            {all.length > TOP_AGENTS && (
+              <button type="button" class="runbar-more" onClick={() => setExpanded((on) => !on)}>
+                {expanded ? 'show less' : 'show all →'}
+              </button>
             )}
           </div>
         )}
