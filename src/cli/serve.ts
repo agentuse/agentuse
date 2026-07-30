@@ -350,7 +350,13 @@ interface WorkerReopenGateResult {
 
 interface WorkerReconcileResult {
   success: true;
-  reconciled: Array<{ sessionId: string; agentId: string; agentName: string }>;
+  reconciled: Array<{
+    sessionId: string;
+    agentId: string;
+    agentName: string;
+    /** 'interrupted': killed mid-run. 'stranded': parked on a child that ended. */
+    reason?: 'interrupted' | 'stranded';
+  }>;
 }
 
 interface ApprovalPageInfo {
@@ -2357,8 +2363,14 @@ export function createServeCommand(): Command {
       // worker owns is newer and untouched. Best-effort; never blocks startup.
       const reconcileWorkerOrphans = (worker: AgentWorker, projectId: string, projectRoot: string, readyAt: number): void => {
         void worker.reconcileOrphans(projectRoot, readyAt).then((r) => {
-          if (r.success && r.reconciled.length > 0) {
-            logger.warn(`Recovered ${r.reconciled.length} interrupted session(s) in ${projectId} (stuck 'running' after a worker restart)`);
+          if (!r.success || r.reconciled.length === 0) return;
+          const interrupted = r.reconciled.filter((o) => o.reason !== 'stranded').length;
+          const stranded = r.reconciled.length - interrupted;
+          if (interrupted > 0) {
+            logger.warn(`Recovered ${interrupted} interrupted session(s) in ${projectId} (stuck 'running' after a worker restart)`);
+          }
+          if (stranded > 0) {
+            logger.warn(`Ended ${stranded} stranded session(s) in ${projectId} (parked on a delegated sub-agent that had already ended)`);
           }
         }).catch(() => {/* best-effort recovery */});
       };

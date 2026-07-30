@@ -48,6 +48,43 @@ async function addResolvedGate(sm: SessionManager, sessionID: string, agentId: s
   } as any);
 }
 
+// A pid that cannot be running, so the sweep sees a dead owner (the live test
+// process is stamped as owner at createSession time).
+const DEAD_PID = 0x7fffffff;
+
+/** A manager parked on a delegated child via a pending subagent_wait bookmark —
+ *  the state every cascade approval leaves behind while the leaf works. */
+async function makeDelegatingPair(childStatus: 'running' | 'error' | 'suspended') {
+  const base = await makeSession('Delegate the post');
+  const { projectRoot, sessionManager: rootSm, sessionID: rootId, agentId: rootAgentId, messageID: rootMsg } = base;
+
+  const childSm = new SessionManager();
+  childSm.setParentPath(rootSm.getFullPath()!);
+  const childAgentId = 'agents/leaf';
+  const childId = await childSm.createSession({
+    agent: { id: childAgentId, name: 'leaf-agent', isSubAgent: true },
+    parentSessionID: rootId,
+    model: 'demo:test', version: 'test', config: {},
+    project: { root: projectRoot, cwd: projectRoot },
+  });
+  if (childStatus === 'error') {
+    await childSm.setSessionError(childId, childAgentId, { code: 'INCOMPLETE', message: 'Image billing limit reached' });
+  } else if (childStatus === 'suspended') {
+    await childSm.setSessionSuspended(childId, childAgentId);
+  }
+
+  await rootSm.addPart(rootId, rootAgentId, rootMsg, {
+    type: 'tool', callID: 'root-call', tool: 'subagent__leaf',
+    state: {
+      status: 'pending', input: { task: 'draft' }, suspendedAt: Date.now(),
+      resumePayload: { kind: 'subagent_wait', childSessionID: childId, childAgentName: 'leaf-agent' },
+    },
+  } as any);
+  await rootSm.setSessionSuspended(rootId, rootAgentId);
+
+  return { ...base, childSm, childId, childAgentId };
+}
+
 describe('reconcileOrphanedSessions', () => {
   it('flips a stuck-running session (touched before cutoff) to error(WORKER_INTERRUPTED)', async () => {
     const { projectRoot, sessionManager, sessionID, agentId } = await makeSession();
@@ -130,6 +167,111 @@ describe('reconcileOrphanedSessions', () => {
       expect(gate.state.status).toBe('pending');
       expect(gate.state.resumePayload.resumeToken).toBe('tok-123');
       expect(gate.state.output).toBeUndefined();
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
+  // Only the child's own resume can complete a subagent_wait bookmark, so a
+  // child that ends without one leaves its manager suspended forever.
+  it('ends a manager stranded on a sub-agent that already ended', async () => {
+    const { projectRoot, sessionManager, sessionID, agentId } = await makeDelegatingPair('error');
+    try {
+      await sessionManager.updateSession(sessionID, agentId, { owner: { pid: DEAD_PID } });
+      const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff: Date.now() + 60_000 });
+
+      expect(reconciled).toContainEqual(expect.objectContaining({ sessionId: sessionID, reason: 'stranded' }));
+      const found = await sessionManager.findSession(sessionID);
+      expect(found?.session.status).toBe('error');
+      expect(found?.session.error?.code).toBe('CASCADE_ORPHANED');
+      // The message must name the child and carry its reason.
+      expect(found?.session.error?.message).toContain('leaf-agent');
+      expect(found?.session.error?.message).toContain('Image billing limit reached');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
+  // The ordering that matters: pass 1 kills the leaf, so pass 2 must already see
+  // it as terminal and sweep the manager that pass 1 just widowed.
+  it('sweeps the manager widowed by its own first pass, in one call', async () => {
+    const { projectRoot, sessionManager, sessionID, agentId, childId, childSm, childAgentId } =
+      await makeDelegatingPair('running');
+    try {
+      await sessionManager.updateSession(sessionID, agentId, { owner: { pid: DEAD_PID } });
+      await childSm.updateSession(childId, childAgentId, { owner: { pid: DEAD_PID } });
+
+      const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff: Date.now() + 60_000 });
+
+      expect(reconciled).toContainEqual(expect.objectContaining({ sessionId: childId, reason: 'interrupted' }));
+      expect(reconciled).toContainEqual(expect.objectContaining({ sessionId: sessionID, reason: 'stranded' }));
+      expect((await sessionManager.findSession(childId))?.session.error?.code).toBe('WORKER_INTERRUPTED');
+      expect((await sessionManager.findSession(sessionID))?.session.error?.code).toBe('CASCADE_ORPHANED');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
+  it('leaves a manager alone while its sub-agent is genuinely still running', async () => {
+    const { projectRoot, sessionManager, sessionID, agentId } = await makeDelegatingPair('running');
+    try {
+      // Dead owner on the manager, so only the child's liveness can save it.
+      // The child keeps this test process as owner, i.e. it really is running.
+      await sessionManager.updateSession(sessionID, agentId, { owner: { pid: DEAD_PID } });
+      const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff: Date.now() + 60_000 });
+
+      expect(reconciled.map((r) => r.sessionId)).not.toContain(sessionID);
+      expect((await sessionManager.findSession(sessionID))?.session.status).toBe('suspended');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
+  // Mid-cascade, a healthy chain is indistinguishable from a stranded one in the
+  // window between the child ending and the parent's bookmark being completed.
+  // A live owner process is the only signal that separates them.
+  it('leaves a stranded-looking manager alone while its owner process is alive', async () => {
+    const { projectRoot, sessionManager, sessionID } = await makeDelegatingPair('error');
+    try {
+      const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff: Date.now() + 60_000 });
+
+      expect(reconciled.map((r) => r.sessionId)).not.toContain(sessionID);
+      expect((await sessionManager.findSession(sessionID))?.session.status).toBe('suspended');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
+  it('leaves a manager alone while a human gate is still waiting below it', async () => {
+    const { projectRoot, sessionManager, sessionID, agentId, childId, childSm, childAgentId } =
+      await makeDelegatingPair('suspended');
+    try {
+      const childMsg = await childSm.createMessage(childId, childAgentId, {
+        user: { prompt: { task: 'draft' } },
+        assistant: {
+          system: ['system'], modelID: 'test', providerID: 'demo', mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot }, cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+        }
+      });
+      await childSm.addPart(childId, childAgentId, childMsg, {
+        type: 'tool', callID: 'leaf-call', tool: 'await_human',
+        state: {
+          status: 'pending', input: { prompt: 'Approve?' }, suspendedAt: Date.now(),
+          resumePayload: { kind: 'await_human', resumeToken: 'leaf-token' },
+        },
+      } as any);
+      await sessionManager.updateSession(sessionID, agentId, { owner: { pid: DEAD_PID } });
+
+      const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff: Date.now() + 60_000 });
+
+      expect(reconciled.map((r) => r.sessionId)).not.toContain(sessionID);
+      expect((await sessionManager.findSession(sessionID))?.session.status).toBe('suspended');
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
       delete process.env.XDG_DATA_HOME;

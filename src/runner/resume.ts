@@ -4,6 +4,13 @@ import { isProcessRefAlive } from '../utils/process-info';
 import { LeaseStore } from './approval-lease';
 import { GateSealStore } from './gate-seal';
 import { applyGateDecisionEffects } from './gate-decision';
+import {
+  loadSessionPartsFlat,
+  findPendingSubagentWaitChildId,
+  findStaleCascadeChild,
+  describeStaleCascade,
+  CASCADE_ORPHANED_CODE,
+} from './subagent-cascade';
 import { logger } from '../utils/logger';
 import { join } from 'node:path';
 import { withOwnershipLock } from '../utils/ownership-lock';
@@ -322,10 +329,13 @@ export interface ReconciledOrphan {
   sessionId: string;
   agentId: string;
   agentName: string;
+  /** 'interrupted': killed mid-run. 'stranded': parked on a child that ended. */
+  reason: 'interrupted' | 'stranded';
 }
 
 /**
- * Recover sessions a dead worker left stuck as 'running' with no live process.
+ * Recover sessions a dead worker left stuck as 'running' with no live process,
+ * then the ancestors those deaths stranded.
  *
  * A hard kill (daemon restart or crash — SIGINT/SIGTERM/SIGKILL) terminates the
  * worker child without running any JS, so the run's own terminal-status write
@@ -344,6 +354,14 @@ export interface ReconciledOrphan {
  * WORKER_INTERRUPTED error so reopenSuspendedGate becomes reachable. It never
  * auto-replays the run — a mutation agent could double-fire an external side
  * effect — so recovery stays an explicit, human-reviewed reopen.
+ *
+ * A manager that delegated to that leaf is collateral damage: it parked its
+ * `subagent__*` step on the child and stays `suspended`, and only the child's
+ * own resume can ever complete that bookmark. Killing the child therefore
+ * strands the whole chain above it, silently — so the second pass sweeps the
+ * ancestors the first pass just widowed (plus any stranded earlier, e.g. by a
+ * leaf that ended on report_incomplete before that path was fixed) and marks
+ * them CASCADE_ORPHANED. Same doctrine as above: mark terminal, never replay.
  */
 export async function reconcileOrphanedSessions(options: {
   sessionManager: SessionManager;
@@ -354,6 +372,7 @@ export async function reconcileOrphanedSessions(options: {
   const lookbackMs = options.lookbackMs ?? 30 * 24 * 60 * 60 * 1000;
   const sessions = await sessionManager.listSessionsCreatedAfter(Date.now() - lookbackMs, { includeSubagents: true });
   const reconciled: ReconciledOrphan[] = [];
+  // Pass 1: runs killed mid-flight.
   for (const { session, agentId } of sessions) {
     if (session.status !== 'running') continue;
     if (session.time.updated >= cutoff) continue; // owned by the current live worker
@@ -365,7 +384,37 @@ export async function reconcileOrphanedSessions(options: {
       code: 'WORKER_INTERRUPTED',
       message: 'Run was interrupted when its serve worker restarted, leaving no live process. If it was waiting on approval, reopen the gate to retry.'
     }).catch(() => {});
-    reconciled.push({ sessionId: session.id, agentId, agentName: session.agent.name || session.agent.id });
+    reconciled.push({ sessionId: session.id, agentId, agentName: session.agent.name || session.agent.id, reason: 'interrupted' });
+  }
+
+  // Pass 2: ancestors left holding a bookmark on a child that has ended. Runs
+  // after pass 1 so a leaf just marked WORKER_INTERRUPTED already reads
+  // terminal. findStaleCascadeChild re-reads each child, so the stale statuses
+  // in the snapshot above don't matter — and it returns null while a descendant
+  // is still running or a live gate is waiting, which is what keeps a healthy
+  // mid-flight manager (or one genuinely parked on a human) untouched.
+  for (const { session, agentId } of sessions) {
+    if (session.status !== 'suspended') continue;
+    // A live process may be mid-cascade right now: between the child ending and
+    // the parent's bookmark being completed, a healthy chain looks exactly like
+    // a stranded one. Its owner being alive is the only distinguishing signal.
+    if (session.owner && isProcessRefAlive(session.owner)) continue;
+    let stale: Awaited<ReturnType<typeof findStaleCascadeChild>> = null;
+    try {
+      const parts = await loadSessionPartsFlat(sessionManager, session.id, agentId);
+      const childId = findPendingSubagentWaitChildId(parts);
+      if (!childId) continue;
+      stale = await findStaleCascadeChild(sessionManager, childId);
+    } catch (error) {
+      logger.debug(`[Reconcile] Cascade probe failed for ${session.id}: ${(error as Error).message}`);
+      continue;
+    }
+    if (!stale) continue;
+    await sessionManager.setSessionError(session.id, agentId, {
+      code: CASCADE_ORPHANED_CODE,
+      message: describeStaleCascade(stale),
+    }).catch(() => {});
+    reconciled.push({ sessionId: session.id, agentId, agentName: session.agent.name || session.agent.id, reason: 'stranded' });
   }
   return reconciled;
 }
