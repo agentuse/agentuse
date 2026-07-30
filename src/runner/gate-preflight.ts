@@ -35,6 +35,10 @@ function scopedChangeContents(input: Record<string, unknown>): Map<string, strin
  *
  * Empty changes remain valid for final-answer gates and pick gates that do not
  * yet describe an executable action.
+ *
+ * On a pick gate the plan must go further: every option needs its own gated
+ * command bound by optionId, because the reviewer's pick is what selects the
+ * action. Leaving the candidates unbound would authorize all of them.
  */
 export function validateEffectfulGatePlan(
   input: Record<string, unknown>,
@@ -48,8 +52,13 @@ export function validateEffectfulGatePlan(
   }
 
   const options = Array.isArray(input.options) ? input.options : [];
-  const scoped = scopedChangeContents(input);
-  if (options.length > 0 && scoped.size > 0) {
+  if (options.length > 0) {
+    // Deliberately NOT guarded on "the agent scoped at least one change":
+    // binding none is the dangerous shape, not the exempt one. An unbound entry
+    // applies to every choice (deriveLeaseEntries only drops entries whose
+    // optionId names a different option), so a pick gate carrying N unbound
+    // candidate commands would let one pick authorize all N.
+    const scoped = scopedChangeContents(input);
     const missing = options.flatMap((option) => {
       if (!option || typeof option !== 'object') return [];
       const id = (option as Record<string, unknown>).id;
@@ -60,7 +69,7 @@ export function validateEffectfulGatePlan(
         : [id.trim()];
     });
     if (missing.length > 0) {
-      return `This option-selection approval would leave these choices without a gated command: ${missing.join(', ')}. Add one complete gated command to changes[] for each option and bind it with the matching optionId.`;
+      return `This option-selection approval would leave these choices without a gated command: ${missing.join(', ')}. Add one complete gated command to changes[] for each option and bind it with the matching optionId. An unbound command authorizes whichever option the reviewer picks, so it cannot stand in for a per-option command; when the action genuinely does not depend on the pick, bind that same command to every option.`;
     }
   }
   return undefined;
