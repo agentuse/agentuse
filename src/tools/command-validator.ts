@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as os from 'os';
 import type { CommandValidationResult } from './types.js';
-import { parseBashCommand, extractPaths, extractPipeTargets, extractRedirectionTargets, type ParsedCommand } from './bash-parser.js';
+import { parseBashCommand, extractPaths, extractPipeTargets, extractRedirectionTargets, maskInertPayloads, type ParsedCommand } from './bash-parser.js';
 import { matchStructured, type StructuredCommand } from './wildcard.js';
 import { resolveRealPath, type PathResolverContext } from './path-validator.js';
 
@@ -365,11 +365,12 @@ export class CommandValidator {
    * Check for external directory access in parsed commands
    */
   private async checkExternalDirectoryAccess(
-    commandString: string
+    commandString: string,
+    scanText: string = commandString
   ): Promise<string | null> {
     if (!this.projectRoot) return null; // No project root = no restriction
 
-    const paths = await extractPaths(commandString);
+    const paths = await extractPaths(commandString, scanText);
 
     for (const p of paths) {
       if (!this.isWithinAllowedPaths(p)) {
@@ -570,7 +571,14 @@ export class CommandValidator {
       return { allowed: false, error: 'No valid commands found' };
     }
 
-    const operatorDenyError = this.checkShellOperatorDenylist(normalizedCommand);
+    // Blank out here-doc/here-string payloads before any character-scanning
+    // check runs. Those payloads are stdin data, not shell, and the scanners
+    // cannot tell the difference: they read a JavaScript arrow function as a
+    // redirect, and an apostrophe in the payload leaves their quote tracking
+    // open, which hides every real operator that follows.
+    const scanText = await maskInertPayloads(normalizedCommand);
+
+    const operatorDenyError = this.checkShellOperatorDenylist(scanText);
     if (operatorDenyError) {
       return { allowed: false, error: operatorDenyError };
     }
@@ -593,7 +601,7 @@ export class CommandValidator {
 
     // Check for external directory access last (after denylist and allowlist)
     // Only check if we have a project root configured
-    const externalError = await this.checkExternalDirectoryAccess(normalizedCommand);
+    const externalError = await this.checkExternalDirectoryAccess(normalizedCommand, scanText);
     if (externalError) {
       return { allowed: false, error: externalError };
     }

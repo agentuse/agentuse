@@ -71,6 +71,108 @@ function stripOuterQuotes(value: string): string {
   return trimmed.slice(1, -1);
 }
 
+// Node types inside an unquoted here-doc body that the shell genuinely expands.
+// `<<EOF` really does run `$(...)` in its body, so those spans must stay visible
+// to the scanners and to the allowlist. Everything else in a body is inert data.
+const EXPANDED_PAYLOAD_TYPES = new Set([
+  'command_substitution',
+  'process_substitution',
+  'expansion',
+  'simple_expansion',
+  'arithmetic_expansion',
+]);
+
+interface SourceRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * Queue `node`'s whole span for masking, minus any descendant the shell expands.
+ */
+function maskSpanExceptExpansions(node: any, ranges: SourceRange[]): void {
+  const keep: SourceRange[] = [];
+
+  const walk = (current: any): void => {
+    if (EXPANDED_PAYLOAD_TYPES.has(current.type)) {
+      // Keep the expansion whole; its contents are a real command line.
+      keep.push({ start: current.startIndex, end: current.endIndex });
+      return;
+    }
+    for (let i = 0; i < current.childCount; i += 1) {
+      const child = current.child(i);
+      if (child) walk(child);
+    }
+  };
+  walk(node);
+
+  keep.sort((a, b) => a.start - b.start);
+
+  let cursor = node.startIndex;
+  for (const span of keep) {
+    if (span.start > cursor) ranges.push({ start: cursor, end: span.start });
+    cursor = Math.max(cursor, span.end);
+  }
+  if (node.endIndex > cursor) ranges.push({ start: cursor, end: node.endIndex });
+}
+
+/**
+ * Blank out here-doc and here-string payloads, keeping every other index intact.
+ *
+ * `extractPipeTargets` and `extractRedirectionTargets` walk the raw command
+ * string character by character and have no idea where a payload starts, so they
+ * read stdin data as shell. That cuts both ways:
+ *
+ *   - False positives. A JavaScript arrow function looks like a redirect:
+ *     `x => /^\d+$/.test(t)` is read as `> /^\d+$/.test(t)` and rejected with
+ *     `Add "/^\d+$" to tools.bash.allowedPaths`. A regex alternation such as
+ *     `/a|bash/` is read as a pipe to bash and hits the built-in denylist.
+ *   - False negatives, which are worse. An apostrophe in the payload (`don't`)
+ *     leaves the scanners' quote tracking open, so every operator after the
+ *     here-doc becomes invisible: a redirect writing outside the project root
+ *     was allowed, and `| bash` slipped past the built-in denylist.
+ *
+ * Masked characters become spaces so the string keeps its length and every
+ * offset stays meaningful; newlines survive so the payload's line structure, and
+ * therefore the surrounding parse, is unchanged.
+ */
+export async function maskInertPayloads(commandString: string): Promise<string> {
+  const parser = await initParser();
+  const tree = parser.parse(commandString as any);
+  if (!tree) return commandString;
+
+  const ranges: SourceRange[] = [];
+
+  for (const body of tree.rootNode.descendantsOfType('heredoc_body')) {
+    maskSpanExceptExpansions(body, ranges);
+  }
+
+  // `cmd <<< data` feeds a literal word to stdin. It is not a path, and not a
+  // nested command line.
+  for (const redirect of tree.rootNode.descendantsOfType('herestring_redirect')) {
+    for (let i = 0; i < redirect.childCount; i += 1) {
+      const child = redirect.child(i);
+      if (child && child.type !== '<<<') maskSpanExceptExpansions(child, ranges);
+    }
+  }
+
+  if (ranges.length === 0) return commandString;
+
+  ranges.sort((a, b) => a.start - b.start);
+
+  let masked = '';
+  let cursor = 0;
+  for (const range of ranges) {
+    const start = Math.max(range.start, cursor);
+    if (range.end <= start) continue;
+    masked += commandString.slice(cursor, start);
+    masked += commandString.slice(start, range.end).replace(/[^\n]/g, ' ');
+    cursor = range.end;
+  }
+
+  return masked + commandString.slice(cursor);
+}
+
 function isPathLike(value: string): boolean {
   return (
     value.startsWith('/') ||
@@ -284,8 +386,16 @@ export async function parseBashCommand(commandString: string): Promise<ParsedCom
 /**
  * Check if a command accesses paths and extract them
  * Used for external directory checking
+ *
+ * `scanText` is the same command with here-doc/here-string payloads blanked out
+ * (see maskInertPayloads). Only the character-scanning half needs it: the
+ * argument scan below reads `command` nodes from the AST, which already knows
+ * where a payload starts and ends.
  */
-export async function extractPaths(commandString: string): Promise<string[]> {
+export async function extractPaths(
+  commandString: string,
+  scanText: string = commandString
+): Promise<string[]> {
   const commands = await parseBashCommand(commandString);
   const paths: string[] = [];
 
@@ -314,5 +424,5 @@ export async function extractPaths(commandString: string): Promise<string[]> {
     }
   }
 
-  return [...paths, ...extractRedirectionTargets(commandString)];
+  return [...paths, ...extractRedirectionTargets(scanText)];
 }
