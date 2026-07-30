@@ -432,6 +432,78 @@ describe('LogEntry component', () => {
     expect(html).toContain('approval-copy');
   });
 
+  const pickGate = (): ApprovalLogEntry => ({
+    id: 'log-pick',
+    type: 'approval',
+    title: 'Approval requested',
+    status: 'pending',
+    details: {
+      resumeToken: 'tok-pick',
+      prompt: 'Which reply?',
+      summary: 'All three agree with the author and differ only in the turn they take.',
+      options: [
+        { id: 'a', label: 'Candidate A', description: 'Diagnostic' },
+        { id: 'b', label: 'Candidate B', description: 'Prescriptive' },
+      ],
+      changes: [
+        { content: 'birdc reply 1 "A"', displayContent: 'A text', optionId: 'a' },
+        { content: 'birdc reply 1 "B"', displayContent: 'B text', optionId: 'b' },
+      ],
+    },
+  });
+
+  it('withholds approve on a pick gate until the reviewer actually picks', () => {
+    // No option carries `recommended` and nothing is selected: the agent handed
+    // the call to the reviewer, so approve has nothing to commit to.
+    const html = renderEntry(pickGate(), { showActions: true, onSelectChoice: noop });
+
+    expect(html).toContain('log-actions-awaiting-pick');
+    expect(html).toContain('Pick an option above to approve');
+    expect(html).toContain('<button disabled title="Pick one of the options above first"');
+    // Reject and comment are still valid answers to "which of these?".
+    expect(html).toContain('<button class="danger">Reject');
+    expect(html).toContain('<button>Comment');
+    // Nothing is emphasized, so the card never implies a pick that was not made.
+    expect(html).toContain('approval-option interactive');
+    expect(html).not.toContain('approval-option interactive selected');
+    // And the button must not name a candidate it is not committing to.
+    expect(html).not.toContain('approve-choice-label');
+  });
+
+  it('enables approve and names the pick once a candidate is selected', () => {
+    const html = renderEntry(pickGate(), { showActions: true, selectedChoice: 'b', onSelectChoice: noop });
+
+    expect(html).not.toContain('log-actions-awaiting-pick');
+    expect(html).not.toContain('Pick one of the options above first');
+    expect(html).toContain('<button class="primary">Approve<span class="approve-choice-label">');
+    expect(html).toContain('Candidate B');
+    expect(html).toContain('approval-option interactive selected');
+  });
+
+  it('collapses the summary on a pick gate but leaves it open on a plain gate', () => {
+    // The per-option descriptions already carry what separates the alternatives,
+    // so the summary starts collapsed there.
+    const pick = renderEntry(pickGate(), { showActions: true });
+    expect(pick).toContain('<summary>Why this request</summary>');
+    expect(pick).toContain('approval-summary-collapsed');
+
+    // On a plain yes/no gate nothing else explains the ask, so it stays open.
+    const plain = renderEntry({
+      id: 'log-plain',
+      type: 'approval',
+      title: 'Approval requested',
+      status: 'pending',
+      details: {
+        resumeToken: 'tok-plain',
+        prompt: 'Send this?',
+        summary: 'Third follow-up, shortened after the reviewer trimmed the last one.',
+        changes: [{ content: 'birdc reply 1 "ok"', displayContent: 'ok' }],
+      },
+    }, { showActions: true });
+    expect(plain).not.toContain('approval-summary-collapsed');
+    expect(plain).toContain('approval-section-title">Why this request');
+  });
+
   it('renders inline artifact previews for image, html, and pdf artifacts', () => {
     const html = renderEntry({
       id: 'log-artifacts',

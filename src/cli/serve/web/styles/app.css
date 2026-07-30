@@ -1867,14 +1867,16 @@ a, button, select, summary, label, input, textarea,
   background: transparent;
 }
 .approval-section-title,
-.approval-context > summary {
+.approval-context > summary,
+.approval-summary-collapsed > summary {
   color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   padding: 10px 12px 0;
 }
-.approval-context > summary {
+.approval-context > summary,
+.approval-summary-collapsed > summary {
   cursor: pointer;
   padding-bottom: 10px;
   list-style-position: inside;
@@ -2204,6 +2206,10 @@ a, button, select, summary, label, input, textarea,
   color: var(--muted);
   letter-spacing: 0.04em;
 }
+/* Why the approve button is inert on an unpicked gate. Uses the readable
+   secondary token, not --muted: it explains a blocked action, so it has to be
+   noticed rather than skimmed past. */
+.log-actions-awaiting-pick { color: var(--muted-3); }
 .log-actions-hint .kbd {
   display: inline-block;
   padding: 1px 6px; margin: 0 2px;

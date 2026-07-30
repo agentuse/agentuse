@@ -481,12 +481,24 @@ function ApprovalDetailCard(props: {
           <div class="approval-link-row">{links}</div>
         </section>
       )}
-      {showSummary && (
-        <section class="approval-section approval-secondary">
-          <div class="approval-section-title">Why this request</div>
-          <div class="approval-section-body"><LogContent value={details.summary!} forceMarkdown /></div>
-        </section>
-      )}
+      {showSummary && (options.length > 0
+        // On a pick gate the per-option descriptions already say what separates
+        // the alternatives, which is the only part of the summary that changes the
+        // decision; the rest tends to restate the candidates or the buttons. Start
+        // it collapsed there. On a plain yes/no gate nothing else explains the ask,
+        // so it stays open.
+        ? (
+          <details class="approval-section approval-secondary approval-summary-collapsed">
+            <summary>Why this request</summary>
+            <div class="approval-section-body"><LogContent value={details.summary!} forceMarkdown /></div>
+          </details>
+        )
+        : (
+          <section class="approval-section approval-secondary">
+            <div class="approval-section-title">Why this request</div>
+            <div class="approval-section-body"><LogContent value={details.summary!} forceMarkdown /></div>
+          </section>
+        ))}
       {details.context && (
         <details class={`approval-section approval-context${changes.length === 0 ? ' approval-context-open' : ''}`} open={changes.length === 0}>
           <summary>Source context</summary>
@@ -779,6 +791,12 @@ function LogEntryImpl(props: LogEntryProps) {
   const selectedOptionLabel = props.showActions && props.selectedChoice
     ? entry.details?.options?.find((o) => o.id === props.selectedChoice)?.label
     : undefined;
+  // A pick gate with nothing selected has nothing to approve: the agent branches
+  // on the choice, so approve must wait for one. Only approve is withheld —
+  // reject and comment are still valid answers to "which of these?".
+  const awaitingPick = props.showActions
+    && (entry.details?.options?.length ?? 0) > 0
+    && !props.selectedChoice;
 
   const classes = [
     'log-item',
@@ -871,13 +889,25 @@ function LogEntryImpl(props: LogEntryProps) {
                 <span class="btn-spinner" aria-hidden="true" />
                 {props.pendingAction === 'approve' ? 'approving…' : props.pendingAction === 'reject' ? 'rejecting…' : props.pendingAction === 'comment' ? 'sending comment…' : 'submitting decision…'}
               </span>
+            ) : awaitingPick ? (
+              // An explanation, not a shortcut list, so it must survive on touch
+              // where the keyboard hints are hidden; only the keys are wrapped.
+              <div class="log-actions-hint log-actions-awaiting-pick">
+                Pick an option above to approve.
+                <span class="log-actions-hint-kbd"> <span class="kbd">esc</span> reject <span class="kbd">c</span> comment</span>
+              </div>
             ) : (
               <div class="log-actions-hint log-actions-hint-kbd">
                 <span class="kbd">⌘⏎</span> approve <span class="kbd">esc</span> reject <span class="kbd">c</span> comment
               </div>
             )}
             <div class="log-actions-buttons">
-              <button class="primary" disabled={props.actionsDisabled} onClick={() => props.onAction('approve')}>
+              <button
+                class="primary"
+                disabled={props.actionsDisabled || awaitingPick}
+                title={awaitingPick ? 'Pick one of the options above first' : undefined}
+                onClick={() => props.onAction('approve')}
+              >
                 {selectedOptionLabel ? <>Approve<span class="approve-choice-label">“{selectedOptionLabel}”</span></> : 'Approve'}
               </button>
               <button class="danger" disabled={props.actionsDisabled} onClick={() => props.onAction('reject')}>Reject</button>

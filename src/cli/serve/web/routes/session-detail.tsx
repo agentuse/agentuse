@@ -725,17 +725,27 @@ export default function SessionDetail() {
     : undefined;
 
   // Effective pick on an options gate: the reviewer's explicit selection when it
-  // still names a live option, otherwise the recommended (or first) option. A
-  // ref mirrors it so submitDecision reads the latest value without re-creating
-  // the callback on every radio click.
+  // still names a live option, otherwise the agent's recommendation. A ref mirrors
+  // it so submitDecision reads the latest value without re-creating the callback
+  // on every radio click.
+  //
+  // Deliberately does NOT fall back to the first option. An agent that marks
+  // nothing recommended is saying the call is the reviewer's, and position is not
+  // a recommendation — preselecting options[0] silently turned "you decide" into
+  // an approve button already committed to A, which the selected-candidate
+  // emphasis then made look deliberate. With no recommendation the gate stays
+  // genuinely unpicked and approve waits for a real choice.
   const gateOptions = approval?.options;
   const effectiveChoice = gateOptions && gateOptions.length > 0
     ? (selectedChoice && gateOptions.some((o) => o.id === selectedChoice)
       ? selectedChoice
-      : gateOptions.find((o) => o.recommended)?.id ?? gateOptions[0].id)
+      : gateOptions.find((o) => o.recommended)?.id)
     : undefined;
   const effectiveChoiceRef = useRef<string | undefined>(undefined);
   effectiveChoiceRef.current = effectiveChoice;
+  // A pick gate cannot be approved without a choice: the agent branches on it, so
+  // an approve carrying none is the ambiguity the comment branch exists to avoid.
+  const awaitingPick = Boolean(gateOptions && gateOptions.length > 0 && !effectiveChoice);
 
   const submitDecision = useCallback(async (action: 'approve' | 'reject' | 'comment', comment?: string, remember?: string) => {
     if (submittingDecision || !currentResumeTokenRef.current) return;
@@ -880,7 +890,9 @@ export default function SessionDetail() {
       const anyDialogOpen = Boolean(document.querySelector('dialog[open], [role="dialog"]'));
       const canAct = actionable && !submittingDecision;
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-        if (!canAct || inField) return;
+        // Reject and comment stay available on an unpicked gate; only approve
+        // needs the choice, so only approve is withheld.
+        if (!canAct || inField || awaitingPick) return;
         event.preventDefault();
         void submitDecision('approve');
       } else if (event.key === 'Escape' && !inField) {
@@ -894,7 +906,7 @@ export default function SessionDetail() {
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [decisionDialog, actionable, submittingDecision, submitDecision]);
+  }, [decisionDialog, actionable, submittingDecision, submitDecision, awaitingPick]);
 
   if (fatalError) {
     return (
