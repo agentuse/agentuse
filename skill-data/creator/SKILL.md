@@ -485,6 +485,20 @@ names like `data` instead of `values`):
   only when a caller other than this single agent will reuse it (a repeated
   workflow, CI, a scheduled job). Default to inline.
 
+  **Reuse is not the only reason to commit one.** The other test is what the
+  allowlist can see. When a tool is driven through a single command shape whose
+  payload decides what happens (`<tool> eval <code>`, `<tool> nodejs <script>`,
+  `psql -c <sql>`), one entry covers the reads and the writes alike, so
+  `tools.bash.gated` has nothing to bite on and "read-only" survives only as
+  body prose. Commit a dispatcher with one subcommand per operation
+  (`ops.sh read-thread`, `ops.sh publish-reply`), allowlist the reads, gate the
+  writes, and leave the raw tool out of the allowlist entirely. Worth doing with
+  a single caller: it buys a boundary the prompt cannot widen, and it stops the
+  model re-deriving the same mechanics every run, differently each time and
+  sometimes wrong. Pass an effectful payload as an argument to the gated
+  command, never as a path to a file the agent could rewrite between approval
+  and execution.
+
 - **Config with runtime override.** To bake in a canonical value but allow
   per-run overrides, resolve the effective value in Steps as: (1) a runtime
   override from the appended prompt if present, else (2) the Configuration value,
