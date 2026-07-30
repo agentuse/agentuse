@@ -576,7 +576,21 @@ export class CommandValidator {
     // cannot tell the difference: they read a JavaScript arrow function as a
     // redirect, and an apostrophe in the payload leaves their quote tracking
     // open, which hides every real operator that follows.
-    const scanText = await maskInertPayloads(normalizedCommand);
+    const { scanText, untrustedDelimiter } = await maskInertPayloads(normalizedCommand);
+
+    // A delimiter the shell and the parser read differently makes the body
+    // boundary meaningless, and a command hidden inside that body is checked by
+    // nothing at all. Refuse rather than guess.
+    if (untrustedDelimiter) {
+      return {
+        allowed: false,
+        error:
+          `Ambiguous here-doc delimiter ${JSON.stringify(untrustedDelimiter)}: the shell and the ` +
+          `command parser would end the here-doc in different places, so anything after it cannot ` +
+          `be checked. Use a plain delimiter, e.g. <<EOF or <<'EOF', on its own without quoting ` +
+          `part of the word or splitting it across lines.`,
+      };
+    }
 
     const operatorDenyError = this.checkShellOperatorDenylist(scanText);
     if (operatorDenyError) {
