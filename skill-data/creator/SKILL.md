@@ -264,6 +264,25 @@ Most wrong-layer rules come from fixing a symptom in whatever file is already
 open: the symptom surfaces in one agent, the cause sits in the skill they all
 share.
 
+**When no layer can hold it: the runtime gap.** Sometimes the body is
+compensating for a runtime limit, e.g. an allowlist that cannot express the
+command shape a skill documents, or a knob that does not exist. The patch stays
+in the body, because it has to live somewhere. What must not happen is that it
+reads as a rule, because then it is copied into the next agent, mutates, and is
+never removed when the limit is lifted. Two moves keep it honest:
+
+- **Say what it works around, in `metadata:`.** Free-form, never interpreted,
+  never injected into the prompt, still visible in the file, and queryable via
+  `agentuse agents --json`. Not a body comment: the body IS the prompt, and the
+  model obeys imperatives inside `<!-- -->`.
+- **File the gap once**, at https://github.com/agentuse/agentuse/issues, so it
+  can be closed and the patch deleted. If it is not worth filing, it is not a
+  gap: the line is permanent behavior, and stop calling it a workaround.
+
+The tell that you are looking at one: the line describes what the harness does
+rather than what the job is. Ask whether it would be false or pointless if the
+runtime changed.
+
 - Put **soft defaults** in skills. Don't bake a hard "never do X" into a skill
   that a learning should be able to override, a captured correction outranks a
   skill default, so an absolute skill rule fights the feedback loop.
