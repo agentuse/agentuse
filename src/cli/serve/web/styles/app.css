@@ -3312,6 +3312,15 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .attn-dismiss:hover { color: var(--red); border-color: var(--line-strong); background: var(--panel-hover); }
 /* Touch screens have no hover: keep the control faintly visible. */
 @media (hover: none) { .page-home .attn-dismiss { opacity: 0.55; } }
+/* Unfolds the needs-a-look tail in place, rather than sending the reviewer off
+   to the sessions list to re-find what Home already knows. */
+.page-home .attn-more {
+  align-self: flex-start;
+  padding: 2px 0; border: 0; background: none; cursor: pointer;
+  font-family: inherit; font-size: 12px; color: var(--muted);
+}
+.page-home .attn-more:hover { color: var(--muted-3); }
+.page-home .attn-more:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 3px; border-radius: 4px; }
 
 /* Runs by agent: one horizontal stacked bar per agent, busiest first, split by
    run outcome. The status hues repeat across the app, so identity never rests

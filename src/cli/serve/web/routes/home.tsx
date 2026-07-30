@@ -164,6 +164,10 @@ function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => voi
   );
 }
 
+/** How many needs-a-look rows show before the tail folds away. Pending gates are
+ *  never folded: a waiting human is the whole point of the section. */
+const ATTENTION_ROWS = 3;
+
 /** What's blocked on a human: pending gates first, then recent failed runs, then
  *  runs stranded on a sub-agent that already ended. A stranded run is raw-status
  *  `suspended`, so it lands in neither of the first two groups — it used to fall
@@ -176,8 +180,13 @@ function AttentionSection(props: {
   stranded: SessionRow[];
   onDismissFailed: (row: SessionRow) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const { pending, failed, stranded } = props;
   const total = pending.length + failed.length + stranded.length;
+  // Each group keeps its own head, so one long list never buries the other.
+  const shownFailed = expanded ? failed : failed.slice(0, ATTENTION_ROWS);
+  const shownStranded = expanded ? stranded : stranded.slice(0, ATTENTION_ROWS);
+  const folded = (failed.length - shownFailed.length) + (stranded.length - shownStranded.length);
   return (
     <section class="group">
       <h2 class="group-title">
@@ -190,8 +199,8 @@ function AttentionSection(props: {
         : (
           <div class="attn-list">
             {pending.map((row) => <ApprovalCard key={`${row.project}:${row.sessionId}`} row={row} />)}
-            {failed.map((row) => <FailedRow key={`${row.project}:${row.sessionId}`} row={row} onDismiss={props.onDismissFailed} />)}
-            {stranded.map((row) => (
+            {shownFailed.map((row) => <FailedRow key={`${row.project}:${row.sessionId}`} row={row} onDismiss={props.onDismissFailed} />)}
+            {shownStranded.map((row) => (
               <FailedRow
                 key={`${row.project}:${row.sessionId}`}
                 row={row}
@@ -199,6 +208,11 @@ function AttentionSection(props: {
                 onDismiss={props.onDismissFailed}
               />
             ))}
+            {(folded > 0 || expanded) && (
+              <button type="button" class="attn-more" onClick={() => setExpanded((on) => !on)}>
+                {expanded ? 'show less' : `show all ${failed.length + stranded.length} needing a look →`}
+              </button>
+            )}
           </div>
         )}
     </section>
@@ -774,11 +788,12 @@ export default function Home() {
         });
       });
   }, []);
+  // Not truncated here: the section itself folds the tail behind "show all", so
+  // the header count is the real number of runs waiting on a review.
   const failedRecent = liveHome.sessions
     .filter((s) => runTone(s.status) === 'failed' && s.errorCode !== 'USER_STOPPED' && s.dismissedAt === undefined
       && !dismissedLocal.has(sessionRowKey(s)))
-    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
-    .slice(0, 3);
+    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
   // Runs parked on a delegated sub-agent that has since ended. They read as
   // `suspended`, so neither the failed filter above nor the pending-gate list
   // catches them, yet nothing will ever move them: the only way out is a human
@@ -786,8 +801,7 @@ export default function Home() {
   const strandedRecent = liveHome.sessions
     .filter((s) => liveHome.suspendedGates.orphaned.has(sessionRowKey(s)) && s.dismissedAt === undefined
       && !dismissedLocal.has(sessionRowKey(s)))
-    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
-    .slice(0, 3);
+    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
   const pendingApprovals = liveHome.pendingApprovals;
   // Suspended rows with no live or expired gate are mid-flight (a delegated
   // leaf running under a decided cascade approval, or a resume in progress),
