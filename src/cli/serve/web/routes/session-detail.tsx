@@ -160,6 +160,35 @@ function scrollToPageEnd(): void {
   });
 }
 
+/** Combined height of the two bars that stay pinned over the feed (topbar, then
+ *  the session bar beneath it), so a scroll target lands below them rather than
+ *  underneath them. Measured live instead of read from --topbar-h: the var is set
+ *  by a later layout effect and is not yet available on the first paint. */
+function stickyHeaderOffset(): number {
+  const topbar = document.querySelector('.topbar');
+  const sessionBar = document.querySelector('.session-bar');
+  return (topbar?.getBoundingClientRect().height ?? 0)
+    + (sessionBar?.getBoundingClientRect().height ?? 0);
+}
+
+/**
+ * Put the pending gate's card at the top of the viewport. Returns false when the
+ * gate has not rendered yet, so the caller can retry on a later commit.
+ *
+ * The decision row sits at the BOTTOM of a gate card, and those cards run well
+ * past a viewport (1200px is ordinary), so jumping to the document end lands the
+ * reviewer on the buttons with the quoted original and every candidate scrolled
+ * off the top, behind them. A gate reads top-down: what you are replying to, then
+ * the options, then the commitment.
+ */
+function scrollToActionableGate(): boolean {
+  const gate = document.querySelector('.log-item.is-actionable');
+  if (!gate) return false;
+  const top = gate.getBoundingClientRect().top + window.scrollY - stickyHeaderOffset() - 12;
+  window.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
+  return true;
+}
+
 // error + USER_STOPPED / TIMEOUT / INCOMPLETE surface as their own pill, matching the server.
 function displaySessionStatus(status: string, header: ApprovalHeader | null): string {
   if ((status === 'error' || header?.sessionStatus === 'error')) {
@@ -173,6 +202,13 @@ function displaySessionStatus(status: string, header: ApprovalHeader | null): st
 export function hasActionableApproval(status: string, header: ApprovalHeader | null): boolean {
   if (!header?.currentResumeToken) return false;
   return status === 'waiting' || (status === 'loading' && header.sessionStatus === 'suspended');
+}
+
+/** A sibling gate in the pending queue: just enough to label it and link to it. */
+interface QueuedApproval {
+  sessionId: string;
+  project: string;
+  agentName: string;
 }
 
 export default function SessionDetail() {
@@ -201,6 +237,9 @@ export default function SessionDetail() {
   // the effective selection then falls back to the recommended (or first)
   // option, so approve is always well-defined on an options gate.
   const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
+  // Sibling gates awaiting a decision, so a reviewer working through a backlog can
+  // move to the next one without going back to the approvals list.
+  const [pendingQueue, setPendingQueue] = useState<QueuedApproval[]>([]);
   const noticeRef = useRef<HTMLParagraphElement>(null);
   const [submittingContinue, setSubmittingContinue] = useState(false);
   const [submittingStop, setSubmittingStop] = useState(false);
@@ -511,13 +550,20 @@ export default function SessionDetail() {
   useLayoutEffect(() => {
     if (orderedLogs.length === 0) return;
     if (!hasScrolledRef.current) {
-      hasScrolledRef.current = true;
-      // First paint for this session: jump to the newest entry only when there's
-      // something live to follow or an actionable gate to act on. On an ended
-      // session leave the reader at the top so the header orients them.
-      if (isLiveStatus(status, orderedLogs) || hasActionableApproval(status, approval)) {
-        scrollToPageEnd();
+      // First paint for this session. An actionable gate takes priority over
+      // live-follow: the reviewer's job is that decision, and it reads from the
+      // card's top. Leave the ref unset until the card actually exists so a
+      // gate that streams in a beat later still gets landed on.
+      if (hasActionableApproval(status, approval)) {
+        if (!scrollToActionableGate()) return;
+        hasScrolledRef.current = true;
+        return;
       }
+      hasScrolledRef.current = true;
+      // Otherwise jump to the newest entry only when there's something live to
+      // follow. On an ended session leave the reader at the top so the header
+      // orients them.
+      if (isLiveStatus(status, orderedLogs)) scrollToPageEnd();
       return;
     }
     // Past first paint: keep live-follow behavior — stick to the end while the
@@ -650,6 +696,33 @@ export default function SessionDetail() {
     if (continueActionable) setSubmittingContinue(false);
     else setShowResume(false);
   }, [continueActionable]);
+
+  // Pending-queue position, fetched once per session rather than polled: it only
+  // has to be right when the reviewer arrives, and deciding this gate navigates
+  // away anyway. A capability-scoped (?token=) view has no operator access to the
+  // approvals endpoint and would only 401, so it stays queue-less.
+  useEffect(() => {
+    if (token || !actionable) return;
+    let cancelled = false;
+    void fetchApprovals()
+      .then((payload) => {
+        if (cancelled) return;
+        setPendingQueue(payload.buckets.pending.map((row) => ({
+          sessionId: row.sessionId,
+          project: row.project,
+          agentName: row.agentName || row.agentId,
+        })));
+      })
+      .catch(() => { /* queue nav is an accelerator, never the only path */ });
+    return () => { cancelled = true; };
+  }, [token, actionable, sessionId]);
+
+  const queueIndex = pendingQueue.findIndex((row) => row.sessionId === sessionId);
+  // Wrap to the first gate: working a backlog from the middle should still reach
+  // every one of them without a detour through the list.
+  const queueNext = queueIndex >= 0 && pendingQueue.length > 1
+    ? pendingQueue[(queueIndex + 1) % pendingQueue.length]
+    : undefined;
 
   // Effective pick on an options gate: the reviewer's explicit selection when it
   // still names a live option, otherwise the recommended (or first) option. A
@@ -1026,6 +1099,21 @@ export default function SessionDetail() {
             {approval?.mock && <span class="mock-badge" title="Tool outputs were LLM-generated; no real tools ran">mock</span>}
             <span class="session-bar-name">{agentLabel}</span>
           </div>
+          {queueNext && (
+            <div class="session-bar-queue">
+              <span class="session-bar-queue-count">{queueIndex + 1} of {pendingQueue.length} pending</span>
+              <a
+                class="session-bar-queue-next"
+                href={`/sessions/${encodeURIComponent(queueNext.sessionId)}?project=${encodeURIComponent(queueNext.project)}`}
+                title={`Next pending: ${queueNext.agentName}`}
+              >
+                next
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="9 6 15 12 9 18" />
+                </svg>
+              </a>
+            </div>
+          )}
           <button
             type="button"
             class="session-bar-top"

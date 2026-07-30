@@ -639,6 +639,48 @@ a, button, select, summary, label, input, textarea,
   text-overflow: ellipsis;
   min-width: 0;
 }
+/* Pending-queue position, shown only while other gates are also waiting. Lives in
+   the sticky bar so a reviewer working a backlog can advance from anywhere in a
+   long card without scrolling back for a control. */
+.page-approval-detail .session-bar-queue {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.page-approval-detail .session-bar-queue-count {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.page-approval-detail .session-bar-queue-next {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--muted-3);
+  font-size: 11px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.page-approval-detail .session-bar-queue-next:hover {
+  border-color: var(--cyan-border);
+  color: var(--fg);
+  background: var(--panel-hover);
+}
+.page-approval-detail .session-bar-queue-next:focus-visible {
+  outline: 2px solid var(--cyan-border);
+  outline-offset: 2px;
+}
+/* Narrow screens: the count is the least load-bearing half, drop it and keep the
+   control that actually advances the queue. */
+@media (max-width: 560px) {
+  .page-approval-detail .session-bar-queue-count { display: none; }
+}
 /* Scroll-to-top: revealed only once the page is scrolled away from the top, so it
    never invites a no-op click while already there. */
 .page-approval-detail .session-bar-top {
