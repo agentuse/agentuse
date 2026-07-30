@@ -313,6 +313,16 @@ export interface ApprovalContext {
   reviews: ApprovalReview[];
 }
 
+/** One durable human decision supplied to gate pre-review. Machine bounces are
+ * excluded so a judge never treats its own earlier critique as human policy. */
+export interface HumanApprovalDecision {
+  status: 'approved' | 'commented' | 'rejected';
+  choice?: string;
+  comment?: string;
+  reviewer?: string;
+  work?: string;
+}
+
 /** Truncate a value for the approval-context prompt without breaking on objects. */
 function approvalText(value: unknown, limit: number): string | undefined {
   const str = typeof value === 'string' ? value.trim() : '';
@@ -325,7 +335,7 @@ function approvalText(value: unknown, limit: number): string | undefined {
  * Markdown block. Pulls the human-facing, text-bearing fields only; URLs and
  * artifact paths are dropped since the model can't follow them.
  */
-function formatReviewedWork(input: unknown): string | undefined {
+export function formatReviewedWork(input: unknown): string | undefined {
   if (!input || typeof input !== 'object') return undefined;
   const i = input as Record<string, unknown>;
   const sections: string[] = [];
@@ -336,11 +346,30 @@ function formatReviewedWork(input: unknown): string | undefined {
   add('Question', i.prompt, 500);
   const reference = i.reference && typeof i.reference === 'object' ? i.reference as Record<string, unknown> : {};
   add(`Original (${typeof reference.label === 'string' && reference.label ? reference.label : 'in reply to'})`, reference.excerpt, 1000);
+  const optionLabels = new Map<string, string>();
+  if (Array.isArray(i.options)) {
+    for (const option of i.options) {
+      const rec = option && typeof option === 'object' ? option as Record<string, unknown> : {};
+      if (typeof rec.id !== 'string' || !rec.id.trim()) continue;
+      optionLabels.set(
+        rec.id.trim(),
+        typeof rec.label === 'string' && rec.label.trim() ? rec.label.trim() : rec.id.trim(),
+      );
+    }
+  }
   if (Array.isArray(i.changes)) {
     i.changes.forEach((entry, index) => {
       const rec = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
       const label = typeof rec.label === 'string' && rec.label ? rec.label : `Change ${index + 1}`;
-      add(label, rec.content, 2000);
+      const optionId = typeof rec.optionId === 'string' && rec.optionId.trim() ? rec.optionId.trim() : undefined;
+      const scopedLabel = optionId
+        ? `${label} (choice: ${optionLabels.get(optionId) ?? optionId} [${optionId}])`
+        : label;
+      const displayContent = typeof rec.displayContent === 'string' && rec.displayContent.trim()
+        ? rec.displayContent
+        : undefined;
+      add(scopedLabel, displayContent ?? rec.content, 2000);
+      if (displayContent) add(`${scopedLabel} — exact command`, rec.content, 2000);
     });
   }
   add('Summary', i.summary, 1500);
@@ -348,6 +377,80 @@ function formatReviewedWork(input: unknown): string | undefined {
   add('Context', i.context, 1500);
   add('Risk', i.risk, 1000);
   return sections.length > 0 ? sections.join('\n\n') : undefined;
+}
+
+function normalizedHumanDecision(output: unknown): Omit<HumanApprovalDecision, 'work'> | undefined {
+  if (!output || typeof output !== 'object') return undefined;
+  const record = output as Record<string, unknown>;
+  const source = typeof record.source === 'string' ? record.source : undefined;
+  const reviewerRecord = record.reviewer && typeof record.reviewer === 'object'
+    ? record.reviewer as Record<string, unknown>
+    : {};
+  const reviewer = typeof reviewerRecord.username === 'string'
+    ? reviewerRecord.username
+    : typeof reviewerRecord.name === 'string'
+      ? reviewerRecord.name
+      : undefined;
+  if (
+    source === 'pre-review'
+    || source === 'gate-preflight'
+    || reviewer === 'verify-judge'
+    || reviewer === 'agentuse-runtime'
+  ) {
+    return undefined;
+  }
+
+  const rawStatus = typeof record.status === 'string' ? record.status.toLowerCase() : '';
+  const status = rawStatus === 'approve' || rawStatus === 'approved'
+    ? 'approved'
+    : rawStatus === 'comment' || rawStatus === 'commented'
+      ? 'commented'
+      : rawStatus === 'reject' || rawStatus === 'rejected'
+        ? 'rejected'
+        : undefined;
+  if (!status) return undefined;
+  const choice = typeof record.choice === 'string' && record.choice.trim()
+    ? record.choice.trim()
+    : undefined;
+  const comment = typeof record.comment === 'string' && record.comment.trim()
+    ? record.comment.trim()
+    : undefined;
+  return {
+    status,
+    ...(choice && { choice }),
+    ...(comment && { comment }),
+    ...(reviewer && { reviewer }),
+  };
+}
+
+/** Gather the latest completed human gate decisions for the same session. The
+ * gate currently being judged is still running, so it is naturally excluded. */
+export async function gatherHumanApprovalHistory(
+  sessionManager: SessionManager,
+  sessionID: string,
+  agentId: string,
+  options: { limit?: number } = {},
+): Promise<HumanApprovalDecision[]> {
+  try {
+    const decisions: HumanApprovalDecision[] = [];
+    const messages = await sessionManager.getSessionMessages(sessionID, agentId);
+    for (const message of messages) {
+      const parts = await sessionManager.getMessageParts(sessionID, agentId, message.id);
+      for (const part of parts) {
+        if (part.type !== 'tool' || part.tool !== 'await_human') continue;
+        const gate = part as ToolPart;
+        if (gate.state.status !== 'completed') continue;
+        const decision = normalizedHumanDecision(gate.state.output);
+        if (!decision) continue;
+        const work = formatReviewedWork(gate.state.input);
+        decisions.push({ ...decision, ...(work && { work }) });
+      }
+    }
+    return decisions.slice(-Math.max(1, options.limit ?? 8));
+  } catch (error) {
+    logger.debug(`Failed to gather human approval history: ${(error as Error).message}`);
+    return [];
+  }
 }
 
 /** Pull a non-empty reviewer comment out of a resolved gate's decision output. */

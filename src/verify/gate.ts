@@ -14,6 +14,10 @@ import type { CanonicalVerifyConfig, VerifyPlacement } from './types.js';
 import { logger } from '../utils/logger.js';
 import type { SessionManager } from '../session/manager.js';
 import type { Part, VerifyPart } from '../session/types.js';
+import {
+  gatherHumanApprovalHistory,
+  type HumanApprovalDecision,
+} from '../runner/session-helper.js';
 import { open, realpath, stat } from 'fs/promises';
 import { isAbsolute, relative, resolve } from 'path';
 
@@ -29,6 +33,35 @@ export function resolveVerifyPlacements(
 
 const MAX_EMBEDDED_ARTIFACT_BYTES = 12_000;
 const MAX_TOTAL_ARTIFACT_BYTES = 24_000;
+
+function renderHumanReviewHistory(decisions: HumanApprovalDecision[]): string | undefined {
+  if (decisions.length === 0) return undefined;
+  return decisions.map((decision, index) => {
+    const metadata = [
+      `Decision: ${decision.status}`,
+      decision.choice && `Selected option: ${decision.choice}`,
+      decision.reviewer && `Reviewer: ${decision.reviewer}`,
+      decision.comment && `Reviewer comment: ${decision.comment}`,
+    ].filter(Boolean).join('\n');
+    return `### Human decision ${index + 1}\n${metadata}${decision.work ? `\n\nWork reviewed:\n${decision.work}` : ''}`;
+  }).join('\n\n');
+}
+
+/**
+ * A real reviewer comment hands the current revision cycle to the human. The
+ * next gate should show that revision directly to them instead of spending
+ * another judge call that can reinterpret or override their instruction.
+ *
+ * This is naturally one-cycle scoped: once that next gate resolves, its newer
+ * human decision becomes the latest history entry. Machine pre-review bounces
+ * never enter this history, so they cannot bypass their own retry.
+ */
+export function shouldDeferGateReviewToHuman(
+  decisions: HumanApprovalDecision[],
+): boolean {
+  const latest = decisions[decisions.length - 1];
+  return latest?.status === 'commented' && Boolean(latest.comment?.trim());
+}
 
 function isInside(parent: string, child: string): boolean {
   const rel = relative(parent, child);
@@ -127,10 +160,30 @@ export async function renderGatePayload(
     if (lines.length > 0) sections.push(`## Target / original\n${lines.join('\n')}`);
   }
 
-  const changes = input.changes as Array<{ label?: string; content?: string }> | undefined;
+  const options = input.options as Array<Record<string, unknown>> | undefined;
+  const optionLabels = new Map<string, string>();
+  if (Array.isArray(options)) {
+    for (const option of options) {
+      const id = str(option?.id);
+      if (id) optionLabels.set(id, str(option?.label) ?? id);
+    }
+  }
+
+  const changes = input.changes as Array<{ label?: string; content?: string; displayContent?: string; optionId?: string }> | undefined;
   if (Array.isArray(changes)) {
     const rendered = changes
-      .map((c, i) => `### ${str(c?.label) ?? `Action ${i + 1}`}\n${str(c?.content) ?? ''}`)
+      .map((c, i) => {
+        const optionId = str(c?.optionId);
+        const scope = optionId
+          ? `\nReviewer choice: ${optionLabels.get(optionId) ?? optionId} [${optionId}]`
+          : '';
+        const content = str(c?.content) ?? '';
+        const displayContent = str(c?.displayContent);
+        const exactCommand = displayContent && displayContent !== content
+          ? `\n\nExact command:\n${content}`
+          : '';
+        return `### ${str(c?.label) ?? `Action ${i + 1}`}${scope}\n${displayContent ?? content}${exactCommand}`;
+      })
       .join('\n\n');
     if (rendered.trim()) sections.push(`## On approval (the exact content under review)\n${rendered}`);
   }
@@ -147,7 +200,6 @@ export async function renderGatePayload(
   const risk = str(input.risk);
   if (risk) sections.push(`## Risk\n${risk}`);
 
-  const options = input.options as Array<Record<string, unknown>> | undefined;
   if (Array.isArray(options)) {
     const rendered = options
       .map((option, index) => {
@@ -196,10 +248,11 @@ export interface GateVerifyOptions {
 }
 
 /**
- * Wrap an await_human tool with a pre-suspension judge. The rejection counter
- * lives in the closure: it spans all judge-bounces within one stream segment
- * (no suspension happens between them) and resets on resume, which starts a
- * fresh human-directed revision cycle.
+ * Wrap an await_human tool with a pre-suspension judge. A gate immediately
+ * following a real human Comment bypasses the judge so the requested revision
+ * returns directly to that reviewer. Otherwise, the rejection counter lives in
+ * the closure: it spans all judge-bounces within one stream segment (no
+ * suspension happens between them) and resets on resume.
  */
 export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptions): T {
   const { config, agentModel, task, agentFilePath, projectContext, abortSignal } = options;
@@ -225,6 +278,14 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
     ...tool,
     execute: async (input: Record<string, unknown>, callOptions: unknown) => {
       const suspend = () => innerExecute(input as never, callOptions as never);
+      const humanDecisions = sessionManager && sessionID && agentId
+        ? await gatherHumanApprovalHistory(sessionManager, sessionID, agentId)
+        : [];
+
+      if (shouldDeferGateReviewToHuman(humanDecisions)) {
+        logger.info('[Verify] Gate pre-review skipped after a human reviewer comment; returning the revision directly to the reviewer');
+        return suspend();
+      }
 
       if (config.maxRedos > 0 && gateRejections >= config.maxRedos) {
         logger.warn(
@@ -235,8 +296,15 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
 
       const attempt = gateRejections;
       const renderedPayload = await renderGatePayload(input, projectContext?.projectRoot);
+      const reviewHistory = renderHumanReviewHistory(humanDecisions);
       const outcome = await judgeOutput({
-        input: { task, output: renderedPayload, attempt },
+        input: {
+          kind: 'gate',
+          task,
+          output: renderedPayload,
+          attempt,
+          ...(reviewHistory && { reviewHistory }),
+        },
         config,
         agentModel,
         agentFilePath,
@@ -276,10 +344,12 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       // automated revision budget, so send that judged candidate to the human.
       if (config.maxRedos === 0) return suspend();
       logger.info(`[Verify] Gate draft rejected by pre-review (${gateRejections} of ${config.maxRedos}): ${critique.slice(0, 200)}`);
-      // Mirror the human rejection-with-comment protocol so existing agent
-      // instructions ("on reject, revise and re-gate") apply unchanged.
+      // Keep the rejection-with-comment shape for compatibility, but mark the
+      // source explicitly so agents and history readers never confuse this
+      // machine bounce with a human decision.
       return {
         status: 'rejected',
+        source: 'pre-review',
         comment: `[Automated pre-review — not the human reviewer] ${critique}\n\nRevise the draft to address this critique, then request approval again. Pre-review rejection ${gateRejections} of ${config.maxRedos}; after that the request goes to the human reviewer regardless. Do not perform any side-effectful action in the meantime.`,
         reviewer: { username: 'verify-judge' },
       };

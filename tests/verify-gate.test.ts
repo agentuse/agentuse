@@ -18,9 +18,15 @@ mock.module('../src/verify/judge', () => ({
 let withGateVerify: typeof import('../src/verify/gate').withGateVerify;
 let resolveVerifyPlacements: typeof import('../src/verify/gate').resolveVerifyPlacements;
 let renderGatePayload: typeof import('../src/verify/gate').renderGatePayload;
+let shouldDeferGateReviewToHuman: typeof import('../src/verify/gate').shouldDeferGateReviewToHuman;
 
 beforeAll(async () => {
-  ({ withGateVerify, resolveVerifyPlacements, renderGatePayload } = await import('../src/verify/gate'));
+  ({
+    withGateVerify,
+    resolveVerifyPlacements,
+    renderGatePayload,
+    shouldDeferGateReviewToHuman,
+  } = await import('../src/verify/gate'));
 });
 
 beforeEach(() => {
@@ -81,12 +87,16 @@ describe('renderGatePayload', () => {
           { id: 'a', label: 'Candidate A', description: 'Faster', recommended: true },
           { id: 'b', label: 'Candidate B' },
         ],
+        changes: [
+          { label: 'Post B', content: 'birdc reply 1 "B"', optionId: 'b' },
+        ],
       }, projectRoot);
 
       expect(text).toContain('Primary artifact: https://example.test/primary');
       expect(text).toContain('Draft artifact: https://example.test/draft');
       expect(text).toContain('Candidate A (recommended) [a]: Faster');
       expect(text).toContain('Candidate B [b]');
+      expect(text).toContain('Reviewer choice: Candidate B [b]');
       expect(text).toContain('# Actual review artifact');
       expect(text.match(/### review\.md/g)).toHaveLength(1);
     } finally {
@@ -135,6 +145,85 @@ describe('renderGatePayload', () => {
 });
 
 describe('withGateVerify', () => {
+  it('sends the next gate straight to the human after a real reviewer comment', async () => {
+    const sessionManager = {
+      getSessionMessages: async () => [{ id: 'message-1' }],
+      getMessageParts: async () => [{
+        type: 'tool',
+        tool: 'await_human',
+        state: {
+          status: 'completed',
+          input: { prompt: 'Pick?', draft: 'Original slate' },
+          output: {
+            status: 'commented',
+            comment: 'reply "very nice!"',
+            reviewer: { username: 'web' },
+          },
+        },
+      }],
+      addPart: async () => 'verify-part',
+    } as any;
+    const { tool, suspend } = makeGateTool();
+    const wrapped = withGateVerify(tool, {
+      ...baseOptions,
+      sessionManager,
+      sessionID: 'session-1',
+      agentId: 'agents/reply',
+      messageID: 'message-2',
+    });
+
+    await expect((wrapped.execute as any)(gateInput, {})).rejects.toThrow('SUSPENDED');
+    expect(suspend).toHaveBeenCalledTimes(1);
+    expect(judgeOutputMock).toHaveBeenCalledTimes(0);
+  });
+
+  it('does not let a machine pre-review bounce bypass the next judge', async () => {
+    judgeOutputMock.mockImplementation(async () => ({ status: 'verdict', verdict: { pass: true } }));
+    const sessionManager = {
+      getSessionMessages: async () => [{ id: 'message-1' }],
+      getMessageParts: async () => [{
+        type: 'tool',
+        tool: 'await_human',
+        state: {
+          status: 'completed',
+          input: { prompt: 'Draft?', draft: 'Failed draft' },
+          output: {
+            status: 'rejected',
+            source: 'pre-review',
+            comment: 'rewrite this',
+            reviewer: { username: 'verify-judge' },
+          },
+        },
+      }],
+      addPart: async () => 'verify-part',
+    } as any;
+    const { tool, suspend } = makeGateTool();
+    const wrapped = withGateVerify(tool, {
+      ...baseOptions,
+      sessionManager,
+      sessionID: 'session-1',
+      agentId: 'agents/reply',
+      messageID: 'message-2',
+    });
+
+    await expect((wrapped.execute as any)(gateInput, {})).rejects.toThrow('SUSPENDED');
+    expect(suspend).toHaveBeenCalledTimes(1);
+    expect(judgeOutputMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('limits the human-comment bypass to the latest review cycle', () => {
+    expect(shouldDeferGateReviewToHuman([
+      { status: 'commented', comment: 'revise this' },
+    ])).toBe(true);
+    expect(shouldDeferGateReviewToHuman([
+      { status: 'commented', comment: 'revise this' },
+      { status: 'approved' },
+    ])).toBe(false);
+    expect(shouldDeferGateReviewToHuman([
+      { status: 'commented' },
+    ])).toBe(false);
+  });
+
   it('suspends normally on a pass verdict', async () => {
     judgeOutputMock.mockImplementation(async () => ({ status: 'verdict', verdict: { pass: true } }));
     const { tool, suspend } = makeGateTool();
@@ -156,6 +245,7 @@ describe('withGateVerify', () => {
     expect(result.comment).toContain('Restates the target');
     expect(result.comment).toContain('Automated pre-review');
     expect(result.reviewer).toEqual({ username: 'verify-judge' });
+    expect(result.source).toBe('pre-review');
   });
 
   it('fails open to the human after maxRedos rejections', async () => {
@@ -206,5 +296,50 @@ describe('withGateVerify', () => {
     await (wrapped.execute as any)(gateInput, {});
     await (wrapped.execute as any)(gateInput, {});
     expect(attempts).toEqual([0, 1]);
+  });
+
+  it('passes bounded prior human decisions to a gate-aware judge prompt', async () => {
+    let capturedInput: any;
+    judgeOutputMock.mockImplementation(async (params: any) => {
+      capturedInput = params.input;
+      return { status: 'verdict', verdict: { pass: true } };
+    });
+    const sessionManager = {
+      getSessionMessages: async () => [{ id: 'message-1' }],
+      getMessageParts: async () => [{
+        type: 'tool',
+        tool: 'await_human',
+        state: {
+          status: 'completed',
+          input: {
+            prompt: 'Pick one?',
+            options: [{ id: 'b', label: 'Candidate B' }, { id: 'c', label: 'Candidate C' }],
+            changes: [{ content: 'Chosen copy', optionId: 'b' }],
+          },
+          output: {
+            status: 'approved',
+            choice: 'b',
+            comment: 'Keep the team-vs-solo framing',
+            reviewer: { username: 'leon' },
+          },
+        },
+      }],
+      addPart: async () => 'verify-part',
+    } as any;
+    const { tool } = makeGateTool();
+    const wrapped = withGateVerify(tool, {
+      ...baseOptions,
+      sessionManager,
+      sessionID: 'session-1',
+      agentId: 'agents/reply',
+      messageID: 'message-2',
+    });
+
+    await expect((wrapped.execute as any)(gateInput, {})).rejects.toThrow('SUSPENDED');
+    expect(capturedInput.kind).toBe('gate');
+    expect(capturedInput.reviewHistory).toContain('Decision: approved');
+    expect(capturedInput.reviewHistory).toContain('Selected option: b');
+    expect(capturedInput.reviewHistory).toContain('Keep the team-vs-solo framing');
+    expect(capturedInput.reviewHistory).toContain('choice: Candidate B [b]');
   });
 });

@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { initStorage } from '../src/storage';
 import { SessionManager } from '../src/session';
-import { gatherApprovalContext } from '../src/runner';
+import { gatherApprovalContext, gatherHumanApprovalHistory } from '../src/runner';
 
 const AGENT_ID = 'agents/review';
 
@@ -92,7 +92,11 @@ describe('gatherApprovalContext', () => {
             prompt: 'Post this comment?',
             reference: { label: 'Replying to', excerpt: 'The economy reorganized.' },
             changes: [
-              { label: 'Comment to post', content: 'The electricity comparison is the right one.' },
+              {
+                label: 'Comment to post',
+                content: 'birdc reply 1 "The electricity comparison is the right one."',
+                displayContent: 'The electricity comparison is the right one.',
+              },
               { content: 'Like the post' },
             ],
           },
@@ -105,6 +109,7 @@ describe('gatherApprovalContext', () => {
       expect(ctx.reviews).toHaveLength(1);
       expect(ctx.reviews[0].work).toContain('The economy reorganized.');
       expect(ctx.reviews[0].work).toContain('Comment to post: The electricity comparison is the right one.');
+      expect(ctx.reviews[0].work).toContain('Comment to post — exact command: birdc reply 1');
       expect(ctx.reviews[0].work).toContain('Change 2: Like the post');
     });
   });
@@ -150,6 +155,69 @@ describe('gatherApprovalContext', () => {
 
       const ctx = await gatherApprovalContext(sessionManager, sessionID, AGENT_ID);
       expect(ctx.reviews).toEqual([]);
+    });
+  });
+
+  it('gathers approvals and comments but excludes machine pre-review bounces', async () => {
+    await withSession('agentuse-human-approval-history-', async ({ sessionManager, sessionID, messageID }) => {
+      await sessionManager.addPart(sessionID, AGENT_ID, messageID, {
+        type: 'tool',
+        callID: 'machine',
+        tool: 'await_human',
+        state: {
+          status: 'completed',
+          input: { prompt: 'Draft?', changes: [{ content: 'machine draft' }] },
+          output: {
+            status: 'rejected',
+            source: 'pre-review',
+            comment: 'rewrite this',
+            reviewer: { username: 'verify-judge' },
+          },
+          time: { start: 1, end: 2 },
+        },
+      } as any);
+      await sessionManager.addPart(sessionID, AGENT_ID, messageID, {
+        type: 'tool',
+        callID: 'comment',
+        tool: 'await_human',
+        state: {
+          status: 'completed',
+          input: { prompt: 'Draft?', changes: [{ content: 'revised draft' }] },
+          output: {
+            status: 'commented',
+            comment: 'use the first-party framing',
+            reviewer: { username: 'leon' },
+          },
+          time: { start: 3, end: 4 },
+        },
+      } as any);
+      await sessionManager.addPart(sessionID, AGENT_ID, messageID, {
+        type: 'tool',
+        callID: 'approve',
+        tool: 'await_human',
+        state: {
+          status: 'completed',
+          input: {
+            prompt: 'Pick?',
+            options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
+            changes: [{ content: 'final B', optionId: 'b' }],
+          },
+          output: {
+            status: 'approved',
+            choice: 'b',
+            reviewer: { username: 'leon' },
+          },
+          time: { start: 5, end: 6 },
+        },
+      } as any);
+
+      const history = await gatherHumanApprovalHistory(sessionManager, sessionID, AGENT_ID);
+      expect(history).toHaveLength(2);
+      expect(history.map((decision) => decision.status)).toEqual(['commented', 'approved']);
+      expect(history[0].comment).toBe('use the first-party framing');
+      expect(history[1].choice).toBe('b');
+      expect(history[1].work).toContain('choice: B [b]');
+      expect(JSON.stringify(history)).not.toContain('rewrite this');
     });
   });
 });

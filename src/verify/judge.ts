@@ -46,12 +46,16 @@ export type JudgeOutcome =
   | { status: 'error'; detail: string };
 
 export interface JudgeInput {
+  /** What is being reviewed. Omitted by legacy callers and treated as output. */
+  kind?: 'gate' | 'output';
   /** The task the agent was asked to do (instructions + user prompt). */
   task: string;
-  /** The final output under evaluation. */
+  /** The final output or rendered approval request under evaluation. */
   output: string;
   /** 0-based verification attempt (0 = first output, N = after Nth redo). */
   attempt: number;
+  /** Bounded, rendered decisions from real human reviewers in this session. */
+  reviewHistory?: string;
 }
 
 const GENERIC_CRITERIA =
@@ -61,6 +65,7 @@ const GENERIC_CRITERIA =
 // whole context window. Head+tail keeps intro and conclusion visible.
 const MAX_TASK_CHARS = 8_000;
 const MAX_OUTPUT_CHARS = 32_000;
+const MAX_REVIEW_HISTORY_CHARS = 12_000;
 
 function truncateMiddle(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
@@ -89,19 +94,28 @@ Reason briefly first (name which criteria or attacks the output survived or fail
 - \`critique\`: one line, required either way. On a pass, the single sharpest risk you checked and why it's fine (not empty praise). On a fail, what is wrong AND what a passing output looks like, concrete enough to act on in one revision.`;
 
 function buildJudgePrompt(input: JudgeInput, criteria: string, outputInstructions: string): string {
-  return `You are verifying an AI agent's final output before it is delivered.
+  const gate = input.kind === 'gate';
+  const subject = gate ? 'approval request' : 'final output';
+  const history = input.reviewHistory?.trim()
+    ? `\n\n## Prior human review decisions\n${truncateMiddle(input.reviewHistory.trim(), MAX_REVIEW_HISTORY_CHARS)}`
+    : '';
+  const historyInstruction = gate && history
+    ? ' Treat prior human comments as requirements and prior approvals as decided context. Do not reopen an approved choice merely to substitute your own preference; reject only for a material change, an unmet explicit requirement, or a concrete safety/correctness problem.'
+    : '';
+
+  return `You are verifying an AI agent's ${subject} before ${gate ? 'it is shown to a human reviewer' : 'it is delivered'}.
 
 ## Task the agent was given
-${truncateMiddle(input.task, MAX_TASK_CHARS)}
+${truncateMiddle(input.task, MAX_TASK_CHARS)}${history}
 
-## Agent's final output (attempt ${input.attempt + 1})
-${input.output.trim() ? truncateMiddle(input.output, MAX_OUTPUT_CHARS) : '(the agent produced no final text output)'}
+## Agent's ${subject} (attempt ${input.attempt + 1})
+${input.output.trim() ? truncateMiddle(input.output, MAX_OUTPUT_CHARS) : `(the agent produced no ${subject})`}
 
 ## Verification criteria
 ${criteria}
 
 ## Instructions
-Judge whether the output satisfies ALL the criteria in the context of the task. Be strict but fair: pass output a demanding reviewer would accept, reject output they would send back.
+Judge whether the ${subject} satisfies ALL the criteria in the context of the task.${historyInstruction} Be strict but fair: pass work a demanding reviewer would accept, reject work they would send back.
 
 ${outputInstructions}`;
 }

@@ -114,7 +114,7 @@ export async function runVerifyLoop(params: {
   for (let attempt = 0; ; attempt++) {
     if (!quiet) logger.info(`[Verify] Judging output (attempt ${attempt + 1} of ${config.maxRedos + 1})...`);
     const outcome = await judgeOutput({
-      input: { task, output: latest.text ?? '', attempt },
+      input: { kind: 'output', task, output: latest.text ?? '', attempt },
       config,
       agentModel: agent.config.model,
       agentFilePath,

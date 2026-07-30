@@ -112,6 +112,28 @@ describe('judgeOutput (built-in judge)', () => {
     expect((completeTextMock.mock.calls[0][1] as any).abortSignal).toBe(controller.signal);
   });
 
+  it('frames gate reviews with prior human decisions instead of final-output language', async () => {
+    completeTextMock.mockImplementation(async () => '{"pass": true}');
+    await judgeOutput({
+      input: {
+        kind: 'gate',
+        task: 'Draft a reply',
+        output: 'Current approval payload',
+        attempt: 0,
+        reviewHistory: '### Human decision 1\nDecision: approved\nReviewer comment: keep this angle',
+      },
+      config,
+      agentModel: 'anthropic:claude-sonnet-4-0',
+    });
+
+    const prompt = (completeTextMock.mock.calls[0][1] as any).prompt;
+    expect(prompt).toContain('approval request before it is shown to a human reviewer');
+    expect(prompt).toContain('Prior human review decisions');
+    expect(prompt).toContain('keep this angle');
+    expect(prompt).toContain('Do not reopen an approved choice');
+    expect(prompt).not.toContain("Agent's final output");
+  });
+
   it('propagates cancellation instead of converting it to fail-open success', async () => {
     const abort = new Error('stopped');
     abort.name = 'AbortError';
