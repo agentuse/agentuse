@@ -126,6 +126,8 @@ high: latency and cost with no lift. Start moderate, tune on observed output.
 - Known skills listed explicitly; prefer `auto: false` when the agent does not
   need to discover arbitrary skills at runtime.
 - Inputs, outputs, destinations, and success criteria stated in the body.
+- Every body rule placed on purpose: about this job, not about a tool or a past
+  run (see Pick the Layer Before You Write the Rule).
 - Multi-role work: subagents with clear names and `maxSteps` limits.
 - Recurring work: YAML `schedule:` + a note that `agentuse serve` must run.
 - Custom labels (draft, owner, team): put them under `metadata:`. It is the
@@ -238,6 +240,42 @@ Over-specification smells: the same rule in several layers, history embedded in
 an invariant, rationale longer than the rule, or a decision tree derivable from
 one sentence of intent. Write what a competent teammate needs, not a manual.
 
+## Pick the Layer Before You Write the Rule
+
+The runtime composes one prompt from layered sources, in this precedence
+(highest first): **agent instructions → Learned Guidelines → Skills → other
+reference files.** The system prompt's operational/safety rules sit above all of
+these.
+
+Knowing that ladder does not place a rule. Ask three questions before typing one
+into an agent body:
+
+1. **Is it true of the job, or of the tool?** Of the job → the body. Of the tool
+   → the skill. A correction from one specific run → learnings.
+2. **Does the line only work by contradicting a lower layer?** Then it is not a
+   rule, it is a patch over the wrong layer: fix the layer that says the
+   opposite. (Body: "do not read the tool's docs." That tool's skill: "load the
+   docs before doing anything.") A body line outranks a skill, so the patch
+   appears to work and the shared cause stays broken.
+3. **Would you write it again in the next agent that uses this tool?** Then it is
+   not an agent rule. One body cannot fix what every caller pays.
+
+Most wrong-layer rules come from fixing a symptom in whatever file is already
+open: the symptom surfaces in one agent, the cause sits in the skill they all
+share.
+
+- Put **soft defaults** in skills. Don't bake a hard "never do X" into a skill
+  that a learning should be able to override, a captured correction outranks a
+  skill default, so an absolute skill rule fights the feedback loop.
+- State a rule **once**, at the right layer, and reference it. The same craft
+  rule copied into both a skill and the agent drifts; the lower-precedence copy
+  then silently wins (the "same rule in several layers" smell above, seen from
+  the runtime side).
+- `learning: true` (sugar for `capture + apply`) injects the agent's stored
+  learnings every run, for delegated subagents too, not just top-level runs. So
+  a leaf's prior-run corrections actually reach it; rely on that instead of
+  hand-restating past corrections in the prompt.
+
 ## Scope Skills Deliberately
 
 When an agent relies on known skills, list them explicitly and prefer a closed
@@ -294,23 +332,6 @@ names like `data` instead of `values`):
 
 > Include an agentuse:chart bar block for the funnel, exact shape:
 > `{"type":"bar","title":"...","categories":["..."],"series":[{"name":"...","values":[1,2]}]}`
-
-The runtime composes one prompt from layered sources, in this precedence
-(highest first): **agent instructions → Learned Guidelines → Skills → other
-reference files.** The system prompt's operational/safety rules sit above all of
-these. This shapes where a rule belongs:
-
-- Put **soft defaults** in skills. Don't bake a hard "never do X" into a skill
-  that a learning should be able to override, a captured correction outranks a
-  skill default, so an absolute skill rule fights the feedback loop.
-- State a rule **once**, at the right layer, and reference it. The same craft
-  rule copied into both a skill and the agent drifts; the lower-precedence copy
-  then silently wins (this is the "same rule in three places" smell above, seen
-  from the runtime side).
-- `learning: true` (sugar for `capture + apply`) injects the agent's stored
-  learnings every run, for delegated subagents too, not just top-level runs. So
-  a leaf's prior-run corrections actually reach it; rely on that instead of
-  hand-restating past corrections in the prompt.
 
 ## Gotchas
 
