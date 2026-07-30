@@ -170,6 +170,10 @@ export function displayStatusLabel(status: string, errorCode?: string | undefine
     if (errorCode === 'USER_STOPPED') return 'stopped';
     if (errorCode === 'TIMEOUT') return 'timeout';
     if (errorCode === 'INCOMPLETE') return 'incomplete';
+    // Ended by the reconcile sweep, not by anything the run itself did: it was
+    // parked on a delegated sub-agent that had already ended. Naming that beats
+    // a bare "error" — the failure is one level down, not here.
+    if (errorCode === 'CASCADE_ORPHANED') return 'subagent ended';
   }
   return status;
 }

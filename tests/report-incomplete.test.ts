@@ -132,6 +132,9 @@ describe('incomplete status labels (web)', () => {
     expect(displayStatusLabel('error', 'TIMEOUT')).toBe('timeout');
     expect(displayStatusLabel('error', 'EXECUTION_ERROR')).toBe('error');
     expect(displayStatusLabel('error', undefined)).toBe('error');
+    // A run the reconcile sweep ended: the failure is in the sub-agent it was
+    // parked on, so say that rather than blaming this run with a bare "error".
+    expect(displayStatusLabel('error', 'CASCADE_ORPHANED')).toBe('subagent ended');
     // Only error carries the sub-label; other statuses pass through untouched.
     expect(displayStatusLabel('completed', 'INCOMPLETE')).toBe('completed');
   });
