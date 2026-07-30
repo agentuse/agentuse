@@ -52,8 +52,9 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
   // Lease enforcement note (agentuse-lab#165, Phase 2): when the agent declares
   // effectful command patterns, the runtime mechanically matches each matching
   // command against the latest APPROVED changes[] before it may execute. The
-  // model must therefore put the exact complete command in changes[] and must
-  // never run a gated command before its gate is approved.
+  // model may emit a plain gate and its gated command together so the runtime
+  // can bind the exact command without relying on hand-copied shell text. Pick
+  // gates remain explicit because each command must be scoped to one option.
   const effectPatterns = config.tools?.bash?.gated ?? [];
   const effectsNote = effectPatterns.length > 0
     ? [
@@ -62,9 +63,10 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
         '',
         `These bash command patterns are GATED and mechanically blocked until covered by an approved plan: ${effectPatterns.map((p: string) => `\`${p}\``).join(', ')}.`,
         '',
-        '- Before running any matching command, call `await_human` and put the exact complete shell command in `changes[].content`, verbatim. You may include the human-readable payload as a separate change, but payload text alone grants nothing. On approve, the runtime runs a gated command only when the whole command exactly matches an approved entry.',
-        '- Never emit a matching command before the gate returns approve: it is auto-denied, never executed.',
-        '- If a matching command is denied, do NOT retry or reword it. Revise the plan, re-gate via `await_human` with the exact new command in `changes[]`, and run it only after approval.',
+        '- For a plain yes/no gate, emit `await_human` and the exact matching bash command in the SAME step. The runtime attaches the command to the approval request and blocks it from executing. After approve, re-issue that exact command once in a later step; do not open a second gate.',
+        '- For a pick gate, put one exact complete command in changes[] per option and set each entry\'s `optionId` to its options[].id. Do not emit any candidate command until the reviewer returns a choice.',
+        '- An approved lease entry is one-shot and is consumed before dispatch. To authorize the same command twice, list it twice. A failed command still burns its entry; ask again before retrying an ambiguous external effect.',
+        '- If a matching command is denied as not covered, do NOT retry or reword it. Revise the plan and request approval for the exact new command. If it is denied as already used, request a new approval only when another execution is genuinely intended.',
         '- If you revise the command or its payload (e.g. trim for a length limit), the old approval no longer covers it: re-gate with the complete revised command.',
       ].join('\n')
     : '';
@@ -74,11 +76,11 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
     '',
     'Approval is enabled in frontmatter. Before you take an irreversible publish/ship/finalize action, or before delivering prepared work as your final answer, call the `await_human` tool. If your instructions define their own approval boundary, follow it.',
     '',
-    'Call `await_human` as the ONLY tool call in its step. Do not run other tools (bash commands, file writes, anything) in the same step as the gate: any tool call issued alongside a pending gate is blocked and must be re-issued after approval, so batching just wastes a turn. Gate first, wait for the result, then act.',
+    'Call `await_human` as the only tool in its step EXCEPT for one supported case: when a plain gate authorizes a tools.bash.gated command, emit that exact command alongside the gate so the runtime can attach it. The command is blocked and must be re-issued only after approval. All non-gated sibling tools remain forbidden alongside a gate.',
     '',
     'Fill the fields so a reviewer can decide without asking you follow-up questions. Put the substance in the body fields, NOT in `prompt`:',
     '- prompt: ONE short line, a direct yes/no question (e.g. "Approve this newsletter draft for send?"). Do not put the content, headings, or bullet lists here.',
-    '- changes: the exact actions taken on approval, one entry per discrete action, in order, each `{ label, content }` with the verbatim final content (the comment text to post, the email body to send, the edit to apply). The reviewer skims these highlighted boxes first, so put ONLY final content here, never rationale.',
+    '- changes: the exact actions taken on approval, one entry per discrete action, in order, each `{ label, content, displayContent?, optionId? }`. `content` is the verbatim final action used for authorization. When it must be an executable command, set `displayContent` to the exact human-facing business content without the CLI wrapper (for example, the reply or email body); the UI shows that first and keeps the command visible but secondary. On pick gates, optionId binds an action to one options[].id; omit it only for unconditional actions. Put only final content here, never rationale.',
     '- reference: when the action responds to something (commenting on a post, replying to a message, amending a document), pass the original as `{ label, author, title, url, excerpt }` so the reviewer sees the quoted original directly above your changes.',
     '- draft: the full reviewable work itself, written in Markdown. Use headings, bullet lists, tables, and fenced code blocks. For long-form deliverables this is the primary artifact the reviewer reads, so make it complete, not a one-line summary. When you use changes for the verbatim content, use draft only for supporting detail; do not duplicate the change content inside it.',
     '- artifact_path: when the reviewable work is a file you created (an HTML page, a long report, a rendered document), pass its path relative to the project root (e.g. `.agentuse/artifacts/report.html`). The reviewer can open it in a popup viewer. Prefer this over inlining very long or HTML content into `draft`. For more than one file, use artifact_paths (an array of project-relative paths) instead.',
@@ -107,9 +109,10 @@ export function appendApprovalInstructions(instructions: string, config: AgentCo
     timeoutNote,
     '',
     'After the approval result:',
+    '- machine feedback: if `source` is `pre-review` or `gate-preflight`, this was NOT a human rejection. Apply its comment, revise the request, and call await_human again.',
     '- approve: finalize the work and complete normally. If you supplied options, the result\'s `choice` field holds the picked option id: proceed with exactly that option; never infer the pick from the comment when `choice` is present.',
     '- reject: do not finalize, publish, ship, or perform the approved action. First perform any workflow-specific cleanup/status updates required by your instructions (for example, updating relevant store items), then stop cleanly and summarize the rejection.',
-    '- comment: treat the reviewer comment as feedback, not approval. Revise or clarify the work, then call `await_human` again with the updated review request. Only stop instead of requesting approval again when the reviewer explicitly asks you to cancel, abandon, or stop the work.',
+    '- comment: this branch takes precedence over option-selection ambiguity. Treat the reviewer comment as feedback, not approval. On a pick gate, a missing `choice` is NOT ambiguous when the comment itself gives an actionable edit or replacement; for example, `reply "very nice!"` means replace the proposed reply with the exact text `very nice!`, even if it names no option. Apply the requested revision without substituting your own quality preference, then call `await_human` again with the updated review request. Only stop instead of requesting approval again when the reviewer explicitly asks you to cancel, abandon, or stop the work.',
     '',
     'If the `await_human` tool fails, do not finalize, publish, ship, or return the prepared work as complete. Stop and report that the approval request failed with the tool error.',
     '',

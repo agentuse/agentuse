@@ -51,9 +51,10 @@ For agents with an [approval gate](/guides/approval-gates), verify defaults to `
 
 - **Fail** → the run does not suspend. The critique returns as a rejection-with-comment tool result, the same protocol as a human rejection, so the agent revises its draft and requests approval again. The human never sees the failed draft.
 - **Pass** → the gate suspends to the human as normal.
+- **After a human Comment** → the next gate skips pre-review and goes directly back to that reviewer. Their requested revision is authoritative for that review cycle; an automated judge cannot reinterpret or override it. Machine pre-review feedback does not trigger this bypass.
 - **Fail-open** → after `maxRedos` pre-review rejections, or on any judge error, the request goes to the human regardless, with the unresolved critique in the session log. The judge protects your attention; it can never deadlock a run or replace your decision.
 
-The judge receives the full approval payload (draft, exact on-approval content, target reference/excerpt, context), so write criteria against what the reviewer would see. Because the check runs before anything posts, this placement is the quality gate; `at: output` is a post-run audit. Gate placement also works for delegated sub-agents: a leaf's gate is judged in the leaf, before the request cascades to the root.
+Otherwise, the judge receives the full approval payload (draft, exact on-approval content, target reference/excerpt, context) plus bounded prior human decisions from the session, so write criteria against what the reviewer would see. Because the check runs before anything posts, this placement is the quality gate; `at: output` is a post-run audit. Gate placement also works for delegated sub-agents: a leaf's gate is judged in the leaf, before the request cascades to the root.
 
 <Warning>
   The payload is **all** the built-in judge sees. It runs without tools, so a criterion about a file on disk is really judged against the agent's *account* of that file. A payload that paraphrases its own artifact gets rejected even when the artifact is correct, and a payload that flatters a broken artifact passes silently. When the criteria describe something on disk, use a [judge agent](#using-a-judge-agent) that can open it.

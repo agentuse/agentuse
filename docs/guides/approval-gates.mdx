@@ -117,17 +117,20 @@ tools:
 
 Read it as: `commands` is what the agent can do; `gated` is what it can't do without you. A gated command is still allowed to run (the effective allowlist is `commands` plus `gated`), but only after a human approves the exact action. A command matching both lists is gated (gated wins), so a broad `birdc *` in `commands` cannot un-gate `birdc reply *`.
 
-Declaring `gated` enables the approval machinery automatically, you do not also need `approval: true`. When the agent reaches a gated command, AgentUse has it present the plan through `await_human`, and the command runs only once you approve.
+Declaring `gated` enables the approval machinery automatically, you do not also need `approval: true`. For a plain yes/no decision, the agent emits `await_human` and the gated command together. AgentUse attaches the exact command to the request, blocks it from executing, and lets the agent re-issue it only after you approve.
 
 The guarantee is two-fold, enforced per action (not once per session):
 
 1. A gated command never runs before approval.
 2. A gated command never runs anything other than what you approved. Approval binds to the exact complete shell command shown in `changes[]`; payload text by itself grants nothing. If the agent revises the command or its payload, the old approval no longer covers it and it must re-gate.
+3. Each approved entry is one-shot. It is consumed before dispatch, so an ambiguous failed external action is never retried silently. Listing the same exact command twice authorizes two executions.
 
 Notes:
 
 - **You rarely hand-write this.** Skills that ship posting commands, the interactive command prompt, and generated agent files add `gated` for you. `agentuse doctor <file>` also flags an allowlisted command that looks irreversible (`reply`, `post`, `delete`, `git push`, `curl -X POST`, ...) but is not gated. AgentUse never auto-gates from a keyword guess, it only suggests.
-- **Show the complete command.** Put the exact executable command (`birdc reply "text"`) in `changes[]`. You can show the reply text separately for readability, but only the complete-command entry creates the lease. For browser automation, gate and show the step that carries the words (`agent-browser type "..."`), not a contentless click.
+- **Plain gates auto-attach the command.** Emit `await_human` and the exact gated bash command in the same model step. The command is shown to the reviewer but remains blocked until approval; after approval the agent re-issues it once. Non-gated tools still cannot ride beside a gate.
+- **Pick gates scope actions explicitly.** Give each `changes[]` action an `optionId` referencing the corresponding `options[].id`. When `content` is an executable command, also set `displayContent` to the exact human-facing post, reply, message, or body. The reviewer sees the business content first with the command de-emphasized inside the same option. Approval grants only the selected option plus any action with no `optionId`. This is the safe one-approval pattern for choosing among several irreversible commands.
+- **Show the complete command.** Whether auto-attached or option-scoped, the lease covers the exact executable command (`birdc reply "text"`), not payload text alone. For browser automation, gate and show the step that carries the words (`agent-browser type "..."`), not a contentless click.
 - **Unattended runs suspend only on a declared gate**, never on a tooling question. You approve outcomes, not commands.
 
 ## Start the Server
@@ -195,6 +198,13 @@ Reviewer actions are fixed:
 - `Approve`: resumes the agent with `status: "approve"`
 - `Reject`: resumes the agent with `status: "reject"`
 - `Comment`: resumes the agent with `status: "comment"` and the reviewer comment
+
+`Comment` is the revise-and-re-gate path, not a failed selection. On a choice
+gate, an actionable edit or direct replacement in the comment takes precedence
+over the absence of a selected option. For example, `reply "very nice!"` means
+to replace the proposed reply with `very nice!` and request approval again; it
+is not ambiguous merely because it names no option. Only an explicit request to
+cancel, abandon, or stop makes a comment terminal.
 
 For a choice gate, AgentUse preselects the recommended option, or the first
 option when none is recommended. The reviewer can change that selection before

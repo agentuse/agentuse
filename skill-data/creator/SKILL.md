@@ -116,6 +116,13 @@ high: latency and cost with no lift. Start moderate, tune on observed output.
 - Tools and MCP servers declared in frontmatter, not assumed ambient.
 - Irreversible bash commands (post, send, delete, deploy) listed under
   `tools.bash.gated`, not just fenced off in the prompt.
+- Plain gated actions rely on the runtime's single-gate pattern: emit
+  `await_human` and the exact gated command together, then re-issue the command
+  only after approval. Pick-one-of-N gates list one exact command per
+  `changes[]` entry with `optionId` bound to the matching `options[].id`. When
+  the entry's `content` is a command, set `displayContent` to the exact
+  human-facing post/message/body so reviewers see the business content first;
+  the command remains visible inside that option as secondary audit detail.
 - Known skills listed explicitly; prefer `auto: false` when the agent does not
   need to discover arbitrary skills at runtime.
 - Inputs, outputs, destinations, and success criteria stated in the body.
@@ -198,7 +205,8 @@ Good:
 2. Select one fresh, in-lane target.
 3. Draft 1-2 sentences; add one new insight.
 4. Save as `awaiting_approval`.
-5. Request approval as the only tool call.
+5. Request approval; when the post command is bash-gated, emit that exact
+   command alongside the plain gate for runtime attachment. Otherwise gate alone.
 6. Explicit approval -> post, verify ID, mark `posted`.
 7. Otherwise -> mark `rejected` or `needs_revision`; never post.
 ```
