@@ -9,6 +9,8 @@ import {
   loadGlobalEnv,
   applyGlobalConfigEnv,
   expandHome,
+  loadModelSettings,
+  resetModelSettingsCache,
 } from '../src/utils/global-config';
 
 function makeTmpConfig(content: string | object): string {
@@ -325,5 +327,104 @@ describe('loadGlobalConfig honors AGENTUSE_CONFIG when no path arg', () => {
 
   it('reads from AGENTUSE_CONFIG when no explicit path passed', () => {
     expect(loadGlobalConfig()?.serve?.port).toBe(9999);
+  });
+});
+
+describe('models config block', () => {
+  it('accepts a default and a set of aliases', () => {
+    const file = makeTmpConfig({
+      models: {
+        default: 'anthropic:claude-sonnet',
+        aliases: { fast: 'anthropic:claude-haiku', smart: '@fast' },
+      },
+    });
+    const config = loadGlobalConfig(file);
+    expect(config?.models?.default).toBe('anthropic:claude-sonnet');
+    expect(config?.models?.aliases).toEqual({ fast: 'anthropic:claude-haiku', smart: '@fast' });
+  });
+
+  it('trims surrounding whitespace', () => {
+    const file = makeTmpConfig({ models: { default: '  openai:gpt  ', aliases: { fast: ' openai:gpt-mini ' } } });
+    const config = loadGlobalConfig(file);
+    expect(config?.models?.default).toBe('openai:gpt');
+    expect(config?.models?.aliases?.fast).toBe('openai:gpt-mini');
+  });
+
+  it('rejects a non-object models block', () => {
+    expect(() => loadGlobalConfig(makeTmpConfig({ models: 'anthropic:claude-sonnet' }))).toThrow(
+      '`models` must be an object'
+    );
+  });
+
+  it('rejects an empty default', () => {
+    expect(() => loadGlobalConfig(makeTmpConfig({ models: { default: '   ' } }))).toThrow(
+      '`models.default` must be a non-empty string'
+    );
+  });
+
+  it('rejects an alias key that includes the @ sigil', () => {
+    expect(() =>
+      loadGlobalConfig(makeTmpConfig({ models: { aliases: { '@fast': 'openai:gpt' } } }))
+    ).toThrow('must not include the @ sigil');
+  });
+
+  it('rejects an alias key that would be ambiguous to reference', () => {
+    expect(() =>
+      loadGlobalConfig(makeTmpConfig({ models: { aliases: { 'my model': 'openai:gpt' } } }))
+    ).toThrow('must be alphanumeric');
+    expect(() =>
+      loadGlobalConfig(makeTmpConfig({ models: { aliases: { 'anthropic:x': 'openai:gpt' } } }))
+    ).toThrow('must be alphanumeric');
+  });
+
+  it('rejects two alias keys that differ only in case', () => {
+    expect(() =>
+      loadGlobalConfig(makeTmpConfig({ models: { aliases: { fast: 'openai:gpt', Fast: 'openai:gpt-mini' } } }))
+    ).toThrow('differ only in case');
+  });
+
+  it('rejects a non-string alias target', () => {
+    expect(() =>
+      loadGlobalConfig(makeTmpConfig({ models: { aliases: { fast: 42 } } }))
+    ).toThrow('`models.aliases.fast` must be a non-empty string');
+  });
+});
+
+describe('loadModelSettings', () => {
+  const original = process.env.AGENTUSE_CONFIG;
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.AGENTUSE_CONFIG;
+    else process.env.AGENTUSE_CONFIG = original;
+    resetModelSettingsCache();
+  });
+
+  it('returns empty settings when no config file exists', () => {
+    resetModelSettingsCache();
+    const settings = loadModelSettings(path.join(os.tmpdir(), 'agentuse-does-not-exist.json'));
+    expect(settings.aliases).toEqual({});
+    expect(settings.default).toBeUndefined();
+  });
+
+  it('reads the models block and caches it', () => {
+    const file = makeTmpConfig({ models: { default: 'openai:gpt', aliases: { fast: 'openai:gpt-mini' } } });
+    resetModelSettingsCache();
+    expect(loadModelSettings(file).default).toBe('openai:gpt');
+    // Second call hits the mtime-keyed cache and must agree.
+    expect(loadModelSettings(file).aliases.fast).toBe('openai:gpt-mini');
+  });
+
+  it('picks up an edit to the config file', () => {
+    const file = makeTmpConfig({ models: { default: 'openai:gpt' } });
+    resetModelSettingsCache();
+    expect(loadModelSettings(file).default).toBe('openai:gpt');
+    fs.writeFileSync(file, JSON.stringify({ models: { default: 'anthropic:claude-sonnet' } }));
+    expect(loadModelSettings(file).default).toBe('anthropic:claude-sonnet');
+  });
+
+  it('propagates a malformed config instead of silently dropping aliases', () => {
+    const file = makeTmpConfig('{ not json');
+    resetModelSettingsCache();
+    expect(() => loadModelSettings(file)).toThrow('Invalid JSON');
   });
 });

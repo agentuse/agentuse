@@ -8,6 +8,7 @@ import { createSessionLogSink, type SessionLogSink } from './runner/session-help
 import { DoomLoopDetector } from './tools/index.js';
 import { resolve, dirname } from 'path';
 import { computeAgentId } from './utils/agent-id';
+import { resolveModelString } from './utils/model-alias';
 import { SessionManager } from './session/manager';
 import { loadAgentTools } from './runner/tools-loader';
 import { EffectWAL } from './runner/effect-wal';
@@ -129,9 +130,13 @@ export async function createSubAgentTool(
     throw new SubAgentApprovalUnsupportedError(agent.name, resolvedPath);
   }
 
-  // Apply model override if provided
+  // Apply model override if provided. Resolved like any other hand-written
+  // model, so a parent can point a subagent at `anthropic:claude-sonnet` or a
+  // configured `@name` instead of a pinned version.
   if (modelOverride) {
-    agent.config.model = modelOverride;
+    agent.config.model = resolveModelString(modelOverride).model;
+    delete agent.config.modelAlias;
+    delete agent.config.modelSource;
   }
 
   return {

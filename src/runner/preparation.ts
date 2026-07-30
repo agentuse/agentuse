@@ -8,6 +8,7 @@ import {
 } from '../tools/index.js';
 import { logger } from '../utils/logger';
 import { resolveMaxSteps, DEFAULT_MAX_STEPS } from '../utils/config';
+import { resumeModelPin } from '../utils/model-alias';
 import { version as packageVersion } from '../../package.json';
 import type { PrepareAgentOptions, PreparedAgentExecution } from './types';
 import type { ToolSet } from 'ai';
@@ -127,6 +128,19 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     if (!found) {
       throw new Error(`Session not found: ${existingSessionId}`);
     }
+
+    // A resume continues on the model the session started with (see
+    // resumeModelPin): the agent file was re-parsed just now, so an alias would
+    // otherwise follow the registry to a different model mid-conversation.
+    const pinnedModel = resumeModelPin(agent.config, found.session.model);
+    if (pinnedModel) {
+      logger.info(
+        `Resuming on ${pinnedModel} (the model this session started with); ` +
+          `${agent.config.modelAlias ?? 'the configured default'} now points at ${agent.config.model}`
+      );
+      agent.config.model = pinnedModel;
+    }
+
     sessionID = existingSessionId;
     agentId = found.agentId;
     const message = await sessionManager.getPrimaryMessage(existingSessionId, found.agentId);

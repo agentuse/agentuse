@@ -4,6 +4,12 @@ import { readFile } from 'fs/promises';
 import { resolve, basename } from 'path';
 import { logger } from './utils/logger';
 import { durationSecondsSchema, parseDurationMs } from './utils/duration';
+import {
+  MODEL_DEFAULT_ENV,
+  ModelAliasError,
+  resolveAgentModel,
+  type ModelResolutionSource,
+} from './utils/model-alias';
 import { ToolsConfigSchema } from './tools/index.js';
 import { ScheduleConfigSchema } from './scheduler/index.js';
 import { StoreConfigSchema } from './store/index.js';
@@ -154,7 +160,12 @@ const AgentSchema = z.object({
     .min(1)
     .regex(/^[a-zA-Z0-9][a-zA-Z0-9 _-]*$/, 'Name must be alphanumeric with spaces, hyphens, or underscores')
     .optional(),
-  model: z.string(),
+  // Optional in the schema only: parseAgentContent falls back to the configured
+  // default (`models.default` / AGENTUSE_MODEL) and fails with a config error
+  // when neither is set, so every parsed agent still carries a concrete model.
+  // May be written as an alias (`anthropic:claude-sonnet`, `@fast`), which is
+  // resolved at parse time.
+  model: z.string().optional(),
   description: z.string().optional(),
   version: z.string().optional(),
   notes: z.string().optional(),
@@ -300,7 +311,53 @@ const AgentSchema = z.object({
   };
 });
 
-export type AgentConfig = z.infer<typeof AgentSchema>;
+export type AgentConfig = z.infer<typeof AgentSchema> & {
+  /**
+   * Always a concrete `provider:model[:env]` id: aliases and the configured
+   * default are resolved once, at parse time, so nothing downstream (registry
+   * limits, cost, session records, provider clients) has to know about aliases.
+   */
+  model: string;
+  /** What the agent file wrote, when `model` came from an alias or a default. */
+  modelAlias?: string;
+  /** How `model` was determined, when it was not written as a concrete id. */
+  modelSource?: ModelResolutionSource;
+};
+
+/**
+ * Resolve the agent's model (alias or configured default) into the concrete id
+ * the rest of the codebase expects, reporting failures as config errors so they
+ * carry the same field/telemetry framing as any other frontmatter problem.
+ */
+function withResolvedModel(parsed: z.infer<typeof AgentSchema>): AgentConfig {
+  let resolved: ReturnType<typeof resolveAgentModel>;
+  try {
+    resolved = resolveAgentModel(parsed.model);
+  } catch (error) {
+    if (error instanceof ModelAliasError) {
+      throw new ConfigError(`Invalid agent configuration: ${error.message}`, 'model', 'invalid_alias');
+    }
+    throw error;
+  }
+
+  if (!resolved) {
+    throw new ConfigError(
+      'Invalid agent configuration: model: no model specified and no default configured. ' +
+        'Add `model:` to the agent file, set `models.default` in ~/.agentuse/config.json, ' +
+        `or set ${MODEL_DEFAULT_ENV}.`,
+      'model',
+      'missing'
+    );
+  }
+
+  return {
+    ...parsed,
+    model: resolved.model,
+    ...(resolved.alias !== undefined &&
+      resolved.alias !== resolved.model && { modelAlias: resolved.alias }),
+    ...(resolved.source !== 'literal' && { modelSource: resolved.source }),
+  };
+}
 
 export interface ParsedAgent {
   name: string;
@@ -328,8 +385,9 @@ export function parseAgentContent(content: string, name: string): ParsedAgent {
       );
     }
     
-    // Validate configuration with Zod
-    const config = AgentSchema.parse(data);
+    // Validate configuration with Zod, then settle the model (alias or default)
+    // so every consumer sees a concrete provider:model id.
+    const config = withResolvedModel(AgentSchema.parse(data));
 
     // Return parsed agent (prefer frontmatter name over filename)
     return {

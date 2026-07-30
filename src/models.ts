@@ -8,6 +8,7 @@ import { CodexAuth } from './auth/codex';
 import { AuthStorage } from './auth/storage';
 import { logger } from './utils/logger';
 import { warnIfModelNotInRegistry, loadCustomProviderNames } from './utils/model-utils';
+import { resolveModelString } from './utils/model-alias';
 import { createDemoModel } from './providers/demo';
 import {
   getOpenCodeGoProtocol,
@@ -225,10 +226,16 @@ export async function createModel(modelString: string) {
   // Load custom provider names for sync validation (cached after first call)
   await loadCustomProviderNames();
 
-  // Validate model and warn if not in registry (non-blocking)
-  warnIfModelNotInRegistry(modelString);
+  // Agent models are resolved at parse time, so this is a no-op for them (and
+  // for any concrete id). It exists for the callers that build a model string
+  // themselves — benchmarks, the verify judge, compaction — so an alias works
+  // wherever a model can be named.
+  const resolvedString = resolveModelString(modelString).model;
 
-  const config = parseModelConfig(modelString);
+  // Validate model and warn if not in registry (non-blocking)
+  warnIfModelNotInRegistry(resolvedString);
+
+  const config = parseModelConfig(resolvedString);
   
   if (config.provider === 'anthropic') {
     const baseURL = resolveBaseURL(config, 'anthropic');

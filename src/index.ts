@@ -23,6 +23,7 @@ import { createAddCommand } from './cli/add';
 import { createDoctorCommand } from './cli/doctor';
 import { BUILTIN_PROVIDERS } from './providers/registry-sources';
 import { resolveModelProvider } from './utils/model-utils';
+import { resolveModelString } from './utils/model-alias';
 import { logger, LogLevel } from './utils/logger';
 import { safeHttpUrl } from './utils/url';
 import { basename, resolve, dirname, join } from 'path';
@@ -551,9 +552,12 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
 
       // Override model if specified via CLI
       if (options.model) {
+        // Accept the same shorthand as frontmatter: a version alias
+        // (`anthropic:claude-sonnet`) or a configured `@name`.
+        const overrideModel = resolveModelString(options.model).model;
         // Bare IDs are canonical OpenAI model IDs; qualified IDs may select a
         // built-in or configured custom provider.
-        const provider = resolveModelProvider(options.model);
+        const provider = resolveModelProvider(overrideModel);
         if (!BUILTIN_PROVIDERS.includes(provider)) {
           // Check if it's a custom provider
           const customProvider = await AuthStorage.getCustomProvider(provider);
@@ -563,8 +567,16 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         }
 
         const originalModel = agent.config.model;
-        agent.config.model = options.model;
-        logger.info(`Model override: ${originalModel} → ${options.model}`);
+        agent.config.model = overrideModel;
+        // An override replaces whatever the file asked for, alias included, so
+        // the run is no longer explained by the frontmatter.
+        delete agent.config.modelAlias;
+        delete agent.config.modelSource;
+        logger.info(
+          overrideModel === options.model
+            ? `Model override: ${originalModel} → ${overrideModel}`
+            : `Model override: ${originalModel} → ${overrideModel} (from ${options.model})`
+        );
 
         // Warn if provider-specific options don't match the new provider
         if (agent.config.openai && provider !== 'openai') {

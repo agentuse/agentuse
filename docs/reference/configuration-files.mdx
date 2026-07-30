@@ -194,6 +194,39 @@ Per-command flags still win over all of these. For example, `--mock-model <model
 
 Keep secrets (like `AGENTUSE_API_KEY` and provider API keys) in an environment file rather than `config.json`, which is plain non-secret configuration.
 
+## Model defaults and aliases
+
+A `models` block in `~/.agentuse/config.json` sets the model used by agent files that omit `model`, and names models that agent files reference as `@name`:
+
+```json
+{
+  "models": {
+    "default": "anthropic:claude-sonnet",
+    "aliases": {
+      "fast": "anthropic:claude-haiku",
+      "smart": "anthropic:claude-opus",
+      "cheap-dev": "openai:gpt-mini:dev"
+    }
+  }
+}
+```
+
+```yaml
+---
+model: "@fast"
+---
+```
+
+- **`default`** applies to any agent file with no `model:` field. `AGENTUSE_MODEL` overrides it, and an explicit `model:` in the file overrides both.
+- **`aliases`** keys are alphanumeric with hyphens or underscores, referenced with the `@` sigil (define `fast`, write `@fast`). The `@` is required in the reference because a bare name is already a valid OpenAI model id.
+- A value may be a concrete id, a [version alias](/reference/models#version-aliases), another `@name`, or any of those with an `:env` auth suffix.
+
+Aliases are resolved once, when the agent file is parsed, so session logs, cost accounting, and context limits all record the concrete model that actually ran. A suspended run that resumes later stays on the model it started with, even if the alias has since moved.
+
+To point a repo at its own aliases rather than your user-global ones, set `AGENTUSE_CONFIG` to a config file inside the repo.
+
+Run `agentuse models` to see every alias and what it currently resolves to.
+
 ## Plugins
 
 Plugins are TypeScript or JavaScript modules loaded from these directories:

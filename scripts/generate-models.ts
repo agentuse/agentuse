@@ -15,6 +15,8 @@
 import { writeFileSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, relative } from 'path';
 import { REGISTRY_PROVIDER_SOURCES } from '../src/providers/registry-sources';
+import { findCurrentModel, isLiveVersionAlias, rewriteModelReferences } from '../src/utils/model-bump';
+import { deriveModelAlias } from '../src/utils/model-alias';
 
 const MODELS_DEV_API = 'https://models.dev/api.json';
 
@@ -459,7 +461,29 @@ export function getProviderModels(provider: Provider): ModelInfo[] {
 `;
 }
 
-function generateDocsPage(registry: Registry): string {
+/**
+ * Alias rows for the docs page, derived exactly as the runtime resolver derives
+ * them (src/utils/model-alias.ts): the version comes off the curated id, and an
+ * alias that collides with a real model id is dropped so it can never shadow one.
+ */
+function aliasRows(registry: Registry, fullRegistry: Registry): Array<[string, string]> {
+  const rows: Array<[string, string]> = [];
+  const claimed = new Set<string>();
+  for (const [provider, models] of Object.entries(registry)) {
+    for (const id of Object.keys(models)) {
+      const alias = deriveModelAlias(id);
+      if (!alias) continue;
+      const key = `${provider}:${alias}`;
+      if (claimed.has(key)) continue;
+      if (fullRegistry[provider]?.[alias]) continue;
+      claimed.add(key);
+      rows.push([key, `${provider}:${id}`]);
+    }
+  }
+  return rows;
+}
+
+function generateDocsPage(registry: Registry, fullRegistry: Registry): string {
   const formatModelRow = (provider: string, modelId: string, model: ModelData): string => {
     const capabilities: string[] = [];
     if (model.reasoning) capabilities.push('Reasoning');
@@ -498,6 +522,12 @@ function generateDocsPage(registry: Registry): string {
   const defaultAnthropic = anthropicKeys.find(id => id.includes('sonnet')) ?? anthropicKeys[0];
   const defaultOpenai = openaiKeys.find(id => /^gpt-\d+(\.\d+)?$/.test(id)) ?? openaiKeys[0];
   const defaultOpenrouter = Object.keys(registry.openrouter)[0];
+  const anthropicAliases = anthropicKeys
+    .map((id) => deriveModelAlias(id))
+    .filter((a): a is string => Boolean(a));
+  const defaultAnthropicAlias = deriveModelAlias(defaultAnthropic) ?? defaultAnthropic;
+  // The cheapest Anthropic line, used as the example for a "@fast" alias.
+  const cheapAnthropicAlias = anthropicAliases.find((a) => a.includes('haiku')) ?? defaultAnthropicAlias;
 
   return `---
 title: Model Reference
@@ -519,6 +549,40 @@ This page lists recommended models for AgentUse, organized by provider.
 - **OpenAI**: \`openai:${defaultOpenai}\` (latest GPT)
 - **OpenRouter**: \`openrouter:${defaultOpenrouter}\` (open source)
 - **Amazon Bedrock**: \`bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0\`
+
+## Version Aliases
+
+Leave the version off a model id and you get whichever release is current, so an
+agent file does not need editing every time a new model ships:
+
+\`\`\`yaml
+---
+model: anthropic:${defaultAnthropicAlias}   # -> anthropic:${defaultAnthropic} today
+---
+\`\`\`
+
+Aliases follow the lineup below, which is refreshed per AgentUse release. An id
+that exists for real always wins, so nothing you pin can be reinterpreted.
+
+| Alias | Currently resolves to |
+|-------|----------------------|
+${aliasRows(registry, fullRegistry).map(([alias, target]) => `| \`${alias}\` | \`${target}\` |`).join('\n')}
+
+Run \`agentuse models\` to see what each alias resolves to on your install, and
+\`agentuse models unpin\` to convert pinned ids in your agent files into aliases.
+
+To name your own, add a \`models.aliases\` block to \`~/.agentuse/config.json\` and
+reference it with the \`@\` sigil (see [Configuration Files](/reference/configuration-files#models)):
+
+\`\`\`json
+{ "models": { "default": "anthropic:${defaultAnthropicAlias}", "aliases": { "fast": "anthropic:${cheapAnthropicAlias}" } } }
+\`\`\`
+
+\`\`\`yaml
+---
+model: "@fast"
+---
+\`\`\`
 
 ## Recommended Models
 
@@ -565,18 +629,28 @@ See [Model Configuration](/guides/model-configuration#custom-providers-local-llm
 
 ## Usage
 
-Specify a model in your agent file:
+Specify a model in your agent file, pinned to a version or tracking the line:
 
 \`\`\`yaml
 ---
-model: anthropic:${defaultAnthropic}
+model: anthropic:${defaultAnthropic}   # pinned
 ---
 \`\`\`
 
-Or override via CLI:
+\`\`\`yaml
+---
+model: anthropic:${defaultAnthropicAlias}     # newest in this line
+---
+\`\`\`
+
+Omit \`model\` entirely to use the configured default (\`models.default\` or
+\`AGENTUSE_MODEL\`).
+
+Or override via CLI, which accepts the same aliases:
 
 \`\`\`bash
 agentuse run agent.agentuse -m openai:${defaultOpenai}
+agentuse run agent.agentuse -m openai:${deriveModelAlias(defaultOpenai) ?? defaultOpenai}
 agentuse run agent.agentuse -m ollama:glm-5-flash:q4_K_M
 \`\`\`
 `;
@@ -590,60 +664,24 @@ function updateFileReferences(projectRoot: string, registry: Registry): void {
     openrouter: Object.keys(registry.openrouter).filter(id => !/\d{8}$/.test(id)),
   };
 
-  // True only when `term` appears as a whole token (split on non-letters), so "mini" matches
-  // "gpt-5-mini" but NOT "gemini" — the substring match that used to send MiniMax refs to Gemini.
-  const hasToken = (id: string, term: string): boolean =>
-    id.toLowerCase().split(/[^a-z]+/).includes(term);
-
-  // Find the best replacement for a now-stale model reference.
-  const findBestMatch = (provider: string, oldModel: string): string | null => {
-    const models = currentModels[provider];
-    if (!models || models.length === 0) return null;
-
-    // Tier/line keywords that distinguish products within a vendor or provider.
-    const lineTerms = ['sonnet', 'opus', 'haiku', 'codex', 'mini', 'nano', 'pro', 'max', 'plus',
-      'flash', 'air', 'turbo', 'lite', 'chat'];
-    const oldLine = lineTerms.filter(t => hasToken(oldModel, t));
-    const sameLine = (candidates: string[]): string =>
-      candidates.find(m => oldLine.length > 0 && oldLine.every(t => hasToken(m, t))) ??
-      candidates.find(m => oldLine.length === 0 || oldLine.some(t => hasToken(m, t))) ??
-      candidates[0];
-
-    // OpenRouter "vendor/model" IDs: stay within the same vendor (z-ai, minimax, qwen, ...) so a
-    // MiniMax example never becomes Gemini. Pick the same product line within that vendor.
-    if (oldModel.includes('/')) {
-      const vendor = oldModel.split('/')[0];
-      const sameVendor = models.filter(m => m.split('/')[0] === vendor);
-      if (sameVendor.length > 0) return sameLine(sameVendor);
-      return models[0];
-    }
-
-    // Flat provider IDs (anthropic/openai): match by product line (models are sorted latest-first).
-    return sameLine(models);
-  };
-
-  // Pattern to match any provider:model reference
-  const modelPattern = /(anthropic|openai|openrouter):([a-zA-Z0-9_./-]+)/g;
+  // Reference rewriting lives in src/utils/model-bump.ts so `agentuse models bump`
+  // applies the identical rule to the user's own agent files.
+  const providers = Object.keys(currentModels);
 
   const processFile = (filePath: string): void => {
-    let content = readFileSync(filePath, 'utf-8');
-    let modified = false;
+    const content = readFileSync(filePath, 'utf-8');
 
-    const newContent = content.replace(modelPattern, (match, provider, oldModel) => {
+    const { text: newContent, changes } = rewriteModelReferences(content, providers, (provider, oldModel) => {
       // Skip if it's already a current model
-      if (currentModels[provider]?.includes(oldModel)) {
-        return match;
-      }
-
-      const bestMatch = findBestMatch(provider, oldModel);
-      if (bestMatch && bestMatch !== oldModel) {
-        modified = true;
-        return `${provider}:${bestMatch}`;
-      }
-      return match;
+      if (currentModels[provider]?.includes(oldModel)) return null;
+      // A version alias (`anthropic:claude-sonnet`) already tracks the newest
+      // release; rewriting it to today's id would pin the docs to a version.
+      if (isLiveVersionAlias(provider, oldModel)) return null;
+      const bestMatch = findCurrentModel(provider, oldModel, currentModels);
+      return bestMatch && bestMatch !== oldModel ? `${provider}:${bestMatch}` : null;
     });
 
-    if (modified) {
+    if (changes.length > 0) {
       writeFileSync(filePath, newContent);
       console.log(`  Updated: ${relative(projectRoot, filePath)}`);
     } else {
@@ -722,7 +760,7 @@ async function main(): Promise<void> {
     console.log(`\nGenerated: src/generated/models.ts`);
 
     // Generate docs page
-    const docsContent = generateDocsPage(registry);
+    const docsContent = generateDocsPage(registry, fullRegistry);
     const docsPath = join(projectRoot, 'docs/reference/models.mdx');
     try {
       writeFileSync(docsPath, docsContent);

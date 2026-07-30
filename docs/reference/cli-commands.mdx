@@ -103,8 +103,10 @@ provider:model[:env]
 
 Where:
 - `provider`: A built-in provider (`anthropic`, `openai`, `openrouter`, `opencode-go`, `bedrock`) or a custom provider name
-- `model`: The specific model name (e.g., `claude-sonnet-4-6`, `gpt-5.5`, `glm-5-flash:q4_K_M`)
+- `model`: The specific model name (e.g., `claude-sonnet-4-6`, `gpt-5.5`, `glm-5-flash:q4_K_M`), or a [version alias](/reference/models#version-aliases) such as `claude-sonnet`
 - `env`: Optional environment suffix for API keys (e.g., `dev`, `prod`, or full env var name), built-in providers only
+
+A configured `@name` alias also works: `--model @fast`.
 
 #### Examples
 
@@ -115,6 +117,10 @@ agentuse run agent.agentuse --model opencode-go:kimi-k2.7-code
 
 # Use Anthropic Claude Haiku for quick testing
 agentuse run agent.agentuse -m anthropic:claude-haiku-4-5
+
+# Track the newest model in a line, or use a configured alias
+agentuse run agent.agentuse -m anthropic:claude-sonnet
+agentuse run agent.agentuse -m @fast
 
 # Use different API key via environment suffix
 agentuse run agent.agentuse --model openai:gpt-5.6:dev
@@ -833,6 +839,49 @@ Jun 03, 09:00  daily.agentuse  Daily 9am  never
 
 ---
 
+## agentuse models
+
+List the recommended models, the aliases they can be reached by, and your configured default.
+
+```bash
+agentuse models                  # recommended lineup + aliases
+agentuse models anthropic        # one provider
+agentuse models --all            # every model in the registry
+agentuse models --verbose        # context limits, capabilities, alias per model
+```
+
+The **Version aliases** section shows what each version-less id (`anthropic:claude-sonnet`) resolves to right now. **Your aliases** and **Default model** appear when a `models` block is configured (see [Configuration Files](/reference/configuration-files#model-defaults-and-aliases)).
+
+### models unpin
+
+Replace pinned model versions in agent files with version aliases, so those files track the newest release and stop needing edits:
+
+```bash
+agentuse models unpin --dry-run       # preview, current directory
+agentuse models unpin ./agents        # apply to a directory
+agentuse models unpin one.agentuse    # apply to a single file
+```
+
+```
+agents/researcher.agentuse
+  anthropic:claude-sonnet-4-0 → anthropic:claude-sonnet (currently anthropic:claude-sonnet-5)
+```
+
+### models bump
+
+Move superseded pins forward to the current model of the same product line, for files you want to keep pinned:
+
+```bash
+agentuse models bump --dry-run
+agentuse models bump ./agents
+```
+
+<Note>
+  Both commands only rewrite model references inside an agent file's YAML frontmatter. Instructions below the frontmatter are left alone, since prose may legitimately name a specific model version. Version aliases are never rewritten by `bump`: they already track the line.
+</Note>
+
+---
+
 ## agentuse provider
 
 Manage providers and authentication credentials. (`auth` still works as a hidden alias.)
@@ -1251,6 +1300,9 @@ agentuse provider logout [provider]      # Remove stored credentials
 agentuse provider remove <name>          # Remove a custom provider
 agentuse provider list                   # Show all providers and credentials
 agentuse provider help                   # Show detailed auth help
+agentuse models [provider] [options]     # List models, aliases, and the configured default
+agentuse models unpin [path]             # Swap pinned model versions for version aliases
+agentuse models bump [path]              # Move superseded pins to the current model
 agentuse skills [subcommand] [options]   # List/get builtin or installed skills
 agentuse doctor <file> [--last-run]      # Diagnose agent skill capability config
 agentuse agents [options]                # Discover and list project agents

@@ -193,6 +193,18 @@ model: anthropic:claude-sonnet-5:dev  # Uses ANTHROPIC_API_KEY_DEV
 
 ## Behavior Control
 
+<ParamField path="AGENTUSE_MODEL" type="string">
+  Model used by agent files that omit `model:`.
+
+  ```bash
+  export AGENTUSE_MODEL="anthropic:claude-sonnet"
+  ```
+
+  Accepts anything a `model:` field accepts: a concrete id, a [version alias](/reference/models#version-aliases), a configured `@name`, or any of those with an `:env` auth suffix.
+
+  **Precedence:** an explicit `model:` in the agent file wins; otherwise this variable wins over `models.default` in the AgentUse config. With none of the three set, an agent file without `model:` fails to parse.
+</ParamField>
+
 <ParamField path="MAX_STEPS" type="number">
   Override the maximum number of conversation steps (LLM generation cycles) an agent can take.
   Default: 100

@@ -44,10 +44,37 @@ Additional instructions or context.
   model: opencode-go:kimi-k2.7-code
   model: bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0
   ```
-  
-  You can also specify a custom environment variable suffix:
+
+  **Version aliases.** Leave the version off and the agent tracks the newest
+  model in that line, so it needs no edit when a new release ships:
+
+  ```yaml
+  model: anthropic:claude-sonnet   # newest Sonnet
+  model: openai:gpt-mini           # newest small GPT
+  model: openrouter:x-ai/grok      # newest Grok
+  ```
+
+  A real model id always wins over an alias, so anything you pin keeps its exact
+  meaning. See [Version Aliases](/reference/models#version-aliases) for the full
+  table, and run `agentuse models` to see what each alias resolves to today.
+
+  **Named aliases.** `@name` resolves through the `models.aliases` block of your
+  AgentUse config, which lets many agent files be repointed at once:
+
+  ```yaml
+  model: "@fast"
+  ```
+
+  **Omitting `model`.** With `models.default` (or `AGENTUSE_MODEL`) configured,
+  the field is optional and the agent uses that default. Without a default, a
+  file that omits `model` fails to parse. See
+  [Configuration Files](/reference/configuration-files#model-defaults-and-aliases).
+
+  You can also specify a custom environment variable suffix, which composes with
+  aliases:
   ```yaml
   model: anthropic:claude-sonnet-5:dev  # Uses ANTHROPIC_API_KEY_DEV
+  model: anthropic:claude-sonnet:dev    # Newest Sonnet, ANTHROPIC_API_KEY_DEV
   model: opencode-go:kimi-k2.7-code:dev   # Uses OPENCODE_GO_API_KEY_DEV
   ```
 </ParamField>
@@ -253,7 +280,7 @@ Additional instructions or context.
   OpenAI to `reasoningEffort`. One setting that works across Claude and OpenAI.
 
   ```yaml
-  model: anthropic:claude-opus-4-8
+  model: anthropic:claude-opus-5
   reasoning: high   # none | minimal | low | medium | high | xhigh
   ```
 

@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 import * as dotenv from 'dotenv';
@@ -42,6 +42,24 @@ export interface GlobalServeConfig {
   terms?: { project?: string; folder?: string };
 }
 
+/**
+ * Model defaults and aliases. Lets a fleet of agent files be repointed at a
+ * new model by editing one place instead of every `model:` line.
+ */
+export interface GlobalModelsConfig {
+  /**
+   * Model used by agent files that omit `model:`. Overridden by the
+   * `AGENTUSE_MODEL` env var. May itself be an alias.
+   */
+  default?: string;
+  /**
+   * Named models, referenced from an agent file as `@name` (e.g.
+   * `{ "fast": "anthropic:claude-haiku-4-5" }` used as `model: "@fast"`).
+   * A value may be a concrete id, a version alias, or another `@name`.
+   */
+  aliases?: Record<string, string>;
+}
+
 export interface GlobalConfig {
   serve?: GlobalServeConfig;
   /**
@@ -51,6 +69,68 @@ export interface GlobalConfig {
    * Applied with override:false, so shell env and `.env` always win.
    */
   env?: Record<string, string>;
+  /** Model default + named aliases (see GlobalModelsConfig). */
+  models?: GlobalModelsConfig;
+}
+
+/**
+ * Alias names are referenced as `@name` from agent frontmatter, so they must not
+ * contain the characters that would make that reference ambiguous (a colon would
+ * read as a provider separator, whitespace as two YAML tokens).
+ */
+const ALIAS_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+
+function validateModels(input: unknown, configPath: string): GlobalModelsConfig {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    fail(configPath, '`models` must be an object');
+  }
+  const models = input as Record<string, unknown>;
+  const out: GlobalModelsConfig = {};
+
+  if (models.default !== undefined) {
+    if (typeof models.default !== 'string' || models.default.trim().length === 0) {
+      fail(configPath, '`models.default` must be a non-empty string');
+    }
+    out.default = models.default.trim();
+  }
+
+  if (models.aliases !== undefined) {
+    if (models.aliases === null || typeof models.aliases !== 'object' || Array.isArray(models.aliases)) {
+      fail(configPath, '`models.aliases` must be an object');
+    }
+    const aliases: Record<string, string> = {};
+    const seen = new Map<string, string>();
+    for (const [name, value] of Object.entries(models.aliases as Record<string, unknown>)) {
+      if (name.startsWith('@')) {
+        fail(
+          configPath,
+          `\`models.aliases\` key "${name}" must not include the @ sigil ` +
+            `(define it as "${name.slice(1)}", reference it as "${name}")`
+        );
+      }
+      if (!ALIAS_NAME_PATTERN.test(name)) {
+        fail(
+          configPath,
+          `\`models.aliases\` key "${name}" must be alphanumeric with hyphens or underscores`
+        );
+      }
+      // Lookup is case-insensitive, so two keys differing only in case would
+      // make resolution depend on object order.
+      const lower = name.toLowerCase();
+      const clash = seen.get(lower);
+      if (clash !== undefined) {
+        fail(configPath, `\`models.aliases\` has "${clash}" and "${name}", which differ only in case`);
+      }
+      seen.set(lower, name);
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        fail(configPath, `\`models.aliases.${name}\` must be a non-empty string`);
+      }
+      aliases[name] = value.trim();
+    }
+    out.aliases = aliases;
+  }
+
+  return out;
 }
 
 export function getGlobalConfigPath(): string {
@@ -109,6 +189,52 @@ export function loadGlobalDefaults(): { envFile: string | undefined; configEnvKe
   return { envFile, configEnvKeys };
 }
 
+/** Model settings with `aliases` always present, so callers can skip the guard. */
+export interface ModelSettings {
+  default?: string;
+  aliases: Record<string, string>;
+}
+
+const EMPTY_MODEL_SETTINGS: ModelSettings = Object.freeze({ aliases: Object.freeze({}) as Record<string, string> });
+
+let modelSettingsCache: { key: string; settings: ModelSettings } | null = null;
+
+/**
+ * Load the `models` block, memoized against the config file's path and mtime.
+ *
+ * Alias resolution runs on every agent parse, and `agentuse serve` re-parses the
+ * same agents for the life of the daemon, so this must be cheap; the mtime check
+ * keeps it that way without going stale when the user edits their aliases.
+ * A malformed config propagates rather than silently degrading to no aliases,
+ * which would resolve a `@name` to nothing or pick an unintended model.
+ */
+export function loadModelSettings(configPath = getGlobalConfigPath()): ModelSettings {
+  let key: string;
+  try {
+    const stat = statSync(configPath);
+    key = `${configPath}:${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    // No config file: nothing to cache against, and nothing to read.
+    modelSettingsCache = null;
+    return EMPTY_MODEL_SETTINGS;
+  }
+
+  if (modelSettingsCache?.key === key) return modelSettingsCache.settings;
+
+  const config = loadGlobalConfig(configPath);
+  const settings: ModelSettings = {
+    ...(config?.models?.default !== undefined && { default: config.models.default }),
+    aliases: config?.models?.aliases ?? {},
+  };
+  modelSettingsCache = { key, settings };
+  return settings;
+}
+
+/** Test seam: forget the memoized `models` block. */
+export function resetModelSettingsCache(): void {
+  modelSettingsCache = null;
+}
+
 export function expandHome(p: string): string {
   if (p === '~') return homedir();
   if (p.startsWith('~/')) return path.join(homedir(), p.slice(2));
@@ -148,6 +274,10 @@ function validate(input: unknown, configPath: string): GlobalConfig {
       env[key] = value;
     }
     out.env = env;
+  }
+
+  if (root.models !== undefined) {
+    out.models = validateModels(root.models, configPath);
   }
 
   if (root.serve === undefined) return out;

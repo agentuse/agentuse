@@ -35,6 +35,58 @@ AgentUse supports multiple AI providers. You need to authenticate with at least 
   </Card>
 </CardGroup>
 
+## Naming a Model Without a Version
+
+Pinning an exact model id means editing every agent file when a new release
+ships. Three ways to avoid that, in increasing order of scope:
+
+**1. Drop the version.** A model id with its version left off means "the newest
+in this line":
+
+```yaml
+---
+model: anthropic:claude-sonnet   # newest Sonnet
+model: openai:gpt-mini           # newest small GPT
+---
+```
+
+The lineup behind these aliases is refreshed each AgentUse release, so an alias
+always points at a model the release shipped with. A real model id always wins
+over an alias, so anything you pin keeps its exact meaning. See
+[Version Aliases](/reference/models#version-aliases) for the current table.
+
+**2. Name your own.** A `models.aliases` block in `~/.agentuse/config.json` lets
+one edit repoint every agent that uses it:
+
+```json
+{
+  "models": {
+    "aliases": { "fast": "anthropic:claude-haiku", "smart": "anthropic:claude-opus" }
+  }
+}
+```
+
+```yaml
+---
+model: "@fast"
+---
+```
+
+**3. Set a default and stop naming models.** With `models.default` (or
+`AGENTUSE_MODEL`) configured, `model:` becomes optional:
+
+```json
+{ "models": { "default": "anthropic:claude-sonnet" } }
+```
+
+Aliases resolve once, when the agent file is parsed, so session logs and cost
+accounting record the concrete model that ran. A suspended run resumes on the
+model it started with, even if the alias has moved since.
+
+To migrate agent files you already have, `agentuse models unpin` swaps pinned
+versions for aliases (`--dry-run` to preview), and `agentuse models bump` moves
+stale pins forward for files you want to keep pinned.
+
 ## Authentication Methods
 
 ### 1. Interactive Login (Recommended)
@@ -308,6 +360,8 @@ Override the model at runtime using the `--model` flag:
 agentuse run agent.agentuse --model anthropic:claude-haiku-4-5
 agentuse run agent.agentuse -m openai:gpt-5.4-mini
 agentuse run agent.agentuse -m opencode-go:kimi-k2.7-code
+agentuse run agent.agentuse -m anthropic:claude-sonnet   # version alias
+agentuse run agent.agentuse -m @fast                     # configured alias
 ```
 
 <Card title="CLI Commands - Model Override" icon="terminal" href="/reference/cli-commands#model-override">
@@ -369,7 +423,7 @@ set a single value and it works whether the agent runs on Claude or GPT-5:
 
 ```yaml
 ---
-model: anthropic:claude-opus-4-8
+model: anthropic:claude-opus-5
 reasoning: high   # none | minimal | low | medium | high | xhigh
 ---
 ```
@@ -430,7 +484,7 @@ For Claude models, you can enable extended thinking so the model's reasoning str
 
 ```yaml
 ---
-model: anthropic:claude-opus-4-8
+model: anthropic:claude-opus-5
 anthropic:
   thinking:
     budgetTokens: 4096  # Minimum 1024

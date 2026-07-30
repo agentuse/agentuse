@@ -19,24 +19,68 @@ export function resolveModelProvider(modelString: string): string {
   return firstColon === -1 ? 'openai' : modelString.slice(0, firstColon);
 }
 
+/** A model string broken into its parts, per the `provider:model[:env]` grammar. */
+export interface SplitModelString {
+  provider: string;
+  modelId: string;
+  /** The `:env` auth suffix, when the provider's grammar allows one. */
+  envPart?: string;
+  /** True when the caller wrote a bare id and `provider` was inferred as openai. */
+  providerInferred: boolean;
+}
+
+/**
+ * Split a model string into provider / model id / optional `:env` auth suffix.
+ *
+ * Single source of the colon grammar shared by registry lookups and alias
+ * resolution, mirroring parseModelConfig in models.ts: a bare id is an OpenAI
+ * id, only built-in providers take the `:env` suffix, and bedrock plus
+ * custom/opencode-go providers keep colons in their ids verbatim (bedrock ids
+ * such as `anthropic.claude-3-5-sonnet-20241022-v2:0` end in one, and local
+ * models such as `ollama:qwen3.5:0.8b` carry a tag).
+ */
+export function splitModelString(modelString: string): SplitModelString {
+  const firstColon = modelString.indexOf(':');
+  if (firstColon === -1) {
+    return { provider: 'openai', modelId: modelString, providerInferred: true };
+  }
+  const provider = modelString.slice(0, firstColon);
+  const rest = modelString.slice(firstColon + 1);
+  if (provider === 'bedrock' || !BUILTIN_PROVIDERS.includes(provider)) {
+    return { provider, modelId: rest, providerInferred: false };
+  }
+  const secondColon = rest.indexOf(':');
+  if (secondColon === -1) {
+    return { provider, modelId: rest, providerInferred: false };
+  }
+  return {
+    provider,
+    modelId: rest.slice(0, secondColon),
+    envPart: rest.slice(secondColon + 1),
+    providerInferred: false,
+  };
+}
+
+/** Rebuild a model string from its parts, preserving any `:env` auth suffix. */
+export function joinModelString(parts: {
+  provider: string;
+  modelId: string;
+  envPart?: string | undefined;
+}): string {
+  const base = `${parts.provider}:${parts.modelId}`;
+  return parts.envPart === undefined ? base : `${base}:${parts.envPart}`;
+}
+
 /**
  * Collapse the optional `:env` auth suffix so a model string can be looked up
  * in the registry. `provider:model:env` (e.g. anthropic:claude-fable-5:dev)
  * must resolve to the `provider:model` registry key; without this the suffix
  * is treated as part of the model id and every lookup silently misses,
  * defeating capability resolution (output-token clamp, reasoning summaries).
- * Mirrors parseModelConfig: only built-in providers use the suffix syntax;
- * bedrock and custom/opencode-go providers keep colons in their ids verbatim.
  */
 export function toRegistryKey(modelString: string): string {
-  const firstColon = modelString.indexOf(':');
-  if (firstColon === -1) return `openai:${modelString}`;
-  const provider = modelString.slice(0, firstColon);
-  if (provider === 'bedrock' || !BUILTIN_PROVIDERS.includes(provider)) return modelString;
-  const rest = modelString.slice(firstColon + 1);
-  const secondColon = rest.indexOf(':');
-  if (secondColon === -1) return modelString;
-  return `${provider}:${rest.slice(0, secondColon)}`;
+  const { provider, modelId } = splitModelString(modelString);
+  return `${provider}:${modelId}`;
 }
 
 export interface ValidationResult {
