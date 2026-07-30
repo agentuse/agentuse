@@ -71,16 +71,25 @@ function stripOuterQuotes(value: string): string {
   return trimmed.slice(1, -1);
 }
 
-// Node types inside an unquoted here-doc body that the shell genuinely expands.
-// `<<EOF` really does run `$(...)` in its body, so those spans must stay visible
-// to the scanners and to the allowlist. Everything else in a body is inert data.
-const EXPANDED_PAYLOAD_TYPES = new Set([
-  'command_substitution',
-  'process_substitution',
-  'expansion',
-  'simple_expansion',
-  'arithmetic_expansion',
-]);
+// The only payload constructs that run a command line. A parameter expansion
+// such as `${x:-value | bash }` merely produces text, so keeping its whole span
+// visible would hand the scanners inert characters to misread once the quotes
+// around it are masked away. Recursing instead still finds a `$(...)` nested
+// inside one, which is the case that genuinely executes.
+const EXECUTED_PAYLOAD_TYPES = new Set(['command_substitution', 'process_substitution']);
+
+// A here-doc delimiter is only safe to trust when tree-sitter resolves it the way
+// a POSIX shell would. It does for a bare word and for a fully quoted word, but
+// not for a partially quoted one (`EO"F"`, `EO'F'`, `E"O"F`) or one folded across
+// a line continuation (`EO\` + newline + `F`). In those cases the shell ends the
+// body at the first `EOF` line while tree-sitter runs on to a later one, so the
+// body swallows a command the shell actually executes.
+const BARE_DELIMITER = /^[A-Za-z0-9_][A-Za-z0-9_.\-]*$/;
+const FULLY_QUOTED_DELIMITER = /^'[^'\\]*'$|^"[^"\\$`]*"$/;
+
+function delimiterIsUnambiguous(text: string): boolean {
+  return BARE_DELIMITER.test(text) || FULLY_QUOTED_DELIMITER.test(text);
+}
 
 interface SourceRange {
   start: number;
@@ -88,14 +97,14 @@ interface SourceRange {
 }
 
 /**
- * Queue `node`'s whole span for masking, minus any descendant the shell expands.
+ * Queue `node`'s whole span for masking, minus any descendant the shell executes.
  */
-function maskSpanExceptExpansions(node: any, ranges: SourceRange[]): void {
+function maskSpanExceptExecuted(node: any, ranges: SourceRange[]): void {
   const keep: SourceRange[] = [];
 
   const walk = (current: any): void => {
-    if (EXPANDED_PAYLOAD_TYPES.has(current.type)) {
-      // Keep the expansion whole; its contents are a real command line.
+    if (EXECUTED_PAYLOAD_TYPES.has(current.type)) {
+      // Keep it whole; its contents are a real command line.
       keep.push({ start: current.startIndex, end: current.endIndex });
       return;
     }
@@ -135,42 +144,73 @@ function maskSpanExceptExpansions(node: any, ranges: SourceRange[]): void {
  * Masked characters become spaces so the string keeps its length and every
  * offset stays meaningful; newlines survive so the payload's line structure, and
  * therefore the surrounding parse, is unchanged.
+ *
+ * Masking fails CLOSED. If any delimiter is one tree-sitter may resolve
+ * differently from the shell, nothing is masked at all and the scanners go back
+ * to reading the raw string: noisy, but it never hides a live operator.
  */
 export async function maskInertPayloads(commandString: string): Promise<string> {
   const parser = await initParser();
   const tree = parser.parse(commandString as any);
   if (!tree) return commandString;
 
-  const ranges: SourceRange[] = [];
+  try {
+    const ranges: SourceRange[] = [];
+    const starts = tree.rootNode.descendantsOfType('heredoc_start');
+    const bodies = tree.rootNode.descendantsOfType('heredoc_body');
 
-  for (const body of tree.rootNode.descendantsOfType('heredoc_body')) {
-    maskSpanExceptExpansions(body, ranges);
-  }
-
-  // `cmd <<< data` feeds a literal word to stdin. It is not a path, and not a
-  // nested command line.
-  for (const redirect of tree.rootNode.descendantsOfType('herestring_redirect')) {
-    for (let i = 0; i < redirect.childCount; i += 1) {
-      const child = redirect.child(i);
-      if (child && child.type !== '<<<') maskSpanExceptExpansions(child, ranges);
+    // Anchor the check on heredoc_start, not on heredoc_redirect: the delimiters
+    // worth distrusting are exactly the ones that make tree-sitter drop the
+    // redirect wrapper and park the pieces under an ERROR node instead.
+    if (bodies.length > starts.length) return commandString;
+    for (const start of starts) {
+      if (!delimiterIsUnambiguous(start.text)) return commandString;
     }
+
+    for (const body of bodies) {
+      maskSpanExceptExecuted(body, ranges);
+    }
+
+    // The delimiter lines sit OUTSIDE heredoc_body. Leaving them visible is not
+    // harmless: `<<"DON'T"` ends on a `DON'T` line whose apostrophe used to be
+    // balanced by one in the body, so masking the body alone would strand it and
+    // put the scanners into quote mode for everything that follows. Delimiters
+    // are never operators, so mask them too.
+    for (const type of ['heredoc_start', 'heredoc_end']) {
+      for (const node of tree.rootNode.descendantsOfType(type)) {
+        ranges.push({ start: node.startIndex, end: node.endIndex });
+      }
+    }
+
+    // `cmd <<< data` feeds a literal word to stdin. It is not a path, and not a
+    // nested command line.
+    for (const redirect of tree.rootNode.descendantsOfType('herestring_redirect')) {
+      for (let i = 0; i < redirect.childCount; i += 1) {
+        const child = redirect.child(i);
+        if (child && child.type !== '<<<') maskSpanExceptExecuted(child, ranges);
+      }
+    }
+
+    if (ranges.length === 0) return commandString;
+
+    ranges.sort((a, b) => a.start - b.start);
+
+    let masked = '';
+    let cursor = 0;
+    for (const range of ranges) {
+      const start = Math.max(range.start, cursor);
+      if (range.end <= start) continue;
+      masked += commandString.slice(cursor, start);
+      masked += commandString.slice(start, range.end).replace(/[^\n]/g, ' ');
+      cursor = range.end;
+    }
+
+    return masked + commandString.slice(cursor);
+  } finally {
+    // web-tree-sitter trees own WASM memory and ship no finalizer, so an
+    // undeleted tree leaks for the lifetime of a serve or scheduler process.
+    tree.delete();
   }
-
-  if (ranges.length === 0) return commandString;
-
-  ranges.sort((a, b) => a.start - b.start);
-
-  let masked = '';
-  let cursor = 0;
-  for (const range of ranges) {
-    const start = Math.max(range.start, cursor);
-    if (range.end <= start) continue;
-    masked += commandString.slice(cursor, start);
-    masked += commandString.slice(start, range.end).replace(/[^\n]/g, ' ');
-    cursor = range.end;
-  }
-
-  return masked + commandString.slice(cursor);
 }
 
 function isPathLike(value: string): boolean {
@@ -346,41 +386,47 @@ export async function parseBashCommand(commandString: string): Promise<ParsedCom
 
   const commands: ParsedCommand[] = [];
 
-  // Find all command nodes in the tree
-  const commandNodes = tree.rootNode.descendantsOfType('command');
+  try {
+    // Find all command nodes in the tree
+    const commandNodes = tree.rootNode.descendantsOfType('command');
 
-  for (const node of commandNodes) {
-    const parts: string[] = [];
+    for (const node of commandNodes) {
+      const parts: string[] = [];
 
-    // Extract command parts from AST
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i);
-      if (!child) continue;
+      // Extract command parts from AST
+      for (let i = 0; i < node.childCount; i++) {
+        const child = node.child(i);
+        if (!child) continue;
 
-      // Only extract actual command parts (not syntax elements)
-      if (
-        child.type === 'command_name' ||
-        child.type === 'word' ||
-        child.type === 'concatenation'
-      ) {
-        parts.push(child.text);
-      } else if (child.type === 'string' || child.type === 'raw_string') {
-        // Strip the surrounding quotes so allowlist patterns match the argument
-        // value: `curl "https://r.jina.ai/x"` must match `curl https://r.jina.ai/*`
-        parts.push(stripOuterQuotes(child.text));
+        // Only extract actual command parts (not syntax elements)
+        if (
+          child.type === 'command_name' ||
+          child.type === 'word' ||
+          child.type === 'concatenation'
+        ) {
+          parts.push(child.text);
+        } else if (child.type === 'string' || child.type === 'raw_string') {
+          // Strip the surrounding quotes so allowlist patterns match the argument
+          // value: `curl "https://r.jina.ai/x"` must match `curl https://r.jina.ai/*`
+          parts.push(stripOuterQuotes(child.text));
+        }
+      }
+
+      if (parts.length > 0) {
+        commands.push({
+          head: parts[0],
+          tail: parts.slice(1),
+          raw: node.text,
+        });
       }
     }
 
-    if (parts.length > 0) {
-      commands.push({
-        head: parts[0],
-        tail: parts.slice(1),
-        raw: node.text,
-      });
-    }
+    return commands;
+  } finally {
+    // Everything above is copied out as plain strings, so the tree can go. It
+    // owns WASM memory and web-tree-sitter ships no finalizer to reclaim it.
+    tree.delete();
   }
-
-  return commands;
 }
 
 /**
