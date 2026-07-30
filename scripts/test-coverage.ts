@@ -8,7 +8,7 @@
  * from the per-file reports.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdir, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 
 const root = resolve(import.meta.dir, '..');
@@ -141,6 +141,26 @@ async function main(): Promise<void> {
   console.log('\nMerged source coverage');
   console.log(`  lines      ${lines.toFixed(2)}% (${coveredLines}/${totalLines}) — minimum ${LINE_THRESHOLD}%`);
   console.log(`  functions  ${functions.toFixed(2)}% (${coveredFunctions}/${totalFunctions}) — minimum ${FUNCTION_THRESHOLD}% (conservative isolated-run merge)`);
+
+  // Machine-readable copy so the release brief can report coverage without
+  // re-deriving it by scraping the lines above.
+  await writeFile(
+    join(outputRoot, 'summary.json'),
+    `${JSON.stringify(
+      {
+        lines,
+        functions,
+        lineThreshold: LINE_THRESHOLD,
+        functionThreshold: FUNCTION_THRESHOLD,
+        coveredLines,
+        totalLines,
+        coveredFunctions,
+        totalFunctions,
+      },
+      null,
+      2,
+    )}\n`,
+  );
 
   const weakest = fileRows
     .filter((row) => row.total >= 20)
