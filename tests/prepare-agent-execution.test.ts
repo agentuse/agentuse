@@ -284,7 +284,10 @@ describe('prepareAgentExecution', () => {
       expect(result.userMessage).toContain('expires after 24h');
       expect(result.userMessage).toContain('workflow-specific cleanup/status updates');
       expect(result.userMessage).toContain('updating relevant store items');
-      expect(result.userMessage).toContain('comment: treat the reviewer comment as feedback, not approval');
+      expect(result.userMessage).toContain('Treat the reviewer comment as feedback, not approval');
+      expect(result.userMessage).toContain('this branch takes precedence over option-selection ambiguity');
+      expect(result.userMessage).toContain('reply "very nice!"');
+      expect(result.userMessage).toContain('a missing `choice` is NOT ambiguous');
       expect(result.userMessage).toContain('call `await_human` again');
     });
 

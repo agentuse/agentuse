@@ -18,6 +18,7 @@ import { wrapToolsWithWAL, sanitizeWALInput, type EffectWAL } from './effect-wal
 import { LeaseStore, isEffectful } from './approval-lease';
 import { GateSealStore } from './gate-seal';
 import { applyGateDecisionEffects } from './gate-decision';
+import { attachCommandToPendingGate, withGatePlanPreflight } from './gate-preflight';
 import { isMockMode, resolveMockApprovalDecision, mockGateDecisionResult } from './mock-tools';
 import { registerSDKTelemetryOnce } from '../telemetry/sdk-telemetry';
 import { recordErrorMarker } from './session-helper';
@@ -760,29 +761,54 @@ export async function* executeAgentCore(
       ...(maxOutputTokens && { maxOutputTokens }),
     };
 
-    // Only add tools if there are any
-    if (Object.keys(modelFacingTools).length > 0) {
-      streamConfig.tools = modelFacingTools;
-    }
-
     // Lease enforcement (agentuse-lab#165, Phase 2) + gate-rides-alone barrier
-    // (agentuse-lab#169). The SDK consults this synchronously and in STREAM ORDER
-    // before any tool in the step is dispatched (executeToolsFromStream queues
-    // nothing until model-call-end). Two guarantees ride on that:
+    // (agentuse-lab#169/#182). The SDK consults this synchronously and in STREAM
+    // ORDER before any tool in the step is dispatched (executeToolsFromStream
+    // queues nothing until model-call-end). Three guarantees ride on that:
     //   1. an uncovered effectful command can never run beside a pending gate
     //      (lease coverage, order-independent), and
-    //   2. EVERY sibling that streams in AFTER an await_human gate in the same
-    //      step is denied, so a human gate rides alone (gate-first order only).
+    //   2. a gated command streaming AFTER a plain await_human gate is attached
+    //      to that gate's final payload, then denied until the reviewer approves,
+    //   3. EVERY other sibling that streams in AFTER an await_human gate in the
+    //      same step is denied (gate-first order only).
     // A generic (all-tools) approval fn is safe: no tool defines its own
     // needsApproval, so nothing is being overridden by taking sole authority.
-    const awaitHumanPresent = !!(modelFacingTools as any).await_human;
+    const toolsForStream: ToolSet = { ...modelFacingTools };
+    const awaitHumanPresent = !!(toolsForStream as any).await_human;
     if (awaitHumanPresent || effectPatterns.length > 0) {
-      // Barrier state, scoped to this streamText. An await_human call always
-      // suspends the step it appears in (stopOnSuspend ends the stream), so a set
-      // flag can never leak into a later LIVE step of the same stream; no reset is
-      // needed. If await_human ever became non-suspending, this would need a
-      // per-step reset.
+      // Barrier state, scoped to this streamText. Real gates suspend and end the
+      // stream. Machine preflight/verify decisions and mocked gates resolve
+      // inline, so the outer preflight wrapper explicitly clears this state
+      // before the SDK starts the next step.
       let gatePendingThisStep = false;
+      let pendingGateInput: Record<string, unknown> | undefined;
+      let pendingMockDecision: ReturnType<typeof mockGateDecisionResult> | undefined;
+
+      const clearInlineGateState = (result: unknown) => {
+        gatePendingThisStep = false;
+        pendingGateInput = undefined;
+        pendingMockDecision = undefined;
+        gateBarrierActive = false;
+        gateBarrierCallId = undefined;
+        if (
+          result
+          && typeof result === 'object'
+          && (result as Record<string, unknown>).source === 'gate-preflight'
+        ) {
+          // Mock approval effects are applied from toolApproval so a later step
+          // can use the lease. If final-payload validation rejects inline, undo
+          // that provisional grant.
+          leaseStore.revoke();
+        }
+      };
+
+      if ((toolsForStream as any).await_human) {
+        (toolsForStream as any).await_human = withGatePlanPreflight(
+          (toolsForStream as any).await_human,
+          { effectPatterns, onInlineResolution: clearInlineGateState },
+        );
+      }
+
       streamConfig.toolApproval = (opts: { toolCall: { toolName: string; toolCallId?: string; input?: any } }) => {
         const { toolName, toolCallId: callId, input } = opts.toolCall;
 
@@ -806,26 +832,32 @@ export async function* executeAgentCore(
               reason: 'The human reviewer REJECTED this request, which is terminal: the approval gate is closed for this run. Do not call await_human again. Perform any required cleanup (for example status updates) and end the run with a short summary of the rejection. (A reviewer who wanted changes rather than a stop would have used Comment, not Reject.)',
             };
           }
+          gatePendingThisStep = true;
+          pendingGateInput = input && typeof input === 'object'
+            ? input as Record<string, unknown>
+            : undefined;
+          gateBarrierActive = true;
+          gateBarrierCallId = callId;
+
           // Mocked approval (--mock-approval): the gate resolves inline with a
           // deterministic decision instead of suspending. Apply the decision's
           // durable side effects HERE, pre-dispatch (the mocked execute only
-          // returns the payload the model sees), so an approve grants the lease
-          // from changes[] exactly like a real resume and the next gated
-          // command is covered. The seal check above stays first: a mocked
-          // reject seals, and any later gate hits the terminal denial, same as
-          // production. Skip the gate-rides-alone flags: they assume the gate
-          // suspends (the stream dies, so they are never reset); setting them
-          // for a non-suspending gate would leave the barrier stuck on and
-          // deny every subsequent tool call in this stream.
+          // returns the payload the model sees), so the next step observes the
+          // same lease a real resume would grant. If a later call in this step
+          // auto-attaches a command, the effectful branch below re-applies the
+          // same decision to the final payload. The outer wrapper clears barrier
+          // state when the inline mocked gate finishes.
           if (isMockMode() && resolveMockApprovalDecision()) {
             const decision = mockGateDecisionResult(input, {
               ...(callId && { callId }),
               ...(options.sessionID && { runKey: options.sessionID }),
             });
+            pendingMockDecision = decision;
             applyGateDecisionEffects({
               leaseStore,
               gateSealStore,
               status: decision.status,
+              choice: decision.choice,
               gateInput: input,
               now: Date.now(),
               sealReason: 'mock reviewer rejected the gate (--mock-approval reject)',
@@ -838,20 +870,48 @@ export async function* executeAgentCore(
             });
             return undefined;
           }
-          gatePendingThisStep = true;
-          gateBarrierActive = true;
-          gateBarrierCallId = callId;
           return undefined;
         }
 
         // Effectful bash is governed by the lease regardless of gate state:
-        // covered -> runs, uncovered -> denied with the re-gate redirect. This is
-        // the #165 path and stays first so effectful denials keep their richer
-        // reason (and so the incident test's lease-denied event is preserved).
+        // a command beside a gate is attached then denied; otherwise a consumed
+        // lease entry runs and every uncovered/reused command is denied.
         if (toolName === 'tools__bash') {
           const command = typeof input?.command === 'string' ? input.command : '';
           if (command && isEffectful(command, effectPatterns)) {
-            if (leaseStore.isCovered(command)) {
+            if (gatePendingThisStep) {
+              const attached = pendingGateInput
+                ? attachCommandToPendingGate(pendingGateInput, command)
+                : false;
+              if (attached && pendingMockDecision) {
+                // The mock decision was provisionally applied when the gate
+                // streamed. Re-grant from the final, auto-attached payload.
+                applyGateDecisionEffects({
+                  leaseStore,
+                  gateSealStore,
+                  status: pendingMockDecision.status,
+                  choice: pendingMockDecision.choice,
+                  gateInput: pendingGateInput,
+                  now: Date.now(),
+                  sealReason: 'mock reviewer rejected the gate (--mock-approval reject)',
+                });
+              }
+              options.effectWal?.append({
+                event: attached ? 'gate-command-attached' : 'gate-barrier-denied',
+                ...(callId && { callId }),
+                tool: 'tools__bash',
+                command: sanitizeWALInput(command),
+              });
+              return {
+                type: 'denied' as const,
+                reason: attached
+                  ? 'This gated command was attached to the pending human approval request and was NOT executed. Wait for the approval result. If approved, re-issue this exact command once in a later step; do not open a second gate.'
+                  : 'A human approval gate is open in this step, so this gated command was NOT executed. It was not auto-attached because the gate is an option-selection request or already describes the command. Wait for the decision, then issue only the selected and approved command in a later step.',
+              };
+            }
+
+            const leaseDecision = leaseStore.consume(command);
+            if (leaseDecision === 'approved') {
               options.effectWal?.append({
                 event: 'lease-approved',
                 ...(callId && { callId }),
@@ -865,18 +925,23 @@ export async function* executeAgentCore(
               ...(callId && { callId }),
               tool: 'tools__bash',
               command: sanitizeWALInput(command),
+              reason: leaseDecision,
             });
             return {
               type: 'denied' as const,
-              reason: 'This command is gated and is not covered by an approved plan. Do NOT retry or reword it. Call await_human with the full plan, putting the exact complete shell command in changes[] (verbatim), and run it only after the reviewer approves. Payload text by itself does not authorize a command. If a reviewer already approved a different version, re-gate with this exact command.',
+              reason: leaseDecision === 'already-used'
+                ? 'This gated command was approved previously, but that one-shot approval has already been used. It will NOT run again. If another execution is genuinely required, request a new human approval that lists the command again.'
+                : leaseDecision === 'persistence-error'
+                  ? 'This gated command was approved, but AgentUse could not persist one-shot consumption, so it was denied before execution. Do not retry automatically; report the approval-state storage failure.'
+                  : 'This command is gated and is not covered by an approved plan. Do NOT retry or reword it. Call await_human with the full plan and emit this exact gated command alongside the gate so the runtime can attach it. The command will remain blocked until the reviewer approves. On option-selection gates, put one complete command per changes[] entry and bind each with optionId.',
             };
           }
         }
 
-        // Gate-rides-alone barrier: ANY sibling (bash or not) that arrived AFTER an
-        // await_human gate in this same step. Deny it pre-dispatch so nothing runs
-        // beside a pending gate; the model re-issues after approval. Deterministic
-        // for the gate-first stream order only; the reverse order is covered by the
+        // Gate-rides-alone barrier for siblings not handled by gated-command
+        // attachment above. Deny pre-dispatch so nothing runs beside a pending
+        // gate; the model re-issues after approval. Deterministic for the
+        // gate-first stream order only; the reverse order is covered by the
         // lease (gated commands) and the suspend-drain abort, not here.
         if (gatePendingThisStep) {
           const command = typeof input?.command === 'string' ? input.command : undefined;
@@ -890,12 +955,17 @@ export async function* executeAgentCore(
           });
           return {
             type: 'denied' as const,
-            reason: 'A human approval gate (await_human) is open in this step, so this sibling tool call was not run. Never call other tools alongside await_human: wait for the approval result, then issue this call in a later step.',
+            reason: 'A human approval gate (await_human) is open in this step, so this non-gated sibling tool call was not run. Only an exact tools.bash.gated command may be emitted alongside a plain gate for automatic attachment. Wait for the approval result, then issue this call in a later step.',
           };
         }
 
         return undefined;
       };
+    }
+
+    // Add the per-stream wrapped toolset after approval/barrier state exists.
+    if (Object.keys(toolsForStream).length > 0) {
+      streamConfig.tools = toolsForStream;
     }
 
     return streamText(streamConfig);

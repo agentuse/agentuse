@@ -154,7 +154,7 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
       .map((line) => JSON.parse(line));
   }
 
-  test('THE INCIDENT, replayed: effectful sibling beside the gate is denied deterministically - nothing posts', async () => {
+  test('effectful sibling is attached to the gate and denied until approval', async () => {
     const marker = path.join(projectRoot, 'ghost-marker.txt');
     const { model, calls } = makeModel([
       turn([
@@ -174,10 +174,47 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     expect(calls()).toBe(1);
 
     const records = readWAL();
-    expect(records.some((r) => r.event === 'lease-denied' && r.callId === 'bash-1')).toBe(true);
+    expect(records.some((r) => r.event === 'gate-command-attached' && r.callId === 'bash-1')).toBe(true);
     // Execute never ran: no bash-spawn, no tool-start for the denied call.
     expect(records.some((r) => r.event === 'bash-spawn')).toBe(false);
     expect(records.some((r) => r.event === 'tool-start' && r.callId === 'bash-1')).toBe(false);
+
+    const gate = chunks.find(
+      (chunk) => chunk.type === 'tool-call' && chunk.toolName === 'await_human'
+    );
+    expect((gate as any)?.toolInput?.changes).toContainEqual({
+      label: 'Exact gated command',
+      content: `touch ${marker}`,
+    });
+  });
+
+  test('content-only authorization is rejected inline before waking the human', async () => {
+    const { model, calls } = makeModel([
+      turn([toolCallPart('gate-1', 'await_human', {
+        prompt: 'Approve this reply?',
+        changes: [{ label: 'Reply', content: 'Looks good to me.' }],
+      })]),
+      turn([toolCallPart('bash-1', 'tools__bash', { command: 'echo gate-state-cleared' })]),
+      turn([
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'fixed' },
+        { type: 'text-end', id: 't1' },
+      ], 'stop'),
+    ]);
+    currentModel = model;
+
+    const chunks = await runCore(makeTools());
+
+    expect(chunks.some((chunk) => chunk.type === 'suspended')).toBe(false);
+    expect(calls()).toBe(3);
+    const preflight = chunks.find(
+      (chunk) => chunk.type === 'tool-result' && chunk.toolName === 'await_human'
+    );
+    expect((preflight as any)?.toolResultRaw?.source).toBe('gate-preflight');
+    const echo = chunks.find(
+      (chunk) => chunk.type === 'tool-result' && (chunk as any).toolCallId === 'bash-1'
+    );
+    expect(String(echo?.toolResult)).toContain('gate-state-cleared');
   });
 
   test('gate rides alone: a non-effectful sibling after the gate is denied pre-dispatch', async () => {
@@ -237,6 +274,67 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     const records = readWAL();
     expect(records.some((r) => r.event === 'lease-approved' && r.callId === 'bash-1')).toBe(true);
     expect(records.some((r) => r.event === 'bash-spawn')).toBe(true);
+  });
+
+  test('an identical command is denied after its one-shot entry is consumed', async () => {
+    const marker = path.join(projectRoot, 'one-shot-marker.txt');
+    const command = `touch ${marker}`;
+    new LeaseStore(sessionDir).grant({
+      version: 1,
+      grantedAt: Date.now(),
+      entries: [{ content: command }],
+    });
+    const { model } = makeModel([
+      turn([
+        toolCallPart('bash-1', 'tools__bash', { command }),
+        toolCallPart('bash-2', 'tools__bash', { command }),
+      ]),
+      turn([
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'done' },
+        { type: 'text-end', id: 't1' },
+      ], 'stop'),
+    ]);
+    currentModel = model;
+
+    await runCore(makeTools());
+
+    expect(fs.existsSync(marker)).toBe(true);
+    const records = readWAL();
+    expect(records.some((r) => r.event === 'lease-approved' && r.callId === 'bash-1')).toBe(true);
+    expect(records.some(
+      (r) => r.event === 'lease-denied' && r.callId === 'bash-2' && r.reason === 'already-used'
+    )).toBe(true);
+    expect(records.filter((r) => r.event === 'bash-spawn')).toHaveLength(1);
+  });
+
+  test('a failed dispatch still burns its entry and cannot retry silently', async () => {
+    const command = `touch ${path.join(projectRoot, 'missing-parent', 'marker.txt')}`;
+    new LeaseStore(sessionDir).grant({
+      version: 1,
+      grantedAt: Date.now(),
+      entries: [{ content: command }],
+    });
+    const { model } = makeModel([
+      turn([toolCallPart('bash-1', 'tools__bash', { command })]),
+      turn([toolCallPart('bash-2', 'tools__bash', { command })]),
+      turn([
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'retry needs approval' },
+        { type: 'text-end', id: 't1' },
+      ], 'stop'),
+    ]);
+    currentModel = model;
+
+    await runCore(makeTools());
+
+    const records = readWAL();
+    expect(records.some((r) => r.event === 'lease-approved' && r.callId === 'bash-1')).toBe(true);
+    expect(records.some((r) => r.event === 'bash-exit' && r.callId === 'bash-1' && r.code !== 0)).toBe(true);
+    expect(records.some(
+      (r) => r.event === 'lease-denied' && r.callId === 'bash-2' && r.reason === 'already-used'
+    )).toBe(true);
+    expect(records.filter((r) => r.event === 'bash-spawn')).toHaveLength(1);
   });
 
   test('abandoning a segment consumes its lease before a later continuation', async () => {
