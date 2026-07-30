@@ -3313,33 +3313,69 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 /* Touch screens have no hover: keep the control faintly visible. */
 @media (hover: none) { .page-home .attn-dismiss { opacity: 0.55; } }
 
-/* Latest results: completed runs' final responses as one-liners, per project. */
-.page-home .latest-groups { display: flex; flex-direction: column; gap: 14px; }
-.page-home .latest-project {
-  font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--muted-3); margin-bottom: 6px;
+/* Runs by agent: one horizontal stacked bar per agent, busiest first, split by
+   run outcome. The status hues repeat across the app, so identity never rests
+   on color alone here: the legend and every row spell the counts out, segments
+   are separated by a 2px surface gap, and failures always sit at the bar's end. */
+.page-home .runbar { display: flex; flex-direction: column; gap: 10px; }
+.page-home .runbar-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 16px;
+  font-size: 11.5px; color: var(--muted);
 }
-.page-home a.latest-row {
+.page-home .runbar-key { display: inline-flex; align-items: center; gap: 6px; }
+.page-home .runbar-key-n { font-family: var(--mono); color: var(--muted-3); font-variant-numeric: tabular-nums; }
+.page-home .runbar-swatch { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+.page-home .runbar-swatch.ok { background: var(--green); opacity: 0.85; }
+.page-home .runbar-swatch.waiting { background: var(--amber); }
+.page-home .runbar-swatch.running { background: var(--cyan); }
+.page-home .runbar-swatch.failed { background: var(--red); }
+
+.page-home .runbar-rows {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+  overflow: hidden;
+}
+.page-home a.runbar-row {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 10px 16px;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 16px;
   border-bottom: 1px solid var(--line);
   text-decoration: none;
   color: inherit;
   transition: background 120ms ease;
 }
-.page-home a.latest-row:last-child { border-bottom: 0; }
-.page-home a.latest-row:hover { background: var(--panel-hover); }
-.page-home .latest-agent {
-  font-family: var(--sans); font-size: 13.5px; color: var(--fg);
-  flex-shrink: 0; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.page-home .latest-text {
-  flex: 1; min-width: 0;
-  font-size: 12.5px; color: var(--muted-3); line-height: 1.45;
+.page-home a.runbar-row:last-child { border-bottom: 0; }
+.page-home a.runbar-row:hover { background: var(--panel-hover); }
+.page-home .runbar-name {
+  flex: 0 0 clamp(96px, 22%, 190px);
+  min-width: 0;
+  font-family: var(--sans); font-size: 13px; color: var(--fg);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.page-home .runbar-project { color: var(--muted-2); font-family: var(--mono); font-size: 10.5px; margin-left: 6px; }
+/* The rail shows each bar against the busiest agent's, so lengths are comparable. */
+.page-home .runbar-track {
+  flex: 1; min-width: 0; height: 14px;
+  border-radius: 4px; background: var(--line);
+}
+.page-home .runbar-fill { display: flex; gap: 2px; height: 100%; min-width: 6px; }
+.page-home .runbar-seg { min-width: 4px; border-radius: 4px; }
+.page-home .runbar-seg.ok { background: var(--green); opacity: 0.85; }
+.page-home .runbar-seg.waiting { background: var(--amber); }
+.page-home .runbar-seg.running { background: var(--cyan); }
+.page-home .runbar-seg.failed { background: var(--red); }
+.page-home a.runbar-row:hover .runbar-seg { filter: brightness(1.2); }
+.page-home .runbar-count {
+  flex-shrink: 0; white-space: nowrap;
+  font-family: var(--mono); font-size: 12px; color: var(--fg); font-variant-numeric: tabular-nums;
+}
+.page-home .runbar-failed { color: var(--red); }
+.page-home a.runbar-more {
+  align-self: flex-start;
+  font-size: 12px; color: var(--muted); text-decoration: none;
+}
+.page-home a.runbar-more:hover { color: var(--muted-3); }
 
 /* Coming up: the next few scheduled runs in plain terms. */
 .page-home a.up-row {
@@ -3368,7 +3404,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 
 @media (max-width: 560px) {
-  .page-home .latest-agent { max-width: 45%; }
+  .page-home .runbar-name { flex-basis: 88px; }
+  .page-home .runbar-project { display: none; }
+  .page-home a.runbar-row { gap: 8px; padding: 9px 12px; }
   .page-home .up-cadence { display: none; }
   .page-home .up-when { min-width: 108px; }
 }

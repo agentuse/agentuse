@@ -115,11 +115,12 @@ export function useLiveHome(): LiveHome {
   const [approvalsPayload, setApprovalsPayload] = useState<ApprovalsListPayload | null>(null);
   const [approvalsFallback, setApprovalsFallback] = useState(false);
 
-  // detail: 'feed' attaches each ended session's cached finalResponse, which
-  // powers the outcome-first "Latest results" section on Home.
+  // Plain rows, no detail: 'feed'. Home charts run counts and statuses now, so
+  // hydrating every ended session's final response would ship a payload of
+  // agent prose on every stream tick for nothing.
   const fetchedSessions = useFetch(
     'home-sessions',
-    () => fetchSessions({ window: '24h', detail: 'feed' }),
+    () => fetchSessions({ window: '24h' }),
     sessionsFallback ? { refreshMs: 10_000 } : {}
   );
   const fetchedApprovals = useFetch(
@@ -135,7 +136,7 @@ export function useLiveHome(): LiveHome {
     triage: undefined,
     trigger: undefined,
     approval: undefined,
-    detail: 'feed',
+    detail: undefined,
     enabled: !sessionsFallback,
     onData: (payload) => {
       setSessionsPayload(payload);

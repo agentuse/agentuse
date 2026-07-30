@@ -10,7 +10,7 @@ import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
-import { formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone } from '../lib/format';
+import { formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone, type RunTone } from '../lib/format';
 import { brandName, pageTitle } from '../lib/brand';
 import { term, termTitle } from '../lib/terms';
 
@@ -189,63 +189,135 @@ function AttentionSection(props: { pending: ApprovalRow[]; failed: SessionRow[];
   );
 }
 
-/** First meaningful line of a final response, stripped of markdown dressing. */
-function responseOneLiner(text: string): string {
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(/^[\s#>*-]+/, '').replace(/\*\*/g, '').trim();
-    if (line && !line.startsWith('|') && !/^[-=:|\s]+$/.test(line)) return line;
-  }
-  return '';
+/** One agent's runs in the window, split by outcome. */
+interface AgentRuns {
+  key: string;
+  agentId: string;
+  name: string;
+  project: string;
+  /** Two projects hold an agent by this name, so the row has to say which. */
+  ambiguous: boolean;
+  total: number;
+  counts: Record<RunTone, number>;
 }
 
-const LATEST_PER_PROJECT = 3;
+/** Bar segments, left to right. Failures sit last so position — not hue alone —
+ *  separates them from the waiting segment, the pair that reads closest in
+ *  light mode. Running is wedged between the two for the same reason. */
+const RUN_TONES: Array<{ tone: RunTone; label: string }> = [
+  { tone: 'ok', label: 'completed' },
+  { tone: 'waiting', label: 'waiting' },
+  { tone: 'running', label: 'running' },
+  { tone: 'failed', label: 'failed' },
+];
 
-/** Completed runs' final responses as one-liners, grouped by project with the
- *  freshest project first. The qualitative half of outcome-first Home (the
- *  Results tiles above it are the quantitative half). */
-function LatestResults(props: { sessions: SessionRow[]; showProject: boolean; loading: boolean }) {
-  const done = props.sessions
-    .filter((s) => s.status === 'completed' && s.finalResponse && responseOneLiner(s.finalResponse))
-    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
-  const byProject = new Map<string, SessionRow[]>();
-  for (const s of done) {
-    const rows = byProject.get(s.project) ?? [];
-    if (rows.length < LATEST_PER_PROJECT) byProject.set(s.project, [...rows, s]);
+/** Sessions folded into one row per agent, busiest first. Agents are kept
+ *  per-project: two projects can hold different agents under the same name, and
+ *  those are the only rows that pay for a project label. */
+function tallyRunsByAgent(sessions: SessionRow[]): AgentRuns[] {
+  const byAgent = new Map<string, AgentRuns>();
+  for (const s of sessions) {
+    const agentId = s.agent.id || s.agent.name;
+    const key = `${s.project} ${agentId}`;
+    let bar = byAgent.get(key);
+    if (!bar) {
+      bar = {
+        key,
+        agentId,
+        name: s.agent.name || s.agent.id,
+        project: s.project,
+        ambiguous: false,
+        total: 0,
+        counts: { ok: 0, waiting: 0, running: 0, failed: 0 },
+      };
+      byAgent.set(key, bar);
+    }
+    bar.counts[runTone(s.status)]++;
+    bar.total++;
   }
-  const groups = [...byProject.entries()];
+  const bars = [...byAgent.values()];
+  const nameCounts = new Map<string, number>();
+  for (const bar of bars) nameCounts.set(bar.name, (nameCounts.get(bar.name) ?? 0) + 1);
+  for (const bar of bars) bar.ambiguous = (nameCounts.get(bar.name) ?? 0) > 1;
+  return bars.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+}
+
+/** Most agents fit on screen; past this the tail is summarized, never dropped
+ *  silently. */
+const TOP_AGENTS = 8;
+
+function RunBarRow(props: { bar: AgentRuns; max: number }) {
+  const { bar, max } = props;
+  const parts = RUN_TONES.filter((t) => bar.counts[t.tone] > 0);
+  const breakdown = parts.map((t) => `${bar.counts[t.tone]} ${t.label}`).join(', ');
+  return (
+    <a
+      class="runbar-row"
+      href={`/sessions?agent=${encodeURIComponent(bar.agentId)}&window=24h`}
+      aria-label={`${bar.name}${bar.ambiguous ? ` in ${bar.project}` : ''}: ${plural(bar.total, 'run')} · ${breakdown}`}
+    >
+      <span class="runbar-name" title={`${bar.name} · ${bar.project}`}>
+        {bar.name}
+        {bar.ambiguous && <span class="runbar-project">{bar.project}</span>}
+      </span>
+      <span class="runbar-track" aria-hidden="true">
+        <span class="runbar-fill" style={{ width: `${(bar.total / max) * 100}%` }}>
+          {parts.map((t) => (
+            <span
+              key={t.tone}
+              class={`runbar-seg ${t.tone}`}
+              style={{ flexGrow: bar.counts[t.tone] }}
+              title={`${bar.counts[t.tone]} ${t.label}`}
+            ></span>
+          ))}
+        </span>
+      </span>
+      {/* Counts in text, so the outcome split never rides on color alone. */}
+      <span class="runbar-count" aria-hidden="true">
+        {bar.total}
+        {bar.counts.failed > 0 && <span class="runbar-failed"> · {bar.counts.failed} failed</span>}
+      </span>
+    </a>
+  );
+}
+
+/** Which agents actually ran, and how those runs turned out: one stacked bar per
+ *  agent, longest first. The qualitative half of outcome-first Home (the Results
+ *  tiles above it are the quantitative half). */
+function RunsByAgent(props: { sessions: SessionRow[]; loading: boolean }) {
+  const all = tallyRunsByAgent(props.sessions);
+  const bars = all.slice(0, TOP_AGENTS);
+  const max = Math.max(1, ...bars.map((b) => b.total));
+  const totals = RUN_TONES.map((t) => ({ ...t, n: all.reduce((sum, bar) => sum + bar.counts[t.tone], 0) }))
+    .filter((t) => t.n > 0);
   return (
     <section class="group">
       <h2 class="group-title">
-        <span>Latest results</span><span class="rule"></span>
+        <span>Runs by agent</span><span class="rule"></span>
         <a class="group-link" href="/sessions">view all →</a>
       </h2>
-      {groups.length === 0
+      {bars.length === 0
         ? (props.loading
-          ? <Loading label="Loading results…" />
-          : <div class="metric-empty">No completed runs in the last 24 hours.</div>)
+          ? <Loading label="Loading runs…" />
+          : <div class="metric-empty">No runs in the last 24 hours.</div>)
         : (
-          <div class="latest-groups">
-            {groups.map(([project, rows]) => (
-              <div class="latest-group" key={project}>
-                {props.showProject && <div class="latest-project">{project}</div>}
-                <div class="panel">
-                  {rows.map((row) => {
-                    const at = row.updatedAt || row.createdAt;
-                    return (
-                      <a
-                        class="latest-row"
-                        key={`${row.project}:${row.sessionId}`}
-                        href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}
-                      >
-                        <span class="latest-agent">{row.agent.name || row.agent.id}</span>
-                        <span class="latest-text">{responseOneLiner(row.finalResponse!)}</span>
-                        <span class="feed-time" title={formatApprovalTime(at)}>{formatRelativeTime(at)}</span>
-                      </a>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+          <div class="runbar">
+            <div class="runbar-legend">
+              {totals.map((t) => (
+                <span class="runbar-key" key={t.tone}>
+                  <span class={`runbar-swatch ${t.tone}`} aria-hidden="true"></span>
+                  {t.label} <span class="runbar-key-n">{t.n}</span>
+                </span>
+              ))}
+            </div>
+            <div class="runbar-rows">
+              {bars.map((bar) => <RunBarRow key={bar.key} bar={bar} max={max} />)}
+            </div>
+            {all.length > bars.length && (
+              <a class="runbar-more" href="/sessions">
+                {plural(all.length - bars.length, 'quieter agent')} not shown →
+              </a>
+            )}
           </div>
         )}
     </section>
@@ -843,7 +915,7 @@ export default function Home() {
         )}
 
         {sections.isVisible('latest') && (
-          <LatestResults sessions={liveHome.sessions} showProject={projects.length > 1} loading={liveHome.loading} />
+          <RunsByAgent sessions={liveHome.sessions} loading={liveHome.loading} />
         )}
 
         {sections.isVisible('coming-up') && (
