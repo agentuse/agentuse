@@ -145,6 +145,48 @@ describe('gatherApprovalContext', () => {
     });
   });
 
+  it('excludes judge, preflight and runtime comments so they cannot become human learnings', async () => {
+    // These resolve await_human with the same shape a person does. Captured as
+    // reviews they become confidence-0.95 "reviewer corrections" that outrank
+    // everything the agent worked out for itself, i.e. the runtime teaching
+    // itself from its own diagnostics.
+    await withSession('agentuse-approval-ctx-machine-', async ({ sessionManager, sessionID, messageID }) => {
+      const machineGates = [
+        { callID: 'judge', output: { status: 'rejected', source: 'pre-review', comment: 'judge says rewrite this', reviewer: { username: 'verify-judge' } } },
+        { callID: 'preflight', output: { status: 'commented', source: 'gate-preflight', comment: 'gate plan is invalid' } },
+        { callID: 'runtime', output: { status: 'commented', comment: 'runtime diagnostic', reviewer: { name: 'agentuse-runtime' } } },
+      ];
+      for (const gate of machineGates) {
+        await sessionManager.addPart(sessionID, AGENT_ID, messageID, {
+          type: 'tool',
+          callID: gate.callID,
+          tool: 'await_human',
+          state: {
+            status: 'completed',
+            input: { prompt: 'Draft?', changes: [{ content: 'a draft' }] },
+            output: gate.output,
+            time: { start: 1, end: 2 },
+          },
+        } as any);
+      }
+      await sessionManager.addPart(sessionID, AGENT_ID, messageID, {
+        type: 'tool',
+        callID: 'human',
+        tool: 'await_human',
+        state: {
+          status: 'completed',
+          input: { prompt: 'Draft?', changes: [{ content: 'a draft' }] },
+          output: { status: 'commented', comment: 'do not lecture the author', reviewer: { username: 'leon' } },
+          time: { start: 3, end: 4 },
+        },
+      } as any);
+
+      const { reviews } = await gatherApprovalContext(sessionManager, sessionID, AGENT_ID);
+
+      expect(reviews.map((r) => r.comment)).toEqual(['do not lecture the author']);
+    });
+  });
+
   it('returns no reviews when the session has no commented gate', async () => {
     await withSession('agentuse-approval-ctx-none-', async ({ sessionManager, sessionID, messageID }) => {
       await sessionManager.addPart(sessionID, AGENT_ID, messageID, {

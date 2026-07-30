@@ -379,8 +379,19 @@ export function formatReviewedWork(input: unknown): string | undefined {
   return sections.length > 0 ? sections.join('\n\n') : undefined;
 }
 
-function normalizedHumanDecision(output: unknown): Omit<HumanApprovalDecision, 'work'> | undefined {
-  if (!output || typeof output !== 'object') return undefined;
+/**
+ * Whether a resolved gate's output records a decision by a HUMAN.
+ *
+ * Several non-human writers resolve `await_human` parts with the same shape: the
+ * pre-review judge, gate preflight, and the runtime itself. Anywhere a person's
+ * judgement is what carries weight, those have to be excluded. Two callers need
+ * it: the approval history shown to the judge, and learning capture, where a
+ * comment is stored as a confidence-0.95 reviewer correction that outranks
+ * everything the agent concluded on its own. Without this filter the runtime's
+ * own diagnostics and the judge's critiques were saved as human corrections.
+ */
+export function isHumanGateDecision(output: unknown): boolean {
+  if (!output || typeof output !== 'object') return false;
   const record = output as Record<string, unknown>;
   const source = typeof record.source === 'string' ? record.source : undefined;
   const reviewerRecord = record.reviewer && typeof record.reviewer === 'object'
@@ -391,14 +402,25 @@ function normalizedHumanDecision(output: unknown): Omit<HumanApprovalDecision, '
     : typeof reviewerRecord.name === 'string'
       ? reviewerRecord.name
       : undefined;
-  if (
+  return !(
     source === 'pre-review'
     || source === 'gate-preflight'
     || reviewer === 'verify-judge'
     || reviewer === 'agentuse-runtime'
-  ) {
-    return undefined;
-  }
+  );
+}
+
+function normalizedHumanDecision(output: unknown): Omit<HumanApprovalDecision, 'work'> | undefined {
+  if (!isHumanGateDecision(output)) return undefined;
+  const record = output as Record<string, unknown>;
+  const reviewerRecord = record.reviewer && typeof record.reviewer === 'object'
+    ? record.reviewer as Record<string, unknown>
+    : {};
+  const reviewer = typeof reviewerRecord.username === 'string'
+    ? reviewerRecord.username
+    : typeof reviewerRecord.name === 'string'
+      ? reviewerRecord.name
+      : undefined;
 
   const rawStatus = typeof record.status === 'string' ? record.status.toLowerCase() : '';
   const status = rawStatus === 'approve' || rawStatus === 'approved'
@@ -484,6 +506,11 @@ export async function gatherApprovalContext(
         if (part.type !== 'tool' || part.tool !== 'await_human') continue;
         const gate = part as ToolPart;
         if (gate.state.status !== 'completed') continue;
+        // Only a human's comment may become an "approval" learning. The judge,
+        // gate preflight and the runtime all resolve gates with this same shape,
+        // and their comments were being captured as confidence-0.95 human
+        // corrections that then outrank the agent's own conclusions.
+        if (!isHumanGateDecision(gate.state.output)) continue;
         const comment = readGateComment(gate.state.output);
         if (!comment) continue;
         const work = formatReviewedWork(gate.state.input);
