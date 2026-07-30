@@ -2953,7 +2953,13 @@ export function createServeCommand(): Command {
           || approvalObj.sessionStatus === 'suspended'
           || approvalObj.sessionStatus === 'waiting';
         if (!stillOpen) return approvalObj;
-        approvalObj.errorMessage = `Couldn't ${resumeActionVerb(failure.status)} this request: ${failure.message} — the gate is still open, try again.`;
+        // "try again" only holds when a gate is actually still there to decide on.
+        // A resume rejected as CASCADE_GATE_UNRESOLVABLE means the delegated child
+        // already ended, so retrying can never work — telling the reviewer to retry
+        // sends them into a loop.
+        const retryable = !failure.message.includes('CASCADE_GATE_UNRESOLVABLE');
+        approvalObj.errorMessage = `Couldn't ${resumeActionVerb(failure.status)} this request: ${failure.message}`
+          + (retryable ? ' — the gate is still open, try again.' : '');
         return approvalObj;
       };
       const loggedApprovalRequests = new Map<string, number>();

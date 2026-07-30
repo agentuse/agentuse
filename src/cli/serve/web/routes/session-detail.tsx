@@ -653,6 +653,10 @@ export default function SessionDetail() {
   // behavior for their whole lifetime (see firstViewEndedRef).
   const summaryFirst = ended && firstViewEndedRef.current === true;
   const expired = approval?.expiresAt !== undefined && approval.expiresAt <= Date.now();
+  // Parked on a delegated sub-agent that already ended: still raw-status
+  // suspended, but nothing will ever carry it forward. Without its own copy line
+  // the page reads "live view of this run" indefinitely.
+  const stranded = approval?.errorCode === 'CASCADE_ORPHANED';
   const displayStatus = status === 'waiting' && expired ? 'expired' : displaySessionStatus(status, approval);
   const actionable = pendingActionable && !expired;
   // A manual "remember" rule can be saved for any agent (the reviewer's action
@@ -975,7 +979,9 @@ export default function SessionDetail() {
           ? `${brandName()} is working on this session. The session log updates as new work arrives.`
           : expired
             ? 'This approval request has expired. The session log remains available for review.'
-            : 'Live view of this run. The session log updates as new work arrives.';
+            : stranded
+              ? (approval.errorMessage ?? 'This run is waiting on a delegated sub-agent that has already ended, so it can no longer be resumed.')
+              : 'Live view of this run. The session log updates as new work arrives.';
 
   // Verdict line for the summary-first result card: wall-clock duration
   // (createdAt → last log entry, so approval wait time counts) + tool calls.

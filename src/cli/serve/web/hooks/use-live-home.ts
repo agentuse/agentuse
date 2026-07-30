@@ -32,6 +32,10 @@ function toneFor(label: string): ActivityEvent['tone'] {
   return 'failed';
 }
 
+/** A stranded cascade is a dead run, not a wait: the sub-agent it is parked on has
+ *  already ended, so no gate will ever arrive and no resume can carry it forward. */
+export const ORPHANED_LABEL = 'subagent ended';
+
 /** Suspended sessions bucketed by why they wait, keyed `${project}:${sessionId}`.
  *  A suspended session with no live pending gate is mid-flight, not blocked: its
  *  gate was decided and the run is being carried forward (a delegated leaf
@@ -40,6 +44,8 @@ export interface SuspendedGateKinds {
   loaded: boolean;
   pending: Set<string>;
   expired: Set<string>;
+  /** Parked on a delegated sub-agent that already ended: unresumable, not waiting. */
+  orphaned: Set<string>;
 }
 
 export function sessionRowKey(row: Pick<SessionRow, 'project' | 'sessionId'>): string {
@@ -47,10 +53,16 @@ export function sessionRowKey(row: Pick<SessionRow, 'project' | 'sessionId'>): s
 }
 
 export function suspendedGateKinds(approvals: ApprovalsListPayload | null): SuspendedGateKinds {
+  const expiredRows = approvals?.buckets.expired ?? [];
   return {
     loaded: approvals !== null,
     pending: new Set((approvals?.buckets.pending ?? []).map(sessionRowKey)),
-    expired: new Set((approvals?.buckets.expired ?? []).map(sessionRowKey)),
+    expired: new Set(expiredRows.map(sessionRowKey)),
+    // Shares the expired bucket on the wire (both are dead gates) but reads very
+    // differently to a human, so it gets its own label rather than "expired".
+    orphaned: new Set(
+      expiredRows.filter((row) => row.errorCode === 'CASCADE_ORPHANED').map(sessionRowKey)
+    ),
   };
 }
 
@@ -63,6 +75,7 @@ export function labelFor(row: SessionRow, isNew: boolean, gates: SuspendedGateKi
     if (row.subagentActive) return 'running · subagent';
     // Until the approvals snapshot arrives, keep the historical default.
     if (!gates.loaded || gates.pending.has(sessionRowKey(row))) return 'awaiting approval';
+    if (gates.orphaned.has(sessionRowKey(row))) return ORPHANED_LABEL;
     if (gates.expired.has(sessionRowKey(row))) return 'approval expired';
     return 'resuming';
   }

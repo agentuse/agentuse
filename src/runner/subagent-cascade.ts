@@ -83,6 +83,71 @@ export async function descendToLeafGate(
   return null;
 }
 
+/** The broken link in a cascade chain that no longer leads to a live human gate. */
+export interface StaleCascadeChild {
+  sessionId: string;
+  agentName: string;
+  /** The child's raw session status at the break ('missing' when the id resolves to nothing). */
+  status: string;
+  error?: { code?: string; message?: string } | undefined;
+}
+
+/**
+ * Diagnose a pending `subagent_wait` bookmark whose chain no longer ends in a live
+ * gate, and report the child it broke at.
+ *
+ * A healthy chain ends either at a suspended leaf holding a pending `await_human`
+ * (a real approval, `descendToLeafGate`) or at a descendant still `running` (the
+ * manager is simply waiting out delegated work). Anything else is a stranded
+ * ancestor: the child ended terminally, or is suspended with nothing pending, and
+ * the parent will sit `suspended` forever because only the child's own resume can
+ * complete its bookmark. Returns null while the chain is healthy so callers can
+ * treat non-null as "this parked session is unresolvable and needs surfacing".
+ */
+export async function findStaleCascadeChild(
+  reader: CascadeSessionReader,
+  childSessionId: string,
+  depth = 0
+): Promise<StaleCascadeChild | null> {
+  if (depth > MAX_CASCADE_DEPTH) return null;
+  const found = await reader.findSession(childSessionId);
+  if (!found) {
+    return { sessionId: childSessionId, agentName: childSessionId, status: 'missing' };
+  }
+  const { session } = found;
+  // Still working: the parent is progressing, not stranded.
+  if (session.status === 'running') return null;
+  const describe = (): StaleCascadeChild => ({
+    sessionId: childSessionId,
+    agentName: session.agent.name || session.agent.id,
+    status: session.status,
+    ...(session.error && { error: session.error }),
+  });
+  if (session.status !== 'suspended') return describe();
+
+  const parts = await loadSessionPartsFlat(reader, childSessionId, found.agentId);
+  if (findPendingAwaitHumanPart(parts)) return null; // live gate: healthy
+  const nextChildId = findPendingSubagentWaitChildId(parts);
+  if (nextChildId) return findStaleCascadeChild(reader, nextChildId, depth + 1);
+  // Suspended with neither a gate nor a bookmark: nothing will ever resume it.
+  return describe();
+}
+
+/** Error code stamped on a parent stranded by a dead cascade chain. */
+export const CASCADE_ORPHANED_CODE = 'CASCADE_ORPHANED';
+
+/** Human-facing explanation for a stranded parent: names the child, its outcome,
+ *  and the only way out. Single-sourced so the list, the session page, and any
+ *  future surface say the same thing. */
+export function describeStaleCascade(stale: StaleCascadeChild): string {
+  const reason = stale.error?.message?.trim().replace(/\.+$/, '');
+  const cause = stale.status === 'missing'
+    ? `its session record is missing (${stale.sessionId})`
+    : `it ended ${stale.status}${reason ? `: ${reason}` : ''}`;
+  return `Waiting on delegated sub-agent "${stale.agentName}", but ${cause}. `
+    + 'This run can no longer be resumed; stop it and re-run the agent.';
+}
+
 /** Walk parentSessionID up to the topmost ancestor (the cascade root where approval
  *  happens). Used to point a delegated child's view-only page back at the root. */
 export async function findRootSessionId(

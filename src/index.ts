@@ -7,7 +7,7 @@ import { isApprovalEnabled } from './runner/approval';
 import { isMockMode, resolveMockApprovalDecision } from './runner/mock-tools';
 import { extractToolIntent, withoutToolIntent } from './runner/tool-intent';
 import { LIVE_OUTPUT_METADATA_KEY } from './tools/types';
-import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
+import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findStaleCascadeChild, describeStaleCascade, CASCADE_ORPHANED_CODE, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
 import { contextUsageFromSnapshot } from './session/usage';
 import { repairEscapedText } from './utils/display-text';
 import { Command } from 'commander';
@@ -1991,12 +1991,14 @@ async function runInternalWorker() {
     if (childResult.status === 'suspended') {
       return { handled: true, response: cascadeReparkedResponse(reqId, rootSessionId) };
     }
-    if (childResult.incomplete) {
-      return {
-        handled: true,
-        response: workerRunResponse(reqId, childResult, Date.now() - startTime, rootSessionId),
-      };
-    }
+    // NOTE: `childResult.incomplete` deliberately does NOT stop the walk-up.
+    // `report_incomplete` is the child's own verdict on its product outcome, not a
+    // control-flow signal: in an ungated run the parent's `subagent__*` tool still
+    // returns the child's text and the manager keeps going (see subagent.ts, which
+    // marks the child session INCOMPLETE and still returns its output). Returning
+    // early here instead left every ancestor durably `suspended` on a bookmark
+    // pointing at a child that had already ended — a run nothing could ever resume,
+    // absent from the approvals list, and mislabeled "resuming" forever.
 
     // 3. Walk up: complete each ancestor's bookmark with the child's output, resume it,
     //    stopping if it re-suspends (its gate re-surfaces at the root next poll).
@@ -2022,12 +2024,9 @@ async function runInternalWorker() {
       if (parentResult.status === 'suspended') {
         return { handled: true, response: cascadeReparkedResponse(reqId, rootSessionId) };
       }
-      if (parentResult.incomplete) {
-        return {
-          handled: true,
-          response: workerRunResponse(reqId, parentResult, Date.now() - startTime, rootSessionId),
-        };
-      }
+      // As above: an intermediate manager's own `report_incomplete` is a product
+      // verdict, so ITS parent still gets the bookmark completed and resumed. The
+      // final response below reports whatever the ROOT ended as.
       childResult = parentResult;
       childSessionId = parent.sessionId;
       childAgentName = parent.agentName;
@@ -2194,6 +2193,22 @@ async function runInternalWorker() {
         : {};
       const learning = await learningInfoForSession(cascadeLeaf?.session ?? found.session);
 
+      // Same stranded-cascade case the approvals list handles: this session is
+      // durably suspended on a delegated child that has already ended, so it has no
+      // gate of its own and none below. Without this the page renders a bare
+      // "suspended" run with no hint that nothing will ever move it again.
+      let orphanedCascadeFields: { errorCode: string; errorMessage: string } | undefined;
+      if (!effectiveApprovalPart && found.session.status === 'suspended' && !found.session.error) {
+        const childSessionId = findPendingSubagentWaitChildId(parts);
+        const stale = childSessionId ? await findStaleCascadeChild(sessionManager, childSessionId) : null;
+        if (stale) {
+          orphanedCascadeFields = {
+            errorCode: CASCADE_ORPHANED_CODE,
+            errorMessage: describeStaleCascade(stale),
+          };
+        }
+      }
+
       if (!effectiveApprovalPart) {
         return {
           id: req.id,
@@ -2205,6 +2220,7 @@ async function runInternalWorker() {
             model: found.session.model,
             ...mockField(found.session),
             ...sessionErrorFields(found.session),
+            ...(orphanedCascadeFields ?? {}),
             ...dismissedAtField(found.session),
             ...(reopenable && { reopenable }),
             agent: {
@@ -2864,6 +2880,33 @@ async function runInternalWorker() {
               approvalPart = leaf.approvalPart;
               originAgentName = leaf.session.agent.name;
               originAgentFilePath = leaf.session.agent.filePath;
+            } else {
+              // The bookmark points at a child that ended (or is itself stuck) without
+              // its ancestors ever being resumed. There is no gate left to act on, but
+              // the root is still durably `suspended`, so dropping it here made it
+              // invisible everywhere: absent from every approvals bucket, and rendered
+              // "resuming" on home forever. Surface it as an errored approval instead,
+              // naming the child that broke the chain.
+              const stale = await findStaleCascadeChild(sessionManager, childId);
+              if (stale) {
+                const createdAt = session.time.created;
+                if (typeof req.approvalCreatedAfter === 'number' && createdAt < req.approvalCreatedAfter) {
+                  return null;
+                }
+                return {
+                  sessionId: session.id,
+                  agentId,
+                  agentName: session.agent.name || session.agent.id,
+                  ...(session.agent.description && { agentDescription: session.agent.description }),
+                  ...(session.agent.filePath && { agentFilePath: session.agent.filePath }),
+                  status: 'errored' as const,
+                  sessionStatus: session.status,
+                  createdAt,
+                  errorCode: CASCADE_ORPHANED_CODE,
+                  errorMessage: describeStaleCascade(stale),
+                  ...(session.channels && { channels: session.channels }),
+                };
+              }
             }
           }
         }

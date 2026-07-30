@@ -232,4 +232,110 @@ describe('subagent approval cascade (worker integration)', () => {
       await rm(dataHome, { recursive: true, force: true });
     }
   });
+
+  // Regression: a manager left parked on a child that already ended used to vanish
+  // from every approvals bucket (the list only surfaced a cascade entry when the
+  // chain still reached a SUSPENDED leaf), so the run showed as neither "needs your
+  // attention" nor failed — it just sat there mislabeled "resuming" forever. It must
+  // surface as an errored approval naming the child that broke the chain.
+  it('surfaces a manager stranded on a sub-agent that ended, instead of dropping it', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const dataHome = await mkdtemp(join(tmpdir(), 'agentuse-cascade-orphan-'));
+    const projectRoot = join(dataHome, 'project');
+    process.env.XDG_DATA_HOME = dataHome;
+    try {
+      await initStorage(projectRoot);
+
+      const rootSm = new SessionManager();
+      const rootAgentId = 'agents/manager';
+      const rootId = await rootSm.createSession({
+        agent: { id: rootAgentId, name: 'Manager', isSubAgent: false },
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      const rootMsg = await rootSm.createMessage(rootId, rootAgentId, {
+        user: { prompt: { task: 'delegate' } }, assistant: ASSISTANT(projectRoot),
+      });
+
+      const leafSm = new SessionManager();
+      leafSm.setParentPath(rootSm.getFullPath()!);
+      const leafAgentId = 'agents/reply-to-post';
+      const leafId = await leafSm.createSession({
+        agent: { id: leafAgentId, name: 'reply-to-post', isSubAgent: true },
+        parentSessionID: rootId,
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      const leafMsg = await leafSm.createMessage(leafId, leafAgentId, {
+        user: { prompt: { task: 'reply' } }, assistant: ASSISTANT(projectRoot),
+      });
+      // The leaf's gate was decided and the leaf then ran to a terminal
+      // report_incomplete — exactly the state a resumed leaf ends in.
+      await leafSm.addPart(leafId, leafAgentId, leafMsg, {
+        type: 'tool', callID: 'leaf-call', tool: 'await_human',
+        state: {
+          status: 'completed', input: { prompt: 'Approve this reply?' },
+          output: { status: 'comment', comment: 'attach the chart' },
+          metadata: { resumePayload: { kind: 'await_human', resumeToken: 'leaf-token' } },
+          time: { start: Date.now() - 2_000, end: Date.now() - 1_000 },
+        },
+      } as any);
+      await leafSm.setSessionError(leafId, leafAgentId, {
+        code: 'INCOMPLETE', message: 'Image generation blocked by a billing hard limit',
+      });
+
+      // The manager is still parked on that (now dead) child.
+      await rootSm.addPart(rootId, rootAgentId, rootMsg, {
+        type: 'tool', callID: 'root-call', tool: 'subagent__reply_to_post',
+        state: {
+          status: 'pending', input: { task: 'reply' }, suspendedAt: Date.now() - 3_000,
+          resumePayload: { kind: 'subagent_wait', childSessionID: leafId, childAgentName: 'reply-to-post' },
+        },
+      } as any);
+      await rootSm.setSessionSuspended(rootId, rootAgentId);
+
+      const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], { cwd: process.cwd(), env: { ...process.env } });
+      const rl = createInterface({ input: child.stdout });
+      worker = { child, rl };
+      await readReady(rl);
+
+      child.stdin.write(`${JSON.stringify({ id: 'list', type: 'list-approvals', projectRoot })}\n`);
+      const list = await readResponseFor(rl, 'list');
+      expect(list.success).toBe(true);
+      // One row, for the ROOT (the leaf is a delegated child and never listed
+      // separately), classified errored rather than silently omitted.
+      expect(list.approvals).toHaveLength(1);
+      expect(list.approvals[0]).toMatchObject({
+        sessionId: rootId,
+        agentName: 'Manager',
+        status: 'errored',
+        sessionStatus: 'suspended',
+        errorCode: 'CASCADE_ORPHANED',
+      });
+      // The message must name the child and carry its reason, so the page says why.
+      expect(list.approvals[0].errorMessage).toContain('reply-to-post');
+      expect(list.approvals[0].errorMessage).toContain('billing hard limit');
+      // No phantom token: there is nothing left to decide.
+      expect(list.approvals[0].resumeToken).toBeUndefined();
+
+      // And a decision submitted against it fails loudly instead of stamping the
+      // reviewer's payload in as the sub-agent's output and resuming the manager.
+      child.stdin.write(`${JSON.stringify({
+        id: 'resume', type: 'resume', projectRoot, sessionId: rootId,
+        toolResult: { status: 'comment', comment: 'try again' },
+      })}\n`);
+      const resumed = await readResponseFor(rl, 'resume');
+      expect(resumed.success).toBe(false);
+      expect(resumed.error.message).toContain('CASCADE_GATE_UNRESOLVABLE');
+
+      const verifySm = new SessionManager();
+      const rootParts = await verifySm.getMessageParts(rootId, rootAgentId, rootMsg);
+      const rootBookmark = rootParts.find((p: any) => p?.tool === 'subagent__reply_to_post') as any;
+      expect(rootBookmark?.state?.status).toBe('pending');
+    } finally {
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(dataHome, { recursive: true, force: true });
+    }
+  }, 20_000);
 });

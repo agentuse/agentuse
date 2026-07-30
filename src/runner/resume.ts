@@ -76,6 +76,24 @@ async function applyClaimedResumeToolResult(options: {
     throw new Error(`PENDING_TOOL_NOT_FOUND: ${sessionId}`);
   }
 
+  // A `subagent_wait` bookmark is a manager's parked `subagent__*` step, not a human
+  // gate: it carries no resumeToken, so token validation below would wave the write
+  // through and stamp the reviewer's decision object in as the SUB-AGENT'S OUTPUT,
+  // then resume the manager on that garbage. The only legitimate way to complete one
+  // is the cascade's completeSubagentBookmark (with the child's real result), so
+  // anything reaching here is a broken chain — the child ended without its ancestors
+  // being resumed. Fail loud with a diagnosable code instead.
+  if (
+    pending.part.state.status === 'pending' &&
+    pending.part.state.resumePayload?.kind === 'subagent_wait'
+  ) {
+    throw new Error(
+      `CASCADE_GATE_UNRESOLVABLE: session ${sessionId} is parked on delegated sub-agent ` +
+      `${pending.part.state.resumePayload.childSessionID ?? '(unknown)'}, which is no longer ` +
+      `holding a live approval gate. There is nothing left to decide on this run; stop it and re-run the agent.`
+    );
+  }
+
   const expectedToken = pending.part.state.status === 'pending'
     ? pending.part.state.resumePayload?.resumeToken
     : undefined;

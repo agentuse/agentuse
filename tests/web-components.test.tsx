@@ -1035,15 +1035,20 @@ describe('Home activity feed labels', () => {
     updatedAt: 2,
     ...overrides,
   });
-  const approvalRow = (sessionId: string) => ({ sessionId, project: 'demo' }) as ApprovalsListPayload['buckets']['pending'][number];
-  const payload = (buckets: { pending?: string[]; expired?: string[] }): ApprovalsListPayload => ({
+  const approvalRow = (sessionId: string, errorCode?: string) =>
+    ({ sessionId, project: 'demo', ...(errorCode && { errorCode }) }) as ApprovalsListPayload['buckets']['pending'][number];
+  const payload = (buckets: { pending?: string[]; expired?: string[]; orphaned?: string[] }): ApprovalsListPayload => ({
     success: true,
     multiProject: false,
     approvals: [],
     buckets: {
-      pending: (buckets.pending ?? []).map(approvalRow),
+      pending: (buckets.pending ?? []).map((id) => approvalRow(id)),
       completed: [],
-      expired: (buckets.expired ?? []).map(approvalRow),
+      expired: [
+        ...(buckets.expired ?? []).map((id) => approvalRow(id)),
+        // A stranded cascade ships in the same wire bucket as an expired gate.
+        ...(buckets.orphaned ?? []).map((id) => approvalRow(id, 'CASCADE_ORPHANED')),
+      ],
     },
     window: { days: 30 },
     errors: [],
@@ -1064,6 +1069,13 @@ describe('Home activity feed labels', () => {
   it('labels an expired gate distinctly', () => {
     const gates = suspendedGateKinds(payload({ expired: ['root-1'] }));
     expect(labelFor(row(), false, gates)).toBe('approval expired');
+  });
+
+  it('labels a manager stranded on an ended sub-agent as dead, not expired or resuming', () => {
+    // The run can never be carried forward: the child it is parked on has ended.
+    // "resuming" (the pre-fix label) read as progress and hid it indefinitely.
+    const gates = suspendedGateKinds(payload({ orphaned: ['root-1'] }));
+    expect(labelFor(row(), false, gates)).toBe('subagent ended');
   });
 
   it('keeps the awaiting-approval default until the approvals snapshot loads', () => {

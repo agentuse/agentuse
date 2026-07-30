@@ -3,6 +3,8 @@ import {
   findPendingSubagentWaitChildId,
   findPendingAwaitHumanPart,
   descendToLeafGate,
+  findStaleCascadeChild,
+  describeStaleCascade,
   findRootSessionId,
   type CascadeSessionReader,
 } from '../src/runner/subagent-cascade';
@@ -41,6 +43,7 @@ type Node = {
   parentSessionID?: string;
   parts: any[];
   agentName?: string;
+  error?: { code?: string; message?: string };
 };
 
 // A minimal in-memory CascadeSessionReader over a node map.
@@ -54,6 +57,7 @@ function makeReader(nodes: Record<string, Node>): CascadeSessionReader {
           id: sessionId,
           status: node.status,
           ...(node.parentSessionID && { parentSessionID: node.parentSessionID }),
+          ...(node.error && { error: node.error }),
           agent: { id: sessionId, name: node.agentName ?? sessionId },
         } as any,
         agentId: 'agent',
@@ -141,6 +145,107 @@ describe('descendToLeafGate', () => {
       mid: { status: 'suspended', parts: [{ type: 'tool', tool: 'x', state: { status: 'completed' } }] },
     });
     expect(await descendToLeafGate(reader, 'mid')).toBeNull();
+  });
+});
+
+// A parent parked on a delegated child can lose its gate without anything
+// resuming it (the child ends while the ancestors stay suspended). descendToLeafGate
+// returns null for BOTH that dead end and the healthy mid-flight case, so the
+// approvals list needs this second read to tell "unresolvable" from "still working"
+// instead of dropping the session and rendering it invisible.
+describe('findStaleCascadeChild', () => {
+  it('reports a child that ended incomplete (the report_incomplete orphan)', async () => {
+    const reader = makeReader({
+      leaf: {
+        status: 'error',
+        parts: [awaitHumanPart('leaf-token', 'completed')],
+        agentName: 'LinkedIn AI News',
+        error: { code: 'INCOMPLETE', message: 'Image billing limit reached' },
+      },
+    });
+    const stale = await findStaleCascadeChild(reader, 'leaf');
+    expect(stale).toEqual({
+      sessionId: 'leaf',
+      agentName: 'LinkedIn AI News',
+      status: 'error',
+      error: { code: 'INCOMPLETE', message: 'Image billing limit reached' },
+    });
+  });
+
+  it('reports a child that completed without its parent being resumed', async () => {
+    const reader = makeReader({
+      leaf: { status: 'completed', parts: [awaitHumanPart('leaf-token', 'completed')], agentName: 'leaf-agent' },
+    });
+    expect(await findStaleCascadeChild(reader, 'leaf')).toMatchObject({ sessionId: 'leaf', status: 'completed' });
+  });
+
+  it('reports a missing child session record', async () => {
+    expect(await findStaleCascadeChild(makeReader({}), 'gone')).toMatchObject({
+      sessionId: 'gone',
+      status: 'missing',
+    });
+  });
+
+  it('reports a suspended child holding neither a gate nor a bookmark', async () => {
+    const reader = makeReader({
+      mid: { status: 'suspended', parts: [{ type: 'tool', tool: 'x', state: { status: 'completed' } }] },
+    });
+    expect(await findStaleCascadeChild(reader, 'mid')).toMatchObject({ sessionId: 'mid', status: 'suspended' });
+  });
+
+  it('returns null while a live gate is waiting below (healthy approval)', async () => {
+    const reader = makeReader({
+      mid: { status: 'suspended', parts: [subagentWaitPart('leaf')] },
+      leaf: { status: 'suspended', parts: [awaitHumanPart('leaf-token')] },
+    });
+    expect(await findStaleCascadeChild(reader, 'mid')).toBeNull();
+  });
+
+  it('returns null while a descendant is still running (mid-flight, not stranded)', async () => {
+    const reader = makeReader({
+      mid: { status: 'suspended', parts: [subagentWaitPart('leaf')] },
+      leaf: { status: 'running', parts: [] },
+    });
+    expect(await findStaleCascadeChild(reader, 'mid')).toBeNull();
+  });
+
+  it('finds the break several levels down', async () => {
+    const reader = makeReader({
+      mid: { status: 'suspended', parts: [subagentWaitPart('leaf')] },
+      leaf: { status: 'error', parts: [], agentName: 'deep-leaf', error: { message: 'boom' } },
+    });
+    expect(await findStaleCascadeChild(reader, 'mid')).toMatchObject({ sessionId: 'leaf', agentName: 'deep-leaf' });
+  });
+});
+
+describe('describeStaleCascade', () => {
+  it('names the child, its outcome, and the way out', () => {
+    expect(describeStaleCascade({
+      sessionId: 'leaf', agentName: 'LinkedIn AI News', status: 'error',
+      error: { code: 'INCOMPLETE', message: 'Image billing limit reached' },
+    })).toBe(
+      'Waiting on delegated sub-agent "LinkedIn AI News", but it ended error: Image billing limit reached. ' +
+      'This run can no longer be resumed; stop it and re-run the agent.'
+    );
+  });
+
+  it('does not double the sentence period when the child reason ends in one', () => {
+    const text = describeStaleCascade({
+      sessionId: 'leaf', agentName: 'leaf', status: 'error',
+      error: { message: 'Login expired.' },
+    });
+    expect(text).toContain('Login expired. This run');
+    expect(text).not.toContain('..');
+  });
+
+  it('reads sensibly with no recorded reason', () => {
+    expect(describeStaleCascade({ sessionId: 'leaf', agentName: 'leaf', status: 'completed' }))
+      .toContain('but it ended completed.');
+  });
+
+  it('calls out a missing session record by id', () => {
+    expect(describeStaleCascade({ sessionId: 'gone-1', agentName: 'gone-1', status: 'missing' }))
+      .toContain('its session record is missing (gone-1)');
   });
 });
 

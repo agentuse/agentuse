@@ -5,7 +5,7 @@ import { fetchInfo, fetchAgents, fetchSchedules, fetchStoreRows, postSessionStop
 import { useFetch } from '../hooks/use-fetch';
 import { useHomeSections } from '../hooks/use-home-sections';
 import { useMetricPrefs, type MetricDisplay } from '../hooks/use-metric-prefs';
-import { useLiveHome, sessionRowKey, type ActivityEvent } from '../hooks/use-live-home';
+import { useLiveHome, sessionRowKey, ORPHANED_LABEL, type ActivityEvent } from '../hooks/use-live-home';
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
@@ -135,14 +135,14 @@ function ApprovalCard(props: { row: ApprovalRow }) {
   );
 }
 
-function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => void }) {
+function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => void; label?: string }) {
   const { row } = props;
   const at = row.updatedAt || row.createdAt;
   return (
     <a class="attn-run" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
       <span class="feed-dot failed" aria-hidden="true"></span>
       <span class="attn-agent">{row.agent.name || row.agent.id}</span>
-      <span class="attn-fail">{displayStatusLabel(row.status, row.errorCode)} · needs a look</span>
+      <span class="attn-fail">{props.label ?? displayStatusLabel(row.status, row.errorCode)} · needs a look</span>
       <span class="feed-time" title={formatApprovalTime(at)}>{formatRelativeTime(at)}</span>
       <button
         type="button"
@@ -164,12 +164,20 @@ function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => voi
   );
 }
 
-/** What's blocked on a human: pending gates first, then recent failed runs.
+/** What's blocked on a human: pending gates first, then recent failed runs, then
+ *  runs stranded on a sub-agent that already ended. A stranded run is raw-status
+ *  `suspended`, so it lands in neither of the first two groups — it used to fall
+ *  through every home surface and sit invisible for days.
  *  Renders even when empty — "nothing waiting on you" is the answer the
  *  section exists to give. */
-function AttentionSection(props: { pending: ApprovalRow[]; failed: SessionRow[]; onDismissFailed: (row: SessionRow) => void }) {
-  const { pending, failed } = props;
-  const total = pending.length + failed.length;
+function AttentionSection(props: {
+  pending: ApprovalRow[];
+  failed: SessionRow[];
+  stranded: SessionRow[];
+  onDismissFailed: (row: SessionRow) => void;
+}) {
+  const { pending, failed, stranded } = props;
+  const total = pending.length + failed.length + stranded.length;
   return (
     <section class="group">
       <h2 class="group-title">
@@ -183,6 +191,14 @@ function AttentionSection(props: { pending: ApprovalRow[]; failed: SessionRow[];
           <div class="attn-list">
             {pending.map((row) => <ApprovalCard key={`${row.project}:${row.sessionId}`} row={row} />)}
             {failed.map((row) => <FailedRow key={`${row.project}:${row.sessionId}`} row={row} onDismiss={props.onDismissFailed} />)}
+            {stranded.map((row) => (
+              <FailedRow
+                key={`${row.project}:${row.sessionId}`}
+                row={row}
+                label={ORPHANED_LABEL}
+                onDismiss={props.onDismissFailed}
+              />
+            ))}
           </div>
         )}
     </section>
@@ -763,6 +779,15 @@ export default function Home() {
       && !dismissedLocal.has(sessionRowKey(s)))
     .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
     .slice(0, 3);
+  // Runs parked on a delegated sub-agent that has since ended. They read as
+  // `suspended`, so neither the failed filter above nor the pending-gate list
+  // catches them, yet nothing will ever move them: the only way out is a human
+  // stopping the run. Dismissing one stops it, which is exactly the fix.
+  const strandedRecent = liveHome.sessions
+    .filter((s) => liveHome.suspendedGates.orphaned.has(sessionRowKey(s)) && s.dismissedAt === undefined
+      && !dismissedLocal.has(sessionRowKey(s)))
+    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
+    .slice(0, 3);
   const pendingApprovals = liveHome.pendingApprovals;
   // Suspended rows with no live or expired gate are mid-flight (a delegated
   // leaf running under a decided cascade approval, or a resume in progress),
@@ -854,7 +879,7 @@ export default function Home() {
         )}
 
         {sections.isVisible('attention') && (
-          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} onDismissFailed={dismissFailed} />
+          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} stranded={strandedRecent} onDismissFailed={dismissFailed} />
         )}
 
         {sections.isVisible('results') && hasAnyMetrics && (
