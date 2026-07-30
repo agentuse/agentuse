@@ -426,6 +426,10 @@ describe('LogEntry component', () => {
     expect(html).not.toContain('<summary>Draft</summary>');
     // Context also starts collapsed so the change boxes stay the focal point.
     expect(html).not.toContain('approval-context-open');
+    // A character count says nothing about whether a reply is any good, and it
+    // competed with the content for the reviewer's attention. Copy stays.
+    expect(html).not.toContain('chars');
+    expect(html).toContain('approval-copy');
   });
 
   it('renders inline artifact previews for image, html, and pdf artifacts', () => {

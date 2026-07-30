@@ -188,7 +188,6 @@ function ChangesBlock(props: { changes: ApprovalChange[]; options: ApprovalOptio
                   Choice: {props.options.find((option) => option.id === change.optionId)?.label ?? change.optionId}
                 </span>
               )}
-              <span class="approval-change-meta">{changeDisplayContent(change).length} chars</span>
               <CopyButton text={changeDisplayContent(change)} />
             </div>
             <div class="approval-change-content"><LogContent value={changeDisplayContent(change)} forceMarkdown /></div>

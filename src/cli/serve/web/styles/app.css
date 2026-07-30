@@ -2055,6 +2055,18 @@ a, button, select, summary, label, input, textarea,
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
+/* Candidates stay fully readable so their phrasings remain comparable, but only
+   the selected one reads at full contrast: the approve button commits to that
+   one, so it must be unambiguous which text is about to be submitted. The rest
+   recede behind a rule without being hidden or truncated. */
+.approval-option:not(.selected) .approval-option-action {
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  color: var(--muted-3);
+}
+.approval-option.selected .approval-option-label {
+  color: var(--fg);
+}
 .approval-option-action-label {
   margin-bottom: 3px;
   color: var(--muted);
