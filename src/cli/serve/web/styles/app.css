@@ -4822,6 +4822,28 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .rows.session-feed {
   gap: 16px;
 }
+/* One divider marks where the reader's last visit ended; everything above it
+   started since. Deliberately quiet: it orients a skim, it is not an alert. */
+.page-sessions .feed-watermark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0;
+  color: var(--cyan);
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.page-sessions .feed-watermark::before,
+.page-sessions .feed-watermark::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--cyan-border);
+}
 .page-sessions .session-feed-card {
   padding: 16px 18px;
   background: var(--bg);

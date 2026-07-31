@@ -10,7 +10,7 @@ import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
 import { hasActionableApproval, headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
-import { FeedResponse, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
+import { FeedResponse, NewSinceLastVisit, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
 import type { AgentRow, ApprovalsListPayload, SessionRow } from '../src/cli/serve/web/lib/api';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
@@ -84,6 +84,8 @@ describe('Session feed response', () => {
         statusFilter=""
         triggerFilter=""
         agentFilter=""
+        dismissed={false}
+        onDiscard={noop}
         filterHref={(key, value) => `/sessions?${key}=${value}`}
         row={{
           sessionId: 'session-1',
@@ -139,6 +141,14 @@ describe('Session feed response', () => {
     expect(html).toContain('session-feed-content is-collapsed');
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain('Show more');
+  });
+
+  it('marks where the last visit ended without any per-session read state', () => {
+    const html = renderToString(<NewSinceLastVisit count={3} />);
+
+    expect(html).toContain('role="separator"');
+    expect(html).toContain('aria-label="3 new since your last visit"');
+    expect(html).toContain('3 new since your last visit');
   });
 
   it('explains when a running session has not produced an answer yet', () => {

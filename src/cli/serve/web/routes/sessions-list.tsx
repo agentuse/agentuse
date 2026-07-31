@@ -1,3 +1,4 @@
+import { Fragment } from 'preact';
 import { useLocation } from 'preact-iso';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import type { SessionRow, SessionsPayload } from '../lib/api';
@@ -16,6 +17,7 @@ import { formatApprovalTime, formatRelativeTime, errorText, displayStatusLabel }
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 import { useSessionListView, type SessionListView } from '../hooks/use-session-list-view';
+import { useLastVisit } from '../hooks/use-last-visit';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
 const STATUSES = ['', 'running', 'suspended', 'completed', 'error', 'incomplete'];
@@ -218,6 +220,14 @@ export function SessionRowView(props: {
         )}
     </div>
   );
+}
+
+/** The one line that answers "which of these have I already seen": everything
+ *  above it started after the reader's previous visit. A single divider, not a
+ *  per-session read flag, so nothing has to be marked, synced, or cleaned up. */
+export function NewSinceLastVisit(props: { count: number }) {
+  const label = `${props.count} new since your last visit`;
+  return <div class="feed-watermark" role="separator" aria-label={label}>{label}</div>;
 }
 
 export function FeedResponse(props: { value: string | undefined; status: string; subagentActive?: boolean; href: string }) {
@@ -440,6 +450,15 @@ export default function SessionsList() {
   const isDismissed = (row: SessionRow): boolean =>
     row.dismissedAt !== undefined || dismissedLocal.has(sessionRowKey(row));
 
+  // How far down the feed "you have already seen this" starts. Rows arrive
+  // newest first, so the count of rows started since the last visit is also the
+  // index the divider belongs at. Grouping by agent replaces the time ordering
+  // the divider reads against, so it stands down there.
+  const lastVisit = useLastVisit();
+  const newSinceLastVisit = lastVisit === null || groupByAgent
+    ? 0
+    : rows.filter((row) => row.createdAt > lastVisit).length;
+
   // Feed keyboard nav: j/k step through the cards, Space expands/collapses the
   // one you are on. The card that has DOM focus *is* the selection, so live SSE
   // snapshots, agent grouping and Load more can reshape the list without a
@@ -652,19 +671,24 @@ export default function SessionsList() {
                   </details>
                 );
               })}</div>
-            : <div class={`rows${view === 'feed' ? ' session-feed' : ''}`}>{rows.map((row) => (
-              <SessionRowView
-                key={`${row.project}:${row.sessionId}`}
-                row={row}
-                view={view}
-                multiProject={multiProject}
-                filterHref={withParam}
-                statusFilter={statusFilter}
-                triggerFilter={triggerFilter}
-                agentFilter={agentFilter ?? ''}
-                dismissed={isDismissed(row)}
-                onDiscard={discardRow}
-              />
+            : <div class={`rows${view === 'feed' ? ' session-feed' : ''}`}>{rows.map((row, index) => (
+              <Fragment key={`${row.project}:${row.sessionId}`}>
+                {/* Nothing is drawn when every loaded row is new (no index can
+                    equal the count): a line under the whole page would claim
+                    the reader had seen sessions that simply are not loaded. */}
+                {newSinceLastVisit > 0 && index === newSinceLastVisit && <NewSinceLastVisit count={newSinceLastVisit} />}
+                <SessionRowView
+                  row={row}
+                  view={view}
+                  multiProject={multiProject}
+                  filterHref={withParam}
+                  statusFilter={statusFilter}
+                  triggerFilter={triggerFilter}
+                  agentFilter={agentFilter ?? ''}
+                  dismissed={isDismissed(row)}
+                  onDiscard={discardRow}
+                />
+              </Fragment>
             ))}</div>)}
         {nextCursor && (
           <button type="button" class={loadingMore ? 'load-more btn-busy' : 'load-more'} onClick={loadMore} disabled={loadingMore}>
