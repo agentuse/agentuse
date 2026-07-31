@@ -460,13 +460,13 @@ export default function SessionsList() {
     : rows.filter((row) => row.createdAt > lastVisit).length;
 
   // Feed keyboard nav: j/k step through the cards, Space expands/collapses the
-  // one you are on. The card that has DOM focus *is* the selection, so live SSE
-  // snapshots, agent grouping and Load more can reshape the list without a
-  // second source of truth drifting out of sync with it.
+  // one you are on, Enter opens it. The card that has DOM focus *is* the
+  // selection, so live SSE snapshots, agent grouping and Load more can reshape
+  // the list without a second source of truth drifting out of sync with it.
   useEffect(() => {
     if (view !== 'feed') return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'j' && event.key !== 'k' && event.key !== ' ') return;
+      if (event.key !== 'j' && event.key !== 'k' && event.key !== ' ' && event.key !== 'Enter') return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       // Text entry owns its keys, and while a dialog (palette, decision) is up
       // the keypress belongs to that surface.
@@ -477,13 +477,23 @@ export default function SessionsList() {
       if (cards.length === 0) return;
       const active = document.activeElement as HTMLElement | null;
       const current = active?.closest<HTMLElement>('.session-feed-card') ?? null;
+      const onInteractive = Boolean(active?.closest('a, button, select, summary, [role="button"]'));
+      if (event.key === 'Enter') {
+        // Opens through the card's own "Open session" link, so the keyboard
+        // goes exactly where the pointer would (and through the SPA router
+        // rather than a full page load).
+        if (!current || onInteractive) return;
+        event.preventDefault();
+        current.querySelector<HTMLAnchorElement>('.session-feed-open')?.click();
+        return;
+      }
       if (event.key === ' ') {
         // Space drives the card's own Show more/less control, so keyboard and
         // pointer stay on one toggle. On a link or button inside the card the
         // browser's own activation wins. Cards short enough to render whole have
         // no toggle: swallow the key anyway rather than scrolling the selection
         // off screen.
-        if (!current || active?.closest('a, button, select, summary, [role="button"]')) return;
+        if (!current || onInteractive) return;
         event.preventDefault();
         current.querySelector<HTMLButtonElement>('.session-feed-more')?.click();
         // Same landing spot as j/k: collapsing from deep inside a long card
@@ -698,7 +708,7 @@ export default function SessionsList() {
         <footer>
           {streamFallback ? 'auto-refreshes every 10s' : 'live updates'}
           {view === 'feed' && !narrow && rows.length > 0 && (
-            <span class="feed-keys"> · <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>space</kbd> expand</span>
+            <span class="feed-keys"> · <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>space</kbd> expand · <kbd>enter</kbd> open</span>
           )}
         </footer>
       </main>
