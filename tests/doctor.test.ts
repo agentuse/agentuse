@@ -8,6 +8,7 @@ import type { Message, SessionInfo, ToolPart } from '../src/session/types';
 
 describe('agentuse doctor', () => {
   let testDir: string;
+  let homeDir: string;
   let originalCwd: string;
   let originalHome: string | undefined;
   let originalXdgDataHome: string | undefined;
@@ -46,13 +47,21 @@ ${body}`);
 
   beforeEach(async () => {
     testDir = await mkdtemp(join(tmpdir(), 'doctor-test-'));
+    // HOME must be a sibling of the project, never the project itself or an
+    // ancestor of it: findProjectRoot deliberately stops rather than walk into
+    // $HOME, so pointing HOME at testDir makes the upward search give up before
+    // it sees testDir's package.json and pick a different project root than the
+    // one the test seeded a session under. That was invisible on macOS, where
+    // tmpdir() is reached through a symlink so HOME and the resolved cwd are
+    // different strings and the guard never matched.
+    homeDir = await mkdtemp(join(tmpdir(), 'doctor-home-'));
     originalCwd = process.cwd();
     originalHome = process.env.HOME;
     originalXdgDataHome = process.env.XDG_DATA_HOME;
     originalConsoleLog = console.log;
     logs = [];
 
-    process.env.HOME = testDir;
+    process.env.HOME = homeDir;
     process.env.XDG_DATA_HOME = join(testDir, 'xdg');
     console.log = (...args: unknown[]) => {
       logs.push(args.join(' '));
@@ -77,6 +86,7 @@ ${body}`);
       delete process.env.XDG_DATA_HOME;
     }
     await rm(testDir, { recursive: true, force: true });
+    await rm(homeDir, { recursive: true, force: true });
   });
 
   it('analyzes the latest run and suggests the blocked command family', async () => {
