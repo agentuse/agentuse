@@ -1,0 +1,16 @@
+{
+  "//": "The root tsconfig includes only src/**, so the release tooling in scripts/ was the one thing CI would never typecheck. This is that gate.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "types": ["bun"]
+  },
+  "include": [
+    "scripts/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tmp"
+  ]
+}

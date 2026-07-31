@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { sectionFor } from './lib/changelog.ts';
 
 const root = resolve(import.meta.dir, '..');
 
@@ -52,6 +53,11 @@ function mb(bytes: number): string {
   return `${(bytes / 1_000_000).toFixed(2)} MB`;
 }
 
+/**
+ * `--ignore-scripts` skips `prepack`, so this measures the dist the gate just
+ * built rather than rebuilding it. Rebuilding here would report on bytes nobody
+ * tested.
+ */
 function pack(): PackResult {
   const raw = run('npm', ['pack', '--dry-run', '--json', '--ignore-scripts']);
   return JSON.parse(raw)[0] as PackResult;
@@ -98,20 +104,6 @@ function sizeByKind(files: PackFile[]): Array<[string, number, number]> {
     .slice(0, 5);
 }
 
-/** The exact changelog section that becomes the GitHub Release body. */
-function changelogSection(version: string): string | null {
-  const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
-  const lines = changelog.split('\n');
-  const start = lines.findIndex((line) => line.startsWith(`## [${version}]`) || line.startsWith('## [Unreleased]'));
-  if (start === -1) return null;
-  const rest = lines.slice(start + 1);
-  const end = rest.findIndex((line) => line.startsWith('## '));
-  return rest
-    .slice(0, end === -1 ? rest.length : end)
-    .join('\n')
-    .trim();
-}
-
 /**
  * Install the real tarball into a throwaway prefix and run the binary.
  *
@@ -142,14 +134,28 @@ function installSmoke(): { ok: boolean; detail: string } {
   }
 }
 
-/** Gate results come from the steps that already ran; absent means not run. */
+/**
+ * Gate results, read from the file `release.ts verify` writes.
+ *
+ * A file rather than the workflow's step outcomes, because verify is one step:
+ * if it fails partway, the outcome is just "failed" and the reviewer has to open
+ * the log to learn where. The file names the step that stopped it and marks the
+ * ones that never got to run.
+ */
 function gateRows(): Array<[string, string]> {
+  const gatePath = join(root, 'tmp', 'release-gate.json');
   const coveragePath = join(root, 'tmp', 'coverage', 'summary.json');
-  const rows: Array<[string, string]> = [
-    ['typecheck', process.env.GATE_TYPECHECK ?? 'not run'],
-    ['build', process.env.GATE_BUILD ?? 'not run'],
-    ['tests', process.env.GATE_TESTS ?? 'not run'],
-  ];
+  const rows: Array<[string, string]> = [];
+  if (existsSync(gatePath)) {
+    const gate = JSON.parse(readFileSync(gatePath, 'utf8')) as {
+      steps: Array<{ name: string; status: string; seconds: number | null }>;
+    };
+    for (const step of gate.steps) {
+      rows.push([step.name, step.seconds === null ? step.status : `${step.status} (${step.seconds}s)`]);
+    }
+  } else {
+    rows.push(['gate', 'not run']);
+  }
   if (existsSync(coveragePath)) {
     const c = JSON.parse(readFileSync(coveragePath, 'utf8'));
     const lineOk = c.lines >= c.lineThreshold;
@@ -174,7 +180,7 @@ function main(): void {
   const packed = pack();
   const baseline = publishedBaseline();
   const unexpected = unexpectedPaths(packed.files);
-  const notes = changelogSection(version);
+  const notes = sectionFor(root, version);
   const sha = run('git', ['rev-parse', '--short', 'HEAD']);
   const lastTag = tryRun('git', ['describe', '--tags', '--abbrev=0', 'HEAD^']) ?? tryRun('git', ['describe', '--tags', '--abbrev=0']);
   const commits = lastTag ? tryRun('git', ['rev-list', '--count', `${lastTag}..HEAD`]) : null;
