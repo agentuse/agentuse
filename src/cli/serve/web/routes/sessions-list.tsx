@@ -467,7 +467,9 @@ export default function SessionsList() {
         if (!current || active?.closest('a, button, select, summary, [role="button"]')) return;
         event.preventDefault();
         current.querySelector<HTMLButtonElement>('.session-feed-more')?.click();
-        current.scrollIntoView({ block: 'nearest' });
+        // Same landing spot as j/k: collapsing from deep inside a long card
+        // should return you to that card's top, not leave you mid-page.
+        current.scrollIntoView({ block: 'start' });
         return;
       }
       event.preventDefault();
@@ -478,7 +480,10 @@ export default function SessionsList() {
         ? cards[Math.min(index + 1, cards.length - 1)]
         : cards[Math.max(index - 1, 0)];
       next?.focus({ preventScroll: true });
-      next?.scrollIntoView({ block: 'nearest' });
+      // Pin the card you moved to at the top of the reading area (scroll-margin
+      // clears the sticky topbar), so every j/k lands the entry in the same
+      // place instead of leaving it wherever it happened to sit.
+      next?.scrollIntoView({ block: 'start' });
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
