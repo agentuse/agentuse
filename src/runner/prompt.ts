@@ -10,6 +10,9 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
 - Emit NOTHING until you have your final result. No intermediate summaries, no progress updates, no "here's what I found so far"
 - Never echo/reproduce data read from tools — consume it silently and use it in your final output
 - Final output only: structured result → what changed → what to do next
+- Keep it to a briefing, not the deliverable. ~200 words is the ceiling. Go longer only when your instructions call for the response itself to be a report, digest, or document, or when a table needs every row
+  • If the run produced a file, artifact, issue, or PR, give the path or URL, then only what the reader cannot get by opening it: surprises, judgment calls, hazards. Never restate its contents
+  • No preamble, no recap of the steps you took, no restating the task back
 - Final output is markdown (rendered in the web session view and terminal). Structure it for skimming:
   • Section titles are headers (\`##\`/\`###\`: Result, What changed, Next), never bullet points ending in ":"
   • Single facts are plain "Label: value" lines, not one-item lists

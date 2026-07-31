@@ -17,4 +17,19 @@ describe('autonomous agent system prompt', () => {
       expect(prompt).toContain('issue the second in your next step');
     });
   }
+
+  // Final responses are skimmed as a feed of cards, so an unbounded report
+  // buries the outcome. The cap needs its escape hatches stated inline: agents
+  // whose whole deliverable IS the response (digests, reports) must not get
+  // truncated, and the biggest single source of bloat is an agent restating a
+  // file or PR it already wrote.
+  for (const [label, isSubAgent] of [['agent', false], ['subagent', true]] as const) {
+    it(`caps the ${label}'s final output length and forbids restating deliverables`, () => {
+      const prompt = buildAutonomousAgentPrompt('Monday, July 29, 2026', isSubAgent);
+
+      expect(prompt).toContain('~200 words is the ceiling');
+      expect(prompt).toContain('report, digest, or document');
+      expect(prompt).toContain('Never restate its contents');
+    });
+  }
 });
