@@ -70,7 +70,7 @@ function stream(cmd: string, args: string[]): void {
   if (result.status !== 0) fail(`${cmd} ${args.join(' ')} exited ${result.status}`);
 }
 
-function manifest(): { version: string; name: string } {
+function manifest(): { version: string; name: string; repository?: { url?: string } } {
   return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 }
 
@@ -343,6 +343,25 @@ function notes(version: string): void {
 
 // ------------------------------------------------------------------ publish
 
+/**
+ * npm attaches provenance only when package.json's `repository` names the repo
+ * the publish is running from. When it does not, npm fails with a message about
+ * provenance rather than about the field that is actually wrong, which is a
+ * miserable thing to debug at the one moment a release is half-done.
+ */
+function assertRepositoryMatches(): void {
+  const publishing = process.env.GITHUB_REPOSITORY;
+  if (!publishing) return;
+  const url = manifest().repository?.url ?? '';
+  const declared = /github\.com[:/]([^/]+\/[^/.]+)/.exec(url)?.[1];
+  if (declared !== publishing) {
+    fail(
+      `package.json repository is "${url}" but this is publishing from ${publishing}. ` +
+        `Provenance requires them to match, case included.`,
+    );
+  }
+}
+
 function publish(): void {
   const { name, version } = manifest();
   const tag = distTag(version);
@@ -358,6 +377,7 @@ function publish(): void {
   if (isCI() && !process.env.ACTIONS_ID_TOKEN_REQUEST_URL) {
     fail('No OIDC token available. The publish job needs `permissions: id-token: write`.');
   }
+  assertRepositoryMatches();
 
   note(`Publishing ${name}@${version} under dist-tag "${tag}".`);
   stream('npm', ['publish', '--access', 'public', '--tag', tag]);
