@@ -95,6 +95,42 @@ export function currentProcessRef(): ProcessRef {
   return { pid: process.pid, ...(procStartedAt && { procStartedAt }) };
 }
 
+/** Boot id embedded in a `linux:<bootId>:<ticks>` token, when it has one. */
+function bootIdOf(token: string): string | null {
+  const parts = token.split(':');
+  return parts[0] === 'linux' && parts.length === 3 ? (parts[1] ?? null) : null;
+}
+
+/**
+ * Liveness with the uncertain case kept separate, for callers that must not
+ * guess.
+ *
+ * `isProcessRefAlive` collapses "the start-time token does not match" into
+ * "dead", which is right for orphan cleanup: a leftover record pointing at a
+ * recycled pid should be swept. It is wrong for anything deciding whether it may
+ * take something away from another process, because a token can disagree without
+ * the holder being gone. A process reading its own `/proc/<pid>/stat` while it is
+ * still starting up can see a partially-populated line and stamp a token that no
+ * other process will ever read back, and the holder is very much alive.
+ *
+ * A mismatch across a reboot is not uncertain: the token carries the boot id, and
+ * no process running now started under a previous one. That case stays `dead` so
+ * a reboot still frees a lock without anyone intervening.
+ */
+export type ProcessRefState = 'dead' | 'alive' | 'ambiguous';
+
+export function processRefState(ref: ProcessRef): ProcessRefState {
+  if (typeof ref.pid !== 'number' || !isPidAlive(ref.pid)) return 'dead';
+  if (!ref.procStartedAt) return 'alive';
+  const current = getProcessStartTime(ref.pid);
+  if (!current) return 'alive';
+  if (current === ref.procStartedAt) return 'alive';
+  const priorBoot = bootIdOf(ref.procStartedAt);
+  const currentBoot = bootIdOf(current);
+  if (priorBoot && currentBoot && priorBoot !== currentBoot) return 'dead';
+  return 'ambiguous';
+}
+
 /**
  * Whether the process a ref points at is still the same live process. A missing
  * start token (unreadable /proc, `ps` failure) degrades to the bare pid probe.

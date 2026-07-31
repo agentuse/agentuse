@@ -20,7 +20,7 @@
 import { appendFileSync, existsSync, linkSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { dirname, join } from 'path';
-import { getCurrentProcessStartTime, isProcessRefAlive } from './process-info';
+import { getCurrentProcessStartTime, processRefState } from './process-info';
 
 export interface SchedulerLockHolder {
   pid: number;
@@ -81,6 +81,25 @@ function readHolder(path: string): SchedulerLockHolder | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Refuse a lock whose holder is running but cannot be confirmed as the process
+ * that recorded it.
+ *
+ * Fail closed, matching the rest of this module: a scheduler that will not start
+ * is one deleted file away from working and says so, while two schedulers that
+ * both believe they hold the lock fire every cron twice and nothing says
+ * anything. The asymmetry is the whole argument.
+ */
+function ambiguousHolder(path: string, holder: SchedulerLockHolder): SchedulerLockResult {
+  return {
+    acquired: false,
+    holder,
+    error:
+      `scheduler lock holder pid ${holder.pid} is running but its identity cannot be confirmed, ` +
+      `so it is not safe to take the lock from it. If that process is not an agentuse scheduler, remove ${path}`,
+  };
 }
 
 function denied(path: string, error?: string): SchedulerLockResult {
@@ -164,8 +183,10 @@ export function acquireSchedulerLock(projectRoot: string): SchedulerLockResult {
 
   const initialHolder = readHolder(path);
   if (initialHolder?.pid === process.pid) return { acquired: true };
-  if (initialHolder && isProcessRefAlive(initialHolder)) {
-    return { acquired: false, holder: initialHolder };
+  if (initialHolder) {
+    const state = processRefState(initialHolder);
+    if (state === 'alive') return { acquired: false, holder: initialHolder };
+    if (state === 'ambiguous') return ambiguousHolder(path, initialHolder);
   }
 
   // Serialize the stale check + removal. The canonical holder is re-read only
@@ -185,8 +206,10 @@ export function acquireSchedulerLock(projectRoot: string): SchedulerLockResult {
   try {
     const currentHolder = readHolder(path);
     if (currentHolder?.pid === process.pid) return { acquired: true };
-    if (currentHolder && isProcessRefAlive(currentHolder)) {
-      return { acquired: false, holder: currentHolder };
+    if (currentHolder) {
+      const state = processRefState(currentHolder);
+      if (state === 'alive') return { acquired: false, holder: currentHolder };
+      if (state === 'ambiguous') return ambiguousHolder(path, currentHolder);
     }
 
     try {
