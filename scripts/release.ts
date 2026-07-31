@@ -192,6 +192,17 @@ function assertToolchain(): void {
   }
 }
 
+/** A leftover tag from an abandoned attempt, which `git tag -a` would reject anyway. */
+function assertTagFree(version: string): void {
+  const existing = spawnSync('git', ['rev-parse', '--verify', `refs/tags/v${version}`], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  if (existing.status === 0) {
+    fail(`Tag v${version} already exists locally. Delete it first: git tag -d v${version}`);
+  }
+}
+
 function preflight(bump: string | undefined, anyBranch: boolean): string | null {
   assertCleanTree();
   assertBranch(anyBranch);
@@ -204,6 +215,7 @@ function preflight(bump: string | undefined, anyBranch: boolean): string | null 
     return null;
   }
   const version = nextVersion(manifest().version, bump);
+  assertTagFree(version);
   assertUnpublished(version);
   note(`Preflight passed. Target version ${version} (dist-tag ${distTag(version)}).`);
   return version;
@@ -246,9 +258,20 @@ function prepare(bump: string | undefined, anyBranch: boolean): void {
   dateChangelog(version);
   bumpManifest(version);
 
-  capture('git', ['add', 'CHANGELOG.md', 'package.json']);
-  capture('git', ['commit', '-m', `Release v${version}`]);
-  capture('git', ['tag', '-a', `v${version}`, '-m', `Release v${version}`]);
+  // The files are already rewritten by this point, so a git failure here leaves
+  // the tree edited but uncommitted. Say how to undo it rather than leaving
+  // someone to work out which files were touched.
+  try {
+    capture('git', ['add', 'CHANGELOG.md', 'package.json']);
+    capture('git', ['commit', '-m', `Release v${version}`]);
+    capture('git', ['tag', '-a', `v${version}`, '-m', `Release v${version}`]);
+  } catch (error) {
+    fail(
+      `${(error as Error).message}\n\n` +
+        `CHANGELOG.md and package.json were already rewritten. Undo with:\n` +
+        `  git checkout -- CHANGELOG.md package.json`,
+    );
+  }
 
   note('');
   note(`Prepared v${version}. Nothing has been pushed.`);
