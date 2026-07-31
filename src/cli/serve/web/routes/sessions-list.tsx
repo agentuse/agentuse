@@ -132,6 +132,9 @@ export function SessionRowView(props: {
       class={`row${view === 'feed' ? ' session-feed-card' : ''}${dismissed ? ' is-dismissed' : ''}`}
       role={view === 'feed' ? 'article' : undefined}
       aria-label={view === 'feed' ? `${row.agent.name || row.agent.id} session` : undefined}
+      // Programmatically focusable (never in the Tab order): j/k move focus card
+      // to card, and the focused card is what Space expands.
+      tabIndex={view === 'feed' ? -1 : undefined}
     >
       {view === 'summary'
         ? (
@@ -437,6 +440,50 @@ export default function SessionsList() {
   const isDismissed = (row: SessionRow): boolean =>
     row.dismissedAt !== undefined || dismissedLocal.has(sessionRowKey(row));
 
+  // Feed keyboard nav: j/k step through the cards, Space expands/collapses the
+  // one you are on. The card that has DOM focus *is* the selection, so live SSE
+  // snapshots, agent grouping and Load more can reshape the list without a
+  // second source of truth drifting out of sync with it.
+  useEffect(() => {
+    if (view !== 'feed') return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'j' && event.key !== 'k' && event.key !== ' ') return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      // Text entry owns its keys, and while a dialog (palette, decision) is up
+      // the keypress belongs to that surface.
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      if (document.querySelector('dialog[open], [role="dialog"]')) return;
+      const cards = [...document.querySelectorAll<HTMLElement>('.session-feed-card')];
+      if (cards.length === 0) return;
+      const active = document.activeElement as HTMLElement | null;
+      const current = active?.closest<HTMLElement>('.session-feed-card') ?? null;
+      if (event.key === ' ') {
+        // Space drives the card's own Show more/less control, so keyboard and
+        // pointer stay on one toggle. On a link or button inside the card the
+        // browser's own activation wins. Cards short enough to render whole have
+        // no toggle: swallow the key anyway rather than scrolling the selection
+        // off screen.
+        if (!current || active?.closest('a, button, select, summary, [role="button"]')) return;
+        event.preventDefault();
+        current.querySelector<HTMLButtonElement>('.session-feed-more')?.click();
+        current.scrollIntoView({ block: 'nearest' });
+        return;
+      }
+      event.preventDefault();
+      const index = current ? cards.indexOf(current) : -1;
+      // Clamped, not wrapping: j at the bottom should sit still, not teleport
+      // back to the newest session.
+      const next = event.key === 'j'
+        ? cards[Math.min(index + 1, cards.length - 1)]
+        : cards[Math.max(index - 1, 0)];
+      next?.focus({ preventScroll: true });
+      next?.scrollIntoView({ block: 'nearest' });
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [view]);
+
   // Build a URL that preserves the other active filters when one changes.
   // The window is carried only when the operator explicitly picked one: pinning
   // the resolved default (24h) into chip-built URLs would defeat the adaptive
@@ -619,7 +666,12 @@ export default function SessionsList() {
             {loadingMore ? <><span class="btn-spinner" aria-hidden="true" />Loading…</> : 'Load more'}
           </button>
         )}
-        <footer>{streamFallback ? 'auto-refreshes every 10s' : 'live updates'}</footer>
+        <footer>
+          {streamFallback ? 'auto-refreshes every 10s' : 'live updates'}
+          {view === 'feed' && !narrow && rows.length > 0 && (
+            <span class="feed-keys"> · <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>space</kbd> expand</span>
+          )}
+        </footer>
       </main>
     </div>
   );

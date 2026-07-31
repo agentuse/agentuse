@@ -99,6 +99,9 @@ describe('Session feed response', () => {
     );
 
     expect(html).toContain('role="article"');
+    // j/k move focus card to card, so a feed card must be programmatically
+    // focusable without joining the Tab order.
+    expect(html).toContain('tabindex="-1"');
     expect(html).toContain('session-feed-header');
     expect(html).toContain('session-feed-avatar');
     expect(html).toContain('>WR</div>');

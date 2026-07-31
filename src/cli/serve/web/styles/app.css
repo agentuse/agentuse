@@ -4820,15 +4820,22 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .row-meta { margin-top: 8px; color: var(--muted); font-size: 11px; }
 .page-sessions .row-meta code { font-family: var(--mono); font-size: 11px; }
 .page-sessions .rows.session-feed {
-  width: min(760px, 100%);
-  margin-inline: auto;
   gap: 16px;
 }
 .page-sessions .session-feed-card {
   padding: 16px 18px;
   background: var(--bg);
+  /* Keeps a j/k-selected card clear of the sticky topbar when it scrolls in. */
+  scroll-margin-top: 80px;
 }
 .page-sessions .session-feed-card:hover { background: var(--bg); }
+/* :focus, not :focus-visible: the card is only ever focused by the j/k keys or
+   by a click on it, so every focus here is a selection worth drawing. */
+.page-sessions .session-feed-card:focus {
+  outline: 2px solid var(--cyan-border);
+  outline-offset: 2px;
+  border-color: var(--cyan-border);
+}
 .page-sessions .session-feed-header {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) auto;
@@ -5118,6 +5125,12 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .row-discard:hover { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
 .page-sessions .session-feed-footer .row-discard { margin-left: auto; }
 .page-sessions footer { color: var(--muted); font-size: 11px; margin-top: 32px; text-align: center; }
+.page-sessions .feed-keys kbd {
+  font-family: var(--mono); font-size: 10px;
+  color: var(--muted-2);
+  padding: 1px 5px;
+  border: 1px solid var(--line); border-radius: 4px;
+}
 @media (max-width: 640px) {
   .page-sessions .session-feed-card { padding: 14px; }
   .page-sessions .session-feed-header {
@@ -5454,7 +5467,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 @media (pointer: coarse) {
   .palette-foot,
   .palette-trigger-kbd,
-  .palette-esc { display: none; }
+  .palette-esc,
+  .page-sessions .feed-keys { display: none; }
 }
 
 /* ============================================================
