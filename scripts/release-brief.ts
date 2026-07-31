@@ -193,7 +193,7 @@ function main(): void {
   w(`## Release review: agentuse ${baseline ? `${baseline.version} → ` : ''}${version}`);
   w();
   w(`\`${sha}\` pushed by **${actor}**${commits ? ` · ${commits} commits since ${lastTag}` : ''}`);
-  if (commits && lastTag) w(`[Compare ${lastTag}...${version}](https://github.com/${repo}/compare/${lastTag}...v${version})`);
+  if (commits && lastTag) w(`[Compare ${lastTag}...v${version}](https://github.com/${repo}/compare/${lastTag}...v${version})`);
   w();
 
   // The tag being released and the version in the manifest are set by different
