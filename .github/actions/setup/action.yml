@@ -1,0 +1,24 @@
+name: Toolchain
+description: >
+  bun, pnpm, and node, matching what a release is built with locally. Three
+  runtimes because the split is real: bun builds and tests, pnpm installs (it is
+  what packageManager pins), npm publishes.
+
+runs:
+  using: composite
+  steps:
+    # .tool-versions is the single pin. release.ts preflight asserts the local
+    # bun matches it, so laptop and runner build with the same compiler.
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version-file: .tool-versions
+
+    # No version input: pnpm/action-setup reads packageManager from package.json.
+    - uses: pnpm/action-setup@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - run: pnpm install --frozen-lockfile
+      shell: bash

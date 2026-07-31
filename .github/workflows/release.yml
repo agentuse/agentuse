@@ -1,0 +1,92 @@
+# Publish agentuse to npm.
+#
+# The filename is load-bearing: npm binds a package's trusted publisher to one
+# exact owner / repo / workflow filename / environment. Renaming this file breaks
+# publishing until the binding is edited on npmjs.com.
+#
+# The approval gate is not a speed bump in front of a credential, it is the
+# credential's precondition. `environment: release` is part of that binding, so
+# the OIDC token that authorizes a publish cannot be minted until a required
+# reviewer approves. A stray tag push, from anyone, reaches `verify` and stops.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  # Manual runs exercise the gate and the brief and cannot publish: the publish
+  # job requires a tag push. This is the permanent dry run.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # agentuse-lab mirrors this repo commit for commit and has Actions enabled, so
+  # without this guard a tag pushed there starts a second run on billed private
+  # minutes that can only ever end in a failed publish. There is no workflow-level
+  # `if`, so every job carries it.
+  verify:
+    if: github.repository == 'agentuse/agentuse'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history and tags: the brief reports commits since the last tag.
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup
+
+      - name: Gate
+        run: bun scripts/release.ts verify
+
+      - name: Release review brief
+        # Runs even when the gate fails, so a red run still says where it broke.
+        if: always()
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            bun scripts/release-brief.ts "${GITHUB_REF_NAME#v}"
+          else
+            bun scripts/release-brief.ts
+          fi
+
+  # Advisory. Drives a real browser, and by decision it never blocks a release,
+  # so it is deliberately absent from publish's `needs`. A red X here is
+  # information for the reviewer, not a stop sign.
+  e2e:
+    if: github.repository == 'agentuse/agentuse'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: npm install -g agent-browser
+      - run: bun run test:e2e
+
+  publish:
+    if: github.repository == 'agentuse/agentuse' && github.event_name == 'push'
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write # mint the OIDC token npm exchanges for a publish grant
+      contents: write # create the GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup
+
+      # Trusted publishing needs npm >= 11.5.1; setup-node ships an older one.
+      - run: npm install -g npm@latest
+
+      # `prepack` builds, so publish ships a build of the approved commit.
+      - run: bun scripts/release.ts publish
+
+      - run: bun scripts/release.ts finish
+        env:
+          GH_TOKEN: ${{ github.token }}
