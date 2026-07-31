@@ -55,40 +55,61 @@ function isBlockedProjectPath(projectRoot: string, resolved: string): boolean {
     || (segments[0] === '.agentuse' && (segments[1] === 'store' || segments[1] === 'sessions' || segments[1] === 'env'));
 }
 
-/** Explicit artifact paths + media paths mentioned in payload prose, deduped. */
-export function collectGateArtifactPaths(input: Record<string, unknown>): string[] {
-  const out: string[] = [];
+interface GateArtifactCandidate {
+  path: string;
+  /** Declared as review material (fail the gate if it cannot be snapshotted)
+   *  vs. merely parsed out of a command string (best-effort). */
+  required: boolean;
+}
+
+/**
+ * Explicit artifact paths + media paths mentioned in payload prose, deduped.
+ *
+ * `changes[].content` is the command the reviewer is approving to RUN, so a
+ * media path in there is as often the command's OUTPUT as its input. Those are
+ * collected best-effort: shown when the bytes already exist, skipped when they
+ * do not. Everything else is review material and stays fail-closed.
+ */
+function collectGateArtifactCandidates(input: Record<string, unknown>): GateArtifactCandidate[] {
+  const out: GateArtifactCandidate[] = [];
   const seen = new Set<string>();
-  const push = (raw: unknown) => {
+  const push = (raw: unknown, required: boolean) => {
     if (typeof raw !== 'string') return;
     const p = raw.trim().replace(/^\.\//, '');
+    // First mention wins, so a path named in prose AND in a command stays required.
     if (!p || seen.has(p)) return;
     seen.add(p);
-    out.push(p);
+    out.push({ path: p, required });
   };
 
-  push(input.artifact_path);
-  if (Array.isArray(input.artifact_paths)) for (const p of input.artifact_paths) push(p);
+  push(input.artifact_path, true);
+  if (Array.isArray(input.artifact_paths)) for (const p of input.artifact_paths) push(p, true);
 
-  const texts: string[] = [];
+  const texts: { text: string; required: boolean }[] = [];
   for (const key of ['summary', 'draft', 'context', 'risk'] as const) {
-    if (typeof input[key] === 'string') texts.push(input[key] as string);
+    if (typeof input[key] === 'string') texts.push({ text: input[key] as string, required: true });
   }
   if (Array.isArray(input.changes)) {
     for (const change of input.changes) {
       const content = (change as Record<string, unknown> | null)?.content;
-      if (typeof content === 'string') texts.push(content);
+      if (typeof content === 'string') texts.push({ text: content, required: false });
     }
   }
-  for (const text of texts) {
+  // Prose first so a path shared with a command is classified as required.
+  for (const { text, required } of [...texts].sort((a, b) => Number(b.required) - Number(a.required))) {
     for (const match of text.matchAll(PAYLOAD_MEDIA_PATH_RE)) {
       const raw = match[0];
       // URL host segment, not a local path.
       if (raw.startsWith('//') || (match.index !== undefined && text[match.index - 1] === ':')) continue;
-      push(raw);
+      push(raw, required);
     }
   }
   return out;
+}
+
+/** Explicit artifact paths + media paths mentioned in payload prose, deduped. */
+export function collectGateArtifactPaths(input: Record<string, unknown>): string[] {
+  return collectGateArtifactCandidates(input).map((c) => c.path);
 }
 
 /** Resolve the on-disk session dir (`<storage>/session/<id>-<agent>`) by id. */
@@ -120,7 +141,7 @@ export async function snapshotGateArtifacts(
   sessionId: string,
   input: Record<string, unknown>
 ): Promise<GateArtifactSnapshot[]> {
-  const candidates = collectGateArtifactPaths(input);
+  const candidates = collectGateArtifactCandidates(input);
   if (candidates.length === 0) return [];
   const sessionDir = await findSessionDir(projectRoot, sessionId);
   if (!sessionDir) {
@@ -131,7 +152,7 @@ export async function snapshotGateArtifacts(
   const snapshots: GateArtifactSnapshot[] = [];
   const failures: string[] = [];
   const realProjectRoot = await fs.realpath(projectRoot);
-  for (const rel of candidates) {
+  for (const { path: rel, required } of candidates) {
     try {
       const resolved = path.resolve(projectRoot, rel);
       if (!isPathInside(projectRoot, resolved)) {
@@ -167,6 +188,13 @@ export async function snapshotGateArtifacts(
       snapshots.push({ path: rel, hash, ext, bytes: content.length });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (!required) {
+        // Command-only path: nothing is displayed, so nothing mutable can be
+        // substituted. Blocking here would deadlock the common case of gating
+        // the very command that creates the file.
+        logger.debug(`gate-artifacts: skipping command-referenced ${rel}: ${message}`);
+        continue;
+      }
       logger.warn(`gate-artifacts: failed to snapshot ${rel}: ${message}`);
       failures.push(`${rel}: ${message}`);
     }

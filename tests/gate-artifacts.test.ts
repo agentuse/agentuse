@@ -60,6 +60,38 @@ describe('immutable gate artifacts', () => {
     })).rejects.toThrow('review/missing.txt');
   });
 
+  // Regression: gating the command that CREATES a file made the gate
+  // unopenable. The payload named tmp/note-diagram.png only inside the
+  // approved command, the snapshot could not find it, and the agent was stuck
+  // asking permission to write a file it was blocked from writing.
+  test('opens the gate when a command references media it has not created yet', async () => {
+    const snapshots = await snapshotGateArtifacts(projectRoot, sessionId, {
+      prompt: 'Approve generating this diagram?',
+      changes: [{ content: 'imagegen "a diagram" -o tmp/note-diagram.png --size 1024x1024' }],
+    });
+    expect(snapshots).toEqual([]);
+  });
+
+  test('still snapshots command-referenced media that already exists', async () => {
+    await mkdir(join(projectRoot, 'tmp'), { recursive: true });
+    await writeFile(join(projectRoot, 'tmp', 'note-diagram.png'), 'approved diagram bytes');
+
+    const [snapshot] = await snapshotGateArtifacts(projectRoot, sessionId, {
+      changes: [{ content: 'publish-note "text" tmp/note-diagram.png' }],
+    });
+    await writeFile(join(projectRoot, 'tmp', 'note-diagram.png'), 'swapped after approval');
+
+    const snapshotPath = await findGateSnapshotFile(projectRoot, sessionId, snapshot!.hash);
+    expect(await readFile(snapshotPath!, 'utf8')).toBe('approved diagram bytes');
+  });
+
+  test('keeps failing closed when prose promises media the reviewer cannot see', async () => {
+    await expect(snapshotGateArtifacts(projectRoot, sessionId, {
+      context: 'The diagram is at tmp/note-diagram.png',
+      changes: [{ content: 'imagegen "a diagram" -o tmp/note-diagram.png' }],
+    })).rejects.toThrow('tmp/note-diagram.png: file does not exist');
+  });
+
   test('refuses blocked project paths reached through in-project symlinks', async () => {
     await writeFile(join(projectRoot, '.env'), 'DOTENV_SECRET=shh');
     await mkdir(join(projectRoot, '.git'), { recursive: true });
