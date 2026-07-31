@@ -29,8 +29,14 @@ jobs:
   # without this guard a tag pushed there starts a second run on billed private
   # minutes that can only ever end in a failed publish. There is no workflow-level
   # `if`, so every job carries it.
+  #
+  # RELEASE_REHEARSAL is the deliberate exception: set it as a repository variable
+  # on agentuse-lab to run the gate there on real GitHub hardware without pushing
+  # anything public. It cannot unlock publishing, which stays pinned to the repo
+  # name below. A variable rather than an edit-and-revert, because a temporary
+  # loosening of a guard is exactly the kind of thing that stops being temporary.
   verify:
-    if: github.repository == 'agentuse/agentuse'
+    if: github.repository == 'agentuse/agentuse' || vars.RELEASE_REHEARSAL == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +63,7 @@ jobs:
   # so it is deliberately absent from publish's `needs`. A red X here is
   # information for the reviewer, not a stop sign.
   e2e:
-    if: github.repository == 'agentuse/agentuse'
+    if: github.repository == 'agentuse/agentuse' || vars.RELEASE_REHEARSAL == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -66,6 +72,10 @@ jobs:
       - run: npm install -g agent-browser
       - run: bun run test:e2e
 
+  # No rehearsal escape hatch here, on purpose. Publishing happens from the public
+  # repo or not at all: that is what npm's trusted publisher is bound to, and
+  # release.ts refuses to publish when package.json's repository disagrees with
+  # the repo it is running in.
   publish:
     if: github.repository == 'agentuse/agentuse' && github.event_name == 'push'
     needs: verify
