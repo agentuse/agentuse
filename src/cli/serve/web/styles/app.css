@@ -3379,7 +3379,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   flex-shrink: 0; white-space: nowrap;
   font-family: var(--mono); font-size: 12px; color: var(--fg); font-variant-numeric: tabular-nums;
 }
-.page-home .runbar-failed { color: var(--red); }
 .page-home .runbar-more {
   align-self: flex-start;
   padding: 0; border: 0; background: none; cursor: pointer;

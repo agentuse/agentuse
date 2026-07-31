@@ -302,11 +302,7 @@ function RunBarRow(props: { bar: AgentRuns; max: number }) {
           ))}
         </span>
       </span>
-      {/* Counts in text, so the outcome split never rides on color alone. */}
-      <span class="runbar-count" aria-hidden="true">
-        {bar.total}
-        {bar.counts.failed > 0 && <span class="runbar-failed"> · {bar.counts.failed} failed</span>}
-      </span>
+      <span class="runbar-count" aria-hidden="true">{bar.total}</span>
     </a>
   );
 }
