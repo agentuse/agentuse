@@ -1209,6 +1209,12 @@ async function runInternalWorker() {
 
   function sessionErrorFields(session: { status?: string; error?: { code?: string; message?: string } }) {
     if (!session.error) return {};
+    // Resuming or continuing a failed run flips the status back to running but
+    // leaves the old error on the record (it's kept as history for the session
+    // log). Only report it while the failure is still the session's current
+    // state, or every list row would keep showing a stale "failed" line under a
+    // run that is working again.
+    if (session.status !== undefined && session.status !== 'error') return {};
     return {
       ...(typeof session.error.code === 'string' && session.error.code ? { errorCode: session.error.code } : {}),
       ...(typeof session.error.message === 'string' && session.error.message ? { errorMessage: session.error.message } : {})
@@ -1760,6 +1766,12 @@ async function runInternalWorker() {
     const lastLogTime = logs.reduce((max, entry) => Math.max(max, entry.time ?? 0), 0);
     const errorTime = typeof (session.error as any).time === 'number' ? (session.error as any).time : undefined;
     const sessionTime = typeof session.time?.updated === 'number' ? session.time.updated : undefined;
+    // Anchor the marker at the moment the failure was recorded. Pinning it past
+    // the newest entry instead would drag it to the bottom of the feed of a run
+    // that has since been resumed, so the failure would keep re-appearing below
+    // work that happened after it. Older sessions stored no error time; those
+    // still fall back to "after everything else".
+    const time = errorTime ?? Math.max(lastLogTime, sessionTime ?? 0) + 1;
     return [
       ...logs,
       {
@@ -1767,7 +1779,7 @@ async function runInternalWorker() {
         type: 'session',
         status: 'error',
         title: 'Session failed',
-        time: Math.max(lastLogTime, errorTime ?? 0, sessionTime ?? 0) + 1,
+        time,
         details: {
           errorMessage: message
         }
