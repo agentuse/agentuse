@@ -2570,6 +2570,17 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
 .dialog-body .prefix {
   color: var(--cyan); opacity: 0.7; font-size: 13px; padding-top: 12px;
 }
+/* Sits under the textarea in the second grid column, telling the reviewer what
+   to write and why. Takes --muted-3 rather than --muted: this is the copy meant
+   to change behaviour (a silent reject teaches the agent nothing), so it must
+   not read quieter than the .dialog-description boilerplate above it. */
+.dialog-hint {
+  grid-column: 2;
+  margin: -2px 0 0;
+  color: var(--muted-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
 .remember-learning {
   grid-column: 2;
   display: grid;

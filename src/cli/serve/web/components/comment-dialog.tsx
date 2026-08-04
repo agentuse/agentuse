@@ -7,6 +7,12 @@ const COPY: Record<DecisionDialogMode, {
   title: string;
   body?: string;
   placeholder: string;
+  /** Rendered under the textarea: what to write and why it matters. Rejecting
+   *  in silence is the common case and the expensive one - the run is discarded
+   *  and the agent gets no signal, so the next run reproduces the same draft.
+   *  The hint lowers the bar deliberately: a fragment naming which part is off
+   *  beats the blank box people default to when they cannot articulate it. */
+  hint: string;
   submitLabel: string;
   submitClass: string;
   requireText: boolean;
@@ -14,6 +20,7 @@ const COPY: Record<DecisionDialogMode, {
   comment: {
     title: 'leave a comment',
     placeholder: 'explain your decision, ask for a tweak, or send context back to the agent',
+    hint: 'Name the part to change and what it should be instead. The agent applies your comment literally, so a specific note produces a specific fix.',
     submitLabel: 'Send comment',
     submitClass: 'primary',
     requireText: true,
@@ -21,7 +28,8 @@ const COPY: Record<DecisionDialogMode, {
   reject: {
     title: 'reject this request?',
     body: 'The agent will stop this approval flow and apply any configured rejected-state updates.',
-    placeholder: 'optional: tell the agent why this should be rejected',
+    placeholder: 'optional: which part is wrong is enough - the source, a fact, the angle, the tone',
+    hint: 'This is the only thing the agent learns from. Reject in silence and the next run drafts the same way. It does not have to be articulate: naming which part is off is enough, and even "cannot say, just wrong" tells it more than nothing.',
     submitLabel: 'Reject',
     submitClass: 'danger',
     requireText: false,
@@ -108,6 +116,7 @@ export function DecisionDialog(props: {
               }
             }}
           />
+          <p class="dialog-hint">{copy.hint}</p>
           {props.mode === 'comment' && props.allowRemember && (
             <div class="remember-learning">
               <label class="remember-toggle">
