@@ -45,13 +45,23 @@ describe('buildAutonomousAgentPrompt', () => {
   it('should add sub-agent specific instruction when isSubAgent is true', () => {
     const prompt = buildAutonomousAgentPrompt('Monday, January 1, 2025', true);
 
-    expect(prompt).toContain('Provide only essential summary when complete');
+    expect(prompt).toContain('You are a sub-agent');
   });
 
   it('should not include sub-agent instruction when isSubAgent is false', () => {
     const prompt = buildAutonomousAgentPrompt('Monday, January 1, 2025', false);
 
-    expect(prompt).not.toContain('Provide only essential summary when complete');
+    expect(prompt).not.toContain('You are a sub-agent');
+  });
+
+  it('tells a sub-agent to return its result in full, since a parent consumes it', () => {
+    const prompt = buildAutonomousAgentPrompt('Monday, January 1, 2025', true);
+
+    // The old wording ("provide only essential summary") left parents holding a
+    // précis of the data they delegated for — agentuse-lab#198.
+    expect(prompt).toMatch(/IN FULL/);
+    expect(prompt).toMatch(/no summarizing and no length ceiling/);
+    expect(prompt).not.toMatch(/only essential summary/);
   });
 
   it('should handle different date formats', () => {

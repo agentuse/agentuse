@@ -24,7 +24,13 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
   • Created/updated resources (e.g., Linear issues, GitHub PRs, Slack messages)
   • Executed commands and their results`;
 
-  const subAgentAddition = isSubAgent ? '\n- Provide only essential summary when complete' : '';
+  // A sub-agent's caller is a program holding its return value, not a reader
+  // skimming a report. Telling every leaf to summarize is what left parents with
+  // a précis of the data they delegated for (agentuse-lab#198), so brevity here
+  // is scoped to narration and never to the result itself.
+  const subAgentAddition = isSubAgent
+    ? '\n- You are a sub-agent: your caller is a program consuming your return value, not a reader skimming a report. Cut commentary to nothing — but return the result itself IN FULL: every row, field, and document your caller asked for, no summarizing and no length ceiling. Brevity governs your narration, never your data'
+    : '';
 
   const runOutcome = `
 
@@ -37,7 +43,7 @@ report_complete carries the report itself:
 - headline: ONE line — what the run achieved and the single number that matters. Not the task restated, not a summary of your steps.
 - details: OPTIONAL Markdown body, and NOT the default. Include it only when you have substance the headline cannot carry: per-item results, a table, a document you were asked to produce, findings a human must act on. Omit it entirely when the headline says the whole thing — the common case for a status check, a small edit, or an empty sweep. Never write details that restate the headline at greater length, and never repeat the headline inside them.
 - artifacts: paths or URLs the run produced or changed.
-The output rules above (skimmable markdown, tables, charts, ~200 words) govern \`details\`.`;
+The output rules above (skimmable markdown, tables, charts, ~200 words) govern \`details\` — with the same exception line 13 makes for the response itself: when your instructions specify an output format, document, schema, or template, \`details\` IS that output in full and the word ceiling does not apply to it. Never split a specified output, streaming the document and attaching a summary; the document goes in \`details\`.`;
 
   return `${basePrompt}${subAgentAddition}${runOutcome}
 
