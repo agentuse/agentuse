@@ -10,6 +10,30 @@ import { parseDurationMs } from '../utils/duration';
 import { findXmlToolMarkup } from '../runner/tool-call-repair';
 import { snapshotGateArtifacts } from '../session/gate-artifacts';
 
+/**
+ * Words that mean "this gate authorizes a response to something someone else
+ * wrote". Such a gate is unjudgeable without the original in front of the
+ * reviewer, so `reference.excerpt` is mandatory for it (see the superRefine
+ * below). Deliberately narrow: "post", "publish", and "send" are excluded
+ * because a fresh post or a cold email answers nothing and has no original.
+ */
+const RESPONSE_INTENT_RE = /\b(?:repl(?:y|ies|ying)|comment(?:ing)?|respond(?:ing)?|response|answer(?:ing)?|rebut(?:tal|ting)?)\b/i;
+
+/**
+ * Explicit elision markers only. A real post can legitimately trail off in an
+ * ellipsis, so a bare "..." is not evidence of truncation; a bracketed or
+ * parenthesized marker is the agent saying out loud that it cut the text.
+ */
+const TRUNCATION_MARKER_RE = /\[\s*(?:\.{3}|…|truncated|snip|abridged|full text|continues)[^\]]*\]|\(\s*(?:truncated|snipped|abridged|shortened|full text|continues)[^)]*\)/i;
+
+/** Every surface that states the gate's intent, minus the bodies being drafted. */
+function gateIntentText(val: {
+  prompt?: string | undefined;
+  changes?: Array<{ label?: string | undefined }> | undefined;
+}): string {
+  return [val.prompt ?? '', ...(val.changes ?? []).map((change) => change.label ?? '')].join('\n');
+}
+
 function parseTimeout(value?: string | number): number | undefined {
   if (value === undefined || value === '') return undefined;
   // Bare numbers are SECONDS, matching every other timeout field. (Before
@@ -90,7 +114,7 @@ export interface AwaitHumanDefaults {
 
 export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDefaults): Tool {
   return {
-    description: 'Suspend the current run while waiting for a reviewer decision or comment. The run resumes when a decision is submitted from the approval page or Approval API. Decide the SHAPE of the request first: a plain yes/no on one proposed action, or a pick among alternatives. A pick MUST carry its alternatives in `options` - that field is what renders the selector, so without it the reviewer gets an approve/reject card and no way to choose. Never present alternatives as prose, numbered blocks, or several `changes` entries and ask the reviewer to name their pick in a comment; that is a defect, not a formatting preference. The tool result carries the decision: `status` (approved/rejected/commented), optional `comment`, and (when you supplied `options`) `choice`, the id of the option the reviewer selected. Always branch on `choice` when present instead of parsing the comment. A human Comment is the revise-and-re-gate branch and takes precedence over missing-choice ambiguity: when its text supplies an actionable edit or replacement, apply it even if it names no option, then request approval again. Only an explicit request to cancel, abandon, or stop is terminal. A result with `source: "pre-review"` or `source: "gate-preflight"` is machine feedback, not a human rejection: revise the request and call await_human again.',
+    description: 'Suspend the current run while waiting for a reviewer decision or comment. The run resumes when a decision is submitted from the approval page or Approval API. Decide the SHAPE of the request first: a plain yes/no on one proposed action, or a pick among alternatives. A pick MUST carry its alternatives in `options` - that field is what renders the selector, so without it the reviewer gets an approve/reject card and no way to choose. Never present alternatives as prose, numbered blocks, or several `changes` entries and ask the reviewer to name their pick in a comment; that is a defect, not a formatting preference. The tool result carries the decision: `status` (approved/rejected/commented), optional `comment`, and (when you supplied `options`) `choice`, the id of the option the reviewer selected. Always branch on `choice` when present instead of parsing the comment. A human Comment is the revise-and-re-gate branch and takes precedence over missing-choice ambiguity: when its text supplies an actionable edit or replacement, apply it even if it names no option, then request approval again. Only an explicit request to cancel, abandon, or stop is terminal. A result with `source: "pre-review"` or `source: "gate-preflight"` is machine feedback, not a human rejection: revise the request and call await_human again. When the action responds to something someone else wrote - a reply, comment, answer, or response - `reference` is mandatory and its `excerpt` must hold the COMPLETE verbatim original, because the reviewer judges the response against it and must never have to open the link to read it.',
     inputSchema: z.object({
       prompt: z.string().describe('One short line: a direct yes/no question for the reviewer, or on a pick gate the single question the options answer. Do not put the content, headings, or lists here; use draft for that, and options for alternatives - never spell the choices out here.'),
       summary: z.string().optional().describe('ONE sentence: what is being decided, or on a pick gate what separates the alternatives. Rendered under "Why this request". Do NOT restate the candidate content, the reference, or the actions available to the reviewer - the card already shows all three, so repeating them just adds reading. Do not open with praise for the reviewer\'s earlier feedback. Omit entirely when the options and their descriptions already make the choice clear.'),
@@ -106,8 +130,8 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
         author: z.string().optional().describe('Who created the original, e.g. "Alexandra Griffon (CEO, BlueCargo)"'),
         title: z.string().optional().describe('Title or one-line descriptor of the original'),
         url: z.string().url().refine(isHttpUrl, 'must be an http(s) URL').optional().describe('Link to the original'),
-        excerpt: z.string().optional().describe('The quoted text of the original that the reviewer needs in order to judge the response')
-      }).optional().describe('The original item this action responds to (the post being commented on, the message being replied to, the document being amended). Rendered as a quoted card directly above the changes.'),
+        excerpt: z.string().optional().describe('The COMPLETE verbatim text of the original, copied as-is. Not a summary, not a paraphrase, not the first few lines: the reviewer judges the response against this text and must never have to open the URL to read what is being answered. Copy the whole post, message, or comment body. Never elide with "..." or "[truncated]"; if the original is genuinely long, include all of it anyway.')
+      }).optional().describe('The original item this action responds to (the post being commented on, the message being replied to, the document being amended). Rendered as a quoted card beside the changes. REQUIRED whenever the approved action is a response to something someone else wrote, and `excerpt` is required with it.'),
       draft_url: z.string().url().refine(isHttpUrl, 'must be an http(s) URL').optional().describe('URL to a non-primary draft artifact'),
       artifact_url: z.string().url().refine(isHttpUrl, 'must be an http(s) URL').optional().describe('External URL to the primary review artifact, such as a PR, hosted preview, or document'),
       artifact_path: z.string().optional().describe('Path, relative to the project root, to a local file artifact you created (e.g. .agentuse/artifacts/report.html). The reviewer can open it in a popup viewer. Prefer this over inlining long or HTML content into draft. For more than one file, use artifact_paths.'),
@@ -118,7 +142,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
         description: z.string().optional().describe('One or two sentences on what picking this option means. Rendered as Markdown on the option card. Keep the full detail in draft; this is the skim line.'),
         recommended: z.boolean().optional().describe('Mark exactly one option as your recommendation; it is preselected for the reviewer')
       })).min(2).optional().describe('When the decision is a pick among alternatives (candidates, variants, strategies) rather than a plain yes/no, list them here: the reviewer gets a single-select menu instead of having to type the pick into a comment. On approval the tool result carries the selected id as `choice`. Reject and comment stay available as escape hatches, so do not add "reject all" or "other" as options.'),
-      context: z.string().optional().describe('Only background the other fields do not already carry: constraints, inputs used, process notes. Never repeat the reference, changes, or summary content (no restating the target, URL, or revision story). Omit entirely when nothing extra remains. Rendered as Markdown.'),
+      context: z.string().optional().describe('Only background the other fields do not already carry: constraints, inputs used, process notes. Never repeat the reference, changes, or summary content (no restating the target, URL, or revision story). In particular, the original being responded to does NOT go here - it belongs in `reference.excerpt`, where the card renders it beside the response. Omit entirely when nothing extra remains. Rendered as Markdown.'),
       risk: z.string().optional().describe('ONE line, and only when approving causes something genuinely hard to undo: a public post, a payment, an email, a deletion. Name the real-world consequence ("this posts publicly and cannot be edited"), never AgentUse\'s internal gate, lease, or approval machinery - you cannot observe it and describing it misleads the reviewer. Do not restate UI state such as which option is preselected. Omit when the action is reversible.')
     }).superRefine((val, ctx) => {
       const optionIds = new Set<string>();
@@ -140,6 +164,42 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
             message: `optionId "${change.optionId}" does not reference an options[].id in this request`,
           });
         }
+      }
+
+      // A reviewer cannot judge a response without the thing being responded
+      // to. Agents routinely bury the original in `context` prose, elide it to
+      // a line, or ship a bare URL — each of which forces the human to leave
+      // the card, open the source, and rebuild the context the agent already
+      // had. These three rules make that unrepresentable.
+      const excerpt = val.reference?.excerpt?.trim() ?? '';
+      if (val.reference && !excerpt) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['reference', 'excerpt'],
+          message:
+            'reference.excerpt is required whenever reference is present: paste the COMPLETE verbatim text of the original ' +
+            '(post, message, comment, ticket) here. A reference carrying only an author, title, or url makes the reviewer ' +
+            'open the link to read what is being answered, which is the exact work the gate exists to save.',
+        });
+      } else if (!val.reference && RESPONSE_INTENT_RE.test(gateIntentText(val))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['reference'],
+          message:
+            'this gate approves a response to something, so it must carry reference: { author, url, excerpt } with the ' +
+            'COMPLETE verbatim text of the original in excerpt. Do not put the original in context or summary - the card ' +
+            'renders reference beside the response so the reviewer can judge both without opening the source. If you no ' +
+            'longer hold the original text, re-fetch it before requesting approval.',
+        });
+      }
+      if (excerpt && TRUNCATION_MARKER_RE.test(excerpt)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['reference', 'excerpt'],
+          message:
+            'reference.excerpt is truncated (it contains an elision marker). Include the original in full, however long it ' +
+            'is - a reviewer who has to open the link for the rest of the text is back to doing the reading by hand.',
+        });
       }
 
       // Approval cards are the one surface where XML-drifted input fails

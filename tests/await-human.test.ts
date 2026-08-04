@@ -163,6 +163,53 @@ describe('await_human approval URL', () => {
     }).success).toBe(false);
   });
 
+  it('requires the verbatim original on any gate that approves a response', () => {
+    const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
+    const schema = tool.inputSchema as { safeParse: (v: unknown) => { success: boolean } };
+
+    // a reply gate without the original is unjudgeable without leaving the card
+    expect(schema.safeParse({
+      prompt: 'Approve this LinkedIn comment on Tom Langridge\'s post?',
+      changes: [{ label: 'Comment to post', content: 'The exact comment text' }],
+      context: 'Original post: agents made 47 unauthorized decisions...',
+    }).success).toBe(false);
+
+    // the same gate passes once the original travels in reference.excerpt
+    expect(schema.safeParse({
+      prompt: 'Approve this LinkedIn comment on Tom Langridge\'s post?',
+      changes: [{ label: 'Comment to post', content: 'The exact comment text' }],
+      reference: {
+        author: 'Tom Langridge (Co-Founder, Fast.io)',
+        url: 'https://www.linkedin.com/feed/update/x/',
+        excerpt: 'Our agents made 47 unauthorized decisions last month. Nobody has solved this.',
+      },
+    }).success).toBe(true);
+
+    // a fresh post answers nothing, so it needs no reference
+    expect(schema.safeParse({
+      prompt: 'Which version of today\'s X post should go out?',
+      options: [{ id: 'a', label: 'With the closing line' }, { id: 'b', label: 'Without it' }],
+    }).success).toBe(true);
+
+    // a reference that carries only a link is the failure this rule exists for
+    expect(schema.safeParse({
+      prompt: 'Approve this reply?',
+      reference: { author: '@someone', url: 'https://x.com/someone/status/1' },
+    }).success).toBe(false);
+
+    // an elided original is no better than a missing one
+    expect(schema.safeParse({
+      prompt: 'Approve this reply?',
+      reference: { excerpt: 'The first two lines of the post [truncated, full text at the link]' },
+    }).success).toBe(false);
+
+    // a real post may legitimately trail off; only explicit markers count
+    expect(schema.safeParse({
+      prompt: 'Approve this reply?',
+      reference: { excerpt: 'and then it just kept going...' },
+    }).success).toBe(true);
+  });
+
   it('defines actionable comments as revise-and-re-gate before choice ambiguity', () => {
     const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
     const description = tool.description ?? '';
@@ -212,6 +259,7 @@ describe('await_human approval URL', () => {
 
     expect(schema.safeParse({
       prompt: 'Pick a reply?',
+      reference: { author: '@someone', excerpt: 'The original post, in full.' },
       options,
       changes: [
         { content: 'birdc reply 1 "A"', displayContent: 'A', optionId: 'a' },

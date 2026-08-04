@@ -1941,6 +1941,21 @@ a, button, select, summary, label, input, textarea,
 }
 .approval-link:hover { border-bottom-style: solid; }
 
+/* Original ↔ response, side by side. A reply gate is a comparison, so the two
+   halves share one row on anything wide enough to hold them and stack in
+   reading order (original first) on phones, where the review actually happens
+   most often. */
+.approval-compare {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+@media (min-width: 760px) {
+  .approval-compare {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
 /* the quoted original an approval action responds to */
 .approval-reference-quote {
   border-left: 3px solid var(--line-strong);
@@ -1957,7 +1972,25 @@ a, button, select, summary, label, input, textarea,
 }
 .approval-reference-author { color: var(--fg); font-size: 13px; font-weight: 600; }
 .approval-reference-title { color: var(--muted-3); font-size: 12px; }
-.approval-reference-excerpt { color: var(--muted-3); font-style: italic; }
+/* The original is read in full, not skimmed: body typography, not the muted
+   italic caption it used to be. Reviewers were opening the source link because
+   this was styled as a footnote. */
+.approval-reference-excerpt {
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.65;
+  width: 100%;
+}
+/* A long original must not push the response off-screen when the two are meant
+   to be compared: it scrolls in place, still complete, still beside the reply.
+   Only while the columns are actually side by side - once stacked, a nested
+   scroll box inside the page scroll is worse than a tall quote. */
+@media (min-width: 760px) {
+  .approval-compare .approval-reference-excerpt {
+    max-height: 26em;
+    overflow-y: auto;
+  }
+}
 .approval-reference-quote .approval-link { font-size: 12px; }
 
 /* verbatim on-approval actions: the skim target of the card */

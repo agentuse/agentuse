@@ -158,7 +158,7 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     const marker = path.join(projectRoot, 'ghost-marker.txt');
     const { model, calls } = makeModel([
       turn([
-        toolCallPart('gate-1', 'await_human', { prompt: 'Approve this reply?' }),
+        toolCallPart('gate-1', 'await_human', { prompt: 'Approve this action?' }),
         toolCallPart('bash-1', 'tools__bash', { command: `touch ${marker}` }),
       ]),
     ]);
@@ -192,6 +192,9 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     const { model, calls } = makeModel([
       turn([toolCallPart('gate-1', 'await_human', {
         prompt: 'Approve this reply?',
+        // A response gate must carry the original it answers (await-human.ts
+        // rejects one that does not), so the payload here mirrors production.
+        reference: { author: '@someone', excerpt: 'The original post, in full.' },
         changes: [{ label: 'Reply', content: 'Looks good to me.' }],
       })]),
       turn([toolCallPart('bash-1', 'tools__bash', { command: 'echo gate-state-cleared' })]),
@@ -224,7 +227,7 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     // the lease: an allowed-but-ungated sibling can no longer leak beside a gate.
     const { model, calls } = makeModel([
       turn([
-        toolCallPart('gate-1', 'await_human', { prompt: 'Approve this reply?' }),
+        toolCallPart('gate-1', 'await_human', { prompt: 'Approve this action?' }),
         toolCallPart('bash-1', 'tools__bash', { command: 'echo hello' }),
       ]),
     ]);

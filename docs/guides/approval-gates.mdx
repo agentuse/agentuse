@@ -179,7 +179,7 @@ The session page shows the best available review details from the agent:
 
 - `prompt`: the reviewer-facing decision prompt
 - `changes`: the exact actions taken on approval, one `{ label, content }` entry per discrete action. Each renders as a highlighted "On approval" box with a copy button and character count, so the reviewer skims the verbatim payload first
-- `reference`: the original item the action responds to (`{ label, author, title, url, excerpt }`), such as the post being commented on or the message being replied to. Renders as a quoted card directly above the changes
+- `reference`: the original item the action responds to (`{ label, author, title, url, excerpt }`), such as the post being commented on or the message being replied to. On a wide screen it renders in a column beside the changes, so the reviewer reads original and response together; on a narrow one it stacks above them
 - `options`: two or more choices for the reviewer, each with an `id`, `label`,
   and optional `description` / `recommended`. The session page renders a
   single-choice picker before the decision controls. On approval, the selected
@@ -192,6 +192,23 @@ The session page shows the best available review details from the agent:
 - `context`: background the other fields do not already carry (constraints, inputs used, process notes); agents are steered to omit it rather than repeat the reference, changes, or summary
 - `risk`: known risks, unresolved questions, or reviewer attention areas
 - Session logs before and after the decision
+
+### The original is mandatory on a response gate
+
+When the gate approves a reply, comment, answer, or any other response to
+something someone else wrote, `reference` is required and its `excerpt` must
+carry the **complete verbatim original**, not a summary and not the first few
+lines. The schema rejects three shapes that force the reviewer to leave the
+card and open the source:
+
+- a response gate with no `reference` at all (putting the original in `context`
+  prose does not count)
+- a `reference` that carries an author, title, or `url` but no `excerpt`
+- an `excerpt` with an explicit elision marker such as `[truncated]` or
+  `(full text at the link)`
+
+A gate for a *fresh* post, email, or document is unaffected: it answers nothing,
+so it has no original to quote.
 
 Reviewer actions are fixed:
 

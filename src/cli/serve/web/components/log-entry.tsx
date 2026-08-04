@@ -150,8 +150,8 @@ function CommandDetail(props: { change: ApprovalChange }) {
   );
 }
 
-/** The original being responded to, quoted above the changes so the reviewer
- *  reads original → reply in natural order. */
+/** The original being responded to, quoted beside (or above, when narrow) the
+ *  changes so the reviewer judges original ↔ reply without leaving the card. */
 function ReferenceBlock(props: { reference: ApprovalReference }) {
   const ref = props.reference;
   return (
@@ -433,8 +433,21 @@ function ApprovalDetailCard(props: {
   return (
     <div class="approval-card">
       {details.prompt && <div class="approval-question"><InlineMarkdown value={details.prompt} /></div>}
-      {details.reference && <ReferenceBlock reference={details.reference} />}
-      {standaloneChanges.length > 0 && <ChangesBlock changes={standaloneChanges} options={options} />}
+      {/* Reply gates are read as a comparison, not a sequence: the reviewer's
+          real question is "does this answer that?". Pairing the two columns
+          puts both halves in one glance. A pick gate keeps them stacked, since
+          the response there lives in the options menu, not in changes. */}
+      {details.reference && standaloneChanges.length > 0 && options.length === 0 ? (
+        <div class="approval-compare">
+          <ReferenceBlock reference={details.reference} />
+          <ChangesBlock changes={standaloneChanges} options={options} />
+        </div>
+      ) : (
+        <>
+          {details.reference && <ReferenceBlock reference={details.reference} />}
+          {standaloneChanges.length > 0 && <ChangesBlock changes={standaloneChanges} options={options} />}
+        </>
+      )}
       {(artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0) && (
         <section class="approval-section approval-artifact">
           <div class="approval-section-title">{artifactPaths.length + snapshotOnlyPaths.length + detectedImagePaths.length > 1 ? 'Artifacts' : 'Artifact'}</div>
