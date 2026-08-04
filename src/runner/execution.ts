@@ -30,6 +30,7 @@ import { stripInlineMediaData } from '../tools/media.js';
 import { messagesContainInlineMedia } from '../session/media-cache.js';
 import { stripToolBlocks, hasReasoningParts, lastAssistantMessage } from '../session/message-utils';
 import { OUTCOME_NUDGE_PROMPT, shouldRequestOutcome } from './outcome';
+import { REPORT_COMPLETE_TOOL } from '../tools/report-outcome.js';
 import type { RunOutcome } from '../tools/report-outcome.js';
 
 // Constants
@@ -640,6 +641,24 @@ export async function* executeAgentCore(
     return used > 0 && used >= contextManager.compactionThresholdTokens();
   };
 
+  // `stopWhen` predicate: end the run the moment report_complete lands. That
+  // call IS the final answer, so the step the SDK would otherwise run next has
+  // nothing left to say — it costs a full model round-trip (seconds, and the
+  // whole context re-sent) to produce either silence or a duplicate of the
+  // report. The tool executed before this runs, so its result is still streamed
+  // and journaled.
+  //
+  // Deliberately NOT report_incomplete: that path is told to finish bookkeeping
+  // after declaring, so it must keep stepping.
+  const stopOnDeliveredOutcome = ({ steps }: { steps: Array<{ content?: unknown }> }): boolean => {
+    const content = steps[steps.length - 1]?.content;
+    if (!Array.isArray(content)) return false;
+    return content.some((part: any) =>
+      (part?.type === 'tool-result' || part?.type === 'tool-call') &&
+      part?.toolName === REPORT_COMPLETE_TOOL
+    );
+  };
+
   // Set once an await_human gate opens in a stream: from that point every sibling
   // tool call in the same turn is barrier-denied (never executed) and the model is
   // told to re-issue after approval. Function-scoped so the tool-call yield sites
@@ -737,8 +756,8 @@ export async function* executeAgentCore(
       // native control (Anthropic thinking budget / OpenAI reasoningEffort).
       ...(reasoning && { reasoning }),
       stopWhen: contextManager
-        ? [isStepCount(remainingSteps), stopForCompaction, stopOnSuspend]
-        : [isStepCount(remainingSteps), stopOnSuspend],
+        ? [isStepCount(remainingSteps), stopForCompaction, stopOnSuspend, stopOnDeliveredOutcome]
+        : [isStepCount(remainingSteps), stopOnSuspend, stopOnDeliveredOutcome],
       abortSignal: effectiveAbortSignal,
       // Deterministic fix for the XML-drift failure mode (fields smuggled into
       // neighboring strings as <parameter> markup); anything else falls through
