@@ -4,6 +4,7 @@ import {
   createReportIncompleteTool,
   normalizeHeadline,
   composeFinalOutput,
+  composeSubagentResult,
   stripLeadingOutcomeLine,
   formatOutcomeLine,
   MAX_HEADLINE_LENGTH,
@@ -266,6 +267,89 @@ describe('stripLeadingOutcomeLine', () => {
 
   it('leaves an ordinary report alone', () => {
     expect(stripLeadingOutcomeLine('## Report\n\nbody', 'Posted 10/10')).toBe('## Report\n\nbody');
+  });
+});
+
+describe('composeSubagentResult', () => {
+  it('hands the parent the child\'s report and its verdict', () => {
+    const result = composeSubagentResult({
+      agent: 'leaf',
+      outcome: { complete: { headline: 'Checked 3 files; 1 stale', details: '| file | status |' } },
+      text: ''
+    });
+
+    expect(result.output).toBe('✅ Complete: Checked 3 files; 1 stale\n\n| file | status |');
+    expect(result.metadata).toEqual({ agent: 'leaf', headline: 'Checked 3 files; 1 stale' });
+  });
+
+  it('carries the artifacts a child produced', () => {
+    const result = composeSubagentResult({
+      agent: 'leaf',
+      outcome: { complete: { headline: 'Shipped', artifacts: ['/tmp/a.txt', 'https://example.com/pr/1'] } },
+      text: ''
+    });
+
+    expect(result.metadata.artifacts).toEqual(['/tmp/a.txt', 'https://example.com/pr/1']);
+  });
+
+  it('leads with the blocker when the child could not deliver', () => {
+    const result = composeSubagentResult({
+      agent: 'leaf',
+      outcome: { incomplete: { reason: 'Substack session logged out' } },
+      text: ''
+    });
+
+    // Not the old "completed without text response", which read as success.
+    expect(result.output).toBe('⚠️ Incomplete: Substack session logged out');
+    expect(result.metadata.incomplete).toBe('Substack session logged out');
+    expect(result.metadata.headline).toBeUndefined();
+  });
+
+  it('keeps a blocked child\'s prose under its blocker, without doubling the line', () => {
+    const result = composeSubagentResult({
+      agent: 'leaf',
+      outcome: { incomplete: { reason: 'Login died' } },
+      text: '⚠️ Incomplete: Login died\n\nTried twice, both 401.'
+    });
+
+    expect(result.output).toBe('⚠️ Incomplete: Login died\n\nTried twice, both 401.');
+    expect(result.output.match(/Incomplete:/g)).toHaveLength(1);
+  });
+
+  it('lets a blocker outrank a headline the child also declared', () => {
+    const result = composeSubagentResult({
+      agent: 'leaf',
+      outcome: {
+        complete: { headline: 'Posted 3/10' },
+        incomplete: { reason: 'Rate limited after 3' }
+      },
+      text: ''
+    });
+
+    expect(result.output).toBe('⚠️ Incomplete: Rate limited after 3');
+    expect(result.metadata.headline).toBeUndefined();
+  });
+
+  it('falls back to streamed prose when the child declared nothing', () => {
+    expect(composeSubagentResult({ agent: 'leaf', outcome: {}, text: 'the old-style report' }))
+      .toEqual({ output: 'the old-style report', metadata: { agent: 'leaf' } });
+  });
+
+  it('never hands the parent an empty result', () => {
+    expect(composeSubagentResult({ agent: 'leaf' }).output)
+      .toBe('Sub-agent completed without text response');
+  });
+
+  it('re-splits an already-composed result without doubling it (the resume path)', () => {
+    const complete = { headline: 'Posted 10/10' };
+    // What runAgent hands back after a human clears the child's gate.
+    const alreadyComposed = composeFinalOutput(complete, 'body from the child');
+
+    const result = composeSubagentResult({ agent: 'leaf', outcome: { complete }, text: alreadyComposed });
+
+    expect(result.output).toBe('✅ Complete: Posted 10/10\n\nbody from the child');
+    expect(result.output.match(/✅ Complete:/g)).toHaveLength(1);
+    expect(result.metadata.headline).toBe('Posted 10/10');
   });
 });
 

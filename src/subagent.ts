@@ -25,7 +25,7 @@ import { toErrorMessage } from './utils/error-message';
 import { usageToAssistantTokens } from './session/usage';
 import { resolveMaxSteps } from './utils/config';
 import { resolveVerifyPlacements, withGateVerify } from './verify/gate';
-import { composeFinalOutput } from './tools/report-outcome.js';
+import { composeSubagentResult } from './tools/report-outcome.js';
 
 // Constants
 const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
@@ -510,21 +510,20 @@ export async function createSubAgentTool(
           }
 
           // The child's own verdict, so the parent can act on the outcome
-          // without re-reading (or re-summarizing) the whole report body.
-          // Absent when the child never called the outcome tools.
-          const subagentComplete = subagentIncomplete ? undefined : loadedTools.runOutcome.complete;
+          // without re-reading (or re-summarizing) the whole report body. Same
+          // rule as a top-level run: the child's report_complete IS its report,
+          // and its streamed prose is the fallback. Shared with the resume path
+          // (completeSubagentBookmark) so both hand the parent one shape.
+          const composed = composeSubagentResult({
+            agent: agent.name,
+            outcome: loadedTools.runOutcome,
+            text: result.text
+          });
 
           return {
-            // Same rule as a top-level run: the child's report_complete IS its
-            // report, and its streamed prose is the fallback.
-            output: composeFinalOutput(subagentComplete, result.text) || 'Sub-agent completed without text response',
+            output: composed.output,
             metadata: {
-              agent: agent.name,
-              ...(subagentComplete && {
-                headline: subagentComplete.headline,
-                ...(subagentComplete.artifacts?.length && { artifacts: subagentComplete.artifacts }),
-              }),
-              ...(subagentIncomplete && { incomplete: subagentIncomplete.reason }),
+              ...composed.metadata,
               toolCalls: result.toolCalls && result.toolCalls.length > 0 ? result.toolCalls : undefined,
               tokensUsed: result.usage?.totalTokens,
               duration  // Add duration in ms to metadata

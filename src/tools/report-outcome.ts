@@ -133,6 +133,66 @@ export function composeFinalOutput(
 }
 
 /**
+ * What a sub-agent tool hands back to its parent: the child's report as text,
+ * plus the structured verdict a parent can act on without re-reading the body.
+ */
+export interface SubagentResult {
+  output: string;
+  metadata: {
+    agent: string;
+    headline?: string;
+    artifacts?: string[];
+    incomplete?: string;
+  };
+}
+
+/**
+ * Compose that pair. One composer because a parent receives a child's result
+ * from two paths — a child that ran straight through, and a child resumed after
+ * a human cleared its approval gate — and they drifted: the resume path rebuilt
+ * the pair by hand and dropped the headline and artifacts, while a blocked child
+ * arrived as the meaningless "completed without text response" with its reason
+ * reachable only in metadata. Both now read the child's verdict the same way.
+ *
+ * Also the shape the session view reads to render a sub-agent row, so a row can
+ * rely on `headline`/`artifacts` being present whenever the child declared them.
+ */
+export function composeSubagentResult(params: {
+  agent: string;
+  outcome?: RunOutcome | undefined;
+  text?: string | undefined;
+}): SubagentResult {
+  const text = params.text ?? '';
+  // Same precedence as classifyRunResult and the top-level run: a child that hit
+  // a real blocker is not complete, whichever call it happened to make last.
+  const incomplete = params.outcome?.incomplete;
+  const complete = incomplete ? undefined : params.outcome?.complete;
+
+  if (incomplete) {
+    // Lead with the blocker. Before this, a child that declared itself blocked
+    // and wrote no prose reached the parent as "completed without text
+    // response", which managers then repeated to the human as the status.
+    const opener = `⚠️ Incomplete: ${incomplete.reason}`;
+    const body = stripLeadingOutcomeLine(text, incomplete.reason);
+    return {
+      output: body ? `${opener}\n\n${body}` : opener,
+      metadata: { agent: params.agent, incomplete: incomplete.reason }
+    };
+  }
+
+  return {
+    output: composeFinalOutput(complete, text) || 'Sub-agent completed without text response',
+    metadata: {
+      agent: params.agent,
+      ...(complete && {
+        headline: complete.headline,
+        ...(complete.artifacts?.length && { artifacts: complete.artifacts })
+      })
+    }
+  };
+}
+
+/**
  * Drop a leading "✅ Complete: …" / "⚠️ Incomplete: …" line, or a bare repeat of
  * the headline, from streamed prose. Models trained on the old contract still
  * open their report with one.
