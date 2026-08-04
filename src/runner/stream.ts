@@ -222,6 +222,8 @@ export async function processAgentStream(
   let suspended = false;
   let suspendApprovalUrl: string | undefined;
   let hasTextSinceLastToolCall = false;
+  /** Report delivered by an outcome tool call, pending recording as text. */
+  let deliveredOutcome: string | undefined;
   const recorder = new SessionRecorder(options);
   const terminal = options?.quiet ? undefined : (options?.terminalPresenter ?? defaultTerminalPresenter);
 
@@ -429,8 +431,12 @@ export async function processAgentStream(
         {
           const outcomeLine = formatOutcomeLine(chunk.toolName!, chunk.toolInput);
           if (outcomeLine) {
-            const details = (chunk.toolInput as { details?: unknown } | undefined)?.details;
-            terminal?.outcome(outcomeLine, typeof details === 'string' ? details : undefined);
+            const rawDetails = (chunk.toolInput as { details?: unknown } | undefined)?.details;
+            const details = typeof rawDetails === 'string' && rawDetails.trim() ? rawDetails.trim() : undefined;
+            terminal?.outcome(outcomeLine, details);
+            // Held until the tool-call bookkeeping below has run, so the text
+            // part lands after the call it came from.
+            deliveredOutcome = details ? `${outcomeLine}\n\n${details}` : outcomeLine;
           } else {
             terminal?.toolStarted(chunk.toolName!, chunk.toolInput, chunk.isSubAgent);
           }
@@ -458,6 +464,20 @@ export async function processAgentStream(
             input: chunk.toolInput,
             startTime,
           });
+        }
+        // An outcome tool DELIVERS the run's answer instead of typing it, so
+        // record that answer as the assistant's text too. Without this the
+        // session holds only a tool call and every reader of session history
+        // (`sessions show`, the web session view, a resumed run) shows a run
+        // with no final output at all. Recorded after the tool part so history
+        // stays chronological: the call, then what it delivered.
+        if (deliveredOutcome) {
+          parts.push({ type: 'text', text: deliveredOutcome, timestamp: Date.now() });
+          hasTextOutput = true;
+          hasTextSinceLastToolCall = true;
+          recorder.textDelta(deliveredOutcome);
+          await recorder.finalizeStreaming();
+          deliveredOutcome = undefined;
         }
         break;
 
