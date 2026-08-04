@@ -629,6 +629,16 @@ class Logger {
     process.stdout.write(newline);
   }
 
+  /**
+   * The run's declared outcome (report_complete / report_incomplete). Routed
+   * through `response` so it lands on stdout beside streamed prose and clears
+   * the spinner the same way: when an agent delivers its report through the
+   * tool instead of writing it, this line IS the answer.
+   */
+  outcome(line: string, details?: string) {
+    this.response(details ? `${line}\n\n${details}\n` : `${line}\n`);
+  }
+
   error(message: string, error?: Error) {
     const errorMessage = error ? `${message}: ${error.message}` : message;
     // Mirror to the session log sink (if any) regardless of terminal level.

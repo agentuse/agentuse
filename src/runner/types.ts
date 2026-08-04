@@ -159,5 +159,5 @@ export interface RunAgentResult {
    * Absent when the agent never called the tool, so consumers must fall back to
    * `text`.
    */
-  complete?: { headline: string; artifacts?: string[] };
+  complete?: { headline: string; details?: string; artifacts?: string[] };
 }

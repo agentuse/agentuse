@@ -15,6 +15,8 @@ import { judgeOutput } from '../verify/judge.js';
 import type { CanonicalVerifyConfig } from '../verify/types.js';
 import { logger } from '../utils/logger.js';
 import type { processAgentStream } from './stream.js';
+import { composeFinalOutput } from '../tools/report-outcome.js';
+import type { RunOutcome } from '../tools/report-outcome.js';
 
 type StreamResult = Awaited<ReturnType<typeof processAgentStream>>;
 
@@ -92,10 +94,16 @@ export async function runVerifyLoop(params: {
   projectContext?: { projectRoot: string; stateRoot: string; cwd: string } | undefined;
   abortSignal?: AbortSignal | undefined;
   quiet?: boolean;
+  /**
+   * Live outcome slot. An agent that delivers via `report_complete` streams no
+   * prose, so judging `result.text` alone would judge an empty string. Read per
+   * attempt because a redo can call the tool again with a better answer.
+   */
+  runOutcome?: RunOutcome | undefined;
 }): Promise<VerifyLoopOutcome> {
   const {
     agent, config, task, initialResult, sessionManager, sessionID, agentId,
-    messageID, executeRedo, agentFilePath, projectContext, abortSignal, quiet
+    messageID, executeRedo, agentFilePath, projectContext, abortSignal, quiet, runOutcome
   } = params;
 
   const judgeName = config.judge ?? config.model ?? agent.config.model;
@@ -114,7 +122,7 @@ export async function runVerifyLoop(params: {
   for (let attempt = 0; ; attempt++) {
     if (!quiet) logger.info(`[Verify] Judging output (attempt ${attempt + 1} of ${config.maxRedos + 1})...`);
     const outcome = await judgeOutput({
-      input: { kind: 'output', task, output: latest.text ?? '', attempt },
+      input: { kind: 'output', task, output: composeFinalOutput(runOutcome?.complete, latest.text ?? ''), attempt },
       config,
       agentModel: agent.config.model,
       agentFilePath,

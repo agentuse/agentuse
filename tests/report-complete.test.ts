@@ -3,6 +3,9 @@ import {
   createReportCompleteTool,
   createReportIncompleteTool,
   normalizeHeadline,
+  composeFinalOutput,
+  stripLeadingOutcomeLine,
+  formatOutcomeLine,
   MAX_HEADLINE_LENGTH,
   type RunOutcome,
 } from '../src/tools/report-outcome';
@@ -21,6 +24,19 @@ describe('report_complete tool', () => {
     expect(outcome.complete).toEqual({ headline: 'Posted 10/10 connect replies; 10 of 20 budget left' });
     expect(typeof reply).toBe('string');
     expect(outcome.incomplete).toBeUndefined();
+  });
+
+  it('keeps a details body when given and omits the key when blank', async () => {
+    const withDetails: RunOutcome = {};
+    await (createReportCompleteTool(withDetails) as any).execute({
+      headline: 'Posted 10/10',
+      details: '  ## Threads\n\n- one  ',
+    });
+    expect(withDetails.complete?.details).toBe('## Threads\n\n- one');
+
+    const blank: RunOutcome = {};
+    await (createReportCompleteTool(blank) as any).execute({ headline: 'Posted 10/10', details: '   ' });
+    expect(blank.complete).toEqual({ headline: 'Posted 10/10' });
   });
 
   it('keeps artifacts when given and omits the key when empty', async () => {
@@ -188,8 +204,78 @@ describe('system prompt outcome contract', () => {
     expect(prompt).toContain('report_incomplete');
   });
 
-  it('puts the status line outside the guidance precedence ladder', () => {
+  it('puts the outcome call outside the guidance precedence ladder', () => {
     expect(prompt).toMatch(/runtime-owned/);
-    expect(prompt).toMatch(/never replaces or suppresses it/);
+    expect(prompt).toMatch(/never replaces the tool call/);
+  });
+
+  it('makes the call the answer and the details body optional', () => {
+    expect(prompt).toMatch(/That call IS your final answer/);
+    expect(prompt).toMatch(/OPTIONAL Markdown body, and NOT the default/);
+  });
+});
+
+describe('composeFinalOutput', () => {
+  it('falls back to streamed prose when no outcome was declared', () => {
+    expect(composeFinalOutput(undefined, 'the streamed report')).toBe('the streamed report');
+  });
+
+  it('renders headline plus details as the run output', () => {
+    expect(composeFinalOutput(
+      { headline: 'Posted 10/10', details: '## Threads\n\n- one\n- two' },
+      ''
+    )).toBe('✅ Complete: Posted 10/10\n\n## Threads\n\n- one\n- two');
+  });
+
+  it('is just the headline when the run had nothing more to say', () => {
+    expect(composeFinalOutput({ headline: 'Swept 40 files, nothing to act on' }, ''))
+      .toBe('✅ Complete: Swept 40 files, nothing to act on');
+  });
+
+  it('keeps a body the model streamed anyway instead of dropping it', () => {
+    expect(composeFinalOutput({ headline: 'Posted 10/10' }, 'the older-style report'))
+      .toBe('✅ Complete: Posted 10/10\n\nthe older-style report');
+  });
+
+  it('never doubles the status line when the model also typed one', () => {
+    const composed = composeFinalOutput(
+      { headline: 'Posted 10/10' },
+      '✅ Complete: Posted 10/10\n\n## Detail\n\nrow'
+    );
+
+    expect(composed).toBe('✅ Complete: Posted 10/10\n\n## Detail\n\nrow');
+    expect(composed.match(/✅ Complete:/g)).toHaveLength(1);
+  });
+
+  it('prefers structured details over streamed prose', () => {
+    expect(composeFinalOutput(
+      { headline: 'Done', details: 'structured body' },
+      'stale streamed body'
+    )).toBe('✅ Complete: Done\n\nstructured body');
+  });
+});
+
+describe('stripLeadingOutcomeLine', () => {
+  it('drops a leading incomplete line', () => {
+    expect(stripLeadingOutcomeLine('⚠️ Incomplete: login died\n\nbody', 'x')).toBe('body');
+  });
+
+  it('drops a bare echo of the headline', () => {
+    expect(stripLeadingOutcomeLine('Posted 10/10\n\nbody', 'Posted 10/10')).toBe('body');
+  });
+
+  it('leaves an ordinary report alone', () => {
+    expect(stripLeadingOutcomeLine('## Report\n\nbody', 'Posted 10/10')).toBe('## Report\n\nbody');
+  });
+});
+
+describe('formatOutcomeLine', () => {
+  it('renders each verdict and ignores every other tool', () => {
+    expect(formatOutcomeLine('report_complete', { headline: 'Posted 10/10' }))
+      .toBe('✅ Complete: Posted 10/10');
+    expect(formatOutcomeLine('report_incomplete', { reason: 'Login expired' }))
+      .toBe('⚠️ Incomplete: Login expired');
+    expect(formatOutcomeLine('tools__bash', { command: 'ls' })).toBeUndefined();
+    expect(formatOutcomeLine('report_complete', {})).toBeUndefined();
   });
 });

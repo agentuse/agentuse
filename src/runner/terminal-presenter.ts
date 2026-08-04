@@ -21,6 +21,12 @@ export interface TerminalPresenter {
   toolStarted(name: string, input: unknown, isSubAgent?: boolean): void;
   toolFinished(result: unknown, options?: TerminalToolResultOptions): void;
   warning(message: string): void;
+  /**
+   * The run's declared outcome, rendered in place of the generic tool call.
+   * `report_complete` delivers the report rather than writing it as prose, so
+   * without this the terminal would show a tool call and no report at all.
+   */
+  outcome(line: string, details?: string): void;
 }
 
 export class LoggerTerminalPresenter implements TerminalPresenter {
@@ -54,6 +60,10 @@ export class LoggerTerminalPresenter implements TerminalPresenter {
 
   warning(message: string): void {
     this.render(() => logger.warn(message));
+  }
+
+  outcome(line: string, details?: string): void {
+    this.render(() => logger.outcome(line, details));
   }
 }
 

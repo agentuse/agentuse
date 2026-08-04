@@ -24,6 +24,7 @@ import { runVerifyLoop } from './verify-loop';
 import { resolveVerifyPlacements } from '../verify/gate';
 import type { PreparedAgentExecution, RunAgentResult } from './types';
 import type { ModelMessage } from 'ai';
+import { composeFinalOutput } from '../tools/report-outcome.js';
 
 type PersistedSlackRunChannelHandle = {
   channel: string;
@@ -372,6 +373,9 @@ export async function runAgent(
           ...(agentFilePath !== undefined && { agentFilePath }),
           ...(projectContext !== undefined && { projectContext }),
           ...(abortSignal && { abortSignal }),
+          // Judge the real output: a run that delivered via report_complete
+          // streamed no prose for the judge to read.
+          ...(preparation.runOutcome && { runOutcome: preparation.runOutcome }),
           quiet
         });
         result = verifyOutcome.result;
@@ -505,7 +509,10 @@ export async function runAgent(
       status: incomplete ? 'failed' : 'completed',
       ...(incomplete && { incomplete }),
       ...(complete && { complete }),
-      text: result.text,
+      // report_complete IS the report, so its headline + details become the
+      // run's output for every consumer. Streamed prose is the fallback for a
+      // run that never called it.
+      text: composeFinalOutput(complete, result.text),
       ...(result.usage && { usage: result.usage }),
       ...(result.usageKind && { usageKind: result.usageKind }),
       toolCallCount: result.toolCalls?.length || 0,

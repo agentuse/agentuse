@@ -25,6 +25,7 @@ import { toErrorMessage } from './utils/error-message';
 import { usageToAssistantTokens } from './session/usage';
 import { resolveMaxSteps } from './utils/config';
 import { resolveVerifyPlacements, withGateVerify } from './verify/gate';
+import { composeFinalOutput } from './tools/report-outcome.js';
 
 // Constants
 const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
@@ -514,7 +515,9 @@ export async function createSubAgentTool(
           const subagentComplete = subagentIncomplete ? undefined : loadedTools.runOutcome.complete;
 
           return {
-            output: result.text || 'Sub-agent completed without text response',
+            // Same rule as a top-level run: the child's report_complete IS its
+            // report, and its streamed prose is the fallback.
+            output: composeFinalOutput(subagentComplete, result.text) || 'Sub-agent completed without text response',
             metadata: {
               agent: agent.name,
               ...(subagentComplete && {

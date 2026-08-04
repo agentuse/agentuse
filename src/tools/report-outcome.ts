@@ -20,7 +20,7 @@ import { z } from 'zod';
  */
 export interface RunOutcome {
   incomplete?: { reason: string };
-  complete?: { headline: string; artifacts?: string[] };
+  complete?: { headline: string; details?: string; artifacts?: string[] };
 }
 
 /** Longest headline we keep verbatim; past this it stops being skimmable. */
@@ -37,6 +37,28 @@ export function normalizeHeadline(headline: string): string {
   return oneLine.length > MAX_HEADLINE_LENGTH
     ? `${oneLine.slice(0, MAX_HEADLINE_LENGTH - 1).trimEnd()}…`
     : oneLine;
+}
+
+export const REPORT_COMPLETE_TOOL = 'report_complete';
+export const REPORT_INCOMPLETE_TOOL = 'report_incomplete';
+
+/**
+ * The one-line verdict to render where the agent declared it, or undefined for
+ * any other tool. The runtime prints this now, which is what lets the agent
+ * skip writing a report at all: the outcome is on screen either way.
+ *
+ * Display only — capped like a headline so a rambling reason cannot swallow the
+ * terminal. The full reason still travels on the error payload.
+ */
+export function formatOutcomeLine(toolName: string, input: unknown): string | undefined {
+  const data = (input ?? {}) as { headline?: unknown; reason?: unknown };
+  if (toolName === REPORT_COMPLETE_TOOL && typeof data.headline === 'string') {
+    return `✅ Complete: ${normalizeHeadline(data.headline)}`;
+  }
+  if (toolName === REPORT_INCOMPLETE_TOOL && typeof data.reason === 'string') {
+    return `⚠️ Incomplete: ${normalizeHeadline(data.reason)}`;
+  }
+  return undefined;
 }
 
 export function createReportIncompleteTool(outcome: RunOutcome): Tool {
@@ -59,29 +81,69 @@ export function createReportIncompleteTool(outcome: RunOutcome): Tool {
 export function createReportCompleteTool(outcome: RunOutcome): Tool {
   return {
     description:
-      'Declare that this run achieved its objective, and give the one-line headline every surface shows first (Slack, the session list, the run feed, and the parent when you are a sub-agent). ' +
-      'Call this once, just before your final report. A legitimately empty result still counts as complete (e.g. a sweep that found nothing to act on) — say so in the headline. ' +
+      'Declare that this run achieved its objective AND deliver its report. This call IS your final answer: the runtime renders `headline` + `details` as the run\'s output everywhere (terminal, Slack, the session list, the run feed, and the parent when you are a sub-agent). ' +
+      'Call it once, when the work is done, and then stop — do not also write the report as a normal message, or the reader gets it twice. ' +
+      'A legitimately empty result still counts as complete (e.g. a sweep that found nothing to act on): say so in the headline and leave details out. ' +
       'If the objective was blocked instead, call report_incomplete.',
     inputSchema: z.object({
       headline: z.string().describe(
-        'ONE line, no markdown heading, stating what the run achieved and the single number that matters (e.g. "Posted 10/10 connect replies, all verified; 10 of 20 daily budget left"). Not a restatement of the task, not a summary of your steps.'
+        'ONE line, no markdown heading, stating what the run achieved and the single number that matters (e.g. "Posted 10/10 connect replies, all verified; 10 of 20 daily budget left"). Not the task restated, not a summary of your steps.'
+      ),
+      details: z.string().optional().describe(
+        'Optional Markdown body rendered under the headline. Include it ONLY when you have substance the headline cannot carry: per-item results, a table, a document you were asked to produce, findings a human must act on. Do not repeat the headline here, do not recap your steps, and do not restate a file you already wrote — link it. Omit this entirely when the headline says the whole thing.'
       ),
       artifacts: z.array(z.string()).optional().describe(
         'Optional. Paths or URLs this run produced or changed (files written, PRs, issues, published posts). Callers use these instead of parsing your report.'
       )
     }),
-    execute: async ({ headline, artifacts }: { headline: string; artifacts?: string[] }) => {
+    execute: async ({ headline, details, artifacts }: { headline: string; details?: string; artifacts?: string[] }) => {
       // Last call wins, matching report_incomplete: an agent may refine the
       // headline once late bookkeeping changes the number.
       outcome.complete = {
         headline: normalizeHeadline(headline),
+        ...(details?.trim() ? { details: details.trim() } : {}),
         ...(artifacts?.length ? { artifacts } : {})
       };
-      // Deliberately does NOT say "now write your report". This call can arrive
-      // after the report is already written (the runtime asks for a missing
-      // verdict at the end of a run), and an instruction to write one there
-      // produced a second copy of the whole report.
-      return 'Recorded: this run will end marked complete with that headline. If you have not written your final report yet, write it now, opening with that same headline.';
+      // Deliberately does NOT ask for a report: this call already delivered it.
+      // Earlier wording here ("now write your final report") produced a second
+      // copy whenever the runtime asked for a missing verdict at the end of a run.
+      return 'Recorded and delivered — this is the run\'s output. Write nothing further.';
     }
   };
+}
+
+/**
+ * The run's final output: what every surface shows.
+ *
+ * `report_complete` is the primary path — its headline and details ARE the
+ * report. Streamed prose is the fallback for a run that never called it (and
+ * for a model that wrote its report the old way despite calling it, which is
+ * why an already-written body is kept rather than dropped).
+ */
+export function composeFinalOutput(
+  complete: { headline: string; details?: string } | undefined,
+  streamedText: string
+): string {
+  if (!complete) return streamedText;
+  const opener = `✅ Complete: ${complete.headline}`;
+  // Prefer the structured body. Fall back to prose the model streamed anyway,
+  // minus any status line it already wrote, so the opener is never doubled.
+  const body = complete.details?.trim() || stripLeadingOutcomeLine(streamedText, complete.headline);
+  return body ? `${opener}\n\n${body}` : opener;
+}
+
+/**
+ * Drop a leading "✅ Complete: …" / "⚠️ Incomplete: …" line, or a bare repeat of
+ * the headline, from streamed prose. Models trained on the old contract still
+ * open their report with one.
+ */
+export function stripLeadingOutcomeLine(text: string, headline: string): string {
+  const lines = text.split('\n');
+  let cut = 0;
+  while (cut < lines.length && !lines[cut]!.trim()) cut++;
+  const first = lines[cut]?.trim() ?? '';
+  const isStatusLine = /^(✅\s*Complete:|⚠️\s*Incomplete:)/.test(first);
+  const isHeadlineEcho = first.length > 0 && first === headline.trim();
+  if (!isStatusLine && !isHeadlineEcho) return text.trim();
+  return lines.slice(cut + 1).join('\n').trim();
 }

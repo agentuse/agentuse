@@ -17,6 +17,7 @@ import type { LiveToolOutputRelay } from './live-tool-output';
 import { LIVE_OUTPUT_INTERVAL_MS, LIVE_OUTPUT_METADATA_KEY } from '../tools/types';
 import { withoutToolIntent } from './tool-intent';
 import { defaultTerminalPresenter, type TerminalPresenter } from './terminal-presenter';
+import { formatOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from '../tools/report-outcome.js';
 
 type SlackRunChannelHandle = {
   channel: string;
@@ -422,7 +423,18 @@ export async function processAgentStream(
           args: chunk.toolInput,
           timestamp: Date.now()
         });
-        terminal?.toolStarted(chunk.toolName!, chunk.toolInput, chunk.isSubAgent);
+        // The outcome tools carry the run's answer, not a step of the work, so
+        // render the verdict (and any delivered report) instead of a raw tool
+        // call. The tool-call part above still lands in session history.
+        {
+          const outcomeLine = formatOutcomeLine(chunk.toolName!, chunk.toolInput);
+          if (outcomeLine) {
+            const details = (chunk.toolInput as { details?: unknown } | undefined)?.details;
+            terminal?.outcome(outcomeLine, typeof details === 'string' ? details : undefined);
+          } else {
+            terminal?.toolStarted(chunk.toolName!, chunk.toolInput, chunk.isSubAgent);
+          }
+        }
         if (options?.collectToolCalls) {
           toolCalls.push({ tool: chunk.toolName!, args: chunk.toolInput });
         }
@@ -559,6 +571,9 @@ export async function processAgentStream(
             ...(toolDuration !== undefined && { duration: toolDuration }),
             success: toolSuccess
           });
+        } else if (chunk.toolName === REPORT_COMPLETE_TOOL || chunk.toolName === REPORT_INCOMPLETE_TOOL) {
+          // Already rendered as the run's outcome at call time; the tool's
+          // bookkeeping acknowledgement is not something a reader needs.
         } else {
           terminal?.toolFinished(chunk.toolResult ?? chunk.toolResultRaw ?? 'No result', {
             ...(toolDuration !== undefined && { duration: toolDuration }),

@@ -9,7 +9,7 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
 - Tool calls in the same message run in PARALLEL, not in sequence. When one depends on another (a wait, a retry backoff, a command that must observe the first's effect), chain them in one bash call (\`sleep 90 && next-cmd\`) or issue the second in your next step. A \`sleep\` beside another call does not delay it
 - Emit NOTHING until you have your final result. No intermediate summaries, no progress updates, no "here's what I found so far"
 - Never echo/reproduce data read from tools — consume it silently and use it in your final output
-- Final output only: structured result → what changed → what to do next
+- Deliver through the outcome tool call described below, not as typed prose: structured result → what changed → what to do next
 - Keep it to a briefing, not the deliverable. ~200 words is the ceiling. Go longer only when your instructions call for the response itself to be a report, digest, or document, or when a table needs every row
   • If the run produced a file, artifact, issue, or PR, give the path or URL, then only what the reader cannot get by opening it: surprises, judgment calls, hazards. Never restate its contents
   • No preamble, no recap of the steps you took, no restating the task back
@@ -28,10 +28,16 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
 
   const runOutcome = `
 
-Run outcome — every run ends in exactly one of two states. Declare it with a tool call, then repeat it as your final output's first line:
-- Objective achieved (a legitimately empty result counts, e.g. a sweep that found nothing to act on): call report_complete with a one-line headline, then begin your final output with "✅ Complete: <that same headline>".
-- Objective NOT achievable (blocked precondition, dead login/session, unrecoverable dependency failure): call report_incomplete with a short reason, then begin your final output with "⚠️ Incomplete: <reason>". Still finish bookkeeping and produce your report as usual.
-Call exactly one of them, once, after your work is done and before your final output. The headline states what the run achieved and the single number that matters — not the task restated, not the steps you took. Never open with Complete when the core objective was skipped or failed; never call report_incomplete for an honestly-empty success.`;
+Run outcome — end every run with ONE tool call. That call IS your final answer:
+- Objective achieved (a legitimately empty result counts, e.g. a sweep that found nothing to act on): call report_complete.
+- Objective NOT achievable (blocked precondition, dead login/session, unrecoverable dependency failure): call report_incomplete with a short reason, after finishing any bookkeeping.
+Call exactly one, once, when the work is done — then STOP. The runtime renders that call as the run's output everywhere (terminal, Slack, session view, and the parent when you are a sub-agent), so a report typed after it reaches the reader twice. Never report Complete when the core objective was skipped or failed; never call report_incomplete for an honestly-empty success.
+
+report_complete carries the report itself:
+- headline: ONE line — what the run achieved and the single number that matters. Not the task restated, not a summary of your steps.
+- details: OPTIONAL Markdown body, and NOT the default. Include it only when you have substance the headline cannot carry: per-item results, a table, a document you were asked to produce, findings a human must act on. Omit it entirely when the headline says the whole thing — the common case for a status check, a small edit, or an empty sweep. Never write details that restate the headline at greater length, and never repeat the headline inside them.
+- artifacts: paths or URLs the run produced or changed.
+The output rules above (skimmable markdown, tables, charts, ~200 words) govern \`details\`.`;
 
   return `${basePrompt}${subAgentAddition}${runOutcome}
 
@@ -42,7 +48,7 @@ Guidance precedence — when guidance from different sources conflicts, the high
 4. Other reference files.
 Skills give you sensible defaults; a Learned Guideline or your own instructions override them. Do not let an elaborately-worded skill rule outweigh a higher-precedence instruction.
 
-Outside that ladder: the outcome tool call and the ✅/⚠️ first line are runtime-owned and always required. An output format in your agent instructions describes the report BENEATH that line; it never replaces or suppresses it, however complete its own template looks. Where a template disagrees with the formatting rules above, the template governs which facts to include, not whether to open with the status line.
+Outside that ladder: the outcome tool call is runtime-owned and always required. An output format in your agent instructions describes what belongs in \`details\`; it never replaces the tool call, however complete its own template looks. A template also never obliges you to fill a field whose answer this run is "none", "n/a", or a restatement of how the system is designed — drop those lines instead of padding them.
 
 Today's date: ${todayDate}`;
 }
