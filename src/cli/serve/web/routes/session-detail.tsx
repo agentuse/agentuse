@@ -3,7 +3,7 @@ import { useLocation, useRoute } from 'preact-iso';
 import type { ApprovalLogEntry, ApprovalPageInfo } from '../../types';
 import { Topbar } from '../components/topbar';
 import { LogEntry } from '../components/log-entry';
-import { LogContent } from '../components/content';
+import { InlineMarkdown, LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
 import { ContinuePanel } from '../components/continue-panel';
 import { LearningsPanel } from '../components/learnings-panel';
@@ -25,6 +25,7 @@ import {
   latestReviewerComment,
   logEntrySignature,
   sessionErrorText,
+  splitOutcomeHeadline,
 } from '../lib/format';
 import { brandName, pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
@@ -514,6 +515,12 @@ export default function SessionDetail() {
     }
     return undefined;
   }, [orderedLogs]);
+  // Lead the card with the verdict instead of burying it in the body markdown,
+  // where it renders smaller than the headings under it.
+  const finalOutcome = useMemo(
+    () => (finalText ? splitOutcomeHeadline(finalText) : { body: '' }),
+    [finalText]
+  );
   const toolCallCount = useMemo(
     () => orderedLogs.reduce((n, e) => n + (e.type === 'tool' ? 1 : 0), 0),
     [orderedLogs]
@@ -1240,7 +1247,14 @@ export default function SessionDetail() {
               )}
               {resultErrorText && <div class="result-error">{resultErrorText}</div>}
               {finalText ? (
-                <div class="result-body"><LogContent value={finalText} forceMarkdown /></div>
+                <>
+                  {finalOutcome.headline && (
+                    <p class="result-headline"><InlineMarkdown value={finalOutcome.headline} /></p>
+                  )}
+                  {finalOutcome.body && (
+                    <div class="result-body"><LogContent value={finalOutcome.body} forceMarkdown /></div>
+                  )}
+                </>
               ) : !resultErrorText ? (
                 <div class="result-empty">This run ended without a final response; the session log below has the details.</div>
               ) : null}

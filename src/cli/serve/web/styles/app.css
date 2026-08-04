@@ -1054,6 +1054,29 @@ a, button, select, summary, label, input, textarea,
   overflow-wrap: anywhere;
 }
 .page-approval-detail .result-empty { color: var(--muted-3); font-size: 13px; }
+
+/* The run's verdict, in one line. Outranks the `##` headings inside the report
+   body, so it reads as the answer and they read as its sections. The status
+   pill above already carries the ✅/⚠️ signal, which is why the composed line's
+   icon is stripped rather than repeated here. */
+.page-approval-detail .result-headline {
+  margin: 0;
+  color: var(--fg);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+/* Only a hairline when a body follows: a headline-only run should not trail off
+   into an empty rule. */
+.page-approval-detail .result-headline + .result-body {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
 .page-approval-detail .session-result .content-markdown,
 .page-approval-detail .session-result .content-code {
   padding: 0;
