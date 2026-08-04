@@ -5327,6 +5327,43 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   }
 }
 
+/* What the sub-agent delivered, under its card in the parent's log. Sits outside
+   .log-content so the verdict and the artifact list read whether or not the row
+   is expanded; only the report body below collapses with the row. */
+.page-approval-detail .subagent-outcome {
+  /* Pulled up against the card above so the two read as one unit rather than as
+     a card and an unrelated paragraph. */
+  margin: -6px 0 10px;
+  padding: 0 12px;
+}
+.page-approval-detail .subagent-verdict {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0;
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .subagent-verdict-mark { color: var(--green); flex: none; }
+.page-approval-detail .subagent-outcome.is-incomplete .subagent-verdict-mark { color: var(--amber); }
+.page-approval-detail .subagent-artifacts {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.page-approval-detail .subagent-artifacts li { overflow-wrap: anywhere; }
+.page-approval-detail .subagent-artifacts code { color: var(--muted-3); }
+.page-approval-detail .subagent-artifacts a { color: var(--cyan); }
+/* The child's report body, revealed with the row. */
+.page-approval-detail .subagent-report { margin-bottom: 8px; }
+
 /* clickable artifact tiles inside an approval card */
 .page-approval-detail .artifact-tiles {
   display: flex;

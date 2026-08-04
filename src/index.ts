@@ -7,6 +7,7 @@ import { isApprovalEnabled } from './runner/approval';
 import { isMockMode, resolveMockApprovalDecision } from './runner/mock-tools';
 import { extractToolIntent, withoutToolIntent } from './runner/tool-intent';
 import { LIVE_OUTPUT_METADATA_KEY } from './tools/types';
+import { composeSubagentResult, stripLeadingOutcomeLine } from './tools/report-outcome';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findStaleCascadeChild, describeStaleCascade, CASCADE_ORPHANED_CODE, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
 import { contextUsageFromSnapshot } from './session/usage';
 import { repairEscapedText } from './utils/display-text';
@@ -1151,6 +1152,14 @@ async function runInternalWorker() {
       bytes?: number;
       originalChars?: number;
     };
+    /** A completed sub-agent call's result as the child declared it (see
+     *  subagentResultFromState), so the parent's row reads on its own. */
+    subagentResult?: {
+      headline?: string;
+      incomplete?: string;
+      artifacts?: string[];
+      body?: string;
+    };
     /** A deliverable saved by `tools__artifact_save`, rendered as a viewable tile. */
     savedArtifact?: {
       url: string;
@@ -1656,6 +1665,39 @@ async function runInternalWorker() {
     return { url, path, ...(title ? { title } : {}), ...(group ? { group } : {}) };
   }
 
+  /**
+   * The child's own report, pulled off a completed `subagent__*` tool part so the
+   * parent's row can show what the sub-agent delivered without a click-through to
+   * the child session. Reads the shape composeSubagentResult writes: the verdict
+   * and artifact list from `metadata`, the body from the output text with the
+   * verdict line stripped (it becomes the row's headline instead of repeating).
+   *
+   * A child that never called an outcome tool still lands here: it has no
+   * headline, and its prose becomes the body.
+   */
+  function subagentResultFromState(state: any, tool?: string): ApprovalLogDetails['subagentResult'] {
+    if (!tool?.startsWith('subagent__')) return undefined;
+    const output = valueAsRecord(state?.output);
+    const metadata = valueAsRecord(output.metadata);
+    const text = typeof output.output === 'string' ? output.output : undefined;
+    if (text === undefined && Object.keys(metadata).length === 0) return undefined;
+
+    const headline = typeof metadata.headline === 'string' ? metadata.headline : undefined;
+    const incomplete = typeof metadata.incomplete === 'string' ? metadata.incomplete : undefined;
+    const artifacts = Array.isArray(metadata.artifacts)
+      ? metadata.artifacts.filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
+      : [];
+    const body = text ? stripLeadingOutcomeLine(text, incomplete ?? headline ?? '') : '';
+
+    if (!headline && !incomplete && artifacts.length === 0 && !body) return undefined;
+    return {
+      ...(headline && { headline }),
+      ...(incomplete && { incomplete }),
+      ...(artifacts.length > 0 && { artifacts }),
+      ...(body && { body }),
+    };
+  }
+
   function buildToolDetails(state: any, tool?: string): ApprovalLogDetails | undefined {
     const fields: ApprovalLogDetails = {};
     const usage = valueAsRecord(valueAsRecord(state?.metadata).modelStepUsage);
@@ -1705,8 +1747,17 @@ async function runInternalWorker() {
     }
 
     if (state?.status === 'completed') {
-      const output = formatApprovalLogValue(state.output);
-      if (output !== undefined) fields.output = output;
+      // A sub-agent's result is the child's whole report. Rendered as the raw
+      // `{output, metadata}` JSON dump it was unreadable, so the reviewer had to
+      // open the child's own session to learn what it did. Surface it structured
+      // instead and skip the dump.
+      const subagentResult = subagentResultFromState(state, tool);
+      if (subagentResult) {
+        fields.subagentResult = subagentResult;
+      } else {
+        const output = formatApprovalLogValue(state.output);
+        if (output !== undefined) fields.output = output;
+      }
       const artifact = toolOutputArtifactFromState(state);
       if (artifact) fields.toolOutputArtifact = artifact;
     } else if (state?.status === 'error') {
@@ -1926,13 +1977,29 @@ async function runInternalWorker() {
       state: {
         status: 'completed',
         input: part.state?.input ?? {},
-        output: {
-          output: childResult.text || 'Sub-agent completed without text response',
-          metadata: {
+        output: (() => {
+          // Same composer as the straight-through path (subagent.ts), so a child
+          // resumed after a human cleared its gate hands the parent the same
+          // shape. Rebuilding this pair by hand is what used to drop the child's
+          // headline and artifacts on this path alone. `childResult.text` is
+          // already composed by runAgent, so the composer sees a body it merely
+          // re-splits rather than an opener it would double.
+          const composed = composeSubagentResult({
             agent: childAgentName,
-            ...(childResult.usage?.totalTokens && { tokensUsed: childResult.usage.totalTokens }),
-          },
-        },
+            outcome: {
+              ...(childResult.complete && { complete: childResult.complete }),
+              ...(childResult.incomplete && { incomplete: childResult.incomplete }),
+            },
+            text: childResult.text,
+          });
+          return {
+            output: composed.output,
+            metadata: {
+              ...composed.metadata,
+              ...(childResult.usage?.totalTokens && { tokensUsed: childResult.usage.totalTokens }),
+            },
+          };
+        })(),
         time: { start, end: Date.now() },
       },
     } as any);

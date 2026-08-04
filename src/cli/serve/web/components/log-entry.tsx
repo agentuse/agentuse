@@ -579,6 +579,43 @@ function SubagentCard(props: { session: LogSubagentSession }) {
     : <div class="subagent-event">{inner}</div>;
 }
 
+/**
+ * What the sub-agent actually delivered, shown on the parent's own row: the
+ * child's one-line verdict and the artifacts it produced stay visible whether or
+ * not the row is expanded, since they are the reason a reader scans a manager's
+ * log at all. The report body expands with the row.
+ *
+ * Before this the row carried a status chip and a link and nothing else, so
+ * reading a manager's run meant opening every child session in turn.
+ */
+function SubagentOutcome(props: { result: NonNullable<ApprovalLogDetails['subagentResult']> }) {
+  const result = props.result;
+  const verdict = result.incomplete ?? result.headline;
+  const artifacts = result.artifacts ?? [];
+  if (!verdict && artifacts.length === 0) return null;
+  return (
+    <div class={`subagent-outcome${result.incomplete ? ' is-incomplete' : ''}`}>
+      {verdict && (
+        <p class="subagent-verdict">
+          <span class="subagent-verdict-mark" aria-hidden="true">{result.incomplete ? '⚠' : '✓'}</span>
+          <InlineMarkdown value={verdict} />
+        </p>
+      )}
+      {artifacts.length > 0 && (
+        <ul class="subagent-artifacts" aria-label="Artifacts produced by this sub-agent">
+          {artifacts.map((artifact) => (
+            <li key={artifact}>
+              {/^https?:\/\//i.test(artifact)
+                ? <a href={artifact} target="_blank" rel="noopener noreferrer">{artifact}</a>
+                : <code>{artifact}</code>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 const toolTokenFmt = new Intl.NumberFormat('en-US');
 
 function ToolTokenUsageStrip(props: { usage: NonNullable<ApprovalLogDetails['tokenUsage']> }) {
@@ -777,6 +814,7 @@ function LogEntryImpl(props: LogEntryProps) {
   const warnings = props.warnings ?? [];
   const isApprovalEntry = isApprovalDetails(entry);
   const savedArtifact = entry.details?.savedArtifact;
+  const subagentResult = entry.details?.subagentResult;
   // A saved-artifact row shows its tile inline; there's nothing to expand into.
   const expandable = entry.type === 'tool' && !isApprovalEntry && !savedArtifact;
   // A running tool opens itself (its live output is the point of watching), but
@@ -877,9 +915,13 @@ function LogEntryImpl(props: LogEntryProps) {
             it visible even when the row is collapsed; only the tool input/output
             below stays behind the expand toggle. */}
         {entry.subagentSession && <SubagentCard session={entry.subagentSession} />}
+        {subagentResult && <SubagentOutcome result={subagentResult} />}
         {savedArtifact && <SavedArtifactCard artifact={savedArtifact} sessionId={props.sessionId} token={props.token} />}
         <div class="log-content">
           {storeEvent && <StoreEventBlock event={storeEvent} />}
+          {subagentResult?.body && (
+            <div class="subagent-report"><LogContent value={subagentResult.body} forceMarkdown /></div>
+          )}
           {entry.details && (isApprovalEntry
             ? <ApprovalDetailCard
                 details={entry.details}

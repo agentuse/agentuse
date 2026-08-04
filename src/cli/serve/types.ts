@@ -309,6 +309,22 @@ export interface ApprovalLogDetails {
     bytes?: number;
     originalChars?: number;
   };
+  /**
+   * A completed sub-agent call's result, as the child declared it: the run's
+   * verdict, what it produced, and its report body. Rendered in the parent's
+   * row so a manager's log reads on its own, instead of forcing a click into
+   * the child session to find out what came back.
+   */
+  subagentResult?: {
+    /** One-line verdict from the child's `report_complete`. */
+    headline?: string;
+    /** Set instead of `headline` when the child declared itself blocked. */
+    incomplete?: string;
+    /** Paths and URLs the child produced or changed. */
+    artifacts?: string[];
+    /** The report body, verdict line already stripped. Markdown. */
+    body?: string;
+  };
   /** A deliverable saved by `tools__artifact_save`, rendered as a viewable tile linking to the artifact. */
   savedArtifact?: {
     url: string;
