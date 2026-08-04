@@ -11,7 +11,7 @@ import {
 } from '../skill/index.js';
 import { discoverSkills } from '../skill/discovery.js';
 import { createStore, createStoreTools, type Store } from '../store/index.js';
-import { createReportIncompleteTool, type RunOutcome } from '../tools/report-incomplete.js';
+import { createReportIncompleteTool, createReportCompleteTool, type RunOutcome } from '../tools/report-outcome.js';
 import { createSandbox, createSandboxTools, type SandboxInstance } from '../sandbox.js';
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
 import { getModelFromRegistry } from '../generated/models.js';
@@ -251,13 +251,16 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     }
   }
 
-  // Always-on run-outcome tool: lets any agent declare "ran clean but did not
-  // deliver" (blocked login, dead precondition) so the run ends error/INCOMPLETE
-  // instead of a misleading completed. The mutable ref is read by the caller
-  // after the stream finishes.
+  // Always-on run-outcome tools, one per verdict. `report_incomplete` lets any
+  // agent declare "ran clean but did not deliver" (blocked login, dead
+  // precondition) so the run ends error/INCOMPLETE instead of a misleading
+  // completed; `report_complete` carries the run's one-line headline for every
+  // surface that shows an outcome before the body. They share one mutable ref,
+  // read by the caller after the stream finishes.
   const runOutcome: RunOutcome = {};
   const outcomeTools: Record<string, Tool> = {
     report_incomplete: createReportIncompleteTool(runOutcome),
+    report_complete: createReportCompleteTool(runOutcome),
   };
 
   // Single ordered merge point for every tool source. New sources (e.g. a future

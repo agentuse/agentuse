@@ -6,7 +6,7 @@ import type { DoomLoopDetector } from '../tools/index.js';
 import type { SessionManager } from '../session';
 import type { ActiveContextUsage, ContextSnapshot, SessionTrigger } from '../session/types';
 import type { AssistantTokens } from '../session/usage';
-import type { RunOutcome } from '../tools/report-incomplete.js';
+import type { RunOutcome } from '../tools/report-outcome.js';
 import type { EffectWAL } from './effect-wal';
 import type { LiveToolOutputRelay } from './live-tool-output';
 
@@ -55,11 +55,12 @@ export interface PreparedAgentExecution {
   /** Agent ID (file-path-based identifier for session directory naming) */
   agentId?: string | undefined;
   /**
-   * Per-run outcome written by the `report_incomplete` tool. Checked after a
-   * clean finish: when `incomplete` is set the session is marked
-   * error/INCOMPLETE and failure channels fire instead of completion.
-   * Optional so hand-built preparations (tests) stay valid; prepareAgentExecution
-   * always sets it.
+   * Per-run outcome written by the `report_incomplete` / `report_complete`
+   * tools. Checked after a clean finish: when `incomplete` is set the session is
+   * marked error/INCOMPLETE and failure channels fire instead of completion;
+   * `complete.headline` becomes the run's one-line outcome. Optional so
+   * hand-built preparations (tests) stay valid; prepareAgentExecution always
+   * sets it.
    */
   runOutcome?: RunOutcome | undefined;
   doomLoopDetector: DoomLoopDetector;
@@ -151,4 +152,12 @@ export interface RunAgentResult {
    * persisted as error/INCOMPLETE.
    */
   incomplete?: { reason: string };
+  /**
+   * Set when the agent declared the run complete via `report_complete`. The
+   * headline is the one-line outcome every surface shows before the body; a
+   * parent reads it (with `artifacts`) instead of parsing a sub-agent's report.
+   * Absent when the agent never called the tool, so consumers must fall back to
+   * `text`.
+   */
+  complete?: { headline: string; artifacts?: string[] };
 }

@@ -287,7 +287,10 @@ export async function runAgent(
       ...(prepSessionID && { sessionID: prepSessionID }),
       ...(prepAgentId && { agentId: prepAgentId }),
       ...(assistantMsgID && { messageID: assistantMsgID }),
-      ...(effectWal && { effectWal })
+      ...(effectWal && { effectWal }),
+      // Lets the segment loop see whether an outcome was declared, so it can
+      // spend its one nudge before the run ends without a headline.
+      ...(preparation.runOutcome && { runOutcome: preparation.runOutcome })
     };
 
     const haveSessionScope = Boolean(sessionManager && prepSessionID && assistantMsgID && prepAgentId);
@@ -444,6 +447,10 @@ export async function runAgent(
     // flips the terminal status to error/INCOMPLETE so the run is skimmable as
     // a failure, while the run itself still finished without throwing.
     const incomplete = preparation.runOutcome?.incomplete;
+    // The agent's own one-line verdict (report_complete). Suppressed when the
+    // run is incomplete so no surface can pair a failure with a "here's what
+    // landed" headline; classifyRunResult applies the same precedence.
+    const complete = incomplete ? undefined : preparation.runOutcome?.complete;
 
     // Display execution summary
     const mainTokens = result.usage?.totalTokens || 0;
@@ -497,6 +504,7 @@ export async function runAgent(
     const runResult: RunAgentResult = {
       status: incomplete ? 'failed' : 'completed',
       ...(incomplete && { incomplete }),
+      ...(complete && { complete }),
       text: result.text,
       ...(result.usage && { usage: result.usage }),
       ...(result.usageKind && { usageKind: result.usageKind }),

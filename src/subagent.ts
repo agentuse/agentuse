@@ -417,7 +417,10 @@ export async function createSubAgentTool(
                 ...(subagentSessionID && { sessionID: subagentSessionID }),
                 agentId,
                 ...(subagentMsgID && { messageID: subagentMsgID }),
-                effectWal
+                effectWal,
+                // A leaf's headline is what the parent reads instead of the
+                // whole report, so nudge for it here too.
+                runOutcome: loadedTools.runOutcome
               }),
               subagentSessionID && subagentMsgID && subagentSessionManager ? {
                 sessionManager: subagentSessionManager,  // Use NEW instance
@@ -505,10 +508,20 @@ export async function createSubAgentTool(
             }
           }
 
+          // The child's own verdict, so the parent can act on the outcome
+          // without re-reading (or re-summarizing) the whole report body.
+          // Absent when the child never called the outcome tools.
+          const subagentComplete = subagentIncomplete ? undefined : loadedTools.runOutcome.complete;
+
           return {
             output: result.text || 'Sub-agent completed without text response',
             metadata: {
               agent: agent.name,
+              ...(subagentComplete && {
+                headline: subagentComplete.headline,
+                ...(subagentComplete.artifacts?.length && { artifacts: subagentComplete.artifacts }),
+              }),
+              ...(subagentIncomplete && { incomplete: subagentIncomplete.reason }),
               toolCalls: result.toolCalls && result.toolCalls.length > 0 ? result.toolCalls : undefined,
               tokensUsed: result.usage?.totalTokens,
               duration  // Add duration in ms to metadata

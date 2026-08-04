@@ -28,10 +28,10 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
 
   const runOutcome = `
 
-Run outcome — every run ends in exactly one of two states; make it skimmable:
-- Objective achieved (a legitimately empty result counts, e.g. a sweep that found nothing to act on): begin your final output with "✅ Complete: <one-line outcome>".
-- Objective NOT achievable (blocked precondition, dead login/session, unrecoverable dependency failure): call the report_incomplete tool with a short reason BEFORE your final output, then begin the final output with "⚠️ Incomplete: <reason>". Still finish bookkeeping and produce your report as usual.
-Never open with Complete when the core objective was skipped or failed; never call report_incomplete for an honestly-empty success.`;
+Run outcome — every run ends in exactly one of two states. Declare it with a tool call, then repeat it as your final output's first line:
+- Objective achieved (a legitimately empty result counts, e.g. a sweep that found nothing to act on): call report_complete with a one-line headline, then begin your final output with "✅ Complete: <that same headline>".
+- Objective NOT achievable (blocked precondition, dead login/session, unrecoverable dependency failure): call report_incomplete with a short reason, then begin your final output with "⚠️ Incomplete: <reason>". Still finish bookkeeping and produce your report as usual.
+Call exactly one of them, once, after your work is done and before your final output. The headline states what the run achieved and the single number that matters — not the task restated, not the steps you took. Never open with Complete when the core objective was skipped or failed; never call report_incomplete for an honestly-empty success.`;
 
   return `${basePrompt}${subAgentAddition}${runOutcome}
 
@@ -41,6 +41,8 @@ Guidance precedence — when guidance from different sources conflicts, the high
 3. Skills — shared defaults and craft, not unoverridable mandates.
 4. Other reference files.
 Skills give you sensible defaults; a Learned Guideline or your own instructions override them. Do not let an elaborately-worded skill rule outweigh a higher-precedence instruction.
+
+Outside that ladder: the outcome tool call and the ✅/⚠️ first line are runtime-owned and always required. An output format in your agent instructions describes the report BENEATH that line; it never replaces or suppresses it, however complete its own template looks. Where a template disagrees with the formatting rules above, the template governs which facts to include, not whether to open with the status line.
 
 Today's date: ${todayDate}`;
 }

@@ -222,8 +222,8 @@ describe('prepareAgentExecution', () => {
         mcpClients: []
       });
 
-      // report_incomplete is always on (agent-declared non-delivery signal).
-      expect(Object.keys(result.tools)).toEqual(['report_incomplete']);
+      // The outcome tools are always on (the agent's own verdict on the run).
+      expect(Object.keys(result.tools).sort()).toEqual(['report_complete', 'report_incomplete']);
     });
 
     it('should include configured tools when project context is provided', async () => {
@@ -515,8 +515,8 @@ describe('prepareAgentExecution - Edge Cases', () => {
       mcpClients: []
     });
 
-    // Only the always-on report_incomplete tool remains.
-    expect(Object.keys(result.tools)).toEqual(['report_incomplete']);
+    // Only the always-on outcome tools remain.
+    expect(Object.keys(result.tools).sort()).toEqual(['report_complete', 'report_incomplete']);
   });
 
   it('should handle special characters in instructions', async () => {

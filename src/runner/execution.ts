@@ -29,6 +29,8 @@ import { clampToolResultForModel } from '../tools/tool-output-limits.js';
 import { stripInlineMediaData } from '../tools/media.js';
 import { messagesContainInlineMedia } from '../session/media-cache.js';
 import { stripToolBlocks, hasReasoningParts, lastAssistantMessage } from '../session/message-utils';
+import { OUTCOME_NUDGE_PROMPT, shouldRequestOutcome } from './outcome';
+import type { RunOutcome } from '../tools/report-outcome.js';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -429,6 +431,12 @@ export async function* executeAgentCore(
     messageID?: string;
     /** Effect WAL shared with the bash audit; tool executes are journaled through it. */
     effectWal?: EffectWAL;
+    /**
+     * Shared slot the report_complete / report_incomplete tools write. Read at
+     * the end of a segment to decide whether to spend the one outcome nudge.
+     * Omitted by hand-built callers, which disables nudging.
+     */
+    runOutcome?: RunOutcome;
   }
 ): AsyncGenerator<AgentChunk> {
   // SDK-layer execution witness (debug trace of every tool execute via the
@@ -1045,6 +1053,13 @@ export async function* executeAgentCore(
   // usage across segments so the consumer's cumulative-replace stays correct.
   let priorSegmentsUsage: any;
   let runAnotherSegment = true;
+  // One outcome nudge per run (see the nudge block at the end of the loop).
+  let outcomeNudgeSpent = false;
+  // Whether the run has produced any visible prose yet, and whether prose from
+  // here on is redundant (set only when the nudge fires on top of an existing
+  // report). See the text-delta case.
+  let sawText = false;
+  let suppressTextAfterNudge = false;
   while (runAnotherSegment) {
   runAnotherSegment = false;
   let segmentFinishReason: string | undefined;
@@ -1320,12 +1335,21 @@ Error: ${errorMessage}`);
         case 'text-delta':
           const textContent = (chunk as any).text || (chunk as any).textDelta || (chunk as any).delta || (chunk as any).content;
           if (textContent && typeof textContent === 'string') {
+            // Drop prose written in the nudge segment. The consumer ACCUMULATES
+            // text across segments, and a model asked only for its outcome tool
+            // routinely re-emits the whole report anyway — which would ship the
+            // reader two copies. The report we already have is the deliverable;
+            // the nudge exists solely to recover the structured verdict. Only
+            // engaged once earlier text exists, so a run whose first segment was
+            // silent can still speak.
+            if (suppressTextAfterNudge) break;
             // Track time to first token
             if (!llmFirstTokenTime && llmGenerationStartTime) {
               llmFirstTokenTime = Date.now();
               yield { type: 'llm-first-token', llmFirstTokenTime };
             }
             accumulatedText += textContent;
+            if (textContent.trim()) sawText = true;
             yield { type: 'text', text: textContent };
           }
           break;
@@ -1619,6 +1643,45 @@ Current step: ${stepCount}/${options.maxSteps}`);
         }
       } catch (reconcileError) {
         logger.debug(`Segment compaction check failed: ${(reconcileError as Error).message}`);
+      }
+    }
+
+    // Outcome nudge. The model finished its turn without declaring an outcome,
+    // so ask once and run one more segment. Worth the extra step because a tool
+    // is re-presented on every step while a system-prompt rule competes with the
+    // whole agent body; a single explicit ask recovers the verdict. Skipped when
+    // compaction already scheduled a segment (that one will re-check on its own
+    // clean finish) and capped at one ask per run so a model that simply refuses
+    // cannot spin. Missing the call after that degrades to the pre-existing
+    // behavior: free text, no headline.
+    if (
+      !runAnotherSegment &&
+      shouldRequestOutcome({
+        outcome: options.runOutcome,
+        segmentFinishReason,
+        stepCount,
+        maxSteps: options.maxSteps,
+        alreadyAsked: outcomeNudgeSpent,
+        suspended: Boolean(suspendState),
+      })
+    ) {
+      try {
+        const segmentResponse: any = await stream.response;
+        messages = [...segmentInput, ...((segmentResponse?.messages as any[]) ?? [])];
+        // A user-role reminder, not system: providers vary on whether a
+        // system message may appear mid-conversation, and every one of them
+        // accepts a user turn.
+        messages.push({ role: 'user', content: OUTCOME_NUDGE_PROMPT } as ModelMessage);
+        contextManager?.setMessages(messages);
+        outcomeNudgeSpent = true;
+        // The report already exists, so anything the nudge segment writes is a
+        // duplicate. A silent first segment keeps its voice.
+        suppressTextAfterNudge = sawText;
+        runAnotherSegment = true;
+        logger.debug('Run ended with no outcome declared; asking once for report_complete/report_incomplete.');
+      } catch (nudgeError) {
+        // Best-effort: never fail a finished run over its own headline.
+        logger.debug(`Outcome nudge skipped: ${(nudgeError as Error).message}`);
       }
     }
 
