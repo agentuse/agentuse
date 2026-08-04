@@ -248,11 +248,39 @@ describe('composeFinalOutput', () => {
     expect(composed.match(/✅ Complete:/g)).toHaveLength(1);
   });
 
-  it('prefers structured details over streamed prose', () => {
+  it('keeps both bodies when the agent split its report in two', () => {
+    // agentuse-lab#198: the deliverable went to the stream, a briefing went to
+    // `details`, and taking only `details` discarded the deliverable silently.
     expect(composeFinalOutput(
-      { headline: 'Done', details: 'structured body' },
-      'stale streamed body'
-    )).toBe('✅ Complete: Done\n\nstructured body');
+      { headline: 'Done', details: 'A 40-word briefing.' },
+      '## The YAML deliverable\n\nkey: value'
+    )).toBe('✅ Complete: Done\n\nA 40-word briefing.\n\n## The YAML deliverable\n\nkey: value');
+  });
+
+  it('renders one copy when the same report was written twice', () => {
+    const report = '## Findings\n\n- one\n- two';
+
+    expect(composeFinalOutput({ headline: 'Done', details: report }, report))
+      .toBe(`✅ Complete: Done\n\n${report}`);
+  });
+
+  it('keeps the fuller copy when one report contains the other', () => {
+    expect(composeFinalOutput(
+      { headline: 'Done', details: '## Findings\n\n- one' },
+      '## Findings\n\n- one\n- two (the streamed copy went further)'
+    )).toBe('✅ Complete: Done\n\n## Findings\n\n- one\n- two (the streamed copy went further)');
+
+    expect(composeFinalOutput(
+      { headline: 'Done', details: '## Findings\n\n- one\n- two (the attached copy went further)' },
+      '## Findings\n\n- one'
+    )).toBe('✅ Complete: Done\n\n## Findings\n\n- one\n- two (the attached copy went further)');
+  });
+
+  it('treats re-wrapped markdown as the same report, not as two', () => {
+    expect(composeFinalOutput(
+      { headline: 'Done', details: '## Findings\n\n- one\n- two' },
+      '## Findings\n- one\n- two'
+    )).toBe('✅ Complete: Done\n\n## Findings\n\n- one\n- two');
   });
 });
 

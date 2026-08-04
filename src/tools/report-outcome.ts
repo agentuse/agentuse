@@ -1,5 +1,6 @@
 import type { Tool } from 'ai';
 import { z } from 'zod';
+import { logger } from '../utils/logger';
 
 /**
  * Mutable per-run outcome shared between the `report_complete` /
@@ -90,7 +91,8 @@ export function createReportCompleteTool(outcome: RunOutcome): Tool {
         'ONE line, no markdown heading, stating what the run achieved and the single number that matters (e.g. "Posted 10/10 connect replies, all verified; 10 of 20 daily budget left"). Not the task restated, not a summary of your steps.'
       ),
       details: z.string().optional().describe(
-        'Optional Markdown body rendered under the headline. Include it ONLY when you have substance the headline cannot carry: per-item results, a table, a document you were asked to produce, findings a human must act on. Do not repeat the headline here, do not recap your steps, and do not restate a file you already wrote — link it. Omit this entirely when the headline says the whole thing.'
+        'Optional Markdown body rendered under the headline. Include it ONLY when you have substance the headline cannot carry: per-item results, a table, a document you were asked to produce, findings a human must act on. Do not repeat the headline here, do not recap your steps, and do not restate a file you already wrote — link it. Omit this entirely when the headline says the whole thing. ' +
+        'EXCEPTION, and it overrides every brevity rule: when your instructions specify an output format, document, schema, or template, `details` IS that output, complete and in full — every row, every field, no summarizing and no length ceiling. Putting the document in your prose and a summary here loses nothing but reaches the reader twice; put it here once.'
       ),
       artifacts: z.array(z.string()).optional().describe(
         'Optional. Paths or URLs this run produced or changed (files written, PRs, issues, published posts). Callers use these instead of parsing your report.'
@@ -126,10 +128,47 @@ export function composeFinalOutput(
 ): string {
   if (!complete) return streamedText;
   const opener = `✅ Complete: ${complete.headline}`;
-  // Prefer the structured body. Fall back to prose the model streamed anyway,
-  // minus any status line it already wrote, so the opener is never doubled.
-  const body = complete.details?.trim() || stripLeadingOutcomeLine(streamedText, complete.headline);
+  // Both halves, not one: an agent whose deliverable IS its response often
+  // streams the document and attaches a briefing, and taking only the attached
+  // body silently threw the document away (agentuse-lab#198). Strip any status
+  // line the model typed first, so the opener is never doubled.
+  const body = mergeReportBodies(
+    complete.details?.trim() ?? '',
+    stripLeadingOutcomeLine(streamedText, complete.headline)
+  );
   return body ? `${opener}\n\n${body}` : opener;
+}
+
+/** Whitespace-insensitive form for comparing two renderings of one report. */
+function normalizeForContainment(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/**
+ * Combine the two places a report can arrive: the body the agent attached to
+ * `report_complete` and the prose it streamed.
+ *
+ * Containment rather than equality, because the common duplicate is one report
+ * written twice — streamed, then attached — and the two copies rarely match
+ * byte-for-byte once markdown is re-wrapped. When neither contains the other
+ * they are genuinely different content (a briefing and a document), so both are
+ * kept, briefing first.
+ */
+export function mergeReportBodies(details: string, prose: string): string {
+  if (!details) return prose;
+  if (!prose) return details;
+  const normalizedDetails = normalizeForContainment(details);
+  const normalizedProse = normalizeForContainment(prose);
+  // Attached copy first, so an exact tie (the same report in both places) keeps
+  // the one the agent deliberately structured rather than a stream re-wrap.
+  if (normalizedDetails.includes(normalizedProse)) return details;
+  if (normalizedProse.includes(normalizedDetails)) return prose;
+  // The only signal for how often an agent splits its report this way: nothing
+  // is lost now, so this line is the sole evidence the case still occurs.
+  logger.debug(
+    `[Outcome] Report arrived in two parts; keeping both (details ${details.length} chars, streamed ${prose.length} chars).`
+  );
+  return `${details}\n\n${prose}`;
 }
 
 /**

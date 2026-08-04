@@ -17,7 +17,7 @@ import type { LiveToolOutputRelay } from './live-tool-output';
 import { LIVE_OUTPUT_INTERVAL_MS, LIVE_OUTPUT_METADATA_KEY } from '../tools/types';
 import { withoutToolIntent } from './tool-intent';
 import { defaultTerminalPresenter, type TerminalPresenter } from './terminal-presenter';
-import { formatOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from '../tools/report-outcome.js';
+import { formatOutcomeLine, mergeReportBodies, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from '../tools/report-outcome.js';
 
 type SlackRunChannelHandle = {
   channel: string;
@@ -434,9 +434,23 @@ export async function processAgentStream(
             const rawDetails = (chunk.toolInput as { details?: unknown } | undefined)?.details;
             const details = typeof rawDetails === 'string' && rawDetails.trim() ? rawDetails.trim() : undefined;
             terminal?.outcome(outcomeLine, details);
+            // Same merge the run's own output uses (composeFinalOutput): an
+            // agent that streamed its deliverable and attached a briefing must
+            // not have the deliverable dropped from the record this text part
+            // becomes — the session view's result card reads exactly this string
+            // (agentuse-lab#198). Only for report_complete: a run that declares
+            // itself blocked keeps working and writes its report afterwards, so
+            // there is nothing yet to fold in.
+            const rawHeadline = (chunk.toolInput as { headline?: unknown } | undefined)?.headline;
+            const body = chunk.toolName === REPORT_COMPLETE_TOOL
+              ? mergeReportBodies(
+                  details ?? '',
+                  stripLeadingOutcomeLine(finalText, typeof rawHeadline === 'string' ? rawHeadline : '')
+                )
+              : details ?? '';
             // Held until the tool-call bookkeeping below has run, so the text
             // part lands after the call it came from.
-            deliveredOutcome = details ? `${outcomeLine}\n\n${details}` : outcomeLine;
+            deliveredOutcome = body ? `${outcomeLine}\n\n${body}` : outcomeLine;
           } else {
             terminal?.toolStarted(chunk.toolName!, chunk.toolInput, chunk.isSubAgent);
           }
