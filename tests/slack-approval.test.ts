@@ -756,3 +756,27 @@ describe('Slack approval blocks', () => {
     }
   });
 });
+
+describe('deferred Slack SDK', () => {
+  it('loads both clients on demand and caches them', async () => {
+    const { loadSlackSdk } = await import('../src/slack/approval');
+
+    const sdk = await loadSlackSdk();
+    expect(typeof sdk.WebClient).toBe('function');
+    expect(typeof sdk.SocketModeClient).toBe('function');
+    // A real client must actually be constructible -- this is the worker path
+    // that posts an approval card, which has no other coverage.
+    const web = new sdk.WebClient('xoxb-test');
+    expect(typeof web.chat.postMessage).toBe('function');
+
+    // Cached: repeat calls must not re-import, or every approval pays again.
+    expect(await loadSlackSdk()).toBe(sdk);
+  });
+
+  it('shares one in-flight import across concurrent callers', async () => {
+    const { loadSlackSdk } = await import('../src/slack/approval');
+    const [a, b, c] = await Promise.all([loadSlackSdk(), loadSlackSdk(), loadSlackSdk()]);
+    expect(a).toBe(b);
+    expect(b).toBe(c);
+  });
+});
