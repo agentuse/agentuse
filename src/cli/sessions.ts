@@ -13,6 +13,7 @@ import { logger, LogLevel } from "../utils/logger";
 import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
 import { applyResumeToolResult, restoreResumeToolResult, runAgent, describeErrorPart, classifyRunResult } from "../runner";
+import { reconcileOrphanedSessions } from "../runner/resume";
 import { describeLearningOutcome, saveManualLearning, type LearningSource, type LearningConfig } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
 
@@ -731,6 +732,19 @@ export function createSessionsCommand(): Command {
       await stopSession(scope, id, options);
     }));
 
+  sessionsCmd
+    .command("reconcile")
+    .description("Settle sessions still marked 'running' whose process is gone. serve does this at startup but only looks back 30 days, so anything older stays stuck forever; this sweeps as far back as you ask")
+    .option("--lookback <spec>", "How far back to scan: a day count, or 'all'", "all")
+    .option("--dry-run", "Report what would be settled without writing")
+    .option("-j, --json", "Output as JSON")
+    .option("--all", "Sweep every project")
+    .option("--project [path]", "Sweep a project path; defaults to the current project")
+    .action(async (options: { lookback?: string; dryRun?: boolean; json?: boolean; all?: boolean; project?: string | boolean }) => runSessionsAction(async () => {
+      const scope = resolveSessionScope(options);
+      await reconcileSessionsCommand(scope, options);
+    }));
+
   // Add path subcommand to show storage location
   sessionsCmd
     .command("path")
@@ -747,6 +761,75 @@ export function createSessionsCommand(): Command {
     }));
 
   return sessionsCmd;
+}
+
+/**
+ * How recently a session must have been touched to be left alone regardless of
+ * what its owner pid says. Covers a writer that predates owner tracking and is
+ * genuinely mid-run right now: without an owner to prove it alive, recency is
+ * the only other evidence there is.
+ */
+const RECONCILE_SAFETY_WINDOW_MS = 10 * 60 * 1000;
+
+async function reconcileSessionsCommand(
+  scope: SessionScope,
+  options: { lookback?: string; dryRun?: boolean; json?: boolean }
+): Promise<void> {
+  const lookbackSpec = (options.lookback ?? "all").trim().toLowerCase();
+  let lookbackMs: number;
+  if (lookbackSpec === "all") {
+    lookbackMs = Number.MAX_SAFE_INTEGER;
+  } else {
+    const days = Number(lookbackSpec.replace(/d$/, ""));
+    if (!Number.isFinite(days) || days <= 0) {
+      throw new Error(`Invalid --lookback: ${options.lookback}. Use a day count (e.g. 90) or 'all'.`);
+    }
+    lookbackMs = days * 24 * 60 * 60 * 1000;
+  }
+
+  // Every project that has sessions in scope. Reconciliation is per-project
+  // because storage is.
+  const sessions = await sessionsForScope(scope);
+  const projectRoots = [...new Set(sessions.map((s) => s.projectRoot).filter(Boolean))];
+  if (projectRoots.length === 0) {
+    if (options.json) process.stdout.write(`${JSON.stringify({ reconciled: [] }, null, 2)}\n`);
+    else process.stdout.write("No sessions found.\n");
+    return;
+  }
+
+  const cutoff = Date.now() - RECONCILE_SAFETY_WINDOW_MS;
+  const all: Array<{ projectRoot: string; sessionId: string; agentName: string; reason: string }> = [];
+  for (const projectRoot of projectRoots) {
+    await initStorage(projectRoot);
+    const sessionManager = new SessionManager();
+    const reconciled = await reconcileOrphanedSessions({
+      sessionManager,
+      cutoff,
+      lookbackMs,
+      ...(options.dryRun === true && { dryRun: true }),
+    });
+    for (const entry of reconciled) {
+      all.push({ projectRoot, sessionId: entry.sessionId, agentName: entry.agentName, reason: entry.reason });
+    }
+  }
+
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify({ dryRun: options.dryRun === true, reconciled: all }, null, 2)}\n`);
+    return;
+  }
+
+  if (all.length === 0) {
+    process.stdout.write("Nothing to reconcile — no sessions are stuck.\n");
+    return;
+  }
+
+  const verb = options.dryRun ? "Would settle" : "Settled";
+  process.stdout.write(`${verb} ${all.length} stuck session(s):\n`);
+  for (const entry of all) {
+    const label = entry.reason === "interrupted" ? "interrupted" : "stranded on a dead child";
+    process.stdout.write(`  ${entry.sessionId}  ${truncate(entry.agentName, 40)}  (${label})\n`);
+  }
+  if (options.dryRun) process.stdout.write("\nDry run — nothing was written. Re-run without --dry-run to apply.\n");
 }
 
 async function listSessionsCommand(

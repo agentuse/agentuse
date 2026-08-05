@@ -367,8 +367,10 @@ export async function reconcileOrphanedSessions(options: {
   sessionManager: SessionManager;
   cutoff: number;
   lookbackMs?: number;
+  /** Report what would be reconciled without writing anything. */
+  dryRun?: boolean;
 }): Promise<ReconciledOrphan[]> {
-  const { sessionManager, cutoff } = options;
+  const { sessionManager, cutoff, dryRun = false } = options;
   const lookbackMs = options.lookbackMs ?? 30 * 24 * 60 * 60 * 1000;
   const sessions = await sessionManager.listSessionsCreatedAfter(Date.now() - lookbackMs, { includeSubagents: true });
   const reconciled: ReconciledOrphan[] = [];
@@ -380,10 +382,12 @@ export async function reconcileOrphanedSessions(options: {
     // another daemon's worker) are not orphans, however stale their header.
     // Sessions from older versions carry no owner and keep the cutoff-only rule.
     if (session.owner && isProcessRefAlive(session.owner)) continue;
-    await sessionManager.setSessionError(session.id, agentId, {
-      code: 'WORKER_INTERRUPTED',
-      message: 'Run was interrupted when its serve worker restarted, leaving no live process. If it was waiting on approval, reopen the gate to retry.'
-    }).catch(() => {});
+    if (!dryRun) {
+      await sessionManager.setSessionError(session.id, agentId, {
+        code: 'WORKER_INTERRUPTED',
+        message: 'Run was interrupted when its serve worker restarted, leaving no live process. If it was waiting on approval, reopen the gate to retry.'
+      }).catch(() => {});
+    }
     reconciled.push({ sessionId: session.id, agentId, agentName: session.agent.name || session.agent.id, reason: 'interrupted' });
   }
 
@@ -410,10 +414,12 @@ export async function reconcileOrphanedSessions(options: {
       continue;
     }
     if (!stale) continue;
-    await sessionManager.setSessionError(session.id, agentId, {
-      code: CASCADE_ORPHANED_CODE,
-      message: describeStaleCascade(stale),
-    }).catch(() => {});
+    if (!dryRun) {
+      await sessionManager.setSessionError(session.id, agentId, {
+        code: CASCADE_ORPHANED_CODE,
+        message: describeStaleCascade(stale),
+      }).catch(() => {});
+    }
     reconciled.push({ sessionId: session.id, agentId, agentName: session.agent.name || session.agent.id, reason: 'stranded' });
   }
   return reconciled;

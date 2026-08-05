@@ -106,6 +106,30 @@ describe('reconcileOrphanedSessions', () => {
     }
   });
 
+  it('reports what it would settle without writing when dryRun is set', async () => {
+    const { projectRoot, sessionManager, sessionID, agentId } = await makeSession();
+    try {
+      await sessionManager.updateSession(sessionID, agentId, { owner: { pid: DEAD_PID } });
+      const cutoff = Date.now() + 60_000;
+
+      const previewed = await reconcileOrphanedSessions({ sessionManager, cutoff, dryRun: true });
+      expect(previewed.map((r) => r.sessionId)).toContain(sessionID);
+      // The whole point: the report is identical, the session is not touched.
+      const afterPreview = await sessionManager.findSession(sessionID);
+      expect(afterPreview?.session.status).toBe('running');
+      expect(afterPreview?.session.error).toBeUndefined();
+
+      const applied = await reconcileOrphanedSessions({ sessionManager, cutoff });
+      expect(applied.map((r) => r.sessionId)).toEqual(previewed.map((r) => r.sessionId));
+      const afterApply = await sessionManager.findSession(sessionID);
+      expect(afterApply?.session.status).toBe('error');
+      expect(afterApply?.session.error?.code).toBe('WORKER_INTERRUPTED');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
   it('leaves a running session owned by the current live worker (touched at/after cutoff) alone', async () => {
     const { projectRoot, sessionManager, sessionID } = await makeSession();
     try {
