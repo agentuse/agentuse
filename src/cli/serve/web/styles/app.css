@@ -800,8 +800,13 @@ a, button, select, summary, label, input, textarea,
   font-weight: 400;
   letter-spacing: normal;
   text-align: left;
+  /* "Go to agent" is an anchor: opt it out of the page's link treatment, and
+     pin the line-height the sibling buttons get from the UA sheet so every row
+     is the same height. */
+  text-decoration: none;
+  line-height: normal;
 }
-.page-approval-detail .header-title-row .session-menu .menu-item:hover { background: var(--panel-hover); border-color: transparent; }
+.page-approval-detail .header-title-row .session-menu .menu-item:hover { background: var(--panel-hover); border-color: transparent; opacity: 1; }
 .page-approval-detail .header-title-row .session-menu .menu-item:disabled { cursor: default; color: var(--muted); }
 .page-approval-detail .header-title-row .session-menu .menu-item .menu-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--cyan); }
 .page-approval-detail .session-menu .menu-error {

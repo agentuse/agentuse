@@ -145,6 +145,13 @@ export interface ApprovalPageInfo {
     id: string;
     name: string;
     filePath?: string;
+    /**
+     * Path relative to the served scope (AgentSummary.runPath), stamped by the
+     * serve daemon when the agent file is one of the project's loaded agents.
+     * Lets the session page link to that agent's detail hub. Absent for agents
+     * outside the served scope (e.g. a run started from elsewhere).
+     */
+    runPath?: string;
     description?: string;
   };
   learning?: {

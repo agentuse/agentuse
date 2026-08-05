@@ -38,6 +38,10 @@ For testing workflow and mock-mode selection, load the `tester` builtin skill.
 `serve agents` / `serve schedules` report live loaded data, not the cached
 `serve ps` counts.
 
+`serve ps` is the liveness check. Curling the base URL is not: there is no
+root `/status` route, so a live daemon answers 404 there. `/status` is
+session-scoped (`/sessions/<id>/status?logs=1` returns that run's JSON).
+
 ## Serve Web UI
 
 - `/agents`, `/schedules`, what the daemon loaded.

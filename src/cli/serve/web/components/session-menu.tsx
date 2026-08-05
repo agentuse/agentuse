@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useRunAgent } from '../hooks/use-run-agent';
+import { agentDetailHref } from '../routes/agent-detail';
 import { RunInstructionDialog } from './run-instruction-dialog';
 
 /**
  * ⋯ overflow menu in the session bar. Holds actions about the agent behind the
- * session rather than the session itself — "Run new session" (a fresh detached
- * run of the same agent, navigating to its live view) and the same run with a
- * one-off instruction appended. Mirrors the agents-page menu pattern: a
- * position:fixed popover that closes on outside click, Escape, scroll, or resize.
+ * session rather than the session itself — "Open agent" (its detail hub),
+ * "Run new session" (a fresh detached run of the same agent, navigating to its
+ * live view) and the same run with a one-off instruction appended. Mirrors the
+ * agents-page menu pattern: a position:fixed popover that closes on outside
+ * click, Escape, scroll, or resize.
  */
 export function SessionMenu(props: {
   agentName: string;
   agentFilePath: string;
+  /** Scope-relative agent path; absent when the agent has no detail hub. */
+  agentRunPath?: string;
   projectId?: string;
 }) {
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -71,6 +75,20 @@ export function SessionMenu(props: {
         <div ref={popRef} class="menu-popover" role="menu" style={{ top: `${pos.top}px`, right: `${pos.right}px` }}>
           <div class="menu-name">{props.agentName}</div>
           <div class="menu-sep" />
+          {props.agentRunPath && props.projectId && (
+            <a
+              class="menu-item"
+              role="menuitem"
+              href={agentDetailHref(props.projectId, props.agentRunPath)}
+              title="Open this agent's detail page"
+              onClick={() => setPos(null)}
+            >
+              <svg class="menu-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3.5 2.5h6l3 3v8h-9z" /><path d="M5.75 8.5h4.5" /><path d="M5.75 11h4.5" />
+              </svg>
+              <span>Go to agent</span>
+            </a>
+          )}
           <button
             type="button"
             class="menu-item"

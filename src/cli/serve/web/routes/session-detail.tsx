@@ -1162,6 +1162,7 @@ export default function SessionDetail() {
               <SessionMenu
                 agentName={agentLabel}
                 agentFilePath={approval.agent.filePath}
+                {...(approval.agent.runPath ? { agentRunPath: approval.agent.runPath } : {})}
                 // The URL's ?project= wins, but push links and direct session
                 // URLs often omit it; the header's stamped project id keeps
                 // "Run new session" working on multi-project daemons.
