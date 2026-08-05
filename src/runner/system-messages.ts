@@ -6,7 +6,7 @@ import { parseScheduleExpression, formatScheduleHuman } from '../scheduler/parse
 import { parseAgent, type ParsedAgent } from '../parser';
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
 import { logger } from '../utils/logger';
-import { LearningStore, MAX_INJECTED_LEARNINGS, partitionLearnings } from '../learning/index.js';
+import { LearningStore, effectiveCap, partitionLearnings } from '../learning/index.js';
 import { addAnthropicIdentity, isAnthropicModel } from '../utils/anthropic';
 
 /**
@@ -193,9 +193,17 @@ export interface LearningPromptResult {
   prompt: string;
   /** Learnings injected into this prompt. */
   count: number;
-  /** Learnings stored in the file, injected and dormant together. Reported
-   *  alongside `count` so a capped file never reads as fully in force. */
+  /** ACTIVE learnings in the file, injected and dormant together. Reported
+   *  alongside `count` so a capped file never reads as fully in force.
+   *  Graduated and retired entries are excluded: a rule living in the agent
+   *  file's own instructions is in force, and counting it here would report the
+   *  best-tended agent in the fleet as the most starved. */
   total: number;
+  /** Ids injected this run, so a run that ends approved and uncommented can
+   *  credit exactly the rules that were in force for it. */
+  injectedIds: string[];
+  /** The cap in force, for messages that name it. */
+  cap: number;
 }
 
 /**
@@ -225,9 +233,20 @@ async function renderLearningPrompt(
     // Ranking (including the recency tiebreak that keeps a fresh correction from
     // starving behind older equal-signal ones) lives in ../learning/ranking so
     // the capture evaluator can partition the same way.
-    const { injected, dormant } = partitionLearnings(learnings);
+    const cap = effectiveCap(agent.config.learning);
+    const { injected, dormant } = partitionLearnings(learnings, cap);
+    const active = injected.length + dormant.length;
 
-    const prompt = `## Learned Guidelines (override skill defaults on conflict)
+    if (injected.length === 0) {
+      return undefined;
+    }
+
+    // "Recent Corrections", not "Learned Guidelines": once an agent has
+    // graduated rules, its own file carries a `## Learned Guidelines` block, and
+    // appending a second heading of the same name would leave the model reading
+    // two identically-titled lists. The split is also honest — these are the
+    // ones still on probation.
+    const prompt = `## Recent Corrections (override skill defaults on conflict)
 
 Corrections captured from previous runs. These take precedence over Skills — if one contradicts a skill's default, follow the guideline:
 
@@ -239,14 +258,12 @@ ${injected.map(l => `- [${l.category}] ${l.instruction}`).join('\n')}`;
         logger.debug(`[Learning] Failed to increment applied count: ${err.message}`);
       });
       logger.debug(
-        `[Learning] Injected ${injected.length} of ${learnings.length} learning(s)`
-        + (dormant.length > 0
-          ? `; ${dormant.length} dormant past the ${MAX_INJECTED_LEARNINGS}-learning cap`
-          : '')
+        `[Learning] Injected ${injected.length} of ${active} active learning(s)`
+        + (dormant.length > 0 ? `; ${dormant.length} dormant past the ${cap}-learning cap` : '')
       );
     }
 
-    return { prompt, count: injected.length, total: learnings.length };
+    return { prompt, count: injected.length, total: active, injectedIds: injected.map(l => l.id), cap };
   } catch (error) {
     logger.debug(`[Learning] Failed to load learnings: ${(error as Error).message}`);
     return undefined;

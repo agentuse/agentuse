@@ -8,7 +8,8 @@ import type { AgentCompleteEvent } from '../plugin/types';
 import type { ApprovalReview, LearningCategory, LearningConfig, LearningOutcome, LearningSource } from './types';
 import { evaluateExecution, refineManualLearning } from './evaluator';
 import { LearningStore } from './store';
-import { partitionLearnings } from './ranking';
+import { effectiveCap, partitionLearnings } from './ranking';
+import { writeLearnedBlock } from './graduate';
 import { logger } from '../utils/logger';
 
 export interface ExtractLearningsOptions {
@@ -61,14 +62,20 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     // duplicate. Passing the full file here is what silently discarded repeat
     // corrections; addOrEscalate below then folds a genuine repeat onto the
     // existing entry instead of appending a near-copy.
-    const { injected } = partitionLearnings(stored);
+    const { injected } = partitionLearnings(stored, effectiveCap(config));
+
+    // Graduated rules were not injected, but they ARE in force: they live in the
+    // agent's own instructions. Omitting them here would have the evaluator
+    // re-extract every rule the last tidy-up made permanent, undoing the tidy-up
+    // one run later.
+    const graduated = stored.filter((l) => l.state === 'graduated');
 
     const learnings = await evaluateExecution(
       event,
       agentInstructions,
-      agentModel,
+      config.model ?? agentModel,
       config.criteria,
-      injected,
+      [...injected, ...graduated],
       reviews,
     );
 
@@ -93,6 +100,13 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
 
     const reasserted = escalated.length > 0 ? `, ${escalated.length} re-asserted` : '';
     spinner.succeed(`Extracted ${persisted.length} learning(s)${reasserted} → ${store.filePath}`);
+
+    // Say it at the moment it matters. The user has just corrected the agent and
+    // reasonably believes the correction took; if the store is over the cap it
+    // may not have. A count of what is being ignored, not a scolding about file
+    // hygiene. `logger.warn` mirrors into the session log sink, so the same line
+    // reaches the terminal and the serve session view.
+    await warnIfCorrectionsAreIgnored(store, config, agentFilePath);
     // A run can yield both reviewer-sourced and execution-sourced learnings;
     // label the marker by the higher-signal source when any is present.
     const source = persisted.some(l => l.source === 'approval') ? 'approval' : 'auto';
@@ -107,6 +121,36 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     spinner.fail('Failed to extract learnings');
     logger.debug(`[Learning] Error: ${detail}`);
     return { status: 'failed', source: hadReviews ? 'approval' : 'auto', count: 0, titles: [], detail };
+  }
+}
+
+/**
+ * Say, at the moment a human has just corrected the agent, that the correction
+ * may not reach it.
+ *
+ * This is the point of maximum misunderstanding: the reviewer believes their
+ * note took effect, and for anything past the cap it did not. The line states a
+ * count and the one command that fixes it — a fact, not a lecture about file
+ * hygiene. Re-reading the store costs one file read and is worth it for a number
+ * that is exactly right rather than inferred from what this run happened to add.
+ *
+ * `logger.warn` mirrors into the session log sink, so the same line reaches both
+ * the terminal and the serve session view without a second call site.
+ */
+async function warnIfCorrectionsAreIgnored(
+  store: LearningStore,
+  config: LearningConfig,
+  agentFilePath: string,
+): Promise<void> {
+  try {
+    const { dormant } = partitionLearnings(await store.load(), effectiveCap(config));
+    if (dormant.length === 0) return;
+    logger.warn(
+      `${dormant.length} of this agent's corrections never reach it: only the top ${effectiveCap(config)} apply per run. `
+      + `Fix: agentuse learnings tidy ${agentFilePath}`
+    );
+  } catch (error) {
+    logger.debug(`[Learning] Could not report dormant corrections: ${(error as Error).message}`);
   }
 }
 
@@ -166,7 +210,7 @@ export async function saveManualLearning(options: {
     }
   }
 
-  await store.upsertManual({
+  const { graduated } = await store.upsertManual({
     id: '',
     category,
     title,
@@ -176,7 +220,21 @@ export async function saveManualLearning(options: {
     extractedAt: new Date().toISOString(),
     source: 'manual',
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+    reasserted: 0,
+    approvedRuns: 0,
   });
+
+  // The reviewer re-worded a rule that already lives in the agent file. The
+  // store now holds the new wording but the copy actually in force is the one in
+  // the agent file, so re-render the block or the correction reaches nothing.
+  if (graduated) {
+    try {
+      const all = await store.load();
+      await writeLearnedBlock(options.agentFilePath, all.filter((l) => l.state === 'graduated'));
+    } catch (error) {
+      logger.debug(`[Learning] Could not refresh the graduated block: ${(error as Error).message}`);
+    }
+  }
 
   return { status: 'captured', source: 'manual', count: 1, titles: [title] };
 }
@@ -215,6 +273,9 @@ export function describeLearningOutcome(o: {
 }
 
 export { LearningStore, resolveLearningFilePath, generateLearningId } from './store';
-export { MAX_INJECTED_LEARNINGS, learningSourceRank, partitionLearnings, rankLearnings } from './ranking';
+export { MAX_INJECTED_LEARNINGS, activeLearnings, effectiveCap, learningSourceRank, partitionLearnings, rankLearnings } from './ranking';
+export { LEARNED_BLOCK_START, LEARNED_BLOCK_END, renderLearnedBlock, spliceLearnedBlock, writeLearnedBlock } from './graduate';
+export { consolidateLearnings, describeConsolidation, isGraduationEligible, undoConsolidation } from './consolidate';
+export type { ConsolidationResult, ConsolidationChange } from './consolidate';
 export type { ApprovalReview, Learning, LearningConfig, LearningOutcome, LearningSource } from './types';
 export { LearningConfigSchema } from './types';

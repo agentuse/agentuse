@@ -1,0 +1,97 @@
+import { readFile, writeFile, access } from 'fs/promises';
+import { constants } from 'fs';
+import type { Learning } from './types';
+
+/**
+ * Graduation: moving a proven correction out of the learnings file and into the
+ * agent's own instructions.
+ *
+ * The learnings file is a staging buffer metered by the per-run injection cap.
+ * The agent file is the durable artifact — uncapped, diffable, reviewable in a
+ * pull request, and the place a teammate looks to find out what this agent has
+ * been taught. A correction that has proven itself belongs there, and moving it
+ * frees the cap slot it was occupying.
+ *
+ * Rules are written into a marked block so the write is idempotent: re-running
+ * replaces the block rather than appending a second copy of everything.
+ */
+export const LEARNED_BLOCK_START = '<!-- agentuse:learned -->';
+export const LEARNED_BLOCK_END = '<!-- /agentuse:learned -->';
+
+/**
+ * The heading is deliberately identical in meaning to the runtime block in
+ * ../runner/system-messages, so a graduated rule behaves exactly as it did while
+ * it was being injected. The runtime block is titled "Recent Corrections" so the
+ * two do not collide as duplicate `## Learned Guidelines` headings once an agent
+ * file carries a graduated block.
+ */
+export function renderLearnedBlock(learnings: Learning[]): string {
+  const bullets = learnings.map((l) => `- [${l.category}] ${l.instruction}`).join('\n');
+  return `${LEARNED_BLOCK_START}
+## Learned Guidelines (override skill defaults on conflict)
+
+Corrections graduated from previous runs. These take precedence over Skills — if one contradicts a skill's default, follow the guideline:
+
+${bullets}
+${LEARNED_BLOCK_END}`;
+}
+
+/**
+ * Splice the marked block into an agent file's raw text.
+ *
+ * Deliberately a string operation on the raw file rather than a gray-matter
+ * parse/serialize round trip: re-serializing the frontmatter reformats the
+ * user's YAML, reorders nothing but restyles everything, and silently drops
+ * their comments. This is someone's source file — the only bytes that may change
+ * are the ones inside the markers.
+ *
+ * An empty learning set removes the block entirely rather than leaving an empty
+ * heading behind.
+ */
+export function spliceLearnedBlock(source: string, learnings: Learning[]): string {
+  const start = source.indexOf(LEARNED_BLOCK_START);
+  const end = source.indexOf(LEARNED_BLOCK_END);
+  const block = learnings.length > 0 ? renderLearnedBlock(learnings) : '';
+
+  if (start !== -1 && end !== -1 && end > start) {
+    const before = source.slice(0, start);
+    const after = source.slice(end + LEARNED_BLOCK_END.length);
+    if (!block) {
+      // Collapse the blank lines that surrounded the removed block so deleting
+      // it leaves the file as it was before it existed.
+      return `${before.replace(/\n+$/, '\n')}${after.replace(/^\n+/, '')}`.trimEnd() + '\n';
+    }
+    return `${before}${block}${after}`;
+  }
+
+  if (!block) return source;
+  return `${source.replace(/\s+$/, '')}\n\n${block}\n`;
+}
+
+/** Whether the agent file can be rewritten. A generated or read-only agent file
+ *  is a legitimate setup, so graduation degrades instead of failing the run. */
+export async function agentFileIsWritable(agentFilePath: string): Promise<boolean> {
+  try {
+    await access(agentFilePath, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Write the graduated set into the agent file.
+ *
+ * @returns the file text before and after, so the caller can show a diff and
+ * restore the exact prior bytes on undo.
+ */
+export async function writeLearnedBlock(
+  agentFilePath: string,
+  learnings: Learning[],
+): Promise<{ before: string; after: string; changed: boolean }> {
+  const before = await readFile(agentFilePath, 'utf-8');
+  const after = spliceLearnedBlock(before, learnings);
+  if (after === before) return { before, after, changed: false };
+  await writeFile(agentFilePath, after, 'utf-8');
+  return { before, after, changed: true };
+}

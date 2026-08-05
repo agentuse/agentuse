@@ -311,6 +311,15 @@ export async function recordLearningMarkerForLatestMessage(
  */
 export interface ApprovalContext {
   reviews: ApprovalReview[];
+  /**
+   * Gates a human actually resolved this run, commented or not.
+   *
+   * `reviews` alone cannot distinguish "a reviewer approved without saying
+   * anything" from "nobody reviewed this at all", and the difference is the
+   * whole signal: the first is a vote of confidence in every rule that was in
+   * force, the second is no evidence whatsoever.
+   */
+  humanGates: number;
 }
 
 /** One durable human decision supplied to gate pre-review. Machine bounces are
@@ -500,6 +509,7 @@ export async function gatherApprovalContext(
   try {
     const messages = await sessionManager.getSessionMessages(sessionID, agentId);
     const reviews: ApprovalReview[] = [];
+    let humanGates = 0;
     for (const message of messages) {
       const parts = await sessionManager.getMessageParts(sessionID, agentId, message.id);
       for (const part of parts) {
@@ -511,16 +521,17 @@ export async function gatherApprovalContext(
         // and their comments were being captured as confidence-0.95 human
         // corrections that then outrank the agent's own conclusions.
         if (!isHumanGateDecision(gate.state.output)) continue;
+        humanGates++;
         const comment = readGateComment(gate.state.output);
         if (!comment) continue;
         const work = formatReviewedWork(gate.state.input);
         reviews.push({ comment, ...(work && { work }) });
       }
     }
-    return { reviews };
+    return { reviews, humanGates };
   } catch (error) {
     logger.debug(`Failed to gather approval context: ${(error as Error).message}`);
-    return { reviews: [] };
+    return { reviews: [], humanGates: 0 };
   }
 }
 

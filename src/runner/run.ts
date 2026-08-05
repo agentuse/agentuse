@@ -6,7 +6,7 @@ import type { AgentCompleteEvent, PluginManager } from '../plugin';
 import { AuthenticationError } from '../models';
 import { logger, runWithLogSink } from '../utils/logger';
 import { toErrorMessage } from '../utils/error-message';
-import { extractLearnings } from '../learning/index.js';
+import { extractLearnings, LearningStore } from '../learning/index.js';
 import { isMockMode } from './mock-tools';
 import { recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, gatherApprovalContext, type SessionLogSink } from './session-helper';
 import { usageToAssistantTokens, addAssistantTokens, type AssistantTokens } from '../session/usage';
@@ -555,7 +555,8 @@ export async function runAgent(
       ...(sessionManager !== undefined && { sessionManager }),
       ...(prepSessionID !== undefined && { sessionId: prepSessionID }),
       ...(prepAgentId !== undefined && { agentId: prepAgentId }),
-      ...(assistantMsgID !== undefined && { messageId: assistantMsgID })
+      ...(assistantMsgID !== undefined && { messageId: assistantMsgID }),
+      learningsInjectedIds: preparation.learningsInjectedIds
     });
 
     // Return metrics for plugin system
@@ -651,6 +652,9 @@ export async function runPostLifecycle(options: {
   sessionId?: string;
   agentId?: string;
   messageId?: string;
+  /** Learning ids injected into this run, credited when a human approves it
+   *  without leaving a comment. */
+  learningsInjectedIds?: string[];
 }) {
   const { pluginManager, agent, agentFilePath, result, startTime, consoleOutput } = options;
   const duration = startTime ? (Date.now() - startTime) / 1000 : 0;
@@ -696,9 +700,22 @@ export async function runPostLifecycle(options: {
       // session here (one place) rather than promoted separately at each resume
       // site, so a comment and the run that produced the reviewed work are
       // evaluated together and deduped in one call.
-      const reviews = (options.sessionManager && options.sessionId && options.agentId)
-        ? (await gatherApprovalContext(options.sessionManager, options.sessionId, options.agentId)).reviews
-        : [];
+      const approvalContext = (options.sessionManager && options.sessionId && options.agentId)
+        ? await gatherApprovalContext(options.sessionManager, options.sessionId, options.agentId)
+        : { reviews: [], humanGates: 0 };
+      const reviews = approvalContext.reviews;
+
+      // A gate a human resolved without leaving a comment is the only positive
+      // evidence the system gets that the rules in force were doing their job.
+      // Credit them BEFORE capture runs, so the counter reflects this run even if
+      // capture then merges or re-asserts one of them. A commented gate credits
+      // nothing: the reviewer had to correct something.
+      if (approvalContext.humanGates > 0 && reviews.length === 0 && options.learningsInjectedIds?.length) {
+        await LearningStore.fromAgentFile(agentFilePath, agent.config.learning.file)
+          .recordApprovedRun(options.learningsInjectedIds)
+          .catch((err: unknown) => logger.debug(`[Learning] Could not credit approved run: ${(err as Error).message}`));
+      }
+
       const outcome = await extractLearnings({
         event,
         agentInstructions: agent.instructions,

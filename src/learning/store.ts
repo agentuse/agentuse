@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname, resolve, basename } from 'path';
 import { randomUUID } from 'crypto';
-import type { Learning, LearningCategory, LearningSource } from './types';
+import type { Learning, LearningCategory, LearningSource, LearningState } from './types';
 import { learningSourceRank } from './ranking';
 
 // Serialize read-modify-write sequences on the same learnings file so two
@@ -88,7 +88,13 @@ export class LearningStore {
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true });
     }
-    await writeFile(this.filePath, this.serializeMarkdown(learnings), 'utf-8');
+    await writeFile(this.filePath, this.render(learnings), 'utf-8');
+  }
+
+  /** The exact file contents a given set would be saved as. Lets the tidy-up
+   *  diff its proposed result against the file on disk without writing it. */
+  render(learnings: Learning[]): string {
+    return this.serializeMarkdown(learnings);
   }
 
   async add(newLearnings: Learning[]): Promise<void> {
@@ -124,19 +130,34 @@ export class LearningStore {
    * that merely overlaps a human rule is genuinely redundant and is still
    * dropped.
    *
+   * A match against a GRADUATED rule is neither inserted nor escalated: that
+   * rule already applies through the agent file's own instructions, so writing
+   * it back into the store would state it twice. It is returned separately so
+   * the caller can say "already permanent" rather than reporting nothing.
+   *
+   * A match against a RETIRED rule revives it. A human re-asserting something we
+   * retired is proof the retirement was wrong, and it is the only correction
+   * signal the archive can ever receive.
+   *
    * @returns the learnings actually persisted, split by how they landed, so the
    * caller can report a truthful count instead of what the evaluator proposed.
    */
   async addOrEscalate(
     incoming: Learning[],
-  ): Promise<{ inserted: Learning[]; escalated: Learning[] }> {
+  ): Promise<{ inserted: Learning[]; escalated: Learning[]; alreadyGraduated: Learning[] }> {
     return withFileLock(this.filePath, async () => {
       const existing = await this.load();
       const inserted: Learning[] = [];
       const escalated: Learning[] = [];
+      const alreadyGraduated: Learning[] = [];
 
       for (const draft of incoming) {
         const idx = existing.findIndex(e => this.similar(e.instruction, draft.instruction));
+
+        if (idx >= 0 && existing[idx]!.state === 'graduated') {
+          alreadyGraduated.push(existing[idx]!);
+          continue;
+        }
 
         if (idx < 0) {
           const taken = new Set(existing.map(l => l.id).filter(Boolean));
@@ -162,6 +183,13 @@ export class LearningStore {
           // Re-asserted now, so it ranks as recent and gets injected next run.
           extractedAt: draft.extractedAt,
           ...(draft.sessionId ? { sessionId: draft.sessionId } : {}),
+          // A repeat is the evidence that the stored wording is not landing.
+          // Counting it is what later lets the tidy-up REWRITE the rule instead
+          // of retiring it or stacking a near-copy beside it.
+          reasserted: (prior.reasserted ?? 0) + 1,
+          // Revive on re-assertion: a human repeating something we archived is
+          // the archive being overruled.
+          state: 'active',
         };
         // Move it to the tail rather than rewriting it in place. Dates persist to
         // day precision, so a rule re-asserted on the same day as its peers ties
@@ -177,7 +205,50 @@ export class LearningStore {
       if (inserted.length > 0 || escalated.length > 0) {
         await this.save(existing);
       }
-      return { inserted, escalated };
+      return { inserted, escalated, alreadyGraduated };
+    });
+  }
+
+  /**
+   * Move learnings between lifecycle states. Used by the tidy-up pass to retire
+   * superseded entries and mark graduated ones, in one load+save under the lock.
+   * @returns the ids that actually changed state
+   */
+  async setState(ids: string[], state: LearningState): Promise<string[]> {
+    return withFileLock(this.filePath, async () => {
+      const learnings = await this.load();
+      const wanted = new Set(ids);
+      const changed: string[] = [];
+      for (const l of learnings) {
+        if (!wanted.has(l.id) || (l.state ?? 'active') === state) continue;
+        l.state = state;
+        changed.push(l.id);
+      }
+      if (changed.length > 0) await this.save(learnings);
+      return changed;
+    });
+  }
+
+  /**
+   * Credit the injected set for a run that a human approved without leaving a
+   * comment — the only positive evidence the system gets that a rule is working.
+   *
+   * Deliberately NOT incremented for a run that drew a comment: the reviewer
+   * corrected something, so the rules in force that run did not fully do their
+   * job, and crediting them would let a bad rule graduate on the strength of
+   * runs it was failing.
+   */
+  async recordApprovedRun(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await withFileLock(this.filePath, async () => {
+      const learnings = await this.load();
+      let changed = false;
+      for (const l of learnings) {
+        if (!ids.includes(l.id)) continue;
+        l.approvedRuns++;
+        changed = true;
+      }
+      if (changed) await this.save(learnings);
     });
   }
 
@@ -187,14 +258,17 @@ export class LearningStore {
    * manual, confidence-1 rule (the reviewer's wording wins) while keeping its id
    * and appliedCount; otherwise the rule is inserted with a fresh id. Single
    * load+save under the file lock.
-   * @returns whether an existing learning was upgraded (vs. a new one inserted)
+   * @returns whether an existing learning was upgraded (vs. a new one inserted),
+   * and whether that learning is graduated — in which case the caller must
+   * re-render the agent file's block so the reviewer's new wording reaches the
+   * copy that is actually in force.
    */
-  async upsertManual(draft: Learning): Promise<{ upgraded: boolean }> {
+  async upsertManual(draft: Learning): Promise<{ upgraded: boolean; graduated: boolean }> {
     return withFileLock(this.filePath, async () => {
       const existing = await this.load();
       const idx = existing.findIndex(e => this.similar(e.instruction, draft.instruction));
       if (idx >= 0) {
-        const prior = existing[idx];
+        const prior = existing[idx]!;
         const { sessionId: _priorSessionId, ...priorWithoutSession } = prior;
         existing[idx] = {
           ...priorWithoutSession,
@@ -207,16 +281,24 @@ export class LearningStore {
           // The re-asserting session owns the rule now (or none, for an
           // agent-level rule); keep prior.id and prior.appliedCount.
           ...(draft.sessionId ? { sessionId: draft.sessionId } : {}),
+          // A human writing a rule we already hold is a repeat like any other.
+          reasserted: (prior.reasserted ?? 0) + 1,
+          // Revive a retired rule, but leave a GRADUATED one graduated: it lives
+          // in the agent file, and flipping it back to active would state the
+          // same rule twice, once there and once in the injected block. The
+          // reviewer's new wording still wins — the caller re-renders the agent
+          // file block so the permanent copy is the one that changes.
+          ...(prior.state === 'retired' ? { state: 'active' as const } : {}),
         };
         await this.save(existing);
-        return { upgraded: true };
+        return { upgraded: true, graduated: existing[idx]!.state === 'graduated' };
       }
       const taken = new Set(existing.map(l => l.id).filter(Boolean));
       const id = draft.id && draft.id.length >= 4 && !taken.has(draft.id)
         ? draft.id
         : generateLearningId(taken);
       await this.save([...existing, { ...draft, id }]);
-      return { upgraded: false };
+      return { upgraded: false, graduated: false };
     });
   }
 
@@ -262,7 +344,10 @@ export class LearningStore {
     const learnings: Learning[] = [];
     // Capture the metadata comment as a single token blob so fields can be
     // parsed positionally-or-by-key. This keeps old files (no `src:`) readable.
-    const regex = /### \[([\w-]+)\] (.+)\n<!-- (.+?) -->\n([\s\S]+?)(?=\n\n###|\n*$)/g;
+    // The `## Retired` heading that separates the archive is not matched by the
+    // `###` entry regex, so it needs no special handling here — each retired
+    // entry carries `state:retired` in its own metadata.
+    const regex = /### \[([\w-]+)\] (.+)\n<!-- (.+?) -->\n([\s\S]+?)(?=\n\n###|\n\n## |\n*$)/g;
 
     let match;
     while ((match = regex.exec(content)) !== null) {
@@ -276,6 +361,9 @@ export class LearningStore {
         extractedAt: meta.date ?? '',
         source: meta.source ?? 'auto',
         ...(meta.sessionId && { sessionId: meta.sessionId }),
+        ...(meta.state && meta.state !== 'active' && { state: meta.state }),
+        reasserted: meta.reasserted ?? 0,
+        approvedRuns: meta.approved ?? 0,
         instruction: match[4].trim(),
       });
     }
@@ -285,13 +373,21 @@ export class LearningStore {
   /**
    * Parse the metadata comment body, e.g.
    * `id:AB12 | confidence:0.92 | applied:0 | src:approval | sess:abc123 | 2024-01-15`.
-   * `src:` and `sess:` are optional so learnings files written before
-   * provenance still load.
+   * Every field except the date is optional and defaults, so learnings files
+   * written before provenance (`src:`), the lifecycle (`state:`) or the evidence
+   * counters (`re:`, `ok:`) still load. Unknown tokens are ignored rather than
+   * rejected, which is what lets a newer field be added without a migration.
    */
   private parseMeta(meta: string): {
-    id?: string; confidence?: number; applied?: number; source?: LearningSource; sessionId?: string; date?: string;
+    id?: string; confidence?: number; applied?: number; source?: LearningSource;
+    sessionId?: string; date?: string; state?: LearningState;
+    reasserted?: number; approved?: number;
   } {
-    const out: { id?: string; confidence?: number; applied?: number; source?: LearningSource; sessionId?: string; date?: string } = {};
+    const out: {
+      id?: string; confidence?: number; applied?: number; source?: LearningSource;
+      sessionId?: string; date?: string; state?: LearningState;
+      reasserted?: number; approved?: number;
+    } = {};
     for (const token of meta.split('|').map(t => t.trim())) {
       if (token.startsWith('id:')) out.id = token.slice(3);
       else if (token.startsWith('confidence:')) out.confidence = parseFloat(token.slice(11));
@@ -301,20 +397,56 @@ export class LearningStore {
         out.source = source === 'manual' || source === 'approval' ? source : 'auto';
       }
       else if (token.startsWith('sess:')) out.sessionId = token.slice(5);
+      else if (token.startsWith('state:')) {
+        const state = token.slice(6);
+        out.state = state === 'graduated' || state === 'retired' ? state : 'active';
+      }
+      else if (token.startsWith('re:')) out.reasserted = parseInt(token.slice(3)) || 0;
+      else if (token.startsWith('ok:')) out.approved = parseInt(token.slice(3)) || 0;
       else if (/^\d{4}-\d{2}-\d{2}$/.test(token)) out.date = token;
     }
     return out;
   }
 
+  /**
+   * Render one entry. Optional metadata is omitted when it carries no
+   * information (state active, counters at zero) so a file that predates these
+   * fields round-trips byte-identical through a save it did not need.
+   */
+  private serializeEntry(l: Learning): string {
+    const sess = l.sessionId ? ` | sess:${l.sessionId}` : '';
+    const state = l.state && l.state !== 'active' ? ` | state:${l.state}` : '';
+    // `?? 0` guards the FILE, not the type: a counter that reached the serializer
+    // as undefined would write `re:NaN` into a user's corrections file and every
+    // later parse would read it back as garbage.
+    const re = (l.reasserted ?? 0) > 0 ? ` | re:${l.reasserted}` : '';
+    const ok = (l.approvedRuns ?? 0) > 0 ? ` | ok:${l.approvedRuns}` : '';
+    return `### [${l.category}] ${l.title}\n`
+      + `<!-- id:${l.id} | confidence:${l.confidence.toFixed(2)} | applied:${l.appliedCount}`
+      + ` | src:${l.source}${sess}${state}${re}${ok} | ${toLocalDate(l.extractedAt)} -->\n`
+      + `${l.instruction}\n\n`;
+  }
+
+  /**
+   * Retired entries sink to a trailing `## Retired` section rather than being
+   * deleted. The system never destroys a lesson a human or a run produced: a
+   * retirement is a judgement that something is superseded, and the evidence
+   * that it was wrong is a human re-asserting the rule — which
+   * {@link addOrEscalate} can only detect if the entry is still there to match.
+   */
   private serializeMarkdown(learnings: Learning[]): string {
     const agentName = this.filePath.split('/').pop()?.replace('.learnings.md', '') || 'agent';
     let md = `# Learnings for ${agentName}\n\n`;
 
     for (const l of learnings) {
-      md += `### [${l.category}] ${l.title}\n`;
-      const sess = l.sessionId ? ` | sess:${l.sessionId}` : '';
-      md += `<!-- id:${l.id} | confidence:${l.confidence.toFixed(2)} | applied:${l.appliedCount} | src:${l.source}${sess} | ${toLocalDate(l.extractedAt)} -->\n`;
-      md += `${l.instruction}\n\n`;
+      if (l.state === 'retired') continue;
+      md += this.serializeEntry(l);
+    }
+
+    const retired = learnings.filter((l) => l.state === 'retired');
+    if (retired.length > 0) {
+      md += `## Retired\n\n`;
+      for (const l of retired) md += this.serializeEntry(l);
     }
     return md.trim() + '\n';
   }

@@ -18,6 +18,8 @@ const baseLearning: Learning = {
   appliedCount: 0,
   extractedAt: "2024-01-02T10:00:00.000Z",
   source: "auto",
+  reasserted: 0,
+  approvedRuns: 0,
 };
 
 describe("LearningStore", () => {
@@ -483,8 +485,92 @@ Always wait for explicit approval before publishing.
 
       const result = await store.addOrEscalate([{ ...stored, id: "auto0002", source: "auto", confidence: 0.9 }]);
 
-      expect(result).toEqual({ inserted: [], escalated: [] });
+      expect(result).toEqual({ inserted: [], escalated: [], alreadyGraduated: [] });
       expect(await store.load()).toEqual(before);
+    });
+
+    it("counts a repeat so the tidy-up can rewrite the rule instead of stacking a copy", async () => {
+      await store.save([stored]);
+
+      await store.addOrEscalate([{ ...stored, id: "again001", extractedAt: "2026-07-28T00:00:00.000Z" }]);
+      await store.addOrEscalate([{ ...stored, id: "again002", extractedAt: "2026-07-29T00:00:00.000Z" }]);
+
+      const loaded = await store.load();
+      expect(loaded).toHaveLength(1);
+      expect(loaded[0]!.reasserted).toBe(2);
+    });
+
+    it("revives a retired rule when a human re-asserts it", async () => {
+      // The archive's only correction signal: a human saying it again.
+      await store.save([{ ...stored, state: "retired" }]);
+
+      const { escalated } = await store.addOrEscalate([{ ...stored, id: "again001", extractedAt: "2026-07-28T00:00:00.000Z" }]);
+
+      expect(escalated).toHaveLength(1);
+      expect((await store.load())[0]!.state).toBeUndefined();
+    });
+
+    it("leaves a graduated rule alone rather than stating it twice", async () => {
+      await store.save([{ ...stored, state: "graduated" }]);
+
+      const result = await store.addOrEscalate([{ ...stored, id: "again001", extractedAt: "2026-07-28T00:00:00.000Z" }]);
+
+      expect(result.alreadyGraduated).toHaveLength(1);
+      expect(result.inserted).toHaveLength(0);
+      expect(result.escalated).toHaveLength(0);
+      expect((await store.load())[0]!.state).toBe("graduated");
+    });
+  });
+
+  describe("lifecycle state", () => {
+    it("round-trips state and the evidence counters, defaulting them on older files", async () => {
+      await store.save([
+        { ...baseLearning, id: "perm0001", state: "graduated", approvedRuns: 7 },
+        { ...baseLearning, id: "arch0001", title: "Archived", instruction: "Something entirely different about archives here.", state: "retired", reasserted: 2 },
+      ]);
+
+      const loaded = await store.load();
+      const permanent = loaded.find((l) => l.id === "perm0001")!;
+      const archived = loaded.find((l) => l.id === "arch0001")!;
+
+      expect(permanent.state).toBe("graduated");
+      expect(permanent.approvedRuns).toBe(7);
+      expect(archived.state).toBe("retired");
+      expect(archived.reasserted).toBe(2);
+      // An entry with nothing to say writes no extra metadata, so a file that
+      // predates these fields round-trips unchanged.
+      expect(store.render([baseLearning])).not.toContain("state:");
+    });
+
+    it("sinks retired entries into an archive section instead of deleting them", async () => {
+      await store.save([
+        baseLearning,
+        { ...baseLearning, id: "arch0001", title: "Archived", instruction: "Something entirely different about archives here.", state: "retired" },
+      ]);
+
+      const raw = store.render(await store.load());
+      expect(raw).toContain("## Retired");
+      expect(raw.indexOf("## Retired")).toBeLessThan(raw.indexOf("Archived"));
+      expect(await store.load()).toHaveLength(2);
+    });
+
+    it("credits only the injected rules for an approved run", async () => {
+      await store.save([baseLearning, { ...baseLearning, id: "other001", title: "Other", instruction: "Completely unrelated guidance about something else." }]);
+
+      await store.recordApprovedRun(["learn001"]);
+
+      const loaded = await store.load();
+      expect(loaded.find((l) => l.id === "learn001")!.approvedRuns).toBe(1);
+      expect(loaded.find((l) => l.id === "other001")!.approvedRuns).toBe(0);
+    });
+
+    it("moves rules between states and reports what changed", async () => {
+      await store.save([baseLearning]);
+
+      expect(await store.setState(["learn001"], "graduated")).toEqual(["learn001"]);
+      // Already there: nothing to change, nothing to report.
+      expect(await store.setState(["learn001"], "graduated")).toEqual([]);
+      expect((await store.load())[0]!.state).toBe("graduated");
     });
   });
 });

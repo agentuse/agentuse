@@ -79,7 +79,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       if (preloadedSkills.length > 0) {
         resolvedInstructions = [
           resolvedInstructions,
-          '## Skills (shared defaults — your agent instructions and Learned Guidelines override these on conflict)',
+          '## Skills (shared defaults — your agent instructions and any captured corrections override these on conflict)',
           preloadedSkills.map((skill) => skill.output).join('\n\n'),
         ].join('\n\n');
         logger.debug(`[Skills] Preloaded ${preloadedSkills.map((skill) => skill.name).join(', ')}`);
@@ -91,12 +91,14 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   // persisted LLM state, so learning prompts are intentionally not re-derived.
   let learningsApplied = 0;
   let learningsStored = 0;
+  let learningsInjectedIds: string[] = [];
   if (!existingSessionId && agent.config.learning?.apply && agentFilePath) {
     const learningResult = await buildLearningPrompt(agent, agentFilePath);
     if (learningResult) {
       resolvedInstructions = `${resolvedInstructions}\n\n${learningResult.prompt}`;
       learningsApplied = learningResult.count;
       learningsStored = learningResult.total;
+      learningsInjectedIds = learningResult.injectedIds;
       logger.debug(`[Learning] Appended ${learningsApplied} of ${learningsStored} learning(s) to instructions`);
     }
   }
@@ -376,6 +378,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     cleanup,
     releaseStoreLock,
     learningsApplied,
-    learningsStored
+    learningsStored,
+    learningsInjectedIds
   };
 }

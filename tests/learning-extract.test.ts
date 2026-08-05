@@ -131,6 +131,8 @@ describe("extractLearnings", () => {
       appliedCount: 5,
       extractedAt: "2026-06-02T00:00:00.000Z",
       source: "manual",
+      reasserted: 0,
+      approvedRuns: 0,
     }]);
 
     completeTextMock.mockImplementation(async () => JSON.stringify([{
@@ -169,6 +171,8 @@ describe("extractLearnings", () => {
       appliedCount: 0,
       extractedAt: "2026-06-02T00:00:00.000Z",
       source: "approval" as const,
+      reasserted: 0,
+      approvedRuns: 0,
     };
     const fillers = Array.from({ length: 10 }, (_, i) => ({
       ...dormant,

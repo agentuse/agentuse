@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { MAX_INJECTED_LEARNINGS, partitionLearnings, rankLearnings } from "../src/learning/ranking";
+import { MAX_INJECTED_LEARNINGS, effectiveCap, partitionLearnings, rankLearnings } from "../src/learning/ranking";
 import type { Learning } from "../src/learning/types";
 
 /** A reviewer-sourced learning: the fixed 0.95 confidence the evaluator assigns. */
@@ -13,6 +13,8 @@ function correction(title: string, date: string): Learning {
     appliedCount: 0,
     extractedAt: date,
     source: "approval",
+    reasserted: 0,
+    approvedRuns: 0,
   };
 }
 
@@ -112,5 +114,26 @@ describe("partitionLearnings", () => {
     const { injected, dormant } = partitionLearnings(three, 1);
     expect(injected.map((l) => l.title)).toEqual(["c"]);
     expect(dormant).toHaveLength(2);
+  });
+
+  it("leaves graduated and retired rules out of both buckets", () => {
+    // A rule living in the agent file IS in force; counting it as dormant would
+    // report the best-tended agent in the fleet as the most starved.
+    const { injected, dormant } = partitionLearnings([
+      correction("live", "2026-05-01"),
+      { ...correction("permanent", "2026-05-01"), state: "graduated" },
+      { ...correction("archived", "2026-05-01"), state: "retired" },
+    ]);
+
+    expect(injected.map((l) => l.title)).toEqual(["live"]);
+    expect(dormant).toEqual([]);
+  });
+});
+
+describe("effectiveCap", () => {
+  it("defaults to the built-in cap and honours a per-agent override", () => {
+    expect(effectiveCap(undefined)).toBe(MAX_INJECTED_LEARNINGS);
+    expect(effectiveCap({ capture: true, apply: true })).toBe(MAX_INJECTED_LEARNINGS);
+    expect(effectiveCap({ capture: true, apply: true, max: 25 })).toBe(25);
   });
 });

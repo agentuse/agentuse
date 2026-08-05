@@ -286,6 +286,8 @@ If no learnings are applicable, respond with an empty array: []`;
       appliedCount: 0,
       extractedAt: now,
       source,
+      reasserted: 0,
+      approvedRuns: 0,
     });
   }
   return learnings;

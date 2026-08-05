@@ -12,6 +12,8 @@ export interface CanonicalLearningConfig {
   apply: boolean;
   criteria?: string; // optional guidance for the capture evaluator
   file?: string;     // custom store path, relative to the agent file
+  max?: number;      // injected-per-run cap (default MAX_INJECTED_LEARNINGS)
+  model?: string;    // model for helper calls (capture + tidy); defaults to the agent's
 }
 
 const CanonicalLearningSchema = z
@@ -20,6 +22,18 @@ const CanonicalLearningSchema = z
     apply: z.boolean().default(true),
     criteria: z.string().optional(),
     file: z.string().optional(),
+    // Bounded on purpose: the cap exists to keep the guideline block from
+    // crowding out the agent's own instructions, and every injected learning is
+    // paid for on every model request. `agentuse doctor` prints the token cost
+    // next to the count so raising it shows its own price.
+    max: z.number().int().min(1).max(50).optional(),
+    // Helper calls (capture, tidy) run on the agent's own model by default:
+    // whatever provider and auth the agent already works with is guaranteed to
+    // work here too, and the model that will later FOLLOW these instructions is
+    // the right one to write them. Override for an agent deliberately running a
+    // cheap tier for high-volume work — you probably don't want that tier
+    // deciding which corrections become permanent.
+    model: z.string().optional(),
   })
   .strict();
 
@@ -80,6 +94,18 @@ export interface ApprovalReview {
 }
 
 /**
+ * Where a learning sits in its lifecycle.
+ * - active: eligible for injection, subject to the per-run cap
+ * - graduated: written into the agent file's own instructions, so it applies on
+ *   every run without consuming a cap slot. Never injected again.
+ * - retired: superseded or stale. Kept in the file (nothing is ever deleted by
+ *   the system) and revived automatically if a human re-asserts it.
+ *
+ * Absent on files written before the lifecycle existed, which load as active.
+ */
+export type LearningState = 'active' | 'graduated' | 'retired';
+
+/**
  * Learning item stored in markdown
  */
 export interface Learning {
@@ -92,4 +118,22 @@ export interface Learning {
   extractedAt: string;  // ISO date
   source: LearningSource; // Provenance (defaults to 'auto' for legacy files)
   sessionId?: string;   // Session the learning was captured in (absent for legacy files and agent-level manual rules)
+  state?: LearningState; // Lifecycle position; absent means active
+  /**
+   * Times a human repeated this correction after it was already stored.
+   *
+   * Evidence that the WORDING is not landing — the agent has the rule and made
+   * the mistake anyway — so a re-asserted entry is a candidate to be rewritten,
+   * never to be retired.
+   */
+  reasserted: number;
+  /**
+   * Runs this learning was injected into that ended with an approval and no
+   * reviewer comment.
+   *
+   * This is the only evidence the system has that a rule actually WORKS, as
+   * opposed to `appliedCount`, which counts injections and so measures cost, not
+   * value. Graduating a rule into the agent file permanently is gated on it.
+   */
+  approvedRuns: number;
 }

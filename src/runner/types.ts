@@ -89,9 +89,14 @@ export interface PreparedAgentExecution {
   releaseStoreLock: () => Promise<void>;
   /** Number of learnings applied to this run (0 if learning.apply is disabled) */
   learningsApplied: number;
-  /** Number of learnings STORED for the agent. Higher than `learningsApplied`
-   *  means the injection cap left the remainder dormant for this run. */
+  /** Number of ACTIVE learnings stored for the agent. Higher than
+   *  `learningsApplied` means the injection cap left the remainder dormant for
+   *  this run. Excludes graduated rules (in force via the agent file) and
+   *  retired ones. */
   learningsStored: number;
+  /** Ids injected this run, so a run a human approves without comment can credit
+   *  exactly the rules that were in force for it. */
+  learningsInjectedIds: string[];
 }
 
 export interface AgentChunk {

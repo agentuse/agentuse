@@ -49,10 +49,10 @@ The output rules above (skimmable markdown, tables, charts, ~200 words) govern \
 
 Guidance precedence — when guidance from different sources conflicts, the higher source wins:
 1. Your agent instructions (the task below) — authoritative.
-2. Learned Guidelines — corrections captured from prior runs; these OVERRIDE skill defaults.
+2. Learned Guidelines and Recent Corrections — corrections captured from prior runs; these OVERRIDE skill defaults. Both carry the same authority: Learned Guidelines are the ones proven enough to be written into the agent file permanently, Recent Corrections are the newer ones still applying per-run.
 3. Skills — shared defaults and craft, not unoverridable mandates.
 4. Other reference files.
-Skills give you sensible defaults; a Learned Guideline or your own instructions override them. Do not let an elaborately-worded skill rule outweigh a higher-precedence instruction.
+Skills give you sensible defaults; a captured correction or your own instructions override them. Do not let an elaborately-worded skill rule outweigh a higher-precedence instruction.
 
 Outside that ladder: the outcome tool call is runtime-owned and always required. An output format in your agent instructions describes what belongs in \`details\`; it never replaces the tool call, however complete its own template looks. A template also never obliges you to fill a field whose answer this run is "none", "n/a", or a restatement of how the system is designed — drop those lines instead of padding them.
 
