@@ -1039,6 +1039,7 @@ async function runInternalWorker() {
   const { createInterface } = await import('readline');
   const { SessionManager } = await import('./session/index.js');
   const { initStorage, CorruptStorageError, readJSON, writeJSON } = await import('./storage/index.js');
+  const { buildSessionContextPayload } = await import('./cli/serve/context-stack.js');
 
   // Configure logger to be quiet
   logger.configure({ level: LogLevel.ERROR, quiet: true, disableTUI: true });
@@ -1046,7 +1047,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'release';
+    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'session-context' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'release';
     agentPath?: string;
     projectRoot: string;
     /** invalidate-lists: hold the short list TTL for a window (start pokes). */
@@ -2680,6 +2681,59 @@ async function runInternalWorker() {
     }
   }
 
+  /**
+   * The context stack for one session: what the model was actually sent.
+   * Read-only, and built entirely from what the run already persisted (the
+   * resolved system messages, the resolved instructions, the tool snapshot),
+   * so it also answers for sessions that ran before this endpoint existed.
+   */
+  async function getSessionContext(req: ExecuteRequest) {
+    try {
+      if (!req.sessionId) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_REQUIRED', message: 'Missing sessionId for context request' },
+        };
+      }
+
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const found = await sessionManager.findSession(req.sessionId);
+      if (!found || !sessionBelongsToProject(found.session, req.projectRoot)) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${req.sessionId}` },
+        };
+      }
+
+      const [message, tools] = await Promise.all([
+        sessionManager.getPrimaryMessage(found.session.id, found.agentId),
+        sessionManager.readToolsSnapshot(found.session.id, found.agentId),
+      ]);
+
+      return {
+        id: req.id,
+        success: true,
+        context: buildSessionContextPayload({ session: found.session, message, tools }),
+      };
+    } catch (err) {
+      if (err instanceof CorruptStorageError) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_CORRUPTED', message: `This session's stored data is corrupted and cannot be displayed (${err.message}).` },
+        };
+      }
+      return {
+        id: req.id,
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: (err as Error).message },
+      };
+    }
+  }
+
   async function sweepExpiredApprovals(req: ExecuteRequest) {
     try {
       await initStorage(req.projectRoot);
@@ -3949,6 +4003,10 @@ async function runInternalWorker() {
         });
       } else if (request.type === 'session-status') {
         getSessionStatusInfo(request).then((response) => {
+          reply(response);
+        });
+      } else if (request.type === 'session-context') {
+        getSessionContext(request).then((response) => {
           reply(response);
         });
       } else if (request.type === 'sweep-expired') {

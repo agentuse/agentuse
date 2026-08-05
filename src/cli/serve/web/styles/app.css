@@ -6034,3 +6034,175 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   color: var(--muted);
   vertical-align: 1px;
 }
+
+/* Context stack (the /sessions/:id/context diagnostic subpage).
+   A weighted list: every layer that went into the run's opening context
+   window, ordered as the model received it, sized by its share of the whole.
+   The bar is the point of the page - it turns "why is this agent slow or
+   expensive" into something readable at a glance. */
+.session-action-button { text-decoration: none; }
+.page-session-context .lede { max-width: 68ch; }
+/* This page shows 4-6 meta fields, so it reliably lands on a partial last row.
+   The shared meta table paints its grid gaps with a line colour and relies on
+   the last cell reaching the end line to cover the unfilled tracks, which only
+   works when the row happens to be full. Separate bordered cards sidestep it
+   and match the layer cards below. */
+.page-session-context .meta {
+  background: none;
+  border: 0;
+  gap: 8px;
+  border-radius: 0;
+}
+.page-session-context .meta .cell {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.page-session-context .meta .cell:last-child { grid-column-end: auto; }
+.page-session-context .ctx-banner {
+  margin-top: 14px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted-3);
+  border-left: 2px solid var(--amber-border);
+}
+.page-session-context .ctx-hint {
+  margin: 0 0 10px;
+  max-width: 68ch;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.page-session-context .ctx-footnote {
+  margin: 28px 0 0;
+  max-width: 68ch;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.ctx-layers, .ctx-tools { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ctx-tools { margin-top: 10px; }
+
+.ctx-layer, .ctx-tool {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.ctx-layer:focus-within, .ctx-tool:focus-within { border-color: var(--cyan-border); }
+
+.ctx-layer-head, .ctx-tool-head {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--sans);
+  color: inherit;
+}
+.ctx-layer-head { grid-template-columns: 22px 64px minmax(0, 1fr) 172px; }
+.ctx-tool-head { grid-template-columns: minmax(0, 220px) minmax(0, 1fr) 172px; }
+.ctx-layer-head:hover, .ctx-tool-head:hover { background: var(--panel-hover); }
+.ctx-layer-head:disabled { cursor: default; }
+.ctx-layer-head:disabled:hover { background: none; }
+.ctx-layer-head:focus-visible, .ctx-tool-head:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: -2px; }
+
+.ctx-order {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted-2);
+  text-align: right;
+}
+.ctx-kind {
+  justify-self: start;
+  padding: 2px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* Colour-code by origin: built-in runtime text, the agent's own file, and
+   text pulled in from elsewhere (skills, corrections) read differently when
+   you are hunting for what bloated a prompt. */
+.ctx-kind-system .ctx-kind, .ctx-kind-tools .ctx-kind { color: var(--chart-3); border-color: var(--chart-3); }
+.ctx-kind-instructions .ctx-kind, .ctx-kind-prompt .ctx-kind { color: var(--cyan); border-color: var(--cyan-border); }
+.ctx-kind-skills .ctx-kind, .ctx-kind-learnings .ctx-kind, .ctx-kind-approval .ctx-kind { color: var(--amber); border-color: var(--amber-border); }
+
+.ctx-layer-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ctx-layer-label { font-size: 13px; color: var(--fg); }
+.ctx-source {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-note { font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+
+.ctx-weight { display: flex; align-items: center; gap: 10px; justify-self: end; width: 100%; }
+.ctx-track { flex: 1; height: 5px; border-radius: 999px; background: var(--bar-bg); overflow: hidden; }
+.ctx-bar { display: block; height: 100%; border-radius: 999px; background: var(--cyan); }
+.ctx-kind-skills .ctx-bar, .ctx-kind-learnings .ctx-bar, .ctx-kind-approval .ctx-bar { background: var(--amber); }
+.ctx-kind-system .ctx-bar, .ctx-kind-tools .ctx-bar { background: var(--chart-3); }
+.ctx-tokens {
+  min-width: 52px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted-3);
+  text-align: right;
+}
+
+.ctx-text {
+  margin: 0;
+  padding: 12px 14px;
+  max-height: 460px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--muted-3);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ctx-tool-name { font-family: var(--mono); font-size: 12px; color: var(--fg); }
+.ctx-tool-desc {
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-tool-body { border-top: 1px solid var(--line); }
+.ctx-tool-body .ctx-text { border-top: 0; }
+.ctx-subhead {
+  padding: 10px 14px 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  color: var(--muted-2);
+  background: var(--bg);
+}
+
+/* Narrow screens: the weight bar drops to its own row rather than crushing
+   the label, matching how the tool-call band stacks on the session page. */
+@media (max-width: 720px) {
+  .ctx-layer-head { grid-template-columns: 22px minmax(0, 1fr); grid-auto-rows: min-content; }
+  .ctx-kind { grid-area: 1 / 2; }
+  .ctx-layer-main { grid-area: 2 / 1 / 3 / -1; }
+  .ctx-weight { grid-area: 3 / 1 / 4 / -1; }
+  .ctx-tool-head { grid-template-columns: minmax(0, 1fr); }
+  .ctx-tool-desc { white-space: normal; }
+}

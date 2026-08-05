@@ -59,6 +59,10 @@ import {
   type StoreBrowserRows,
   type StoreBrowserSummary
 } from "./serve/stores";
+// Type-only, so this stays erased at compile and adds nothing to the bundle.
+// The context payload is elaborate enough that a hand-kept local copy (as the
+// older session types above are) would drift from the page that consumes it.
+import type { SessionContextPayload } from "./serve/types";
 
 const APPROVAL_LIST_SSE_INTERVAL_MS = 10_000;
 const SESSION_LIST_SSE_INTERVAL_MS = 10_000;
@@ -250,6 +254,11 @@ interface WorkerApprovalInfoResult {
 interface WorkerSessionStatusResult {
   success: true;
   session: SessionStatusInfo;
+}
+
+interface WorkerSessionContextResult {
+  success: true;
+  context: SessionContextPayload;
 }
 
 interface ExpiredApproval {
@@ -575,7 +584,7 @@ class AgentWorker {
   private readline: ReadlineInterface | null = null;
   private forceKillTimer: NodeJS.Timeout | null = null;
   private pendingRequests: Map<string, {
-    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerSessionFinalResponsesResult | WorkerStopSessionResult) => void;
+    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSessionContextResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerSessionFinalResponsesResult | WorkerStopSessionResult) => void;
     timeoutId?: NodeJS.Timeout;
   }> = new Map();
   private requestCounter = 0;
@@ -863,6 +872,18 @@ class AgentWorker {
     }) as Promise<WorkerSessionStatusResult | WorkerExecuteError>;
   }
 
+  getSessionContext(options: {
+    projectRoot: string;
+    sessionId: string;
+  }): Promise<WorkerSessionContextResult | WorkerExecuteError> {
+    return this.request({
+      type: "session-context",
+      projectRoot: options.projectRoot,
+      sessionId: options.sessionId,
+      timeout: 30,
+    }) as Promise<WorkerSessionContextResult | WorkerExecuteError>;
+  }
+
   sweepExpired(projectRoot: string): Promise<WorkerSweepExpiredResult | WorkerExecuteError> {
     return this.request({
       type: "sweep-expired",
@@ -938,7 +959,7 @@ class AgentWorker {
   private request(
     options: Record<string, unknown> & { timeout?: number | undefined },
     requestOptions: { signal?: AbortSignal | undefined } = {}
-  ): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerSessionFinalResponsesResult | WorkerStopSessionResult> {
+  ): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSessionContextResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerSessionFinalResponsesResult | WorkerStopSessionResult> {
     return new Promise((resolve) => {
       if (requestOptions.signal?.aborted) {
         resolve({
@@ -2230,7 +2251,7 @@ function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
   if (legacyApprovalRoute && legacyApprovalRoute[1] !== 'events') return true;
   if (isApi) return false;
   if (routePath === '/sessions/events') return false;
-  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|started|finished|reopen|events|learnings|learnings\/[^/?#]+\/discard|artifacts-list|artifacts\/.+|tool-artifacts\/.+))?$/.test(routePath);
+  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|started|finished|reopen|events|learnings|learnings\/[^/?#]+\/discard|artifacts-list|artifacts\/.+|tool-artifacts\/.+|context|context-stack))?$/.test(routePath);
 }
 
 /**
@@ -4751,9 +4772,13 @@ export function createServeCommand(): Command {
         // mint the canonical session-view token and 302 to a tokenized URL so the
         // client's own fetches authorize. On local (no api key) the token is
         // empty and links omit it; nothing to convert.
-        const sessionPageMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)$/) : null;
+        // The optional trailing segment is the context-stack diagnostic subpage;
+        // it is a client route, so it serves the same shell and is preserved
+        // across the token-minting redirect.
+        const sessionPageMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)(\/context)?$/) : null;
         if (sessionPageMatch) {
           const sessionId = decodeURIComponent(sessionPageMatch[1]);
+          const sessionSubPath = sessionPageMatch[2] ?? '';
           const token = requestUrl.searchParams.get('token') ?? undefined;
           const projectId = requestUrl.searchParams.get('project') ?? undefined;
 
@@ -4767,7 +4792,7 @@ export function createServeCommand(): Command {
             }
             if (allow) {
               const minted = sessionViewToken(sessionId, apiKey);
-              const target = new URL(`/sessions/${encodeURIComponent(sessionId)}`, serverUrl);
+              const target = new URL(`/sessions/${encodeURIComponent(sessionId)}${sessionSubPath}`, serverUrl);
               if (minted) target.searchParams.set('token', minted);
               if (projectId) target.searchParams.set('project', projectId);
               res.writeHead(302, { Location: `${target.pathname}${target.search}` });
@@ -4967,6 +4992,56 @@ export function createServeCommand(): Command {
               updatedAt: a.updatedAt,
             }));
           sendJSON(res, 200, { success: true, artifacts });
+          return;
+        }
+
+        // GET /sessions/:id/context-stack: the diagnostic breakdown of what went
+        // into this run's context window - system messages, tool schemas, agent
+        // instructions, inlined skill files, injected corrections. Read-only and
+        // reconstructed from what the run already persisted. Named
+        // `context-stack` because `/sessions/:id/context` is the SPA page that
+        // renders it.
+        const sessionContextMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/context-stack$/) : null;
+        if (sessionContextMatch) {
+          const sessionId = decodeURIComponent(sessionContextMatch[1]);
+          const token = requestUrl.searchParams.get('token') ?? undefined;
+          const projectId = requestUrl.searchParams.get('project') ?? undefined;
+          if (!sessionAuthorized(sessionId, token)) {
+            sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+            return;
+          }
+          const selection = selectSessionProjects(projects, projectId);
+          if (!selection.success) {
+            sendError(res, selection.status, selection.code, selection.message);
+            return;
+          }
+          let contextResult: SessionContextPayload | undefined;
+          let contextError: { status: number; code: string; message: string } | undefined;
+          for (const project of selection.projects) {
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) {
+              contextError ??= { status: 500, code: "WORKER_UNAVAILABLE", message: `No worker for project ${project.id}` };
+              continue;
+            }
+            const info = await projectWorker.getSessionContext({ projectRoot: project.root, sessionId });
+            if (info.success) {
+              contextResult = info.context;
+              break;
+            }
+            if (info.error.code !== 'SESSION_NOT_FOUND') {
+              contextError ??= {
+                status: info.error.code === 'SESSION_CORRUPTED' ? 422 : 500,
+                code: info.error.code,
+                message: info.error.message,
+              };
+            }
+          }
+          if (!contextResult) {
+            const fallback = contextError ?? { status: 404, code: "SESSION_NOT_FOUND", message: `Session not found: ${sessionId}` };
+            sendError(res, fallback.status, fallback.code, fallback.message);
+            return;
+          }
+          sendJSON(res, 200, { success: true, context: contextResult });
           return;
         }
 

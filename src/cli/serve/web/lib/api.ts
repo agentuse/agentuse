@@ -1,4 +1,4 @@
-import type { AgentSummary, ApprovalLogEntry, ApprovalPageInfo, ApprovalSummary, SessionSummary } from "../../types";
+import type { AgentSummary, ApprovalLogEntry, ApprovalPageInfo, ApprovalSummary, SessionContextPayload, SessionSummary } from "../../types";
 import type { StoreBrowserRows, StoreBrowserSummary } from "../../stores";
 import type { StoreItem } from "../../../../store/types";
 import type { SerializedSchedule } from "../../../../scheduler";
@@ -162,6 +162,29 @@ export function fetchSessionArtifacts(
 ): Promise<SessionArtifactsPayload> {
   return getJson(
     `/sessions/${encodeURIComponent(sessionId)}/artifacts-list`,
+    { token, project },
+    signal ? { signal } : {}
+  );
+}
+
+export interface SessionContextResponse {
+  success: true;
+  context: SessionContextPayload;
+}
+
+/**
+ * The context-stack diagnostic for one session. The endpoint is
+ * `context-stack`, not `context`, because `/sessions/:id/context` is the page
+ * that renders it.
+ */
+export function fetchSessionContext(
+  sessionId: string,
+  token: string | undefined,
+  project?: string,
+  signal?: AbortSignal
+): Promise<SessionContextResponse> {
+  return getJson(
+    `/sessions/${encodeURIComponent(sessionId)}/context-stack`,
     { token, project },
     signal ? { signal } : {}
   );

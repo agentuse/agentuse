@@ -109,6 +109,71 @@ export interface SessionStatusInfo {
   mock?: boolean;
 }
 
+/**
+ * One attributable slice of what the model was actually sent. Layers are
+ * returned in send order (system messages first, then the user turn), so the
+ * diagnostic page reads top-to-bottom as the model saw it.
+ *
+ * Everything here is reconstructed from what a run already persists - the
+ * resolved `system[]` array, the resolved instructions, and the tool snapshot -
+ * so it works on sessions that ran before this page existed.
+ */
+export interface ContextStackLayer {
+  id: string;
+  kind: 'system' | 'instructions' | 'approval' | 'skills' | 'learnings' | 'prompt' | 'tools';
+  label: string;
+  /** Where this text came from, when the origin is a real file or a config
+   *  switch worth naming (the agent file, a frontmatter flag, the learning store). */
+  source?: string;
+  /** One line on why this is in the context, for readers who did not write the runtime. */
+  note?: string;
+  chars: number;
+  /** chars/4 heuristic, the same one the runtime's context manager uses. Never
+   *  a provider-reported count - `measured` carries the real numbers. */
+  estTokens: number;
+  /** Full text. Omitted on the tools layer, whose weight is in `tools` instead. */
+  text?: string;
+}
+
+export interface ContextToolRow {
+  name: string;
+  description?: string;
+  /** Serialized JSON Schema the model receives for this tool. */
+  schema?: string;
+  chars: number;
+  estTokens: number;
+}
+
+export interface SessionContextPayload {
+  sessionId: string;
+  model?: string;
+  agent: {
+    id: string;
+    name: string;
+    filePath?: string;
+  };
+  createdAt?: number;
+  layers: ContextStackLayer[];
+  tools: ContextToolRow[];
+  totals: {
+    chars: number;
+    estTokens: number;
+  };
+  /** Provider-reported usage, when the run got far enough to report any. This
+   *  is what calibrates the estimates above. */
+  measured?: {
+    input: number;
+    output: number;
+    reasoning: number;
+    cacheRead: number;
+    cacheWrite: number;
+    context?: ActiveContextUsage;
+  };
+  /** True when the run compacted, meaning the live window no longer matches
+   *  the opening stack shown here. */
+  compacted?: boolean;
+}
+
 export interface ChildSessionSummary {
   sessionId: string;
   agent: {

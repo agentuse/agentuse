@@ -1462,6 +1462,22 @@ export default function SessionDetail() {
               <span>Learnings</span>
             </button>
           )}
+          <a
+            class="session-action-button"
+            href={`/sessions/${encodeURIComponent(sessionId)}/context${location.query.token || projectId
+              ? `?${new URLSearchParams({
+                  ...(location.query.token ? { token: location.query.token } : {}),
+                  ...(projectId ? { project: projectId } : {}),
+                }).toString()}`
+              : ''}`}
+            title="See what was loaded into this run's context window: system prompts, tool schemas, agent instructions, inlined skill files"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <span>Context stack</span>
+          </a>
           <DebugPromptButton
             context={{
               sessionId: approval.sessionId,

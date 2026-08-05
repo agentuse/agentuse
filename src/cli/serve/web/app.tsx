@@ -13,6 +13,7 @@ const AgentDetail = lazy(reloadOnChunkError(() => import('./routes/agent-detail'
 const Schedules = lazy(reloadOnChunkError(() => import('./routes/schedules')));
 const SessionsList = lazy(reloadOnChunkError(() => import('./routes/sessions-list')));
 const SessionDetail = lazy(reloadOnChunkError(() => import('./routes/session-detail')));
+const SessionContext = lazy(reloadOnChunkError(() => import('./routes/session-context')));
 const ApprovalsList = lazy(reloadOnChunkError(() => import('./routes/approvals-list')));
 const StoresIndex = lazy(reloadOnChunkError(() => import('./routes/stores-index')));
 const StoreItems = lazy(reloadOnChunkError(() => import('./routes/store-items')));
@@ -80,6 +81,8 @@ export function App() {
           <Route path="/schedules" component={Schedules} />
           <Route path="/sessions" component={SessionsList} />
           <Route path="/sessions/:sessionId" component={SessionDetail} />
+          {/* Diagnostic subpage: what was actually loaded into this run's context window. */}
+          <Route path="/sessions/:sessionId/context" component={SessionContext} />
           <Route path="/approvals" component={ApprovalsList} />
           <Route path="/stores" component={StoresIndex} />
           <Route path="/stores/:store" component={StoreItems} />
