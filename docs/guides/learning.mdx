@@ -175,10 +175,20 @@ became permanent named individually, and the diff of **both** files. Undo with
 
 ```
 $ agentuse learnings tidy ./blog-writer.agentuse
+  planning batch 1 of 3…
+  planning batch 2 of 3…
+  writing both files…
 
 Done
   3 merged, 1 rewritten, 12 retired, 9 now permanent — 58 → 10 in force
 ```
+
+A pass reads every stored correction, so it takes a few minutes. In the web UI it
+runs on its own page, reporting which batch it is on; leaving that page does not
+stop it, and the result waits there with its Undo button. The agent's Learnings
+tab links back to the last tidy-up (`Tidied up 5m ago, see what changed or undo
+it`) for as long as it is undoable, whether it was run from the browser or the
+terminal.
 
 Inspect first with `agentuse learnings ./blog-writer.agentuse` (a list by status)
 or `agentuse learnings tidy ./blog-writer.agentuse --dry-run` (the plan and both
