@@ -17,6 +17,7 @@ const StoresIndex = lazy(reloadOnChunkError(() => import('./routes/stores-index'
 const StoreItems = lazy(reloadOnChunkError(() => import('./routes/store-items')));
 const StoreItemDetail = lazy(reloadOnChunkError(() => import('./routes/store-item-detail')));
 const Settings = lazy(reloadOnChunkError(() => import('./routes/settings')));
+const LearningsTidy = lazy(reloadOnChunkError(() => import('./routes/learnings-tidy')));
 
 // The shell's #boot spinner (static.ts) covers bundle download AND the first
 // lazy route chunk: it lives outside #app so mounting the (route-less) app
@@ -82,6 +83,9 @@ export function App() {
           <Route path="/stores/:store" component={StoreItems} />
           <Route path="/stores/:store/:item" component={StoreItemDetail} />
           <Route path="/settings" component={Settings} />
+          {/* Query-addressed (?project=&path=&job=): an agent path has slashes
+              of its own, which would be ambiguous under /agents/:project/:agent*. */}
+          <Route path="/learnings/tidy" component={LearningsTidy} />
           <Route default component={NotFound} />
         </Router>
       </ErrorBoundary>

@@ -17,6 +17,8 @@ import type { ApprovalLogEntry } from '../src/cli/serve/types';
 import { term, termTitle } from '../src/cli/serve/web/lib/terms';
 import { AgentGraphView } from '../src/cli/serve/web/components/agent-graph-view';
 import { statusBadge, TidyResultView } from '../src/cli/serve/web/components/learnings-panel';
+import { TidyProgressView } from '../src/cli/serve/web/routes/learnings-tidy';
+import { learningsTidyHref } from '../src/cli/serve/web/lib/links';
 import type { SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
 
 const noop = () => {};
@@ -1221,5 +1223,46 @@ describe('TidyResultView', () => {
     );
     expect(html).toContain('not made permanent');
     expect(html).toContain('not writable');
+  });
+
+  it('drops the undo button once the change has been rolled back', () => {
+    // Both files are already back to how they were; a second Undo would have
+    // nothing to restore and the button would just fail.
+    const html = renderToString(<TidyResultView result={result()} onUndo={noop} undoing={false} undone />);
+    expect(html).toContain('Now permanent in the agent file');
+    expect(html).not.toContain('>Undo<');
+  });
+});
+
+describe('TidyProgressView', () => {
+  it('names the step it is on rather than showing a bare spinner', () => {
+    // A pass takes minutes. "Please wait" for that long reads as a hang.
+    const html = renderToString(<TidyProgressView phase="planning" batch={2} batches={3} elapsedMs={95_000} />);
+    expect(html).toContain('Planning batch 2 of 3');
+    expect(html).toContain('1m 35s');
+    expect(html).toContain('aria-valuenow');
+  });
+
+  it('sweeps instead of claiming a position before the first batch reports', () => {
+    const html = renderToString(<TidyProgressView phase="planning" batch={0} batches={0} elapsedMs={2_000} />);
+    expect(html).toContain('is-indeterminate');
+    expect(html).not.toContain('aria-valuenow');
+    expect(html).toContain('2s');
+  });
+
+  it('says which files it is writing at the end', () => {
+    const html = renderToString(<TidyProgressView phase="applying" batch={3} batches={3} elapsedMs={1_000} />);
+    expect(html).toContain('corrections file and the agent file');
+  });
+});
+
+describe('learningsTidyHref', () => {
+  it('carries the agent by query, so a path with slashes stays unambiguous', () => {
+    const href = learningsTidyHref('proj', 'agents/x/writer.agentuse', { start: true });
+    expect(href).toBe('/learnings/tidy?project=proj&path=agents%2Fx%2Fwriter.agentuse&start=1');
+  });
+
+  it('addresses one finished run when given its job', () => {
+    expect(learningsTidyHref('p', 'a.agentuse', { job: 'J1' })).toContain('job=J1');
   });
 });

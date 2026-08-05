@@ -201,11 +201,36 @@ export interface TidyResult {
   note?: string;
 }
 
+/** A tidy-up in flight. Minutes of model work, so the page it runs on polls
+ *  this rather than holding a request open. */
+export interface TidyJob {
+  id: string;
+  project: string;
+  path: string;
+  status: 'running' | 'done' | 'error' | 'undone';
+  phase: 'planning' | 'applying' | 'done';
+  /** 1-based batch being planned; 0 before the first one starts. */
+  batch: number;
+  batches: number;
+  projectedActive: number;
+  cap: number;
+  dryRun: boolean;
+  startedAt: number;
+  finishedAt?: number;
+  error?: string;
+}
+
 export interface SessionLearningsPayload {
   success: true;
   learnings: SessionLearning[];
   summary?: LearningSummary;
   tidy?: TidyResult;
+  job?: TidyJob;
+  /** A tidy-up running right now, so the panel can point at it instead of
+   *  offering to start one that would just join it. */
+  runningTidy?: { jobId: string };
+  /** The last applied tidy-up, so a page loaded later can still offer Undo. */
+  lastTidy?: { jobId: string; finishedAt: number };
   undone?: boolean;
 }
 
@@ -239,10 +264,19 @@ export function discardAgentLearning(project: string, runPath: string, learningI
   return postJson('/api/agents/learnings/discard', { project, path: runPath, id: learningId });
 }
 
-/** Merge, sharpen, retire and make permanent, until every correction counts.
- *  Applies unless `dryRun`, and returns both diffs either way. */
-export function tidyAgentLearnings(project: string, runPath: string, dryRun = false): Promise<SessionLearningsPayload> {
+/**
+ * Start a tidy-up: merge, sharpen, retire and make permanent, until every
+ * correction counts. Returns as soon as the job is queued — the work itself
+ * takes minutes, and {@link fetchAgentLearningsTidy} follows it.
+ */
+export function startAgentLearningsTidy(project: string, runPath: string, dryRun = false): Promise<{ success: true; job: TidyJob }> {
   return postJson('/api/agents/learnings/tidy', { project, path: runPath, dryRun });
+}
+
+/** Progress while a tidy-up runs, its result once it lands. Without `jobId` it
+ *  answers with the agent's last applied tidy-up. */
+export function fetchAgentLearningsTidy(project: string, runPath: string, jobId?: string): Promise<SessionLearningsPayload> {
+  return getJson('/api/agents/learnings/tidy', { project, path: runPath, job: jobId });
 }
 
 /** Restore the corrections file AND the agent file to their pre-tidy state. */

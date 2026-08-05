@@ -7,14 +7,14 @@ import {
   fetchAgentLearnings,
   addAgentLearning,
   discardAgentLearning,
-  tidyAgentLearnings,
-  undoAgentLearningsTidy,
   type SessionLearning,
   type SessionLearningsPayload,
   type SessionLearningSource,
   type LearningSummary,
   type TidyResult,
 } from '../lib/api';
+import { learningsTidyHref } from '../lib/links';
+import { formatRelativeTime } from '../lib/format';
 import { Loading } from './loading';
 
 // Grouped by provenance, manual first (highest-signal, human-authored), then
@@ -73,7 +73,7 @@ function DiffBlock(props: { label: string; diff: string }) {
  * and both diffs are shown, since the change lands in two files and showing one
  * would hide half of it.
  */
-export function TidyResultView(props: { result: TidyResult; onUndo: () => void; undoing: boolean }) {
+export function TidyResultView(props: { result: TidyResult; onUndo: () => void; undoing: boolean; undone?: boolean }) {
   const r = props.result;
   if (!r.ran) return <p class="learnings-empty">Nothing to tidy up — every correction reaches this agent.</p>;
   // `note` doubles as a partial-failure warning alongside real changes, so it
@@ -112,7 +112,7 @@ export function TidyResultView(props: { result: TidyResult; onUndo: () => void; 
       )}
       {r.diffs.learnings && <DiffBlock label="corrections file" diff={r.diffs.learnings} />}
       {r.diffs.agentFile && <DiffBlock label="agent file" diff={r.diffs.agentFile} />}
-      {r.undoId && (
+      {r.undoId && !props.undone && (
         <button type="button" class="learnings-undo" disabled={props.undoing} onClick={props.onUndo}>
           {props.undoing ? 'Undoing…' : 'Undo'}
         </button>
@@ -137,15 +137,15 @@ function LearningsSection(props: {
   addRule: (instruction: string) => Promise<SessionLearningsPayload>;
   discardRule: (id: string) => Promise<SessionLearningsPayload>;
   /** Agent-scoped only: the session view shows one run's captures, and tidying
-   *  the whole store from there would edit far more than what is on screen. */
-  tidy?: () => Promise<SessionLearningsPayload>;
-  undoTidy?: () => Promise<SessionLearningsPayload>;
+   *  the whole store from there would edit far more than what is on screen.
+   *  The run itself lives on its own page — it takes minutes, and its result is
+   *  the only offer of an undo the user gets. */
+  tidyTarget?: { project: string; runPath: string };
 }) {
   const [learnings, setLearnings] = useState<SessionLearning[] | null>(null);
   const [summary, setSummary] = useState<LearningSummary | null>(null);
-  const [tidyResult, setTidyResult] = useState<TidyResult | null>(null);
-  const [tidying, setTidying] = useState(false);
-  const [undoing, setUndoing] = useState(false);
+  const [lastTidy, setLastTidy] = useState<{ jobId: string; finishedAt: number } | null>(null);
+  const [runningTidy, setRunningTidy] = useState<{ jobId: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -154,6 +154,8 @@ function LearningsSection(props: {
   const absorb = (payload: SessionLearningsPayload) => {
     setLearnings(payload.learnings);
     setSummary(payload.summary ?? null);
+    setLastTidy(payload.lastTidy ?? null);
+    setRunningTidy(payload.runningTidy ?? null);
   };
 
   useEffect(() => {
@@ -162,35 +164,6 @@ function LearningsSection(props: {
       .then(absorb)
       .catch((err) => setError((err as Error).message));
   }, [props.hidden]);
-
-  const runTidy = async () => {
-    if (!props.tidy || tidying) return;
-    setTidying(true);
-    setError(null);
-    try {
-      const payload = await props.tidy();
-      absorb(payload);
-      setTidyResult(payload.tidy ?? null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setTidying(false);
-    }
-  };
-
-  const runUndo = async () => {
-    if (!props.undoTidy || undoing) return;
-    setUndoing(true);
-    setError(null);
-    try {
-      absorb(await props.undoTidy());
-      setTidyResult(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setUndoing(false);
-    }
-  };
 
   const add = async () => {
     const instruction = (inputRef.current?.value ?? '').trim();
@@ -244,10 +217,16 @@ function LearningsSection(props: {
           <span class="learnings-banner-text">
             {summary.dormant} of this agent's corrections never reach it — only the top {summary.cap} apply per run.
           </span>
-          {props.tidy && (
-            <button type="button" class="primary" disabled={tidying} aria-busy={tidying} onClick={() => void runTidy()}>
-              {tidying ? (<><span class="btn-spinner" aria-hidden="true" />Tidying up…</>) : 'Tidy up'}
-            </button>
+          {/* A link, not a submit: the run takes minutes and belongs on a page
+              with a URL, not inside a panel the user may navigate away from. */}
+          {props.tidyTarget && (
+            <a
+              class="learnings-tidy-start"
+              href={learningsTidyHref(props.tidyTarget.project, props.tidyTarget.runPath,
+                runningTidy ? { job: runningTidy.jobId } : { start: true })}
+            >
+              {runningTidy ? (<><span class="btn-spinner" aria-hidden="true" />Tidying up…</>) : 'Tidy up'}
+            </a>
           )}
         </div>
       )}
@@ -258,7 +237,17 @@ function LearningsSection(props: {
         </div>
       )}
 
-      {tidyResult && <TidyResultView result={tidyResult} onUndo={() => void runUndo()} undoing={undoing} />}
+      {/* The last tidy-up rewrote this agent's own file. Whoever comes back to
+          this page is the one who might want that undone, so the way back to it
+          has to be here and not only in the tab that ran it. */}
+      {lastTidy && props.tidyTarget && (
+        <p class="learnings-note">
+          Tidied up {formatRelativeTime(lastTidy.finishedAt)} —{' '}
+          <a href={learningsTidyHref(props.tidyTarget.project, props.tidyTarget.runPath, { job: lastTidy.jobId })}>
+            see what changed or undo it
+          </a>
+        </p>
+      )}
 
       {error && <p class="learnings-error">{error}</p>}
       {learnings === null && !error && <Loading wrapClass="learnings-empty" label="Loading learnings…" />}
@@ -369,8 +358,7 @@ export function AgentLearningsPanel(props: { project: string; runPath: string })
       fetchList={() => fetchAgentLearnings(props.project, props.runPath)}
       addRule={(instruction) => addAgentLearning(props.project, props.runPath, instruction)}
       discardRule={(id) => discardAgentLearning(props.project, props.runPath, id)}
-      tidy={() => tidyAgentLearnings(props.project, props.runPath)}
-      undoTidy={() => undoAgentLearningsTidy(props.project, props.runPath)}
+      tidyTarget={{ project: props.project, runPath: props.runPath }}
     />
   );
 }

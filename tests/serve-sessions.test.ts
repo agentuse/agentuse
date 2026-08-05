@@ -108,6 +108,13 @@ describe('header-gate exemption (capability routes)', () => {
     }
   });
 
+  it('serves the app shell on the tidy-up page so a direct link to it works', () => {
+    // The page is where a tidy-up reports progress and offers its undo, so it is
+    // linked to and reloaded directly; without this it 404s on a hard load.
+    expect(__testing.isSpaPageRoute('/learnings/tidy')).toBe(true);
+    expect(__testing.isSpaPageRoute('/learnings')).toBe(false);
+  });
+
   it('rejects an explicitly wrong project even when the session token is valid', () => {
     const apiKey = 'operator-secret';
     const sessionToken = sessionViewToken('abc', apiKey);

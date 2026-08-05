@@ -2791,6 +2791,34 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .learnings-badge.is-graduated { color: var(--accent, #60a5fa); border-color: currentColor; }
 .learnings-item.is-dormant .learnings-text { opacity: 0.6; }
 
+/* The banner's action is an anchor, not a button: the run lives on its own
+   page. Styled as the primary control it is. */
+.learnings-tidy-start {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  font-family: var(--mono); font-size: 12px; text-decoration: none;
+  color: var(--primary-fg, #fff);
+  background: var(--primary-bg); border: 1px solid var(--primary-bg);
+  border-radius: 8px; min-height: 32px; padding: 0 14px;
+}
+.learnings-tidy-start:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
+
+/* Tidy-up progress. The wait is minutes long, so the page has to keep saying
+   what is happening rather than showing a spinner and hoping. */
+.tidy-progress { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.tidy-progress-head { display: flex; align-items: center; gap: 10px; }
+.tidy-progress-step { flex: 1; font-size: 13px; }
+.tidy-progress-elapsed { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.tidy-progress-track { height: 4px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.tidy-progress-bar { height: 100%; background: var(--primary-bg); transition: width 400ms ease; }
+/* Before the first batch reports in there is no honest percentage to show, so
+   the bar sweeps instead of claiming a position. */
+.tidy-progress-bar.is-indeterminate { width: 35%; animation: tidy-sweep 1.4s ease-in-out infinite; }
+@keyframes tidy-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(285%); }
+}
+.tidy-progress-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; max-width: 62ch; }
+
 .learnings-tidy-result { display: grid; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
 .learnings-tidy-summary { font-size: 12.5px; }
 .learnings-tidy-permanent { display: grid; gap: 6px; }

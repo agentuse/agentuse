@@ -28,7 +28,7 @@ import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-l
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
-import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, consolidateLearnings, undoConsolidation, type LearningConfig } from "../learning";
+import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, consolidateLearnings, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord, type LearningConfig, type ConsolidationResult, type TidyProgress } from "../learning";
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
@@ -65,6 +65,80 @@ const APPROVAL_LIST_SSE_INTERVAL_MS = 10_000;
 const SESSION_LIST_SSE_INTERVAL_MS = 10_000;
 /** Faster session-list cadence while any session is live, so the dashboard tracks runs in near-real-time. */
 const SESSION_LIST_SSE_LIVE_INTERVAL_MS = 2_000;
+
+/**
+ * A tidy-up in flight, or one this process finished recently.
+ *
+ * The pass is minutes of model work on a large corrections file, far too long to
+ * hold a request open for: the browser or a proxy times out and the user is left
+ * with two rewritten files and no idea what happened. So the request starts a
+ * job and returns its id, and the page polls this registry.
+ */
+interface TidyJob {
+  id: string;
+  project: string;
+  path: string;
+  agentFilePath: string;
+  stateRoot: string;
+  startedAt: number;
+  finishedAt?: number;
+  status: 'running' | 'done' | 'error' | 'undone';
+  phase: TidyProgress['phase'];
+  batch: number;
+  batches: number;
+  projectedActive: number;
+  cap: number;
+  dryRun: boolean;
+  result?: ConsolidationResult;
+  error?: string;
+}
+
+const tidyJobs = new Map<string, TidyJob>();
+/** How long a finished job stays queryable in memory. Beyond this the page
+ *  falls back to the record on disk, which is what survives a daemon restart. */
+const TIDY_JOB_RETENTION_MS = 6 * 60 * 60 * 1000;
+
+function pruneTidyJobs(now = Date.now()): void {
+  for (const [id, job] of tidyJobs) {
+    if (job.finishedAt && now - job.finishedAt > TIDY_JOB_RETENTION_MS) tidyJobs.delete(id);
+  }
+}
+
+/** The running job for this agent, if any. A second Tidy up press joins the
+ *  first rather than starting a competing pass over the same two files. */
+function runningTidyJob(project: string, path: string): TidyJob | undefined {
+  for (const job of tidyJobs.values()) {
+    if (job.status === 'running' && job.project === project && job.path === path) return job;
+  }
+  return undefined;
+}
+
+/** Same question asked by agent file, for the list payload — which knows the
+ *  file it is describing but not which project id was used to reach it. */
+function runningTidyJobForFile(agentFilePath: string): TidyJob | undefined {
+  for (const job of tidyJobs.values()) {
+    if (job.status === 'running' && job.agentFilePath === agentFilePath) return job;
+  }
+  return undefined;
+}
+
+function tidyJobView(job: TidyJob) {
+  return {
+    id: job.id,
+    project: job.project,
+    path: job.path,
+    status: job.status,
+    phase: job.phase,
+    batch: job.batch,
+    batches: job.batches,
+    projectedActive: job.projectedActive,
+    cap: job.cap,
+    dryRun: job.dryRun,
+    startedAt: job.startedAt,
+    ...(job.finishedAt ? { finishedAt: job.finishedAt } : {}),
+    ...(job.error ? { error: job.error } : {}),
+  };
+}
 
 interface RunRequest {
   agent: string;
@@ -2026,6 +2100,10 @@ function isSpaPageRoute(routePath: string): boolean {
     case '/sessions':
     case '/approvals':
     case '/settings':
+    /** The tidy-up progress/result page, addressed by ?project=&path=&job=
+     *  rather than by path segments so an agent path containing slashes stays
+     *  unambiguous against the `/agents/:project/:agent*` hub. */
+    case '/learnings/tidy':
       return true;
   }
   if (/^\/stores\/[^/?#]+(?:\/[^/?#]+)?$/.test(routePath)) return true; // /stores/:s and /stores/:s/:item
@@ -4886,14 +4964,32 @@ export function createServeCommand(): Command {
         // whole surface exists to end.
         const learningListPayload = async (
           store: LearningStore,
-          opts: { forSessionId?: string; config?: LearningConfig | undefined } = {},
+          opts: {
+            forSessionId?: string;
+            config?: LearningConfig | undefined;
+            /** Both required to report the last tidy-up; omitted on the
+             *  session-scoped views, which cannot start or undo one. */
+            stateRoot?: string;
+            agentFilePath?: string;
+          } = {},
         ) => {
           const all = await store.load();
           const cap = effectiveCap(opts.config);
           const { injected, dormant } = partitionLearnings(all, cap);
           const injectedIds = new Set(injected.map((l) => l.id));
+          // A tidy-up rewrote two files; the offer to undo it has to be
+          // reachable from the page the user comes back to, not only from the
+          // tab that ran it.
+          const record = opts.stateRoot && opts.agentFilePath
+            ? await readTidyRecord(opts.stateRoot, opts.agentFilePath)
+            : null;
+          // A pass takes minutes, longer than anyone waits on one page. Say it
+          // is running, or coming back here reads as "nothing happened".
+          const inFlight = opts.agentFilePath ? runningTidyJobForFile(opts.agentFilePath) : undefined;
           return {
             success: true,
+            ...(inFlight ? { runningTidy: { jobId: inFlight.id } } : {}),
+            ...(record ? { lastTidy: { jobId: record.jobId, finishedAt: record.finishedAt } } : {}),
             summary: {
               cap,
               active: injected.length + dormant.length,
@@ -5023,7 +5119,7 @@ export function createServeCommand(): Command {
           res: ServerResponse,
           requestedProject: string | undefined,
           requestedPath: string | undefined,
-        ): Promise<{ store: LearningStore; agent: Awaited<ReturnType<typeof parseAgent>>; absPath: string } | null> => {
+        ): Promise<{ store: LearningStore; agent: Awaited<ReturnType<typeof parseAgent>>; absPath: string; stateRoot: string } | null> => {
           if (!requestedProject || !requestedPath) {
             sendError(res, 400, "MISSING_PARAMS", "Both project and path are required");
             return null;
@@ -5039,8 +5135,22 @@ export function createServeCommand(): Command {
           }
           const absPath = resolveScopedAgentPath(project, requestedPath);
           const agent = await parseAgent(absPath);
-          return { store: LearningStore.fromAgentFile(absPath, agent.config.learning?.file), agent, absPath };
+          return {
+            store: LearningStore.fromAgentFile(absPath, agent.config.learning?.file),
+            agent,
+            absPath,
+            stateRoot: resolveProjectContext(dirname(absPath), { agentFilePath: absPath }).stateRoot,
+          };
         };
+
+        /** The agent-scoped list, always carrying the last tidy-up so every
+         *  response that redraws the panel keeps the offer to undo it. */
+        const agentLearningPayload = (target: NonNullable<Awaited<ReturnType<typeof resolveAgentLearningTarget>>>) =>
+          learningListPayload(target.store, {
+            config: target.agent.config.learning,
+            stateRoot: target.stateRoot,
+            agentFilePath: target.absPath,
+          });
 
         // GET /agents/learnings?project=<id>&path=<runPath>: list all stored learnings.
         if (req.method === "GET" && routePath === '/agents/learnings') {
@@ -5051,7 +5161,7 @@ export function createServeCommand(): Command {
               requestUrl.searchParams.get('path') ?? undefined,
             );
             if (!target) return;
-            sendJSON(res, 200, await learningListPayload(target.store, { config: target.agent.config.learning }));
+            sendJSON(res, 200, await agentLearningPayload(target));
           } catch (err) {
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
@@ -5080,7 +5190,7 @@ export function createServeCommand(): Command {
               model: target.agent.config.model,
               agentInstructions: target.agent.instructions,
             });
-            sendJSON(res, 200, await learningListPayload(target.store, { config: target.agent.config.learning }));
+            sendJSON(res, 200, await agentLearningPayload(target));
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
@@ -5104,7 +5214,7 @@ export function createServeCommand(): Command {
             );
             if (!target) return;
             await target.store.remove(learningId);
-            sendJSON(res, 200, await learningListPayload(target.store, { config: target.agent.config.learning }));
+            sendJSON(res, 200, await agentLearningPayload(target));
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
@@ -5122,27 +5232,112 @@ export function createServeCommand(): Command {
         if (req.method === "POST" && routePath === '/agents/learnings/tidy') {
           try {
             const body = await parseJSONBody(req);
-            const target = await resolveAgentLearningTarget(
-              res,
-              typeof body.project === 'string' ? body.project : undefined,
-              typeof body.path === 'string' ? body.path : undefined,
-            );
+            const projectId = typeof body.project === 'string' ? body.project : undefined;
+            const runPath = typeof body.path === 'string' ? body.path : undefined;
+            const target = await resolveAgentLearningTarget(res, projectId, runPath);
             if (!target) return;
-            const projectContext = resolveProjectContext(dirname(target.absPath), { agentFilePath: target.absPath });
-            const result = await consolidateLearnings({
+
+            // A second press while one is running joins the first. Two passes
+            // over the same two files would race each other's writes, and the
+            // loser's undo snapshot would restore the winner's output.
+            const existing = runningTidyJob(projectId!, runPath!);
+            if (existing) {
+              sendJSON(res, 200, { success: true, job: tidyJobView(existing) });
+              return;
+            }
+
+            pruneTidyJobs();
+            const job: TidyJob = {
+              id: ulid(),
+              project: projectId!,
+              path: runPath!,
+              agentFilePath: target.absPath,
+              stateRoot: target.stateRoot,
+              startedAt: Date.now(),
+              status: 'running',
+              phase: 'planning',
+              batch: 0,
+              batches: 0,
+              projectedActive: 0,
+              cap: effectiveCap(target.agent.config.learning),
+              dryRun: body.dryRun === true,
+            };
+            tidyJobs.set(job.id, job);
+
+            // Deliberately not awaited: the response carries the job id so the
+            // page can start showing progress immediately.
+            void consolidateLearnings({
               agentFilePath: target.absPath,
               agentInstructions: target.agent.instructions,
               agentModel: target.agent.config.model,
               config: target.agent.config.learning,
-              stateRoot: projectContext.stateRoot,
-              ...(body.dryRun === true ? { dryRun: true } : {}),
+              stateRoot: target.stateRoot,
+              onProgress: (progress) => {
+                job.phase = progress.phase;
+                job.batch = progress.batch;
+                job.batches = progress.batches;
+                job.projectedActive = progress.projectedActive;
+                job.cap = progress.cap;
+              },
+              ...(job.dryRun ? { dryRun: true } : {}),
+            }).then(async (result) => {
+              job.result = result;
+              job.status = 'done';
+              job.phase = 'done';
+              job.finishedAt = Date.now();
+              // Only a real, applied pass is worth remembering: a dry run
+              // changed nothing, so there is nothing to undo.
+              if (!job.dryRun && result.undoId) {
+                await writeTidyRecord(target.stateRoot, target.absPath, {
+                  jobId: job.id,
+                  agentFilePath: target.absPath,
+                  startedAt: job.startedAt,
+                  finishedAt: job.finishedAt,
+                  result,
+                }).catch(() => {});
+              }
+            }).catch((err: unknown) => {
+              job.status = 'error';
+              job.finishedAt = Date.now();
+              job.error = (err as Error).message;
             });
-            sendJSON(res, 200, {
-              ...(await learningListPayload(target.store, { config: target.agent.config.learning })),
-              tidy: result,
-            });
+
+            sendJSON(res, 202, { success: true, job: tidyJobView(job) });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // GET /agents/learnings/tidy?project=&path=&job=: how the tidy-up is
+        // going, and its result once it lands. Without `job` it answers with the
+        // last tidy-up this agent had, read from disk — that is what makes Undo
+        // reachable after the tab that started it is gone.
+        if (req.method === "GET" && routePath === '/agents/learnings/tidy') {
+          try {
+            const projectId = requestUrl.searchParams.get('project') ?? undefined;
+            const runPath = requestUrl.searchParams.get('path') ?? undefined;
+            const target = await resolveAgentLearningTarget(res, projectId, runPath);
+            if (!target) return;
+            const jobId = requestUrl.searchParams.get('job') ?? undefined;
+            const job = jobId ? tidyJobs.get(jobId) : runningTidyJob(projectId!, runPath!);
+            const record = await readTidyRecord(target.stateRoot, target.absPath);
+
+            // In-memory job first (it is the only thing that knows about a run
+            // still in flight), then the record on disk, which is what survives
+            // a daemon restart. Asking for a specific job only ever gets that
+            // job's result: the record is the LAST tidy-up, and answering a
+            // stale job id with it would show the user a result they did not
+            // ask for next to an Undo button that rolls back something else.
+            const recordForRequest = record && (jobId === undefined || record.jobId === jobId) ? record : null;
+            const result = job?.result ?? (job === undefined ? recordForRequest?.result : undefined);
+            sendJSON(res, 200, {
+              ...(await agentLearningPayload(target)),
+              ...(job ? { job: tidyJobView(job) } : {}),
+              ...(result ? { tidy: result } : {}),
+            });
+          } catch (err) {
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
           return;
@@ -5160,10 +5355,15 @@ export function createServeCommand(): Command {
               typeof body.path === 'string' ? body.path : undefined,
             );
             if (!target) return;
-            const projectContext = resolveProjectContext(dirname(target.absPath), { agentFilePath: target.absPath });
-            const restored = await undoConsolidation(projectContext.stateRoot, target.absPath);
+            const restored = await undoConsolidation(target.stateRoot, target.absPath);
+            if (restored) {
+              await clearTidyRecord(target.stateRoot, target.absPath);
+              for (const job of tidyJobs.values()) {
+                if (job.status === 'done' && job.agentFilePath === target.absPath) job.status = 'undone';
+              }
+            }
             sendJSON(res, 200, {
-              ...(await learningListPayload(target.store, { config: target.agent.config.learning })),
+              ...(await agentLearningPayload(target)),
               undone: Boolean(restored),
               restored: restored?.restored ?? [],
             });
