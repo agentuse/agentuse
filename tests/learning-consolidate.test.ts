@@ -355,4 +355,128 @@ describe("tidying up an over-cap corrections file", () => {
     expect(await undoConsolidation(tempDir, otherAgent)).toBeNull();
     expect(await undoConsolidation(tempDir, agentFilePath)).not.toBeNull();
   });
+
+  it("reports which batch it is on, then that it is writing", async () => {
+    // The web page and the CLI both show this: a pass is minutes of model work,
+    // and without it the only thing either surface can say is "please wait".
+    await store.save(Array.from({ length: 60 }, (_, i) => learning({ id: `rule${String(i).padStart(3, "0")}` })));
+    const seen: string[] = [];
+
+    await consolidateLearnings({
+      agentFilePath,
+      agentInstructions: "Do the work.",
+      agentModel: "demo:test",
+      config: { capture: true, apply: true },
+      stateRoot: tempDir,
+      now: NOW,
+      onProgress: (p) => seen.push(`${p.phase}:${p.batch}/${p.batches}`),
+    });
+
+    expect(seen.slice(0, 3)).toEqual(["planning:1/3", "planning:2/3", "planning:3/3"]);
+    expect(seen).toContain("applying:3/3");
+  });
+
+  it("stops reporting progress once the file is back under the cap", async () => {
+    // The early exit is the point: an agent two over the cap should not sit
+    // through three batches of progress it never needed.
+    await seed();
+    planResponse = JSON.stringify({
+      retire: [{ id: "rule4", why: "superseded" }, { id: "rule5", why: "superseded" }],
+    });
+    const planned: number[] = [];
+
+    await consolidateLearnings({
+      agentFilePath,
+      agentInstructions: "Do the work.",
+      agentModel: "demo:test",
+      config: { capture: true, apply: true },
+      stateRoot: tempDir,
+      now: NOW,
+      onProgress: (p) => { if (p.phase === "planning") planned.push(p.batch); },
+    });
+
+    expect(planned).toEqual([1]);
+  });
+});
+
+describe("the record of an agent's last tidy-up", () => {
+  let tempDir: string;
+  let agentFilePath: string;
+  let store: LearningStore;
+  let mod: typeof import("../src/learning/consolidate");
+
+  beforeAll(async () => {
+    mod = await import("../src/learning/consolidate");
+  });
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "learning-record-"));
+    agentFilePath = join(tempDir, "demo.agentuse");
+    writeFileSync(agentFilePath, AGENT_FILE);
+    store = LearningStore.fromAgentFile(agentFilePath);
+    planResponse = JSON.stringify({ retire: [{ id: "rule4", why: "superseded" }] });
+    completeTextMock.mockClear();
+    completeTextMock.mockImplementation(async () => planResponse);
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const record = (over: Partial<import("../src/learning/consolidate").TidyRecord> = {}) => ({
+    jobId: "job-1",
+    agentFilePath,
+    startedAt: NOW,
+    finishedAt: NOW + 1000,
+    result: {
+      ran: true, activeBefore: 12, activeAfter: 11, cap: 10, changes: [],
+      merged: 0, rewritten: 0, retired: 1, graduated: [], diffs: { learnings: "" },
+    },
+    ...over,
+  });
+
+  it("survives a restart: written once, readable later, gone after undo", async () => {
+    // The whole reason it is on disk. A tidy-up rewrote two files, and the offer
+    // to undo it has to outlive the browser tab that started the run.
+    expect(await mod.readTidyRecord(tempDir, agentFilePath)).toBeNull();
+
+    await mod.writeTidyRecord(tempDir, agentFilePath, record());
+    expect((await mod.readTidyRecord(tempDir, agentFilePath))!.jobId).toBe("job-1");
+
+    await mod.clearTidyRecord(tempDir, agentFilePath);
+    expect(await mod.readTidyRecord(tempDir, agentFilePath)).toBeNull();
+  });
+
+  it("is not mistaken for an undo snapshot", async () => {
+    // It lives in the snapshot directory. Listed as one, undo would try to
+    // restore the record's own JSON over the user's agent file.
+    await store.save(Array.from({ length: 12 }, (_, i) => learning({ id: `rule${i}` })));
+    await mod.writeTidyRecord(tempDir, agentFilePath, record());
+
+    await mod.consolidateLearnings({
+      agentFilePath,
+      agentInstructions: "Do the work.",
+      agentModel: "demo:test",
+      config: { capture: true, apply: true },
+      stateRoot: tempDir,
+      now: NOW,
+    });
+    const restored = await mod.undoConsolidation(tempDir, agentFilePath);
+
+    expect(restored!.restored).toEqual([store.filePath, agentFilePath]);
+    expect(readFileSync(agentFilePath, "utf-8")).toBe(AGENT_FILE);
+    // Undoing a tidy-up does not throw away the record of a different one.
+    expect(await mod.readTidyRecord(tempDir, agentFilePath)).not.toBeNull();
+  });
+
+  it("keeps one agent's record out of another's, file names alike", async () => {
+    const nested = join(tempDir, "nested");
+    mkdirSync(nested, { recursive: true });
+    const otherAgent = join(nested, "demo.agentuse");
+    writeFileSync(otherAgent, AGENT_FILE);
+
+    await mod.writeTidyRecord(tempDir, agentFilePath, record());
+
+    expect(await mod.readTidyRecord(tempDir, otherAgent)).toBeNull();
+  });
 });

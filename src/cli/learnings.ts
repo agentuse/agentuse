@@ -13,6 +13,8 @@ import {
   isGraduationEligible,
   partitionLearnings,
   undoConsolidation,
+  writeTidyRecord,
+  clearTidyRecord,
   type ConsolidationResult,
   type Learning,
 } from '../learning/index.js';
@@ -188,16 +190,39 @@ export function createLearningsCommand(): Command {
       const { agent, agentFilePath } = loaded;
       const projectContext = resolveProjectContext(process.cwd(), { agentFilePath });
 
+      // A pass over a large file is minutes of model work. Say what it is doing
+      // while it does it, or the command looks hung.
+      const startedAt = Date.now();
       const result = await consolidateLearnings({
         agentFilePath,
         agentInstructions: agent.instructions,
         agentModel: agent.config.model,
         config: agent.config.learning,
         stateRoot: projectContext.stateRoot,
+        onProgress: (progress) => {
+          if (progress.phase === 'planning') {
+            console.log(chalk.gray(`  planning batch ${progress.batch} of ${progress.batches}…`));
+          } else if (progress.phase === 'applying' && !options.dryRun) {
+            console.log(chalk.gray('  writing both files…'));
+          }
+        },
         ...(options.dryRun ? { dryRun: true } : {}),
         ...(options.model ? { model: options.model } : {}),
       });
       printResult(result, Boolean(options.dryRun));
+
+      // Remember the pass for the web UI, so a tidy-up run from the terminal is
+      // still reviewable and undoable from the browser. Same record either way:
+      // one agent has one last tidy-up, whoever ran it.
+      if (!options.dryRun && result.undoId) {
+        await writeTidyRecord(projectContext.stateRoot, agentFilePath, {
+          jobId: `cli-${result.undoId}`,
+          agentFilePath,
+          startedAt,
+          finishedAt: Date.now(),
+          result,
+        }).catch(() => {});
+      }
     });
 
   command
@@ -215,6 +240,7 @@ export function createLearningsCommand(): Command {
         console.log(chalk.yellow('Nothing to undo — no tidy-up has been applied to this agent.'));
         return;
       }
+      await clearTidyRecord(projectContext.stateRoot, agentFilePath);
       console.log(chalk.green('Restored:'));
       for (const path of restored.restored) console.log(chalk.gray(`  ${path}`));
     });

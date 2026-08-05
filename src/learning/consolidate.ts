@@ -72,6 +72,23 @@ const TIDY_BATCH_SIZE = 25;
  */
 const TIDY_MAX_BATCHES = 3;
 
+/**
+ * Where a running tidy-up has got to.
+ *
+ * Reported per batch rather than per model call finishing, because the wait is
+ * the whole problem this exists to solve: a pass over a large file is minutes of
+ * model work, and a button that just sits there looks broken long before it is.
+ */
+export interface TidyProgress {
+  phase: 'planning' | 'applying' | 'done';
+  /** 1-based batch being planned. */
+  batch: number;
+  batches: number;
+  /** Corrections that would still be active if planning stopped here. */
+  projectedActive: number;
+  cap: number;
+}
+
 export interface ConsolidationChange {
   kind: 'merge' | 'rewrite' | 'retire' | 'graduate';
   /** Titles involved, for the human-readable summary. */
@@ -338,15 +355,62 @@ function snapshotDir(stateRoot: string, agentFilePath: string): string {
   return join(stateRoot, '.agentuse', 'consolidations', `${label}-${digest}`);
 }
 
+/** The one file in the snapshot directory that is NOT a snapshot; excluded
+ *  everywhere the snapshots are listed, or undo would try to restore it and the
+ *  retention sweep would delete it. */
+const RECORD_FILE = 'last-tidy.json';
+
+async function listSnapshots(dir: string): Promise<string[]> {
+  return (await readdir(dir)).filter((f) => f.endsWith('.json') && f !== RECORD_FILE).sort();
+}
+
 async function writeSnapshot(stateRoot: string, agentFilePath: string, snapshot: Snapshot): Promise<void> {
   const dir = snapshotDir(stateRoot, agentFilePath);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, `${snapshot.id}.json`), JSON.stringify(snapshot, null, 2), 'utf-8');
 
-  const entries = (await readdir(dir)).filter((f) => f.endsWith('.json')).sort();
+  const entries = await listSnapshots(dir);
   for (const stale of entries.slice(0, Math.max(0, entries.length - UNDO_HISTORY))) {
     await unlink(join(dir, stale)).catch(() => {});
   }
+}
+
+/**
+ * The last tidy-up this agent had, kept on disk beside its undo snapshot.
+ *
+ * A tidy-up rewrites two files and the only way back is Undo, so the result has
+ * to outlive the browser tab that started it. Held in memory alone, closing the
+ * tab or restarting the daemon would leave a user who wanted to undo with a
+ * changed agent file and no idea what changed.
+ */
+export interface TidyRecord {
+  jobId: string;
+  agentFilePath: string;
+  startedAt: number;
+  finishedAt: number;
+  result: ConsolidationResult;
+}
+
+export async function writeTidyRecord(stateRoot: string, agentFilePath: string, record: TidyRecord): Promise<void> {
+  const dir = snapshotDir(stateRoot, agentFilePath);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, RECORD_FILE), JSON.stringify(record, null, 2), 'utf-8');
+}
+
+export async function readTidyRecord(stateRoot: string, agentFilePath: string): Promise<TidyRecord | null> {
+  const path = join(snapshotDir(stateRoot, agentFilePath), RECORD_FILE);
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(await readFile(path, 'utf-8')) as TidyRecord;
+  } catch {
+    return null; // a truncated record is not worth failing a page load over
+  }
+}
+
+/** Drop the record once its change has been undone: there is nothing left to
+ *  offer an undo for. */
+export async function clearTidyRecord(stateRoot: string, agentFilePath: string): Promise<void> {
+  await unlink(join(snapshotDir(stateRoot, agentFilePath), RECORD_FILE)).catch(() => {});
 }
 
 /** Restore the most recent tidy-up. Returns the files it put back. */
@@ -356,7 +420,7 @@ export async function undoConsolidation(
 ): Promise<{ restored: string[] } | null> {
   const dir = snapshotDir(stateRoot, agentFilePath);
   if (!existsSync(dir)) return null;
-  const entries = (await readdir(dir)).filter((f) => f.endsWith('.json')).sort();
+  const entries = await listSnapshots(dir);
   const latest = entries[entries.length - 1];
   if (!latest) return null;
 
@@ -381,6 +445,8 @@ export interface ConsolidateOptions {
   model?: string | undefined;
   /** Timestamp for age checks; injected so tests are not clock-dependent. */
   now?: number;
+  /** Called as each batch starts and again before the files are written. */
+  onProgress?: (progress: TidyProgress) => void;
 }
 
 /**
@@ -438,10 +504,14 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   let failedBatches = 0;
   let lastSample = '';
 
-  for (const batch of batches) {
+  const report = (phase: TidyProgress['phase'], batch: number) =>
+    options.onProgress?.({ phase, batch, batches: batches.length, projectedActive, cap });
+
+  for (const [index, batch] of batches.entries()) {
     // Stop once the goal is met: an agent one over the cap should not pay for
     // five model calls to tidy corrections that are already reaching it.
     if (projectedActive <= cap) break;
+    report('planning', index + 1);
 
     const responseText = await completeText(model, {
       instructions,
@@ -472,6 +542,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   }
 
   for (const rejection of plan.rejected) logger.debug(`[Learning] Tidy-up rejected ${rejection}`);
+  report('applying', batches.length);
 
   const nothingUsable = failedBatches === batches.length;
   if (nothingUsable) {
@@ -594,6 +665,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // order would lose it from both places.
   if (!graduationSkipped) await writeLearnedBlock(options.agentFilePath, graduatedAll);
   await store.save(next);
+  report('done', batches.length);
 
   return { ...result, undoId };
 }

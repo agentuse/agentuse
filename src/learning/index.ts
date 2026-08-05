@@ -275,7 +275,7 @@ export function describeLearningOutcome(o: {
 export { LearningStore, resolveLearningFilePath, generateLearningId } from './store';
 export { MAX_INJECTED_LEARNINGS, activeLearnings, effectiveCap, learningSourceRank, partitionLearnings, rankLearnings } from './ranking';
 export { LEARNED_BLOCK_START, LEARNED_BLOCK_END, renderLearnedBlock, spliceLearnedBlock, writeLearnedBlock } from './graduate';
-export { consolidateLearnings, describeConsolidation, isGraduationEligible, undoConsolidation } from './consolidate';
-export type { ConsolidationResult, ConsolidationChange } from './consolidate';
+export { consolidateLearnings, describeConsolidation, isGraduationEligible, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord } from './consolidate';
+export type { ConsolidationResult, ConsolidationChange, TidyProgress, TidyRecord } from './consolidate';
 export type { ApprovalReview, Learning, LearningConfig, LearningOutcome, LearningSource } from './types';
 export { LearningConfigSchema } from './types';
