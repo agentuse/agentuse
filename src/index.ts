@@ -3627,6 +3627,83 @@ async function runInternalWorker() {
   let released = false;
   /** An exit that arrived mid-run and was deferred until the runs drain. */
   let pendingExitCode: number | null = null;
+  /** Project roots seen on run requests. A worker only ever serves one. */
+  const inFlightProjectRoots = new Set<string>();
+  /** Runs this worker aborted because the user stopped them after release. */
+  const stoppedWhileReleased = new Set<string>();
+  let releasedStopWatch: NodeJS.Timeout | undefined;
+
+  /**
+   * Once released, watch storage for a stop the user asked for.
+   *
+   * Stopping a run is otherwise purely in-process: serve forwards it to the
+   * worker holding the AbortController. A released worker is no longer the one
+   * serve talks to, so its runs would take a stop that reads as successful,
+   * keep executing anyway, and then overwrite the stopped status with their own
+   * result -- the user watches it un-stop itself and the side effects land.
+   * Polling closes that window for the one case that has it, without putting a
+   * storage read in every run's step loop.
+   */
+  const watchForStopWhileReleased = () => {
+    if (releasedStopWatch) return;
+    releasedStopWatch = setInterval(() => {
+      void (async () => {
+        if (activeExecutionControllers.size === 0) return;
+        for (const projectRoot of inFlightProjectRoots) {
+          try {
+            await initStorage(projectRoot);
+            const sessionManager = new SessionManager();
+            for (const [sessionId, controller] of activeExecutionControllers) {
+              if (activeStoppedSessions.has(sessionId)) continue;
+              const found = await sessionManager.findSession(sessionId);
+              if (found?.session.error?.code !== 'USER_STOPPED') continue;
+              activeStoppedSessions.add(sessionId);
+              stoppedWhileReleased.add(sessionId);
+              controller.abort();
+            }
+          } catch {
+            // Storage hiccup -- try again on the next tick.
+          }
+        }
+      })();
+    }, 5_000);
+    releasedStopWatch.unref?.();
+  };
+
+  /**
+   * Restore the stopped verdict on a run we aborted after release.
+   *
+   * A local stop survives because the process that wrote USER_STOPPED is the
+   * same one that then finishes the run, so its own terminal write stands down.
+   * Ours was written by a different process, so this worker still believes the
+   * session is running and stamps the abort as a TIMEOUT over the top -- the
+   * user stops a run, watches it report stopped, then watches it report a
+   * timeout instead. stopSessionTree will not correct it (it only touches
+   * running/suspended sessions), so write the verdict back directly, strictly
+   * after the run has made its last write.
+   */
+  const restampStopsAfterRelease = async () => {
+    if (stoppedWhileReleased.size === 0) return;
+    for (const projectRoot of inFlightProjectRoots) {
+      try {
+        await initStorage(projectRoot);
+        const sessionManager = new SessionManager();
+        for (const sessionId of [...stoppedWhileReleased]) {
+          const found = await sessionManager.findSession(sessionId);
+          if (!found) continue;
+          if (found.session.error?.code !== 'USER_STOPPED') {
+            await sessionManager.updateSession(sessionId, found.agentId, {
+              status: 'error',
+              error: { code: 'USER_STOPPED', message: 'Session stopped by user', time: Date.now() },
+            } as any);
+          }
+          stoppedWhileReleased.delete(sessionId);
+        }
+      } catch {
+        // Leave it recorded; the next run to settle tries again.
+      }
+    }
+  };
 
   const exitWorker = (code = 0, options: { force?: boolean } = {}) => {
     if (workerExiting) return;
@@ -3770,12 +3847,16 @@ async function runInternalWorker() {
         reply({ id: request.id, success: true, inFlightRuns });
         // Nothing to protect -- leave now rather than linger as a stray process.
         if (inFlightRuns === 0) exitWorker(0);
+        else watchForStopWhileReleased();
       } else if (request.type === 'execute' || request.type === 'resume' || request.type === 'continue-session') {
         // Don't await - handle requests concurrently
         // Each request runs in parallel, response sent when complete
         inFlightRuns += 1;
-        executeAgent(request).then((response) => {
+        inFlightProjectRoots.add(request.projectRoot);
+        executeAgent(request).then(async (response) => {
           reply(response);
+          // Before runFinished, which may exit the process.
+          await restampStopsAfterRelease();
           runFinished();
         }, (err) => {
           // executeAgent resolves its own errors, so this is a defect rather
