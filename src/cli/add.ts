@@ -6,9 +6,22 @@ import { glob } from 'glob';
 import { join, basename, dirname, resolve } from 'path';
 import { tmpdir } from 'os';
 import * as readline from 'readline';
-import * as p from '@clack/prompts';
+import type * as ClackPrompts from '@clack/prompts';
+
 import { resolveProjectContext } from '../utils/project.js';
 import { telemetry, type AddCommandResult } from '../telemetry/index.js';
+
+/**
+ * @clack/prompts is ~4MB of interactive-terminal machinery that only this
+ * command can reach, yet a static import made every other entry point pay for
+ * it at startup -- including the serve workers, which can never prompt.
+ * Every `p.*` call site below is reachable only from the async action handler,
+ * which loads it first.
+ */
+let p!: typeof ClackPrompts;
+async function loadPrompts(): Promise<void> {
+  p ??= await import('@clack/prompts');
+}
 
 type SourceType = 'github' | 'git' | 'local' | 'skill';
 
@@ -473,6 +486,7 @@ export function createAddCommand(): Command {
     .option('-s, --skill <name...>', 'Install specific skill(s) by name')
     .option('-a, --agent <path...>', 'Install specific agent(s) by path')
     .action(async (source: string, options: CliOptions) => {
+      await loadPrompts();
       const projectContext = resolveProjectContext(process.cwd());
       const startTime = Date.now();
 

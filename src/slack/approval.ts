@@ -1,5 +1,5 @@
-import { SocketModeClient, LogLevel as SlackSocketLogLevel, type Logger as SlackSocketLogger } from '@slack/socket-mode';
-import { WebClient } from '@slack/web-api';
+import type { SocketModeClient, LogLevel as SlackSocketLogLevel, Logger as SlackSocketLogger } from '@slack/socket-mode';
+import type { WebClient } from '@slack/web-api';
 import { logger } from '../utils/logger';
 import {
   bestEffortClearSlackThreadStatus,
@@ -87,16 +87,61 @@ const SLACK_RESTART_DISCONNECT_MS = 5_000; // cap on tearing down a wedged socke
 // trigger_id within ~3s, and Socket Mode delivery is best-effort, so the modal
 // intermittently failed with expired_trigger_id. Commenting is done by replying
 // in the approval thread instead (onThreadComment), which has no expiry.
+/**
+ * The Slack SDKs cost ~23MB of heap and were loaded by every agentuse process at
+ * startup -- including the serve workers, which touch Slack only if an agent
+ * suspends on a gate with Slack configured. Both have to be deferred together:
+ * @slack/socket-mode depends on @slack/web-api, so deferring one alone saves
+ * nothing. Callers await loadSlackSdk() before constructing either client.
+ */
+type SlackSdk = {
+  WebClient: typeof import('@slack/web-api').WebClient;
+  SocketModeClient: typeof import('@slack/socket-mode').SocketModeClient;
+};
+let slackSdkCache: SlackSdk | undefined;
+let slackSdkPending: Promise<SlackSdk> | undefined;
+
+export async function loadSlackSdk(): Promise<SlackSdk> {
+  if (slackSdkCache) return slackSdkCache;
+  // Share one in-flight import: concurrent approvals would otherwise each start
+  // their own, and the first use is exactly when several tend to land at once.
+  slackSdkPending ??= Promise.all([import('@slack/web-api'), import('@slack/socket-mode')])
+    .then(([web, socket]) => {
+      slackSdkCache = { WebClient: web.WebClient, SocketModeClient: socket.SocketModeClient };
+      return slackSdkCache;
+    })
+    .finally(() => { slackSdkPending = undefined; });
+  return slackSdkPending;
+}
+
+/** The loaded SDK, for sync contexts that a caller has already primed. */
+function loadedSlackSdk(): SlackSdk {
+  if (!slackSdkCache) {
+    throw new Error('Slack SDK not loaded yet — await loadSlackSdk() before constructing a Slack client');
+  }
+  return slackSdkCache;
+}
+
 const SLACK_APPROVAL_ACTIONS: Array<{ id: string; label: string; style?: 'primary' | 'danger' }> = [
   { id: 'approve', label: 'Approve', style: 'primary' },
   { id: 'reject', label: 'Reject', style: 'danger' }
 ];
 
-const SLACK_LOG_SEVERITY: Record<SlackSocketLogLevel, number> = {
-  [SlackSocketLogLevel.DEBUG]: 0,
-  [SlackSocketLogLevel.INFO]: 1,
-  [SlackSocketLogLevel.WARN]: 2,
-  [SlackSocketLogLevel.ERROR]: 3
+// @slack/socket-mode's LogLevel is a string enum ('debug' | 'info' | ...).
+// Spelling the values out keeps the type without importing the module to read
+// them, which is what pinned the SDK to module-evaluation time.
+const SLACK_LOG_LEVEL = {
+  DEBUG: 'debug' as SlackSocketLogLevel,
+  INFO: 'info' as SlackSocketLogLevel,
+  WARN: 'warn' as SlackSocketLogLevel,
+  ERROR: 'error' as SlackSocketLogLevel
+};
+
+const SLACK_LOG_SEVERITY: Record<string, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3
 };
 
 class SlackSocketSdkLogger implements SlackSocketLogger {
@@ -104,7 +149,7 @@ class SlackSocketSdkLogger implements SlackSocketLogger {
   private name = 'socket-mode';
 
   constructor(private readonly debugEnabled: boolean) {
-    this.level = debugEnabled ? SlackSocketLogLevel.DEBUG : SlackSocketLogLevel.ERROR;
+    this.level = debugEnabled ? SLACK_LOG_LEVEL.DEBUG : SLACK_LOG_LEVEL.ERROR;
   }
 
   setLevel(level: SlackSocketLogLevel): void {
@@ -120,31 +165,31 @@ class SlackSocketSdkLogger implements SlackSocketLogger {
   }
 
   debug(...msg: any[]): void {
-    if (this.shouldLog(SlackSocketLogLevel.DEBUG)) {
+    if (this.shouldLog(SLACK_LOG_LEVEL.DEBUG)) {
       logger.debug(this.format(msg));
     }
   }
 
   info(...msg: any[]): void {
-    if (this.shouldLog(SlackSocketLogLevel.INFO)) {
+    if (this.shouldLog(SLACK_LOG_LEVEL.INFO)) {
       logger.debug(this.format(msg));
     }
   }
 
   warn(...msg: any[]): void {
-    if (this.shouldLog(SlackSocketLogLevel.WARN)) {
+    if (this.shouldLog(SLACK_LOG_LEVEL.WARN)) {
       logger.warn(this.format(msg));
     }
   }
 
   error(...msg: any[]): void {
-    if (this.shouldLog(SlackSocketLogLevel.ERROR)) {
+    if (this.shouldLog(SLACK_LOG_LEVEL.ERROR)) {
       logger.error(this.format(msg));
     }
   }
 
   private shouldLog(level: SlackSocketLogLevel): boolean {
-    return this.debugEnabled && SLACK_LOG_SEVERITY[level] >= SLACK_LOG_SEVERITY[this.level];
+    return this.debugEnabled && (SLACK_LOG_SEVERITY[level] ?? 0) >= (SLACK_LOG_SEVERITY[this.level] ?? 0);
   }
 
   private format(msg: any[]): string {
@@ -662,7 +707,7 @@ export async function sendSlackApprovalRequest(request: SlackApprovalRequest): P
     throw new Error('Slack approval requires a session id');
   }
 
-  const web = new WebClient(request.botToken);
+  const web = new (await loadSlackSdk()).WebClient(request.botToken);
   const message = await postSlackApprovalMessage(web, request.channelId, {
     channel: request.channelId,
     text: `AgentUse approval requested: ${request.prompt}`,
@@ -699,7 +744,7 @@ export async function sendSlackApprovalRequestToThread(
     rootMessageTs: root.ts
   });
   const posted = await postSlackThreadMessages(
-    new WebClient(request.botToken),
+    new (await loadSlackSdk()).WebClient(request.botToken),
     root.channel,
     root.ts,
     threadMessages,
@@ -728,7 +773,7 @@ export async function updateSlackApprovalRequestStatus(options: {
   decision?: string;
   error?: unknown;
 }): Promise<void> {
-  const web = new WebClient(options.botToken);
+  const web = new (await loadSlackSdk()).WebClient(options.botToken);
   await updateSlackRootMessage(web, {
     channel: options.channelId,
     ts: options.ts,
@@ -874,6 +919,15 @@ export class SlackApprovalSocket {
   private stopped = false;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
 
+  /**
+   * Build a socket with the Slack SDK loaded first. The constructor wires both
+   * clients synchronously, so it cannot await the deferred import itself.
+   */
+  static async create(options: ConstructorParameters<typeof SlackApprovalSocket>[0]): Promise<SlackApprovalSocket> {
+    await loadSlackSdk();
+    return new SlackApprovalSocket(options);
+  }
+
   constructor(private readonly options: {
     appToken: string;
     botToken: string;
@@ -882,7 +936,7 @@ export class SlackApprovalSocket {
     onRunThreadComment?: (comment: SlackApprovalThreadComment) => Promise<SlackRunThreadCommentResult>;
     debug?: boolean;
   }) {
-    this.web = new WebClient(options.botToken);
+    this.web = new (loadedSlackSdk()).WebClient(options.botToken);
     this.socket = this.buildSocket();
   }
 
@@ -892,7 +946,7 @@ export class SlackApprovalSocket {
    * recreation always re-registers handlers identically.
    */
   private buildSocket(): SocketModeClient {
-    const socket = new SocketModeClient({
+    const socket = new (loadedSlackSdk()).SocketModeClient({
       appToken: this.options.appToken,
       serverPingTimeout: SLACK_SERVER_PING_TIMEOUT_MS,
       logger: new SlackSocketSdkLogger(this.options.debug === true),

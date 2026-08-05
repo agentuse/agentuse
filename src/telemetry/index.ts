@@ -10,7 +10,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { PostHog } from 'posthog-node';
+import type { PostHog } from 'posthog-node';
 import { getOrCreateAnonymousId, isFirstRun, markFirstRunComplete } from './id';
 import type { ExecutionResult, ToolCallMetrics, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult, TimeoutUnitError } from './types';
 import type { ToolCallTrace } from '../plugin/types';
@@ -230,7 +230,10 @@ class TelemetryManager {
     try {
       this.anonymousId = await getOrCreateAnonymousId();
 
-      this.client = new PostHog(POSTHOG_API_KEY, {
+      // Deferred: ~5MB that a telemetry-disabled process, and every serve
+      // worker, would otherwise load for nothing.
+      const { PostHog: PostHogClient } = await import('posthog-node');
+      this.client = new PostHogClient(POSTHOG_API_KEY, {
         host: POSTHOG_HOST,
         // CLI: send events immediately, don't batch
         flushAt: 1,

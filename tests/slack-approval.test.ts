@@ -229,7 +229,7 @@ describe('Slack approval blocks', () => {
   it('updates Slack before awaiting resumed execution', async () => {
     let releaseDecision!: () => void;
     let decisionStarted = false;
-    const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
+    const socket = await (await import('../src/slack/approval')).SlackApprovalSocket.create({
       appToken: 'xapp-test',
       botToken: 'xoxb-test',
       onDecision: async () => {
@@ -308,7 +308,7 @@ describe('Slack approval blocks', () => {
 
   it('starts resumed execution without waiting for Slack message updates', async () => {
     let decisionStarted = false;
-    const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
+    const socket = await (await import('../src/slack/approval')).SlackApprovalSocket.create({
       appToken: 'xapp-test',
       botToken: 'xoxb-test',
       onDecision: async () => {
@@ -367,7 +367,7 @@ describe('Slack approval blocks', () => {
   it('treats plain Slack approval thread replies as comment decisions', async () => {
     let received: any;
     let acked = false;
-    const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
+    const socket = await (await import('../src/slack/approval')).SlackApprovalSocket.create({
       appToken: 'xapp-test',
       botToken: 'xoxb-test',
       onDecision: async () => undefined,
@@ -431,7 +431,7 @@ describe('Slack approval blocks', () => {
 
   it('ignores Slack root messages and bot thread replies for approval comments', async () => {
     const received: any[] = [];
-    const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
+    const socket = await (await import('../src/slack/approval')).SlackApprovalSocket.create({
       appToken: 'xapp-test',
       botToken: 'xoxb-test',
       onDecision: async () => undefined,
@@ -467,7 +467,7 @@ describe('Slack approval blocks', () => {
   });
 
   it('does not acknowledge thread replies that are not approval threads', async () => {
-    const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
+    const socket = await (await import('../src/slack/approval')).SlackApprovalSocket.create({
       appToken: 'xapp-test',
       botToken: 'xoxb-test',
       onDecision: async () => undefined,
@@ -503,7 +503,7 @@ describe('Slack approval blocks', () => {
 
   it('continues run channel threads when approval lookup does not handle the reply', async () => {
     let runComment: any;
-    const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
+    const socket = await (await import('../src/slack/approval')).SlackApprovalSocket.create({
       appToken: 'xapp-test',
       botToken: 'xoxb-test',
       onDecision: async () => undefined,
@@ -561,7 +561,7 @@ describe('Slack approval blocks', () => {
 
   it('continues run channel threads from Slack message_replied events', async () => {
     let runComment: any;
-    const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
+    const socket = await (await import('../src/slack/approval')).SlackApprovalSocket.create({
       appToken: 'xapp-test',
       botToken: 'xoxb-test',
       onDecision: async () => undefined,
@@ -622,7 +622,7 @@ describe('Slack approval blocks', () => {
 
   it('continues run channel threads from Slack thread_broadcast replies', async () => {
     let runComment: any;
-    const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
+    const socket = await (await import('../src/slack/approval')).SlackApprovalSocket.create({
       appToken: 'xapp-test',
       botToken: 'xoxb-test',
       onDecision: async () => undefined,
@@ -669,7 +669,7 @@ describe('Slack approval blocks', () => {
 
   it('dedupes the same Slack thread reply across event shapes', async () => {
     let count = 0;
-    const socket = new (await import('../src/slack/approval')).SlackApprovalSocket({
+    const socket = await (await import('../src/slack/approval')).SlackApprovalSocket.create({
       appToken: 'xapp-test',
       botToken: 'xoxb-test',
       onDecision: async () => undefined,
@@ -730,7 +730,7 @@ describe('Slack approval blocks', () => {
     Date.now = () => now;
 
     try {
-      const socket = new SlackApprovalSocket({
+      const socket = await SlackApprovalSocket.create({
         appToken: 'xapp-test',
         botToken: 'xoxb-test',
         onDecision: async () => undefined

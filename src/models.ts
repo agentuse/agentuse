@@ -1,7 +1,7 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createAnthropic } from '@ai-sdk/anthropic';
-import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
+import type { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { wrapLanguageModel } from 'ai';
 import { AnthropicAuth } from './auth/anthropic';
 import { CodexAuth } from './auth/codex';
@@ -625,7 +625,11 @@ export async function createModel(modelString: string) {
       }
     }
 
-    const bedrock = createAmazonBedrock(bedrockOptions);
+    // Loaded here rather than at module scope: Bedrock pulls in ~3MB of AWS
+    // SDK that every agentuse process would otherwise pay for, including the
+    // serve workers, whatever provider the agent actually names.
+    const { createAmazonBedrock: createBedrock } = await import('@ai-sdk/amazon-bedrock');
+    const bedrock = createBedrock(bedrockOptions);
     return await maybeWrapWithDevTools(bedrock(config.modelName));
 
   } else {
