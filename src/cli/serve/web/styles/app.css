@@ -2797,15 +2797,21 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .learnings-item.is-dormant .learnings-text { opacity: 0.6; }
 
 /* The banner's action is an anchor, not a button: the run lives on its own
-   page. Styled as the primary control it is. */
-.learnings-tidy-start {
+   page. Styled as the primary control it is.
+
+   Qualified with `a` on purpose. The session page paints every link cyan with a
+   dotted underline (`.page-approval-detail a`), which out-specifies a lone class
+   and left the label unreadable against the button's own fill: dark-on-green in
+   the light theme. Matching that selector's weight, and sitting later in the
+   file, puts the button back in charge of its own text. */
+a.learnings-tidy-start {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   font-family: var(--mono); font-size: 12px; text-decoration: none;
   color: var(--primary-fg, #fff);
   background: var(--primary-bg); border: 1px solid var(--primary-bg);
   border-radius: 8px; min-height: 32px; padding: 0 14px;
 }
-.learnings-tidy-start:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
+a.learnings-tidy-start:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); color: var(--primary-fg, #fff); }
 
 /* Tidy-up progress. The wait is minutes long, so the page has to keep saying
    what is happening rather than showing a spinner and hoping. */
