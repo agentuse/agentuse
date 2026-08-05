@@ -973,9 +973,39 @@ a, button, select, summary, label, input, textarea,
   font-size: 11px;
   letter-spacing: 0.02em;
 }
+/* Narrow screens: a shared three-column grid would starve the bar, so each tool
+   becomes its own block instead — name and count on one line, bar full width
+   underneath. The rows list drops out of grid layout entirely, because
+   `display: contents` rows would otherwise snake through the shared tracks. */
 @media (max-width: 560px) {
-  .page-approval-detail .tool-stats-rows { grid-template-columns: minmax(0, 1fr) max-content; }
-  .page-approval-detail .tool-stat-track { grid-column: 1 / -1; }
+  .page-approval-detail .tool-stats { padding: 12px 14px; }
+  .page-approval-detail .tool-stats-head { margin-bottom: 14px; }
+  .page-approval-detail .tool-stats-rows {
+    display: flex;
+    flex-direction: column;
+    /* Reset the grid rule's centring: in a flex column it would shrink each row
+       to its content and centre it instead of filling the card. */
+    align-items: stretch;
+    gap: 13px;
+    padding-bottom: 0;
+  }
+  .page-approval-detail .tool-stat {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    align-items: baseline;
+    gap: 7px 10px;
+  }
+  /* Placed explicitly, not auto-flowed: the bar sits between the name and the
+     count in DOM order, so auto-placement would push the count onto a third row
+     under the bar instead of pairing it with the name. */
+  .page-approval-detail .tool-stat-name {
+    grid-area: 1 / 1;
+    /* The 30ch desktop cap is narrower than the row here; let the 1fr track and
+       the ellipsis do the truncating so short names aren't clipped early. */
+    max-width: none;
+  }
+  .page-approval-detail .tool-stat-count { grid-area: 1 / 2; }
+  .page-approval-detail .tool-stat-track { grid-area: 2 / 1 / 3 / -1; }
 }
 .page-approval-detail .session-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .debug-prompt-button, .session-action-button {
