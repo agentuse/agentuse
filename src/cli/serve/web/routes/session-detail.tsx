@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useLocation, useRoute } from 'preact-iso';
 import type { ApprovalLogEntry, ApprovalPageInfo } from '../../types';
 import { Topbar } from '../components/topbar';
-import { LogEntry } from '../components/log-entry';
+import { LogEntry, toolChipLabel } from '../components/log-entry';
 import { InlineMarkdown, LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
 import { ContinuePanel } from '../components/continue-panel';
@@ -129,6 +129,35 @@ interface RecordedMetric {
   count?: number;
   value?: number;
   unit?: string;
+}
+
+/** One tool id's call tally for the header stat band. */
+export interface ToolStat {
+  /** Raw tool id, e.g. `tools__bash`. The grouping key and the row's tooltip. */
+  tool: string;
+  /** Chip text shown to the reader, e.g. `bash`. */
+  label: string;
+  count: number;
+  failed: number;
+}
+
+/**
+ * Roll a session's tool calls up by tool id, busiest first: which commands the
+ * run leaned on, how often, and how many of those calls failed. Grouped on the
+ * raw id (so `tools__bash` and `sandbox__bash` stay distinct) and labelled with
+ * the same chip text the log rows use.
+ */
+export function aggregateToolStats(logs: ApprovalLogEntry[]): ToolStat[] {
+  const byTool = new Map<string, ToolStat>();
+  for (const entry of logs) {
+    if (entry.type !== 'tool') continue;
+    const tool = entry.tool || entry.title || 'tool';
+    const stat = byTool.get(tool) ?? { tool, label: toolChipLabel(tool), count: 0, failed: 0 };
+    stat.count += 1;
+    if (entry.status === 'error' || entry.status === 'failed') stat.failed += 1;
+    byTool.set(tool, stat);
+  }
+  return [...byTool.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
 /** "$12,400" / "3,200 words" / "+2" — the amount half of a recorded-metric chip. */
@@ -546,6 +575,12 @@ export default function SessionDetail() {
     () => orderedLogs.reduce((n, e) => n + (e.type === 'tool' ? 1 : 0), 0),
     [orderedLogs]
   );
+  // Per-tool call tallies for the header's stat band, under the meta table.
+  const toolStats = useMemo(() => aggregateToolStats(orderedLogs), [orderedLogs]);
+  // Longest bar sets the scale, so the rows read as shares of the busiest tool.
+  const toolStatsPeak = toolStats.length > 0 ? toolStats[0].count : 0;
+  // The feed pages in; say so rather than passing a partial roll-up off as final.
+  const toolStatsPartial = logsTotal !== null && orderedLogs.length < logsTotal;
   // Business facts the run recorded via record_metric, for the result card's
   // "recorded" chips. The tool's OUTPUT (details.output JSON) confirms the
   // write and names the metric; the call INPUT carries the recorded amounts.
@@ -1237,6 +1272,47 @@ export default function SessionDetail() {
               </div>
             )}
           </div>
+          {toolStats.length > 0 && (
+            <section class="tool-stats" aria-label="Tool calls grouped by tool">
+              <div class="tool-stats-head">
+                <span class="tool-stats-title">tool calls</span>
+                <span class="tool-stats-total">
+                  {toolCallCount.toLocaleString()} across {toolStats.length}
+                  {toolStats.length === 1 ? ' tool' : ' tools'}
+                  {toolStatsPartial ? ' (loaded entries)' : ''}
+                </span>
+              </div>
+              <ul class="tool-stats-rows">
+                {toolStats.map((s) => (
+                  <li class="tool-stat" key={s.tool}>
+                    <span class="tool-stat-name" title={s.tool}>{s.label}</span>
+                    <span class="tool-stat-track">
+                      <span
+                        class="tool-stat-bar"
+                        style={{ width: `${Math.max((s.count / toolStatsPeak) * 100, 3)}%` }}
+                      >
+                        {s.failed > 0 && (
+                          <span
+                            class="tool-stat-bar-failed"
+                            style={{ width: `${(s.failed / s.count) * 100}%` }}
+                          ></span>
+                        )}
+                      </span>
+                    </span>
+                    {/* Badge leads the count so the numbers keep a shared right edge. */}
+                    <span class="tool-stat-count">
+                      {s.failed > 0 && (
+                        <span class="tool-stat-failed" title={`${s.failed} of ${s.count} failed`}>
+                          {s.failed} failed
+                        </span>
+                      )}
+                      {s.count.toLocaleString()}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </header>
 
         {approval.additionalInstruction && (

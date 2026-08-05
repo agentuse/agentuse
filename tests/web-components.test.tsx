@@ -9,7 +9,7 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { hasActionableApproval, headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, hasActionableApproval, headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
 import { FeedResponse, NewSinceLastVisit, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
 import type { AgentRow, ApprovalsListPayload, SessionRow } from '../src/cli/serve/web/lib/api';
@@ -708,6 +708,34 @@ describe('SessionDetail header', () => {
     expect(hasActionableApproval('resuming', header)).toBe(false);
     expect(hasActionableApproval('continuing', header)).toBe(false);
     expect(hasActionableApproval('completed', { ...header, sessionStatus: 'completed' })).toBe(false);
+  });
+
+  it('groups tool calls by tool, busiest first, tallying failures', () => {
+    const logs = [
+      { id: '1', type: 'tool', tool: 'tools__bash', title: 'run', status: 'completed' },
+      { id: '2', type: 'text', title: 'thinking' },
+      { id: '3', type: 'tool', tool: 'store_list', title: 'list', status: 'completed' },
+      { id: '4', type: 'tool', tool: 'tools__bash', title: 'run', status: 'error' },
+      { id: '5', type: 'tool', tool: 'tools__bash', title: 'run', status: 'failed' },
+      { id: '6', type: 'log', title: 'Calling model' },
+      { id: '7', type: 'tool', tool: 'store_list', title: 'list', status: 'completed' },
+      { id: '8', type: 'tool', tool: 'subagent__research', title: 'delegate', status: 'completed' },
+    ];
+
+    expect(aggregateToolStats(logs)).toEqual([
+      { tool: 'tools__bash', label: 'bash', count: 3, failed: 2 },
+      { tool: 'store_list', label: 'store_list', count: 2, failed: 0 },
+      { tool: 'subagent__research', label: 'subagent · research', count: 1, failed: 0 },
+    ]);
+  });
+
+  it('breaks a tie between equally busy tools on label, not insertion order', () => {
+    const logs = [
+      { id: '1', type: 'tool', tool: 'zeta', title: 'z', status: 'completed' },
+      { id: '2', type: 'tool', tool: 'alpha', title: 'a', status: 'completed' },
+    ];
+
+    expect(aggregateToolStats(logs).map((s) => s.label)).toEqual(['alpha', 'zeta']);
   });
 
   it('shows token usage before a session completes', () => {

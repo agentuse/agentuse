@@ -839,7 +839,7 @@ function LogWarnings(props: { warnings: ApprovalLogEntry[] }) {
  * join the remaining segments ("tools__skill_load" → "skill_load",
  * "sandbox__exec" → "sandbox · exec"). The raw id stays on the chip's tooltip.
  */
-function toolChipLabel(tool: string): string {
+export function toolChipLabel(tool: string): string {
   const segments = tool.split('__').filter(Boolean);
   if (segments.length > 1 && segments[0] === 'tools') segments.shift();
   return segments.join(' · ');

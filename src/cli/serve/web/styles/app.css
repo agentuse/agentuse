@@ -892,6 +892,91 @@ a, button, select, summary, label, input, textarea,
 }
 .page-approval-detail .meta .label::before { content: "⋮ "; color: var(--cyan); opacity: 0.6; }
 .page-approval-detail .meta .value, .page-approval-detail .meta code { color: var(--fg); font-size: 13px; word-break: break-all; }
+/* Tool-call roll-up under the meta table: one row per tool, ranked by call
+   count, with a proportional bar so the run's shape reads at a glance. Shares
+   the meta table's card treatment so the two bands read as one block. */
+.page-approval-detail .tool-stats {
+  margin: 10px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 14px 16px 4px;
+}
+.page-approval-detail .tool-stats-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.page-approval-detail .tool-stats-title {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+.page-approval-detail .tool-stats-title::before { content: "⋮ "; color: var(--cyan); opacity: 0.6; }
+.page-approval-detail .tool-stats-total {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+.page-approval-detail .tool-stats-rows {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(60px, 1fr) max-content;
+  align-items: center;
+  gap: 8px 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0 0 10px;
+}
+.page-approval-detail .tool-stat { display: contents; }
+.page-approval-detail .tool-stat-name {
+  color: var(--fg);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 30ch;
+}
+.page-approval-detail .tool-stat-track {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--line);
+  overflow: hidden;
+}
+.page-approval-detail .tool-stat-bar {
+  /* flex, not block: the failed share paints from the bar's trailing edge. */
+  display: flex;
+  justify-content: flex-end;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--cyan);
+  opacity: 0.75;
+}
+.page-approval-detail .tool-stat-bar-failed {
+  display: block;
+  height: 100%;
+  background: var(--red);
+}
+.page-approval-detail .tool-stat-count {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--fg);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  justify-self: end;
+}
+.page-approval-detail .tool-stat-failed {
+  color: var(--red);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+@media (max-width: 560px) {
+  .page-approval-detail .tool-stats-rows { grid-template-columns: minmax(0, 1fr) max-content; }
+  .page-approval-detail .tool-stat-track { grid-column: 1 / -1; }
+}
 .page-approval-detail .session-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .debug-prompt-button, .session-action-button {
   display: inline-flex; align-items: center; gap: 7px;
