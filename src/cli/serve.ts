@@ -448,6 +448,9 @@ interface ApprovalPageInfo {
     id: string;
     name: string;
     filePath?: string;
+    /** Scope-relative path of the agent file, stamped by the serve daemon so the
+     *  session page can link to the agent detail hub (see findApprovalInfo). */
+    runPath?: string;
     description?: string;
   };
   learning?: {
@@ -2209,6 +2212,17 @@ function toProjectRelativeAgentPath(project: Project | Omit<Project, 'agentFiles
   return relative(project.root, resolveScopedAgentPath(project, agentPath));
 }
 
+/**
+ * The scope-relative path the agent detail hub addresses, for a session's
+ * (absolute) agent file. Returns undefined when the file is not one of the
+ * project's loaded agents, so the session page only links where a hub exists.
+ */
+function toAgentRunPath(project: Project, filePath: string | undefined): string | undefined {
+  if (!filePath) return undefined;
+  const runPath = relative(project.scopeRoot, filePath);
+  return project.agentFiles.includes(runPath) ? runPath : undefined;
+}
+
 function isPathInside(parent: string, child: string): boolean {
   const rel = relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !rel.startsWith('/'));
@@ -2909,6 +2923,11 @@ export function createServeCommand(): Command {
             // daemons) can still address project-scoped endpoints like
             // POST /api/run.
             info.approval.project = project.id;
+            // Same idea for the agent's scope-relative path: it is what the
+            // agent detail hub is addressed by, and only the daemon knows the
+            // served scope the session's absolute file path sits under.
+            const agentRunPath = toAgentRunPath(project, info.approval.agent.filePath);
+            if (agentRunPath) info.approval.agent.runPath = agentRunPath;
             return { success: true, project, info };
           }
 
@@ -2966,6 +2985,11 @@ export function createServeCommand(): Command {
             // daemons) can still address project-scoped endpoints like
             // POST /api/run.
             info.approval.project = project.id;
+            // Same idea for the agent's scope-relative path: it is what the
+            // agent detail hub is addressed by, and only the daemon knows the
+            // served scope the session's absolute file path sits under.
+            const agentRunPath = toAgentRunPath(project, info.approval.agent.filePath);
+            if (agentRunPath) info.approval.agent.runPath = agentRunPath;
             return { success: true, project, info };
           }
           if (info.error.code !== 'SESSION_NOT_FOUND') {
@@ -4949,14 +4973,33 @@ export function createServeCommand(): Command {
         // adding a manual rule is the reviewer's explicit opt-in.
         const resolveSessionLearningStore = async (
           info: WorkerApprovalInfoResult,
-        ): Promise<{ store: LearningStore; config: LearningConfig | undefined } | null> => {
+        ): Promise<{ store: LearningStore; config: LearningConfig | undefined; filePath: string } | null> => {
           const targetAgent = info.approval.originAgent ?? info.approval.agent;
           if (!targetAgent.filePath) return null;
           const agent = await parseAgent(targetAgent.filePath);
           return {
             store: LearningStore.fromAgentFile(targetAgent.filePath, agent.config.learning?.file),
             config: agent.config.learning,
+            filePath: targetAgent.filePath,
           };
+        };
+
+        /**
+         * Where a tidy-up for this store would run, for the session views.
+         *
+         * Derived from the file the store was resolved from, never from
+         * `approval.agent.runPath`: on a sub-agent session those are different
+         * agents, and a button built from the session's own agent would tidy a
+         * file other than the one whose rules are on screen. Undefined when the
+         * file is not one of the project's loaded agents, which is the same
+         * condition under which the agent hub does not exist to run it.
+         */
+        const sessionTidyTarget = (
+          project: Project,
+          filePath: string,
+        ): { project: string; runPath: string } | undefined => {
+          const runPath = toAgentRunPath(project, filePath);
+          return runPath ? { project: project.id, runPath } : undefined;
         };
         // `forSessionId` narrows the list to learnings captured in that session
         // (the session page shows only what the run produced); omit it for the
@@ -4971,10 +5014,13 @@ export function createServeCommand(): Command {
           opts: {
             forSessionId?: string;
             config?: LearningConfig | undefined;
-            /** Both required to report the last tidy-up; omitted on the
-             *  session-scoped views, which cannot start or undo one. */
+            /** Both required to report the last tidy-up. */
             stateRoot?: string;
             agentFilePath?: string;
+            /** Where a tidy-up would run. The panel offers the button only when
+             *  the server names a target, so the two surfaces cannot disagree
+             *  about which file a press would rewrite. */
+            tidyTarget?: { project: string; runPath: string } | undefined;
           } = {},
         ) => {
           const all = await store.load();
@@ -4992,6 +5038,7 @@ export function createServeCommand(): Command {
           const inFlight = opts.agentFilePath ? runningTidyJobForFile(opts.agentFilePath) : undefined;
           return {
             success: true,
+            ...(opts.tidyTarget ? { tidyTarget: opts.tidyTarget } : {}),
             ...(inFlight ? { runningTidy: { jobId: inFlight.id } } : {}),
             ...(record ? { lastTidy: { jobId: record.jobId, finishedAt: record.finishedAt } } : {}),
             summary: {
@@ -5022,6 +5069,30 @@ export function createServeCommand(): Command {
           };
         };
 
+        /**
+         * The session-scoped list: this run's captures, plus the whole-store
+         * counts and the offer to tidy it.
+         *
+         * The list is narrowed to the session but the tidy-up is not, and that
+         * is deliberate. The reviewer who just left a correction is the person
+         * who needs to know it will not reach the agent, and this is the page
+         * they are on; sending them to find the agent hub to act on it is how
+         * the warning went unread. The banner above the list already speaks
+         * about the whole store, so the button belongs with it.
+         */
+        const sessionLearningPayload = (
+          project: Project,
+          resolved: NonNullable<Awaited<ReturnType<typeof resolveSessionLearningStore>>>,
+          sessionId: string,
+        ) =>
+          learningListPayload(resolved.store, {
+            forSessionId: sessionId,
+            config: resolved.config,
+            stateRoot: resolveProjectContext(dirname(resolved.filePath), { agentFilePath: resolved.filePath }).stateRoot,
+            agentFilePath: resolved.filePath,
+            tidyTarget: sessionTidyTarget(project, resolved.filePath),
+          });
+
         // GET /sessions/:id/learnings: list the learnings captured in this session.
         const sessionLearningsMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/learnings$/) : null;
         if (sessionLearningsMatch) {
@@ -5040,7 +5111,7 @@ export function createServeCommand(): Command {
             }
             const resolved = await resolveSessionLearningStore(found.info);
             sendJSON(res, 200, resolved
-              ? await learningListPayload(resolved.store, { forSessionId: sessionId, config: resolved.config })
+              ? await sessionLearningPayload(found.project, resolved, sessionId)
               : { success: true, learnings: [] });
           } catch (err) {
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
@@ -5077,8 +5148,14 @@ export function createServeCommand(): Command {
             }
             const agent = await parseAgent(targetAgent.filePath);
             await saveManualLearning({ agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(found.info.approval.logs), sessionId });
-            const store = LearningStore.fromAgentFile(targetAgent.filePath, agent.config.learning?.file);
-            sendJSON(res, 200, await learningListPayload(store, { forSessionId: sessionId, config: agent.config.learning }));
+            // Redraw through the same builder as the GET: a rule added by hand
+            // can be the one that pushes the store past the cap, and a response
+            // that dropped the tidy target would take the button away at the
+            // moment it started to matter.
+            const resolved = await resolveSessionLearningStore(found.info);
+            sendJSON(res, 200, resolved
+              ? await sessionLearningPayload(found.project, resolved, sessionId)
+              : { success: true, learnings: [] });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
@@ -5107,7 +5184,7 @@ export function createServeCommand(): Command {
             const resolved = await resolveSessionLearningStore(found.info);
             if (resolved) await resolved.store.remove(learningId);
             sendJSON(res, 200, resolved
-              ? await learningListPayload(resolved.store, { forSessionId: sessionId, config: resolved.config })
+              ? await sessionLearningPayload(found.project, resolved, sessionId)
               : { success: true, learnings: [] });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
@@ -5123,7 +5200,7 @@ export function createServeCommand(): Command {
           res: ServerResponse,
           requestedProject: string | undefined,
           requestedPath: string | undefined,
-        ): Promise<{ store: LearningStore; agent: Awaited<ReturnType<typeof parseAgent>>; absPath: string; stateRoot: string } | null> => {
+        ): Promise<{ store: LearningStore; agent: Awaited<ReturnType<typeof parseAgent>>; absPath: string; stateRoot: string; tidyTarget: { project: string; runPath: string } } | null> => {
           if (!requestedProject || !requestedPath) {
             sendError(res, 400, "MISSING_PARAMS", "Both project and path are required");
             return null;
@@ -5144,6 +5221,7 @@ export function createServeCommand(): Command {
             agent,
             absPath,
             stateRoot: resolveProjectContext(dirname(absPath), { agentFilePath: absPath }).stateRoot,
+            tidyTarget: { project: project.id, runPath: requestedPath },
           };
         };
 
@@ -5154,6 +5232,7 @@ export function createServeCommand(): Command {
             config: target.agent.config.learning,
             stateRoot: target.stateRoot,
             agentFilePath: target.absPath,
+            tidyTarget: target.tidyTarget,
           });
 
         // GET /agents/learnings?project=<id>&path=<runPath>: list all stored learnings.

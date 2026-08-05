@@ -161,6 +161,56 @@ export function TidyResultView(props: { result: TidyResult; onUndo: () => void; 
 }
 
 /**
+ * The line above the list, and the way to act on it.
+ *
+ * Two states, never both: corrections are being ignored, or they are not. The
+ * warning carries the button, because a page that states the problem and leaves
+ * the fix somewhere else is how the problem goes unfixed.
+ */
+export function LearningsHeadline(props: {
+  summary: LearningSummary | null;
+  tidyTarget: { project: string; runPath: string } | null;
+  runningTidy: { jobId: string } | null;
+}) {
+  const { summary, tidyTarget, runningTidy } = props;
+  if (!summary) return null;
+
+  // A fact, not a scolding. The number is what makes it credible: the reviewer
+  // believes their corrections took effect, and this is the only place that
+  // says how many did not.
+  if (summary.dormant > 0) {
+    return (
+      <div class="learnings-banner">
+        <span class="learnings-banner-text">
+          {summary.dormant} of this agent's corrections never reach it — only the top {summary.cap} apply per run.
+        </span>
+        {/* A link, not a submit: the run takes minutes and belongs on a page
+            with a URL, not inside a panel the user may navigate away from. */}
+        {tidyTarget && (
+          <a
+            class="learnings-tidy-start"
+            href={learningsTidyHref(tidyTarget.project, tidyTarget.runPath,
+              runningTidy ? { job: runningTidy.jobId } : { start: true })}
+          >
+            {runningTidy ? (<><span class="btn-spinner" aria-hidden="true" />Tidying up…</>) : 'Tidy up'}
+          </a>
+        )}
+      </div>
+    );
+  }
+
+  if (summary.active > 0) {
+    return (
+      <div class="learnings-summary">
+        {summary.injected} of {summary.active} apply per run
+        {summary.graduated > 0 && ` · ${summary.graduated} permanent in the agent file`}
+      </div>
+    );
+  }
+  return null;
+}
+
+/**
  * Shared learnings list + add/discard editor. The two wrappers below bind it to
  * the session-scoped endpoints (only that session's captures) and the
  * agent-scoped endpoints (the full store).
@@ -175,14 +225,13 @@ function LearningsSection(props: {
   fetchList: () => Promise<SessionLearningsPayload>;
   addRule: (instruction: string) => Promise<SessionLearningsPayload>;
   discardRule: (id: string) => Promise<SessionLearningsPayload>;
-  /** Agent-scoped only: the session view shows one run's captures, and tidying
-   *  the whole store from there would edit far more than what is on screen.
-   *  The run itself lives on its own page — it takes minutes, and its result is
-   *  the only offer of an undo the user gets. */
-  tidyTarget?: { project: string; runPath: string };
 }) {
   const [learnings, setLearnings] = useState<SessionLearning[] | null>(null);
   const [summary, setSummary] = useState<LearningSummary | null>(null);
+  // Which agent a press would rewrite. Comes from the response rather than from
+  // props: the session panel and the agent panel then offer the same button on
+  // the same terms, and neither can name a file the server would not act on.
+  const [tidyTarget, setTidyTarget] = useState<{ project: string; runPath: string } | null>(null);
   const [lastTidy, setLastTidy] = useState<{ jobId: string; finishedAt: number } | null>(null);
   const [runningTidy, setRunningTidy] = useState<{ jobId: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -193,6 +242,7 @@ function LearningsSection(props: {
   const absorb = (payload: SessionLearningsPayload) => {
     setLearnings(payload.learnings);
     setSummary(payload.summary ?? null);
+    setTidyTarget(payload.tidyTarget ?? null);
     setLastTidy(payload.lastTidy ?? null);
     setRunningTidy(payload.runningTidy ?? null);
   };
@@ -248,41 +298,15 @@ function LearningsSection(props: {
     <div class="learnings-panel" id={props.id}>
       {props.label !== null && <div class="learnings-label">{props.label}</div>}
 
-      {/* A fact, not a scolding. The number is what makes it credible: the
-          reviewer believes their corrections took effect, and this is the only
-          place that says how many did not. */}
-      {summary && summary.dormant > 0 && (
-        <div class="learnings-banner">
-          <span class="learnings-banner-text">
-            {summary.dormant} of this agent's corrections never reach it — only the top {summary.cap} apply per run.
-          </span>
-          {/* A link, not a submit: the run takes minutes and belongs on a page
-              with a URL, not inside a panel the user may navigate away from. */}
-          {props.tidyTarget && (
-            <a
-              class="learnings-tidy-start"
-              href={learningsTidyHref(props.tidyTarget.project, props.tidyTarget.runPath,
-                runningTidy ? { job: runningTidy.jobId } : { start: true })}
-            >
-              {runningTidy ? (<><span class="btn-spinner" aria-hidden="true" />Tidying up…</>) : 'Tidy up'}
-            </a>
-          )}
-        </div>
-      )}
-      {summary && summary.dormant === 0 && summary.active > 0 && (
-        <div class="learnings-summary">
-          {summary.injected} of {summary.active} apply per run
-          {summary.graduated > 0 && ` · ${summary.graduated} permanent in the agent file`}
-        </div>
-      )}
+      <LearningsHeadline summary={summary} tidyTarget={tidyTarget} runningTidy={runningTidy} />
 
       {/* The last tidy-up rewrote this agent's own file. Whoever comes back to
           this page is the one who might want that undone, so the way back to it
           has to be here and not only in the tab that ran it. */}
-      {lastTidy && props.tidyTarget && (
+      {lastTidy && tidyTarget && (
         <p class="learnings-note">
           Tidied up {formatRelativeTime(lastTidy.finishedAt)} —{' '}
-          <a href={learningsTidyHref(props.tidyTarget.project, props.tidyTarget.runPath, { job: lastTidy.jobId })}>
+          <a href={learningsTidyHref(tidyTarget.project, tidyTarget.runPath, { job: lastTidy.jobId })}>
             see what changed or undo it
           </a>
         </p>
@@ -358,6 +382,12 @@ function LearningsSection(props: {
  * Ended-session panel: shows only the learnings captured in THIS session (the
  * agent's full store lives on the agent detail page) and lets a reviewer add
  * one more rule (standalone — no resume) or discard any.
+ *
+ * The list is this session's; the banner above it and its Tidy up button are
+ * about the whole store. That mix is on purpose. The reviewer reading this page
+ * is the one who just corrected the agent, and if the store is over the cap
+ * their correction will not reach it — telling them here and making them go
+ * find the agent page to act on it is how the warning went unread.
  */
 export function LearningsPanel(props: {
   hidden: boolean;
@@ -397,7 +427,6 @@ export function AgentLearningsPanel(props: { project: string; runPath: string })
       fetchList={() => fetchAgentLearnings(props.project, props.runPath)}
       addRule={(instruction) => addAgentLearning(props.project, props.runPath, instruction)}
       discardRule={(id) => discardAgentLearning(props.project, props.runPath, id)}
-      tidyTarget={{ project: props.project, runPath: props.runPath }}
     />
   );
 }

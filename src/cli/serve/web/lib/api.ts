@@ -244,6 +244,11 @@ export interface SessionLearningsPayload {
   success: true;
   learnings: SessionLearning[];
   summary?: LearningSummary;
+  /** Which agent a tidy-up would rewrite. Server-supplied rather than assembled
+   *  by each panel: on a sub-agent session the rules on screen belong to the
+   *  parent agent, not the session's own, and only the server knows which. Its
+   *  absence is what hides the button. */
+  tidyTarget?: { project: string; runPath: string };
   tidy?: TidyResult;
   job?: TidyJob;
   /** A tidy-up running right now, so the panel can point at it instead of

@@ -16,10 +16,10 @@ import type { AgentRow, ApprovalsListPayload, SessionRow } from '../src/cli/serv
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 import { term, termTitle } from '../src/cli/serve/web/lib/terms';
 import { AgentGraphView } from '../src/cli/serve/web/components/agent-graph-view';
-import { statusBadge, TidyResultView } from '../src/cli/serve/web/components/learnings-panel';
+import { statusBadge, LearningsHeadline, TidyResultView } from '../src/cli/serve/web/components/learnings-panel';
 import { TidyProgressView } from '../src/cli/serve/web/routes/learnings-tidy';
 import { learningsTidyHref } from '../src/cli/serve/web/lib/links';
-import type { SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
+import type { LearningSummary, SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
 
 const noop = () => {};
 
@@ -1189,6 +1189,58 @@ describe('learnings panel status', () => {
   it('says nothing rather than guessing when the server sent no status', () => {
     // An older daemon omits `injected`; claiming "applied" there would be a lie.
     expect(statusBadge(rule({}))).toBeNull();
+  });
+});
+
+describe('LearningsHeadline', () => {
+  const summary = (over: Partial<LearningSummary> = {}): LearningSummary => ({
+    cap: 10, active: 36, injected: 10, dormant: 26, graduated: 0, retired: 0, ...over,
+  });
+  const target = { project: 'demo', runPath: 'agents/writer.agentuse' };
+
+  it('offers the fix in the same breath as the problem', () => {
+    // The whole point of the change: the session panel used to state that 26
+    // corrections were being ignored and then leave the user to go find the
+    // button on another page.
+    const html = renderToString(
+      <LearningsHeadline summary={summary()} tidyTarget={target} runningTidy={null} />,
+    );
+    expect(html).toContain("26 of this agent's corrections never reach it");
+    expect(html).toContain('Tidy up');
+    expect(html).toContain('agents%2Fwriter.agentuse');
+  });
+
+  it('points at the pass already running instead of offering a second one', () => {
+    const html = renderToString(
+      <LearningsHeadline summary={summary()} tidyTarget={target} runningTidy={{ jobId: 'job-7' }} />,
+    );
+    expect(html).toContain('Tidying up…');
+    expect(html).toContain('job-7');
+    expect(html).not.toContain('>Tidy up<');
+  });
+
+  it('states the problem without a button when the server named no target', () => {
+    // A session whose agent file is outside the served scope has no page to run
+    // a tidy-up on; the count is still true and still worth saying.
+    const html = renderToString(
+      <LearningsHeadline summary={summary()} tidyTarget={null} runningTidy={null} />,
+    );
+    expect(html).toContain('never reach it');
+    expect(html).not.toContain('Tidy up');
+  });
+
+  it('drops the warning entirely once every correction lands', () => {
+    const html = renderToString(
+      <LearningsHeadline
+        summary={summary({ active: 8, injected: 8, dormant: 0, graduated: 2 })}
+        tidyTarget={target}
+        runningTidy={null}
+      />,
+    );
+    expect(html).not.toContain('never reach');
+    expect(html).not.toContain('Tidy up');
+    expect(html).toContain('8 of 8 apply per run');
+    expect(html).toContain('2 permanent in the agent file');
   });
 });
 
