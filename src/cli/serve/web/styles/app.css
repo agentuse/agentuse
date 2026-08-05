@@ -2746,6 +2746,81 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .learnings-add button:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
 .learnings-add button:active { transform: translateY(1px); }
 .learnings-add button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* The count of corrections that never reach the agent, with the one action that
+   fixes it. Loud enough to be noticed on a page the reviewer opened for another
+   reason, quiet enough not to read as an error. */
+.learnings-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--warning-line, var(--line-strong));
+  border-radius: 8px;
+  background: var(--warning-bg, var(--panel-hover));
+}
+.learnings-banner-text { flex: 1; min-width: 220px; font-size: 12.5px; line-height: 1.45; }
+.learnings-banner button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--primary-fg, #fff);
+  background: var(--primary-bg); border: 1px solid var(--primary-bg);
+  border-radius: 8px; min-height: 32px; padding: 0 14px; cursor: pointer;
+}
+.learnings-banner button:disabled { opacity: 0.55; cursor: not-allowed; }
+.learnings-summary { color: var(--muted); font-size: 12px; }
+.learnings-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+/* Per-rule status. `dormant` is dimmed on purpose: a rule with no effect should
+   not look the same as one in force. */
+.learnings-badge {
+  flex-shrink: 0;
+  align-self: flex-start;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.learnings-badge.is-applied { color: var(--success, #4ade80); border-color: currentColor; }
+.learnings-badge.is-dormant { color: var(--warning, #fbbf24); border-color: currentColor; }
+.learnings-badge.is-graduated { color: var(--accent, #60a5fa); border-color: currentColor; }
+.learnings-item.is-dormant .learnings-text { opacity: 0.6; }
+
+.learnings-tidy-result { display: grid; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.learnings-tidy-summary { font-size: 12.5px; }
+.learnings-tidy-permanent { display: grid; gap: 6px; }
+.learnings-diff { display: grid; gap: 4px; }
+.learnings-diff-label { color: var(--muted); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
+.learnings-diff-body {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 320px;
+  overflow: auto;
+}
+.learnings-diff-line { white-space: pre; }
+.learnings-diff-line.is-add { color: var(--success, #4ade80); }
+.learnings-diff-line.is-del { color: var(--danger, #f87171); }
+.learnings-diff-line.is-hunk { color: var(--muted); }
+.learnings-undo {
+  justify-self: start;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--fg); background: transparent;
+  border: 1px solid var(--line); border-radius: 8px;
+  min-height: 32px; padding: 0 14px; cursor: pointer;
+}
+.learnings-undo:hover { border-color: var(--line-strong); background: var(--panel-hover); }
+.learnings-undo:disabled { opacity: 0.55; cursor: not-allowed; }
 /* Inline spinner for buttons in a pending state and for the shared Loading
    component; inherits the surrounding text colour. */
 .btn-spinner,

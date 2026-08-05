@@ -22,6 +22,7 @@ import { createBenchmarkCommand } from './cli/benchmark';
 import { createAgentsCommand } from './cli/agents';
 import { createAddCommand } from './cli/add';
 import { createDoctorCommand } from './cli/doctor';
+import { createLearningsCommand } from './cli/learnings';
 import { BUILTIN_PROVIDERS } from './providers/registry-sources';
 import { resolveModelProvider } from './utils/model-utils';
 import { resolveModelString } from './utils/model-alias';
@@ -177,6 +178,9 @@ program.addCommand(createAddCommand());
 
 // Add doctor command
 program.addCommand(createDoctorCommand());
+
+// Add learnings command
+program.addCommand(createLearningsCommand());
 
 // Add benchmark command (hidden from help)
 program.addCommand(createBenchmarkCommand(), { hidden: true });
@@ -747,7 +751,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         if (preparedExecution.learningsApplied > 0) {
           const { learningsApplied: applied, learningsStored: stored } = preparedExecution;
           metadataLines.push(stored > applied
-            ? `Learnings: ${applied} of ${stored} applied (${stored - applied} dormant past the cap)`
+            ? `Learnings: ${applied} of ${stored} applied (${stored - applied} never reach this agent)`
             : `Learnings: ${applied} applied`);
         }
         logger.metadata(metadataLines);

@@ -28,7 +28,7 @@ import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-l
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
-import { saveManualLearning, LearningStore, type LearningConfig } from "../learning";
+import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, consolidateLearnings, undoConsolidation, type LearningConfig } from "../learning";
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
@@ -4865,30 +4865,62 @@ export function createServeCommand(): Command {
         // Learnings for a session's agent. Reading and editing follow the same
         // trust boundary as the session log (local, session token, or API key);
         // adding a manual rule is the reviewer's explicit opt-in.
-        const resolveSessionLearningStore = async (info: WorkerApprovalInfoResult): Promise<LearningStore | null> => {
+        const resolveSessionLearningStore = async (
+          info: WorkerApprovalInfoResult,
+        ): Promise<{ store: LearningStore; config: LearningConfig | undefined } | null> => {
           const targetAgent = info.approval.originAgent ?? info.approval.agent;
           if (!targetAgent.filePath) return null;
           const agent = await parseAgent(targetAgent.filePath);
-          return LearningStore.fromAgentFile(targetAgent.filePath, agent.config.learning?.file);
+          return {
+            store: LearningStore.fromAgentFile(targetAgent.filePath, agent.config.learning?.file),
+            config: agent.config.learning,
+          };
         };
         // `forSessionId` narrows the list to learnings captured in that session
         // (the session page shows only what the run produced); omit it for the
         // agent-level view of the full store.
-        const learningListPayload = async (store: LearningStore, forSessionId?: string) => ({
-          success: true,
-          learnings: (await store.load())
-            .filter((l) => forSessionId === undefined || l.sessionId === forSessionId)
-            .map((l) => ({
-              id: l.id,
-              category: l.category,
-              title: l.title,
-              instruction: l.instruction,
-              confidence: l.confidence,
-              source: l.source,
-              extractedAt: l.extractedAt,
-              ...(l.sessionId && { sessionId: l.sessionId }),
-            })),
-        });
+        //
+        // The payload carries each rule's STATUS, not just its text. Without it
+        // the panel cannot tell a reviewer that the correction they just left is
+        // one of the ones past the cap, which is the exact misunderstanding this
+        // whole surface exists to end.
+        const learningListPayload = async (
+          store: LearningStore,
+          opts: { forSessionId?: string; config?: LearningConfig | undefined } = {},
+        ) => {
+          const all = await store.load();
+          const cap = effectiveCap(opts.config);
+          const { injected, dormant } = partitionLearnings(all, cap);
+          const injectedIds = new Set(injected.map((l) => l.id));
+          return {
+            success: true,
+            summary: {
+              cap,
+              active: injected.length + dormant.length,
+              injected: injected.length,
+              dormant: dormant.length,
+              graduated: all.filter((l) => l.state === 'graduated').length,
+              retired: all.filter((l) => l.state === 'retired').length,
+            },
+            learnings: all
+              .filter((l) => opts.forSessionId === undefined || l.sessionId === opts.forSessionId)
+              .map((l) => ({
+                id: l.id,
+                category: l.category,
+                title: l.title,
+                instruction: l.instruction,
+                confidence: l.confidence,
+                source: l.source,
+                extractedAt: l.extractedAt,
+                ...(l.sessionId && { sessionId: l.sessionId }),
+                state: l.state ?? 'active',
+                appliedCount: l.appliedCount,
+                reasserted: l.reasserted,
+                approvedRuns: l.approvedRuns,
+                injected: injectedIds.has(l.id),
+              })),
+          };
+        };
 
         // GET /sessions/:id/learnings: list the learnings captured in this session.
         const sessionLearningsMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/learnings$/) : null;
@@ -4906,8 +4938,10 @@ export function createServeCommand(): Command {
               sendError(res, found.status, found.code, found.message);
               return;
             }
-            const store = await resolveSessionLearningStore(found.info);
-            sendJSON(res, 200, store ? await learningListPayload(store, sessionId) : { success: true, learnings: [] });
+            const resolved = await resolveSessionLearningStore(found.info);
+            sendJSON(res, 200, resolved
+              ? await learningListPayload(resolved.store, { forSessionId: sessionId, config: resolved.config })
+              : { success: true, learnings: [] });
           } catch (err) {
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
@@ -4944,7 +4978,7 @@ export function createServeCommand(): Command {
             const agent = await parseAgent(targetAgent.filePath);
             await saveManualLearning({ agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(found.info.approval.logs), sessionId });
             const store = LearningStore.fromAgentFile(targetAgent.filePath, agent.config.learning?.file);
-            sendJSON(res, 200, await learningListPayload(store, sessionId));
+            sendJSON(res, 200, await learningListPayload(store, { forSessionId: sessionId, config: agent.config.learning }));
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
@@ -4970,9 +5004,11 @@ export function createServeCommand(): Command {
               sendError(res, found.status, found.code, found.message);
               return;
             }
-            const store = await resolveSessionLearningStore(found.info);
-            if (store) await store.remove(learningId);
-            sendJSON(res, 200, store ? await learningListPayload(store, sessionId) : { success: true, learnings: [] });
+            const resolved = await resolveSessionLearningStore(found.info);
+            if (resolved) await resolved.store.remove(learningId);
+            sendJSON(res, 200, resolved
+              ? await learningListPayload(resolved.store, { forSessionId: sessionId, config: resolved.config })
+              : { success: true, learnings: [] });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
@@ -5015,7 +5051,7 @@ export function createServeCommand(): Command {
               requestUrl.searchParams.get('path') ?? undefined,
             );
             if (!target) return;
-            sendJSON(res, 200, await learningListPayload(target.store));
+            sendJSON(res, 200, await learningListPayload(target.store, { config: target.agent.config.learning }));
           } catch (err) {
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
           }
@@ -5044,7 +5080,7 @@ export function createServeCommand(): Command {
               model: target.agent.config.model,
               agentInstructions: target.agent.instructions,
             });
-            sendJSON(res, 200, await learningListPayload(target.store));
+            sendJSON(res, 200, await learningListPayload(target.store, { config: target.agent.config.learning }));
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
@@ -5068,7 +5104,69 @@ export function createServeCommand(): Command {
             );
             if (!target) return;
             await target.store.remove(learningId);
-            sendJSON(res, 200, await learningListPayload(target.store));
+            sendJSON(res, 200, await learningListPayload(target.store, { config: target.agent.config.learning }));
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // POST /agents/learnings/tidy: merge, sharpen, retire and make permanent,
+        // until every stored correction reaches the agent. `dryRun` returns the
+        // plan and both diffs without writing.
+        //
+        // Deliberately the same core call as `agentuse learnings tidy`: the
+        // reviewer who lives in this UI and the operator who lives in the
+        // terminal must not get different results from the same button.
+        if (req.method === "POST" && routePath === '/agents/learnings/tidy') {
+          try {
+            const body = await parseJSONBody(req);
+            const target = await resolveAgentLearningTarget(
+              res,
+              typeof body.project === 'string' ? body.project : undefined,
+              typeof body.path === 'string' ? body.path : undefined,
+            );
+            if (!target) return;
+            const projectContext = resolveProjectContext(dirname(target.absPath), { agentFilePath: target.absPath });
+            const result = await consolidateLearnings({
+              agentFilePath: target.absPath,
+              agentInstructions: target.agent.instructions,
+              agentModel: target.agent.config.model,
+              config: target.agent.config.learning,
+              stateRoot: projectContext.stateRoot,
+              ...(body.dryRun === true ? { dryRun: true } : {}),
+            });
+            sendJSON(res, 200, {
+              ...(await learningListPayload(target.store, { config: target.agent.config.learning })),
+              tidy: result,
+            });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // POST /agents/learnings/undo: restore both files to their state before
+        // the last tidy-up. Half the change lands in the agent file, so an undo
+        // that only rolled back the store would leave it quietly rewritten.
+        if (req.method === "POST" && routePath === '/agents/learnings/undo') {
+          try {
+            const body = await parseJSONBody(req);
+            const target = await resolveAgentLearningTarget(
+              res,
+              typeof body.project === 'string' ? body.project : undefined,
+              typeof body.path === 'string' ? body.path : undefined,
+            );
+            if (!target) return;
+            const projectContext = resolveProjectContext(dirname(target.absPath), { agentFilePath: target.absPath });
+            const restored = await undoConsolidation(projectContext.stateRoot, target.absPath);
+            sendJSON(res, 200, {
+              ...(await learningListPayload(target.store, { config: target.agent.config.learning })),
+              undone: Boolean(restored),
+              restored: restored?.restored ?? [],
+            });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);

@@ -148,6 +148,8 @@ export function fetchSessionArtifacts(sessionId: string, token: string | undefin
 
 export type SessionLearningSource = 'auto' | 'approval' | 'manual';
 
+export type LearningState = 'active' | 'graduated' | 'retired';
+
 export interface SessionLearning {
   id: string;
   category: string;
@@ -158,11 +160,53 @@ export interface SessionLearning {
   extractedAt: string;
   /** Session the learning was captured in; absent for legacy entries and agent-level rules. */
   sessionId?: string;
+  state?: LearningState;
+  appliedCount?: number;
+  reasserted?: number;
+  approvedRuns?: number;
+  /** Whether this rule is one of the ones actually put in front of the model. */
+  injected?: boolean;
+}
+
+/** Counts behind the "N of M apply per run" line. Absent on older responses. */
+export interface LearningSummary {
+  cap: number;
+  active: number;
+  injected: number;
+  dormant: number;
+  graduated: number;
+  retired: number;
+}
+
+export interface TidyChange {
+  kind: 'merge' | 'rewrite' | 'retire' | 'graduate';
+  titles: string[];
+  why: string;
+}
+
+export interface TidyResult {
+  ran: boolean;
+  model?: string;
+  activeBefore: number;
+  activeAfter: number;
+  cap: number;
+  changes: TidyChange[];
+  merged: number;
+  rewritten: number;
+  retired: number;
+  graduated: string[];
+  graduationSkipped?: string;
+  diffs: { learnings: string; agentFile?: string };
+  undoId?: string;
+  note?: string;
 }
 
 export interface SessionLearningsPayload {
   success: true;
   learnings: SessionLearning[];
+  summary?: LearningSummary;
+  tidy?: TidyResult;
+  undone?: boolean;
 }
 
 export function fetchSessionLearnings(sessionId: string, token: string | undefined, project?: string): Promise<SessionLearningsPayload> {
@@ -193,6 +237,17 @@ export function addAgentLearning(project: string, runPath: string, instruction: 
 
 export function discardAgentLearning(project: string, runPath: string, learningId: string): Promise<SessionLearningsPayload> {
   return postJson('/api/agents/learnings/discard', { project, path: runPath, id: learningId });
+}
+
+/** Merge, sharpen, retire and make permanent, until every correction counts.
+ *  Applies unless `dryRun`, and returns both diffs either way. */
+export function tidyAgentLearnings(project: string, runPath: string, dryRun = false): Promise<SessionLearningsPayload> {
+  return postJson('/api/agents/learnings/tidy', { project, path: runPath, dryRun });
+}
+
+/** Restore the corrections file AND the agent file to their pre-tidy state. */
+export function undoAgentLearningsTidy(project: string, runPath: string): Promise<SessionLearningsPayload> {
+  return postJson('/api/agents/learnings/undo', { project, path: runPath });
 }
 
 export function postSessionDecision(sessionId: string, token: string | undefined, body: {

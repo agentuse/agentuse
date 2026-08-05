@@ -98,6 +98,16 @@ describe('header-gate exemption (capability routes)', () => {
     }
   });
 
+  it('keeps the agent-level learning routes behind the operator gate', () => {
+    // A session-view link is handed out to reviewers; these routes rewrite the
+    // agent's own `.agentuse` file, so they must stay on the operator surface
+    // rather than riding a session token like the capability routes above.
+    for (const route of ['/agents/learnings', '/agents/learnings/tidy', '/agents/learnings/undo']) {
+      expect(__testing.isHeaderGateExemptRoute(route, false)).toBe(false);
+      expect(__testing.isHeaderGateExemptRoute(route, true)).toBe(false);
+    }
+  });
+
   it('rejects an explicitly wrong project even when the session token is valid', () => {
     const apiKey = 'operator-secret';
     const sessionToken = sessionViewToken('abc', apiKey);

@@ -16,6 +16,8 @@ import type { AgentRow, ApprovalsListPayload, SessionRow } from '../src/cli/serv
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 import { term, termTitle } from '../src/cli/serve/web/lib/terms';
 import { AgentGraphView } from '../src/cli/serve/web/components/agent-graph-view';
+import { statusBadge, TidyResultView } from '../src/cli/serve/web/components/learnings-panel';
+import type { SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
 
 const noop = () => {};
 
@@ -685,7 +687,7 @@ describe('DecisionDialog component', () => {
     const html = renderToString(<DecisionDialog open mode="reject" onSubmit={noop} onClose={noop} />);
     expect(html).toContain('reject this request?');
     expect(html).toContain('configured rejected-state updates');
-    expect(html).toContain('optional: tell the agent why this should be rejected');
+    expect(html).toContain('optional: which part is wrong is enough');
     expect(html).toContain('>Reject</button>');
     expect(html).not.toContain('Remember this comment as a future instruction');
   });
@@ -1166,5 +1168,58 @@ describe('AgentGraphView filtering', () => {
     const html = renderToString(<AgentGraphView agents={rows} query="newsletter" />);
     expect(html).toContain('>solo<');
     expect(html).not.toContain('agent-graph-node static dim');
+  });
+});
+
+describe('learnings panel status', () => {
+  const rule = (over: Partial<SessionLearning>): SessionLearning => ({
+    id: 'a', category: 'tip', title: 'T', instruction: 'Do the thing.',
+    confidence: 1, source: 'manual', extractedAt: '2026-07-01', ...over,
+  });
+
+  it('tells a reviewer when a rule never reaches the agent', () => {
+    expect(statusBadge(rule({ injected: false }))).toEqual({ label: 'never reaches the agent', kind: 'dormant' });
+    expect(statusBadge(rule({ injected: true }))).toEqual({ label: 'applied', kind: 'applied' });
+    expect(statusBadge(rule({ state: 'graduated', injected: false }))).toEqual({ label: 'in agent file', kind: 'graduated' });
+    expect(statusBadge(rule({ state: 'retired', injected: false }))).toEqual({ label: 'retired', kind: 'retired' });
+  });
+
+  it('says nothing rather than guessing when the server sent no status', () => {
+    // An older daemon omits `injected`; claiming "applied" there would be a lie.
+    expect(statusBadge(rule({}))).toBeNull();
+  });
+});
+
+describe('TidyResultView', () => {
+  const result = (over: Partial<TidyResult> = {}): TidyResult => ({
+    ran: true, activeBefore: 58, activeAfter: 10, cap: 10,
+    changes: [{ kind: 'merge', titles: ['A', 'B'], why: 'same thing' }],
+    merged: 1, rewritten: 0, retired: 12, graduated: ['Cite sources before publishing'],
+    diffs: { learnings: '@@ -1 +1 @@\n-old\n+new', agentFile: '@@ -2 +2 @@\n+rule' },
+    undoId: '2026-08-04', ...over,
+  });
+
+  it('names the rules that became permanent and shows both diffs with an undo', () => {
+    const html = renderToString(<TidyResultView result={result()} onUndo={noop} undoing={false} />);
+    expect(html).toContain('1 merged, 12 retired, 1 now permanent');
+    expect(html).toContain('58 ');
+    expect(html).toContain('Now permanent in the agent file');
+    expect(html).toContain('Cite sources before publishing');
+    expect(html).toContain('corrections file');
+    expect(html).toContain('agent file');
+    expect(html).toContain('Undo');
+  });
+
+  it('admits when a pass left the file still over the cap', () => {
+    const html = renderToString(<TidyResultView result={result({ activeAfter: 50 })} onUndo={noop} undoing={false} />);
+    expect(html).toContain('Still 40 over the cap');
+  });
+
+  it('explains a skipped graduation instead of silently omitting it', () => {
+    const html = renderToString(
+      <TidyResultView result={result({ graduated: [], graduationSkipped: 'the agent file is not writable' })} onUndo={noop} undoing={false} />,
+    );
+    expect(html).toContain('not made permanent');
+    expect(html).toContain('not writable');
   });
 });

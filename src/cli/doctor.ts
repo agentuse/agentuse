@@ -15,7 +15,6 @@ import { parseBashCommand } from '../tools/bash-parser.js';
 import { looksEffectful, grantsUnnamedSubcommands, grantsArbitraryCode, commandHead } from '../tools/effectful-heuristic.js';
 import { isEffectful } from '../runner/approval-lease.js';
 import { previewLearningPrompt } from '../runner/system-messages.js';
-import { MAX_INJECTED_LEARNINGS } from '../learning/index.js';
 import type { Message, Part, SessionInfo, ToolPart } from '../session/types.js';
 
 interface DoctorOptions {
@@ -337,8 +336,8 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
     const dormant = learningPreview.total - learningPreview.count;
     console.log(`  learned guidelines: ${learningPreview.count} of ${learningPreview.total} applied, ${formatEstimatedTokens(estimatedLearningTokens)} tokens/model request`);
     if (dormant > 0) {
-      console.log(chalk.yellow(`  ${dormant} stored learning${dormant === 1 ? '' : 's'} never reach the model: only the top ${MAX_INJECTED_LEARNINGS} are injected per run.`));
-      console.log(chalk.gray('  Merge near-duplicates and delete the stale ones, or a captured reviewer correction can sit in the file with no effect.'));
+      console.log(chalk.yellow(`  ${dormant} stored correction${dormant === 1 ? '' : 's'} never reach the model: only the top ${learningPreview.cap} are injected per run.`));
+      console.log(chalk.gray(`  Fix: agentuse learnings tidy ${agentFilePath}`));
     }
   }
   console.log(chalk.gray(`  total: ${formatEstimatedTokens(estimatedRequestTokens)} tokens/model request (agent body + preloaded skills + skill catalog${learningPreview ? ' + learned guidelines' : ''})`));
