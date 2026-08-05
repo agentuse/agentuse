@@ -54,6 +54,8 @@ This is the safer default for agents that touch untrusted input (web pages, emai
 | `apply` | `boolean` | Inject stored learnings into instructions before each run. Defaults to `true`. |
 | `criteria` | `string` | Optional guidance for the capture evaluator (domain-specific extraction). |
 | `file` | `string` | Custom file path for storing learnings (relative to agent file). |
+| `max` | `number` | How many corrections apply per run. Defaults to `10`, range 1-50. Each one is paid for on every model request; `agentuse doctor` prints the token cost. |
+| `model` | `string` | Model for the helper calls (capture and tidy-up). Defaults to the agent's own model. |
 
 <Note>
   **Deprecated:** the older `evaluate: true` / `evaluate: "<prompt>"` field still works but maps to `capture: true` (and `criteria` for the string form). It is removed in a future release; migrate to `capture` / `criteria`.
@@ -116,12 +118,14 @@ agentuse sessions resume 01K... \
 On next run or approval resume (when `apply: true`):
 
 1. Loads up to 10 learnings from storage
-2. Appends them to your agent instructions as a `## Learned Guidelines` section
+2. Appends them to your agent instructions as a `## Recent Corrections` section
 3. Tracks which learnings were applied (for analytics)
 
 This keeps learnings at the instruction level - where they have the most influence on agent behavior.
 
-### Only 10 apply per run, so keep the file small
+Corrections that have [graduated](#tidying-up) live in your agent file's own `## Learned Guidelines` block instead. Both carry the same authority and both override skill defaults; the split just separates the proven rules from the ones still applying per-run.
+
+### Only 10 apply per run
 
 The cap bounds context growth, and everything past it is dormant: stored and
 visible, but with no effect on the run. Order of precedence:
@@ -136,17 +140,86 @@ queueing behind it.
 
 Recency keeps the newest corrections in force; it does not make room. A file with
 far more than 10 entries leaves most of them dormant no matter how they are
-ordered, and a reviewer correction can sit there having no effect. `agentuse
-doctor` reports the split:
+ordered, and a reviewer correction can sit there having no effect. Every run says
+so, and so does `agentuse doctor`:
 
 ```
 learned guidelines: 10 of 57 applied, ~1.2k tokens/model request
-47 stored learnings never reach the model: only the top 10 are injected per run.
+47 stored corrections never reach the model: only the top 10 are injected per run.
+Fix: agentuse learnings tidy ./blog-writer.agentuse
 ```
 
-When you see that, merge near-duplicates and delete the stale entries. Repeating
-a correction a reviewer already gave refreshes the existing rule in place (it
-keeps its id and applied count) instead of adding a second copy.
+## Tidying up
+
+When corrections outgrow the cap, one action gets them back under it:
+
+```bash
+agentuse learnings tidy ./blog-writer.agentuse
+```
+
+or the **Tidy up** button in the serve UI, on the session view and the agent's
+Learnings tab. Both run the same thing. It makes four kinds of change:
+
+- **merge** near-duplicates into one rule
+- **rewrite** a correction you have repeated, a repeat means the wording is not
+  landing, so restating it sharply is the fix
+- **retire** what has been superseded, into a `## Retired` section of the same
+  file. Nothing is deleted, and a retired rule comes back automatically if you
+  ever re-assert it
+- **graduate** the corrections that have proven themselves into the agent's own
+  instructions, where they apply on every run and cost no cap slot
+
+It applies immediately and then shows you what changed: a summary, the rules that
+became permanent named individually, and the diff of **both** files. Undo with
+`agentuse learnings undo ./blog-writer.agentuse` or the Undo button.
+
+```
+$ agentuse learnings tidy ./blog-writer.agentuse
+
+Done
+  3 merged, 1 rewritten, 12 retired, 9 now permanent — 58 → 10 in force
+```
+
+Inspect first with `agentuse learnings ./blog-writer.agentuse` (a list by status)
+or `agentuse learnings tidy ./blog-writer.agentuse --dry-run` (the plan and both
+diffs, nothing written).
+
+### What makes a correction permanent
+
+Graduation is earned, not guessed. A correction qualifies when either:
+
+- **you wrote it yourself** (`src:manual`), writing it down was the assertion, or
+- **it was in force across 3 runs you approved without leaving a comment.**
+  Approving with no notes is a vote for every rule that applied that run; a run
+  you commented on credits nothing, because you had to correct something.
+
+Graduated rules are written into your agent file inside a marked block:
+
+```markdown
+<!-- agentuse:learned -->
+## Learned Guidelines (override skill defaults on conflict)
+
+Corrections graduated from previous runs. These take precedence over Skills — if one contradicts a skill's default, follow the guideline:
+
+- [tip] Cite sources before publishing
+<!-- /agentuse:learned -->
+```
+
+Only the bytes inside the markers ever change; your frontmatter, comments and
+formatting are left exactly as they were. Because the block is part of the agent
+file, it is diffable, reviewable in a pull request, and readable by a teammate
+who wants to know what this agent has been taught. Re-running the tidy-up
+replaces the block rather than appending a second copy.
+
+Corrections still on probation are injected under a separate
+`## Recent Corrections` heading, so the two tiers never collide.
+
+<Note>
+  Graduation is skipped, and the result says so, when the agent file is not
+  writable, or when several agents share one corrections file via `file:`, 
+  making a rule permanent in one agent file would silently remove it from the
+  others.
+</Note>
 
 ## Learning Categories
 
@@ -176,11 +249,21 @@ Each actionable tip should include a specific time estimate
 (e.g., "5-minute brain dump") to make it feel achievable.
 
 ### [tip] Cite sources before publishing
-<!-- id:i9j0k1l2 | confidence:1.00 | applied:0 | src:manual | 2026-01-27 -->
+<!-- id:i9j0k1l2 | confidence:1.00 | applied:0 | src:manual | ok:4 | state:graduated | 2026-01-27 -->
 Always include source links before publishing.
+
+## Retired
+
+### [tip] Open with a question
+<!-- id:m3n4o5p6 | confidence:0.85 | applied:2 | src:auto | state:retired | 2026-01-10 -->
+Start posts with a question to draw the reader in.
 ```
 
-The `src:` field records provenance: `auto` (self-evaluation), `approval` (promoted from a reviewer comment), or `manual` (explicitly saved by a reviewer). Older files without `src:` load as `auto`.
+Every field except the date is optional, so older files load unchanged:
+
+- `src:` records provenance, `auto` (self-evaluation), `approval` (promoted from a reviewer comment), or `manual` (explicitly saved by a reviewer). Files without it load as `auto`.
+- `state:` records lifecycle, `graduated` (now permanent in the agent file) or `retired` (archived). Absent means active.
+- `re:` counts how many times a human repeated the correction; `ok:` counts the approved, uncommented runs it was in force for. These are the evidence the tidy-up uses to decide what to rewrite and what to make permanent.
 
 ## Custom Evaluation Criteria
 
@@ -246,8 +329,8 @@ This keeps you in control while still benefiting from extracted patterns.
   <Card title="Review before auto-apply" icon="eye">
     Run with `apply: false` first to verify learning quality before enabling auto-injection
   </Card>
-  <Card title="Curate your instructions" icon="pen">
-    The best learnings should become permanent parts of your agent file
+  <Card title="Tidy up when prompted" icon="broom">
+    When a run says corrections are not reaching the agent, run `agentuse learnings tidy`, proven ones become permanent parts of your agent file
   </Card>
   <Card title="Use custom prompts" icon="microscope">
     Tailor extraction to your domain with custom evaluation prompts

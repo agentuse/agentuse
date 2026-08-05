@@ -1104,6 +1104,53 @@ agentuse doctor agents/research.agentuse --last-run
 
 ---
 
+## agentuse learnings
+
+Inspect and tidy an agent's stored corrections. Only the top few apply per run (10 by default); anything past that is stored but never reaches the model. See the [Learning guide](/guides/learning).
+
+### Syntax
+
+```bash
+agentuse learnings <agent-file> [--json]
+agentuse learnings tidy <agent-file> [--dry-run]
+agentuse learnings undo <agent-file>
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| *(none)* | List every correction by status: applied, never reaches the agent, in the agent file, retired. |
+| `tidy` | Merge near-duplicates, sharpen corrections you have repeated, retire what is superseded, and make proven corrections permanent in the agent file. Applies immediately, then shows both diffs. |
+| `undo` | Restore the corrections file **and** the agent file to their state before the last tidy-up. |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-j, --json` | Machine-readable listing, including each rule's state and evidence counters. |
+| `--dry-run` | (`tidy`) Show the plan and both diffs without writing anything. |
+
+### Examples
+
+```bash
+# What is actually reaching this agent?
+agentuse learnings agents/blog-writer.agentuse
+
+# See what a tidy-up would do, then do it
+agentuse learnings tidy agents/blog-writer.agentuse --dry-run
+agentuse learnings tidy agents/blog-writer.agentuse
+
+# Changed your mind
+agentuse learnings undo agents/blog-writer.agentuse
+```
+
+<Note>
+  A tidy-up writes proven corrections into a marked block in your `.agentuse` file. Only the bytes inside the markers change, frontmatter, comments and formatting are left exactly as they were, and `undo` restores both files byte for byte.
+</Note>
+
+---
+
 ## agentuse agents
 
 Discover and list all agent files in the current project.
@@ -1305,6 +1352,9 @@ agentuse models unpin [path]             # Swap pinned model versions for versio
 agentuse models bump [path]              # Move superseded pins to the current model
 agentuse skills [subcommand] [options]   # List/get builtin or installed skills
 agentuse doctor <file> [--last-run]      # Diagnose agent skill capability config
+agentuse learnings <file> [--json]       # List an agent's stored corrections by status
+agentuse learnings tidy <file>           # Merge, sharpen, retire and make proven ones permanent
+agentuse learnings undo <file>           # Restore both files to their pre-tidy state
 agentuse agents [options]                # Discover and list project agents
 agentuse add <source> [options]          # Add skills/agents from GitHub or local path
 agentuse --version                       # Show version
