@@ -2038,12 +2038,20 @@ a, button, select, summary, label, input, textarea,
   line-height: 1.65;
 }
 .approval-risk .approval-section-title { color: var(--amber); }
+/* The card's contrast ramp is declared on the wrappers (.approval-section-body,
+   .approval-reference-excerpt, .approval-change-content, .approval-option-action),
+   but the text lands in a .content-markdown descendant that sets its own colour -
+   and a direct declaration beats an inherited one. Without `inherit` here every
+   one of those rules is dead: the quoted original, the actions that run on
+   approval, and the risk line all render at --muted-3, and a selected option is
+   indistinguishable from the ones the reviewer did not pick. */
 .approval-card .content-markdown,
 .approval-card .content-code {
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
+  color: inherit;
 }
 .approval-card .content-code {
   color: inherit;
