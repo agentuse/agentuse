@@ -2,19 +2,19 @@
 //
 // Apply with:  pm2 startOrRestart scripts/pm2-agentuse.config.cjs && pm2 save
 //
-// The setting that matters is `treekill: false`. pm2's default (true) signals the
-// whole process tree, so on `pm2 restart` the daemon's agent worker children get
-// SIGINT at t=0 and exit 130 before the daemon's own shutdown handler has run --
-// every in-flight agent dies instantly and its session is stranded at 'running'.
-// With treekill off, only the daemon is signalled; it drains in-flight approval
-// resumes/continuations, then shuts its workers down itself.
+// Surviving a restart is serve's own job now: on shutdown it releases workers
+// that still have agents running, and they finish out of process (see
+// AgentWorker.release in src/cli/serve.ts). The settings here are the belt to
+// that fix's braces -- worth having, no longer load-bearing.
 //
-// `kill_timeout` must stay above the daemon's SHUTDOWN_DRAIN_MS (8s, see
-// src/cli/serve.ts) plus its 2s worker force-kill grace, or pm2 SIGKILLs the
-// daemon mid-drain and the drain buys nothing.
+// `treekill: false` stops pm2 signalling the whole process tree. The workers
+// ignore a mid-run SIGINT/SIGTERM on their own, so the graceful signal is
+// already survivable; what treekill still costs you is the SIGKILL pm2 sends at
+// `kill_timeout`, which nothing can defer and which would take the released
+// workers with it if the daemon were slow to exit.
 //
-// This still does not let a long-running agent survive a restart -- nothing in
-// serve does today. Use scripts/serve-restart.sh, which waits for idle first.
+// `kill_timeout` is generous for the same reason: it is the window the daemon
+// has to finish its own shutdown before that unblockable SIGKILL lands.
 //
 // `script` must point at bin/cli.js, NOT the `agentuse` bin on PATH. That bin is
 // a pnpm /bin/sh shim that spawns node as a *child*, so with treekill off pm2

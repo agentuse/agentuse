@@ -1045,7 +1045,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists';
+    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'release';
     agentPath?: string;
     projectRoot: string;
     /** invalidate-lists: hold the short list TTL for a window (start pokes). */
@@ -3612,27 +3612,97 @@ async function runInternalWorker() {
   const parentPid = process.ppid;
   let workerExiting = false;
   let parentWatchTimer: NodeJS.Timeout | undefined;
-  const exitWorker = (code = 0) => {
+  /**
+   * Run requests (execute/resume/continue-session) currently executing here.
+   * Counted around the whole request rather than read off
+   * `activeExecutionControllers`, which only fills in once a session row exists
+   * and so misses the setup window at the front of every run.
+   */
+  let inFlightRuns = 0;
+  /**
+   * Set by a `release` request: serve is going down but this worker still has
+   * work, so it has been cut loose to finish on its own instead of being killed
+   * mid-run. A released worker deliberately outlives its parent.
+   */
+  let released = false;
+  /** An exit that arrived mid-run and was deferred until the runs drain. */
+  let pendingExitCode: number | null = null;
+
+  const exitWorker = (code = 0, options: { force?: boolean } = {}) => {
     if (workerExiting) return;
+    // A run in flight is never abandoned voluntarily. Ctrl-C and supervisor
+    // tree-kills (pm2's default, systemd's control-group default) are delivered
+    // to this process directly and land here mid-run -- obeying them is what
+    // destroyed minutes of work on every restart. serve owns the decision
+    // instead: it either releases us to finish, or kills us after its own grace
+    // period. `force` is the reparenting watchdog, the one caller whose entire
+    // job is reaping a worker whose serve has already gone.
+    if (inFlightRuns > 0 && !options.force) {
+      pendingExitCode = code;
+      return;
+    }
     workerExiting = true;
     if (parentWatchTimer) clearInterval(parentWatchTimer);
     rl.close();
     process.exit(code);
   };
 
-  parentWatchTimer = setInterval(() => {
-    if (parentPid === 1 || process.ppid !== parentPid || process.ppid === 1) {
-      exitWorker(0);
+  /** Settle a run and take any exit that was deferred while it was running. */
+  const runFinished = () => {
+    inFlightRuns = Math.max(0, inFlightRuns - 1);
+    if (inFlightRuns > 0) return;
+    if (released) return exitWorker(0);
+    if (pendingExitCode !== null) exitWorker(pendingExitCode);
+  };
+
+  // A released worker outlives serve, so its stdout pipe can close underneath
+  // it. Losing the reply is fine -- the run it describes is already durable in
+  // storage, and serve re-reads state from there -- but an unhandled EPIPE
+  // would take the process down mid-run, which is not.
+  process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+    if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') return;
+    process.stderr.write(`[worker] stdout error: ${err?.message}\n`);
+  });
+
+  /** Write one IPC response, tolerating a parent that is no longer listening. */
+  const reply = (response: unknown) => {
+    try {
+      console.log(JSON.stringify(response));
+    } catch {
+      // Released worker with nowhere to report; storage already has the result.
     }
+  };
+
+  // Reap a worker whose serve died without releasing it (a crash, a SIGKILL).
+  // `release` clears this timer, which is what lets a released worker outlive
+  // its parent on purpose.
+  let orphanTicks = 0;
+  parentWatchTimer = setInterval(() => {
+    const orphaned = parentPid === 1 || process.ppid !== parentPid || process.ppid === 1;
+    if (!orphaned) {
+      orphanTicks = 0;
+      return;
+    }
+    orphanTicks += 1;
+    // Idle: nothing to protect, and a stray worker helps nobody.
+    if (inFlightRuns === 0) return exitWorker(0, { force: true });
+    // Mid-run, allow a few ticks first. A clean shutdown writes the release
+    // line and exits, so the parent can be gone a moment before that line is
+    // read -- and reaping a run we were about to be released to finish is
+    // exactly the bug this whole path exists to prevent.
+    if (orphanTicks >= 3) exitWorker(0, { force: true });
   }, 1_000);
   parentWatchTimer.unref?.();
-  process.stdin.once('end', () => exitWorker(0));
-  process.stdin.once('close', () => exitWorker(0));
-  process.once('SIGTERM', () => exitWorker(0));
-  process.once('SIGINT', () => exitWorker(130));
+  process.stdin.on('end', () => exitWorker(0));
+  process.stdin.on('close', () => exitWorker(0));
+  // `on`, not `once`: a released worker must keep ignoring repeat signals from a
+  // supervisor that tree-kills. With `once` the second SIGTERM falls through to
+  // the default action and kills the run anyway.
+  process.on('SIGTERM', () => exitWorker(0));
+  process.on('SIGINT', () => exitWorker(130));
 
   // Signal ready
-  console.log(JSON.stringify({ type: 'ready' }));
+  reply({ type: 'ready' });
 
   for await (const line of rl) {
     if (!line.trim()) continue;
@@ -3641,23 +3711,23 @@ async function runInternalWorker() {
       const request = JSON.parse(line) as ExecuteRequest;
       if (request.type === 'approval-info') {
         getApprovalInfo(request).then((response) => {
-          console.log(JSON.stringify(response));
+          reply(response);
         });
       } else if (request.type === 'session-status') {
         getSessionStatusInfo(request).then((response) => {
-          console.log(JSON.stringify(response));
+          reply(response);
         });
       } else if (request.type === 'sweep-expired') {
         sweepExpiredApprovals(request).then((response) => {
-          console.log(JSON.stringify(response));
+          reply(response);
         });
       } else if (request.type === 'reconcile-orphans') {
         reconcileOrphanSessions(request).then((response) => {
-          console.log(JSON.stringify(response));
+          reply(response);
         });
       } else if (request.type === 'list-approvals') {
         listAllApprovals(request).then((response) => {
-          console.log(JSON.stringify(response));
+          reply(response);
         });
       } else if (request.type === 'invalidate-lists') {
         // A run this worker didn't start just changed state (see the runner's
@@ -3669,42 +3739,64 @@ async function runInternalWorker() {
           externalActivityUntil.set(request.projectRoot, Date.now() + EXTERNAL_ACTIVITY_WINDOW_MS);
         }
         invalidateListCaches(request.projectRoot);
-        console.log(JSON.stringify({ id: request.id, success: true }));
+        reply({ id: request.id, success: true });
       } else if (request.type === 'list-sessions') {
         listSessions(request).then((response) => {
-          console.log(JSON.stringify(response));
+          reply(response);
         });
       } else if (request.type === 'session-final-responses') {
         getSessionFinalResponses(request).then((response) => {
-          console.log(JSON.stringify(response));
+          reply(response);
         });
       } else if (request.type === 'stop-session') {
         stopSession(request).then((response) => {
-          console.log(JSON.stringify(response));
+          reply(response);
         });
       } else if (request.type === 'reopen-gate') {
         reopenGate(request).then((response) => {
-          console.log(JSON.stringify(response));
+          reply(response);
         });
+      } else if (request.type === 'release') {
+        // serve is shutting down and we still have work. Cut the tethers that
+        // would otherwise kill these runs the moment it goes: the reparenting
+        // watchdog is the aggressive one -- it fires within a second of the
+        // parent dying -- while stdin EOF and SIGTERM are handled by the
+        // `released` guard in exitWorker.
+        released = true;
+        if (parentWatchTimer) {
+          clearInterval(parentWatchTimer);
+          parentWatchTimer = undefined;
+        }
+        reply({ id: request.id, success: true, inFlightRuns });
+        // Nothing to protect -- leave now rather than linger as a stray process.
+        if (inFlightRuns === 0) exitWorker(0);
       } else if (request.type === 'execute' || request.type === 'resume' || request.type === 'continue-session') {
         // Don't await - handle requests concurrently
         // Each request runs in parallel, response sent when complete
+        inFlightRuns += 1;
         executeAgent(request).then((response) => {
-          console.log(JSON.stringify(response));
+          reply(response);
+          runFinished();
+        }, (err) => {
+          // executeAgent resolves its own errors, so this is a defect rather
+          // than a run failure -- but it must still settle the count, or a
+          // released worker would never reach its exit.
+          reply({ id: request.id, success: false, error: { code: 'WORKER_ERROR', message: (err as Error).message } });
+          runFinished();
         });
       } else {
-        console.log(JSON.stringify({
+        reply({
           id: (request as any).id || 'unknown',
           success: false,
           error: { code: 'UNKNOWN_REQUEST', message: 'Unknown request type' },
-        }));
+        });
       }
     } catch (err) {
-      console.log(JSON.stringify({
+      reply({
         id: 'unknown',
         success: false,
         error: { code: 'PARSE_ERROR', message: (err as Error).message },
-      }));
+      });
     }
   }
 

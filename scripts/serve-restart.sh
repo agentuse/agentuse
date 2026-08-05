@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Restart the pm2-managed `agentuse serve` daemon without killing in-flight agents.
+# Restart the pm2-managed `agentuse serve` daemon once it has gone idle.
 #
-# `pm2 restart` signals the daemon, and the daemon's own shutdown gives in-flight
-# work only an 8s drain window (SHUTDOWN_DRAIN_MS in src/cli/serve.ts) before it
-# SIGTERMs its worker children. Any agent still running past that window dies
-# mid-run. So the only reliable way to restart without losing work is to wait for
-# the daemon to go idle first -- which is what this does.
+# This is no longer required to protect in-flight agents -- serve releases busy
+# workers on shutdown and they finish out of process (AgentWorker.release in
+# src/cli/serve.ts). It is still the tidier way to restart: a released worker
+# runs to completion on the OLD build, so when the point of restarting is to pick
+# up code you just changed, waiting for idle is what actually gets it applied.
 #
 #   scripts/serve-restart.sh                 # wait for idle (up to 30m), then restart
 #   scripts/serve-restart.sh --build         # pnpm build first, then wait, then restart

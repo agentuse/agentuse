@@ -576,6 +576,10 @@ class AgentWorker {
     timeoutId?: NodeJS.Timeout;
   }> = new Map();
   private requestCounter = 0;
+  /** Ids of the run requests (execute/resume/continue) in flight right now.
+   *  Shutdown uses this to tell a busy worker from an idle one. */
+  private activeRuns = new Set<string>();
+  private released = false;
   private ready = false;
   private readyPromise: Promise<void> | null = null;
   private readyResolve: (() => void) | null = null;
@@ -730,6 +734,7 @@ class AgentWorker {
       });
     }
     this.pendingRequests.clear();
+    this.activeRuns.clear();
     this.scheduleRespawn();
   }
 
@@ -944,6 +949,7 @@ class AgentWorker {
 
       const id = `req-${++this.requestCounter}`;
       const longRunningRequest = options.type === "execute" || options.type === "resume" || options.type === "continue-session";
+      if (longRunningRequest) this.activeRuns.add(id);
       const requestTimeoutSeconds = options.timeout ?? (longRunningRequest ? 24 * 60 * 60 : 300);
       const timeoutMs = requestTimeoutSeconds * 1000 + 5000; // Add 5s buffer
 
@@ -972,6 +978,7 @@ class AgentWorker {
 
       this.pendingRequests.set(id, {
         resolve: (value) => {
+          this.activeRuns.delete(id);
           requestOptions.signal?.removeEventListener("abort", abortHandler);
           resolve(value);
         },
@@ -985,6 +992,51 @@ class AgentWorker {
 
       this.process.stdin!.write(JSON.stringify(request) + "\n");
     });
+  }
+
+  /** Agent runs executing in this worker right now. */
+  activeRunCount(): number {
+    return this.activeRuns.size;
+  }
+
+  /**
+   * Cut the worker loose instead of killing it: it finishes the runs it already
+   * has, writes them to storage exactly as it would have, and exits on its own.
+   *
+   * This is what makes `pm2 restart` (or systemd, or Ctrl-C) survivable. Every
+   * result reaches the dashboard through storage rather than this pipe, so the
+   * only thing lost by walking away mid-run is the reply we would have thrown
+   * away anyway. The released process keeps its pid, and sessions record their
+   * owner's pid, so the next daemon's reconciliation sweep reads those runs as
+   * alive and leaves them alone (see reconcileOrphanedSessions).
+   *
+   * Returns false if the worker cannot be released and must be killed instead.
+   */
+  release(): boolean {
+    const child = this.process;
+    if (!child || !this.ready || this.released) return false;
+    // No respawn: this worker is no longer ours, and the process is exiting.
+    this.shuttingDown = true;
+    if (this.respawnTimer) {
+      clearTimeout(this.respawnTimer);
+      this.respawnTimer = null;
+    }
+    try {
+      child.stdin!.write(JSON.stringify({ id: `req-${++this.requestCounter}`, type: "release" }) + "\n");
+    } catch {
+      return false;
+    }
+    this.released = true;
+    // Deliberately NOT ending stdin: EOF is one of the tethers the worker reads
+    // as "serve died", and it is about to stop honouring it, but closing the
+    // pipe before the release line is consumed would race that.
+    child.unref?.();
+    if (this.readline) {
+      this.readline.close();
+      this.readline = null;
+    }
+    this.ready = false;
+    return true;
   }
 
   /**
@@ -6434,6 +6486,27 @@ export function createServeCommand(): Command {
       const shutdown = async () => {
         console.log("\nShutting down...");
 
+        // Decide the fate of the workers FIRST, before any awaits. A supervisor
+        // gives us its own grace period and then SIGKILLs -- pm2 defaults to
+        // 1.6s -- so anything queued behind a drain or a socket teardown may
+        // simply never run, and the agents die with us. Releasing is one pipe
+        // write per worker, so it always fits.
+        let releasedWorkers = 0;
+        let releasedRuns = 0;
+        const releaseEnabled = process.env.AGENTUSE_RELEASE_WORKERS !== "0";
+        for (const w of workers.values()) {
+          const runs = w.activeRunCount();
+          if (releaseEnabled && runs > 0 && w.release()) {
+            releasedWorkers += 1;
+            releasedRuns += runs;
+            continue;
+          }
+          w.shutdown();
+        }
+        if (releasedWorkers > 0) {
+          logger.info(`Released ${releasedWorkers} worker(s) still running ${releasedRuns} agent(s) — they finish on their own and their results land as usual. Restarting now will not interrupt them.`);
+        }
+
         // Unregister from process registry and release per-project scheduler locks
         unregisterServer();
         for (const p of projects) {
@@ -6452,20 +6525,20 @@ export function createServeCommand(): Command {
         if (slackApprovalSocket) {
           await slackApprovalSocket.stop().catch(() => {/* ignore */});
         }
-        // Give in-flight approval resumes / continuations a bounded window to
-        // finish (or roll back) inside the still-alive worker before we kill it.
-        // A resume killed mid-flight is exactly what strands a session as a stuck
-        // 'running'; the startup reconciliation sweep is the backstop for whatever
-        // this window (or a raw SIGINT delivered straight to the child) misses.
-        const inflight = [...activeApprovalResumes.values(), ...activeSessionContinuations.values()];
-        if (inflight.length > 0) {
-          logger.info(`Draining ${inflight.length} in-flight resume/continuation(s) before shutdown (up to ${SHUTDOWN_DRAIN_MS}ms)...`);
-          await Promise.race([
-            Promise.allSettled(inflight),
-            new Promise<void>((resolve) => { const t = setTimeout(resolve, SHUTDOWN_DRAIN_MS); t.unref?.(); }),
-          ]);
+        // A released worker carries its resume to completion out of process, so
+        // the daemon-side promise tracking it will never settle here and waiting
+        // on it would only burn the window. Drain what stayed behind: the tail
+        // of work that runs in THIS process after the worker has replied.
+        if (releasedWorkers === 0) {
+          const inflight = [...activeApprovalResumes.values(), ...activeSessionContinuations.values()];
+          if (inflight.length > 0) {
+            logger.info(`Draining ${inflight.length} in-flight resume/continuation(s) before shutdown (up to ${SHUTDOWN_DRAIN_MS}ms)...`);
+            await Promise.race([
+              Promise.allSettled(inflight),
+              new Promise<void>((resolve) => { const t = setTimeout(resolve, SHUTDOWN_DRAIN_MS); t.unref?.(); }),
+            ]);
+          }
         }
-        for (const w of workers.values()) w.shutdown();
         for (const fw of fileWatchers) fw.close().catch(() => {/* ignore */});
 
         // Capture server shutdown telemetry
