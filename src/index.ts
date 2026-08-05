@@ -2708,15 +2708,21 @@ async function runInternalWorker() {
         };
       }
 
-      const [message, tools] = await Promise.all([
+      const [message, tools, messages] = await Promise.all([
         sessionManager.getPrimaryMessage(found.session.id, found.agentId),
         sessionManager.readToolsSnapshot(found.session.id, found.agentId),
+        sessionManager.getSessionMessages(found.session.id, found.agentId),
       ]);
+
+      // Mid-run file reads live in the tool parts, which are per message.
+      const parts = (await Promise.all(
+        messages.map((m) => sessionManager.getMessageParts(found.session.id, found.agentId, m.id))
+      )).flat();
 
       return {
         id: req.id,
         success: true,
-        context: buildSessionContextPayload({ session: found.session, message, tools }),
+        context: buildSessionContextPayload({ session: found.session, message, tools, parts }),
       };
     } catch (err) {
       if (err instanceof CorruptStorageError) {

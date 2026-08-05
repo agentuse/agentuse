@@ -1,6 +1,6 @@
 import { ANTHROPIC_IDENTITY_PROMPT } from '../../utils/anthropic';
-import type { Message, SessionInfo, ToolsSnapshot } from '../../session/types';
-import type { ContextStackLayer, ContextToolRow, SessionContextPayload } from './types';
+import type { Message, Part, SessionInfo, ToolsSnapshot } from '../../session/types';
+import type { ContextFileRead, ContextStackLayer, ContextToolRow, SessionContextPayload } from './types';
 
 /**
  * Reconstructs "what was actually in the context window" for one session.
@@ -85,6 +85,120 @@ function splitSkillsBlock(block: string): ContextStackLayer[] {
   });
 }
 
+/** Tools whose result is the text of a file, i.e. a file entering the context. */
+const READ_TOOLS = new Set(['tools__filesystem_read', 'tools__skill_read', 'tools__skill_load']);
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+/**
+ * Collapse `.` and `..` segments. Agents routinely read through paths like
+ * `agents/../../data/x.json`; left raw those read as different files and defeat
+ * the per-file merge below.
+ */
+function normalizePath(path: string): string {
+  const absolute = path.startsWith('/');
+  const out: string[] = [];
+  for (const segment of path.split('/')) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') {
+      // A leading `..` on a relative path has nothing to pop; keep it.
+      if (out.length > 0 && out[out.length - 1] !== '..') out.pop();
+      else if (!absolute) out.push('..');
+      continue;
+    }
+    out.push(segment);
+  }
+  const joined = out.join('/');
+  if (absolute) return `/${joined}`;
+  return path.startsWith('./') && !joined.startsWith('..') ? `./${joined}` : joined;
+}
+
+/** The file a read call targeted, as the tool's own input describes it. */
+function readTargetPath(tool: string, input: unknown): string | undefined {
+  const args = asRecord(input);
+  if (tool === 'tools__filesystem_read') {
+    return typeof args.file_path === 'string' ? normalizePath(args.file_path) : undefined;
+  }
+  if (tool === 'tools__skill_read') {
+    const skill = typeof args.skill === 'string' ? args.skill : undefined;
+    const path = typeof args.path === 'string' ? args.path : undefined;
+    if (!skill && !path) return undefined;
+    return [skill, path].filter(Boolean).join('/');
+  }
+  // tools__skill_load pulls a whole SKILL.md in on demand.
+  const name = typeof args.name === 'string' ? args.name : undefined;
+  return name ? `${name}/SKILL.md` : undefined;
+}
+
+/** The text the tool actually returned, which is what the model then carries. */
+function readOutputText(state: unknown): string | undefined {
+  const s = asRecord(state);
+  if (typeof s.output === 'string') return s.output;
+  const output = asRecord(s.output);
+  return typeof output.output === 'string' ? output.output : undefined;
+}
+
+/**
+ * When the runtime truncated a large output it records the pre-truncation size
+ * alongside the artifact it spilled the rest to. Worth surfacing: it is the
+ * difference between "this file is huge" and "this file is huge in my context".
+ */
+function originalChars(state: unknown): number | undefined {
+  const s = asRecord(state);
+  for (const source of [asRecord(s.metadata), asRecord(asRecord(s.output).metadata)]) {
+    const ref = asRecord(source.fullOutputArtifact);
+    if (typeof ref.originalChars === 'number') return ref.originalChars;
+  }
+  return undefined;
+}
+
+/**
+ * Files pulled into the context window by read tools during the run, merged per
+ * path. A file read three times is one row with `reads: 3` and the summed cost,
+ * because that is what it charged the context.
+ */
+export function buildFileReads(parts: Part[]): ContextFileRead[] {
+  const byPath = new Map<string, ContextFileRead>();
+
+  for (const part of parts) {
+    if (part.type !== 'tool' || !READ_TOOLS.has(part.tool)) continue;
+    const state = part.state;
+    // Only completed reads put text in the context; a failed one contributes
+    // just its error string.
+    if (state.status !== 'completed') continue;
+
+    const path = readTargetPath(part.tool, state.input);
+    if (!path) continue;
+    const text = readOutputText(state);
+    if (text === undefined) continue;
+
+    const existing = byPath.get(path);
+    const full = originalChars(state);
+    const startedAt = state.time?.start;
+
+    if (existing) {
+      existing.reads += 1;
+      existing.chars += text.length;
+      existing.estTokens = estimateTokens(existing.chars);
+      if (full !== undefined) existing.truncatedFrom = Math.max(existing.truncatedFrom ?? 0, full);
+    } else {
+      byPath.set(path, {
+        path,
+        tool: part.tool,
+        reads: 1,
+        chars: text.length,
+        estTokens: estimateTokens(text.length),
+        ...(full !== undefined && full > text.length ? { truncatedFrom: full } : {}),
+        ...(typeof startedAt === 'number' ? { firstReadAt: startedAt } : {}),
+      });
+    }
+  }
+
+  return [...byPath.values()].sort((a, b) => b.chars - a.chars);
+}
+
 function makeLayer(
   kind: ContextStackLayer['kind'],
   id: string,
@@ -129,8 +243,10 @@ export function buildSessionContextPayload(options: {
   session: SessionInfo;
   message: Message | null;
   tools: ToolsSnapshot | null;
+  /** Every part of the session, used to find mid-run file reads. */
+  parts?: Part[];
 }): SessionContextPayload {
-  const { session, message, tools } = options;
+  const { session, message, tools, parts = [] } = options;
   const layers: ContextStackLayer[] = [];
 
   for (const [i, content] of (message?.assistant.system ?? []).entries()) {
@@ -204,6 +320,8 @@ export function buildSessionContextPayload(options: {
   }
 
   const totalChars = layers.reduce((sum, layer) => sum + layer.chars, 0);
+  const fileReads = buildFileReads(parts);
+  const fileReadChars = fileReads.reduce((sum, file) => sum + file.chars, 0);
   const tokens = message?.assistant.tokens;
   const context = message?.assistant.context;
 
@@ -218,7 +336,12 @@ export function buildSessionContextPayload(options: {
     ...(typeof session.time?.created === 'number' ? { createdAt: session.time.created } : {}),
     layers,
     tools: toolRows,
-    totals: { chars: totalChars, estTokens: estimateTokens(totalChars) },
+    fileReads,
+    totals: {
+      chars: totalChars,
+      estTokens: estimateTokens(totalChars),
+      withFileReadsEstTokens: estimateTokens(totalChars + fileReadChars),
+    },
     ...(tokens
       ? {
           measured: {

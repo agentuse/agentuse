@@ -7,7 +7,14 @@ import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { pageTitle } from '../lib/brand';
-import type { ContextStackLayer, ContextToolRow } from '../../types';
+import type { ContextFileRead, ContextStackLayer, ContextToolRow } from '../../types';
+
+/** Friendly name for the tool that pulled a file in. */
+const READ_TOOL_LABEL: Record<string, string> = {
+  tools__filesystem_read: 'read',
+  tools__skill_read: 'skill file',
+  tools__skill_load: 'skill loaded on demand',
+};
 
 /** Short, human labels for each layer kind. Doubles as the filter chip set. */
 const KIND_LABEL: Record<ContextStackLayer['kind'], string> = {
@@ -71,6 +78,38 @@ function LayerRow(props: { layer: ContextStackLayer; share: number; index: numbe
       {open && layer.text !== undefined && (
         <pre class="ctx-text"><code>{layer.text}</code></pre>
       )}
+    </li>
+  );
+}
+
+function FileReadRow(props: { file: ContextFileRead; share: number }) {
+  const { file, share } = props;
+  return (
+    <li class="ctx-file">
+      <span class="ctx-file-main">
+        <code class="ctx-file-path" title={file.path}>{shortenPath(file.path, 4)}</code>
+        <span class="ctx-file-meta">
+          {READ_TOOL_LABEL[file.tool] ?? file.tool}
+          {file.reads > 1 && (
+            <span class="ctx-repeat" title={`Read ${file.reads} times; each read costs its tokens again`}>
+              ×{file.reads}
+            </span>
+          )}
+          {file.truncatedFrom !== undefined && (
+            <span class="muted" title={`Tool truncated the output; the file itself is ${file.truncatedFrom.toLocaleString()} characters`}>
+              truncated from ~{formatTokens(Math.ceil(file.truncatedFrom / 4))}
+            </span>
+          )}
+        </span>
+      </span>
+      <span class="ctx-weight">
+        <span class="ctx-track">
+          <span class="ctx-bar" style={{ width: `${Math.max(share * 100, 1)}%` }}></span>
+        </span>
+        <span class="ctx-tokens" title={`${file.chars.toLocaleString()} characters`}>
+          ~{formatTokens(file.estTokens)}
+        </span>
+      </span>
     </li>
   );
 }
@@ -140,6 +179,14 @@ export default function SessionContext() {
     () => Math.max(1, ...(context?.tools ?? []).map((t) => t.estTokens)),
     [context]
   );
+  const filePeak = useMemo(
+    () => Math.max(1, ...(context?.fileReads ?? []).map((f) => f.estTokens)),
+    [context]
+  );
+  const fileReadTokens = useMemo(
+    () => (context?.fileReads ?? []).reduce((sum, f) => sum + f.estTokens, 0),
+    [context]
+  );
 
   const measured = context?.measured;
   const usage = measured?.context;
@@ -175,6 +222,14 @@ export default function SessionContext() {
                     ~{formatTokens(context.totals.estTokens)} tokens
                   </span>
                 </div>
+                {context.fileReads.length > 0 && (
+                  <div class="cell">
+                    <span class="label">files read</span>
+                    <span class="value" title="Files pulled in by read tools while the run was going">
+                      {context.fileReads.length} · ~{formatTokens(fileReadTokens)} tokens
+                    </span>
+                  </div>
+                )}
                 {measured && measured.input > 0 && (
                   <div class="cell">
                     <span class="label">measured input</span>
@@ -220,6 +275,25 @@ export default function SessionContext() {
               </p>
             )}
 
+            {context.fileReads.length > 0 && (
+              <>
+                <div class="section-title">
+                  <span>files read during the run</span>
+                  <span class="rule"></span>
+                </div>
+                <p class="ctx-hint">
+                  Text the agent pulled in with a read tool after the run started. These are not in
+                  the opening stack above, but they occupy the same window — and a file read more
+                  than once is charged every time. Heaviest first.
+                </p>
+                <ul class="ctx-files">
+                  {context.fileReads.map((file) => (
+                    <FileReadRow key={file.path} file={file} share={file.estTokens / filePeak} />
+                  ))}
+                </ul>
+              </>
+            )}
+
             {context.tools.length > 0 && (
               <>
                 <div class="section-title">
@@ -247,7 +321,10 @@ export default function SessionContext() {
 
             <p class="ctx-footnote">
               Token counts marked ~ are estimates at 4 characters per token, the same heuristic the
-              runtime uses to decide when to compact. Treat them as proportions, not billing.
+              runtime uses to decide when to compact. Treat them as proportions, not billing. File
+              reads cover the read tools by name; text that reached the context another way — a
+              <code>cat</code> through bash, an MCP tool returning a document — lands in the run's
+              tool output rather than here.
             </p>
           </>
         )}

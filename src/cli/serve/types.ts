@@ -144,6 +144,27 @@ export interface ContextToolRow {
   estTokens: number;
 }
 
+/**
+ * A file the agent pulled into the context window mid-run, via a read tool.
+ * Distinct from the layers above: those are the opening prompt, these arrive
+ * as tool results while the run is going, and a file read twice costs its
+ * tokens twice.
+ */
+export interface ContextFileRead {
+  /** Absolute path when known, otherwise the best label the tool input gives. */
+  path: string;
+  /** Which tool pulled it in, e.g. `tools__filesystem_read`. */
+  tool: string;
+  /** How many times this run read it. Repeats each cost context again. */
+  reads: number;
+  /** Characters that actually entered the context, summed over every read. */
+  chars: number;
+  estTokens: number;
+  /** Set when the tool truncated the file: the full size it was cut down from. */
+  truncatedFrom?: number;
+  firstReadAt?: number;
+}
+
 export interface SessionContextPayload {
   sessionId: string;
   model?: string;
@@ -155,9 +176,13 @@ export interface SessionContextPayload {
   createdAt?: number;
   layers: ContextStackLayer[];
   tools: ContextToolRow[];
+  /** Files read during the run, heaviest first. Empty when the run read none. */
+  fileReads: ContextFileRead[];
   totals: {
     chars: number;
     estTokens: number;
+    /** Opening stack plus every mid-run file read. */
+    withFileReadsEstTokens: number;
   };
   /** Provider-reported usage, when the run got far enough to report any. This
    *  is what calibrates the estimates above. */

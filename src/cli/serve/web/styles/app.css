@@ -6130,10 +6130,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   color: var(--muted);
   white-space: nowrap;
 }
-/* Colour-code by origin: built-in runtime text, the agent's own file, and
-   text pulled in from elsewhere (skills, corrections) read differently when
-   you are hunting for what bloated a prompt. */
-.ctx-kind-system .ctx-kind, .ctx-kind-tools .ctx-kind { color: var(--chart-3); border-color: var(--chart-3); }
+/* Colour-code by origin, four families: blue for built-in runtime text, cyan
+   for the agent's own file, amber for text pulled in from elsewhere (skills,
+   corrections, approval), purple for files read mid-run. Deliberately no red
+   or green - nothing on this page is a pass or a failure. */
+.ctx-kind-system .ctx-kind, .ctx-kind-tools .ctx-kind { color: var(--chart-1); border-color: var(--chart-1); }
 .ctx-kind-instructions .ctx-kind, .ctx-kind-prompt .ctx-kind { color: var(--cyan); border-color: var(--cyan-border); }
 .ctx-kind-skills .ctx-kind, .ctx-kind-learnings .ctx-kind, .ctx-kind-approval .ctx-kind { color: var(--amber); border-color: var(--amber-border); }
 
@@ -6153,7 +6154,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .ctx-track { flex: 1; height: 5px; border-radius: 999px; background: var(--bar-bg); overflow: hidden; }
 .ctx-bar { display: block; height: 100%; border-radius: 999px; background: var(--cyan); }
 .ctx-kind-skills .ctx-bar, .ctx-kind-learnings .ctx-bar, .ctx-kind-approval .ctx-bar { background: var(--amber); }
-.ctx-kind-system .ctx-bar, .ctx-kind-tools .ctx-bar { background: var(--chart-3); }
+.ctx-kind-system .ctx-bar, .ctx-kind-tools .ctx-bar { background: var(--chart-1); }
 .ctx-tokens {
   min-width: 52px;
   font-family: var(--mono);
@@ -6176,6 +6177,45 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Mid-run file reads. Not expandable: the text is already in the run's log,
+   and re-serving whole file bodies here would make the page enormous. */
+.ctx-files { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ctx-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 172px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.ctx-file-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ctx-file-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-file-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+/* A file read more than once is the cheapest win on this page, so it gets the
+   one loud treatment in the list. */
+.ctx-repeat {
+  padding: 1px 6px;
+  border: 1px solid var(--amber-border);
+  border-radius: 999px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.ctx-file .ctx-bar { background: var(--chart-5); }
+@media (max-width: 720px) {
+  .ctx-file { grid-template-columns: minmax(0, 1fr); }
+}
+
 .ctx-tool-name { font-family: var(--mono); font-size: 12px; color: var(--fg); }
 .ctx-tool-desc {
   min-width: 0;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { buildSessionContextPayload } from '../src/cli/serve/context-stack';
-import type { Message, SessionInfo, ToolsSnapshot } from '../src/session/types';
+import type { Message, Part, SessionInfo, ToolsSnapshot } from '../src/session/types';
 
 const session = {
   id: '01TESTSESSION',
@@ -164,8 +164,104 @@ describe('session context stack', () => {
 
     expect(payload.layers).toEqual([]);
     expect(payload.tools).toEqual([]);
-    expect(payload.totals).toEqual({ chars: 0, estTokens: 0 });
+    expect(payload.fileReads).toEqual([]);
+    expect(payload.totals).toEqual({ chars: 0, estTokens: 0, withFileReadsEstTokens: 0 });
     expect(payload.measured).toBeUndefined();
     expect(payload.agent.filePath).toBe('/repo/agents/reporter.agentuse');
+  });
+});
+
+function readPart(tool: string, input: unknown, output: string, extra: { metadata?: unknown; start?: number } = {}) {
+  return {
+    id: `prt_${Math.random().toString(36).slice(2)}`,
+    messageID: 'msg_1',
+    sessionID: session.id,
+    type: 'tool',
+    callID: 'call_1',
+    tool,
+    state: {
+      status: 'completed',
+      input,
+      output: { output },
+      time: { start: extra.start ?? 1, end: 2 },
+      ...(extra.metadata ? { metadata: extra.metadata } : {}),
+    },
+  } as unknown as Part;
+}
+
+describe('mid-run file reads', () => {
+  it('collects files pulled in by each read tool, heaviest first', () => {
+    const parts = [
+      readPart('tools__filesystem_read', { file_path: '/repo/docs/spec.md' }, 'x'.repeat(4000)),
+      readPart('tools__skill_read', { skill: 'fastmail', path: 'reference/fm.md' }, 'y'.repeat(400)),
+      readPart('tools__skill_load', { name: 'slack-formatting' }, 'z'.repeat(800)),
+      // Not a read tool: its output is not a file entering the context.
+      readPart('tools__bash', { command: 'ls' }, 'w'.repeat(9000)),
+    ];
+
+    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts });
+
+    expect(payload.fileReads.map((f) => [f.path, f.chars])).toEqual([
+      ['/repo/docs/spec.md', 4000],
+      ['slack-formatting/SKILL.md', 800],
+      ['fastmail/reference/fm.md', 400],
+    ]);
+    expect(payload.fileReads[0]!.estTokens).toBe(1000);
+  });
+
+  it('normalises traversal segments so one file does not split into several rows', () => {
+    const parts = [
+      readPart('tools__filesystem_read', { file_path: '/repo/agents/../../repo/data.json' }, 'a'.repeat(100)),
+      readPart('tools__filesystem_read', { file_path: '/repo/data.json' }, 'a'.repeat(100)),
+      readPart('tools__filesystem_read', { file_path: './docs/./notes.md' }, 'b'.repeat(40)),
+    ];
+
+    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts });
+
+    expect(payload.fileReads.map((f) => f.path)).toEqual(['/repo/data.json', './docs/notes.md']);
+    expect(payload.fileReads[0]!.reads).toBe(2);
+  });
+
+  it('merges repeat reads of one file and charges each read', () => {
+    const parts = [
+      readPart('tools__filesystem_read', { file_path: '/repo/notes.md' }, 'a'.repeat(1000), { start: 10 }),
+      readPart('tools__filesystem_read', { file_path: '/repo/notes.md' }, 'a'.repeat(1000), { start: 20 }),
+      readPart('tools__filesystem_read', { file_path: '/repo/notes.md' }, 'a'.repeat(1000), { start: 30 }),
+    ];
+
+    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts });
+
+    expect(payload.fileReads).toHaveLength(1);
+    expect(payload.fileReads[0]).toMatchObject({ reads: 3, chars: 3000, estTokens: 750, firstReadAt: 10 });
+  });
+
+  it('reports the pre-truncation size when the runtime spilled the output', () => {
+    const parts = [
+      readPart('tools__filesystem_read', { file_path: '/repo/huge.md' }, 'a'.repeat(500), {
+        metadata: { fullOutputArtifact: { originalChars: 90_000 } },
+      }),
+    ];
+
+    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts });
+
+    expect(payload.fileReads[0]).toMatchObject({ chars: 500, truncatedFrom: 90_000 });
+  });
+
+  it('skips failed reads and adds file reads to the combined total', () => {
+    const failed = {
+      id: 'prt_err', messageID: 'msg_1', sessionID: session.id, type: 'tool', callID: 'c', tool: 'tools__filesystem_read',
+      state: { status: 'error', input: { file_path: '/repo/missing.md' }, error: 'ENOENT', time: { start: 1, end: 2 } },
+    } as unknown as Part;
+
+    const payload = buildSessionContextPayload({
+      session,
+      message: message({ task: 'b'.repeat(400) }),
+      tools: null,
+      parts: [failed, readPart('tools__filesystem_read', { file_path: '/repo/ok.md' }, 'c'.repeat(800))],
+    });
+
+    expect(payload.fileReads.map((f) => f.path)).toEqual(['/repo/ok.md']);
+    expect(payload.totals.estTokens).toBe(100);
+    expect(payload.totals.withFileReadsEstTokens).toBe(300);
   });
 });
