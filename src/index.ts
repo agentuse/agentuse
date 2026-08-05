@@ -7,7 +7,7 @@ import { isApprovalEnabled } from './runner/approval';
 import { isMockMode, resolveMockApprovalDecision } from './runner/mock-tools';
 import { extractToolIntent, withoutToolIntent } from './runner/tool-intent';
 import { LIVE_OUTPUT_METADATA_KEY } from './tools/types';
-import { composeSubagentResult, stripLeadingOutcomeLine } from './tools/report-outcome';
+import { composeSubagentResult, formatOutcomeLine, normalizeHeadline, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from './tools/report-outcome';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findStaleCascadeChild, describeStaleCascade, CASCADE_ORPHANED_CODE, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
 import { contextUsageFromSnapshot } from './session/usage';
 import { repairEscapedText } from './utils/display-text';
@@ -1168,6 +1168,15 @@ async function runInternalWorker() {
       artifacts?: string[];
       body?: string;
     };
+    /** The run's own verdict and report as delivered through `report_complete` /
+     *  `report_incomplete` (see collectRunOutcomes), rendered on that call's row
+     *  instead of behind its expand toggle. */
+    runOutcome?: {
+      kind: 'complete' | 'incomplete';
+      headline: string;
+      body?: string;
+      artifacts?: string[];
+    };
     /** A deliverable saved by `tools__artifact_save`, rendered as a viewable tile. */
     savedArtifact?: {
       url: string;
@@ -1310,8 +1319,85 @@ async function runInternalWorker() {
     return String(n);
   }
 
+  /**
+   * Pair each `report_complete` / `report_incomplete` call with the assistant
+   * text part the runtime wrote to deliver it, so the session view can render
+   * the report on the call's own row and drop the duplicate text row.
+   *
+   * The pairing key is the opener line the runtime composes from the call's own
+   * input ("✅ Complete: <headline>"), which makes this work on runs recorded
+   * before this row existed — no marker on the stored part is needed.
+   *
+   * The body comes from the delivered text rather than straight from the call's
+   * `details`, because the runtime merges `details` with any prose the agent
+   * streamed alongside it; rebuilding from `details` alone would drop the
+   * deliverable of an agent that streamed its document and attached a briefing
+   * (agentuse-lab#198). Only the LAST match is claimed: an agent that typed the
+   * opener itself keeps its own message as a real assistant response.
+   */
+  function collectRunOutcomes(parts: any[]): {
+    outcomeByPartId: Map<string, NonNullable<ApprovalLogDetails['runOutcome']>>;
+    deliveredTextIds: Set<string>;
+  } {
+    const outcomeByPartId = new Map<string, NonNullable<ApprovalLogDetails['runOutcome']>>();
+    const deliveredTextIds = new Set<string>();
+    const openerToPartId = new Map<string, string>();
+    for (const part of parts) {
+      if (part?.type !== 'tool') continue;
+      const tool = String(part.tool ?? '');
+      if (tool !== REPORT_COMPLETE_TOOL && tool !== REPORT_INCOMPLETE_TOOL) continue;
+      const input = valueAsRecord(part.state?.input);
+      const opener = formatOutcomeLine(tool, input);
+      if (!opener) continue;
+      const kind = tool === REPORT_COMPLETE_TOOL ? 'complete' as const : 'incomplete' as const;
+      const artifacts = Array.isArray(input.artifacts)
+        ? input.artifacts.filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
+        : [];
+      // Stands in until the delivered text is found below: during a live run the
+      // call lands a tick before the text part that delivers it.
+      const attached = typeof input.details === 'string' ? repairEscapedText(input.details).trim() : '';
+      const raw = kind === 'complete' ? input.headline : input.reason;
+      outcomeByPartId.set(String(part.id), {
+        kind,
+        // The row draws its own verdict mark, so the headline arrives bare
+        // rather than carrying the opener's "✅ Complete: " prefix.
+        headline: normalizeHeadline(typeof raw === 'string' ? repairEscapedText(raw) : ''),
+        ...(attached && { body: attached }),
+        ...(artifacts.length > 0 && { artifacts })
+      });
+      openerToPartId.set(opener, String(part.id));
+    }
+    if (openerToPartId.size === 0) return { outcomeByPartId, deliveredTextIds };
+
+    const deliveredByOpener = new Map<string, { id: string; body: string }>();
+    for (const part of parts) {
+      if (part?.type !== 'text' || part.role === 'user') continue;
+      const text = typeof part.text === 'string' ? part.text : '';
+      const newline = text.indexOf('\n');
+      const firstLine = (newline === -1 ? text : text.slice(0, newline)).trim();
+      if (!openerToPartId.has(firstLine)) continue;
+      deliveredByOpener.set(firstLine, {
+        id: String(part.id),
+        body: newline === -1 ? '' : text.slice(newline + 1).trim()
+      });
+    }
+    for (const [opener, delivered] of deliveredByOpener) {
+      deliveredTextIds.add(delivered.id);
+      const outcome = outcomeByPartId.get(openerToPartId.get(opener)!)!;
+      if (delivered.body) outcome.body = delivered.body;
+    }
+    return { outcomeByPartId, deliveredTextIds };
+  }
+
   function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; tool?: string; callId?: string; toolId?: string; status?: string; level?: LogPartLevel; title: string; message?: string; time?: number; details?: ApprovalLogDetails }> {
-    return parts.map((part: any) => {
+    const { outcomeByPartId, deliveredTextIds } = collectRunOutcomes(parts);
+    // The runtime records an outcome tool's delivered report as an assistant
+    // text part as well, so `sessions show`, a resumed run and a sub-agent's
+    // parent all still find the run's final output. The session view renders
+    // that report on the tool row that produced it, so keeping the text part
+    // too would print the whole report twice — once as the report, once as an
+    // "Assistant response" the model never wrote.
+    return parts.filter((part: any) => !deliveredTextIds.has(String(part?.id))).map((part: any) => {
       if (part?.type === 'log') {
         const view = describeLogPart(part);
         return {
@@ -1429,7 +1515,9 @@ async function runInternalWorker() {
       if (part?.type === 'tool') {
         const state = part.state ?? {};
         const isAwaitHuman = part.tool === 'await_human';
-        const details = isAwaitHuman ? buildAwaitHumanDetails(state) : buildToolDetails(state, part.tool);
+        const runOutcome = outcomeByPartId.get(String(part.id));
+        const built = isAwaitHuman ? buildAwaitHumanDetails(state) : buildToolDetails(state, part.tool);
+        const details = runOutcome ? { ...(built ?? {}), runOutcome } : built;
         const message = details
           ? undefined
           : state.status === 'completed'

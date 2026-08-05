@@ -332,6 +332,26 @@ export interface ApprovalLogDetails {
     /** The report body, verdict line already stripped. Markdown. */
     body?: string;
   };
+  /**
+   * The run's own verdict and report, as delivered through `report_complete` /
+   * `report_incomplete`. That call IS the run's answer, not a step of the work,
+   * so the row renders this inline instead of leaving the report one expand
+   * click deep inside a JSON input dump. The raw input/output stay behind the
+   * toggle.
+   */
+  runOutcome?: {
+    kind: 'complete' | 'incomplete';
+    /** One-line verdict: `headline` on complete, `reason` on incomplete. */
+    headline: string;
+    /**
+     * The report body as the runtime composed it — the attached `details`
+     * merged with any prose the agent streamed alongside it, verdict line
+     * already stripped. Markdown.
+     */
+    body?: string;
+    /** Paths and URLs the run produced or changed. */
+    artifacts?: string[];
+  };
   /** A deliverable saved by `tools__artifact_save`, rendered as a viewable tile linking to the artifact. */
   savedArtifact?: {
     url: string;

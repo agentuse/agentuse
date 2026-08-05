@@ -5485,6 +5485,45 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 /* The child's report body, revealed with the row. */
 .page-approval-detail .subagent-report { margin-bottom: 8px; }
 
+/* The run's own report on its report_complete row. Sits outside .log-content,
+   so it stays readable while the row's raw input/output stay collapsed. */
+.page-approval-detail .run-outcome {
+  margin: 2px 0 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--green);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.page-approval-detail .run-outcome.is-incomplete { border-left-color: var(--amber); }
+.page-approval-detail .run-outcome-verdict {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .run-outcome-mark { color: var(--green); flex: none; font-weight: 400; }
+.page-approval-detail .run-outcome.is-incomplete .run-outcome-mark { color: var(--amber); }
+/* Same typography as the result card at the top of the page: it is the same
+   report, and reading it twice in two different voices is disorienting. */
+.page-approval-detail .run-outcome-body {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+/* The card supplies the padding; the block inside it must not add a second inset. */
+.page-approval-detail .run-outcome-body .content-markdown { padding: 0; }
+.page-approval-detail .run-outcome .subagent-artifacts { margin-top: 8px; }
+
 /* clickable artifact tiles inside an approval card */
 .page-approval-detail .artifact-tiles {
   display: flex;

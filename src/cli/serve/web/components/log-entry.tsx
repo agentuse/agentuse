@@ -616,6 +616,42 @@ function SubagentOutcome(props: { result: NonNullable<ApprovalLogDetails['subage
   );
 }
 
+/**
+ * The run's own report, on the `report_complete` / `report_incomplete` row that
+ * delivered it. Rendered outside the expand toggle on purpose: this call is the
+ * run's answer rather than a step of the work, so the reader who scrolls to the
+ * end of the log must land on the report itself, not on a collapsed row whose
+ * raw JSON input happens to contain it. The toggle still opens the verbatim
+ * input/output underneath.
+ */
+function RunOutcomeCard(props: { outcome: NonNullable<ApprovalLogDetails['runOutcome']> }) {
+  const outcome = props.outcome;
+  const incomplete = outcome.kind === 'incomplete';
+  const artifacts = outcome.artifacts ?? [];
+  return (
+    <div class={`run-outcome${incomplete ? ' is-incomplete' : ''}`}>
+      <p class="run-outcome-verdict">
+        <span class="run-outcome-mark" aria-hidden="true">{incomplete ? '⚠' : '✓'}</span>
+        <InlineMarkdown value={outcome.headline} />
+      </p>
+      {outcome.body && (
+        <div class="run-outcome-body"><LogContent value={outcome.body} forceMarkdown /></div>
+      )}
+      {artifacts.length > 0 && (
+        <ul class="subagent-artifacts" aria-label="Artifacts produced by this run">
+          {artifacts.map((artifact) => (
+            <li key={artifact}>
+              {/^https?:\/\//i.test(artifact)
+                ? <a href={artifact} target="_blank" rel="noopener noreferrer">{artifact}</a>
+                : <code>{artifact}</code>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 const toolTokenFmt = new Intl.NumberFormat('en-US');
 
 function ToolTokenUsageStrip(props: { usage: NonNullable<ApprovalLogDetails['tokenUsage']> }) {
@@ -815,6 +851,7 @@ function LogEntryImpl(props: LogEntryProps) {
   const isApprovalEntry = isApprovalDetails(entry);
   const savedArtifact = entry.details?.savedArtifact;
   const subagentResult = entry.details?.subagentResult;
+  const runOutcome = entry.details?.runOutcome;
   // A saved-artifact row shows its tile inline; there's nothing to expand into.
   const expandable = entry.type === 'tool' && !isApprovalEntry && !savedArtifact;
   // A running tool opens itself (its live output is the point of watching), but
@@ -916,6 +953,7 @@ function LogEntryImpl(props: LogEntryProps) {
             below stays behind the expand toggle. */}
         {entry.subagentSession && <SubagentCard session={entry.subagentSession} />}
         {subagentResult && <SubagentOutcome result={subagentResult} />}
+        {runOutcome && <RunOutcomeCard outcome={runOutcome} />}
         {savedArtifact && <SavedArtifactCard artifact={savedArtifact} sessionId={props.sessionId} token={props.token} />}
         <div class="log-content">
           {storeEvent && <StoreEventBlock event={storeEvent} />}

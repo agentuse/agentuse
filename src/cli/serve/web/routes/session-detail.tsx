@@ -519,25 +519,29 @@ export default function SessionDetail() {
     return out;
   }, [visibleLogs]);
   const reviewerComment = useMemo(() => latestReviewerComment(orderedLogs), [orderedLogs]);
-  // The outcome for the summary-first ended layout: the last completed
-  // assistant text in the log is the run's final response. Derived client-side
-  // from the entries already loaded (same idea as the server's feed-detail
+  // The outcome for the summary-first ended layout. An agent that declared its
+  // verdict through `report_complete` delivered the run's answer there, so read
+  // it off that row (already split into headline + body by the server); a run
+  // that never called an outcome tool falls back to its last completed
+  // assistant text, which is then split here. Derived client-side from the
+  // entries already loaded (same idea as the server's feed-detail
   // finalResponse, which reads the durable transcript).
-  const finalText = useMemo(() => {
+  const finalOutcome = useMemo<{ headline?: string; body: string }>(() => {
+    for (let i = orderedLogs.length - 1; i >= 0; i--) {
+      const outcome = orderedLogs[i].details?.runOutcome;
+      if (outcome) return { headline: outcome.headline, body: outcome.body ?? '' };
+    }
     for (let i = orderedLogs.length - 1; i >= 0; i--) {
       const entry = orderedLogs[i];
       if (entry.type === 'text' && entry.status !== 'streaming' && (entry.message ?? '').trim()) {
-        return entry.message as string;
+        // Lead the card with the verdict instead of burying it in the body
+        // markdown, where it renders smaller than the headings under it.
+        return splitOutcomeHeadline(entry.message as string);
       }
     }
-    return undefined;
+    return { body: '' };
   }, [orderedLogs]);
-  // Lead the card with the verdict instead of burying it in the body markdown,
-  // where it renders smaller than the headings under it.
-  const finalOutcome = useMemo(
-    () => (finalText ? splitOutcomeHeadline(finalText) : { body: '' }),
-    [finalText]
-  );
+  const hasFinalOutcome = Boolean(finalOutcome.headline || finalOutcome.body);
   const toolCallCount = useMemo(
     () => orderedLogs.reduce((n, e) => n + (e.type === 'tool' ? 1 : 0), 0),
     [orderedLogs]
@@ -1273,7 +1277,7 @@ export default function SessionDetail() {
                 </div>
               )}
               {resultErrorText && <div class="result-error">{resultErrorText}</div>}
-              {finalText ? (
+              {hasFinalOutcome ? (
                 <>
                   {finalOutcome.headline && (
                     <p class="result-headline"><InlineMarkdown value={finalOutcome.headline} /></p>
