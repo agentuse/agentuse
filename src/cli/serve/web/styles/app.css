@@ -2810,13 +2810,6 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .tidy-progress-elapsed { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .tidy-progress-track { height: 4px; border-radius: 999px; background: var(--line); overflow: hidden; }
 .tidy-progress-bar { height: 100%; background: var(--primary-bg); transition: width 400ms ease; }
-/* Before the first batch reports in there is no honest percentage to show, so
-   the bar sweeps instead of claiming a position. */
-.tidy-progress-bar.is-indeterminate { width: 35%; animation: tidy-sweep 1.4s ease-in-out infinite; }
-@keyframes tidy-sweep {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(285%); }
-}
 .tidy-progress-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; max-width: 62ch; }
 
 .learnings-tidy-result { display: grid; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }

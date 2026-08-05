@@ -34,33 +34,36 @@ function formatElapsed(ms: number): string {
  *
  * The wait is the reason this page exists: a pass over a large corrections file
  * is minutes of model work, and a button that just sits there reads as broken
- * long before it is. Naming the step and the batch is what makes the wait
- * legible instead of merely long.
+ * long before it is. Naming the phase, and counting the rules as they are
+ * written, is what makes the wait legible instead of merely long.
  */
 export function TidyProgressView(props: {
-  phase: 'planning' | 'applying' | 'done';
-  batch: number;
-  batches: number;
+  phase: 'deciding' | 'writing' | 'applying' | 'done';
+  step: number;
+  total: number;
   elapsedMs: number;
 }) {
-  const { phase, batch, batches } = props;
-  const step = phase === 'planning' && batches > 0
-    ? `Planning batch ${batch} of ${batches}`
-    : phase === 'applying'
-      ? 'Writing the corrections file and the agent file'
-      : phase === 'done'
-        ? 'Finishing up'
-        : 'Reading the stored corrections';
-  // Counted over batches + 1 so the first batch reads as started rather than
-  // sitting at zero: batch one of two is the longest single wait in the run,
-  // and a bar pinned at the left edge for a minute and a half looks stuck.
-  const pct = batches > 0 && phase === 'planning' ? Math.round((batch / (batches + 1)) * 100) : phase === 'planning' ? 0 : 95;
+  const { phase, step, total } = props;
+  const label = phase === 'deciding'
+    ? 'Reading every correction to see what repeats'
+    : phase === 'writing'
+      ? total > 0 ? `Rewriting rule ${Math.min(step + 1, total)} of ${total}` : 'Rewriting the merged rules'
+      : phase === 'applying'
+        ? 'Writing the corrections file and the agent file'
+        : 'Finishing up';
+
+  // Deciding is one wide call with no inner milestones, so it holds a nominal
+  // third rather than pretending to a position it cannot know. Writing is the
+  // long phase and it genuinely counts, so it owns most of the bar.
+  const pct = phase === 'deciding' ? 30
+    : phase === 'writing' ? (total > 0 ? 30 + Math.round((step / total) * 60) : 40)
+    : 95;
 
   return (
     <div class="tidy-progress">
       <div class="tidy-progress-head">
         <span class="btn-spinner" aria-hidden="true" />
-        <span class="tidy-progress-step">{step}</span>
+        <span class="tidy-progress-step">{label}</span>
         <span class="tidy-progress-elapsed">{formatElapsed(props.elapsedMs)}</span>
       </div>
       <div
@@ -68,15 +71,15 @@ export function TidyProgressView(props: {
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={100}
-        {...(batches > 0 ? { 'aria-valuenow': pct } : {})}
+        aria-valuenow={pct}
         aria-label="Tidy-up progress"
       >
-        <div class={`tidy-progress-bar${batches > 0 ? '' : ' is-indeterminate'}`} style={batches > 0 ? `width:${Math.max(pct, 4)}%` : ''} />
+        <div class="tidy-progress-bar" style={`width:${pct}%`} />
       </div>
       <p class="tidy-progress-hint">
-        The model reads every stored correction and decides what says the same thing twice, what to
-        sharpen, and what has earned a permanent place in the agent file. It takes a few minutes.
-        Leaving this page does not stop it — the result waits here.
+        First it reads every stored correction and decides what says the same thing twice, what to
+        sharpen, and what has earned a permanent place in the agent file. Then it writes the
+        replacements, several at a time. Leaving this page does not stop it — the result waits here.
       </p>
     </div>
   );
@@ -182,8 +185,8 @@ export default function LearningsTidy() {
         {running && job && (
           <TidyProgressView
             phase={job.phase}
-            batch={job.batch}
-            batches={job.batches}
+            step={job.step}
+            total={job.total}
             elapsedMs={now - job.startedAt}
           />
         )}

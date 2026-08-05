@@ -208,10 +208,11 @@ export interface TidyJob {
   project: string;
   path: string;
   status: 'running' | 'done' | 'error' | 'undone';
-  phase: 'planning' | 'applying' | 'done';
-  /** 1-based batch being planned; 0 before the first one starts. */
-  batch: number;
-  batches: number;
+  /** Deciding what relates to what, writing the replacement rules, then saving. */
+  phase: 'deciding' | 'writing' | 'applying' | 'done';
+  /** Units of this phase finished, out of `total`. */
+  step: number;
+  total: number;
   projectedActive: number;
   cap: number;
   dryRun: boolean;

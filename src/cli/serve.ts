@@ -84,8 +84,8 @@ interface TidyJob {
   finishedAt?: number;
   status: 'running' | 'done' | 'error' | 'undone';
   phase: TidyProgress['phase'];
-  batch: number;
-  batches: number;
+  step: number;
+  total: number;
   projectedActive: number;
   cap: number;
   dryRun: boolean;
@@ -129,8 +129,8 @@ function tidyJobView(job: TidyJob) {
     path: job.path,
     status: job.status,
     phase: job.phase,
-    batch: job.batch,
-    batches: job.batches,
+    step: job.step,
+    total: job.total,
     projectedActive: job.projectedActive,
     cap: job.cap,
     dryRun: job.dryRun,
@@ -5255,9 +5255,9 @@ export function createServeCommand(): Command {
               stateRoot: target.stateRoot,
               startedAt: Date.now(),
               status: 'running',
-              phase: 'planning',
-              batch: 0,
-              batches: 0,
+              phase: 'deciding',
+              step: 0,
+              total: 0,
               projectedActive: 0,
               cap: effectiveCap(target.agent.config.learning),
               dryRun: body.dryRun === true,
@@ -5274,8 +5274,8 @@ export function createServeCommand(): Command {
               stateRoot: target.stateRoot,
               onProgress: (progress) => {
                 job.phase = progress.phase;
-                job.batch = progress.batch;
-                job.batches = progress.batches;
+                job.step = progress.step;
+                job.total = progress.total;
                 job.projectedActive = progress.projectedActive;
                 job.cap = progress.cap;
               },

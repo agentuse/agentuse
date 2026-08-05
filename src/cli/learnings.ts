@@ -200,8 +200,13 @@ export function createLearningsCommand(): Command {
         config: agent.config.learning,
         stateRoot: projectContext.stateRoot,
         onProgress: (progress) => {
-          if (progress.phase === 'planning') {
-            console.log(chalk.gray(`  planning batch ${progress.batch} of ${progress.batches}…`));
+          // One line per phase, not per unit: the writes finish out of order
+          // (they run concurrently), so counting them up in a terminal would
+          // scroll a column of near-identical lines.
+          if (progress.phase === 'deciding' && progress.step === 0) {
+            console.log(chalk.gray(`  reading ${progress.projectedActive} corrections to see what repeats…`));
+          } else if (progress.phase === 'writing' && progress.step === 0 && progress.total > 0) {
+            console.log(chalk.gray(`  rewriting ${progress.total} rule${progress.total === 1 ? '' : 's'}…`));
           } else if (progress.phase === 'applying' && !options.dryRun) {
             console.log(chalk.gray('  writing both files…'));
           }

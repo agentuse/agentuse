@@ -15,13 +15,26 @@ import type { Learning, LearningCategory, LearningConfig } from './types';
  * The tidy-up pass: bring an agent's stored corrections back under the per-run
  * injection cap without losing anything.
  *
- * Four moves, in one model call:
+ * Four moves:
  * - MERGE near-duplicates into a single rule
  * - REWRITE a rule a human has repeated (a repeat means the wording is not
  *   landing, so restating it more sharply is the fix; retiring it is not)
  * - RETIRE what has been superseded (archived in the same file, never deleted)
  * - GRADUATE what has proven itself into the agent's own instructions, where it
  *   applies on every run and costs no cap slot
+ *
+ * Run in two passes, because the two halves of the job have opposite shapes.
+ *
+ * DECIDING what relates to what is expensive in REASONING and cheap in output:
+ * a handful of ids. WRITING the merged rules is the reverse. Fused, as this
+ * started out, every correction paid both costs at once and the batches ran
+ * one after another: one real 43-correction file took 180s.
+ *
+ * Split, each half can be sized and scheduled for what it actually costs.
+ * Decide calls stay small, because thinking cost climbs superlinearly with how
+ * many things must be compared and falls off a cliff (see DECIDE_BATCH_SIZE);
+ * write calls stay tiny, one group each. Both run concurrently, so the wall
+ * time is the slowest single call rather than the sum of all of them.
  *
  * The model proposes; this module decides. Every constraint below is enforced in
  * code rather than asked for in the prompt, because this rewrites a user's agent
@@ -41,50 +54,59 @@ const GRADUATE_MIN_APPROVED_RUNS = 3;
 const UNDO_HISTORY = 5;
 
 /**
- * Output budget for the planning call.
+ * Output budget for a decide call.
  *
- * Well above what the JSON needs, because on a reasoning model the budget covers
- * thinking too. At the provider default (4096) a 125-correction file spent the
- * entire allowance on reasoning and returned ZERO text: `finishReason` came back
- * as `max_tokens` with an empty completion, which is indistinguishable from a
- * dead model unless you are counting chunk types.
+ * Generous relative to the ids-and-reasons it asks for, because on a reasoning
+ * model the budget covers thinking too, and thinking is nearly all of it. Given
+ * too many corrections at once a model will spend the ENTIRE allowance
+ * reasoning and return zero text, `finishReason: max_tokens` with an empty
+ * completion, which is indistinguishable from a dead model unless you are
+ * counting chunk types. Raising this does not fix that; a smaller batch does.
  */
-const TIDY_MAX_OUTPUT_TOKENS = 16_000;
+const DECIDE_MAX_OUTPUT_TOKENS = 8_000;
+
+/** Output budget for writing one merged or sharpened rule. One rule of prose. */
+const WRITE_MAX_OUTPUT_TOKENS = 2_000;
 
 /**
- * Corrections planned over per model call.
+ * Corrections weighed against each other in one decide call.
  *
- * Small enough that a reasoning model reaches an answer instead of thinking
- * until the budget runs out. See the batching comment in
- * {@link consolidateLearnings} for what happened without this.
+ * Small because the cost of deciding is superlinear in how many things must be
+ * compared, and it is spent on THINKING, not on output. Measured on one real
+ * agent (Opus 5, ids-only output, 8k budget):
+ *
+ *   15 corrections -> 38s, a usable plan
+ *   25 corrections -> 87s, a usable plan
+ *   42 corrections -> 98s, ZERO text: the budget went entirely on reasoning
+ *
+ * So a wide decide call is not just slow, it falls off a cliff and returns
+ * nothing. Batches run concurrently, so keeping them small costs tokens rather
+ * than the user's time. Corrections in different batches are never compared,
+ * which is what {@link orderForBatching} exists to mitigate.
  */
-const TIDY_BATCH_SIZE = 25;
+const DECIDE_BATCH_SIZE = 15;
 
 /**
- * Batches planned per invocation.
+ * Model calls in flight at once.
  *
- * Bounds how long one tidy-up takes. On a reasoning model a batch costs a minute
- * or two, so an unbounded pass over a 125-correction file runs for ten minutes —
- * fine in a terminal, useless behind a button in the web UI, where the request
- * would time out before it wrote anything. A very large file therefore takes
- * several passes, and both surfaces say so rather than implying one press
- * finished the job.
+ * Bounded because a fleet-sized file would otherwise open thirty connections and
+ * earn a rate limit, which costs far more time than the concurrency saved.
  */
-const TIDY_MAX_BATCHES = 3;
+const TIDY_CONCURRENCY = 6;
 
-/**
- * Where a running tidy-up has got to.
+/** Where a running tidy-up has got to.
  *
- * Reported per batch rather than per model call finishing, because the wait is
- * the whole problem this exists to solve: a pass over a large file is minutes of
- * model work, and a button that just sits there looks broken long before it is.
- */
+ * Reported per unit of work rather than at the end, because the wait is the
+ * whole problem this exists to solve: a pass over a large corrections file is
+ * minutes of model work, and a button that just sits there looks broken long
+ * before it is. */
 export interface TidyProgress {
-  phase: 'planning' | 'applying' | 'done';
-  /** 1-based batch being planned. */
-  batch: number;
-  batches: number;
-  /** Corrections that would still be active if planning stopped here. */
+  phase: 'deciding' | 'writing' | 'applying' | 'done';
+  /** Units of this phase finished. */
+  step: number;
+  /** Units in this phase; 0 when there is nothing to do in it. */
+  total: number;
+  /** Corrections that would still be active if the pass stopped here. */
   projectedActive: number;
   cap: number;
 }
@@ -119,11 +141,19 @@ export interface ConsolidationResult {
   note?: string;
 }
 
-interface RawPlan {
-  merge?: { ids?: string[]; keep?: string; category?: string; title?: string; instruction?: string; why?: string }[];
-  rewrite?: { id?: string; title?: string; instruction?: string; why?: string }[];
+/** What a decide call is allowed to say: ids and one-line reasons, never prose. */
+interface RawDecisions {
+  merge?: { ids?: string[]; keep?: string; why?: string }[];
+  rewrite?: { id?: string; why?: string }[];
   retire?: { id?: string; why?: string }[];
   graduate?: { id?: string; why?: string }[];
+}
+
+/** What a write call returns for one group. */
+interface RawWrite {
+  category?: string;
+  title?: string;
+  instruction?: string;
 }
 
 const CATEGORIES: LearningCategory[] = ['tip', 'warning', 'pattern', 'tool-usage', 'error-fix'];
@@ -154,24 +184,85 @@ function retireBlocked(learning: Learning, now: number): string | undefined {
   return undefined;
 }
 
-export function buildTidyPrompt(
+/** One correction as the decide pass sees it: the full text plus the evidence
+ *  that decides what may be done to it. */
+function inventoryEntry(learning: Learning, now: number): string {
+  const flags: string[] = [`src:${learning.source}`];
+  if (learning.reasserted > 0) flags.push(`repeated by a human ${learning.reasserted}x`);
+  if (learning.approvedRuns > 0) flags.push(`in force across ${learning.approvedRuns} approved runs`);
+  flags.push(`${Math.round(ageInDays(learning, now))}d old`);
+  const blocked = retireBlocked(learning, now);
+  if (blocked) flags.push(`CANNOT RETIRE: ${blocked}`);
+  if (isGraduationEligible(learning)) flags.push('ELIGIBLE TO GRADUATE');
+  return `- id:${learning.id} [${learning.category}] ${learning.title} (${flags.join('; ')})\n  ${learning.instruction}`;
+}
+
+/** Content words of a correction, for the crude similarity below. Four letters
+ *  and up, which drops the articles and prepositions without needing a stopword
+ *  list to maintain. */
+function contentWords(learning: Learning): Set<string> {
+  return new Set(`${learning.title} ${learning.instruction}`.toLowerCase().match(/[a-z][a-z0-9_-]{3,}/g) ?? []);
+}
+
+/** How much of the smaller correction's vocabulary the larger one already
+ *  carries. Containment rather than Jaccard: a short rule fully covered by a
+ *  long one is exactly the pair worth putting in front of the same call, and
+ *  Jaccard would score it low for being short. */
+function overlap(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let shared = 0;
+  for (const word of a) if (b.has(word)) shared++;
+  return shared / Math.min(a.size, b.size);
+}
+
+/**
+ * Order corrections so similar ones end up in the same decide call.
+ *
+ * Batches have to be small (see {@link DECIDE_BATCH_SIZE}), and two duplicates
+ * that land either side of a batch boundary are never compared, so they survive
+ * the pass. Chaining each correction to its nearest unplaced neighbour costs
+ * nothing (no model call, a few thousand set lookups) and it only decides who
+ * shares a call — never what may be done to anything.
+ */
+export function orderForBatching(ranked: Learning[]): Learning[] {
+  const words = new Map(ranked.map((l) => [l.id, contentWords(l)]));
+  const remaining = ranked.slice(1);
+  const ordered: Learning[] = [];
+  let current = ranked[0];
+
+  while (current) {
+    ordered.push(current);
+    if (remaining.length === 0) break;
+    let bestIndex = 0;
+    let bestScore = -1;
+    for (let i = 0; i < remaining.length; i++) {
+      const score = overlap(words.get(current.id)!, words.get(remaining[i]!.id)!);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = i;
+      }
+    }
+    current = remaining.splice(bestIndex, 1)[0];
+  }
+  return ordered;
+}
+
+/**
+ * Pass one: which corrections relate to which.
+ *
+ * Asks for ids and one-line reasons ONLY. The replacement wording is written
+ * later, one group per call, in parallel — see the module comment for why that
+ * split is the difference between three minutes and under one.
+ */
+export function buildDecidePrompt(
   learnings: Learning[],
   agentInstructions: string,
   cap: number,
   now: number,
 ): string {
-  const inventory = learnings.map((l) => {
-    const flags: string[] = [`src:${l.source}`];
-    if (l.reasserted > 0) flags.push(`repeated by a human ${l.reasserted}x`);
-    if (l.approvedRuns > 0) flags.push(`in force across ${l.approvedRuns} approved runs`);
-    flags.push(`${Math.round(ageInDays(l, now))}d old`);
-    const blocked = retireBlocked(l, now);
-    if (blocked) flags.push(`CANNOT RETIRE: ${blocked}`);
-    if (isGraduationEligible(l)) flags.push('ELIGIBLE TO GRADUATE');
-    return `- id:${l.id} [${l.category}] ${l.title} (${flags.join('; ')})\n  ${l.instruction}`;
-  }).join('\n');
+  const inventory = learnings.map((l) => inventoryEntry(l, now)).join('\n');
 
-  return `An agent has accumulated ${learnings.length} stored corrections, but only the top ${cap} are put in front of the model on any run. The rest have no effect. Your job is to get the active set to ${cap} or fewer without losing anything the agent needs.
+  return `An agent has accumulated ${learnings.length} stored corrections, but only the top ${cap} are put in front of the model on any run. The rest have no effect. Your job is to decide how to get the active set to ${cap} or fewer without losing anything the agent needs.
 
 ## The agent's own instructions
 ${agentInstructions.slice(0, 6000)}
@@ -181,36 +272,64 @@ ${inventory}
 
 ## Moves available
 
-1. **merge** — two or more corrections saying substantially the same thing become one. Write the merged instruction so it covers everything the originals covered; do not just pick one.
-2. **rewrite** — a correction a human has REPEATED is not wrong, it is not landing. Restate it more concretely and more specifically so the agent cannot follow it and still make the mistake. Prefer this over retiring anything marked as repeated.
+1. **merge** — two or more corrections saying substantially the same thing become one. Name the ids and which one to keep; someone else writes the merged wording.
+2. **rewrite** — a correction a human has REPEATED is not wrong, it is not landing. Name it and it will be restated more sharply. Prefer this over retiring anything marked as repeated.
 3. **retire** — a correction that another one now fully covers, or that the agent's own instructions above already state. Only entries with no "CANNOT RETIRE" flag.
 4. **graduate** — a correction that has proven itself moves into the agent's permanent instructions. Only entries marked "ELIGIBLE TO GRADUATE". Prefer graduating over merging when a rule stands on its own: it stops competing for a slot.
 
 ## Rules
 - Every id you name must come from the list. Each id may appear in AT MOST ONE move.
 - Never drop a distinction that matters. If two corrections look similar but constrain different situations, leave them both alone.
-- Do not invent new corrections. Every instruction you write must be traceable to the ones you were given.
+- Do NOT write any replacement text. Ids and a one-line reason each, nothing more.
 - If nothing can be safely improved, return empty arrays.
 
 Respond with ONLY a JSON object, no other text:
 {
-  "merge":    [{"ids": ["ab12cd34", "ef56gh78"], "keep": "ab12cd34", "category": "tip", "title": "short title", "instruction": "the merged instruction", "why": "one line"}],
-  "rewrite":  [{"id": "ij90kl12", "title": "short title", "instruction": "the sharper instruction", "why": "one line"}],
-  "retire":   [{"id": "mn34op56", "why": "one line"}],
-  "graduate": [{"id": "qr78st90", "why": "one line"}]
+  "merge":    [{"ids": ["ab12cd34", "ef56gh78"], "keep": "ab12cd34", "why": "one line"}],
+  "rewrite":  [{"id": "ij90kl12", "why": "reviewer repeated this 3 times; sharpen it"}],
+  "retire":   [{"id": "mn34op56", "why": "superseded by ab12cd34"}],
+  "graduate": [{"id": "qr78st90", "why": "in force across 12 approved runs"}]
 }`;
 }
 
+/** Pass two, merge: the group's full text in, one correction out. */
+export function buildMergePrompt(group: Learning[]): string {
+  const parts = group.map((l) => `- id:${l.id} [${l.category}] ${l.title}\n  ${l.instruction}`).join('\n');
+  return `These stored corrections for an agent say substantially the same thing:
+
+${parts}
+
+Write ONE correction that replaces them. It must cover everything all of them covered — do not just pick the best one and drop the rest, and do not invent guidance none of them gave.
+
+Respond with ONLY a JSON object, no other text:
+{"category": "tip|warning|pattern|tool-usage|error-fix", "title": "short title", "instruction": "the merged instruction"}`;
+}
+
+/** Pass two, rewrite: one repeated correction in, a sharper one out. */
+export function buildRewritePrompt(learning: Learning, why: string): string {
+  return `A human has repeated this correction to an agent, which means the wording is not landing:
+
+- [${learning.category}] ${learning.title}
+  ${learning.instruction}
+
+Reason it was flagged: ${why}
+
+Restate it more concretely and more specifically, so the agent cannot follow it and still make the mistake. Keep it to the same rule — do not broaden it or add guidance it did not carry.
+
+Respond with ONLY a JSON object, no other text:
+{"title": "short title", "instruction": "the sharper instruction"}`;
+}
+
 /**
- * Read a plan out of a model response.
+ * Read a JSON object out of a model response.
  *
  * Tries the response as-is, then a fenced code block, then the outermost
  * `{...}` span. The last fallback matters in practice: models routinely preface
  * a JSON answer with a sentence of explanation however firmly the prompt asks
- * them not to, and throwing away an otherwise perfect plan over a leading
+ * them not to, and throwing away an otherwise perfect answer over a leading
  * "Here's the consolidation:" would make the whole feature look broken.
  */
-function parsePlan(responseText: string): RawPlan | null {
+function parseJsonObject<T>(responseText: string): T | null {
   const text = responseText.trim();
   if (!text) return null;
 
@@ -223,7 +342,7 @@ function parsePlan(responseText: string): RawPlan | null {
     if (!candidate) continue;
     try {
       const parsed = JSON.parse(candidate);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as RawPlan;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as T;
     } catch {
       // try the next shape
     }
@@ -231,25 +350,26 @@ function parsePlan(responseText: string): RawPlan | null {
   return null;
 }
 
-interface ValidatedPlan {
-  merges: { keep: Learning; absorbed: Learning[]; category: LearningCategory; title: string; instruction: string; why: string }[];
-  rewrites: { target: Learning; title: string; instruction: string; why: string }[];
+/** A plan of ids, before any replacement text exists. */
+interface DecidedPlan {
+  merges: { keep: Learning; absorbed: Learning[]; why: string }[];
+  rewrites: { target: Learning; why: string }[];
   retires: { target: Learning; why: string }[];
   graduates: { target: Learning; why: string }[];
   rejected: string[];
 }
 
 /**
- * Apply every guardrail to a proposed plan.
+ * Apply every guardrail to a proposed set of decisions.
  *
  * Rejections are collected rather than thrown: one bad entry in an otherwise
  * good plan should cost that entry, not the whole tidy-up. They are logged at
  * debug so a model that keeps proposing forbidden moves is diagnosable.
  */
-export function validatePlan(raw: RawPlan, learnings: Learning[], now: number): ValidatedPlan {
+export function validateDecisions(raw: RawDecisions, learnings: Learning[], now: number): DecidedPlan {
   const byId = new Map(learnings.map((l) => [l.id, l]));
   const claimed = new Set<string>();
-  const out: ValidatedPlan = { merges: [], rewrites: [], retires: [], graduates: [], rejected: [] };
+  const out: DecidedPlan = { merges: [], rewrites: [], retires: [], graduates: [], rejected: [] };
 
   const claim = (id: string | undefined, label: string): Learning | undefined => {
     if (!id) {
@@ -270,9 +390,8 @@ export function validatePlan(raw: RawPlan, learnings: Learning[], now: number): 
 
   for (const m of raw.merge ?? []) {
     const ids = Array.isArray(m.ids) ? m.ids : [];
-    const instruction = typeof m.instruction === 'string' ? m.instruction.trim() : '';
-    if (ids.length < 2 || !instruction) {
-      out.rejected.push('merge: needs at least two ids and an instruction');
+    if (ids.length < 2) {
+      out.rejected.push('merge: needs at least two ids');
       continue;
     }
     const group = ids.map((id) => claim(id, 'merge'));
@@ -283,28 +402,15 @@ export function validatePlan(raw: RawPlan, learnings: Learning[], now: number): 
     out.merges.push({
       keep,
       absorbed: members.filter((l) => l.id !== keep.id),
-      category: CATEGORIES.includes(m.category as LearningCategory) ? (m.category as LearningCategory) : keep.category,
-      title: typeof m.title === 'string' && m.title.trim() ? m.title.trim() : keep.title,
-      instruction,
       why: m.why ?? 'merged near-duplicates',
     });
   }
 
   for (const r of raw.rewrite ?? []) {
-    const instruction = typeof r.instruction === 'string' ? r.instruction.trim() : '';
-    if (!instruction) {
-      out.rejected.push('rewrite: missing instruction');
-      continue;
-    }
     const target = claim(r.id, 'rewrite');
     if (!target) continue;
     claimed.add(target.id);
-    out.rewrites.push({
-      target,
-      title: typeof r.title === 'string' && r.title.trim() ? r.title.trim() : target.title,
-      instruction,
-      why: r.why ?? 'sharpened a repeated correction',
-    });
+    out.rewrites.push({ target, why: r.why ?? 'sharpened a repeated correction' });
   }
 
   for (const r of raw.retire ?? []) {
@@ -331,6 +437,36 @@ export function validatePlan(raw: RawPlan, learnings: Learning[], now: number): 
   }
 
   return out;
+}
+
+/**
+ * Run `worker` over `items` with at most `limit` in flight, preserving order.
+ *
+ * The whole point of the two-pass split: eleven merges written concurrently cost
+ * the slowest single merge, not the sum of eleven. A rejected item resolves to
+ * `null` so one failure costs its own group and nothing else.
+ */
+async function mapConcurrent<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<(R | null)[]> {
+  const results: (R | null)[] = new Array(items.length).fill(null);
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const index = next++;
+      if (index >= items.length) return;
+      try {
+        results[index] = await worker(items[index]!, index);
+      } catch (err) {
+        logger.debug(`[Learning] Tidy-up item ${index} failed: ${(err as Error).message}`);
+        results[index] = null;
+      }
+    }
+  });
+  await Promise.all(runners);
+  return results;
 }
 
 /** Snapshot both files before writing, so undo can restore the exact prior bytes.
@@ -484,68 +620,58 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     ? ANTHROPIC_IDENTITY_PROMPT
     : 'You consolidate an agent\'s stored corrections into a smaller set without losing meaning, and reply with a JSON object only.';
 
-  // Plan in bounded batches rather than one pass over the whole file.
+  // PASS ONE: decide. Every active correction in, ids out.
   //
-  // Not an optimisation — a correctness fix. Handed all 125 corrections from a
-  // real agent at once, the model spent its ENTIRE output budget reasoning and
-  // emitted no text at all: `finishReason: max_tokens`, zero text deltas, which
-  // surfaces as "empty response" and looks like a dead model. Raising the budget
-  // to 16k did not help; it reasoned through that too. The task, not the budget,
-  // was the problem. A batch is small enough to actually plan over, and batches
-  // are disjoint so their ids can never collide when the plans are merged.
-  const ranked = rankLearnings(active);
+  // Batched only to bound how much cross-comparison one call holds in mind; the
+  // batches run concurrently, so a bigger file costs tokens rather than time.
+  const ordered = orderForBatching(rankLearnings(active));
   const batches: Learning[][] = [];
-  for (let i = 0; i < ranked.length && batches.length < TIDY_MAX_BATCHES; i += TIDY_BATCH_SIZE) {
-    batches.push(ranked.slice(i, i + TIDY_BATCH_SIZE));
+  for (let i = 0; i < ordered.length; i += DECIDE_BATCH_SIZE) {
+    batches.push(ordered.slice(i, i + DECIDE_BATCH_SIZE));
   }
 
-  const plan: ValidatedPlan = { merges: [], rewrites: [], retires: [], graduates: [], rejected: [] };
   let projectedActive = active.length;
-  let failedBatches = 0;
-  let lastSample = '';
+  let decided = 0;
+  const report = (phase: TidyProgress['phase'], step: number, total: number) =>
+    options.onProgress?.({ phase, step, total, projectedActive, cap });
 
-  const report = (phase: TidyProgress['phase'], batch: number) =>
-    options.onProgress?.({ phase, batch, batches: batches.length, projectedActive, cap });
-
-  for (const [index, batch] of batches.entries()) {
-    // Stop once the goal is met: an agent one over the cap should not pay for
-    // five model calls to tidy corrections that are already reaching it.
-    if (projectedActive <= cap) break;
-    report('planning', index + 1);
-
+  report('deciding', 0, batches.length);
+  const decisions = await mapConcurrent(batches, TIDY_CONCURRENCY, async (batch) => {
     const responseText = await completeText(model, {
       instructions,
-      prompt: buildTidyPrompt(batch, options.agentInstructions, cap, now),
-      maxOutputTokens: TIDY_MAX_OUTPUT_TOKENS,
+      prompt: buildDecidePrompt(batch, options.agentInstructions, cap, now),
+      maxOutputTokens: DECIDE_MAX_OUTPUT_TOKENS,
     });
-
-    const raw = parsePlan(responseText);
+    report('deciding', ++decided, batches.length);
+    const raw = parseJsonObject<RawDecisions>(responseText);
     if (!raw) {
-      // One bad batch costs that batch, not the whole tidy-up. Whatever the
-      // other batches proposed is still valid and still worth applying.
+      logger.debug(`[Learning] Tidy-up decide call returned unusable JSON: ${responseText.slice(0, 500)}`);
+      return { plan: null, sample: responseText.trim().slice(0, 120).replace(/\s+/g, ' ') };
+    }
+    return { plan: validateDecisions(raw, batch, now), sample: '' };
+  });
+
+  const plan: DecidedPlan = { merges: [], rewrites: [], retires: [], graduates: [], rejected: [] };
+  let failedBatches = 0;
+  let lastSample = '';
+  for (const outcome of decisions) {
+    // A batch that threw (rate limit, network) counts the same as one that came
+    // back unreadable: it contributes nothing and costs only itself.
+    if (!outcome || !outcome.plan) {
       failedBatches++;
-      lastSample = responseText.trim().slice(0, 120).replace(/\s+/g, ' ');
-      logger.debug(`[Learning] Tidy-up batch returned unusable JSON: ${responseText.slice(0, 500)}`);
+      if (outcome?.sample) lastSample = outcome.sample;
       continue;
     }
-
-    const batchPlan = validatePlan(raw, batch, now);
-    plan.merges.push(...batchPlan.merges);
-    plan.rewrites.push(...batchPlan.rewrites);
-    plan.retires.push(...batchPlan.retires);
-    plan.graduates.push(...batchPlan.graduates);
-    plan.rejected.push(...batchPlan.rejected);
-
-    projectedActive -= batchPlan.retires.length
-      + batchPlan.graduates.length
-      + batchPlan.merges.reduce((n, m) => n + m.absorbed.length, 0);
+    plan.merges.push(...outcome.plan.merges);
+    plan.rewrites.push(...outcome.plan.rewrites);
+    plan.retires.push(...outcome.plan.retires);
+    plan.graduates.push(...outcome.plan.graduates);
+    plan.rejected.push(...outcome.plan.rejected);
   }
 
   for (const rejection of plan.rejected) logger.debug(`[Learning] Tidy-up rejected ${rejection}`);
-  report('applying', batches.length);
 
-  const nothingUsable = failedBatches === batches.length;
-  if (nothingUsable) {
+  if (failedBatches === batches.length) {
     // Write nothing rather than guess. A partial apply is worse than no apply
     // when the target is the user's own agent file.
     //
@@ -561,6 +687,87 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
         : `${model} returned an empty plan; nothing was changed. Try another model with --model.`,
     };
   }
+
+  projectedActive -= plan.retires.length
+    + plan.graduates.length
+    + plan.merges.reduce((n, m) => n + m.absorbed.length, 0);
+
+  // PASS TWO: write. One small call per merge or rewrite, all at once.
+  //
+  // This is where the time used to go, serially, inside the same call that did
+  // the deciding. Retirements and graduations need no wording at all and no
+  // longer wait behind text they never had a use for.
+  type WriteJob =
+    | { kind: 'merge'; merge: DecidedPlan['merges'][number] }
+    | { kind: 'rewrite'; rewrite: DecidedPlan['rewrites'][number] };
+  const jobs: WriteJob[] = [
+    ...plan.merges.map((merge): WriteJob => ({ kind: 'merge', merge })),
+    ...plan.rewrites.map((rewrite): WriteJob => ({ kind: 'rewrite', rewrite })),
+  ];
+
+  let written = 0;
+  report('writing', 0, jobs.length);
+  const drafts = await mapConcurrent(jobs, TIDY_CONCURRENCY, async (job) => {
+    const prompt = job.kind === 'merge'
+      ? buildMergePrompt([job.merge.keep, ...job.merge.absorbed])
+      : buildRewritePrompt(job.rewrite.target, job.rewrite.why);
+    const responseText = await completeText(model, {
+      instructions,
+      prompt,
+      maxOutputTokens: WRITE_MAX_OUTPUT_TOKENS,
+    });
+    report('writing', ++written, jobs.length);
+    const raw = parseJsonObject<RawWrite>(responseText);
+    const instruction = typeof raw?.instruction === 'string' ? raw.instruction.trim() : '';
+    if (!instruction) {
+      logger.debug(`[Learning] Tidy-up ${job.kind} draft unusable: ${responseText.slice(0, 300)}`);
+      return null;
+    }
+    return { raw, instruction };
+  });
+
+  // A group whose wording could not be written is left exactly as it was. The
+  // decision was sound; only the prose failed, and half-applying it would retire
+  // an entry into a merge that never got written.
+  const merges: { keep: Learning; absorbed: Learning[]; category: LearningCategory; title: string; instruction: string; why: string }[] = [];
+  const rewrites: { target: Learning; title: string; instruction: string; why: string }[] = [];
+  let failedWrites = 0;
+  jobs.forEach((job, index) => {
+    const draft = drafts[index];
+    if (!draft) {
+      failedWrites++;
+      return;
+    }
+    const title = typeof draft.raw?.title === 'string' && draft.raw.title.trim() ? draft.raw.title.trim() : undefined;
+    if (job.kind === 'merge') {
+      merges.push({
+        keep: job.merge.keep,
+        absorbed: job.merge.absorbed,
+        category: CATEGORIES.includes(draft.raw?.category as LearningCategory)
+          ? (draft.raw!.category as LearningCategory)
+          : job.merge.keep.category,
+        title: title ?? job.merge.keep.title,
+        instruction: draft.instruction,
+        why: job.merge.why,
+      });
+    } else {
+      rewrites.push({
+        target: job.rewrite.target,
+        title: title ?? job.rewrite.target.title,
+        instruction: draft.instruction,
+        why: job.rewrite.why,
+      });
+    }
+  });
+
+  // Recompute from what SURVIVED both passes: a merge whose wording never got
+  // written frees no slot, and reporting as if it had would tell the user the
+  // file is closer to the cap than it is.
+  projectedActive = active.length
+    - plan.retires.length
+    - plan.graduates.length
+    - merges.reduce((n, m) => n + m.absorbed.length, 0);
+  report('applying', jobs.length, jobs.length);
 
   const graduatedTargets = plan.graduates.map((g) => g.target);
   const canGraduate = graduatedTargets.length > 0;
@@ -578,7 +785,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   const byId = new Map(next.map((l) => [l.id, l]));
   const nowIso = new Date(now).toISOString();
 
-  for (const merge of plan.merges) {
+  for (const merge of merges) {
     const keep = byId.get(merge.keep.id)!;
     keep.category = merge.category;
     keep.title = merge.title;
@@ -595,7 +802,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     keep.extractedAt = nowIso;
     for (const absorbed of merge.absorbed) byId.get(absorbed.id)!.state = 'retired';
   }
-  for (const rewrite of plan.rewrites) {
+  for (const rewrite of rewrites) {
     const target = byId.get(rewrite.target.id)!;
     target.title = rewrite.title;
     target.instruction = rewrite.instruction;
@@ -612,12 +819,12 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   const agentAfter = graduationSkipped ? agentBefore : spliceLearnedBlock(agentBefore, graduatedAll);
 
   const changes: ConsolidationChange[] = [
-    ...plan.merges.map((m): ConsolidationChange => ({
+    ...merges.map((m): ConsolidationChange => ({
       kind: 'merge',
       titles: [m.keep.title, ...m.absorbed.map((l) => l.title)],
       why: m.why,
     })),
-    ...plan.rewrites.map((r): ConsolidationChange => ({ kind: 'rewrite', titles: [r.target.title], why: r.why })),
+    ...rewrites.map((r): ConsolidationChange => ({ kind: 'rewrite', titles: [r.target.title], why: r.why })),
     ...plan.retires.map((r): ConsolidationChange => ({ kind: 'retire', titles: [r.target.title], why: r.why })),
     ...graduating.map((t): ConsolidationChange => ({
       kind: 'graduate',
@@ -626,6 +833,15 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     })),
   ];
 
+  // Say what was skipped. A pass that quietly covered less than the whole file
+  // reads as "done" unless it admits the gap.
+  const shortfalls: string[] = [];
+  if (failedBatches > 0) shortfalls.push(`${failedBatches} of ${batches.length} groups of corrections could not be planned`);
+  if (failedWrites > 0) shortfalls.push(`${failedWrites} rewrite${failedWrites === 1 ? '' : 's'} could not be written`);
+  const incomplete = shortfalls.length > 0
+    ? `${shortfalls.join(' and ')}; those corrections were left untouched. Run tidy again to retry them.`
+    : undefined;
+
   const result: ConsolidationResult = {
     ran: true,
     model,
@@ -633,14 +849,12 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     activeAfter: activeLearnings(next).length,
     cap,
     changes,
-    merged: plan.merges.length,
-    rewritten: plan.rewrites.length,
-    retired: plan.retires.length + plan.merges.reduce((n, m) => n + m.absorbed.length, 0),
+    merged: merges.length,
+    rewritten: rewrites.length,
+    retired: plan.retires.length + merges.reduce((n, m) => n + m.absorbed.length, 0),
     graduated: graduating.map((l) => l.title),
     ...(graduationSkipped ? { graduationSkipped } : {}),
-    ...(failedBatches > 0
-      ? { note: `${failedBatches} of ${batches.length} batches could not be planned and were left untouched; re-run to try them again.` }
-      : {}),
+    ...(incomplete ? { note: incomplete } : {}),
     diffs: {
       learnings: unifiedDiff(beforeLearnings, afterLearnings, { label: store.filePath }),
       ...(agentAfter !== agentBefore
@@ -665,7 +879,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // order would lose it from both places.
   if (!graduationSkipped) await writeLearnedBlock(options.agentFilePath, graduatedAll);
   await store.save(next);
-  report('done', batches.length);
+  report('done', jobs.length, jobs.length);
 
   return { ...result, undoId };
 }

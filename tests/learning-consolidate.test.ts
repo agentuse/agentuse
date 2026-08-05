@@ -5,11 +5,25 @@ import { tmpdir } from "os";
 import { LearningStore } from "../src/learning/store";
 import type { Learning } from "../src/learning/types";
 
-// The tidy-up plans with one helper LLM call; mock it so every test drives an
-// exact proposal and asserts what the guardrails do with it.
-let planResponse = "{}";
-const completeTextMock = mock(async () => planResponse);
+// The tidy-up runs in two passes: one call decides what relates to what (ids
+// only), then one small call per group writes the replacement rule. The mock
+// answers by prompt kind so every test can drive an exact decision and assert
+// what the guardrails do with it.
+let decideResponse = "{}";
+let writeResponse = JSON.stringify({ category: "tip", title: "Merged", instruction: "One rule covering both." });
+
+function isWriteCall(prompt: string): boolean {
+  return prompt.includes("say substantially the same thing") || prompt.includes("has repeated this correction");
+}
+
+const completeTextMock = mock(async (_model: string, opts: { prompt: string }) =>
+  isWriteCall(opts.prompt) ? writeResponse : decideResponse);
 mock.module("../src/complete-text", () => ({ completeText: completeTextMock }));
+
+/** Ids of the corrections a decide prompt was given, in prompt order. */
+function idsIn(prompt: string): string[] {
+  return [...prompt.matchAll(/id:(\w+) /g)].map((m) => m[1]!);
+}
 
 let consolidateLearnings: typeof import("../src/learning/consolidate").consolidateLearnings;
 let undoConsolidation: typeof import("../src/learning/consolidate").undoConsolidation;
@@ -59,12 +73,14 @@ describe("tidying up an over-cap corrections file", () => {
     agentFilePath = join(tempDir, "demo.agentuse");
     writeFileSync(agentFilePath, AGENT_FILE);
     store = LearningStore.fromAgentFile(agentFilePath);
-    planResponse = JSON.stringify({});
+    decideResponse = JSON.stringify({});
+    writeResponse = JSON.stringify({ category: "tip", title: "Merged", instruction: "One rule covering both." });
     completeTextMock.mockClear();
     // Restore the default implementation here rather than at the end of the
     // tests that override it: an assertion failing mid-test would otherwise
     // leave the stub broken and cascade into every test after it.
-    completeTextMock.mockImplementation(async () => planResponse);
+    completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) =>
+      isWriteCall(opts.prompt) ? writeResponse : decideResponse);
   });
 
   afterEach(() => {
@@ -99,8 +115,8 @@ describe("tidying up an over-cap corrections file", () => {
 
   it("merges near-duplicates, retiring the absorbed entries rather than deleting them", async () => {
     await seed();
-    planResponse = JSON.stringify({
-      merge: [{ ids: ["rule0", "rule1"], keep: "rule0", title: "Merged", instruction: "One rule covering both.", why: "same thing" }],
+    decideResponse = JSON.stringify({
+      merge: [{ ids: ["rule0", "rule1"], keep: "rule0", why: "same thing" }],
     });
 
     const result = await run();
@@ -120,8 +136,8 @@ describe("tidying up an over-cap corrections file", () => {
       learning({ id: "absorb", appliedCount: 7, approvedRuns: 2, instruction: "Guidance number absorb covering separate territory entirely." }),
       ...Array.from({ length: 10 }, (_, i) => learning({ id: `pad${i}` })),
     ]);
-    planResponse = JSON.stringify({
-      merge: [{ ids: ["keepme", "absorb"], keep: "keepme", instruction: "Merged rule.", why: "" }],
+    decideResponse = JSON.stringify({
+      merge: [{ ids: ["keepme", "absorb"], keep: "keepme", why: "" }],
     });
 
     await run();
@@ -134,7 +150,7 @@ describe("tidying up an over-cap corrections file", () => {
   it("refuses to retire a rule a human wrote", async () => {
     await seed();
     await store.save([...(await store.load()), learning({ id: "human01", source: "manual" })]);
-    planResponse = JSON.stringify({ retire: [{ id: "human01", why: "looks stale" }] });
+    decideResponse = JSON.stringify({ retire: [{ id: "human01", why: "looks stale" }] });
 
     const result = await run();
 
@@ -148,7 +164,7 @@ describe("tidying up an over-cap corrections file", () => {
       ...(await store.load()),
       learning({ id: "fresh001", extractedAt: new Date(NOW - 3 * DAY).toISOString() }),
     ]);
-    planResponse = JSON.stringify({ retire: [{ id: "fresh001", why: "not needed" }] });
+    decideResponse = JSON.stringify({ retire: [{ id: "fresh001", why: "not needed" }] });
 
     const result = await run();
 
@@ -158,7 +174,7 @@ describe("tidying up an over-cap corrections file", () => {
   it("refuses to retire a correction a human has repeated, since that is a rewrite case", async () => {
     await seed();
     await store.save([...(await store.load()), learning({ id: "repeat01", reasserted: 2 })]);
-    planResponse = JSON.stringify({ retire: [{ id: "repeat01", why: "redundant" }] });
+    decideResponse = JSON.stringify({ retire: [{ id: "repeat01", why: "redundant" }] });
 
     const result = await run();
 
@@ -170,7 +186,7 @@ describe("tidying up an over-cap corrections file", () => {
     // `rule2` is otherwise graduation-eligible, so the ONLY reason the graduate
     // move can fail is that retire already claimed the id.
     await store.save((await store.load()).map((l) => (l.id === "rule2" ? { ...l, approvedRuns: 9 } : l)));
-    planResponse = JSON.stringify({
+    decideResponse = JSON.stringify({
       retire: [{ id: "nosuchid", why: "" }, { id: "rule2", why: "superseded" }],
       graduate: [{ id: "rule2", why: "double-claimed" }],
     });
@@ -184,7 +200,7 @@ describe("tidying up an over-cap corrections file", () => {
 
   it("refuses to make a rule permanent before it has a track record", async () => {
     await seed();
-    planResponse = JSON.stringify({ graduate: [{ id: "rule3", why: "feels right" }] });
+    decideResponse = JSON.stringify({ graduate: [{ id: "rule3", why: "feels right" }] });
 
     const result = await run();
 
@@ -195,7 +211,7 @@ describe("tidying up an over-cap corrections file", () => {
   it("makes a proven rule permanent in the agent file and frees its cap slot", async () => {
     await seed();
     await store.save([...(await store.load()), learning({ id: "proven01", approvedRuns: 5, instruction: "Cite a source before publishing anything." })]);
-    planResponse = JSON.stringify({ graduate: [{ id: "proven01", why: "5 approved runs" }] });
+    decideResponse = JSON.stringify({ graduate: [{ id: "proven01", why: "5 approved runs" }] });
 
     const result = await run();
 
@@ -214,7 +230,7 @@ describe("tidying up an over-cap corrections file", () => {
       ...Array.from({ length: 12 }, (_, i) => learning({ id: `rule${i}` })),
       learning({ id: "proven01", approvedRuns: 5 }),
     ]);
-    planResponse = JSON.stringify({ graduate: [{ id: "proven01", why: "proven" }] });
+    decideResponse = JSON.stringify({ graduate: [{ id: "proven01", why: "proven" }] });
 
     const result = await consolidateLearnings({
       agentFilePath,
@@ -233,7 +249,7 @@ describe("tidying up an over-cap corrections file", () => {
   it("writes nothing when the model returns an unusable plan", async () => {
     await seed();
     const before = await store.load();
-    planResponse = "I'm afraid I can't do that.";
+    decideResponse = "I'm afraid I can't do that.";
 
     const result = await run();
 
@@ -244,50 +260,80 @@ describe("tidying up an over-cap corrections file", () => {
     expect(await store.load()).toEqual(before);
   });
 
-  it("plans in batches, so one dead batch costs that batch and not the whole tidy-up", async () => {
-    // 60 corrections is three batches. The first returns junk; the rest must
-    // still be planned and applied.
-    await store.save(Array.from({ length: 60 }, (_, i) => learning({ id: `rule${String(i).padStart(2, "0")}` })));
-    let call = 0;
-    completeTextMock.mockImplementation(async () => {
-      call++;
-      if (call === 1) return "sorry, no";
-      return JSON.stringify({ retire: [{ id: `rule${String(call * 25 - 25).padStart(2, "0")}`, why: "superseded" }] });
+  it("asks for ids first and prose second, one call per group", async () => {
+    // The split is the whole performance story: deciding sees everything and
+    // writes almost nothing, writing sees almost nothing and produces all the
+    // text. Fused, the job ran at the speed of writing, serially.
+    await seed();
+    decideResponse = JSON.stringify({
+      merge: [{ ids: ["rule0", "rule1"], keep: "rule0", why: "same thing" }],
+      retire: [{ id: "rule5", why: "superseded" }],
     });
 
-    const result = await run();
+    await run();
 
-    expect(call).toBeGreaterThan(1);
-    expect(result.retired).toBeGreaterThan(0);
-    expect(result.note).toContain("1 of 3 batches");
+    const prompts = completeTextMock.mock.calls.map((c) => (c[1] as { prompt: string }).prompt);
+    const decide = prompts.filter((p) => !isWriteCall(p));
+    const writes = prompts.filter(isWriteCall);
+    expect(decide).toHaveLength(1);
+    expect(decide[0]).toContain("Do NOT write any replacement text");
+    // One write for the merge, none for the retirement: a retirement needs no
+    // wording and no longer waits behind text it never had a use for.
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toContain("Guidance number rule0");
+    expect(writes[0]).toContain("Guidance number rule1");
+    // The write call is small on purpose: it must not carry the other ten.
+    expect(writes[0]).not.toContain("Guidance number rule7");
   });
 
-  it("stops early once the goal is met instead of paying for every batch", async () => {
-    // 26 corrections is two batches, but one retirement is enough to hit the
-    // cap... it is not, so instead assert the inverse: a file barely over the
-    // cap that gets fixed by the first batch never opens the second.
-    await store.save(Array.from({ length: 26 }, (_, i) => learning({ id: `rule${String(i).padStart(2, "0")}` })));
-    let call = 0;
-    completeTextMock.mockImplementation(async () => {
-      call++;
-      // Ranking is newest-first and these entries tie on everything but file
-      // position, so the LAST written land in batch one. Retire 16 of those.
-      return JSON.stringify({
-        retire: Array.from({ length: 16 }, (_, i) => ({ id: `rule${String(25 - i).padStart(2, "0")}`, why: "superseded" })),
-      });
+  it("leaves a group exactly as it was when its wording cannot be written", async () => {
+    // The decision was sound; only the prose failed. Half-applying it would
+    // retire an entry into a merge that never got written.
+    await seed();
+    decideResponse = JSON.stringify({
+      merge: [{ ids: ["rule0", "rule1"], keep: "rule0", why: "same thing" }],
+      retire: [{ id: "rule5", why: "superseded" }],
+    });
+    writeResponse = "I could not do that.";
+
+    const result = await run();
+
+    expect(result.merged).toBe(0);
+    const loaded = await store.load();
+    expect(loaded.find((l) => l.id === "rule1")!.state).toBeUndefined();
+    expect(loaded.find((l) => l.id === "rule0")!.instruction).toContain("Guidance number rule0");
+    // The retirement, which needed no wording, still lands.
+    expect(loaded.find((l) => l.id === "rule5")!.state).toBe("retired");
+    expect(result.note).toContain("1 rewrite could not be written");
+  });
+
+  it("covers a whole large file in one pass, one dead group costing only itself", async () => {
+    // No ceiling on decide calls any more: they run concurrently, so a bigger
+    // file costs tokens rather than the user's time, and one press finishes the
+    // job instead of asking for three.
+    await store.save(Array.from({ length: 130 }, (_, i) => learning({ id: `rule${String(i).padStart(3, "0")}` })));
+    completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) => {
+      if (isWriteCall(opts.prompt)) return writeResponse;
+      const ids = idsIn(opts.prompt);
+      if (ids.includes("rule000")) return "sorry, no";
+      return JSON.stringify({ retire: [{ id: ids[0], why: "superseded" }] });
     });
 
     const result = await run();
 
-    expect(call).toBe(1);
-    expect(result.activeAfter).toBe(10);
+    const decideCalls = completeTextMock.mock.calls
+      .map((c) => (c[1] as { prompt: string }).prompt)
+      .filter((p) => !isWriteCall(p));
+    expect(decideCalls).toHaveLength(9);
+    expect(result.retired).toBe(8);
+    expect(result.note).toContain("1 of 9 groups");
   });
 
   it("dry run reports both diffs and touches neither file", async () => {
     await seed();
     await store.save([...(await store.load()), learning({ id: "proven01", approvedRuns: 5 })]);
     const storeBefore = readFileSync(store.filePath, "utf-8");
-    planResponse = JSON.stringify({
+    decideResponse = JSON.stringify({
       retire: [{ id: "rule4", why: "superseded" }],
       graduate: [{ id: "proven01", why: "proven" }],
     });
@@ -305,7 +351,7 @@ describe("tidying up an over-cap corrections file", () => {
     await seed();
     await store.save([...(await store.load()), learning({ id: "proven01", approvedRuns: 5 })]);
     const storeBefore = readFileSync(store.filePath, "utf-8");
-    planResponse = JSON.stringify({
+    decideResponse = JSON.stringify({
       retire: [{ id: "rule4", why: "superseded" }],
       graduate: [{ id: "proven01", why: "proven" }],
     });
@@ -325,19 +371,32 @@ describe("tidying up an over-cap corrections file", () => {
     expect(await undoConsolidation(tempDir, agentFilePath)).toBeNull();
   });
 
-  it("bounds one invocation so a huge file cannot run for ten minutes", async () => {
-    // 200 corrections is eight batches; a single pass must stop well short of
-    // that, or the web button's request times out before anything is written.
-    await store.save(Array.from({ length: 200 }, (_, i) => learning({ id: `rule${String(i).padStart(3, "0")}` })));
-    let call = 0;
-    completeTextMock.mockImplementation(async () => {
-      call++;
-      return JSON.stringify({});
+  it("keeps the calls it runs at once bounded", async () => {
+    // Unbounded, a fleet-sized file would open thirty connections at once and
+    // earn a rate limit, which costs far more time than the concurrency saved.
+    await store.save(Array.from({ length: 40 }, (_, i) => learning({ id: `rule${String(i).padStart(2, "0")}` })));
+    decideResponse = JSON.stringify({
+      merge: Array.from({ length: 12 }, (_, i) => ({
+        ids: [`rule${String(i * 2).padStart(2, "0")}`, `rule${String(i * 2 + 1).padStart(2, "0")}`],
+        keep: `rule${String(i * 2).padStart(2, "0")}`,
+        why: "same thing",
+      })),
+    });
+    let inFlight = 0;
+    let peak = 0;
+    completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return isWriteCall(opts.prompt) ? writeResponse : decideResponse;
     });
 
-    await run();
+    const result = await run();
 
-    expect(call).toBe(3);
+    expect(result.merged).toBe(12);
+    expect(peak).toBeGreaterThan(1); // they really do overlap
+    expect(peak).toBeLessThanOrEqual(6);
   });
 
   it("keeps undo history separate for two agents sharing a file name", async () => {
@@ -349,17 +408,24 @@ describe("tidying up an over-cap corrections file", () => {
     writeFileSync(otherAgent, AGENT_FILE);
 
     await seed();
-    planResponse = JSON.stringify({ retire: [{ id: "rule4", why: "superseded" }] });
+    decideResponse = JSON.stringify({ retire: [{ id: "rule4", why: "superseded" }] });
     await run();
 
     expect(await undoConsolidation(tempDir, otherAgent)).toBeNull();
     expect(await undoConsolidation(tempDir, agentFilePath)).not.toBeNull();
   });
 
-  it("reports which batch it is on, then that it is writing", async () => {
+  it("counts the rules as it writes them, not just the phase it is in", async () => {
     // The web page and the CLI both show this: a pass is minutes of model work,
     // and without it the only thing either surface can say is "please wait".
-    await store.save(Array.from({ length: 60 }, (_, i) => learning({ id: `rule${String(i).padStart(3, "0")}` })));
+    // Writing is the long phase and it is the one that can honestly count.
+    await seed();
+    decideResponse = JSON.stringify({
+      merge: [
+        { ids: ["rule0", "rule1"], keep: "rule0", why: "same thing" },
+        { ids: ["rule2", "rule3"], keep: "rule2", why: "same thing" },
+      ],
+    });
     const seen: string[] = [];
 
     await consolidateLearnings({
@@ -369,21 +435,23 @@ describe("tidying up an over-cap corrections file", () => {
       config: { capture: true, apply: true },
       stateRoot: tempDir,
       now: NOW,
-      onProgress: (p) => seen.push(`${p.phase}:${p.batch}/${p.batches}`),
+      onProgress: (p) => seen.push(`${p.phase}:${p.step}/${p.total}`),
     });
 
-    expect(seen.slice(0, 3)).toEqual(["planning:1/3", "planning:2/3", "planning:3/3"]);
-    expect(seen).toContain("applying:3/3");
+    expect(seen[0]).toBe("deciding:0/1");
+    expect(seen).toContain("deciding:1/1");
+    expect(seen).toContain("writing:0/2");
+    expect(seen).toContain("writing:2/2");
+    expect(seen).toContain("applying:2/2");
+    expect(seen[seen.length - 1]).toBe("done:2/2");
   });
 
-  it("stops reporting progress once the file is back under the cap", async () => {
-    // The early exit is the point: an agent two over the cap should not sit
-    // through three batches of progress it never needed.
+  it("reports no writing phase when nothing needs wording", async () => {
+    // Retirements and graduations change state only. Announcing a writing phase
+    // of zero would have the page claim work that never happens.
     await seed();
-    planResponse = JSON.stringify({
-      retire: [{ id: "rule4", why: "superseded" }, { id: "rule5", why: "superseded" }],
-    });
-    const planned: number[] = [];
+    decideResponse = JSON.stringify({ retire: [{ id: "rule4", why: "superseded" }] });
+    const seen: string[] = [];
 
     await consolidateLearnings({
       agentFilePath,
@@ -392,10 +460,48 @@ describe("tidying up an over-cap corrections file", () => {
       config: { capture: true, apply: true },
       stateRoot: tempDir,
       now: NOW,
-      onProgress: (p) => { if (p.phase === "planning") planned.push(p.batch); },
+      onProgress: (p) => seen.push(`${p.phase}:${p.step}/${p.total}`),
     });
 
-    expect(planned).toEqual([1]);
+    expect(seen.filter((s) => s.startsWith("writing:"))).toEqual(["writing:0/0"]);
+  });
+});
+
+describe("who shares a decide call", () => {
+  let orderForBatching: typeof import("../src/learning/consolidate").orderForBatching;
+
+  beforeAll(async () => {
+    orderForBatching = (await import("../src/learning/consolidate")).orderForBatching;
+  });
+
+  it("puts near-duplicates next to each other, whatever their rank order", async () => {
+    // Decide calls have to be small, so two duplicates either side of a batch
+    // boundary would never be compared and would both survive the pass. This
+    // costs no model call and only decides who shares a call.
+    const pair = [
+      learning({ id: "dup1", title: "Never pipe browser commands", instruction: "Piping browser wrapper output through head or grep is blocked by the allowlist." }),
+      learning({ id: "dup2", title: "Browser commands cannot be piped", instruction: "The allowlist blocks piping the browser wrapper output through head; call the wrapper alone." }),
+    ];
+    const filler = Array.from({ length: 6 }, (_, i) => learning({
+      id: `pad${i}`,
+      title: `Unrelated rule ${i}`,
+      instruction: `Something entirely different about scheduling and store items, number ${i}.`,
+    }));
+    // Six unrelated corrections sit between them to start with.
+    const scattered = [pair[0]!, ...filler, pair[1]!];
+
+    const ordered = orderForBatching(scattered);
+
+    const first = ordered.findIndex((l) => l.id === "dup1");
+    const second = ordered.findIndex((l) => l.id === "dup2");
+    expect(Math.abs(first - second)).toBe(1);
+  });
+
+  it("keeps every correction exactly once", () => {
+    const all = Array.from({ length: 20 }, (_, i) => learning({ id: `rule${i}` }));
+    const ordered = orderForBatching(all);
+    expect(ordered).toHaveLength(20);
+    expect(new Set(ordered.map((l) => l.id)).size).toBe(20);
   });
 });
 
@@ -414,9 +520,10 @@ describe("the record of an agent's last tidy-up", () => {
     agentFilePath = join(tempDir, "demo.agentuse");
     writeFileSync(agentFilePath, AGENT_FILE);
     store = LearningStore.fromAgentFile(agentFilePath);
-    planResponse = JSON.stringify({ retire: [{ id: "rule4", why: "superseded" }] });
+    decideResponse = JSON.stringify({ retire: [{ id: "rule4", why: "superseded" }] });
     completeTextMock.mockClear();
-    completeTextMock.mockImplementation(async () => planResponse);
+    completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) =>
+      isWriteCall(opts.prompt) ? writeResponse : decideResponse);
   });
 
   afterEach(() => {

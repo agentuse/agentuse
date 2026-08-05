@@ -183,9 +183,12 @@ Done
   3 merged, 1 rewritten, 12 retired, 9 now permanent — 58 → 10 in force
 ```
 
-A pass reads every stored correction, so it takes a few minutes. In the web UI it
-runs on its own page, reporting which batch it is on; leaving that page does not
-stop it, and the result waits there with its Undo button. The agent's Learnings
+A pass reads every stored correction, so it takes about a minute. It runs in two
+stages: first it decides which corrections relate to which, in small groups
+weighed in parallel, then it writes each replacement rule in its own call, again
+in parallel. In the web UI it runs on its own page and counts the rules as it
+writes them; leaving that page does not stop it, and the result waits there with
+its Undo button. The agent's Learnings
 tab links back to the last tidy-up (`Tidied up 5m ago, see what changed or undo
 it`) for as long as it is undoable, whether it was run from the browser or the
 terminal.

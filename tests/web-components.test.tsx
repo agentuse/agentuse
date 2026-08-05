@@ -1235,23 +1235,24 @@ describe('TidyResultView', () => {
 });
 
 describe('TidyProgressView', () => {
-  it('names the step it is on rather than showing a bare spinner', () => {
-    // A pass takes minutes. "Please wait" for that long reads as a hang.
-    const html = renderToString(<TidyProgressView phase="planning" batch={2} batches={3} elapsedMs={95_000} />);
-    expect(html).toContain('Planning batch 2 of 3');
+  it('counts the rules as they are written rather than showing a bare spinner', () => {
+    // A pass takes minutes. "Please wait" for that long reads as a hang, and
+    // writing is the long phase that can honestly count.
+    const html = renderToString(<TidyProgressView phase="writing" step={3} total={11} elapsedMs={95_000} />);
+    expect(html).toContain('Rewriting rule 4 of 11');
     expect(html).toContain('1m 35s');
     expect(html).toContain('aria-valuenow');
   });
 
-  it('sweeps instead of claiming a position before the first batch reports', () => {
-    const html = renderToString(<TidyProgressView phase="planning" batch={0} batches={0} elapsedMs={2_000} />);
-    expect(html).toContain('is-indeterminate');
-    expect(html).not.toContain('aria-valuenow');
+  it('names the deciding phase, which has no inner milestones to count', () => {
+    const html = renderToString(<TidyProgressView phase="deciding" step={0} total={1} elapsedMs={2_000} />);
+    expect(html).toContain('Reading every correction');
+    expect(html).not.toContain('of 0');
     expect(html).toContain('2s');
   });
 
   it('says which files it is writing at the end', () => {
-    const html = renderToString(<TidyProgressView phase="applying" batch={3} batches={3} elapsedMs={1_000} />);
+    const html = renderToString(<TidyProgressView phase="applying" step={11} total={11} elapsedMs={1_000} />);
     expect(html).toContain('corrections file and the agent file');
   });
 });
