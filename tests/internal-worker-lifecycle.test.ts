@@ -215,4 +215,48 @@ describe('internal worker lifecycle', () => {
       await api.close();
     }
   }, 45_000);
+
+  it('leaves anyway when a released run never lands', async () => {
+    // Release clears the reparenting watchdog, so this backstop is the only
+    // thing standing between a wedged run and a worker that never exits.
+    const api = await startStalledApi();
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-backstop-'));
+    const agentPath = join(projectRoot, 'stalled.agentuse');
+    await writeFile(
+      agentPath,
+      ['---', 'name: Stalled', 'model: "anthropic:claude-haiku-4-5"', 'maxSteps: 2', '---', '', 'Say hi.'].join('\n')
+    );
+    const dataHome = join(projectRoot, 'xdg-data');
+    await mkdir(dataHome, { recursive: true });
+
+    const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], {
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        XDG_DATA_HOME: dataHome,
+        HOME: projectRoot,
+        ANTHROPIC_API_KEY: 'test-key',
+        ANTHROPIC_BASE_URL: api.url,
+        AGENTUSE_RELEASE_BACKSTOP_SECONDS: '5',
+      },
+    });
+
+    try {
+      await waitForReady(child);
+      // A 600s run timeout the test will never reach, against an API that never
+      // answers: only the backstop can end this process.
+      send(child, { id: 'run-2', type: 'execute', agentPath, projectRoot, timeout: 600, maxSteps: 2 });
+      await sleep(3_000);
+      expect(child.exitCode).toBeNull();
+
+      const exited = waitForExit(child, 25_000);
+      send(child, { id: 'rel-3', type: 'release' });
+      await waitForMessage(child, (m) => m.id === 'rel-3');
+      expect(await exited).toMatchObject({ code: 0 });
+    } finally {
+      if (!child.killed && child.exitCode === null) child.kill('SIGKILL');
+      await api.close();
+    }
+  }, 45_000);
 });

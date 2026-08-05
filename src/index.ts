@@ -3632,6 +3632,17 @@ async function runInternalWorker() {
   /** Runs this worker aborted because the user stopped them after release. */
   const stoppedWhileReleased = new Set<string>();
   let releasedStopWatch: NodeJS.Timeout | undefined;
+  /**
+   * Longest timeout any in-flight run was given, so the release backstop below
+   * can never cut a legitimately slow run short. Unknown means the daemon's own
+   * ceiling for a run request, which is the most a run can be waited on anyway.
+   */
+  let maxRunTimeoutSeconds = 0;
+  const UNKNOWN_RUN_TIMEOUT_SECONDS = 24 * 60 * 60;
+  /** Grace past a run's own deadline before we call it hung and leave. */
+  const RELEASE_BACKSTOP_GRACE_SECONDS = 600;
+  /** Hard cap on how long a released worker may live, overriding the above. */
+  const releaseBackstopOverride = Number(process.env.AGENTUSE_RELEASE_BACKSTOP_SECONDS);
 
   /**
    * Once released, watch storage for a stop the user asked for.
@@ -3736,9 +3747,18 @@ async function runInternalWorker() {
   // it. Losing the reply is fine -- the run it describes is already durable in
   // storage, and serve re-reads state from there -- but an unhandled EPIPE
   // would take the process down mid-run, which is not.
+  /** Diagnostics must never take the process down; both pipes can be dead. */
+  const writeStderr = (line: string) => {
+    try {
+      process.stderr.write(line);
+    } catch {
+      // Released worker with no parent left to read it.
+    }
+  };
+  process.stderr.on('error', () => {/* parent is gone; nothing to report to */});
   process.stdout.on('error', (err: NodeJS.ErrnoException) => {
     if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') return;
-    process.stderr.write(`[worker] stdout error: ${err?.message}\n`);
+    writeStderr(`[worker] stdout error: ${err?.message}\n`);
   });
 
   /** Write one IPC response, tolerating a parent that is no longer listening. */
@@ -3846,13 +3866,32 @@ async function runInternalWorker() {
         }
         reply({ id: request.id, success: true, inFlightRuns });
         // Nothing to protect -- leave now rather than linger as a stray process.
-        if (inFlightRuns === 0) exitWorker(0);
-        else watchForStopWhileReleased();
+        if (inFlightRuns === 0) {
+          exitWorker(0);
+        } else {
+          watchForStopWhileReleased();
+          // Clearing the watchdog above removed the only thing that reaps this
+          // process, and serve is gone, so nothing else will. Runs are bounded
+          // by their own timeout; outliving it by this margin means something
+          // downstream of the abort is wedged (an MCP client that will not
+          // close, a write that never settles) and we would otherwise stay
+          // resident forever. Leaving loses nothing -- the run's progress is
+          // already in storage, and the next startup sweep reconciles it.
+          const backstopSeconds = Number.isFinite(releaseBackstopOverride) && releaseBackstopOverride > 0
+            ? releaseBackstopOverride
+            : maxRunTimeoutSeconds + RELEASE_BACKSTOP_GRACE_SECONDS;
+          const backstop = setTimeout(() => {
+            writeStderr(`[worker] released run outlived its ${backstopSeconds}s deadline; exiting\n`);
+            exitWorker(0, { force: true });
+          }, backstopSeconds * 1000);
+          backstop.unref?.();
+        }
       } else if (request.type === 'execute' || request.type === 'resume' || request.type === 'continue-session') {
         // Don't await - handle requests concurrently
         // Each request runs in parallel, response sent when complete
         inFlightRuns += 1;
         inFlightProjectRoots.add(request.projectRoot);
+        maxRunTimeoutSeconds = Math.max(maxRunTimeoutSeconds, request.timeout ?? UNKNOWN_RUN_TIMEOUT_SECONDS);
         executeAgent(request).then(async (response) => {
           reply(response);
           // Before runFinished, which may exit the process.
