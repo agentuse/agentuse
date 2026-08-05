@@ -190,6 +190,8 @@ interface WorkerExecuteOptions {
 
 interface WorkerExecuteResult {
   success: true;
+  /** The reporting worker's RSS when the run settled (see worker recycling). */
+  workerRssBytes?: number;
   result: {
     text: string;
     finishReason?: string;
@@ -203,6 +205,8 @@ interface WorkerExecuteResult {
 
 interface WorkerExecuteError {
   success: false;
+  /** The reporting worker's RSS when the run settled (see worker recycling). */
+  workerRssBytes?: number;
   error: {
     code: string;
     message: string;
@@ -579,6 +583,8 @@ class AgentWorker {
    *  Shutdown uses this to tell a busy worker from an idle one. */
   private activeRuns = new Set<string>();
   private released = false;
+  private spawnedAt = 0;
+  private recycling = false;
   private ready = false;
   private readyPromise: Promise<void> | null = null;
   private readyResolve: (() => void) | null = null;
@@ -634,6 +640,7 @@ class AgentWorker {
       };
     });
 
+    this.spawnedAt = Date.now();
     const child = spawn(process.execPath, [cliPath, "--internal-worker"], {
       stdio: ["pipe", "pipe", "pipe"],
       env: {
@@ -980,9 +987,15 @@ class AgentWorker {
 
       this.pendingRequests.set(id, {
         resolve: (value) => {
-          this.activeRuns.delete(id);
+          const settledRun = this.activeRuns.delete(id);
           requestOptions.signal?.removeEventListener("abort", abortHandler);
           resolve(value);
+          // After the caller has its answer: a run just banked its peak heap,
+          // so this is the moment to decide whether the worker is worth keeping.
+          if (settledRun) {
+            const rssBytes = (value as { workerRssBytes?: number }).workerRssBytes;
+            void this.recycleIfBloated(rssBytes, this.envOverrides.AGENTUSE_PROJECT_ID ?? "worker");
+          }
         },
         timeoutId,
       });
@@ -1042,6 +1055,42 @@ class AgentWorker {
   }
 
   /**
+   * Retire a bloated idle worker and bring up a fresh one in its place.
+   *
+   * Built on release rather than a kill so it stays safe if a run slips in
+   * between the idle check and here: the old process finishes whatever it holds
+   * and exits on its own, while the replacement takes new work immediately.
+   *
+   * Returns false when the worker is not a candidate (busy, too young, already
+   * recycling, or recycling disabled).
+   */
+  async recycleIfBloated(rssBytes: number | undefined, projectId: string): Promise<boolean> {
+    if (this.recycling || this.released) return false;
+    if (!shouldRecycleWorker({
+      rssBytes,
+      activeRuns: this.activeRuns.size,
+      ageMs: Date.now() - this.spawnedAt,
+    })) return false;
+    const rssMb = (rssBytes ?? 0) / (1024 * 1024);
+
+    this.recycling = true;
+    try {
+      if (!this.release()) return false;
+      // release() marked us shutting-down; spawn() clears it and replaces the
+      // child, and the old one's exit handler no-ops once this.process moves on.
+      this.released = false;
+      await this.spawn();
+      logger.info(`Recycled ${projectId} worker holding ${rssMb.toFixed(0)}MB (threshold ${WORKER_RECYCLE_MB}MB); a fresh one is serving now.`);
+      return true;
+    } catch (error) {
+      logger.warn(`Worker recycle for ${projectId} failed: ${(error as Error).message}`);
+      return false;
+    } finally {
+      this.recycling = false;
+    }
+  }
+
+  /**
    * Shutdown the worker process.
    */
   shutdown() {
@@ -1085,6 +1134,41 @@ const LOGGED_APPROVAL_REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
 // to settle before killing workers, so a graceful restart mid-resume finishes (or
 // rolls back) cleanly instead of orphaning the session as a stuck 'running'.
 const SHUTDOWN_DRAIN_MS = 8_000;
+
+// Retire a worker once an idle one is holding this much memory. A fresh worker
+// is ~130MB; one that has run an agent settles at 350-450MB and stays there for
+// the daemon's lifetime, so the cost is paid per project that ever ran anything
+// and never given back. Recycling an *idle* worker is close to free -- release
+// lets it exit on its own and the respawn is warm long before the next run
+// arrives -- so the threshold sits just above where a single run's high-water
+// mark lands. Set AGENTUSE_WORKER_RECYCLE_MB=0 to disable.
+const WORKER_RECYCLE_MB = (() => {
+  const raw = Number(process.env.AGENTUSE_WORKER_RECYCLE_MB);
+  if (Number.isFinite(raw) && raw >= 0) return raw;
+  return 300;
+})();
+// Floor on how often a worker may be recycled, so a project whose every run
+// crosses the threshold respawns on a timer rather than on each request.
+const WORKER_RECYCLE_MIN_AGE_MS = 2 * 60 * 1000;
+
+/**
+ * Whether an idle worker has banked enough memory to be worth replacing.
+ * Pure so the guards are testable without standing up a daemon.
+ */
+function shouldRecycleWorker(state: {
+  rssBytes: number | undefined;
+  activeRuns: number;
+  ageMs: number;
+  thresholdMb?: number;
+  minAgeMs?: number;
+}): boolean {
+  const thresholdMb = state.thresholdMb ?? WORKER_RECYCLE_MB;
+  if (thresholdMb <= 0) return false;                       // disabled
+  if (state.rssBytes === undefined) return false;           // worker did not report
+  if (state.activeRuns > 0) return false;                   // busy; try again next settle
+  if (state.ageMs < (state.minAgeMs ?? WORKER_RECYCLE_MIN_AGE_MS)) return false;  // too young
+  return state.rssBytes / (1024 * 1024) >= thresholdMb;
+}
 
 function shouldLogApprovalRequest(logged: Map<string, number>, key: string, now = Date.now()): boolean {
   for (const [existingKey, loggedAt] of logged) {
@@ -7027,6 +7111,9 @@ function createSchedulesSubcommand(): Command {
 }
 
 export const __testing = {
+  shouldRecycleWorker,
+  WORKER_RECYCLE_MB,
+  WORKER_RECYCLE_MIN_AGE_MS,
   serveSessionArtifact,
   serveSessionToolOutputArtifact,
   redactAgentDetailSource,

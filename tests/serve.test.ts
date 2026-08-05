@@ -827,3 +827,42 @@ describe('Serve Command - Multi-Project Routing', () => {
     });
   });
 });
+
+describe('worker recycling', () => {
+  const MB = 1024 * 1024;
+  const base = { rssBytes: 400 * MB, activeRuns: 0, ageMs: 10 * 60_000, thresholdMb: 300, minAgeMs: 120_000 };
+
+  it('retires an idle worker holding more than the threshold', async () => {
+    const { shouldRecycleWorker } = (await import('../src/cli/serve')).__testing;
+    expect(shouldRecycleWorker(base)).toBe(true);
+  });
+
+  it('leaves a worker that is still below the threshold', async () => {
+    const { shouldRecycleWorker } = (await import('../src/cli/serve')).__testing;
+    // A fresh worker sits near 130MB; recycling those would just churn.
+    expect(shouldRecycleWorker({ ...base, rssBytes: 140 * MB })).toBe(false);
+  });
+
+  it('never retires a worker with a run in flight', async () => {
+    const { shouldRecycleWorker } = (await import('../src/cli/serve')).__testing;
+    expect(shouldRecycleWorker({ ...base, activeRuns: 1 })).toBe(false);
+  });
+
+  it('holds off until the worker is past its minimum age, so runs cannot thrash it', async () => {
+    const { shouldRecycleWorker } = (await import('../src/cli/serve')).__testing;
+    expect(shouldRecycleWorker({ ...base, ageMs: 30_000 })).toBe(false);
+    expect(shouldRecycleWorker({ ...base, ageMs: 130_000 })).toBe(true);
+  });
+
+  it('does nothing when the worker reported no memory, or recycling is disabled', async () => {
+    const { shouldRecycleWorker } = (await import('../src/cli/serve')).__testing;
+    expect(shouldRecycleWorker({ ...base, rssBytes: undefined })).toBe(false);
+    expect(shouldRecycleWorker({ ...base, thresholdMb: 0 })).toBe(false);
+  });
+
+  it('defaults to a threshold above a fresh worker but below a used one', async () => {
+    const { WORKER_RECYCLE_MB } = (await import('../src/cli/serve')).__testing;
+    expect(WORKER_RECYCLE_MB).toBeGreaterThan(150);
+    expect(WORKER_RECYCLE_MB).toBeLessThan(345);
+  });
+});

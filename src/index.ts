@@ -4030,7 +4030,12 @@ async function runInternalWorker() {
         inFlightProjectRoots.add(request.projectRoot);
         maxRunTimeoutSeconds = Math.max(maxRunTimeoutSeconds, request.timeout ?? UNKNOWN_RUN_TIMEOUT_SECONDS);
         executeAgent(request).then(async (response) => {
-          reply(response);
+          // A run's peak heap is largely banked for good: a worker that has run
+          // an agent settles two to three times above a fresh one and stays
+          // there for the daemon's lifetime. Report it so serve can retire this
+          // process once it is idle, rather than carrying the high-water mark
+          // of every run it ever handled.
+          reply({ ...(response as Record<string, unknown>), workerRssBytes: process.memoryUsage().rss });
           // Before runFinished, which may exit the process.
           await restampStopsAfterRelease();
           runFinished();
