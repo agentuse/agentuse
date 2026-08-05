@@ -41,6 +41,9 @@ export function TidyProgressView(props: {
   phase: 'deciding' | 'writing' | 'applying' | 'done';
   step: number;
   total: number;
+  /** Which pass over the file this is. A long list needs several. */
+  round?: number;
+  maxRounds?: number;
   elapsedMs: number;
 }) {
   const { phase, step, total } = props;
@@ -51,6 +54,12 @@ export function TidyProgressView(props: {
       : phase === 'applying'
         ? 'Writing the corrections file and the agent file'
         : 'Finishing up';
+
+  // Name the pass. Without it a second pass looks like the first one starting
+  // over: the bar jumps back to the left and the same label returns, which reads
+  // as a stall rather than as progress.
+  const round = props.round ?? 1;
+  const pass = props.maxRounds && props.maxRounds > 1 ? `Pass ${round} of up to ${props.maxRounds}` : '';
 
   // Deciding is one wide call with no inner milestones, so it holds a nominal
   // third rather than pretending to a position it cannot know. Writing is the
@@ -64,7 +73,9 @@ export function TidyProgressView(props: {
       <div class="tidy-progress-head">
         <span class="btn-spinner" aria-hidden="true" />
         <span class="tidy-progress-step">{label}</span>
-        <span class="tidy-progress-elapsed">{formatElapsed(props.elapsedMs)}</span>
+        <span class="tidy-progress-elapsed">
+          {pass ? `${pass} · ` : ''}{formatElapsed(props.elapsedMs)}
+        </span>
       </div>
       <div
         class="tidy-progress-track"
@@ -79,7 +90,8 @@ export function TidyProgressView(props: {
       <p class="tidy-progress-hint">
         First it reads every stored correction and decides what says the same thing twice, what to
         sharpen, and what has earned a permanent place in the agent file. Then it writes the
-        replacements, several at a time. Leaving this page does not stop it — the result waits here.
+        replacements, several at a time, and goes back over whatever is left until another pass
+        would not help. A long list takes a few minutes. Leaving this page does not stop it — the result waits here.
       </p>
     </div>
   );
@@ -187,6 +199,8 @@ export default function LearningsTidy() {
             phase={job.phase}
             step={job.step}
             total={job.total}
+            round={job.round}
+            maxRounds={job.maxRounds}
             elapsedMs={now - job.startedAt}
           />
         )}

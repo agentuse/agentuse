@@ -86,6 +86,8 @@ interface TidyJob {
   phase: TidyProgress['phase'];
   step: number;
   total: number;
+  round: number;
+  maxRounds: number;
   projectedActive: number;
   cap: number;
   dryRun: boolean;
@@ -131,6 +133,8 @@ function tidyJobView(job: TidyJob) {
     phase: job.phase,
     step: job.step,
     total: job.total,
+    round: job.round,
+    maxRounds: job.maxRounds,
     projectedActive: job.projectedActive,
     cap: job.cap,
     dryRun: job.dryRun,
@@ -5258,6 +5262,8 @@ export function createServeCommand(): Command {
               phase: 'deciding',
               step: 0,
               total: 0,
+              round: 1,
+              maxRounds: 1,
               projectedActive: 0,
               cap: effectiveCap(target.agent.config.learning),
               dryRun: body.dryRun === true,
@@ -5276,6 +5282,8 @@ export function createServeCommand(): Command {
                 job.phase = progress.phase;
                 job.step = progress.step;
                 job.total = progress.total;
+                job.round = progress.round;
+                job.maxRounds = progress.maxRounds;
                 job.projectedActive = progress.projectedActive;
                 job.cap = progress.cap;
               },

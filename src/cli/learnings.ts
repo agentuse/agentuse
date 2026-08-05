@@ -106,11 +106,20 @@ function printResult(result: ConsolidationResult, dryRun: boolean): void {
     printDiff(result.diffs.agentFile);
   }
 
-  // A single pass plans in batches and is deliberately conservative, so a very
-  // large file lands closer to the cap without reaching it. Say so: "125 → 50"
-  // reads as finished unless we point out that 50 is still 40 over.
-  if (result.activeAfter > result.cap) {
-    console.log(chalk.yellow(`\n  Still ${result.activeAfter - result.cap} over the cap. Run tidy again to keep going.`));
+  // "125 → 50" reads as finished unless we point out that 50 is still 40 over —
+  // and then immediately account for the 50, because a press now runs until it
+  // stops paying, so what is left is usually left on merit.
+  if (result.remaining) {
+    const over = result.remaining.active - result.remaining.cap;
+    console.log(chalk.yellow(
+      result.remaining.moreToDo
+        ? `\n  Still ${over} over the cap, and there is more it can do. Run tidy again to keep going.`
+        : `\n  Still ${over} over the cap, and that is as far as tidying up can take it. The rest are still there for a reason:`,
+    ));
+    for (const reason of result.remaining.reasons) {
+      console.log(chalk.gray(`    ${reason.count} ${reason.because}`));
+    }
+    if (result.remaining.graduationWait) console.log(chalk.gray(`\n  ${result.remaining.graduationWait}`));
   }
 
   if (!dryRun && result.undoId) {
@@ -203,10 +212,13 @@ export function createLearningsCommand(): Command {
           // One line per phase, not per unit: the writes finish out of order
           // (they run concurrently), so counting them up in a terminal would
           // scroll a column of near-identical lines.
+          // The pass number leads: a second round repeats the same two lines,
+          // and without it the command looks like it is going in circles.
+          const pass = progress.round > 1 ? `pass ${progress.round}: ` : '';
           if (progress.phase === 'deciding' && progress.step === 0) {
-            console.log(chalk.gray(`  reading ${progress.projectedActive} corrections to see what repeats…`));
+            console.log(chalk.gray(`  ${pass}reading ${progress.projectedActive} corrections to see what repeats…`));
           } else if (progress.phase === 'writing' && progress.step === 0 && progress.total > 0) {
-            console.log(chalk.gray(`  rewriting ${progress.total} rule${progress.total === 1 ? '' : 's'}…`));
+            console.log(chalk.gray(`  ${pass}rewriting ${progress.total} rule${progress.total === 1 ? '' : 's'}…`));
           } else if (progress.phase === 'applying' && !options.dryRun) {
             console.log(chalk.gray('  writing both files…'));
           }

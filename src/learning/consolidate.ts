@@ -94,6 +94,24 @@ const DECIDE_BATCH_SIZE = 15;
  */
 const TIDY_CONCURRENCY = 6;
 
+/**
+ * Passes over the file one press will make.
+ *
+ * One pass is deliberately cautious — it merges only what it is sure about, and
+ * it compares corrections in small groups (see {@link DECIDE_BATCH_SIZE}), so
+ * two duplicates that never shared a group both survive it. On a big file that
+ * left the user pressing the same button five times, with nothing on screen
+ * saying how many more presses were coming or whether any of them would help.
+ *
+ * So a press keeps going by itself. Each round re-groups whatever is left, which
+ * is exactly what pressing again used to do, and it all happens in memory: the
+ * files are written once at the end, so one press is still one undo.
+ *
+ * Bounded, because rounds pay off less each time — by the fourth there is rarely
+ * a duplicate left to find — and every round is about a minute of waiting.
+ */
+const MAX_ROUNDS = 5;
+
 /** Where a running tidy-up has got to.
  *
  * Reported per unit of work rather than at the end, because the wait is the
@@ -106,6 +124,10 @@ export interface TidyProgress {
   step: number;
   /** Units in this phase; 0 when there is nothing to do in it. */
   total: number;
+  /** Which pass over the file this is, counting from 1. */
+  round: number;
+  /** Most rounds this press can make. */
+  maxRounds: number;
   /** Corrections that would still be active if the pass stopped here. */
   projectedActive: number;
   cap: number;
@@ -118,6 +140,33 @@ export interface ConsolidationChange {
   why: string;
 }
 
+/**
+ * Why the corrections still in force are still in force.
+ *
+ * Present only when a press ends above the cap, which is the moment the whole
+ * feature looks broken: the user sees "42 → 30", a cap of 10, and no reason for
+ * the gap. The rules that produced that gap already exist ({@link retireBlocked},
+ * {@link isGraduationEligible}) — they were just never shown to anyone but the
+ * model. Every remaining correction lands in exactly one bucket, so the counts
+ * add up to the number on screen.
+ *
+ * Sentences rather than codes because both surfaces render this verbatim, and
+ * the web bundle cannot import this module to phrase it itself.
+ */
+export interface TidyRemaining {
+  /** Corrections still in force. */
+  active: number;
+  cap: number;
+  /** True when the press stopped at its round limit rather than because nothing
+   *  more could be done: pressing again really will get further. */
+  moreToDo: boolean;
+  /** One clause per group, rendered as "{count} {because}". */
+  reasons: { count: number; because: string }[];
+  /** What would let more of these become permanent. Absent when some already
+   *  can, since then the wait is not what is holding the file up. */
+  graduationWait?: string;
+}
+
 export interface ConsolidationResult {
   /** False when there was nothing over the cap to fix. */
   ran: boolean;
@@ -125,6 +174,10 @@ export interface ConsolidationResult {
   activeBefore: number;
   activeAfter: number;
   cap: number;
+  /** Passes over the file this press made. */
+  rounds: number;
+  /** Why the file is still over the cap; absent when it reached it. */
+  remaining?: TidyRemaining;
   changes: ConsolidationChange[];
   merged: number;
   rewritten: number;
@@ -569,6 +622,63 @@ export async function undoConsolidation(
   return { restored: snapshot.files.map((f) => f.path) };
 }
 
+/**
+ * Account for every correction a press left in force.
+ *
+ * The order of the checks is the order of the guardrails in
+ * {@link retireBlocked}, so the bucket a correction lands in is the FIRST reason
+ * it could not be retired rather than an arbitrary one of several.
+ */
+export function explainRemaining(
+  active: Learning[],
+  cap: number,
+  now: number,
+  moreToDo: boolean,
+): TidyRemaining {
+  let manual = 0;
+  let repeated = 0;
+  let tooNew = 0;
+  let distinct = 0;
+  let eligible = 0;
+  let closest = 0;
+
+  for (const learning of active) {
+    if (isGraduationEligible(learning)) eligible++;
+    else closest = Math.max(closest, learning.approvedRuns);
+
+    if (learning.source === 'manual') manual++;
+    else if (learning.reasserted > 0) repeated++;
+    else if (ageInDays(learning, now) < RETIRE_MIN_AGE_DAYS) tooNew++;
+    else distinct++;
+  }
+
+  const reasons: TidyRemaining['reasons'] = [];
+  if (distinct > 0) reasons.push({ count: distinct, because: 'say different things, so there is nothing left to merge them into' });
+  if (tooNew > 0) {
+    reasons.push({
+      count: tooNew,
+      because: `are less than ${RETIRE_MIN_AGE_DAYS} days old, and a new correction gets that long to prove itself before it can be retired`,
+    });
+  }
+  if (manual > 0) reasons.push({ count: manual, because: 'you wrote by hand, and those are never retired for you' });
+  if (repeated > 0) reasons.push({ count: repeated, because: 'you have corrected more than once, so they get sharpened rather than dropped' });
+
+  // The question this answers is the one users actually ask: not "why is it
+  // still 30" but "why did nothing become permanent". Naming the best score so
+  // far turns a rule into a distance.
+  const graduationWait = eligible > 0
+    ? undefined
+    : `None of these can move into the agent file yet. That takes ${GRADUATE_MIN_APPROVED_RUNS} runs approved without a comment, and the closest of them has ${closest}. They will become permanent on their own as you keep approving runs.`;
+
+  return {
+    active: active.length,
+    cap,
+    moreToDo,
+    reasons,
+    ...(graduationWait ? { graduationWait } : {}),
+  };
+}
+
 export interface ConsolidateOptions {
   agentFilePath: string;
   agentInstructions: string;
@@ -585,40 +695,63 @@ export interface ConsolidateOptions {
   onProgress?: (progress: TidyProgress) => void;
 }
 
-/**
- * Run a tidy-up. Safe to call when nothing needs doing — it reports `ran: false`
- * rather than spending a model call.
- */
-export async function consolidateLearnings(options: ConsolidateOptions): Promise<ConsolidationResult> {
-  const now = options.now ?? Date.now();
-  const cap = effectiveCap(options.config);
-  const store = LearningStore.fromAgentFile(options.agentFilePath, options.config?.file);
-  const stored = await store.load();
-  const active = activeLearnings(stored);
+/** Everything a round needs that does not change between rounds. */
+interface RoundContext {
+  model: string;
+  instructions: string;
+  agentInstructions: string;
+  cap: number;
+  now: number;
+  nowIso: string;
+  /** When true a round still plans graduations but applies none, so the press
+   *  reports the reason once instead of once per round. */
+  graduationBlocked: boolean;
+  report: (phase: TidyProgress['phase'], step: number, total: number, projectedActive: number) => void;
+}
 
-  const base: ConsolidationResult = {
-    ran: false,
-    activeBefore: active.length,
-    activeAfter: active.length,
-    cap,
+/** What one pass over the active set achieved. */
+interface RoundOutcome {
+  /** The whole store state after the round, retired and graduated included. */
+  next: Learning[];
+  changes: ConsolidationChange[];
+  merged: number;
+  rewritten: number;
+  retired: number;
+  graduated: Learning[];
+  /** Graduations the model asked for, applied or not, so a press can tell
+   *  whether a graduation block actually cost anything. */
+  graduatesProposed: number;
+  batches: number;
+  failedBatches: number;
+  /** Ids of the rules whose wording could not be written. Ids rather than a
+   *  count because a later round retries the same group, and summing attempts
+   *  would report two broken rules where there is one. */
+  failedWrites: string[];
+  /** The start of an unreadable response, for the failure message. */
+  sample: string;
+}
+
+/**
+ * One pass: decide in small concurrent groups, write the wording in small
+ * concurrent calls, apply the result to a copy of the store.
+ *
+ * Touches no files. A press runs several of these and writes once at the end,
+ * so a round that goes wrong costs its own round and nothing on disk.
+ */
+async function tidyRound(current: Learning[], active: Learning[], ctx: RoundContext): Promise<RoundOutcome> {
+  const nothing: RoundOutcome = {
+    next: current,
     changes: [],
     merged: 0,
     rewritten: 0,
     retired: 0,
     graduated: [],
-    diffs: { learnings: '' },
+    graduatesProposed: 0,
+    batches: 0,
+    failedBatches: 0,
+    failedWrites: [],
+    sample: '',
   };
-
-  if (active.length <= cap) return base;
-
-  // Helper calls run on the agent's own model unless overridden: whatever
-  // provider and auth the agent already works with is guaranteed to work here,
-  // and the model that will follow these instructions should be the one that
-  // writes them.
-  const model = options.model ?? options.config?.model ?? options.agentModel;
-  const instructions = isAnthropicModel(model)
-    ? ANTHROPIC_IDENTITY_PROMPT
-    : 'You consolidate an agent\'s stored corrections into a smaller set without losing meaning, and reply with a JSON object only.';
 
   // PASS ONE: decide. Every active correction in, ids out.
   //
@@ -632,34 +765,32 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
 
   let projectedActive = active.length;
   let decided = 0;
-  const report = (phase: TidyProgress['phase'], step: number, total: number) =>
-    options.onProgress?.({ phase, step, total, projectedActive, cap });
 
-  report('deciding', 0, batches.length);
+  ctx.report('deciding', 0, batches.length, projectedActive);
   const decisions = await mapConcurrent(batches, TIDY_CONCURRENCY, async (batch) => {
-    const responseText = await completeText(model, {
-      instructions,
-      prompt: buildDecidePrompt(batch, options.agentInstructions, cap, now),
+    const responseText = await completeText(ctx.model, {
+      instructions: ctx.instructions,
+      prompt: buildDecidePrompt(batch, ctx.agentInstructions, ctx.cap, ctx.now),
       maxOutputTokens: DECIDE_MAX_OUTPUT_TOKENS,
     });
-    report('deciding', ++decided, batches.length);
+    ctx.report('deciding', ++decided, batches.length, projectedActive);
     const raw = parseJsonObject<RawDecisions>(responseText);
     if (!raw) {
       logger.debug(`[Learning] Tidy-up decide call returned unusable JSON: ${responseText.slice(0, 500)}`);
       return { plan: null, sample: responseText.trim().slice(0, 120).replace(/\s+/g, ' ') };
     }
-    return { plan: validateDecisions(raw, batch, now), sample: '' };
+    return { plan: validateDecisions(raw, batch, ctx.now), sample: '' };
   });
 
   const plan: DecidedPlan = { merges: [], rewrites: [], retires: [], graduates: [], rejected: [] };
   let failedBatches = 0;
-  let lastSample = '';
+  let sample = '';
   for (const outcome of decisions) {
     // A batch that threw (rate limit, network) counts the same as one that came
     // back unreadable: it contributes nothing and costs only itself.
     if (!outcome || !outcome.plan) {
       failedBatches++;
-      if (outcome?.sample) lastSample = outcome.sample;
+      if (outcome?.sample) sample = outcome.sample;
       continue;
     }
     plan.merges.push(...outcome.plan.merges);
@@ -670,22 +801,8 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   }
 
   for (const rejection of plan.rejected) logger.debug(`[Learning] Tidy-up rejected ${rejection}`);
-
   if (failedBatches === batches.length) {
-    // Write nothing rather than guess. A partial apply is worse than no apply
-    // when the target is the user's own agent file.
-    //
-    // Quote what came back: "unusable plan" with no evidence leaves the user
-    // (and us) with nowhere to go, and the two causes — an empty completion and
-    // a chatty one — need opposite responses.
-    return {
-      ...base,
-      ran: true,
-      model,
-      note: lastSample
-        ? `${model} did not return a usable plan; nothing was changed. It said: "${lastSample}…"`
-        : `${model} returned an empty plan; nothing was changed. Try another model with --model.`,
-    };
+    return { ...nothing, batches: batches.length, failedBatches, sample };
   }
 
   projectedActive -= plan.retires.length
@@ -706,17 +823,17 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   ];
 
   let written = 0;
-  report('writing', 0, jobs.length);
+  ctx.report('writing', 0, jobs.length, projectedActive);
   const drafts = await mapConcurrent(jobs, TIDY_CONCURRENCY, async (job) => {
     const prompt = job.kind === 'merge'
       ? buildMergePrompt([job.merge.keep, ...job.merge.absorbed])
       : buildRewritePrompt(job.rewrite.target, job.rewrite.why);
-    const responseText = await completeText(model, {
-      instructions,
+    const responseText = await completeText(ctx.model, {
+      instructions: ctx.instructions,
       prompt,
       maxOutputTokens: WRITE_MAX_OUTPUT_TOKENS,
     });
-    report('writing', ++written, jobs.length);
+    ctx.report('writing', ++written, jobs.length, projectedActive);
     const raw = parseJsonObject<RawWrite>(responseText);
     const instruction = typeof raw?.instruction === 'string' ? raw.instruction.trim() : '';
     if (!instruction) {
@@ -731,11 +848,11 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // an entry into a merge that never got written.
   const merges: { keep: Learning; absorbed: Learning[]; category: LearningCategory; title: string; instruction: string; why: string }[] = [];
   const rewrites: { target: Learning; title: string; instruction: string; why: string }[] = [];
-  let failedWrites = 0;
+  const failedWrites: string[] = [];
   jobs.forEach((job, index) => {
     const draft = drafts[index];
     if (!draft) {
-      failedWrites++;
+      failedWrites.push(job.kind === 'merge' ? job.merge.keep.id : job.rewrite.target.id);
       return;
     }
     const title = typeof draft.raw?.title === 'string' && draft.raw.title.trim() ? draft.raw.title.trim() : undefined;
@@ -760,30 +877,20 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     }
   });
 
+  const graduating = ctx.graduationBlocked ? [] : plan.graduates.map((g) => g.target);
+
   // Recompute from what SURVIVED both passes: a merge whose wording never got
   // written frees no slot, and reporting as if it had would tell the user the
   // file is closer to the cap than it is.
   projectedActive = active.length
     - plan.retires.length
-    - plan.graduates.length
+    - graduating.length
     - merges.reduce((n, m) => n + m.absorbed.length, 0);
-  report('applying', jobs.length, jobs.length);
+  if (jobs.length > 0) ctx.report('writing', jobs.length, jobs.length, projectedActive);
 
-  const graduatedTargets = plan.graduates.map((g) => g.target);
-  const canGraduate = graduatedTargets.length > 0;
-  let graduationSkipped: string | undefined;
-  if (canGraduate && options.config?.file) {
-    graduationSkipped = 'this agent shares its learnings file with other agents, so making a rule permanent here would silently remove it from them';
-  } else if (canGraduate && !(await agentFileIsWritable(options.agentFilePath))) {
-    graduationSkipped = 'the agent file is not writable';
-  }
-  const graduating = graduationSkipped ? [] : graduatedTargets;
-
-  // Build the next store state in memory so both files can be diffed before
-  // either is written.
-  const next: Learning[] = stored.map((l) => ({ ...l }));
+  // Build the round's result in memory, against a copy: nothing here is written.
+  const next: Learning[] = current.map((l) => ({ ...l }));
   const byId = new Map(next.map((l) => [l.id, l]));
-  const nowIso = new Date(now).toISOString();
 
   for (const merge of merges) {
     const keep = byId.get(merge.keep.id)!;
@@ -799,24 +906,17 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     keep.appliedCount = Math.max(keep.appliedCount, ...merge.absorbed.map((l) => l.appliedCount));
     keep.approvedRuns = Math.max(keep.approvedRuns, ...merge.absorbed.map((l) => l.approvedRuns));
     keep.reasserted = merge.absorbed.reduce((sum, l) => sum + l.reasserted, keep.reasserted);
-    keep.extractedAt = nowIso;
+    keep.extractedAt = ctx.nowIso;
     for (const absorbed of merge.absorbed) byId.get(absorbed.id)!.state = 'retired';
   }
   for (const rewrite of rewrites) {
     const target = byId.get(rewrite.target.id)!;
     target.title = rewrite.title;
     target.instruction = rewrite.instruction;
-    target.extractedAt = nowIso;
+    target.extractedAt = ctx.nowIso;
   }
   for (const retire of plan.retires) byId.get(retire.target.id)!.state = 'retired';
   for (const target of graduating) byId.get(target.id)!.state = 'graduated';
-
-  const beforeLearnings = existsSync(store.filePath) ? await readFile(store.filePath, 'utf-8') : '';
-  const afterLearnings = store.render(next);
-  const graduatedAll = next.filter((l) => l.state === 'graduated');
-
-  const agentBefore = await readFile(options.agentFilePath, 'utf-8');
-  const agentAfter = graduationSkipped ? agentBefore : spliceLearnedBlock(agentBefore, graduatedAll);
 
   const changes: ConsolidationChange[] = [
     ...merges.map((m): ConsolidationChange => ({
@@ -833,28 +933,196 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     })),
   ];
 
-  // Say what was skipped. A pass that quietly covered less than the whole file
+  return {
+    next,
+    changes,
+    merged: merges.length,
+    rewritten: rewrites.length,
+    retired: plan.retires.length + merges.reduce((n, m) => n + m.absorbed.length, 0),
+    graduated: graduating,
+    graduatesProposed: plan.graduates.length,
+    batches: batches.length,
+    failedBatches,
+    failedWrites,
+    sample,
+  };
+}
+
+/**
+ * Run a tidy-up. Safe to call when nothing needs doing — it reports `ran: false`
+ * rather than spending a model call.
+ */
+export async function consolidateLearnings(options: ConsolidateOptions): Promise<ConsolidationResult> {
+  const now = options.now ?? Date.now();
+  const cap = effectiveCap(options.config);
+  const store = LearningStore.fromAgentFile(options.agentFilePath, options.config?.file);
+  const stored = await store.load();
+  const active = activeLearnings(stored);
+
+  const base: ConsolidationResult = {
+    ran: false,
+    activeBefore: active.length,
+    activeAfter: active.length,
+    cap,
+    rounds: 0,
+    changes: [],
+    merged: 0,
+    rewritten: 0,
+    retired: 0,
+    graduated: [],
+    diffs: { learnings: '' },
+  };
+
+  if (active.length <= cap) return base;
+
+  // Helper calls run on the agent's own model unless overridden: whatever
+  // provider and auth the agent already works with is guaranteed to work here,
+  // and the model that will follow these instructions should be the one that
+  // writes them.
+  const model = options.model ?? options.config?.model ?? options.agentModel;
+  const instructions = isAnthropicModel(model)
+    ? ANTHROPIC_IDENTITY_PROMPT
+    : 'You consolidate an agent\'s stored corrections into a smaller set without losing meaning, and reply with a JSON object only.';
+
+  // Whether a rule may become permanent at all is a property of this agent, not
+  // of any one round, so it is settled once: five rounds should not re-stat the
+  // same file, and no round should mark something graduated that will never
+  // reach the agent file.
+  const graduationBlocked = options.config?.file
+    ? 'this agent shares its learnings file with other agents, so making a rule permanent here would silently remove it from them'
+    : (await agentFileIsWritable(options.agentFilePath))
+      ? undefined
+      : 'the agent file is not writable';
+
+  // Read both files before the first round. Every round below works in memory,
+  // and the files are written once at the end, so a press that took five rounds
+  // is still one undo.
+  const beforeLearnings = existsSync(store.filePath) ? await readFile(store.filePath, 'utf-8') : '';
+  const agentBefore = await readFile(options.agentFilePath, 'utf-8');
+
+  let working: Learning[] = stored.map((l) => ({ ...l }));
+  const changes: ConsolidationChange[] = [];
+  const graduated: Learning[] = [];
+  let merged = 0;
+  let rewritten = 0;
+  let retired = 0;
+  let graduatesProposed = 0;
+  let batchCount = 0;
+  let failedBatches = 0;
+  const failedWrites = new Set<string>();
+  let lastSample = '';
+  let rounds = 0;
+  let stoppedEarly = false;
+
+  for (let round = 1; round <= MAX_ROUNDS; round++) {
+    const before = activeLearnings(working);
+    if (before.length <= cap) break;
+
+    const outcome = await tidyRound(working, before, {
+      model,
+      instructions,
+      agentInstructions: options.agentInstructions,
+      cap,
+      now,
+      nowIso: new Date(now).toISOString(),
+      graduationBlocked: graduationBlocked !== undefined,
+      report: (phase, step, total, projectedActive) =>
+        options.onProgress?.({ phase, step, total, round, maxRounds: MAX_ROUNDS, projectedActive, cap }),
+    });
+
+    rounds = round;
+    batchCount += outcome.batches;
+    failedBatches += outcome.failedBatches;
+    for (const id of outcome.failedWrites) failedWrites.add(id);
+    graduatesProposed += outcome.graduatesProposed;
+    if (outcome.sample) lastSample = outcome.sample;
+
+    if (outcome.batches > 0 && outcome.failedBatches === outcome.batches) {
+      // Not one group came back readable. On the first round there is nothing
+      // to keep, so write nothing and say why rather than guess: a partial
+      // apply is worse than no apply when the target is a file the user owns.
+      //
+      // Quote what came back. "Unusable plan" with no evidence leaves the user
+      // (and us) with nowhere to go, and the two causes, an empty completion
+      // and a chatty one, need opposite responses.
+      if (round === 1) {
+        return {
+          ...base,
+          ran: true,
+          rounds,
+          model,
+          note: lastSample
+            ? `${model} did not return a usable plan; nothing was changed. It said: "${lastSample}…"`
+            : `${model} returned an empty plan; nothing was changed. Try another model with --model.`,
+        };
+      }
+      break; // a later round failing whole costs its own round, not the press
+    }
+
+    working = outcome.next;
+    changes.push(...outcome.changes);
+    graduated.push(...outcome.graduated);
+    merged += outcome.merged;
+    rewritten += outcome.rewritten;
+    retired += outcome.retired;
+
+    // Stop the moment a round stops paying. A round that freed no slot has run
+    // out of duplicates to find; the corrections left are there on merit, and
+    // four more rounds would spend minutes confirming it.
+    const after = activeLearnings(working).length;
+    if (after >= before.length) break;
+    if (round === MAX_ROUNDS && after > cap) stoppedEarly = true;
+  }
+
+  const remainingActive = activeLearnings(working);
+  const reportAt = (phase: TidyProgress['phase']) =>
+    options.onProgress?.({
+      phase,
+      step: 1,
+      total: 1,
+      round: rounds,
+      maxRounds: MAX_ROUNDS,
+      projectedActive: remainingActive.length,
+      cap,
+    });
+  reportAt('applying');
+
+  const graduatedAll = working.filter((l) => l.state === 'graduated');
+  const afterLearnings = store.render(working);
+  const agentAfter = graduationBlocked ? agentBefore : spliceLearnedBlock(agentBefore, graduatedAll);
+
+  // Only mention the block when it cost something: an unwritable agent file that
+  // nothing wanted to graduate into is not news.
+  const graduationSkipped = graduationBlocked && graduatesProposed > 0 ? graduationBlocked : undefined;
+
+  // Say what was skipped. A press that quietly covered less than the whole file
   // reads as "done" unless it admits the gap.
   const shortfalls: string[] = [];
-  if (failedBatches > 0) shortfalls.push(`${failedBatches} of ${batches.length} groups of corrections could not be planned`);
-  if (failedWrites > 0) shortfalls.push(`${failedWrites} rewrite${failedWrites === 1 ? '' : 's'} could not be written`);
+  if (failedBatches > 0) shortfalls.push(`${failedBatches} of ${batchCount} groups of corrections could not be planned`);
+  if (failedWrites.size > 0) shortfalls.push(`${failedWrites.size} rewrite${failedWrites.size === 1 ? '' : 's'} could not be written`);
   const incomplete = shortfalls.length > 0
-    ? `${shortfalls.join(' and ')}; those corrections were left untouched. Run tidy again to retry them.`
+    ? `${shortfalls.join(' and ')}; those corrections were left untouched. Tidy up again to retry them.`
     : undefined;
 
   const result: ConsolidationResult = {
     ran: true,
     model,
     activeBefore: active.length,
-    activeAfter: activeLearnings(next).length,
+    activeAfter: remainingActive.length,
     cap,
+    rounds,
     changes,
-    merged: merges.length,
-    rewritten: rewrites.length,
-    retired: plan.retires.length + merges.reduce((n, m) => n + m.absorbed.length, 0),
-    graduated: graduating.map((l) => l.title),
+    merged,
+    rewritten,
+    retired,
+    graduated: graduated.map((l) => l.title),
     ...(graduationSkipped ? { graduationSkipped } : {}),
     ...(incomplete ? { note: incomplete } : {}),
+    // Only when it ends over the cap. At or under it there is nothing to
+    // explain, and an explanation nobody asked for reads as an excuse.
+    ...(remainingActive.length > cap
+      ? { remaining: explainRemaining(remainingActive, cap, now, stoppedEarly || failedBatches > 0) }
+      : {}),
     diffs: {
       learnings: unifiedDiff(beforeLearnings, afterLearnings, { label: store.filePath }),
       ...(agentAfter !== agentBefore
@@ -877,9 +1145,9 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // Agent file first. A crash between the two writes then leaves a rule stated
   // twice, which is harmless and self-correcting on the next pass; the reverse
   // order would lose it from both places.
-  if (!graduationSkipped) await writeLearnedBlock(options.agentFilePath, graduatedAll);
-  await store.save(next);
-  report('done', jobs.length, jobs.length);
+  if (!graduationBlocked) await writeLearnedBlock(options.agentFilePath, graduatedAll);
+  await store.save(working);
+  reportAt('done');
 
   return { ...result, undoId };
 }

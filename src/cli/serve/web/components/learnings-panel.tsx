@@ -12,6 +12,7 @@ import {
   type SessionLearningSource,
   type LearningSummary,
   type TidyResult,
+  type TidyRemaining,
 } from '../lib/api';
 import { learningsTidyHref } from '../lib/links';
 import { formatRelativeTime } from '../lib/format';
@@ -64,6 +65,41 @@ function DiffBlock(props: { label: string; diff: string }) {
 }
 
 /**
+ * Why the file is still over the cap.
+ *
+ * What used to stand here was one line: "Still 20 over the cap. Tidy up again to
+ * keep going." That was the whole of what a user got after waiting a minute —
+ * press it again, no reason, no idea how many more presses were coming. Now that
+ * a press keeps going until it stops paying, ending over the cap usually means
+ * the rest have EARNED their place, so this says which rule kept each of them.
+ *
+ * The last line answers the question people actually ask, which is not "why is
+ * it still 30" but "why did none of them become permanent".
+ */
+export function TidyRemainingView({ remaining }: { remaining: TidyRemaining }) {
+  const over = remaining.active - remaining.cap;
+  return (
+    <div class="learnings-tidy-remaining">
+      <p class="learnings-note">
+        {remaining.moreToDo
+          ? `Still ${over} over the cap, and there is more it can do — tidy up again to keep going.`
+          : `Still ${over} over the cap, and that is as far as tidying up can take it. The rest are still there for a reason:`}
+      </p>
+      {remaining.reasons.length > 0 && (
+        <ul class="learnings-list">
+          {remaining.reasons.map((reason) => (
+            <li class="learnings-item" key={reason.because}>
+              <span class="learnings-text">{reason.count} {reason.because}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {remaining.graduationWait && <p class="learnings-note">{remaining.graduationWait}</p>}
+    </div>
+  );
+}
+
+/**
  * What just happened, after the fact.
  *
  * We apply first and show the result rather than asking for approval on a
@@ -105,11 +141,14 @@ export function TidyResultView(props: { result: TidyResult; onUndo: () => void; 
         <p class="learnings-note">Rules were not made permanent: {r.graduationSkipped}</p>
       )}
       {r.note && <p class="learnings-note">{r.note}</p>}
-      {r.activeAfter > r.cap && (
-        <p class="learnings-note">
-          Still {r.activeAfter - r.cap} over the cap. Tidy up again to keep going.
-        </p>
-      )}
+      {r.remaining
+        ? <TidyRemainingView remaining={r.remaining} />
+        : r.activeAfter > r.cap && (
+          // Older results, replayed from the record on disk, carry no breakdown.
+          <p class="learnings-note">
+            Still {r.activeAfter - r.cap} over the cap. Tidy up again to keep going.
+          </p>
+        )}
       {r.diffs.learnings && <DiffBlock label="corrections file" diff={r.diffs.learnings} />}
       {r.diffs.agentFile && <DiffBlock label="agent file" diff={r.diffs.agentFile} />}
       {r.undoId && !props.undone && (

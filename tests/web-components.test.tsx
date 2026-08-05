@@ -1212,7 +1212,40 @@ describe('TidyResultView', () => {
     expect(html).toContain('Undo');
   });
 
-  it('admits when a pass left the file still over the cap', () => {
+  it('accounts for the corrections it left in force, one line each', () => {
+    // "Still 40 over the cap, tidy up again" was the whole explanation a user
+    // got after waiting a minute, and it read as a failure rather than as a
+    // file whose remaining rules have earned their place.
+    const html = renderToString(<TidyResultView onUndo={noop} undoing={false} result={result({
+      activeAfter: 50,
+      remaining: {
+        active: 50,
+        cap: 10,
+        moreToDo: false,
+        reasons: [
+          { count: 38, because: 'say different things, so there is nothing left to merge them into' },
+          { count: 12, because: 'you wrote by hand, and those are never retired for you' },
+        ],
+        graduationWait: 'None of these can move into the agent file yet. That takes 3 runs approved without a comment, and the closest of them has 0.',
+      },
+    })} />);
+    expect(html).toContain('Still 40 over the cap');
+    expect(html).toContain('as far as tidying up can take it');
+    expect(html).toContain('38 say different things');
+    expect(html).toContain('12 you wrote by hand');
+    expect(html).toContain('the closest of them has 0');
+  });
+
+  it('says to press again only when pressing again would actually help', () => {
+    const html = renderToString(<TidyResultView onUndo={noop} undoing={false} result={result({
+      activeAfter: 50,
+      remaining: { active: 50, cap: 10, moreToDo: true, reasons: [] },
+    })} />);
+    expect(html).toContain('tidy up again to keep going');
+  });
+
+  it('falls back to the old line for a result saved before the breakdown existed', () => {
+    // The last tidy-up is replayed from a file on disk, which may predate this.
     const html = renderToString(<TidyResultView result={result({ activeAfter: 50 })} onUndo={noop} undoing={false} />);
     expect(html).toContain('Still 40 over the cap');
   });
@@ -1249,6 +1282,15 @@ describe('TidyProgressView', () => {
     expect(html).toContain('Reading every correction');
     expect(html).not.toContain('of 0');
     expect(html).toContain('2s');
+  });
+
+  it('names the pass, so a second one does not read as the first one stalling', () => {
+    // Every pass starts the bar over at the same label. Without the number that
+    // looks like a hang rather than like progress.
+    const html = renderToString(
+      <TidyProgressView phase="deciding" step={0} total={2} round={3} maxRounds={5} elapsedMs={9_000} />,
+    );
+    expect(html).toContain('Pass 3 of up to 5');
   });
 
   it('says which files it is writing at the end', () => {

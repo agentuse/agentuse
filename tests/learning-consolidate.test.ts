@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, mock } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { LearningStore } from "../src/learning/store";
@@ -272,7 +272,7 @@ describe("tidying up an over-cap corrections file", () => {
 
     await run();
 
-    const prompts = completeTextMock.mock.calls.map((c) => (c[1] as { prompt: string }).prompt);
+    const prompts = completeTextMock.mock.calls.map((call) => (call[1] as { prompt: string }).prompt);
     const decide = prompts.filter((p) => !isWriteCall(p));
     const writes = prompts.filter(isWriteCall);
     expect(decide).toHaveLength(1);
@@ -304,13 +304,14 @@ describe("tidying up an over-cap corrections file", () => {
     expect(loaded.find((l) => l.id === "rule0")!.instruction).toContain("Guidance number rule0");
     // The retirement, which needed no wording, still lands.
     expect(loaded.find((l) => l.id === "rule5")!.state).toBe("retired");
+    // Counted once, though a later round retried the same group and failed
+    // again: the user has one broken rule, not two.
     expect(result.note).toContain("1 rewrite could not be written");
   });
 
-  it("covers a whole large file in one pass, one dead group costing only itself", async () => {
-    // No ceiling on decide calls any more: they run concurrently, so a bigger
-    // file costs tokens rather than the user's time, and one press finishes the
-    // job instead of asking for three.
+  it("covers a whole large file, one dead group costing only itself", async () => {
+    // No ceiling on decide calls: they run concurrently, so a bigger file costs
+    // tokens rather than the user's time.
     await store.save(Array.from({ length: 130 }, (_, i) => learning({ id: `rule${String(i).padStart(3, "0")}` })));
     completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) => {
       if (isWriteCall(opts.prompt)) return writeResponse;
@@ -322,11 +323,123 @@ describe("tidying up an over-cap corrections file", () => {
     const result = await run();
 
     const decideCalls = completeTextMock.mock.calls
-      .map((c) => (c[1] as { prompt: string }).prompt)
-      .filter((p) => !isWriteCall(p));
-    expect(decideCalls).toHaveLength(9);
-    expect(result.retired).toBe(8);
-    expect(result.note).toContain("1 of 9 groups");
+      .map((call) => (call[1] as { prompt: string }).prompt)
+      .filter((prompt: string) => !isWriteCall(prompt));
+    // Nine groups on the first pass, and the one that came back unreadable took
+    // nothing else down with it: the other eight all retired their first entry.
+    expect(decideCalls.length).toBeGreaterThanOrEqual(9);
+    // Exactly one group per pass came back unreadable, and every other group
+    // retired its first entry: the dead one cost itself and nothing else.
+    expect(result.retired).toBe(decideCalls.length - result.rounds);
+    expect(result.note).toContain(`${result.rounds} of ${decideCalls.length} groups`);
+  });
+
+  it("keeps going by itself until another pass would not help", async () => {
+    // The whole point: a long list used to need the button pressed five times,
+    // with nothing on screen saying how many more presses were coming.
+    await store.save(Array.from({ length: 20 }, (_, i) => learning({ id: `rule${String(i).padStart(2, "0")}` })));
+    completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) => {
+      if (isWriteCall(opts.prompt)) return writeResponse;
+      // Retire two per pass, so it takes five passes to reach the cap of 10.
+      const ids = idsIn(opts.prompt);
+      return JSON.stringify({ retire: ids.slice(0, 2).map((id) => ({ id, why: "superseded" })) });
+    });
+
+    const result = await run();
+
+    expect(result.rounds).toBeGreaterThan(1);
+    expect(result.retired).toBeGreaterThanOrEqual(10);
+    expect(result.activeAfter).toBeLessThanOrEqual(result.cap);
+    // It reached the cap, so there is nothing left to explain.
+    expect(result.remaining).toBeUndefined();
+    // One press, one undo: the rounds happen in memory and both files are
+    // written once at the end.
+    const snapshots = readdirSync(join(tempDir, ".agentuse", "consolidations")).flatMap((d) =>
+      readdirSync(join(tempDir, ".agentuse", "consolidations", d)),
+    );
+    expect(snapshots).toHaveLength(1);
+  });
+
+  it("stops the moment a pass stops paying, rather than running the limit out", async () => {
+    await seed();
+    // The model finds one merge and then nothing: a second pass proposes the
+    // same ids, which no longer exist, so it frees nothing.
+    decideResponse = JSON.stringify({ merge: [{ ids: ["rule0", "rule1"], keep: "rule0", why: "same thing" }] });
+
+    const result = await run();
+
+    expect(result.rounds).toBe(2);
+    expect(result.merged).toBe(1);
+  });
+
+  it("says why the corrections it left in force are still there", async () => {
+    // "Still 20 over the cap, tidy up again" was the whole explanation a user
+    // used to get after waiting a minute.
+    await store.save([
+      ...Array.from({ length: 8 }, (_, i) => learning({ id: `fresh${i}`, extractedAt: new Date(NOW - 2 * DAY).toISOString() })),
+      ...Array.from({ length: 3 }, (_, i) => learning({ id: `mine${i}`, source: "manual" })),
+      learning({ id: "repeated1", reasserted: 2 }),
+      learning({ id: "plain1", approvedRuns: 1 }),
+    ]);
+    decideResponse = JSON.stringify({});
+
+    const result = await run();
+
+    const remaining = result.remaining!;
+    expect(remaining.active).toBe(13);
+    expect(remaining.cap).toBe(10);
+    expect(remaining.moreToDo).toBe(false);
+    // Every remaining correction is accounted for exactly once.
+    expect(remaining.reasons.reduce((n, r) => n + r.count, 0)).toBe(13);
+    expect(remaining.reasons.find((r) => r.because.includes("14 days old"))!.count).toBe(8);
+    expect(remaining.reasons.find((r) => r.because.includes("by hand"))!.count).toBe(3);
+    expect(remaining.reasons.find((r) => r.because.includes("more than once"))!.count).toBe(1);
+    expect(remaining.reasons.find((r) => r.because.includes("say different things"))!.count).toBe(1);
+    // Three of these are hand-written, and a hand-written rule can become
+    // permanent whenever the model picks it, so waiting is not what is holding
+    // this file up and saying it would be a red herring.
+    expect(remaining.graduationWait).toBeUndefined();
+  });
+
+  it("answers the question people actually ask: why did nothing become permanent", async () => {
+    // A distance, not a rule. "Needs three approved runs" is policy; "the
+    // closest of them has one" is how far off they are.
+    await store.save(Array.from({ length: 13 }, (_, i) => learning({ id: `rule${i}`, approvedRuns: i === 0 ? 1 : 0 })));
+    decideResponse = JSON.stringify({});
+
+    const result = await run();
+
+    expect(result.remaining!.graduationWait).toContain("3 runs approved");
+    expect(result.remaining!.graduationWait).toContain("has 1");
+  });
+
+  it("does not explain the leftovers when there are none", async () => {
+    await seed();
+    decideResponse = JSON.stringify({
+      retire: [{ id: "rule4", why: "superseded" }, { id: "rule5", why: "superseded" }],
+    });
+
+    const result = await run();
+
+    expect(result.activeAfter).toBe(10);
+    expect(result.remaining).toBeUndefined();
+  });
+
+  it("says there is more to do when it stopped at the pass limit", async () => {
+    await store.save(Array.from({ length: 40 }, (_, i) => learning({ id: `rule${String(i).padStart(2, "0")}` })));
+    completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) => {
+      if (isWriteCall(opts.prompt)) return writeResponse;
+      const ids = idsIn(opts.prompt);
+      return JSON.stringify({ retire: [{ id: ids[0], why: "superseded" }] });
+    });
+
+    const result = await run();
+
+    expect(result.rounds).toBe(5);
+    expect(result.activeAfter).toBeGreaterThan(result.cap);
+    // Pressing again really would get further, so it says so instead of
+    // claiming the rest are there on merit.
+    expect(result.remaining!.moreToDo).toBe(true);
   });
 
   it("dry run reports both diffs and touches neither file", async () => {
@@ -442,8 +555,11 @@ describe("tidying up an over-cap corrections file", () => {
     expect(seen).toContain("deciding:1/1");
     expect(seen).toContain("writing:0/2");
     expect(seen).toContain("writing:2/2");
-    expect(seen).toContain("applying:2/2");
-    expect(seen[seen.length - 1]).toBe("done:2/2");
+    // Applying happens once, after the last pass: the files are written once
+    // however many passes it took.
+    expect(seen).toContain("applying:1/1");
+    expect(seen[seen.length - 1]).toBe("done:1/1");
+    expect(seen.every((s) => s.length > 0)).toBe(true);
   });
 
   it("reports no writing phase when nothing needs wording", async () => {
@@ -463,7 +579,9 @@ describe("tidying up an over-cap corrections file", () => {
       onProgress: (p) => seen.push(`${p.phase}:${p.step}/${p.total}`),
     });
 
-    expect(seen.filter((s) => s.startsWith("writing:"))).toEqual(["writing:0/0"]);
+    // One per pass, and never claiming work: a writing phase of two would have
+    // the page count rules that are never written.
+    expect(new Set(seen.filter((s) => s.startsWith("writing:")))).toEqual(new Set(["writing:0/0"]));
   });
 });
 
@@ -536,7 +654,7 @@ describe("the record of an agent's last tidy-up", () => {
     startedAt: NOW,
     finishedAt: NOW + 1000,
     result: {
-      ran: true, activeBefore: 12, activeAfter: 11, cap: 10, changes: [],
+      ran: true, activeBefore: 12, activeAfter: 11, cap: 10, rounds: 1, changes: [],
       merged: 0, rewritten: 0, retired: 1, graduated: [], diffs: { learnings: "" },
     },
     ...over,

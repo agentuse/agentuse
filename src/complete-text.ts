@@ -55,6 +55,12 @@ export async function completeText(modelString: string, options: CompleteTextOpt
     // `messages` alone is not enough.
     ...(usesCodexBackend && { providerOptions: { openai: { instructions: options.instructions, store: false } } }),
     ...(options.abortSignal && { abortSignal: options.abortSignal }),
+    // Swallow the SDK's own error logging. Its default `onError` prints the raw
+    // error object to the console, so a helper call that failed and was handled
+    // — a tidy-up group that retries, an overloaded provider — still dumped a
+    // stack trace into the middle of a run that went on to succeed. Nothing is
+    // lost: the error chunk below throws, and the caller decides what to say.
+    onError: () => {},
   });
 
   let text = '';

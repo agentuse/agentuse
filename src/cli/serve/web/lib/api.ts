@@ -184,12 +184,28 @@ export interface TidyChange {
   why: string;
 }
 
+/** Why the corrections still in force are still in force. Present only when a
+ *  tidy-up ends above the cap. The sentences are written server-side so the two
+ *  surfaces cannot word the same rule differently. */
+export interface TidyRemaining {
+  active: number;
+  cap: number;
+  /** True when the pass stopped at its round limit, so pressing again helps. */
+  moreToDo: boolean;
+  /** Rendered as "{count} {because}". */
+  reasons: { count: number; because: string }[];
+  graduationWait?: string;
+}
+
 export interface TidyResult {
   ran: boolean;
   model?: string;
   activeBefore: number;
   activeAfter: number;
   cap: number;
+  /** Passes over the file this press made. */
+  rounds?: number;
+  remaining?: TidyRemaining;
   changes: TidyChange[];
   merged: number;
   rewritten: number;
@@ -213,6 +229,9 @@ export interface TidyJob {
   /** Units of this phase finished, out of `total`. */
   step: number;
   total: number;
+  /** Which pass over the file this is; a big file needs several. */
+  round: number;
+  maxRounds: number;
   projectedActive: number;
   cap: number;
   dryRun: boolean;
