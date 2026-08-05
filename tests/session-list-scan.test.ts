@@ -250,4 +250,44 @@ describe('session list scanning', () => {
       await rm(projectRoot, { recursive: true, force: true });
     }
   });
+
+  it('invalidates approval projections only for approval-relevant changes', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-approval-generation-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+
+    try {
+      await initStorage(projectRoot);
+      const manager = new SessionManager();
+      const sessionId = await manager.createSession({
+        agent: { id: 'agents/generation', name: 'Generation', isSubAgent: false },
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      const beforeOrdinaryStatus = await manager.getApprovalIndexGeneration();
+      await manager.setSessionCompleted(sessionId, 'agents/generation');
+      expect(await manager.getApprovalIndexGeneration()).toBe(beforeOrdinaryStatus);
+
+      const messageId = await manager.createMessage(sessionId, 'agents/generation', {
+        user: { prompt: { task: 'review' } },
+        assistant: {
+          system: [], modelID: 'demo:test', providerID: 'demo', mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot }, cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+      await manager.addPart(sessionId, 'agents/generation', messageId, {
+        type: 'tool', callID: 'approval-call', tool: 'await_human',
+        state: {
+          status: 'pending', input: { prompt: 'Approve?' }, suspendedAt: Date.now(),
+          resumePayload: { kind: 'await_human', resumeToken: 'approval-token' },
+        },
+      });
+      expect(await manager.getApprovalIndexGeneration()).toBeGreaterThan(beforeOrdinaryStatus);
+    } finally {
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
 });

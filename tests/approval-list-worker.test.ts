@@ -53,7 +53,7 @@ describe('approval list worker', () => {
     worker = undefined;
   });
 
-  it('bounds approval list scans by the session directory creation window', async () => {
+  it('filters the durable approval projection by the session creation window', async () => {
     const originalXdgDataHome = process.env.XDG_DATA_HOME;
     const originalNow = Date.now;
     const dataHome = await mkdtemp(join(tmpdir(), 'agentuse-approvals-window-'));

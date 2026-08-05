@@ -714,7 +714,7 @@ export default function Agents({ project }: { project?: string } = {}) {
   const [sessionsFallback, setSessionsFallback] = useState(false);
   const fetchedSessions = useFetch(
     'agents-last-runs',
-    () => fetchSessions({ window: '30d' }),
+    () => fetchSessions({ window: '30d', detail: 'agents' }),
     sessionsFallback ? { refreshMs: 10_000 } : {}
   );
   useSessionsStream({
@@ -724,6 +724,7 @@ export default function Agents({ project }: { project?: string } = {}) {
     triage: undefined,
     trigger: undefined,
     approval: undefined,
+    detail: 'agents',
     enabled: !sessionsFallback,
     onData: setStreamedSessions,
     onError: () => setSessionsFallback(true),

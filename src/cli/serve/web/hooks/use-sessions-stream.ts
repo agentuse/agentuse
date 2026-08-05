@@ -12,7 +12,7 @@ export function useSessionsStream(options: {
   approval: string | undefined;
   window: string | undefined;
   limit?: number | undefined;
-  detail?: 'feed' | undefined;
+  detail?: 'feed' | 'agents' | undefined;
   mock?: 'include' | 'only' | undefined;
   enabled: boolean;
   onData: (payload: SessionsPayload) => void;

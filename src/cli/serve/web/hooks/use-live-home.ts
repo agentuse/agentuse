@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ApiRequestError, ApprovalRow, SessionRow, SessionsPayload, ApprovalsListPayload } from '../lib/api';
-import { fetchSessions, fetchApprovals } from '../lib/api';
+import { fetchSessions } from '../lib/api';
 import { useFetch } from './use-fetch';
 import { useSessionsStream } from './use-sessions-stream';
-import { useApprovalsStream } from './use-approvals-stream';
+import { useGlobalApprovals } from './use-global-approvals';
 import { displayStatusLabel } from '../lib/format';
 
 /** One row of the home-page activity feed, derived from session transitions. */
@@ -125,8 +125,7 @@ export function useLiveHome(): LiveHome {
   const [sessionsPayload, setSessionsPayload] = useState<SessionsPayload | null>(null);
   const [sessionsFallback, setSessionsFallback] = useState(false);
   const [streamError, setStreamError] = useState<ApiRequestError | null>(null);
-  const [approvalsPayload, setApprovalsPayload] = useState<ApprovalsListPayload | null>(null);
-  const [approvalsFallback, setApprovalsFallback] = useState(false);
+  const approvals = useGlobalApprovals();
 
   // Plain rows, no detail: 'feed'. Home charts run counts and statuses now, so
   // hydrating every ended session's final response would ship a payload of
@@ -136,12 +135,6 @@ export function useLiveHome(): LiveHome {
     () => fetchSessions({ window: '24h' }),
     sessionsFallback ? { refreshMs: 10_000 } : {}
   );
-  const fetchedApprovals = useFetch(
-    'home-approvals',
-    () => fetchApprovals(),
-    approvalsFallback ? { refreshMs: 15_000 } : {}
-  );
-
   useSessionsStream({
     window: '24h',
     agent: undefined,
@@ -159,21 +152,10 @@ export function useLiveHome(): LiveHome {
     onFallback: () => setSessionsFallback(true),
   });
 
-  useApprovalsStream({
-    days: undefined,
-    project: undefined,
-    enabled: !approvalsFallback,
-    onData: setApprovalsPayload,
-    onError: () => {},
-    onFallback: () => setApprovalsFallback(true),
-  });
-
   const sessionsData = sessionsFallback
     ? (fetchedSessions.data ?? sessionsPayload)
     : (sessionsPayload ?? fetchedSessions.data);
-  const approvalsData = approvalsFallback
-    ? (fetchedApprovals.data ?? approvalsPayload)
-    : (approvalsPayload ?? fetchedApprovals.data);
+  const approvalsData = approvals.data;
 
   const [feed, setFeed] = useState<ActivityEvent[]>([]);
   const prevLabels = useRef<Map<string, string> | null>(null);

@@ -1,8 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { openAgentPalette } from './agent-palette';
-import { useFetch } from '../hooks/use-fetch';
-import { fetchApprovals } from '../lib/api';
+import { useGlobalApprovals } from '../hooks/use-global-approvals';
 import { WORDMARK_SVG } from '../../brand';
 import { brandName, hasCustomBrand } from '../lib/brand';
 
@@ -70,15 +69,7 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
   const activeNavRef = useRef<HTMLAnchorElement>(null);
   const [navEdges, setNavEdges] = useState({ left: false, right: false });
 
-  // Pending-approvals count for the approvals tab badge, visible on every page.
-  // A capability-scoped session view (?token=) has no operator access to the
-  // approvals endpoint, so skip the poll there — it would only 401.
-  const scoped = typeof location !== 'undefined' && new URLSearchParams(location.search).has('token');
-  const approvals = useFetch(
-    'topbar-approvals',
-    () => (scoped ? Promise.resolve(null) : fetchApprovals()),
-    scoped ? {} : { refreshMs: 30_000 }
-  );
+  const approvals = useGlobalApprovals();
   const pending = approvals.data?.buckets.pending.length ?? 0;
 
   // Keep the current destination visible on narrow screens and expose overflow

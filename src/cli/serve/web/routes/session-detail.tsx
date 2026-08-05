@@ -263,6 +263,12 @@ export default function SessionDetail() {
   // Project artifacts this run produced, from the artifact manifest. Refetched as
   // the log grows so newly written artifacts appear without a page reload.
   const [artifacts, setArtifacts] = useState<SessionArtifact[]>([]);
+  // Artifact manifests change only when artifact_save completes. Keeping this
+  // separate from logsVersion prevents an initial SSE transcript replay from
+  // turning N historical log entries into N manifest requests.
+  const [artifactRevision, setArtifactRevision] = useState(0);
+  const [logsLimit, setLogsLimit] = useState(400);
+  const [logsTotal, setLogsTotal] = useState<number | null>(null);
   // Debug-level operational logs are hidden by default to keep the log readable;
   // the preference persists across sessions.
   const [showDebug, setShowDebug] = useState<boolean>(() => {
@@ -368,23 +374,25 @@ export default function SessionDetail() {
     setFatalError(null);
     setLogsVersion((v) => v + 1);
     setArtifacts([]);
+    setLogsLimit(400);
+    setLogsTotal(null);
     // Re-latch the summary-first decision, and the keyed uncontrolled
     // <details> transcript remounts closed for the new session.
     firstViewEndedRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  // Pull the run's artifacts from the manifest, refreshing as the log grows so a
-  // freshly written artifact surfaces live. Best-effort: a fetch error just
-  // leaves the panel empty rather than disrupting the page.
+  // Pull the run's artifacts once on navigation, then only after an artifact
+  // entry arrives. Abort a superseded request instead of merely ignoring its
+  // result: ignored requests still consume a server slot and were the source of
+  // a large first-load request storm on long transcripts.
   useEffect(() => {
     if (!sessionId) return;
-    let cancelled = false;
-    fetchSessionArtifacts(sessionId, token, projectId)
+    const controller = new AbortController();
+    fetchSessionArtifacts(sessionId, token, projectId, controller.signal)
       .then((payload) => {
-        if (cancelled) return;
-        // The effect refetches on every log batch, but artifacts change rarely;
-        // skip the state update (and re-render) when the list is unchanged.
+        // Artifacts change rarely; skip the state update when the list is
+        // unchanged so an explicit refresh does not repaint the transcript.
         setArtifacts((prev) => {
           const next = payload.artifacts;
           const same = prev.length === next.length
@@ -393,8 +401,8 @@ export default function SessionDetail() {
         });
       })
       .catch(() => { /* leave panel empty */ });
-    return () => { cancelled = true; };
-  }, [sessionId, token, projectId, logsVersion]);
+    return () => controller.abort();
+  }, [sessionId, token, projectId, artifactRevision]);
 
   useApprovalStream({
     sessionId,
@@ -402,16 +410,25 @@ export default function SessionDetail() {
     project: projectId,
     nudge,
     pending,
+    logsLimit,
     handlers: {
       onStatus: handleStatus,
       onLog: (entry) => {
-        if (mergeLog(entry)) commitLogs();
-      },
-      onLogs: (entries) => {
-        let changed = false;
-        for (const entry of entries) {
-          if (mergeLog(entry)) changed = true;
+        if (mergeLog(entry)) {
+          if (entry.details?.savedArtifact) setArtifactRevision((value) => value + 1);
+          commitLogs();
         }
+      },
+      onLogs: (entries, total) => {
+        if (total !== undefined) setLogsTotal(total);
+        let changed = false;
+        let artifactChanged = false;
+        for (const entry of entries) {
+          if (!mergeLog(entry)) continue;
+          changed = true;
+          if (entry.details?.savedArtifact) artifactChanged = true;
+        }
+        if (artifactChanged) setArtifactRevision((value) => value + 1);
         if (changed) commitLogs();
       },
       onFatalError: (_code, message) => setFatalError(message),
@@ -1051,6 +1068,15 @@ export default function SessionDetail() {
   // title (live/feed-first) or inside the collapsed <details> (summary-first).
   const logsFeed = (
     <div class="panel">
+      {logsTotal !== null && logsRef.current.size < logsTotal && (
+        <button
+          type="button"
+          class="attn-more"
+          onClick={() => setLogsLimit((current) => Math.min(current + 400, 5_000))}
+        >
+          load earlier entries ({logsTotal - logsRef.current.size} remaining)
+        </button>
+      )}
       <ul class="logs" role="log">
         {visibleLogs.length === 0 && (
           <li class="log-empty">

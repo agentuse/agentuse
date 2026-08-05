@@ -56,6 +56,8 @@ export interface SessionListSummary {
   error?: { code?: string; message?: string };
   dismissedAt?: number;
   mock?: boolean;
+  /** This session has participated in an approval/cascade lifecycle. */
+  approvalRelevant?: boolean;
   /** Suspended parent parked on a running delegated child (a "running ·
    *  subagent" run, not one blocked on a human gate). Derived at list time from
    *  the full set, not persisted. See ./subagent-active. */
@@ -66,6 +68,7 @@ export interface SessionListSummary {
 interface SessionIndex {
   version: 1;
   generation: number;
+  approvalGeneration?: number;
   sessions: Record<string, SessionListSummary>;
 }
 
@@ -85,6 +88,20 @@ function getPartOrder(part: Part): number {
   }
   if (part.type === 'compaction' || part.type === 'learning' || part.type === 'error' || part.type === 'log' || part.type === 'verify') return part.time.start;
   return Number.MAX_SAFE_INTEGER;
+}
+
+function partAffectsApprovalIndex(part: Part): boolean {
+  if (part.type !== 'tool') return false;
+  if (part.tool === 'await_human') return true;
+  const state = part.state;
+  const resumePayload = state.status === 'pending'
+    ? state.resumePayload
+    : ('metadata' in state && state.metadata && typeof state.metadata === 'object'
+        ? (state.metadata as { resumePayload?: { kind?: string } }).resumePayload
+        : undefined);
+  return resumePayload && typeof resumePayload === 'object' && 'kind' in resumePayload
+    ? resumePayload.kind === 'subagent_wait'
+    : false;
 }
 
 function stringifyToolOutputArtifact(value: unknown): string {
@@ -155,6 +172,12 @@ function toSessionListSummary(session: SessionInfo, sessionPath: string): Sessio
 
 export class SessionManager {
   private static foundSessionPathCache: Map<string, string> = new Map();
+  private static sessionIndexCache: Map<string, {
+    mtimeMs: number;
+    size: number;
+    ino: number;
+    index: SessionIndex;
+  }> = new Map();
 
   private sessionID: string | null = null;
   private agentId: string | null = null;
@@ -208,8 +231,30 @@ export class SessionManager {
 
   private async readSessionIndex(): Promise<SessionIndex | null> {
     try {
+      const state = await getStorageState();
+      const indexPath = path.join(state.dir, `${SESSION_INDEX_KEY}.json`);
+      const stat = await fs.stat(indexPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (!stat) return null;
+      const cached = SessionManager.sessionIndexCache.get(indexPath);
+      if (
+        cached &&
+        cached.mtimeMs === stat.mtimeMs &&
+        cached.size === stat.size &&
+        cached.ino === stat.ino
+      ) {
+        return cached.index;
+      }
       const index = await readJSON<SessionIndex>(SESSION_INDEX_KEY);
       if (!index || index.version !== 1 || typeof index.generation !== 'number' || !index.sessions || typeof index.sessions !== 'object') return null;
+      SessionManager.sessionIndexCache.set(indexPath, {
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        ino: stat.ino,
+        index,
+      });
       return index;
     } catch (error) {
       if (error instanceof CorruptStorageError) {
@@ -220,6 +265,19 @@ export class SessionManager {
     }
   }
 
+  private async writeSessionIndex(index: SessionIndex): Promise<void> {
+    await writeJSON(SESSION_INDEX_KEY, index);
+    const state = await getStorageState();
+    const indexPath = path.join(state.dir, `${SESSION_INDEX_KEY}.json`);
+    const stat = await fs.stat(indexPath);
+    SessionManager.sessionIndexCache.set(indexPath, {
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      ino: stat.ino,
+      index,
+    });
+  }
+
   private async rebuildSessionIndex(): Promise<SessionIndex> {
     const entries = await this.readSessionEntries();
     const sessions: Record<string, SessionListSummary> = {};
@@ -227,15 +285,33 @@ export class SessionManager {
       sessions[entry.session.id] = toSessionListSummary(entry.session, entry.path);
     }
     const index: SessionIndex = { version: 1, generation: Date.now(), sessions };
-    await writeJSON(SESSION_INDEX_KEY, index);
+    await this.writeSessionIndex(index);
     return index;
   }
 
-  private async updateSessionIndex(session: SessionInfo, sessionPath: string): Promise<void> {
+  private async updateSessionIndex(
+    session: SessionInfo,
+    sessionPath: string,
+    options: { approvalRelevant?: boolean } = {}
+  ): Promise<void> {
     const index = await this.readSessionIndex() ?? await this.rebuildSessionIndex();
-    index.sessions[session.id] = toSessionListSummary(session, sessionPath);
-    index.generation++;
-    await writeJSON(SESSION_INDEX_KEY, index);
+    const previous = index.sessions[session.id];
+    const approvalRelevant = options.approvalRelevant === true || previous?.approvalRelevant === true;
+    const approvalChanged = options.approvalRelevant === true ||
+      previous?.status === 'suspended' || session.status === 'suspended' ||
+      (approvalRelevant && previous?.status !== session.status);
+    const summary = toSessionListSummary(session, sessionPath);
+    if (approvalRelevant) summary.approvalRelevant = true;
+    const updated: SessionIndex = {
+      ...index,
+      generation: index.generation + 1,
+      approvalGeneration: (index.approvalGeneration ?? index.generation) + (approvalChanged ? 1 : 0),
+      sessions: {
+        ...index.sessions,
+        [session.id]: summary,
+      },
+    };
+    await this.writeSessionIndex(updated);
   }
 
   /** Mark an update in progress so a crash is detected before a list read. */
@@ -276,6 +352,14 @@ export class SessionManager {
   private rememberSessionPath(sessionID: string, agentId: string, sessionPath: string): void {
     this.sessionPathCache.set(this.sessionPathCacheKey(sessionID, agentId), sessionPath);
     SessionManager.foundSessionPathCache.set(sessionID, sessionPath);
+  }
+
+  private async touchSessionDirectory(sessionPath: string): Promise<void> {
+    const state = await getStorageState();
+    const now = new Date();
+    await fs.utimes(path.join(state.dir, sessionPath), now, now).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
   }
 
   private knownSessionPath(sessionID: string, agentId: string): string {
@@ -437,7 +521,11 @@ export class SessionManager {
     return results;
   }
 
-  private async updateSessionAtPath(sessionPath: string, updates: Partial<Omit<SessionInfo, 'id'>>): Promise<void> {
+  private async updateSessionAtPath(
+    sessionPath: string,
+    updates: Partial<Omit<SessionInfo, 'id'>>,
+    options: { approvalRelevant?: boolean } = {}
+  ): Promise<void> {
     const key = `${sessionPath}/session`;
 
     await this.serializedWrite(key, () => this.withSessionIndexMutation(async () => {
@@ -446,7 +534,7 @@ export class SessionManager {
       Object.assign(session, updates);
       session.time.updated = Date.now();
       await writeJSON(key, session);
-      await this.updateSessionIndex(session, sessionPath);
+      await this.updateSessionIndex(session, sessionPath, options);
     }));
   }
 
@@ -482,6 +570,7 @@ export class SessionManager {
         } as Part);
       });
     }));
+    await this.touchSessionDirectory(sessionPath);
   }
 
   /**
@@ -566,6 +655,7 @@ export class SessionManager {
     const sessionPath = this.knownSessionPath(sessionID, agentId);
     // New path structure: {messageID}/message.json
     await writeJSON(`${sessionPath}/${id}/message`, message);
+    await this.touchSessionDirectory(sessionPath);
     return id;
   }
 
@@ -593,6 +683,10 @@ export class SessionManager {
 
     // New path structure: {messageID}/part/{partID}.json
     await writeJSON(`${sessionPath}/${messageID}/part/${id}`, completePart);
+    await this.touchSessionDirectory(sessionPath);
+    if (partAffectsApprovalIndex(completePart)) {
+      await this.updateSessionAtPath(sessionPath, {}, { approvalRelevant: true });
+    }
     return id;
   }
 
@@ -624,8 +718,12 @@ export class SessionManager {
       if (!existing) {
         throw new Error(`PART_NOT_FOUND: cannot update part ${partID} of session ${sessionID} (resolved path: ${sessionPath})`);
       }
-      const updated = { ...existing, ...updates };
+      const updated = { ...existing, ...updates } as Part;
       await writeJSON(key, updated);
+      await this.touchSessionDirectory(sessionPath);
+      if (partAffectsApprovalIndex(existing) || partAffectsApprovalIndex(updated)) {
+        await this.updateSessionAtPath(sessionPath, {}, { approvalRelevant: true });
+      }
     });
   }
 
@@ -694,6 +792,7 @@ export class SessionManager {
           message.user = { ...message.user, ...updates.user } as Message['user'];
         }
         await writeJSON(key, message);
+        await this.touchSessionDirectory(sessionPath);
       }
     });
   }
@@ -942,44 +1041,18 @@ export class SessionManager {
     return null;
   }
 
-  /**
-   * Cheap change probe over a session's subtree, statting directories only.
-   * Every persisted write goes through writeJSON's temp-file + rename
-   * (storage.ts), and both steps touch the containing directory's mtime, so
-   * adding, rewriting, or removing any session/message/part/context/subagent
-   * file changes the max directory mtime. One readdir + stat per directory,
-   * no file reads or JSON parses — pollers can skip rebuilding a session view
-   * whose signature is unchanged. Returns null when the session dir is gone
-   * (callers must not cache against an unprobeable signature).
-   */
+  /** One-stat live-view change probe. Nested transcript writes touch the
+   * session root, so pollers no longer recurse through every message and part
+   * directory twice a second. */
   async getSessionChangeSignature(sessionPath: string): Promise<string | null> {
     const state = await getStorageState();
-    let dirCount = 0;
-    let maxMtimeMs = 0;
-
-    const walk = async (dir: string): Promise<void> => {
-      let subdirs: string[];
-      try {
-        const [stat, entries] = await Promise.all([
-          fs.stat(dir),
-          fs.readdir(dir, { withFileTypes: true })
-        ]);
-        dirCount += 1;
-        if (stat.mtimeMs > maxMtimeMs) maxMtimeMs = stat.mtimeMs;
-        subdirs = entries
-          .filter((entry) => entry.isDirectory())
-          .map((entry) => path.join(dir, entry.name));
-      } catch (error) {
-        // A directory can vanish mid-walk (session cleanup); treat it as
-        // absent rather than failing the probe.
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-        throw error;
-      }
-      await Promise.all(subdirs.map((subdir) => walk(subdir)));
-    };
-
-    await walk(path.join(state.dir, sessionPath));
-    return dirCount === 0 ? null : `${dirCount}:${maxMtimeMs}`;
+    try {
+      const stat = await fs.stat(path.join(state.dir, sessionPath));
+      return `${stat.mtimeMs}:${stat.ctimeMs}`;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
   }
 
   /**
@@ -1161,6 +1234,15 @@ export class SessionManager {
       .filter((session) => options.createdAfter === undefined || session.createdAt >= options.createdAfter)
       .sort((a, b) => b.createdAt - a.createdAt || b.sessionId.localeCompare(a.sessionId))
       .map((session) => activeIds.has(session.sessionId) ? { ...session, subagentActive: true } : session);
+  }
+
+  /** Generation token for the durable approval projection. Ordinary runs do
+   * not invalidate it; approval/cascade part writes and suspended transitions do. */
+  async getApprovalIndexGeneration(): Promise<number> {
+    await this.listSessionSummaries({ includeSubagents: true });
+    const index = await this.readSessionIndex();
+    if (!index) throw new Error('Session index unavailable after rebuild');
+    return index.approvalGeneration ?? index.generation;
   }
 
   async listSessionsCreatedAfter(

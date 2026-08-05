@@ -34,6 +34,7 @@ import * as readline from 'readline';
 import { PluginManager } from './plugin';
 import { version as packageVersion } from '../package.json';
 import { existsSync as existsSyncFs } from 'fs';
+import { createHash } from 'crypto';
 
 // Detect if running from a linked/local development build
 function getVersionString(): string {
@@ -1037,7 +1038,7 @@ if (process.argv[2] === '--internal-worker') {
 async function runInternalWorker() {
   const { createInterface } = await import('readline');
   const { SessionManager } = await import('./session/index.js');
-  const { initStorage, CorruptStorageError } = await import('./storage/index.js');
+  const { initStorage, CorruptStorageError, readJSON, writeJSON } = await import('./storage/index.js');
 
   // Configure logger to be quiet
   logger.configure({ level: LogLevel.ERROR, quiet: true, disableTUI: true });
@@ -1064,6 +1065,9 @@ async function runInternalWorker() {
     approvalCreatedAfter?: number;
     sessionsCreatedAfter?: number;
     includeSubagents?: boolean;
+    sessionsLimit?: number;
+    sessionsPerAgent?: number;
+    sessionsMock?: 'exclude' | 'include' | 'only';
     sessionRefs?: Array<{ sessionId: string; agentId: string }>;
     /** reconcile-orphans: only sessions last touched before this timestamp (the
      *  reconciling worker's ready time) are treated as orphans of a dead worker. */
@@ -1205,6 +1209,17 @@ async function runInternalWorker() {
     channels?: {
       slack?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
     };
+  }
+
+  interface ApprovalProjectionIndex {
+    version: 1;
+    approvalGeneration: number;
+    approvals: ApprovalSummary[];
+  }
+
+  function approvalProjectionKey(projectRoot: string): string {
+    const projectHash = createHash('sha256').update(resolve(projectRoot)).digest('hex').slice(0, 20);
+    return `.index/approvals.${projectHash}.v1`;
   }
 
   function valueAsRecord(value: unknown): Record<string, unknown> {
@@ -2689,13 +2704,6 @@ async function runInternalWorker() {
     }
   }
 
-  function approvalPartCreatedAt(state: any, session: SessionInfo): number {
-    const suspendedAt = typeof state?.suspendedAt === 'number' ? state.suspendedAt : undefined;
-    const startedAt = typeof state?.time?.start === 'number' ? state.time.start : undefined;
-    const endedAt = typeof state?.time?.end === 'number' ? state.time.end : undefined;
-    return suspendedAt ?? startedAt ?? endedAt ?? session.time.created;
-  }
-
   const approvalPartCache = new Map<string, {
     updatedAt: number;
     part: ToolPart | null;
@@ -2770,7 +2778,10 @@ async function runInternalWorker() {
       req.projectRoot,
       req.approvalCreatedAfter ?? '',
       req.sessionsCreatedAfter ?? '',
-      req.includeSubagents ? 'subagents' : 'top'
+      req.includeSubagents ? 'subagents' : 'top',
+      req.sessionsLimit ?? '',
+      req.sessionsPerAgent ?? '',
+      req.sessionsMock ?? ''
     ].join('\0');
   }
 
@@ -2938,11 +2949,33 @@ async function runInternalWorker() {
     try {
       await initStorage(req.projectRoot);
       const sessionManager = new SessionManager();
-      const sessions = typeof req.approvalCreatedAfter === 'number'
-        ? await sessionManager.listSessionsCreatedAfter(req.approvalCreatedAfter, {
-            includeSubagents: true
-          })
-        : await sessionManager.listAllSessions();
+      const approvalGeneration = await sessionManager.getApprovalIndexGeneration();
+      const projectionKey = approvalProjectionKey(req.projectRoot);
+      let projection: ApprovalProjectionIndex | null = null;
+      try {
+        projection = await readJSON<ApprovalProjectionIndex>(projectionKey);
+      } catch (error) {
+        if (!(error instanceof CorruptStorageError)) throw error;
+        logger.warn(`Rebuilding corrupt approval index: ${error.message}`);
+      }
+      if (
+        projection?.version === 1 &&
+        projection.approvalGeneration === approvalGeneration &&
+        Array.isArray(projection.approvals)
+      ) {
+        return {
+          id: req.id,
+          success: true as const,
+          approvals: typeof req.approvalCreatedAfter === 'number'
+            ? projection.approvals.filter((approval) => (approval.createdAt ?? 0) >= req.approvalCreatedAfter!)
+            : projection.approvals,
+        };
+      }
+
+      // Build one all-history projection for this project. Date-windowed Web UI
+      // requests filter this compact file in memory instead of rescanning every
+      // session/message/part tree for each page load and SSE poll.
+      const sessions = await sessionManager.listAllSessions();
       const approvals: ApprovalSummary[] = [];
       const sessionBatchSize = 16;
 
@@ -2990,9 +3023,6 @@ async function runInternalWorker() {
               const stale = await findStaleCascadeChild(sessionManager, childId);
               if (stale) {
                 const createdAt = session.time.created;
-                if (typeof req.approvalCreatedAfter === 'number' && createdAt < req.approvalCreatedAfter) {
-                  return null;
-                }
                 return {
                   sessionId: session.id,
                   agentId,
@@ -3013,10 +3043,6 @@ async function runInternalWorker() {
         if (!approvalPart) return null;
 
         const state = approvalPart.state;
-        const approvalCreatedAt = approvalPartCreatedAt(state, session);
-        if (typeof req.approvalCreatedAfter === 'number' && approvalCreatedAt < req.approvalCreatedAfter) {
-          return null;
-        }
         const input = valueAsRecord(state.input);
         const metadata = 'metadata' in state ? valueAsRecord(state.metadata) : {};
         const resumePayload = state.status === 'pending'
@@ -3114,10 +3140,18 @@ async function runInternalWorker() {
         approvals.push(...summaries.filter((approval): approval is ApprovalSummary => approval !== null));
       }
 
+      await writeJSON(projectionKey, {
+        version: 1,
+        approvalGeneration,
+        approvals,
+      } satisfies ApprovalProjectionIndex);
+
       return {
         id: req.id,
         success: true as const,
-        approvals
+        approvals: typeof req.approvalCreatedAfter === 'number'
+          ? approvals.filter((approval) => (approval.createdAt ?? 0) >= req.approvalCreatedAfter!)
+          : approvals,
       };
     } catch (err) {
       return {
@@ -3141,8 +3175,9 @@ async function runInternalWorker() {
 
       // Top-level runs by default; approval-filtered session views opt into
       // subagents so approval history links can land on the exact run.
-      const summaries = sessions
+      let summaries = sessions
         .filter((session) => sessionBelongsToProject(session, req.projectRoot))
+        .filter((session) => req.sessionsMock === 'include' || (req.sessionsMock === 'only' ? session.mock === true : session.mock !== true))
         .map((session) => ({
           sessionId: session.sessionId,
           ...(session.parentSessionId && { parentSessionId: session.parentSessionId }),
@@ -3162,6 +3197,20 @@ async function runInternalWorker() {
           ...(session.subagentActive && { subagentActive: true }),
         }))
         .sort((a, b) => b.createdAt - a.createdAt);
+
+      if (typeof req.sessionsPerAgent === 'number' && req.sessionsPerAgent > 0) {
+        const counts = new Map<string, number>();
+        summaries = summaries.filter((session) => {
+          const key = session.agent.filePath ?? session.agent.id;
+          const count = counts.get(key) ?? 0;
+          if (count >= req.sessionsPerAgent!) return false;
+          counts.set(key, count + 1);
+          return true;
+        });
+      }
+      if (typeof req.sessionsLimit === 'number' && req.sessionsLimit > 0) {
+        summaries = summaries.slice(0, req.sessionsLimit);
+      }
 
       return {
         id: req.id,

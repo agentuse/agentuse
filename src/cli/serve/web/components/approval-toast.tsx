@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
-import type { ApprovalRow, ApprovalsListPayload } from '../lib/api';
+import type { ApprovalRow } from '../lib/api';
 import { postSessionDecision } from '../lib/api';
-import { useApprovalsStream } from '../hooks/use-approvals-stream';
+import { useGlobalApprovals } from '../hooks/use-global-approvals';
 
 const rowKey = (row: ApprovalRow): string => `${row.project}:${row.sessionId}`;
 const sessionHref = (row: ApprovalRow): string =>
@@ -24,15 +24,12 @@ export function ApprovalToast() {
   const [pendingCount, setPendingCount] = useState(0);
   const [busy, setBusy] = useState<'approved' | 'rejected' | null>(null);
   const [outcome, setOutcome] = useState<'approved' | 'rejected' | null>(null);
-  const [fallback, setFallback] = useState(false);
   const seenRef = useRef<Set<string> | null>(null);
+  const approvals = useGlobalApprovals();
 
-  useApprovalsStream({
-    days: undefined,
-    project: undefined,
-    enabled: !fallback,
-    onData: (payload: ApprovalsListPayload) => {
-      const pending = payload.buckets.pending;
+  useEffect(() => {
+      const pending = approvals.data?.buckets.pending;
+      if (!pending) return;
       setPendingCount(pending.length);
       const seen = seenRef.current;
       if (!seen) {
@@ -52,10 +49,7 @@ export function ApprovalToast() {
         if (fresh && fresh.resumeToken) return fresh;
         return survives ? current : null;
       });
-    },
-    onError: () => {},
-    onFallback: () => setFallback(true),
-  });
+  }, [approvals.data]);
 
   // The session page renders the gate inline with full context; a banner on
   // top of it would be a duplicate. Suppress while that page is open.

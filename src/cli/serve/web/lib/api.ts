@@ -17,12 +17,19 @@ export class ApiRequestError extends Error implements ApiError {
   }
 }
 
-async function getJson<T>(path: string, params: Record<string, string | undefined> = {}): Promise<T> {
+async function getJson<T>(
+  path: string,
+  params: Record<string, string | undefined> = {},
+  options: { signal?: AbortSignal } = {}
+): Promise<T> {
   const url = new URL(path, location.origin);
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined) url.searchParams.set(key, value);
   }
-  const response = await fetch(url, { headers: { Accept: 'application/json' } });
+  const response = await fetch(url, {
+    headers: { Accept: 'application/json' },
+    ...(options.signal && { signal: options.signal }),
+  });
   const payload = await response.json().catch(() => null);
   if (!response.ok || payload?.success === false) {
     throw new ApiRequestError(
@@ -70,7 +77,7 @@ export interface ApprovalsListPayload {
 
 export function fetchApprovals(options: { days?: string | undefined; project?: string | undefined; limit?: number | undefined; cursor?: string | undefined } = {}): Promise<ApprovalsListPayload> {
   return getJson('/api/approvals', {
-    days: options.days, project: options.project,
+    days: options.days, project: options.project, view: 'buckets',
     ...(options.limit !== undefined && { limit: String(options.limit) }), cursor: options.cursor,
   });
 }
@@ -79,6 +86,7 @@ export function approvalsEventUrl(options: { days?: string | undefined; project?
   const url = new URL('/api/approvals/events', location.origin);
   if (options.days !== undefined) url.searchParams.set('days', options.days);
   if (options.project !== undefined) url.searchParams.set('project', options.project);
+  url.searchParams.set('view', 'buckets');
   return url.toString();
 }
 
@@ -88,6 +96,7 @@ export interface ApprovalStatusPayload {
   status: string;
   approval: ApprovalPageInfo;
   logs: ApprovalLogEntry[];
+  logsTotal?: number;
   decision: unknown;
 }
 
@@ -124,8 +133,11 @@ function withToken(path: string, token?: string): string {
   return token ? `${path}?token=${encodeURIComponent(token)}` : path;
 }
 
-export function fetchSessionStatus(sessionId: string, token: string | undefined, project?: string): Promise<ApprovalStatusPayload> {
-  return getJson(`/sessions/${encodeURIComponent(sessionId)}/status`, { token, project, logs: '1' });
+export function fetchSessionStatus(sessionId: string, token: string | undefined, project?: string, logsLimit?: number): Promise<ApprovalStatusPayload> {
+  return getJson(`/sessions/${encodeURIComponent(sessionId)}/status`, {
+    token, project, logs: '1',
+    ...(logsLimit !== undefined && { logsLimit: String(logsLimit) }),
+  });
 }
 
 export interface SessionArtifact {
@@ -142,8 +154,17 @@ export interface SessionArtifactsPayload {
   artifacts: SessionArtifact[];
 }
 
-export function fetchSessionArtifacts(sessionId: string, token: string | undefined, project?: string): Promise<SessionArtifactsPayload> {
-  return getJson(`/sessions/${encodeURIComponent(sessionId)}/artifacts-list`, { token, project });
+export function fetchSessionArtifacts(
+  sessionId: string,
+  token: string | undefined,
+  project?: string,
+  signal?: AbortSignal
+): Promise<SessionArtifactsPayload> {
+  return getJson(
+    `/sessions/${encodeURIComponent(sessionId)}/artifacts-list`,
+    { token, project },
+    signal ? { signal } : {}
+  );
 }
 
 export type SessionLearningSource = 'auto' | 'approval' | 'manual';
@@ -540,7 +561,7 @@ export function fetchSessions(options: {
   window?: string | undefined;
   limit?: number | undefined;
   cursor?: string | undefined;
-  detail?: 'feed' | undefined;
+  detail?: 'feed' | 'agents' | undefined;
   /** Mock/test runs are excluded server-side by default; 'include' mixes them in, 'only' shows just them. */
   mock?: 'include' | 'only' | undefined;
 } = {}): Promise<SessionsPayload> {
@@ -596,7 +617,7 @@ export function sessionsEventUrl(options: {
   approval?: string | undefined;
   window?: string | undefined;
   limit?: number | undefined;
-  detail?: 'feed' | undefined;
+  detail?: 'feed' | 'agents' | undefined;
   mock?: 'include' | 'only' | undefined;
 } = {}): string {
   const url = new URL('/sessions/events', location.origin);

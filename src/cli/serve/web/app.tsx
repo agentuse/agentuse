@@ -4,6 +4,7 @@ import { Topbar } from './components/topbar';
 import { AgentPalette } from './components/agent-palette';
 import { ApprovalToast } from './components/approval-toast';
 import { NavTracker } from './hooks/use-smart-back';
+import { GlobalApprovalsProvider } from './hooks/use-global-approvals';
 import { reloadOnChunkError } from './lib/lazy-route';
 
 const Home = lazy(reloadOnChunkError(() => import('./routes/home')));
@@ -58,9 +59,10 @@ export function App() {
     <LocationProvider>
       <NavTracker />
       <ErrorBoundary>
-        <AgentPalette />
-        <ApprovalToast />
-        <Router
+        <GlobalApprovalsProvider>
+          <AgentPalette />
+          <ApprovalToast />
+          <Router
           onLoadStart={() => setRouteLoading(true)}
           onLoadEnd={() => {
             setRouteLoading(false);
@@ -70,7 +72,7 @@ export function App() {
             setRouteLoading(false);
             dismissBootLoader();
           }}
-        >
+          >
           <Route path="/" component={Home} />
           <Route path="/agents" component={Agents} />
           <Route path="/agents/:project" component={Agents} />
@@ -87,7 +89,8 @@ export function App() {
               of its own, which would be ambiguous under /agents/:project/:agent*. */}
           <Route path="/learnings/tidy" component={LearningsTidy} />
           <Route default component={NotFound} />
-        </Router>
+          </Router>
+        </GlobalApprovalsProvider>
       </ErrorBoundary>
     </LocationProvider>
   );

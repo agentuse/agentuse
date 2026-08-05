@@ -6,7 +6,7 @@ import { isLiveStatus } from '../lib/format';
 export interface ApprovalStreamHandlers {
   onStatus: (status: string, approval: Omit<ApprovalPageInfo, 'logs'>) => void;
   onLog: (entry: ApprovalLogEntry) => void;
-  onLogs: (entries: ApprovalLogEntry[]) => void;
+  onLogs: (entries: ApprovalLogEntry[], total?: number) => void;
   /**
    * Terminal load failures that the view should render as an error instead of
    * retrying: unauthorized (401), not found (404), and corrupted session data
@@ -48,12 +48,13 @@ export function useApprovalStream(options: {
    * not be treated as a fatal "not found".
    */
   pending?: boolean;
+  logsLimit?: number;
 }): void {
   const handlersRef = useRef(options.handlers);
   handlersRef.current = options.handlers;
   const nudgeRef = useRef<() => void>(() => {});
 
-  const { sessionId, token, project, pending } = options;
+  const { sessionId, token, project, pending, logsLimit } = options;
 
   useEffect(() => {
     // Grace window for a just-started session that 404s in the polling fallback.
@@ -72,6 +73,7 @@ export function useApprovalStream(options: {
     const url = new URL(`/sessions/${encodeURIComponent(sessionId)}/events`, location.origin);
     if (token) url.searchParams.set('token', token);
     if (project) url.searchParams.set('project', project);
+    if (logsLimit !== undefined) url.searchParams.set('logsLimit', String(logsLimit));
 
     // One status fetch → dispatch to the view. Shared by the initial paint and
     // the polling fallback so first load / SPA navigation never waits on the SSE
@@ -79,12 +81,12 @@ export function useApprovalStream(options: {
     // terminal error was surfaced and the caller should stop.
     const fetchAndDispatch = async (): Promise<{ fatal: boolean; delay: number }> => {
       try {
-        const payload = await fetchSessionStatus(sessionId, token, project);
+        const payload = await fetchSessionStatus(sessionId, token, project, logsLimit);
         if (closed) return { fatal: false, delay: 1500 };
         seenOk = true;
         const { logs, ...approval } = payload.approval;
         handlersRef.current.onStatus(payload.status, approval);
-        handlersRef.current.onLogs(payload.logs ?? logs ?? []);
+        handlersRef.current.onLogs(payload.logs ?? logs ?? [], payload.logsTotal);
         return { fatal: false, delay: isLiveStatus(payload.status, payload.logs ?? []) ? 500 : 1500 };
       } catch (err) {
         const status = (err as { status?: number }).status;
@@ -204,17 +206,18 @@ export function useApprovalStream(options: {
     };
     document.addEventListener('visibilitychange', onVisible);
 
-    // Paint from the API right away (in parallel with opening the stream) so the
-    // page shows the session in one round-trip instead of waiting on the SSE
-    // handshake — which, on a slow/buffered stream, may never deliver its first
-    // event and leaves the page stuck on "Loading session…". SSE then takes over
-    // for live deltas. A terminal error on this first load tears the stream down.
-    connect();
+    // Paint from the API first, then attach the stream. A fresh server-side SSE
+    // loop replays existing logs one event at a time; opening it concurrently
+    // let that replay beat the batched status response and caused one render per
+    // historical log. Once the batch has seeded the client's id map, replayed
+    // entries are harmless duplicates and SSE carries only subsequent deltas.
     void fetchAndDispatch().then(({ fatal }) => {
-      if (!fatal) return;
+      if (closed) return;
+      if (!fatal) {
+        connect();
+        return;
+      }
       closed = true;
-      source?.close();
-      source = null;
       if (pollTimer) clearTimeout(pollTimer);
       if (sseRetryTimer) clearTimeout(sseRetryTimer);
     });
@@ -226,7 +229,7 @@ export function useApprovalStream(options: {
       if (pollTimer) clearTimeout(pollTimer);
       if (sseRetryTimer) clearTimeout(sseRetryTimer);
     };
-  }, [sessionId, token, project]);
+  }, [sessionId, token, project, logsLimit]);
 
   useEffect(() => {
     if (options.nudge > 0) nudgeRef.current();

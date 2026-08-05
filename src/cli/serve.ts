@@ -1,6 +1,5 @@
 import { Command } from "commander";
 import { createServer, IncomingMessage, ServerResponse } from "http";
-import { WebClient } from "@slack/web-api";
 import { timingSafeEqual } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
 import { join, resolve, basename, relative, extname, dirname } from "path";
@@ -27,7 +26,7 @@ import { registerServer, unregisterServer, updateServer, listServers, formatUpti
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
-import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
+import { SlackApprovalSocket, loadSlackSdk, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
 import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, consolidateLearnings, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord, type LearningConfig, type ConsolidationResult, type TidyProgress } from "../learning";
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
@@ -888,13 +887,16 @@ class AgentWorker {
 
   listSessions(
     projectRoot: string,
-    options: { createdAfter?: number; includeSubagents?: boolean } = {}
+    options: { createdAfter?: number; includeSubagents?: boolean; limit?: number; perAgent?: number; mock?: 'exclude' | 'include' | 'only' } = {}
   ): Promise<WorkerListSessionsResult | WorkerExecuteError> {
     return this.request({
       type: "list-sessions",
       projectRoot,
       sessionsCreatedAfter: options.createdAfter,
       includeSubagents: options.includeSubagents,
+      sessionsLimit: options.limit,
+      sessionsPerAgent: options.perAgent,
+      sessionsMock: options.mock,
       timeout: 30,
     }) as Promise<WorkerListSessionsResult | WorkerExecuteError>;
   }
@@ -1346,6 +1348,15 @@ function parseApprovalSessionFilter(value: string | undefined): ApprovalSessionF
 
 const LIST_PAGE_DEFAULT_LIMIT = 50;
 const LIST_PAGE_MAX_LIMIT = 100;
+const SESSION_LOG_DEFAULT_LIMIT = 400;
+const SESSION_LOG_MAX_LIMIT = 5_000;
+
+function sessionLogLimit(requestUrl: URL): number {
+  const parsed = Number(requestUrl.searchParams.get('logsLimit'));
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.min(Math.floor(parsed), SESSION_LOG_MAX_LIMIT)
+    : SESSION_LOG_DEFAULT_LIMIT;
+}
 
 type CursorPage<T> = { items: T[]; nextCursor?: string; limit?: number };
 
@@ -3519,21 +3530,27 @@ export function createServeCommand(): Command {
           return;
         }
 
-        const web = new WebClient(slackBotToken);
-        void web.chat.postMessage({
-          channel: approval.channelMessage.channel,
-          thread_ts: approval.channelMessage.ts,
-          text: message,
-          blocks: [
-            {
-              type: 'section',
-              text: {
-                type: 'mrkdwn',
-                text: `*AgentUse processed your comment.*\nThe agent continued after receiving the feedback.`
+        const channel = approval.channelMessage.channel;
+        const threadTs = approval.channelMessage.ts;
+        // Already fire-and-forget; the async wrapper is only so the deferred
+        // Slack SDK can be awaited without changing this helper's signature.
+        void (async () => {
+          const web = new (await loadSlackSdk()).WebClient(slackBotToken);
+          await web.chat.postMessage({
+            channel,
+            thread_ts: threadTs,
+            text: message,
+            blocks: [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: `*AgentUse processed your comment.*\nThe agent continued after receiving the feedback.`
+                }
               }
-            }
-          ] as any[]
-        }).catch((err) => logger.warn(`Slack approval thread note failed: ${(err as Error).message}`));
+            ] as any[]
+          });
+        })().catch((err) => logger.warn(`Slack approval thread note failed: ${(err as Error).message}`));
       };
 
       const sessionIdForLocalApprovalThread = async (comment: SlackApprovalThreadComment): Promise<string | undefined> => {
@@ -3567,13 +3584,15 @@ export function createServeCommand(): Command {
         blocks: any[]
       ): void => {
         if (!slackBotToken) return;
-        const web = new WebClient(slackBotToken);
-        void web.chat.postMessage({
-          channel: comment.channel,
-          thread_ts: comment.threadTs,
-          text,
-          blocks
-        }).catch((err) => logger.warn(`Slack run thread note failed: ${(err as Error).message}`));
+        void (async () => {
+          const web = new (await loadSlackSdk()).WebClient(slackBotToken);
+          await web.chat.postMessage({
+            channel: comment.channel,
+            thread_ts: comment.threadTs,
+            text,
+            blocks
+          });
+        })().catch((err) => logger.warn(`Slack run thread note failed: ${(err as Error).message}`));
       };
 
       const continueSlackRunThread = async (comment: SlackApprovalThreadComment): Promise<SlackRunThreadCommentResult> => {
@@ -3729,7 +3748,7 @@ export function createServeCommand(): Command {
 
       let slackApprovalSocket: SlackApprovalSocket | null = null;
       if (slackBotToken && slackAppToken) {
-        slackApprovalSocket = new SlackApprovalSocket({
+        slackApprovalSocket = await SlackApprovalSocket.create({
           botToken: slackBotToken,
           appToken: slackAppToken,
           onDecision: resumeSuspendedSession,
@@ -3857,6 +3876,15 @@ export function createServeCommand(): Command {
         const mockFilter = parseSessionMockFilter(requestUrl.searchParams.get('mock') ?? undefined);
         const createdAfter = sessionListCreatedAfter(requestUrl);
         const daysFilter = sessionDaysFilterValue(requestUrl);
+        const detail = requestUrl.searchParams.get('detail');
+        const rawLimit = requestUrl.searchParams.get('limit');
+        const parsedLimit = rawLimit === null ? undefined : Number(rawLimit);
+        const requestedLimit = parsedLimit !== undefined && Number.isFinite(parsedLimit) && parsedLimit > 0
+          ? Math.min(Math.floor(parsedLimit), LIST_PAGE_MAX_LIMIT)
+          : rawLimit === null ? undefined : LIST_PAGE_DEFAULT_LIMIT;
+        const canPrelimit = requestedLimit !== undefined &&
+          !requestUrl.searchParams.get('cursor') &&
+          !agentFilter && !statusFilter && !triageFilter && !triggerFilter && !approvalFilter;
 
         type ProjectSessionRow = { projectId: string; session: SessionSummary };
         const rows: ProjectSessionRow[] = [];
@@ -3872,7 +3900,10 @@ export function createServeCommand(): Command {
             project.root,
             {
               ...(createdAfter !== undefined && { createdAfter }),
-              ...(approvalFilter && { includeSubagents: true })
+              ...(approvalFilter && { includeSubagents: true }),
+              ...(canPrelimit && { limit: requestedLimit }),
+              ...(detail === 'agents' && { perAgent: 12 }),
+              mock: mockFilter,
             }
           );
           if (!result.success) {
@@ -3952,7 +3983,7 @@ export function createServeCommand(): Command {
         );
 
         let pageItems = page.items;
-        if (requestUrl.searchParams.get('detail') === 'feed') {
+        if (detail === 'feed') {
           const finalResponses = new Map<string, string | undefined>();
           const missingByProject = new Map<string, ProjectSessionRow[]>();
 
@@ -4124,13 +4155,14 @@ export function createServeCommand(): Command {
         const days = requestUrl.searchParams.get('days') === 'all'
           ? 'all' as const
           : Math.floor((Date.now() - createdAfter!) / (24 * 60 * 60 * 1000));
+        const bucketsOnly = requestUrl.searchParams.get('view') === 'buckets';
 
         return {
           success: true,
           payload: {
             success: true,
             multiProject: selectedProjects.length > 1,
-            approvals: paged ?? rows.map(serializeRow),
+            approvals: bucketsOnly ? [] : (paged ?? rows.map(serializeRow)),
             buckets: { pending: pagePending, completed: pageCompleted, expired: pageExpired },
             window: {
               days,
@@ -4681,6 +4713,7 @@ export function createServeCommand(): Command {
           const sessionId = decodeURIComponent(sessionEventsMatch[1]);
           const token = requestUrl.searchParams.get('token') ?? undefined;
           const projectId = requestUrl.searchParams.get('project') ?? undefined;
+          const logsLimit = sessionLogLimit(requestUrl);
           if (!sessionAuthorized(sessionId, token)) {
             sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
             return;
@@ -4698,7 +4731,7 @@ export function createServeCommand(): Command {
                 : found.info.approval.sessionStatus === 'suspended'
                   ? 'waiting'
                   : found.info.approval.sessionStatus;
-            const logs = logsWithChildSessions(
+            const allLogs = logsWithChildSessions(
               found.info.approval.logs ?? [],
               found.info.approval.childSessions ?? [],
               (childSessionId) => {
@@ -4709,6 +4742,7 @@ export function createServeCommand(): Command {
                 return `/sessions/${encodeURIComponent(childSessionId)}?${params.toString()}`;
               }
             );
+            const logs = allLogs.slice(-logsLimit);
             const approval = { ...found.info.approval };
             delete approval.logs;
             if (approval.parentSessionId) {
@@ -4721,7 +4755,7 @@ export function createServeCommand(): Command {
             applyResumeError(approval, activeKey);
             return { ok: true, snapshot: { status, approval, logs } };
           };
-          if (!approvalHub.subscribe({ key: sessionId, sessionId, poll, req, res })) {
+          if (!approvalHub.subscribe({ key: `${sessionId}:logs:${logsLimit}`, sessionId, poll, req, res })) {
             sendError(res, 503, "TOO_MANY_SUBSCRIBERS", "Too many live connections for this session");
           }
           return;
@@ -4734,6 +4768,7 @@ export function createServeCommand(): Command {
           const token = requestUrl.searchParams.get('token') ?? undefined;
           const projectId = requestUrl.searchParams.get('project') ?? undefined;
           const includeLogs = requestUrl.searchParams.get('logs') === '1';
+          const logsLimit = sessionLogLimit(requestUrl);
           if (!sessionAuthorized(sessionId, token)) {
             sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
             return;
@@ -4777,7 +4812,7 @@ export function createServeCommand(): Command {
               : found.info.approval.sessionStatus === 'suspended'
                 ? 'waiting'
                 : found.info.approval.sessionStatus;
-          const logs = logsWithChildSessions(
+          const allLogs = logsWithChildSessions(
             found.info.approval.logs ?? [],
             found.info.approval.childSessions ?? [],
             (childSessionId) => {
@@ -4788,6 +4823,7 @@ export function createServeCommand(): Command {
               return `/sessions/${encodeURIComponent(childSessionId)}?${params.toString()}`;
             }
           );
+          const logs = allLogs.slice(-logsLimit);
           const parentSid = found.info.approval.parentSessionId;
           let parentHref: string | undefined;
           if (parentSid) {
@@ -4808,6 +4844,7 @@ export function createServeCommand(): Command {
               ...(parentHref && { parentHref }),
             }, activeKey),
             logs,
+            logsTotal: allLogs.length,
             decision: found.info.approval.decision
           }));
           return;
@@ -4826,7 +4863,10 @@ export function createServeCommand(): Command {
             sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
             return;
           }
-          const found = await findSessionInfo(sessionId, projectId);
+          // Resolving an artifact list needs only the owning project. The old
+          // path rebuilt the complete transcript/approval view before reading
+          // the manifest, multiplying that work during live log bursts.
+          const found = await findSessionStatusInfo(sessionId, projectId);
           if (!found.success) {
             sendError(res, found.status, found.code, found.message);
             return;
@@ -5807,7 +5847,8 @@ export function createServeCommand(): Command {
           const streamKey = [
             'approvals',
             requestUrl.searchParams.get('days') ?? '',
-            requestUrl.searchParams.get('project') ?? ''
+            requestUrl.searchParams.get('project') ?? '',
+            requestUrl.searchParams.get('view') ?? ''
           ].join(':');
           const poll: import("./serve/sse").ApprovalListPoll<ApprovalListPayload> = async () => {
             const result = await buildApprovalListPayload(requestUrl);
