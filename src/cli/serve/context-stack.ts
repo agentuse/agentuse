@@ -157,17 +157,21 @@ const MAX_CALL_DETAILS = 12;
  * MCP tool still gets something better than "call 3".
  */
 function describeCall(input: unknown): string {
+  // Generous, because the page shortens the paths inside a command before it
+  // truncates: spending this budget on directory names would cut the script
+  // name and arguments, which are the parts that tell calls apart.
+  const cap = 400;
   const args = asRecord(input);
   for (const key of ['command', 'file_path', 'path', 'name', 'query', 'url', 'prompt', 'pattern']) {
     const value = args[key];
     if (typeof value === 'string' && value.trim().length > 0) {
       const line = value.trim().split('\n')[0]!;
-      return line.length > 140 ? `${line.slice(0, 140)}…` : line;
+      return line.length > cap ? `${line.slice(0, cap)}…` : line;
     }
   }
   const preview = Object.keys(args).length > 0 ? JSON.stringify(args) : '';
   if (!preview) return 'no arguments';
-  return preview.length > 140 ? `${preview.slice(0, 140)}…` : preview;
+  return preview.length > cap ? `${preview.slice(0, cap)}…` : preview;
 }
 
 /** The text the tool actually returned, which is what the model then carries. */
