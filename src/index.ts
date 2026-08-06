@@ -8,7 +8,8 @@ import { isMockMode, resolveMockApprovalDecision } from './runner/mock-tools';
 import { extractToolIntent, withoutToolIntent } from './runner/tool-intent';
 import { LIVE_OUTPUT_METADATA_KEY } from './tools/types';
 import { composeSubagentResult, formatOutcomeLine, normalizeHeadline, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from './tools/report-outcome';
-import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findStaleCascadeChild, describeStaleCascade, CASCADE_ORPHANED_CODE, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
+import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findStaleCascadeChild, describeStaleCascade, isFinishableStale, loadStoredSubagentResult, CASCADE_ORPHANED_CODE, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
+import { currentProcessRef } from './utils/process-info';
 import { contextUsageFromSnapshot } from './session/usage';
 import { repairEscapedText } from './utils/display-text';
 import { Command } from 'commander';
@@ -1047,7 +1048,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'approval-info' | 'session-status' | 'session-context' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'release';
+    type: 'execute' | 'resume' | 'continue-session' | 'finish-cascade' | 'approval-info' | 'session-status' | 'session-context' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'release';
     agentPath?: string;
     projectRoot: string;
     /** invalidate-lists: hold the short list TTL for a window (start pokes). */
@@ -2052,6 +2053,16 @@ async function runInternalWorker() {
     return Boolean(error && typeof error === 'object' && (error as any)[Symbol.for('agentuse.existingSessionPreRunError')]);
   }
 
+  // The slice of a child's run result the walk-up needs. Structurally satisfied
+  // both by a live runAgent result and by loadStoredSubagentResult's rebuild,
+  // which is what lets the recovery path share the exact same walk-up code.
+  interface CascadeChildResult {
+    text?: string | undefined;
+    complete?: { headline: string; details?: string; artifacts?: string[] } | undefined;
+    incomplete?: { reason: string } | undefined;
+    usage?: { totalTokens?: number | undefined } | undefined;
+  }
+
   // Complete a parent's parked subagent__* step with the resumed child's real output,
   // matching the shape the sub-agent tool returns on a normal run, so rehydration can
   // replay the tool result and the parent can resume.
@@ -2061,7 +2072,7 @@ async function runInternalWorker() {
     parentAgentId: string,
     childSessionId: string,
     childAgentName: string,
-    childResult: Awaited<ReturnType<typeof runAgent>>
+    childResult: CascadeChildResult
   ): Promise<NonNullable<Awaited<ReturnType<typeof applyResumeToolResult>>['rollback']>> {
     const parts = await loadSessionPartsFlat(sessionManager, parentSessionId, parentAgentId);
     const part = [...parts].reverse().find((p: any) =>
@@ -2125,6 +2136,84 @@ async function runInternalWorker() {
     };
   }
 
+  // Mark this process as the one driving a parked ancestor chain. The orphan
+  // sweep's only way to tell a healthy mid-cascade chain from a stranded one is
+  // the parent's recorded owner being alive — but until the walk-up reaches a
+  // parent, its owner still names whichever worker originally suspended it,
+  // which may be several restarts dead while this cascade is perfectly healthy
+  // (issue #199). Best-effort: a failed stamp only weakens that liveness
+  // signal, it must not block the resume.
+  async function claimCascadeChain(
+    sessionManager: InstanceType<typeof SessionManager>,
+    chain: Array<{ sessionId: string; agentId: string }>
+  ): Promise<void> {
+    await Promise.all(chain.map(({ sessionId, agentId }) =>
+      sessionManager.updateSession(sessionId, agentId, { owner: currentProcessRef() } as any).catch(() => {})
+    ));
+  }
+
+  // Walk a parked ancestor chain back up from a finished child: complete each
+  // ancestor's subagent_wait bookmark with its child's real output, resume it,
+  // and stop if any level re-suspends on a new gate (its gate re-surfaces at
+  // the root on the next poll). `ancestors` is ordered root → … → parent-of-child.
+  // Shared by the live approval cascade (resumeApprovalCascade) and the
+  // storage-driven recovery path (finishCascadeFromStorage) so they can't drift.
+  //
+  // NOTE: an intermediate child's `report_incomplete` deliberately does NOT stop
+  // the walk. It is the child's own verdict on its product outcome, not a
+  // control-flow signal: in an ungated run the parent's `subagent__*` tool still
+  // returns the child's text and the manager keeps going (see subagent.ts).
+  // Returning early here instead left every ancestor durably `suspended` on a
+  // bookmark pointing at a child that had already ended — a run nothing could
+  // ever resume, absent from the approvals list, and mislabeled "resuming"
+  // forever.
+  async function walkUpCascadeChain(opts: {
+    sessionManager: InstanceType<typeof SessionManager>;
+    ancestors: Array<{ sessionId: string; agentId: string; agentName: string }>;
+    childSessionId: string;
+    childAgentName: string;
+    childResult: CascadeChildResult;
+    projectRoot: string;
+    abortController: AbortController;
+    startTime: number;
+    debug?: boolean;
+    maxSteps?: number;
+  }): Promise<{ suspended: true } | { suspended: false; result: Awaited<ReturnType<typeof runAgent>> }> {
+    const { sessionManager, ancestors, projectRoot, abortController, startTime, debug, maxSteps } = opts;
+    let childSessionId = opts.childSessionId;
+    let childAgentName = opts.childAgentName;
+    let childResult = opts.childResult;
+    let lastParentResult: Awaited<ReturnType<typeof runAgent>> | undefined;
+    for (let i = ancestors.length - 1; i >= 0; i--) {
+      const parent = ancestors[i];
+      let parentRollback: Awaited<ReturnType<typeof completeSubagentBookmark>> | undefined;
+      let enteredParentRun = false;
+      let parentResult: Awaited<ReturnType<typeof runAgent>>;
+      try {
+        parentRollback = await completeSubagentBookmark(sessionManager, parent.sessionId, parent.agentId, childSessionId, childAgentName, childResult);
+        await sessionManager.setSessionRunning(parent.sessionId, parent.agentId);
+        enteredParentRun = true;
+        parentResult = await runExistingSession({ sessionManager, sessionId: parent.sessionId, projectRoot, abortController, startTime, ...(debug !== undefined && { debug }), ...(maxSteps !== undefined && { maxSteps }) });
+        parentRollback = undefined;
+      } catch (error) {
+        if (parentRollback && (!enteredParentRun || isExistingSessionPreRunError(error))) {
+          await restoreResumeToolResult({ sessionManager, rollback: parentRollback }).catch((restoreErr) => {
+            logger.warn(`Failed to restore sub-agent bookmark after resume setup error: ${(restoreErr as Error).message}`);
+          });
+        }
+        throw error;
+      }
+      if (parentResult.status === 'suspended') {
+        return { suspended: true };
+      }
+      childResult = parentResult;
+      lastParentResult = parentResult;
+      childSessionId = parent.sessionId;
+      childAgentName = parent.agentName;
+    }
+    return { suspended: false, result: lastParentResult! };
+  }
+
   // Resolve a delegated approval gate by descending to the leaf, resolving it, then
   // resuming child→…→root: run the leaf, complete each ancestor's bookmark with the
   // child's output and resume it, stopping if any level re-suspends. Returns
@@ -2167,6 +2256,10 @@ async function runInternalWorker() {
 
     const leaf = chain[chain.length - 1];
 
+    // This process now drives the whole chain; stamp every level so the orphan
+    // sweep's owner-liveness probe points at a process that actually exists.
+    await claimCascadeChain(sessionManager, chain);
+
     // 1. Resolve the leaf's human gate with the decision.
     let leafRollback: Awaited<ReturnType<typeof applyResumeToolResult>>['rollback'] | undefined;
     const appliedLeaf = await applyResumeToolResult({
@@ -2190,57 +2283,128 @@ async function runInternalWorker() {
       }
       throw error;
     }
-    let childSessionId = leaf.sessionId;
-    let childAgentName = leaf.agentName;
     if (childResult.status === 'suspended') {
       return { handled: true, response: cascadeReparkedResponse(reqId, rootSessionId) };
     }
-    // NOTE: `childResult.incomplete` deliberately does NOT stop the walk-up.
-    // `report_incomplete` is the child's own verdict on its product outcome, not a
-    // control-flow signal: in an ungated run the parent's `subagent__*` tool still
-    // returns the child's text and the manager keeps going (see subagent.ts, which
-    // marks the child session INCOMPLETE and still returns its output). Returning
-    // early here instead left every ancestor durably `suspended` on a bookmark
-    // pointing at a child that had already ended — a run nothing could ever resume,
-    // absent from the approvals list, and mislabeled "resuming" forever.
 
-    // 3. Walk up: complete each ancestor's bookmark with the child's output, resume it,
-    //    stopping if it re-suspends (its gate re-surfaces at the root next poll).
-    for (let i = chain.length - 2; i >= 0; i--) {
-      const parent = chain[i];
-      let parentRollback: Awaited<ReturnType<typeof completeSubagentBookmark>> | undefined;
-      let enteredParentRun = false;
-      let parentResult: Awaited<ReturnType<typeof runAgent>>;
-      try {
-        parentRollback = await completeSubagentBookmark(sessionManager, parent.sessionId, parent.agentId, childSessionId, childAgentName, childResult);
-        await sessionManager.setSessionRunning(parent.sessionId, parent.agentId);
-        enteredParentRun = true;
-        parentResult = await runExistingSession({ sessionManager, sessionId: parent.sessionId, projectRoot, abortController, startTime, ...(debug !== undefined && { debug }), ...(maxSteps !== undefined && { maxSteps }) });
-        parentRollback = undefined;
-      } catch (error) {
-        if (parentRollback && (!enteredParentRun || isExistingSessionPreRunError(error))) {
-          await restoreResumeToolResult({ sessionManager, rollback: parentRollback }).catch((restoreErr) => {
-            logger.warn(`Failed to restore sub-agent bookmark after resume setup error: ${(restoreErr as Error).message}`);
-          });
-        }
-        throw error;
-      }
-      if (parentResult.status === 'suspended') {
-        return { handled: true, response: cascadeReparkedResponse(reqId, rootSessionId) };
-      }
-      // As above: an intermediate manager's own `report_incomplete` is a product
-      // verdict, so ITS parent still gets the bookmark completed and resumed. The
-      // final response below reports whatever the ROOT ended as.
-      childResult = parentResult;
-      childSessionId = parent.sessionId;
-      childAgentName = parent.agentName;
+    // 3. Walk up: complete each ancestor's bookmark with the child's output,
+    //    resume it, stopping if it re-suspends. The final response reports
+    //    whatever the ROOT ended as (see walkUpCascadeChain for the
+    //    report_incomplete semantics at each hop).
+    const walked = await walkUpCascadeChain({
+      sessionManager,
+      ancestors: chain.slice(0, -1),
+      childSessionId: leaf.sessionId,
+      childAgentName: leaf.agentName,
+      childResult,
+      projectRoot,
+      abortController,
+      startTime,
+      ...(debug !== undefined && { debug }),
+      ...(maxSteps !== undefined && { maxSteps }),
+    });
+    if (walked.suspended) {
+      return { handled: true, response: cascadeReparkedResponse(reqId, rootSessionId) };
     }
 
     const duration = Date.now() - startTime;
     return {
       handled: true,
-      response: workerRunResponse(reqId, childResult, duration, rootSessionId),
+      response: workerRunResponse(reqId, walked.result, duration, rootSessionId),
     };
+  }
+
+  // Finish a cascade whose driving worker died after the delegated child ended
+  // but before the ancestors were resumed (issue #199). Everything the walk-up
+  // needs survived: the child's final text and declared outcome, and each
+  // ancestor's pending subagent_wait bookmark. Rebuild the child's result from
+  // storage and run the normal walk-up. Nothing external re-executes — the
+  // child already did its work — and each ancestor resumes its own remaining
+  // steps exactly once, same as if the original worker had lived.
+  //
+  // Also accepts an ancestor already stamped CASCADE_ORPHANED by an older sweep
+  // (the pre-recovery behavior): its bookmark is still pending, so the same
+  // walk-up applies once the stale error is cleared.
+  async function finishCascadeFromStorage(opts: {
+    sessionManager: InstanceType<typeof SessionManager>;
+    rootSessionId: string;
+    projectRoot: string;
+    abortController: AbortController;
+    startTime: number;
+    reqId: string;
+    debug?: boolean;
+    maxSteps?: number;
+  }): Promise<any> {
+    const { sessionManager, rootSessionId, projectRoot, abortController, startTime, reqId, debug, maxSteps } = opts;
+
+    const recoverableStrand = (session: SessionInfo): boolean =>
+      session.status === 'suspended' ||
+      (session.status === 'error' && session.error?.code === CASCADE_ORPHANED_CODE);
+
+    const rootFound = await sessionManager.findSession(rootSessionId);
+    if (!rootFound) {
+      return { id: reqId, success: false, error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${rootSessionId}` } };
+    }
+    // Anything else means a live process already resumed it (or it ended):
+    // finishing twice is the double-fire this whole path exists to avoid.
+    if (!recoverableStrand(rootFound.session)) {
+      return { id: reqId, success: false, error: { code: 'SESSION_NOT_SUSPENDED', message: `SESSION_NOT_SUSPENDED: ${rootFound.session.status}` } };
+    }
+
+    // Follow pending bookmarks down to the child that ended with a durable
+    // result. A live human gate or a still-running descendant means the chain
+    // is healthy and there is nothing to finish.
+    const chain: Array<{ sessionId: string; agentId: string; agentName: string }> = [
+      { sessionId: rootSessionId, agentId: rootFound.agentId, agentName: rootFound.session.agent.name },
+    ];
+    let cursorChildId = findPendingSubagentWaitChildId(await loadSessionPartsFlat(sessionManager, rootSessionId, rootFound.agentId));
+    let ended: { sessionId: string; agentId: string; agentName: string } | undefined;
+    for (let i = 0; i < MAX_CASCADE_DEPTH && cursorChildId; i++) {
+      const f = await sessionManager.findSession(cursorChildId);
+      if (!f) break;
+      if (isFinishableStale(f.session)) {
+        ended = { sessionId: cursorChildId, agentId: f.agentId, agentName: f.session.agent.name || f.agentId };
+        break;
+      }
+      if (!recoverableStrand(f.session)) break;
+      const parts = await loadSessionPartsFlat(sessionManager, cursorChildId, f.agentId);
+      if (findPendingAwaitHumanPart(parts)) break;
+      const next = findPendingSubagentWaitChildId(parts);
+      if (!next) break;
+      chain.push({ sessionId: cursorChildId, agentId: f.agentId, agentName: f.session.agent.name || f.agentId });
+      cursorChildId = next;
+    }
+    if (!ended) {
+      return { id: reqId, success: false, error: { code: 'CASCADE_NOT_FINISHABLE', message: `Session ${rootSessionId} is not parked on a delegated sub-agent that ended with a durable result` } };
+    }
+
+    // This process drives the chain now: stamp liveness, and clear any stale
+    // CASCADE_ORPHANED verdict so the resumed levels report a clean run.
+    await claimCascadeChain(sessionManager, chain);
+    for (const level of chain) {
+      const f = await sessionManager.findSession(level.sessionId);
+      if (f?.session.error?.code === CASCADE_ORPHANED_CODE) {
+        await sessionManager.updateSession(level.sessionId, level.agentId, { status: 'suspended', error: undefined } as any).catch(() => {});
+      }
+    }
+
+    const stored = await loadStoredSubagentResult(sessionManager, ended.sessionId, ended.agentId);
+    const walked = await walkUpCascadeChain({
+      sessionManager,
+      ancestors: chain,
+      childSessionId: ended.sessionId,
+      childAgentName: ended.agentName,
+      childResult: stored,
+      projectRoot,
+      abortController,
+      startTime,
+      ...(debug !== undefined && { debug }),
+      ...(maxSteps !== undefined && { maxSteps }),
+    });
+    if (walked.suspended) {
+      return cascadeReparkedResponse(reqId, rootSessionId);
+    }
+    return workerRunResponse(reqId, walked.result, Date.now() - startTime, rootSessionId);
   }
 
   async function getApprovalInfo(req: ExecuteRequest) {
@@ -3469,6 +3633,27 @@ async function runInternalWorker() {
       let existingSessionId: string | undefined = req.sessionId;
       let runPrompt = req.prompt;
       let runCwd = req.projectRoot;
+      if (req.type === 'finish-cascade') {
+        // Recovery for a chain stranded between a child ending and its parent's
+        // bookmark completing (issue #199): finish the walk-up from storage.
+        if (!req.sessionId) {
+          return {
+            id: req.id,
+            success: false,
+            error: { code: 'SESSION_REQUIRED', message: 'Missing sessionId for finish-cascade request' },
+          };
+        }
+        return await finishCascadeFromStorage({
+          sessionManager,
+          rootSessionId: req.sessionId,
+          projectRoot: req.projectRoot,
+          abortController,
+          startTime,
+          reqId: req.id,
+          ...(req.debug !== undefined && { debug: req.debug }),
+          ...(req.maxSteps !== undefined && { maxSteps: req.maxSteps }),
+        });
+      }
       if (req.type === 'resume') {
         if (!req.sessionId) {
           return {
@@ -4087,7 +4272,7 @@ async function runInternalWorker() {
           }, backstopSeconds * 1000);
           backstop.unref?.();
         }
-      } else if (request.type === 'execute' || request.type === 'resume' || request.type === 'continue-session') {
+      } else if (request.type === 'execute' || request.type === 'resume' || request.type === 'continue-session' || request.type === 'finish-cascade') {
         // Don't await - handle requests concurrently
         // Each request runs in parallel, response sent when complete
         inFlightRuns += 1;

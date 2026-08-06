@@ -54,7 +54,7 @@ const DEAD_PID = 0x7fffffff;
 
 /** A manager parked on a delegated child via a pending subagent_wait bookmark —
  *  the state every cascade approval leaves behind while the leaf works. */
-async function makeDelegatingPair(childStatus: 'running' | 'error' | 'suspended') {
+async function makeDelegatingPair(childStatus: 'running' | 'error' | 'suspended' | 'completed' | 'incomplete') {
   const base = await makeSession('Delegate the post');
   const { projectRoot, sessionManager: rootSm, sessionID: rootId, agentId: rootAgentId, messageID: rootMsg } = base;
 
@@ -68,9 +68,16 @@ async function makeDelegatingPair(childStatus: 'running' | 'error' | 'suspended'
     project: { root: projectRoot, cwd: projectRoot },
   });
   if (childStatus === 'error') {
-    await childSm.setSessionError(childId, childAgentId, { code: 'INCOMPLETE', message: 'Image billing limit reached' });
+    // A dead-end error (not INCOMPLETE, which carries a durable report and is
+    // finishable — see isFinishableStale).
+    await childSm.setSessionError(childId, childAgentId, { code: 'WORKER_INTERRUPTED', message: 'Run was interrupted when its serve worker restarted' });
   } else if (childStatus === 'suspended') {
     await childSm.setSessionSuspended(childId, childAgentId);
+  } else if (childStatus === 'completed') {
+    await childSm.updateSession(childId, childAgentId, { status: 'completed' });
+  } else if (childStatus === 'incomplete') {
+    // report_incomplete's terminal shape: status 'error' with code INCOMPLETE.
+    await childSm.setSessionError(childId, childAgentId, { code: 'INCOMPLETE', message: 'Substack session logged out; needs re-auth' });
   }
 
   await rootSm.addPart(rootId, rootAgentId, rootMsg, {
@@ -211,7 +218,7 @@ describe('reconcileOrphanedSessions', () => {
       expect(found?.session.error?.code).toBe('CASCADE_ORPHANED');
       // The message must name the child and carry its reason.
       expect(found?.session.error?.message).toContain('leaf-agent');
-      expect(found?.session.error?.message).toContain('Image billing limit reached');
+      expect(found?.session.error?.message).toContain('Run was interrupted when its serve worker restarted');
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
       delete process.env.XDG_DATA_HOME;
@@ -233,6 +240,62 @@ describe('reconcileOrphanedSessions', () => {
       expect(reconciled).toContainEqual(expect.objectContaining({ sessionId: sessionID, reason: 'stranded' }));
       expect((await sessionManager.findSession(childId))?.session.error?.code).toBe('WORKER_INTERRUPTED');
       expect((await sessionManager.findSession(sessionID))?.session.error?.code).toBe('CASCADE_ORPHANED');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
+  // Issue #199: a child that ended holding a durable result (completed, or
+  // incomplete — which still carries its report) must NOT be stamped terminal.
+  // The sweep reports it 'finishable' untouched, so serve can drive
+  // finish-cascade and fold the result into the waiting manager.
+  it('reports a manager parked on a completed child as finishable, without stamping it', async () => {
+    const { projectRoot, sessionManager, sessionID, agentId } = await makeDelegatingPair('completed');
+    try {
+      await sessionManager.updateSession(sessionID, agentId, { owner: { pid: DEAD_PID } });
+      const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff: Date.now() + 60_000 });
+
+      expect(reconciled).toContainEqual(expect.objectContaining({ sessionId: sessionID, reason: 'finishable' }));
+      const found = await sessionManager.findSession(sessionID);
+      expect(found?.session.status).toBe('suspended');
+      expect(found?.session.error).toBeUndefined();
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
+  it('reports a manager parked on an incomplete child as finishable too', async () => {
+    const { projectRoot, sessionManager, sessionID, agentId } = await makeDelegatingPair('incomplete');
+    try {
+      await sessionManager.updateSession(sessionID, agentId, { owner: { pid: DEAD_PID } });
+      const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff: Date.now() + 60_000 });
+
+      expect(reconciled).toContainEqual(expect.objectContaining({ sessionId: sessionID, reason: 'finishable' }));
+      expect((await sessionManager.findSession(sessionID))?.session.status).toBe('suspended');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
+  // Only the topmost stranded ancestor is reported: the walk-up it triggers
+  // resumes every level below it, so reporting an intermediate too would
+  // double-drive the same chain.
+  it('skips a finishable intermediate manager (one that itself has a parent)', async () => {
+    const { projectRoot, sessionManager, sessionID, agentId } = await makeDelegatingPair('completed');
+    try {
+      await sessionManager.updateSession(sessionID, agentId, {
+        owner: { pid: DEAD_PID },
+        parentSessionID: '01FAKEROOTSESSIONID0000000',
+      } as any);
+      const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff: Date.now() + 60_000 });
+
+      expect(reconciled.map((r) => r.sessionId)).not.toContain(sessionID);
+      const found = await sessionManager.findSession(sessionID);
+      expect(found?.session.status).toBe('suspended');
+      expect(found?.session.error).toBeUndefined();
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
       delete process.env.XDG_DATA_HOME;

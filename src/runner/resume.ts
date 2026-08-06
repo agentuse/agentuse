@@ -9,6 +9,7 @@ import {
   findPendingSubagentWaitChildId,
   findStaleCascadeChild,
   describeStaleCascade,
+  isFinishableStale,
   CASCADE_ORPHANED_CODE,
 } from './subagent-cascade';
 import { logger } from '../utils/logger';
@@ -329,8 +330,11 @@ export interface ReconciledOrphan {
   sessionId: string;
   agentId: string;
   agentName: string;
-  /** 'interrupted': killed mid-run. 'stranded': parked on a child that ended. */
-  reason: 'interrupted' | 'stranded';
+  /** 'interrupted': killed mid-run. 'stranded': parked on a child that ended
+   *  with nothing to fold in (error/missing) — marked terminal. 'finishable':
+   *  parked on a child whose durable result can still complete the chain — NOT
+   *  marked; the caller drives a finish-cascade run instead. */
+  reason: 'interrupted' | 'stranded' | 'finishable';
 }
 
 /**
@@ -414,6 +418,18 @@ export async function reconcileOrphanedSessions(options: {
       continue;
     }
     if (!stale) continue;
+    // A child that ended holding a durable result is not a dead end: the
+    // parent's bookmark can be completed from storage and the chain resumed
+    // (issue #199). Report it WITHOUT stamping a terminal error so the caller
+    // can drive a finish-cascade run. Only the topmost stranded ancestor is
+    // reported — the walk-up it triggers resumes every level below it, so
+    // reporting intermediates too would double-drive the same chain.
+    if (isFinishableStale(stale)) {
+      const parentId = (session as { parentSessionID?: string }).parentSessionID;
+      if (typeof parentId === 'string' && parentId.length > 0) continue;
+      reconciled.push({ sessionId: session.id, agentId, agentName: session.agent.name || session.agent.id, reason: 'finishable' });
+      continue;
+    }
     if (!dryRun) {
       await sessionManager.setSessionError(session.id, agentId, {
         code: CASCADE_ORPHANED_CODE,

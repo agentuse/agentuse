@@ -136,16 +136,92 @@ export async function findStaleCascadeChild(
 /** Error code stamped on a parent stranded by a dead cascade chain. */
 export const CASCADE_ORPHANED_CODE = 'CASCADE_ORPHANED';
 
+/**
+ * Whether an ended child left a durable result its parked parent can be
+ * finished from. A `completed` child did; so did one that ended
+ * `report_incomplete` (session status 'error' with code INCOMPLETE) — its
+ * report is on disk and the live walk-up deliberately folds incomplete
+ * children in rather than stopping (see resumeApprovalCascade). Any other
+ * error, or a missing record, leaves nothing to fold in, so parents parked on
+ * those stay CASCADE_ORPHANED.
+ */
+export function isFinishableStale(stale: { status: string; error?: { code?: string | undefined } | undefined }): boolean {
+  return stale.status === 'completed' ||
+    (stale.status === 'error' && stale.error?.code === 'INCOMPLETE');
+}
+
+/** Reader surface for rebuilding a child's result from storage: the cascade
+ *  part-walk plus the session's final assistant text. SessionManager satisfies
+ *  this structurally. */
+export interface CascadeResultReader extends CascadeSessionReader {
+  getLastAssistantText(sessionId: string, agentId: string): Promise<string | undefined>;
+}
+
+/** A child's contribution to its parent's parked `subagent__*` step, rebuilt
+ *  from durable state. Field-compatible with the slice of a live runAgent
+ *  result that completeSubagentBookmark consumes. */
+export interface StoredSubagentResult {
+  text: string;
+  complete?: { headline: string; details?: string; artifacts?: string[] };
+  incomplete?: { reason: string };
+}
+
+/**
+ * Rebuild what a child's `subagent__*` step would have returned, from the
+ * child's stored session alone: its final assistant text plus the outcome it
+ * declared via report_complete / report_incomplete. This is what makes a
+ * cascade whose worker died between the child ending and the parent's bookmark
+ * completing finishable after the fact — nothing the walk-up needs exists only
+ * in the dead worker's memory. Same precedence as classifyRunResult: a child
+ * that declared a real blocker is incomplete, whichever call landed last.
+ */
+export async function loadStoredSubagentResult(
+  reader: CascadeResultReader,
+  sessionId: string,
+  agentId: string
+): Promise<StoredSubagentResult> {
+  const parts = await loadSessionPartsFlat(reader, sessionId, agentId);
+  const lastToolInput = (tool: string): any => {
+    const part = [...parts].reverse().find((p: any) =>
+      p?.type === 'tool' && p?.tool === tool && p?.state?.status === 'completed'
+    ) as any;
+    return part?.state?.input;
+  };
+  const text = (await reader.getLastAssistantText(sessionId, agentId)) ?? '';
+  const incompleteInput = lastToolInput('report_incomplete');
+  if (typeof incompleteInput?.reason === 'string') {
+    return { text, incomplete: { reason: incompleteInput.reason } };
+  }
+  const completeInput = lastToolInput('report_complete');
+  if (typeof completeInput?.headline === 'string') {
+    return {
+      text,
+      complete: {
+        headline: completeInput.headline,
+        ...(typeof completeInput.details === 'string' && completeInput.details.trim() && { details: completeInput.details }),
+        ...(Array.isArray(completeInput.artifacts) && completeInput.artifacts.length > 0 && { artifacts: completeInput.artifacts }),
+      },
+    };
+  }
+  return { text };
+}
+
 /** Human-facing explanation for a stranded parent: names the child, its outcome,
- *  and the only way out. Single-sourced so the list, the session page, and any
- *  future surface say the same thing. */
+ *  and the way out. Single-sourced so the list, the session page, and any
+ *  future surface say the same thing. A finishable strand must NOT advise
+ *  re-running — the child's work (often an external side effect) is already
+ *  done, and the daemon's next startup sweep finishes the chain from storage. */
 export function describeStaleCascade(stale: StaleCascadeChild): string {
   const reason = stale.error?.message?.trim().replace(/\.+$/, '');
   const cause = stale.status === 'missing'
     ? `its session record is missing (${stale.sessionId})`
-    : `it ended ${stale.status}${reason ? `: ${reason}` : ''}`;
-  return `Waiting on delegated sub-agent "${stale.agentName}", but ${cause}. `
-    + 'This run can no longer be resumed; stop it and re-run the agent.';
+    : stale.status === 'error' && stale.error?.code === 'INCOMPLETE'
+      ? `it ended incomplete${reason ? `: ${reason}` : ''}`
+      : `it ended ${stale.status}${reason ? `: ${reason}` : ''}`;
+  const wayOut = isFinishableStale(stale)
+    ? 'Its result is saved; the serve daemon folds it into this run at its next startup sweep.'
+    : 'This run can no longer be resumed; stop it and re-run the agent.';
+  return `Waiting on delegated sub-agent "${stale.agentName}", but ${cause}. ${wayOut}`;
 }
 
 /** Walk parentSessionID up to the topmost ancestor (the cascade root where approval

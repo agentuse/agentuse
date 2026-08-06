@@ -444,8 +444,10 @@ interface WorkerReconcileResult {
     sessionId: string;
     agentId: string;
     agentName: string;
-    /** 'interrupted': killed mid-run. 'stranded': parked on a child that ended. */
-    reason?: 'interrupted' | 'stranded';
+    /** 'interrupted': killed mid-run. 'stranded': parked on a child that ended
+     *  with nothing usable. 'finishable': parked on a child whose durable
+     *  result can still complete the chain — serve drives finish-cascade. */
+    reason?: 'interrupted' | 'stranded' | 'finishable';
   }>;
 }
 
@@ -892,6 +894,21 @@ class AgentWorker {
     }) as Promise<WorkerSweepExpiredResult | WorkerExecuteError>;
   }
 
+  /**
+   * Finish a cascade stranded between a delegated child ending and its
+   * ancestors being resumed (issue #199): the worker rebuilds the child's
+   * result from storage and runs the normal walk-up. A long-running run
+   * request on purpose — it resumes real agent sessions, so it must count
+   * toward activeRuns and be released (not killed) on shutdown like any run.
+   */
+  finishCascade(projectRoot: string, sessionId: string): Promise<WorkerExecuteResult | WorkerExecuteError> {
+    return this.request({
+      type: "finish-cascade",
+      projectRoot,
+      sessionId,
+    }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
+  }
+
   reconcileOrphans(projectRoot: string, cutoff: number): Promise<WorkerReconcileResult | WorkerExecuteError> {
     return this.request({
       type: "reconcile-orphans",
@@ -978,7 +995,7 @@ class AgentWorker {
       }
 
       const id = `req-${++this.requestCounter}`;
-      const longRunningRequest = options.type === "execute" || options.type === "resume" || options.type === "continue-session";
+      const longRunningRequest = options.type === "execute" || options.type === "resume" || options.type === "continue-session" || options.type === "finish-cascade";
       if (longRunningRequest) this.activeRuns.add(id);
       const requestTimeoutSeconds = options.timeout ?? (longRunningRequest ? 24 * 60 * 60 : 300);
       const timeoutMs = requestTimeoutSeconds * 1000 + 5000; // Add 5s buffer
@@ -2628,13 +2645,27 @@ export function createServeCommand(): Command {
       const reconcileWorkerOrphans = (worker: AgentWorker, projectId: string, projectRoot: string, readyAt: number): void => {
         void worker.reconcileOrphans(projectRoot, readyAt).then((r) => {
           if (!r.success || r.reconciled.length === 0) return;
-          const interrupted = r.reconciled.filter((o) => o.reason !== 'stranded').length;
-          const stranded = r.reconciled.length - interrupted;
+          const finishable = r.reconciled.filter((o) => o.reason === 'finishable');
+          const stranded = r.reconciled.filter((o) => o.reason === 'stranded').length;
+          const interrupted = r.reconciled.length - finishable.length - stranded;
           if (interrupted > 0) {
             logger.warn(`Recovered ${interrupted} interrupted session(s) in ${projectId} (stuck 'running' after a worker restart)`);
           }
           if (stranded > 0) {
             logger.warn(`Ended ${stranded} stranded session(s) in ${projectId} (parked on a delegated sub-agent that had already ended)`);
+          }
+          // A restart killed the worker between a delegated child finishing and
+          // its manager being resumed. The child's result is durable, so finish
+          // the chain instead of orphaning it (issue #199).
+          for (const orphan of finishable) {
+            logger.warn(`Resuming ${orphan.agentName} (${orphan.sessionId}) in ${projectId}: its delegated sub-agent finished, folding the result in`);
+            void worker.finishCascade(projectRoot, orphan.sessionId).then((res) => {
+              if (!res.success) {
+                logger.warn(`Cascade finish for ${orphan.sessionId} failed: ${res.error.message}`);
+              } else {
+                logger.info(`Cascade finished for ${orphan.agentName} (${orphan.sessionId})`);
+              }
+            }).catch(() => {/* best-effort recovery */});
           }
         }).catch(() => {/* best-effort recovery */});
       };

@@ -222,11 +222,29 @@ describe('describeStaleCascade', () => {
   it('names the child, its outcome, and the way out', () => {
     expect(describeStaleCascade({
       sessionId: 'leaf', agentName: 'LinkedIn AI News', status: 'error',
-      error: { code: 'INCOMPLETE', message: 'Image billing limit reached' },
+      error: { code: 'BROWSER_CRASHED', message: 'Image billing limit reached' },
     })).toBe(
       'Waiting on delegated sub-agent "LinkedIn AI News", but it ended error: Image billing limit reached. ' +
       'This run can no longer be resumed; stop it and re-run the agent.'
     );
+  });
+
+  // A finishable strand (completed, or incomplete = error+INCOMPLETE) must not
+  // advise a re-run: the child's side effect already happened, and the daemon's
+  // startup sweep finishes the chain from the saved result instead.
+  it('does not advise re-running when the child left a durable result', () => {
+    const completed = describeStaleCascade({ sessionId: 'leaf', agentName: 'Connect Batch', status: 'completed' });
+    expect(completed).toContain('but it ended completed.');
+    expect(completed).toContain('Its result is saved');
+    expect(completed).not.toContain('re-run');
+
+    const incomplete = describeStaleCascade({
+      sessionId: 'leaf', agentName: 'Connect Batch', status: 'error',
+      error: { code: 'INCOMPLETE', message: 'Image billing limit reached' },
+    });
+    expect(incomplete).toContain('it ended incomplete: Image billing limit reached');
+    expect(incomplete).toContain('Its result is saved');
+    expect(incomplete).not.toContain('re-run');
   });
 
   it('does not double the sentence period when the child reason ends in one', () => {
