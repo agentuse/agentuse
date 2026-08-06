@@ -352,6 +352,7 @@ export type Part =
   | SnapshotPart
   | PatchPart
   | CompactionPart
+  | CorrectionsPart
   | LearningPart
   | VerifyPart
   | ErrorPart
@@ -372,6 +373,35 @@ export interface CompactionPart extends PartBase {
   messagesBefore: number;
   messagesAfter: number;
   usagePercentBefore?: number;
+  time: {
+    start: number;
+  };
+}
+
+/**
+ * Marker recorded when a run starts with stored corrections applied to its
+ * instructions.
+ *
+ * The injected text itself survives inside the persisted prompt, so the session
+ * view could always show *which* corrections were in force. What it could not
+ * show is what was left out: the cap is applied at run time and the counts were
+ * only ever logged to stderr, so a run that applied 10 of 26 looked identical to
+ * one that applied all 10 it had. Recording them makes the dormant remainder
+ * visible on the run it affected, which is the only place it is actionable.
+ *
+ * Injection-time only. {@link LearningPart} is the other direction — corrections
+ * captured *from* a finished run.
+ */
+export interface CorrectionsPart extends PartBase {
+  type: 'corrections';
+  /** Injected into this run's instructions. */
+  applied: number;
+  /** Active corrections stored for the agent, injected and dormant together.
+   *  Excludes graduated rules (in force through the agent file) and retired
+   *  ones, neither of which competes for a cap slot. */
+  active: number;
+  /** The per-run injection cap in force, so a report can name it. */
+  cap: number;
   time: {
     start: number;
   };

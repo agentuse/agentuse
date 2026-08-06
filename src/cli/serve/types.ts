@@ -118,10 +118,32 @@ export interface SessionStatusInfo {
  * resolved `system[]` array, the resolved instructions, and the tool snapshot -
  * so it works on sessions that ran before this page existed.
  */
+/**
+ * How many of an agent's stored corrections the `learnings` layer's text
+ * actually carried into the run.
+ *
+ * `applied` is always known: with no marker it is recoverable by counting the
+ * bullets in the injected block. `active` and `cap` come from the run's
+ * corrections marker, so they are absent on runs recorded before that marker
+ * existed. They are left absent rather than defaulted, because "10 applied" and
+ * "10 of 10 applied" are different claims and only one of them is supported.
+ */
+export interface ContextCorrectionCounts {
+  /** Injected into this run's instructions. */
+  applied: number;
+  /** Active corrections stored for the agent, injected and dormant together. */
+  active?: number;
+  /** The per-run injection cap that decided the split. */
+  cap?: number;
+}
+
 export interface ContextStackLayer {
   id: string;
   kind: 'system' | 'instructions' | 'approval' | 'skills' | 'learnings' | 'prompt' | 'tools';
   label: string;
+  /** Set on the `learnings` layer only: what the cap let through, and what it
+   *  held back. */
+  corrections?: ContextCorrectionCounts;
   /** Where this text came from, when the origin is a real file or a config
    *  switch worth naming (the agent file, a frontmatter flag, the learning store). */
   source?: string;

@@ -9,7 +9,7 @@ export { executeAgentCore } from './runner/execution';
 export { runAgent } from './runner/run';
 export { applyResumeToolResult, restoreResumeToolResult, reopenSuspendedGate, reconcileOrphanedSessions } from './runner/resume';
 export type { ReopenGateResult, ReconciledOrphan } from './runner/resume';
-export { recordLearningMarker, recordLearningMarkerForLatestMessage, recordErrorMarker, recordErrorMarkerForLatestMessage, describeErrorPart, createSessionLogSink, describeLogPart, gatherApprovalContext, gatherHumanApprovalHistory } from './runner/session-helper';
+export { recordCorrectionsMarker, recordLearningMarker, recordLearningMarkerForLatestMessage, recordErrorMarker, recordErrorMarkerForLatestMessage, describeErrorPart, createSessionLogSink, describeLogPart, gatherApprovalContext, gatherHumanApprovalHistory } from './runner/session-helper';
 export type { SessionLogSink, LogPartView, ApprovalContext } from './runner/session-helper';
 export type { PrepareAgentOptions, PreparedAgentExecution, AgentChunk, RunAgentResult } from './runner/types';
 export {

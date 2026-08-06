@@ -92,6 +92,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   // persisted LLM state, so learning prompts are intentionally not re-derived.
   let learningsApplied = 0;
   let learningsStored = 0;
+  let learningsCap = 0;
   let learningsInjectedIds: string[] = [];
   if (!existingSessionId && agent.config.learning?.apply && agentFilePath) {
     // Same state root that keys this run's session and agentId. Derived from the
@@ -106,6 +107,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       resolvedInstructions = `${resolvedInstructions}\n\n${learningResult.prompt}`;
       learningsApplied = learningResult.count;
       learningsStored = learningResult.total;
+      learningsCap = learningResult.cap;
       learningsInjectedIds = learningResult.injectedIds;
       logger.debug(`[Learning] Appended ${learningsApplied} of ${learningsStored} learning(s) to instructions`);
     }
@@ -387,6 +389,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     releaseStoreLock,
     learningsApplied,
     learningsStored,
+    learningsCap,
     learningsInjectedIds
   };
 }

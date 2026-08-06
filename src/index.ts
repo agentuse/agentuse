@@ -1456,6 +1456,21 @@ async function runInternalWorker() {
           ...(typeof part.time?.start === 'number' && { time: part.time.start })
         };
       }
+      if (part?.type === 'corrections') {
+        // Numbers only, no sentence: the row is worded in log-entry.tsx, which
+        // has to phrase the same three counts for the context view anyway. A
+        // title composed here would be a second copy to keep in agreement.
+        return {
+          id: String(part.id),
+          type: 'corrections',
+          status: 'completed',
+          title: 'corrections applied',
+          ...(typeof part.applied === 'number' && { applied: part.applied }),
+          ...(typeof part.active === 'number' && { active: part.active }),
+          ...(typeof part.cap === 'number' && { cap: part.cap }),
+          ...(typeof part.time?.start === 'number' && { time: part.time.start })
+        };
+      }
       if (part?.type === 'learning') {
         const { title, message } = describeLearningOutcome({
           status: part.status,

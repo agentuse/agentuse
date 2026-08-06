@@ -1,6 +1,7 @@
 import { ANTHROPIC_IDENTITY_PROMPT } from '../../utils/anthropic';
-import type { Message, Part, SessionInfo, ToolsSnapshot } from '../../session/types';
+import type { CorrectionsPart, Message, Part, SessionInfo, ToolsSnapshot } from '../../session/types';
 import type {
+  ContextCorrectionCounts,
   ContextFileRead,
   ContextFileReadContent,
   ContextStackLayer,
@@ -64,6 +65,27 @@ function findAppendedBlocks(task: string): Cut[] {
   }
 
   return cuts.sort((a, b) => a.index - b.index);
+}
+
+/**
+ * How many corrections the injected block carried, and - when the run recorded
+ * a corrections marker - how many were stored but left out of it.
+ *
+ * The marker is authoritative when present: it is the injection site's own
+ * count, including the ones that never made it into the text. Without one the
+ * block is all there is, and `renderLearningPrompt` writes exactly one
+ * `- [category] instruction` bullet per injected correction, so counting them
+ * recovers `applied`. The stored total and the cap leave no trace in the text
+ * and stay absent rather than being inferred from the part that did.
+ */
+function correctionCounts(
+  block: string,
+  marker: CorrectionsPart | undefined
+): ContextCorrectionCounts | undefined {
+  if (marker) return { applied: marker.applied, active: marker.active, cap: marker.cap };
+
+  const applied = block.split('\n').filter((line) => /^- \[[^\]]*\] /.test(line)).length;
+  return applied > 0 ? { applied } : undefined;
 }
 
 /**
@@ -267,7 +289,7 @@ function makeLayer(
   id: string,
   label: string,
   text: string,
-  extra: { source?: string; note?: string } = {}
+  extra: { source?: string; note?: string; corrections?: ContextCorrectionCounts } = {}
 ): ContextStackLayer {
   return {
     id,
@@ -275,6 +297,7 @@ function makeLayer(
     label,
     ...(extra.source ? { source: extra.source } : {}),
     ...(extra.note ? { note: extra.note } : {}),
+    ...(extra.corrections ? { corrections: extra.corrections } : {}),
     chars: text.length,
     estTokens: estimateTokens(text.length),
     text,
@@ -480,6 +503,17 @@ export function buildSessionContextPayload(options: {
     });
   }
 
+  // Written once per run, before the stream, and only when something was
+  // actually injected. A resumed run never re-derives injection, so it carries
+  // the marker of the run that did.
+  let correctionsMarker: CorrectionsPart | undefined;
+  for (const part of parts) {
+    if (part.type === 'corrections') {
+      correctionsMarker = part;
+      break;
+    }
+  }
+
   const task = message?.user.prompt.task ?? '';
   if (task.length > 0) {
     const cuts = findAppendedBlocks(task);
@@ -505,8 +539,10 @@ export function buildSessionContextPayload(options: {
       } else if (cut.kind === 'skills') {
         layers.push(...splitSkillsBlock(block));
       } else {
+        const counts = correctionCounts(block, correctionsMarker);
         layers.push(makeLayer('learnings', 'learnings', 'Recent corrections', block, {
           note: 'Added because `learning.apply` is on. Captured from earlier runs of this agent.',
+          ...(counts ? { corrections: counts } : {}),
         }));
       }
     }

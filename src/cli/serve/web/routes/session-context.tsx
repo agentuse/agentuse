@@ -14,6 +14,7 @@ import { formatTokens } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { TokenPromptButton } from '../components/token-prompt-button';
 import type {
+  ContextCorrectionCounts,
   ContextFileRead,
   ContextStackLayer,
   ContextToolResultStat,
@@ -311,6 +312,39 @@ function ToolResultBreakdown(props: { results: ContextToolResultStat[] }) {
   );
 }
 
+/**
+ * The corrections layer's note: how much of the agent's stored corrections this
+ * text is. The dormant remainder is the point — those corrections exist, rank
+ * below the cap, and had no effect on this run — so it gets the same amber pill
+ * a re-read file row uses, rather than a colour of its own.
+ *
+ * A run recorded before the corrections marker existed has the injected text
+ * but no totals. It shows what was applied and stops there: "10 of 10" would be
+ * a claim about the dormant set that nothing here can support.
+ */
+function CorrectionsNote(props: { counts: ContextCorrectionCounts; note?: string }) {
+  const { applied, active, cap } = props.counts;
+  const dormant = active === undefined ? 0 : Math.max(active - applied, 0);
+
+  return (
+    <>
+      <span class="ctx-file-meta">
+        <span title={active === undefined
+          ? 'This run predates the corrections marker, so how many were stored is not recorded'
+          : `${applied} of the ${active} corrections stored for this agent reached the model`}>
+          {active === undefined ? `${applied} applied` : `${applied} of ${active} applied`}
+        </span>
+        {dormant > 0 && (
+          <span class="ctx-repeat" title={`Stored, but ranked below the per-run cap of ${cap}, so this run never saw them`}>
+            {dormant} dormant
+          </span>
+        )}
+      </span>
+      {props.note}
+    </>
+  );
+}
+
 /** The note line under a file row: which tool read it, how often, truncation. */
 function FileNote(props: { file: ContextFileRead }) {
   const { file } = props;
@@ -592,7 +626,9 @@ export default function SessionContext() {
                   share={layer.estTokens / peak}
                   label={layer.label}
                   {...(layer.source ? { source: layer.source } : {})}
-                  {...(layer.note ? { note: layer.note } : {})}
+                  {...(layer.corrections
+                    ? { note: <CorrectionsNote counts={layer.corrections} {...(layer.note ? { note: layer.note } : {})} /> }
+                    : layer.note ? { note: layer.note } : {})}
                   chars={layer.chars}
                   estTokens={layer.estTokens}
                   {...(layer.kind === 'tools'

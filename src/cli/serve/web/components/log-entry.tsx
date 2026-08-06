@@ -771,6 +771,53 @@ function logLevelMarker(level: string | undefined): string {
   }
 }
 
+/** What a run's stored corrections did to it: injected, stored, and the cap. */
+interface CorrectionsCounts {
+  applied: number;
+  active: number;
+  cap: number;
+}
+
+/**
+ * The numbers on a `corrections` marker. Read off the entry rather than
+ * declared on ApprovalLogEntry, which is the single transport shape every part
+ * type shares. Absent numbers mean a run recorded before the marker existed, and
+ * the row falls back to the title the session log gave it rather than inventing
+ * counts it cannot support.
+ */
+function correctionsCounts(entry: ApprovalLogEntry): CorrectionsCounts | undefined {
+  if (entry.type !== 'corrections') return undefined;
+  const { applied, active, cap } = valueAsRecord(entry);
+  if (typeof applied !== 'number' || typeof active !== 'number' || typeof cap !== 'number') return undefined;
+  return { applied, active, cap };
+}
+
+/**
+ * The corrections row's own words: what applied, and only then what did not.
+ *
+ * The dormant remainder is the actionable half — those corrections are stored
+ * and ranked, and had no effect on this run — so it carries the amber pill this
+ * file already uses for a warning about a row, rather than a colour of its own.
+ * With nothing dormant there is no second clause: "0 over the cap" is chrome.
+ */
+function CorrectionsSummary(props: { counts: CorrectionsCounts }) {
+  const { applied, active, cap } = props.counts;
+  const dormant = Math.max(active - applied, 0);
+  return (
+    <>
+      {dormant > 0
+        ? `${applied} of ${active} corrections applied`
+        : `${applied} correction${applied === 1 ? '' : 's'} applied`}
+      {dormant > 0 && (
+        <span
+          class="log-warn-badge"
+          title={`Stored, but ranked below the per-run cap of ${cap}, so this run never saw them`}
+        >⚠ {dormant} over the cap of {cap}</span>
+      )}
+    </>
+  );
+}
+
 function isApprovalDetails(entry: ApprovalLogEntry): boolean {
   if (entry.tool === 'await_human' || entry.type === 'approval') return true;
   const details = entry.details;
@@ -874,6 +921,8 @@ function LogEntryImpl(props: LogEntryProps) {
   const toolIntent = entry.type === 'tool' && !isApprovalEntry && entry.details?.intent
     ? entry.details.intent
     : undefined;
+  // A corrections marker states itself in one line, so the counts are the row.
+  const corrections = correctionsCounts(entry);
   // On a pick-among-options gate the approve button names the selection, so the
   // reviewer sees exactly what a click commits to.
   const selectedOptionLabel = props.showActions && props.selectedChoice
@@ -929,16 +978,18 @@ function LogEntryImpl(props: LogEntryProps) {
             : entry.type === 'log'
               ? { 'aria-label': `${entry.level ?? 'info'} log`, title: entry.level ?? 'info', role: 'img' }
               : { 'aria-hidden': 'true' })}
-        >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'verify' ? (entry.status === 'completed' ? '✓' : '⚖') : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : failed ? '✗' : entry.type === 'tool' && entry.status === 'completed' ? '✓' : '⋮')}</span>
+        >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'corrections' ? '✧' : entry.type === 'verify' ? (entry.status === 'completed' ? '✓' : '⚖') : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : failed ? '✗' : entry.type === 'tool' && entry.status === 'completed' ? '✓' : '⋮')}</span>
         <span class="log-title">
-          {entry.type === 'tool' && entry.tool && !isApprovalEntry
-            ? (
-              <>
-                {toolIntent && <span class="log-intent" title={toolIntent}>{toolIntent}</span>}
-                <span class={`tool-chip${toolIntent ? ' has-intent' : ''}`} title={entry.title} aria-label={entry.title}>{toolChipLabel(entry.tool)}</span>
-              </>
-            )
-            : entry.title}
+          {corrections
+            ? <CorrectionsSummary counts={corrections} />
+            : entry.type === 'tool' && entry.tool && !isApprovalEntry
+              ? (
+                <>
+                  {toolIntent && <span class="log-intent" title={toolIntent}>{toolIntent}</span>}
+                  <span class={`tool-chip${toolIntent ? ' has-intent' : ''}`} title={entry.title} aria-label={entry.title}>{toolChipLabel(entry.tool)}</span>
+                </>
+              )
+              : entry.title}
           {props.repeatCount !== undefined && props.repeatCount > 1 && (
             <span class="log-count-badge">x{props.repeatCount}</span>
           )}
@@ -969,7 +1020,9 @@ function LogEntryImpl(props: LogEntryProps) {
                 onSelectChoice={props.showActions ? props.onSelectChoice : undefined}
               />
             : <ToolDetails details={entry.details} sessionId={props.sessionId} token={props.token} />)}
-          {message && !storeEvent && !entry.subagentSession && <LogContent value={message} forceMarkdown={prose} />}
+          {/* The counts are the whole corrections row; anything the session log
+              also wrote about them would restate the line above. */}
+          {message && !corrections && !storeEvent && !entry.subagentSession && <LogContent value={message} forceMarkdown={prose} />}
           {warnings.length > 0 && <LogWarnings warnings={warnings} />}
         </div>
         {props.showActions && (

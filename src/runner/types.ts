@@ -94,6 +94,10 @@ export interface PreparedAgentExecution {
    *  this run. Excludes graduated rules (in force via the agent file) and
    *  retired ones. */
   learningsStored: number;
+  /** The injection cap in force for this run (`learning.max`, else the default).
+   *  Carried so the session log can name the number that made the difference
+   *  rather than leaving "10 of 26" to be explained. */
+  learningsCap: number;
   /** Ids injected this run, so a run a human approves without comment can credit
    *  exactly the rules that were in force for it. */
   learningsInjectedIds: string[];

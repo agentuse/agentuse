@@ -9,7 +9,7 @@ import { toErrorMessage } from '../utils/error-message';
 import { extractLearnings, LearningStore } from '../learning/index.js';
 import { findProjectRoot } from '../utils/project';
 import { isMockMode } from './mock-tools';
-import { recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, gatherApprovalContext, type SessionLogSink } from './session-helper';
+import { recordCorrectionsMarker, recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, gatherApprovalContext, type SessionLogSink } from './session-helper';
 import { usageToAssistantTokens, addAssistantTokens, type AssistantTokens } from '../session/usage';
 import {
   sendRunChannelMessages,
@@ -296,6 +296,23 @@ export async function runAgent(
     };
 
     const haveSessionScope = Boolean(sessionManager && prepSessionID && assistantMsgID && prepAgentId);
+
+    // Before the stream, so the corrections a run started with read above its
+    // first tool call rather than arriving after the work they shaped. Resume
+    // reuses the persisted prompt without re-deriving injection, so
+    // `learningsApplied` is 0 there and this stays silent — the marker belongs to
+    // the run that actually applied them.
+    if (haveSessionScope) {
+      await recordCorrectionsMarker(
+        sessionManager!,
+        prepSessionID!,
+        prepAgentId!,
+        assistantMsgID!,
+        preparation.learningsApplied,
+        preparation.learningsStored,
+        preparation.learningsCap,
+      );
+    }
     const streamOptions = haveSessionScope ? {
       collectToolCalls: true,
       sessionManager: sessionManager!,

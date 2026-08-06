@@ -256,6 +256,43 @@ export function createSessionLogSink(
 }
 
 /**
+ * Persist the corrections a run started with, so the session log says what was
+ * applied and — the part that was previously invisible — what the cap left out.
+ *
+ * Recorded here rather than logged from the injection site because injection
+ * happens inside `prepareAgentExecution`, which returns before the per-run log
+ * sink is attached: anything it writes goes to stderr and nowhere else.
+ *
+ * Silent when nothing was applied. A run with no corrections has nothing to
+ * report, and a row saying so on every run of every agent that has never been
+ * corrected is noise in the one place that should be signal.
+ *
+ * Best-effort: a failed write never affects the run.
+ */
+export async function recordCorrectionsMarker(
+  sessionManager: SessionManager,
+  sessionID: string,
+  agentId: string,
+  messageID: string,
+  applied: number,
+  active: number,
+  cap: number,
+): Promise<void> {
+  if (applied <= 0) return;
+  try {
+    await sessionManager.addPart(sessionID, agentId, messageID, {
+      type: 'corrections',
+      applied,
+      active,
+      cap,
+      time: { start: Date.now() },
+    } as Omit<Part, 'id' | 'sessionID' | 'messageID'>);
+  } catch (error) {
+    logger.debug(`Failed to persist corrections marker: ${(error as Error).message}`);
+  }
+}
+
+/**
  * Persist a learning marker part so the result of a capture attempt is visible
  * in the session log (CLI, `agentuse sessions`, and the serve web view). Mirrors
  * the compaction marker. Best-effort: a failed write never affects the run.
