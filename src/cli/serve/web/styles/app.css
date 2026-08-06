@@ -2870,7 +2870,24 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
   color: var(--muted-3);
   background: var(--panel);
 }
-.dialog-foot .actions { gap: 8px; }
+.dialog-foot .actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+/* The desktop shortcut legend and two actions cannot share the dialog footer
+   at phone widths. Give touch users one clear action row instead of allowing
+   the inline buttons to collapse into the staggered two-line layout. */
+@media (max-width: 480px) {
+  dialog#decision-dialog .dialog-foot .hint { display: none; }
+  dialog#decision-dialog .dialog-foot .actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+  dialog#decision-dialog .dialog-foot .actions button { width: 100%; }
+}
 
 .inactive-banner {
   margin-top: 24px;
