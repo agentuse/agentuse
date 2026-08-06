@@ -150,6 +150,18 @@ export interface ContextToolRow {
  * as tool results while the run is going, and a file read twice costs its
  * tokens twice.
  */
+/**
+ * The text of one read, as the model received it - line numbering and all.
+ * `text` may be shortened for transport; `chars` is always the real size, so
+ * the weight figures stay honest even when the preview is cut.
+ */
+export interface ContextFileReadContent {
+  chars: number;
+  text: string;
+  /** True when `text` is a prefix of what the model actually got. */
+  truncated: boolean;
+}
+
 export interface ContextFileRead {
   /** Absolute path when known, otherwise the best label the tool input gives. */
   path: string;
@@ -163,6 +175,12 @@ export interface ContextFileRead {
   /** Set when the tool truncated the file: the full size it was cut down from. */
   truncatedFrom?: number;
   firstReadAt?: number;
+  /**
+   * What the model received, one entry per read, in read order. Omitted
+   * entirely once the payload budget is spent; `reads` may exceed its length
+   * when a file was read more times than the page will show.
+   */
+  content?: ContextFileReadContent[];
 }
 
 export interface SessionContextPayload {

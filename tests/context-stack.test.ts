@@ -263,6 +263,71 @@ describe('mid-run file reads', () => {
     expect(payload.fileReads[0]).toMatchObject({ reads: 3, chars: 3000, estTokens: 750, firstReadAt: 10 });
   });
 
+  it('ships the text the model received, one entry per read', () => {
+    const parts = [
+      readPart('tools__filesystem_read', { file_path: '/repo/notes.md' }, 'first slice'),
+      readPart('tools__filesystem_read', { file_path: '/repo/notes.md' }, 'second slice'),
+    ];
+
+    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts });
+    const file = payload.fileReads[0]!;
+
+    expect(file.reads).toBe(2);
+    expect(file.content?.map((c) => c.text)).toEqual(['first slice', 'second slice']);
+    expect(file.content?.every((c) => !c.truncated)).toBe(true);
+  });
+
+  it('caps a long preview without distorting the weight it reports', () => {
+    const big = 'x'.repeat(50_000);
+    const payload = buildSessionContextPayload({
+      session,
+      message: message({}),
+      tools: null,
+      parts: [readPart('tools__filesystem_read', { file_path: '/repo/big.md' }, big)],
+    });
+    const file = payload.fileReads[0]!;
+
+    // The preview is cut, but the accounting still reflects the real cost.
+    expect(file.content?.[0]!.text.length).toBe(20_000);
+    expect(file.content?.[0]!.truncated).toBe(true);
+    expect(file.content?.[0]!.chars).toBe(50_000);
+    expect(file.chars).toBe(50_000);
+    expect(file.estTokens).toBe(12_500);
+  });
+
+  it('stops shipping text once the payload budget is spent, keeping the heaviest files', () => {
+    // 40 files of 20k chars each = 800k, well past the 500k transport budget.
+    const parts = Array.from({ length: 40 }, (_, i) =>
+      readPart('tools__filesystem_read', { file_path: `/repo/f${i}.md` }, 'y'.repeat(20_000))
+    );
+
+    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts });
+    const shipped = payload.fileReads.filter((f) => f.content?.length);
+
+    expect(payload.fileReads).toHaveLength(40);
+    expect(shipped.length).toBeLessThan(40);
+    const totalText = payload.fileReads.reduce(
+      (sum, f) => sum + (f.content ?? []).reduce((s, c) => s + c.text.length, 0),
+      0
+    );
+    expect(totalText).toBeLessThanOrEqual(500_000);
+    // Every row still reports its true weight, shipped preview or not.
+    expect(payload.fileReads.every((f) => f.chars === 20_000)).toBe(true);
+  });
+
+  it('limits how many reads of one file carry text', () => {
+    const parts = Array.from({ length: 9 }, () =>
+      readPart('tools__filesystem_read', { file_path: '/repo/hot.md' }, 'z'.repeat(100))
+    );
+
+    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts });
+    const file = payload.fileReads[0]!;
+
+    expect(file.reads).toBe(9);
+    expect(file.content).toHaveLength(5);
+    expect(file.chars).toBe(900);
+  });
+
   it('reports the pre-truncation size when the runtime spilled the output', () => {
     const parts = [
       readPart('tools__filesystem_read', { file_path: '/repo/huge.md' }, 'a'.repeat(500), {

@@ -1,6 +1,12 @@
 import { ANTHROPIC_IDENTITY_PROMPT } from '../../utils/anthropic';
 import type { Message, Part, SessionInfo, ToolsSnapshot } from '../../session/types';
-import type { ContextFileRead, ContextStackLayer, ContextToolRow, SessionContextPayload } from './types';
+import type {
+  ContextFileRead,
+  ContextFileReadContent,
+  ContextStackLayer,
+  ContextToolRow,
+  SessionContextPayload,
+} from './types';
 
 /**
  * Reconstructs "what was actually in the context window" for one session.
@@ -87,6 +93,13 @@ function splitSkillsBlock(block: string): ContextStackLayer[] {
 
 /** Tools whose result is the text of a file, i.e. a file entering the context. */
 const READ_TOOLS = new Set(['tools__filesystem_read', 'tools__skill_read', 'tools__skill_load']);
+
+// Budgets for shipping read contents to the page. The weight figures are always
+// exact; only the readable preview is bounded, so a run that read a hundred
+// files cannot turn this diagnostic into a multi-megabyte response.
+const MAX_TEXT_PER_READ = 20_000;
+const MAX_READS_WITH_TEXT = 5;
+const MAX_TOTAL_TEXT = 500_000;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -182,6 +195,7 @@ export function buildFileReads(parts: Part[]): ContextFileRead[] {
       existing.reads += 1;
       existing.chars += text.length;
       existing.estTokens = estimateTokens(existing.chars);
+      existing.content?.push({ chars: text.length, text, truncated: false });
       if (full !== undefined) existing.truncatedFrom = Math.max(existing.truncatedFrom ?? 0, full);
     } else {
       byPath.set(path, {
@@ -190,13 +204,33 @@ export function buildFileReads(parts: Part[]): ContextFileRead[] {
         reads: 1,
         chars: text.length,
         estTokens: estimateTokens(text.length),
+        content: [{ chars: text.length, text, truncated: false }],
         ...(full !== undefined && full > text.length ? { truncatedFrom: full } : {}),
         ...(typeof startedAt === 'number' ? { firstReadAt: startedAt } : {}),
       });
     }
   }
 
-  return [...byPath.values()].sort((a, b) => b.chars - a.chars);
+  const files = [...byPath.values()].sort((a, b) => b.chars - a.chars);
+
+  // Trim the previews to the transport budget, heaviest file first so the rows
+  // most worth reading keep their text. `chars`/`estTokens` are left untouched.
+  let remaining = MAX_TOTAL_TEXT;
+  for (const file of files) {
+    const kept: ContextFileReadContent[] = [];
+    for (const entry of (file.content ?? []).slice(0, MAX_READS_WITH_TEXT)) {
+      if (remaining <= 0) break;
+      const limit = Math.min(MAX_TEXT_PER_READ, remaining);
+      const truncated = entry.text.length > limit;
+      const text = truncated ? entry.text.slice(0, limit) : entry.text;
+      remaining -= text.length;
+      kept.push({ chars: entry.chars, text, truncated });
+    }
+    if (kept.length > 0) file.content = kept;
+    else delete file.content;
+  }
+
+  return files;
 }
 
 function makeLayer(

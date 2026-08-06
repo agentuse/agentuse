@@ -6,6 +6,8 @@ import { useTitle } from '../hooks/use-title';
 import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
+import { LogContent } from '../components/content';
+import { isMarkdownPath, parseReadOutput } from '../lib/read-output';
 import { pageTitle } from '../lib/brand';
 import type { ContextFileRead, ContextStackLayer, ContextToolRow } from '../../types';
 
@@ -110,6 +112,53 @@ function StackRow(props: {
       )}
       {open && body && <div class="ctx-body">{body()}</div>}
     </li>
+  );
+}
+
+/**
+ * What the model received for this file, per read. Multiple reads are labelled
+ * because they are usually different slices of the same file (an offset/limit
+ * range), not repeats of identical text.
+ */
+function FileContent(props: { file: ContextFileRead }) {
+  const { file } = props;
+  const entries = file.content ?? [];
+  const shown = entries.length;
+  const markdown = isMarkdownPath(file.path);
+
+  return (
+    <>
+      {entries.map((entry, i) => {
+        const parsed = parseReadOutput(entry.text);
+        return (
+          <div key={i}>
+            {(shown > 1 || file.reads > shown) && (
+              <div class="ctx-subhead">
+                read {i + 1} of {file.reads} · {entry.chars.toLocaleString()} characters
+              </div>
+            )}
+            {parsed.header && <div class="ctx-subhead ctx-subhead-note">{parsed.header}</div>}
+            {/* The shared log renderer: markdown for documents, a smart block
+                for JSON, a code block for anything else - the same treatment
+                this content gets in the session log. */}
+            <div class="ctx-doc">
+              <LogContent value={parsed.body} {...(markdown ? { forceMarkdown: true } : {})} />
+            </div>
+            {entry.truncated && (
+              <div class="ctx-subhead ctx-subhead-note">
+                Preview cut at {entry.text.length.toLocaleString()} of {entry.chars.toLocaleString()} characters.
+                The full text is in the run's session log.
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {file.reads > shown && (
+        <div class="ctx-subhead ctx-subhead-note">
+          Showing {shown} of {file.reads} reads.
+        </div>
+      )}
+    </>
   );
 }
 
@@ -383,6 +432,7 @@ export default function SessionContext() {
                   note={<FileNote file={file} />}
                   chars={file.chars}
                   estTokens={file.estTokens}
+                  {...(file.content?.length ? { body: () => <FileContent file={file} /> } : {})}
                 />
               ))}
             </ul>

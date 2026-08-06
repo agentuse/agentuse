@@ -6290,6 +6290,23 @@ button.ctx-layer-head:hover, .ctx-tool-head:hover { background: var(--panel-hove
   color: var(--muted-2);
   background: var(--bg);
 }
+/* A caveat about the text above it, not a heading for what follows. */
+.ctx-subhead-note {
+  padding: 8px 14px 10px;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+/* Rendered file content. Same scroll cap as the raw text panes so one long
+   document cannot run away with the page; the log renderer's own typography
+   handles everything inside. */
+.ctx-doc {
+  max-height: 460px;
+  overflow: auto;
+  padding: 4px 14px 12px;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.ctx-subhead + .ctx-doc, .ctx-subhead-note + .ctx-doc { border-top: 0; }
 
 /* Narrow screens: the weight bar drops to its own row rather than crushing
    the label, matching how the tool-call band stacks on the session page. */
