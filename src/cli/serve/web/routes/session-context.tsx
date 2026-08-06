@@ -10,7 +10,12 @@ import { LogContent } from '../components/content';
 import { toolChipLabel } from '../components/log-entry';
 import { isMarkdownPath, parseReadOutput } from '../lib/read-output';
 import { pageTitle } from '../lib/brand';
-import type { ContextFileRead, ContextStackLayer, ContextToolRow } from '../../types';
+import type {
+  ContextFileRead,
+  ContextStackLayer,
+  ContextToolResultStat,
+  ContextToolRow,
+} from '../../types';
 
 /** Friendly name for the tool that pulled a file in. */
 const READ_TOOL_LABEL: Record<string, string> = {
@@ -109,6 +114,15 @@ function StackRow(props: {
           ~{formatTokens(estTokens)}
         </span>
       </span>
+      {/* Always rendered, so the token column lands in the same place whether
+          or not a row opens; only the expandable ones draw the chevron. */}
+      <span class="ctx-chevron" aria-hidden="true">
+        {body && (
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 6.5 8 10.5l4-4" />
+          </svg>
+        )}
+      </span>
     </>
   );
 
@@ -190,6 +204,53 @@ function FileContent(props: { file: ContextFileRead }) {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Which tools filled the window with their results. Sizes only - the results
+ * themselves are in the session log, and re-serving them here would be a lot
+ * of bytes for something already one click away.
+ */
+function ToolResultBreakdown(props: { results: ContextToolResultStat[] }) {
+  const { results } = props;
+  const peak = Math.max(1, ...results.map((r) => r.estTokens));
+
+  return (
+    <ul class="ctx-results">
+      {results.map((r) => (
+        <li class="ctx-result" key={r.tool}>
+          <code class="ctx-result-name" title={r.tool}>{toolChipLabel(r.tool)}</code>
+          <span class="ctx-result-calls">
+            {r.calls.toLocaleString()} call{r.calls === 1 ? '' : 's'}
+            {r.failed > 0 && (
+              <span class="ctx-result-failed" title={`${r.failed} call${r.failed === 1 ? '' : 's'} errored, returning no result`}>
+                {r.failed} failed
+              </span>
+            )}
+            {r.pending > 0 && (
+              <span class="ctx-result-pending" title="Still running, or parked on an approval gate, so it has no result yet">
+                {r.pending} in flight
+              </span>
+            )}
+          </span>
+          {r.countedAsFiles ? (
+            // A read tool: its bytes are the file rows above, so it shows its
+            // activity here but contributes nothing to this row's total.
+            <span class="ctx-result-elsewhere">counted as files above</span>
+          ) : (
+            <span class="ctx-weight">
+              <span class="ctx-track">
+                <span class="ctx-bar" style={{ width: `${Math.max((r.estTokens / peak) * 100, 2)}%` }}></span>
+              </span>
+              <span class="ctx-tokens" title={`${r.chars.toLocaleString()} characters`}>
+                ~{formatTokens(r.estTokens)}
+              </span>
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -344,12 +405,6 @@ export default function SessionContext() {
   }, [context]);
 
   const mixTotal = useMemo(() => mix.reduce((sum, g) => sum + g.tokens, 0), [mix]);
-  const toolCallTotal = useMemo(
-    () => (context?.toolCalls ?? []).reduce((sum, s) => sum + s.count, 0),
-    [context]
-  );
-  // Longest bar sets the scale, so rows read as shares of the busiest tool.
-  const toolCallPeak = context?.toolCalls[0]?.count ?? 1;
   const fileReadTokens = useMemo(
     () => (context?.fileReads ?? []).reduce((sum, f) => sum + f.estTokens, 0),
     [context]
@@ -456,48 +511,6 @@ export default function SessionContext() {
                   ))}
                 </section>
               )}
-              {/* The per-tool roll-up, moved here from the session view. Counted
-                  from the session's parts, so it is the whole run - the session
-                  log's version could only tally the entries it had paged in. */}
-              {context.toolCalls.length > 0 && (
-                <section class="tool-stats" aria-label="Tool calls grouped by tool">
-                  <div class="tool-stats-head">
-                    <span class="tool-stats-title">tool calls</span>
-                    <span class="tool-stats-total">
-                      {toolCallTotal.toLocaleString()} across {context.toolCalls.length}
-                      {context.toolCalls.length === 1 ? ' tool' : ' tools'}
-                    </span>
-                  </div>
-                  <ul class="tool-stats-rows">
-                    {context.toolCalls.map((s) => (
-                      <li class="tool-stat" key={s.tool}>
-                        <span class="tool-stat-name" title={s.tool}>{toolChipLabel(s.tool)}</span>
-                        <span class="tool-stat-track">
-                          <span
-                            class="tool-stat-bar"
-                            style={{ width: `${Math.max((s.count / toolCallPeak) * 100, 3)}%` }}
-                          >
-                            {s.failed > 0 && (
-                              <span
-                                class="tool-stat-bar-failed"
-                                style={{ width: `${(s.failed / s.count) * 100}%` }}
-                              ></span>
-                            )}
-                          </span>
-                        </span>
-                        <span class="tool-stat-count">
-                          {s.failed > 0 && (
-                            <span class="tool-stat-failed" title={`${s.failed} of ${s.count} failed`}>
-                              {s.failed} failed
-                            </span>
-                          )}
-                          {s.count.toLocaleString()}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
             </header>
 
             {context.compacted && (
@@ -571,9 +584,10 @@ export default function SessionContext() {
                   index={context.layers.length + context.fileReads.length}
                   share={context.traffic.toolResultEstTokens / peak}
                   label="Tool results"
-                  note="What the run's tool calls returned, other than the file reads above. Read the individual results in the session log."
+                  note={`Every tool this run called — ${context.traffic.toolResults.length} of them — with what its results added to the window.`}
                   chars={context.traffic.toolResultChars}
                   estTokens={context.traffic.toolResultEstTokens}
+                  body={() => <ToolResultBreakdown results={context.traffic.toolResults} />}
                 />
               )}
               {context.traffic.outputEstTokens > 0 && (

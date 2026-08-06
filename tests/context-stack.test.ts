@@ -194,7 +194,6 @@ describe('session context stack', () => {
     expect(payload.tools).toEqual([]);
     expect(payload.fileReads).toEqual([]);
     expect(payload.totals).toEqual({ chars: 0, estTokens: 0, withFileReadsEstTokens: 0 });
-    expect(payload.toolCalls).toEqual([]);
     expect(payload.measured).toBeUndefined();
     expect(payload.agent.filePath).toBe('/repo/agents/reporter.agentuse');
   });
@@ -360,40 +359,6 @@ describe('mid-run file reads', () => {
   });
 });
 
-describe('tool call tallies', () => {
-  it('counts every tool part, not just the reads, and ranks by call count', () => {
-    const parts = [
-      readPart('tools__bash', { command: 'ls' }, 'a'),
-      readPart('tools__bash', { command: 'pwd' }, 'b'),
-      readPart('tools__bash', { command: 'date' }, 'c'),
-      readPart('tools__filesystem_read', { file_path: '/repo/x.md' }, 'd'),
-      readPart('mcp__slack__post', {}, 'e'),
-    ];
-
-    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts });
-
-    expect(payload.toolCalls).toEqual([
-      { tool: 'tools__bash', count: 3, failed: 0 },
-      { tool: 'mcp__slack__post', count: 1, failed: 0 },
-      { tool: 'tools__filesystem_read', count: 1, failed: 0 },
-    ]);
-  });
-
-  it('counts failures separately', () => {
-    const errored = {
-      id: 'p', messageID: 'msg_1', sessionID: session.id, type: 'tool', callID: 'c', tool: 'tools__bash',
-      state: { status: 'error', input: {}, error: 'boom', time: { start: 1, end: 2 } },
-    } as unknown as Part;
-
-    const payload = buildSessionContextPayload({
-      session, message: message({}), tools: null,
-      parts: [readPart('tools__bash', { command: 'ok' }, 'x'), errored],
-    });
-
-    expect(payload.toolCalls).toEqual([{ tool: 'tools__bash', count: 2, failed: 1 }]);
-  });
-});
-
 describe('what the run added to the window', () => {
   it('separates the model\'s output from what its tools returned', () => {
     const text = {
@@ -422,8 +387,11 @@ describe('what the run added to the window', () => {
     });
 
     expect(payload.fileReads[0]!.chars).toBe(500);
+    // The result text is the file row's, not the results row's.
     expect(payload.traffic.toolResultChars).toBe(0);
-    expect(payload.traffic.outputChars).toBe(0);
+    // The arguments still count as output: the model wrote them, and they sit
+    // in the window like any other tool call it made.
+    expect(payload.traffic.outputChars).toBe(JSON.stringify({ file_path: '/repo/a.md' }).length);
   });
 
   it('ignores user text, which is prompt rather than output', () => {
@@ -437,5 +405,49 @@ describe('what the run added to the window', () => {
     });
 
     expect(payload.traffic.outputChars).toBe(0);
+  });
+});
+
+describe('tool result breakdown', () => {
+  it('covers every tool the run called, heaviest first, read tools last', () => {
+    const parts = [
+      readPart('tools__bash', { command: 'a' }, 'x'.repeat(300)),
+      readPart('tools__bash', { command: 'b' }, 'x'.repeat(700)),
+      readPart('mcp__slack__list', {}, 'y'.repeat(400)),
+      /* A read tool. It is listed, but its bytes belong to the file rows. */
+      readPart('tools__filesystem_read', { file_path: '/repo/a.md' }, 'z'.repeat(9000)),
+    ];
+
+    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts });
+    const results = payload.traffic.toolResults;
+
+    expect(results.map((r) => [r.tool, r.calls, r.chars])).toEqual([
+      ['tools__bash', 2, 1000],
+      ['mcp__slack__list', 1, 400],
+      ['tools__filesystem_read', 1, 0],
+    ]);
+    expect(results[2]!.countedAsFiles).toBe(true);
+    /* The read tool contributes no chars, so the total still matches the bar. */
+    expect(payload.traffic.toolResultChars).toBe(1400);
+    expect(payload.fileReads[0]!.chars).toBe(9000);
+    expect(results[0]!.estTokens).toBe(250);
+  });
+
+  it('shows a tool that only ever failed, with no result weight', () => {
+    const errored = (tool: string) => ({
+      id: `e${Math.random()}`, messageID: 'msg_1', sessionID: session.id, type: 'tool', callID: 'c', tool,
+      state: { status: 'error', input: { a: 1 }, error: 'boom', time: { start: 1, end: 2 } },
+    } as unknown as Part);
+
+    const payload = buildSessionContextPayload({
+      session, message: message({}), tools: null,
+      parts: [readPart('tools__bash', { command: 'ok' }, 'x'.repeat(80)), errored('tools__bash'), errored('mcp__flaky')],
+    });
+
+    expect(payload.traffic.toolResults).toEqual([
+      { tool: 'tools__bash', calls: 1, failed: 1, pending: 0, chars: 80, estTokens: 20 },
+      { tool: 'mcp__flaky', calls: 0, failed: 1, pending: 0, chars: 0, estTokens: 0 },
+    ]);
+    expect(payload.traffic.toolResultChars).toBe(80);
   });
 });

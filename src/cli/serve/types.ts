@@ -184,14 +184,34 @@ export interface ContextFileRead {
 }
 
 /**
- * One tool's call tally for this run. Counted from the session's tool parts
- * rather than from the log the page happens to have loaded, so the totals are
- * complete even on a long run.
+ * One tool's activity for this run: how often it ran, how often it failed, and
+ * how much window its results took. Counted from the session's tool parts, so
+ * it is the whole run rather than however much log a page has loaded.
+ *
+ * Calls and result size are worth seeing together but are not the same story:
+ * a tool called twice can return more text than one called twenty times, and
+ * it is the characters, not the calls, that occupy the context.
  */
-export interface ContextToolCallStat {
+export interface ContextToolResultStat {
   tool: string;
-  count: number;
+  /** Completed calls. */
+  calls: number;
+  /** Calls that errored. They return no result text, so they add no `chars`. */
   failed: number;
+  /**
+   * Calls still in flight - running, or parked on an approval gate. They have
+   * no result yet, so they add no `chars`, but a suspended run's pending call
+   * is often the most interesting row on the page.
+   */
+  pending: number;
+  chars: number;
+  estTokens: number;
+  /**
+   * True for the read tools, whose result text is itemised as `fileReads`
+   * instead. Their `chars` are excluded from `traffic.toolResultChars` so the
+   * two are never counted twice.
+   */
+  countedAsFiles?: boolean;
 }
 
 export interface SessionContextPayload {
@@ -207,8 +227,6 @@ export interface SessionContextPayload {
   tools: ContextToolRow[];
   /** Files read during the run, heaviest first. Empty when the run read none. */
   fileReads: ContextFileRead[];
-  /** Tool calls this run made, most-called first. */
-  toolCalls: ContextToolCallStat[];
   /**
    * What the run added to the window as it went: the model's own words and
    * tool arguments, and the results its tools returned. Read-tool results are
@@ -219,6 +237,8 @@ export interface SessionContextPayload {
     outputEstTokens: number;
     toolResultChars: number;
     toolResultEstTokens: number;
+    /** Per tool, heaviest first. Sums to `toolResultChars`. */
+    toolResults: ContextToolResultStat[];
   };
   totals: {
     chars: number;

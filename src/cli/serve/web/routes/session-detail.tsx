@@ -248,6 +248,14 @@ export default function SessionDetail() {
   const sessionId = decodeURIComponent(params.sessionId ?? '');
   const token = location.query.token || undefined;
   const projectId = location.query.project || undefined;
+  // The diagnostic subpage, carrying whatever authorises this view.
+  const diagnosticHref = (() => {
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    if (projectId) params.set('project', projectId);
+    const query = params.toString();
+    return `/sessions/${encodeURIComponent(sessionId)}/context${query ? `?${query}` : ''}`;
+  })();
   // Arrived from a just-started detached run: tolerate a brief "not found" while
   // the worker is still writing the session to disk.
   const pending = location.query.pending === '1';
@@ -1229,12 +1237,6 @@ export default function SessionDetail() {
                 // URLs often omit it; the header's stamped project id keeps
                 // "Run new session" working on multi-project daemons.
                 {...(projectId ?? approval.project ? { projectId: projectId ?? approval.project } : {})}
-                contextHref={`/sessions/${encodeURIComponent(sessionId)}/context${location.query.token || projectId
-                  ? `?${new URLSearchParams({
-                      ...(location.query.token ? { token: location.query.token } : {}),
-                      ...(projectId ? { project: projectId } : {}),
-                    }).toString()}`
-                  : ''}`}
               />
             )}
           </div>
@@ -1253,6 +1255,20 @@ export default function SessionDetail() {
             {approval.expiresAt !== undefined && (
               <div class="cell"><span class="label">expires</span><span class="value">{formatApprovalTime(approval.expiresAt)}</span></div>
             )}
+          </div>
+          {/* Context and cost get their own table: they answer "what did this
+              run consume", not "what is this run", and the diagnostic page
+              that breaks them down hangs off this band. */}
+          <div class="meta-band-head">
+            <span class="meta-band-title">context</span>
+            <a class="meta-band-link" href={diagnosticHref}>
+              Diagnostic
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M6 3.5 10.5 8 6 12.5" />
+              </svg>
+            </a>
+          </div>
+          <div class="meta meta-context">
             {tokenUsageMetaItems(tokenUsage).map((item) => (
               <div class="cell token-cell" key={item.label}>
                 <span class="label">{item.label}</span>

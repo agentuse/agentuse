@@ -4,12 +4,15 @@ import { agentDetailHref } from '../routes/agent-detail';
 import { RunInstructionDialog } from './run-instruction-dialog';
 
 /**
- * ⋯ overflow menu in the session bar. Holds the actions that are not part of
- * reviewing this run: "Go to agent" (its detail hub), "Run new session" (a
- * fresh detached run of the same agent) and the same run with a one-off
- * instruction, plus the context-stack diagnostic for this session. Mirrors the
+ * ⋯ overflow menu in the session bar. Holds actions about the agent behind the
+ * session rather than the session itself — "Go to agent" (its detail hub),
+ * "Run new session" (a fresh detached run of the same agent, navigating to its
+ * live view) and the same run with a one-off instruction appended. Mirrors the
  * agents-page menu pattern: a position:fixed popover that closes on outside
  * click, Escape, scroll, or resize.
+ *
+ * The diagnostic subpage is reached from the context table in the header, not
+ * from here: it is about this run, not about the agent.
  */
 export function SessionMenu(props: {
   agentName: string;
@@ -17,8 +20,6 @@ export function SessionMenu(props: {
   /** Scope-relative agent path; absent when the agent has no detail hub. */
   agentRunPath?: string;
   projectId?: string;
-  /** Link to this session's context-stack page, already carrying its token. */
-  contextHref?: string;
 }) {
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -122,23 +123,6 @@ export function SessionMenu(props: {
             </svg>
             <span>Run new session with custom instruction</span>
           </button>
-          {props.contextHref && (
-            <>
-              <div class="menu-sep" />
-              <a
-                class="menu-item"
-                role="menuitem"
-                href={props.contextHref}
-                title="What was loaded into this run's context window: system prompts, tool schemas, agent instructions, skill files and files read"
-                onClick={() => setPos(null)}
-              >
-                <svg class="menu-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M2.5 12.5A1.5 1.5 0 0 1 4 11h9.5" /><path d="M4 2h9.5v12H4a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 4 2Z" />
-                </svg>
-                <span>Diagnostic</span>
-              </a>
-            </>
-          )}
           {error && !runOpen && <p class="menu-error" role="alert">{error}</p>}
         </div>
       )}

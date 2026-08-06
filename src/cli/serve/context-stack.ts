@@ -4,7 +4,7 @@ import type {
   ContextFileRead,
   ContextFileReadContent,
   ContextStackLayer,
-  ContextToolCallStat,
+  ContextToolResultStat,
   ContextToolRow,
   SessionContextPayload,
 } from './types';
@@ -234,56 +234,6 @@ export function buildFileReads(parts: Part[]): ContextFileRead[] {
   return files;
 }
 
-/**
- * Tool calls tallied per tool. Counted from the session's parts, so unlike the
- * session log's own roll-up this never says "loaded entries" - it is the whole
- * run every time.
- */
-export function buildToolCalls(parts: Part[]): ContextToolCallStat[] {
-  const byTool = new Map<string, ContextToolCallStat>();
-
-  for (const part of parts) {
-    if (part.type !== 'tool') continue;
-    const stat = byTool.get(part.tool) ?? { tool: part.tool, count: 0, failed: 0 };
-    stat.count += 1;
-    if (part.state.status === 'error') stat.failed += 1;
-    byTool.set(part.tool, stat);
-  }
-
-  return [...byTool.values()].sort((a, b) => b.count - a.count || a.tool.localeCompare(b.tool));
-}
-
-/**
- * What the run itself added to the window after the opening prompt: the
- * model's own words, and the results its tool calls returned.
- *
- * Both re-enter the context on every later step, so on a long run they are
- * usually the larger half of the window - the opening stack is charged once,
- * these accumulate. Read-tool results are excluded because they are already
- * itemised as file rows; counting them here would double up.
- */
-export function buildRunTraffic(parts: Part[]): { outputChars: number; toolResultChars: number } {
-  let outputChars = 0;
-  let toolResultChars = 0;
-
-  for (const part of parts) {
-    if (part.type === 'text' && part.role !== 'user') {
-      outputChars += part.text.length;
-    } else if (part.type === 'reasoning') {
-      outputChars += part.text.length;
-    } else if (part.type === 'tool' && !READ_TOOLS.has(part.tool)) {
-      if (part.state.status !== 'completed') continue;
-      // The arguments the model wrote are output; the result it got back is
-      // input on the next step. Both sit in the window either way.
-      outputChars += JSON.stringify(part.state.input ?? '').length;
-      toolResultChars += readOutputText(part.state)?.length
-        ?? JSON.stringify(part.state.output ?? '').length;
-    }
-  }
-
-  return { outputChars, toolResultChars };
-}
-
 function makeLayer(
   kind: ContextStackLayer['kind'],
   id: string,
@@ -310,6 +260,88 @@ function makeLayer(
  */
 function isIdentityMessage(content: string): boolean {
   return content.trim() === ANTHROPIC_IDENTITY_PROMPT.trim();
+}
+
+/**
+ * What the run itself added to the window after the opening prompt: the
+ * model's own words, and the results its tool calls returned.
+ *
+ * Both re-enter the context on every later step, so on a long run they are
+ * usually the larger half of the window - the opening stack is charged once,
+ * these accumulate. Every tool that ran appears, including the read tools and
+ * ones that only ever failed, so this is the run's whole tool activity; the
+ * read tools carry `countedAsFiles` because their bytes are itemised as file
+ * rows and must not be added twice.
+ */
+export function buildRunTraffic(parts: Part[]): {
+  outputChars: number;
+  toolResults: ContextToolResultStat[];
+} {
+  let outputChars = 0;
+  const byTool = new Map<string, ContextToolResultStat>();
+
+  const statFor = (tool: string): ContextToolResultStat => {
+    const existing = byTool.get(tool);
+    if (existing) return existing;
+    const fresh: ContextToolResultStat = {
+      tool,
+      calls: 0,
+      failed: 0,
+      pending: 0,
+      chars: 0,
+      estTokens: 0,
+      ...(READ_TOOLS.has(tool) ? { countedAsFiles: true } : {}),
+    };
+    byTool.set(tool, fresh);
+    return fresh;
+  };
+
+  for (const part of parts) {
+    if (part.type === 'text' && part.role !== 'user') {
+      outputChars += part.text.length;
+      continue;
+    }
+    if (part.type === 'reasoning') {
+      outputChars += part.text.length;
+      continue;
+    }
+    if (part.type !== 'tool') continue;
+
+    const stat = statFor(part.tool);
+    if (part.state.status === 'error') {
+      // A failed call still costs its arguments and an error string, but it
+      // returns no result text - so it is worth seeing, and adds no chars.
+      stat.failed += 1;
+      continue;
+    }
+    if (part.state.status !== 'completed') {
+      // Running, or parked on a gate. Its arguments are already in the window,
+      // but there is no result yet.
+      stat.pending += 1;
+      continue;
+    }
+
+    // The arguments the model wrote are output; the result it got back is
+    // input on the next step. Both sit in the window either way.
+    outputChars += JSON.stringify(part.state.input ?? '').length;
+    stat.calls += 1;
+    if (!stat.countedAsFiles) {
+      stat.chars += readOutputText(part.state)?.length
+        ?? JSON.stringify(part.state.output ?? '').length;
+      stat.estTokens = estimateTokens(stat.chars);
+    }
+  }
+
+  return {
+    outputChars,
+    // Heaviest first, with the read tools last: their bytes are shown as file
+    // rows, so they are context for the reader rather than part of the total.
+    toolResults: [...byTool.values()].sort((a, b) =>
+      Number(a.countedAsFiles ?? false) - Number(b.countedAsFiles ?? false)
+      || b.chars - a.chars
+      || a.tool.localeCompare(b.tool)
+    ),
+  };
 }
 
 /**
@@ -453,14 +485,15 @@ export function buildSessionContextPayload(options: {
     layers,
     tools: toolRows,
     fileReads,
-    toolCalls: buildToolCalls(parts),
     traffic: (() => {
       const t = buildRunTraffic(parts);
+      const toolResultChars = t.toolResults.reduce((sum, r) => sum + r.chars, 0);
       return {
         outputChars: t.outputChars,
         outputEstTokens: estimateTokens(t.outputChars),
-        toolResultChars: t.toolResultChars,
-        toolResultEstTokens: estimateTokens(t.toolResultChars),
+        toolResultChars,
+        toolResultEstTokens: estimateTokens(toolResultChars),
+        toolResults: t.toolResults,
       };
     })(),
     totals: {

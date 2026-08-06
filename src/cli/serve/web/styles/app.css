@@ -885,6 +885,33 @@ a, button, select, summary, label, input, textarea,
 /* A meta field with no value renders an empty .cell. Collapse it so an empty
    box doesn't sit in the table; auto-fit reflows the rest to fill the width. */
 .page-approval-detail .meta .cell:empty { display: none; }
+/* Context and cost sit in their own table under a labelled strip, with the
+   link to the page that breaks them down. Same title treatment as the other
+   band headings on this page. */
+.page-approval-detail .meta-band-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+.page-approval-detail .meta-band-title { color: var(--muted); }
+.page-approval-detail .meta-band-title::before { content: "⋮ "; color: var(--cyan); opacity: 0.6; }
+.page-approval-detail .meta-band-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted-3);
+  text-decoration: none;
+  letter-spacing: 0.02em;
+  transition: color 120ms ease;
+}
+.page-approval-detail .meta-band-link:hover { color: var(--cyan); }
+.page-approval-detail .meta-band-link svg { transition: transform 120ms ease; }
+.page-approval-detail .meta-band-link:hover svg { transform: translateX(2px); }
+.page-approval-detail .meta.meta-context { margin-top: 0; }
 .page-approval-detail .meta .label {
   display: block;
   color: var(--muted);
@@ -6079,9 +6106,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   line-height: 1.55;
   color: var(--muted);
 }
+/* Full width, matching the stack it sits under - a narrow measure here read as
+   a stray paragraph rather than a footer to the list above it. */
 .page-session-context .ctx-footnote {
-  margin: 28px 0 0;
-  max-width: 68ch;
+  margin: 20px 0 0;
   font-size: 11.5px;
   line-height: 1.55;
   color: var(--muted);
@@ -6207,7 +6235,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
      only won on the non-button rows, so the list rendered in two faces. */
   color: inherit;
 }
-.ctx-layer-head { grid-template-columns: 22px 64px minmax(0, 1fr) 172px; }
+.ctx-layer-head { grid-template-columns: 22px 64px minmax(0, 1fr) 172px 14px; }
 .ctx-tool-head { grid-template-columns: minmax(0, 220px) minmax(0, 1fr) 172px; }
 button.ctx-layer-head:hover, .ctx-tool-head:hover { background: var(--panel-hover); }
 /* Not interactive, so no pointer and no hover response - but full contrast:
@@ -6268,6 +6296,18 @@ button.ctx-layer-head:hover, .ctx-tool-head:hover { background: var(--panel-hove
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+/* Marks the rows that open. Quiet until the row is hovered, then it brightens;
+   flips up once expanded, which is the only cue on a row whose content has
+   scrolled past. */
+.ctx-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  color: var(--muted-2);
+  transition: transform 140ms ease, color 140ms ease;
+}
+button.ctx-layer-head:hover .ctx-chevron { color: var(--fg); }
+button.ctx-layer-head[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg); }
 
 .ctx-text {
   margin: 0;
@@ -6306,6 +6346,41 @@ button.ctx-layer-head:hover, .ctx-tool-head:hover { background: var(--panel-hove
 }
 .ctx-kind-file .ctx-kind, .ctx-kind-results .ctx-kind { color: var(--chart-5); border-color: var(--chart-5); }
 .ctx-kind-output .ctx-kind { color: var(--chart-3); border-color: var(--chart-3); }
+
+/* Per-tool result sizes inside the "Tool results" row. Static rows, not
+   buttons: there is nothing to open, because the results themselves live in
+   the session log. */
+.ctx-results { list-style: none; margin: 0; padding: 10px 12px; background: var(--bg); display: flex; flex-direction: column; gap: 8px; }
+.ctx-result {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+.ctx-result-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-result-calls {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ctx-result-failed { color: var(--red); }
+.ctx-result-pending { color: var(--amber); }
+.ctx-result-elsewhere { font-size: 11px; color: var(--muted-2); justify-self: end; }
+@media (max-width: 720px) {
+  .ctx-result { grid-template-columns: minmax(0, 1fr) max-content; }
+  .ctx-result .ctx-weight { grid-area: 2 / 1 / 3 / -1; }
+}
 
 .ctx-tool-name { font-family: var(--mono); font-size: 12px; color: var(--fg); }
 .ctx-tool-desc {
@@ -6347,8 +6422,9 @@ button.ctx-layer-head:hover, .ctx-tool-head:hover { background: var(--panel-hove
 /* Narrow screens: the weight bar drops to its own row rather than crushing
    the label, matching how the tool-call band stacks on the session page. */
 @media (max-width: 720px) {
-  .ctx-layer-head { grid-template-columns: 22px minmax(0, 1fr); grid-auto-rows: min-content; }
+  .ctx-layer-head { grid-template-columns: 22px minmax(0, 1fr) 14px; grid-auto-rows: min-content; }
   .ctx-kind { grid-area: 1 / 2; }
+  .ctx-chevron { grid-area: 1 / 3; }
   .ctx-layer-main { grid-area: 2 / 1 / 3 / -1; }
   .ctx-weight { grid-area: 3 / 1 / 4 / -1; }
   .ctx-tool-head { grid-template-columns: minmax(0, 1fr); }
