@@ -173,7 +173,7 @@ describe('agentuse learnings migrate', () => {
     expect(await readFile(destination, 'utf-8')).toBe('already migrated\n');
     expect(await readFile(legacy, 'utf-8')).toBe('from the repo\n');
     expect(output).toContain('refused');
-    expect(output).toContain('the destination already holds corrections');
+    expect(output).toContain('the destination already holds learnings');
     expect(output).not.toContain('1 moved');
     expect(process.exitCode).toBe(1);
   });

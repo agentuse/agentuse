@@ -540,7 +540,7 @@ export function buildSessionContextPayload(options: {
         layers.push(...splitSkillsBlock(block));
       } else {
         const counts = correctionCounts(block, correctionsMarker);
-        layers.push(makeLayer('learnings', 'learnings', 'Recent corrections', block, {
+        layers.push(makeLayer('learnings', 'learnings', 'Recent learnings', block, {
           note: 'Added because `learning.apply` is on. Captured from earlier runs of this agent.',
           ...(counts ? { corrections: counts } : {}),
         }));

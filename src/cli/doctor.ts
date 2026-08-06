@@ -349,7 +349,7 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
     const dormant = learningPreview.total - learningPreview.count;
     console.log(`  learned guidelines: ${learningPreview.count} of ${learningPreview.total} applied, ${formatEstimatedTokens(estimatedLearningTokens)} tokens/model request`);
     if (dormant > 0) {
-      console.log(chalk.yellow(`  ${dormant} stored correction${dormant === 1 ? '' : 's'} never reach the model: only the top ${learningPreview.cap} are injected per run.`));
+      console.log(chalk.yellow(`  ${dormant} stored learning${dormant === 1 ? '' : 's'} never reach the model: only the top ${learningPreview.cap} are injected per run.`));
       console.log(chalk.gray(`  Fix: agentuse learnings tidy ${agentFilePath}`));
     }
   }
@@ -358,7 +358,7 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
   // an agent that has captured nothing yet, which is when "where did it go?" is
   // the actual question.
   if (agent.config.learning) {
-    console.log(chalk.gray(`  corrections file: ${resolveLearningFilePath(agentFilePath, projectContext.stateRoot)}`));
+    console.log(chalk.gray(`  learnings file: ${resolveLearningFilePath(agentFilePath, projectContext.stateRoot)}`));
   }
   if (strandedLearnings) {
     for (const line of strandedLearnings.split('\n')) console.log(chalk.yellow(`  ${line}`));

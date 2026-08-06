@@ -677,12 +677,12 @@ describe('DecisionDialog component', () => {
     expect(html).toContain('leave a comment');
     expect(html).toContain('explain your decision');
     expect(html).toContain('Send comment');
-    expect(html).not.toContain('Remember this comment as a future instruction');
+    expect(html).not.toContain('Remember this comment as a future learning');
   });
 
   it('renders the manual learning affordance when allowed', () => {
     const html = renderToString(<DecisionDialog open mode="comment" allowRemember onSubmit={noop} onClose={noop} />);
-    expect(html).toContain('Remember this comment as a future instruction');
+    expect(html).toContain('Remember this comment as a future learning');
   });
 
   it('renders reject mode with optional reason copy', () => {
@@ -691,7 +691,7 @@ describe('DecisionDialog component', () => {
     expect(html).toContain('configured rejected-state updates');
     expect(html).toContain('optional: which part is wrong is enough');
     expect(html).toContain('>Reject</button>');
-    expect(html).not.toContain('Remember this comment as a future instruction');
+    expect(html).not.toContain('Remember this comment as a future learning');
   });
 });
 
@@ -1233,7 +1233,7 @@ describe('LearningsHeadline', () => {
     const html = renderToString(
       <LearningsHeadline summary={summary()} tidyTarget={target} runningTidy={null} />,
     );
-    expect(html).toContain("26 of this agent's corrections never reach it");
+    expect(html).toContain("26 of this agent's learnings never reach it");
     expect(html).toContain('Tidy up');
     expect(html).toContain('agents%2Fwriter.agentuse');
   });
@@ -1287,7 +1287,7 @@ describe('TidyResultView', () => {
     expect(html).toContain('58 ');
     expect(html).toContain('Now permanent in the agent file');
     expect(html).toContain('Cite sources before publishing');
-    expect(html).toContain('corrections file');
+    expect(html).toContain('learnings file');
     expect(html).toContain('agent file');
     expect(html).toContain('Undo');
   });
@@ -1359,7 +1359,7 @@ describe('TidyProgressView', () => {
 
   it('names the deciding phase, which has no inner milestones to count', () => {
     const html = renderToString(<TidyProgressView phase="deciding" step={0} total={1} elapsedMs={2_000} />);
-    expect(html).toContain('Reading every correction');
+    expect(html).toContain('Reading every learning');
     expect(html).not.toContain('of 0');
     expect(html).toContain('2s');
   });
@@ -1375,7 +1375,7 @@ describe('TidyProgressView', () => {
 
   it('says which files it is writing at the end', () => {
     const html = renderToString(<TidyProgressView phase="applying" step={11} total={11} elapsedMs={1_000} />);
-    expect(html).toContain('corrections file and the agent file');
+    expect(html).toContain('learnings file and the agent file');
   });
 });
 

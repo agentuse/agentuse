@@ -48,11 +48,11 @@ export function TidyProgressView(props: {
 }) {
   const { phase, step, total } = props;
   const label = phase === 'deciding'
-    ? 'Reading every correction to see what repeats'
+    ? 'Reading every learning to see what repeats'
     : phase === 'writing'
       ? total > 0 ? `Rewriting rule ${Math.min(step + 1, total)} of ${total}` : 'Rewriting the merged rules'
       : phase === 'applying'
-        ? 'Writing the corrections file and the agent file'
+        ? 'Writing the learnings file and the agent file'
         : 'Finishing up';
 
   // Name the pass. Without it a second pass looks like the first one starting
@@ -88,7 +88,7 @@ export function TidyProgressView(props: {
         <div class="tidy-progress-bar" style={`width:${pct}%`} />
       </div>
       <p class="tidy-progress-hint">
-        First it reads every stored correction and decides what says the same thing twice, what to
+        First it reads every stored learning and decides what says the same thing twice, what to
         sharpen, and what has earned a permanent place in the agent file. Then it writes the
         replacements, several at a time, and goes back over whatever is left until another pass
         would not help. A long list takes a few minutes. Leaving this page does not stop it — the result waits here.
@@ -181,7 +181,7 @@ export default function LearningsTidy() {
       <main>
         <a class="back-link" href={backHref}>Back to agent</a>
         <header>
-          <div class="eyebrow">corrections</div>
+          <div class="eyebrow">learnings</div>
           <h1>Tidy up {agentName(runPath)}</h1>
           <p class="lede">
             Merge what repeats, sharpen what keeps being re-said, retire what is superseded, and make
@@ -211,7 +211,7 @@ export default function LearningsTidy() {
 
         {alreadyUndone && (
           <p class="learnings-note">
-            Undone — the corrections file and the agent file are back to exactly how they were.
+            Undone — the learnings file and the agent file are back to exactly how they were.
           </p>
         )}
 

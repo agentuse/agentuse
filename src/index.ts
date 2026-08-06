@@ -1464,7 +1464,7 @@ async function runInternalWorker() {
           id: String(part.id),
           type: 'corrections',
           status: 'completed',
-          title: 'corrections applied',
+          title: 'learnings applied',
           ...(typeof part.applied === 'number' && { applied: part.applied }),
           ...(typeof part.active === 'number' && { active: part.active }),
           ...(typeof part.cap === 'number' && { cap: part.cap }),

@@ -125,11 +125,11 @@ export function DecisionDialog(props: {
                   checked={rememberChecked}
                   onChange={(event) => setRememberChecked((event.currentTarget as HTMLInputElement).checked)}
                 />
-                <span>Remember this comment as a future instruction</span>
+                <span>Remember this comment as a future learning</span>
               </label>
               {rememberChecked && !props.rememberApplies && (
                 <p class="remember-hint">
-                  Saved as an instruction for this agent. It takes effect on future runs once <code>learning.apply</code> is enabled.
+                  Saved as a learning for this agent. It takes effect on future runs once <code>learning.apply</code> is enabled.
                 </p>
               )}
             </div>

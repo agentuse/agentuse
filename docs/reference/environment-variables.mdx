@@ -419,11 +419,11 @@ Large tool results are re-sent to the model on every subsequent step, so a singl
   ```
   $XDG_DATA_HOME/agentuse/project/{git-hash}/
   ├── session/          # execution logs
-  ├── learnings/        # agent corrections
+  ├── learnings/        # agent learnings
   └── consolidations/   # undo snapshots for `agentuse learnings tidy`
   ```
 
-  Pointing this at a scratch directory therefore isolates a development daemon's sessions and corrections from your own.
+  Pointing this at a scratch directory therefore isolates a development daemon's sessions and learnings from your own.
 
   See [Session Logs](/guides/session-logs) and [Learning](/guides/learning) for more details.
 </ParamField>

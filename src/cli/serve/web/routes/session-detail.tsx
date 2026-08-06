@@ -1064,7 +1064,7 @@ export default function SessionDetail() {
       const row = orderedLogs.find((e) => e.type === 'corrections');
       if (!row || typeof row.applied !== 'number' || typeof row.active !== 'number') return undefined;
       const dormant = row.active - row.applied;
-      return dormant > 0 ? `${row.applied} of ${row.active} corrections` : undefined;
+      return dormant > 0 ? `${row.applied} of ${row.active} learnings` : undefined;
     },
     [orderedLogs]
   );

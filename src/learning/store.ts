@@ -61,7 +61,7 @@ function learningKey(agentFilePath: string, stateRoot: string, agentName?: strin
   if (!agentFilePath || /^https?:\/\//i.test(agentFilePath)) {
     if (!agentName) {
       throw new Error(
-        `Cannot resolve a corrections file for "${agentFilePath || '(no agent file)'}" without an agent name`
+        `Cannot resolve a learnings file for "${agentFilePath || '(no agent file)'}" without an agent name`
       );
     }
     return sanitizeAgentName(agentName);
@@ -155,7 +155,7 @@ export function strandedLearningsNotice(agentFilePath: string, stateRoot: string
   if (!existsSync(sibling)) return null;
 
   return [
-    `learnings: corrections found at the old location for ${displayPath(absolute, stateRoot)}`,
+    `learnings found at the old location for ${displayPath(absolute, stateRoot)}`,
     `  ${displayPath(sibling, stateRoot)}`,
     `  No longer read. Move them:  agentuse learnings migrate --all`,
   ].join('\n');

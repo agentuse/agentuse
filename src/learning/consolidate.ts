@@ -665,7 +665,7 @@ export function explainRemaining(
   if (tooNew > 0) {
     reasons.push({
       count: tooNew,
-      because: `are less than ${RETIRE_MIN_AGE_DAYS} days old, and a new correction gets that long to prove itself before it can be retired`,
+      because: `are less than ${RETIRE_MIN_AGE_DAYS} days old, and a new learning gets that long to prove itself before it can be retired`,
     });
   }
   if (manual > 0) reasons.push({ count: manual, because: 'you wrote by hand, and those are never retired for you' });
@@ -1145,10 +1145,10 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
       ? { remaining: explainRemaining(remainingActive, cap, now, stoppedEarly || failedBatches > 0) }
       : {}),
     diffs: {
-      // Named, not located. The corrections file now lives under a project hash
+      // Named, not located. The learnings file now lives under a project hash
       // in the state directory, so its absolute path tells a reviewer nothing
       // they can act on and everything about the machine it ran on.
-      learnings: unifiedDiff(beforeLearnings, afterLearnings, { label: 'corrections file' }),
+      learnings: unifiedDiff(beforeLearnings, afterLearnings, { label: 'learnings file' }),
       ...(agentAfter !== agentBefore
         ? {
           agentFile: unifiedDiff(agentBefore, agentAfter, {

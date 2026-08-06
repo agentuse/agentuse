@@ -806,8 +806,8 @@ function CorrectionsSummary(props: { counts: CorrectionsCounts }) {
   return (
     <>
       {dormant > 0
-        ? `${applied} of ${active} corrections applied`
-        : `${applied} correction${applied === 1 ? '' : 's'} applied`}
+        ? `${applied} of ${active} learnings applied`
+        : `${applied} learning${applied === 1 ? '' : 's'} applied`}
       {dormant > 0 && (
         <span
           class="log-warn-badge"

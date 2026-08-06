@@ -266,10 +266,10 @@ State that a run generates rather than a person writes lives outside the project
 ```
 $XDG_DATA_HOME/agentuse/project/{project-hash}/
 ├── session/          # execution logs
-├── learnings/        # agent corrections, one file per agent
+├── learnings/        # agent learnings, one file per agent
 └── consolidations/   # undo snapshots for `agentuse learnings tidy`
 ```
 
-Corrections moved here in v0.17.0; they used to sit beside the agent file as `{agent-file}.learnings.md`, where every run rewrote them into your working tree. `agentuse learnings <agent-file> --path` prints the new location and `agentuse learnings migrate --all` moves existing files into it.
+Learnings moved here in v0.17.0; they used to sit beside the agent file as `{agent-file}.learnings.md`, where every run rewrote them into your working tree. `agentuse learnings <agent-file> --path` prints the new location and `agentuse learnings migrate --all` moves existing files into it.
 
 See [Learning](/guides/learning), [Store](/guides/store), [Sandbox](/guides/sandbox), and [Session Storage](/reference/session-storage) for details.

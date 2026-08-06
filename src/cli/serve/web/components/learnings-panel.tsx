@@ -47,7 +47,7 @@ export function statusBadge(learning: SessionLearning): { label: string; kind: s
  * The `---`/`+++` header inside `diff` is rendered verbatim, so whatever the
  * server labelled the diff with ends up in the DOM of a page any gate link can
  * reach. It is kept — a diff copied out of here should still say what it is —
- * but that is why the server labels these `corrections file` and a
+ * but that is why the server labels these `learnings file` and a
  * project-relative agent path rather than absolute paths from its own disk.
  */
 function DiffBlock(props: { label: string; diff: string }) {
@@ -119,7 +119,7 @@ export function TidyRemainingView({ remaining }: { remaining: TidyRemaining }) {
  */
 export function TidyResultView(props: { result: TidyResult; onUndo: () => void; undoing: boolean; undone?: boolean }) {
   const r = props.result;
-  if (!r.ran) return <p class="learnings-empty">Nothing to tidy up — every correction reaches this agent.</p>;
+  if (!r.ran) return <p class="learnings-empty">Nothing to tidy up — every learning reaches this agent.</p>;
   // `note` doubles as a partial-failure warning alongside real changes, so it
   // only replaces the result when there is nothing else to show.
   if (r.note && r.changes.length === 0) return <p class="learnings-error">{r.note}</p>;
@@ -157,7 +157,7 @@ export function TidyResultView(props: { result: TidyResult; onUndo: () => void; 
             Still {r.activeAfter - r.cap} over the cap. Tidy up again to keep going.
           </p>
         )}
-      {r.diffs.learnings && <DiffBlock label="corrections file" diff={r.diffs.learnings} />}
+      {r.diffs.learnings && <DiffBlock label="learnings file" diff={r.diffs.learnings} />}
       {r.diffs.agentFile && <DiffBlock label="agent file" diff={r.diffs.agentFile} />}
       {r.undoId && !props.undone && (
         <button type="button" class="learnings-undo" disabled={props.undoing} onClick={props.onUndo}>
@@ -190,7 +190,7 @@ export function LearningsHeadline(props: {
     return (
       <div class="learnings-banner">
         <span class="learnings-banner-text">
-          {summary.dormant} of this agent's corrections never reach it — only the top {summary.cap} apply per run.
+          {summary.dormant} of this agent's learnings never reach it — only the top {summary.cap} apply per run.
         </span>
         {/* A link, not a submit: the run takes minutes and belongs on a page
             with a URL, not inside a panel the user may navigate away from. */}
@@ -338,7 +338,7 @@ function LearningsSection(props: {
                   <button
                     type="button"
                     class="learnings-discard"
-                    aria-label="Discard this instruction"
+                    aria-label="Discard this learning"
                     title="Discard"
                     disabled={busyId === l.id}
                     onClick={() => void discard(l.id)}
@@ -355,7 +355,7 @@ function LearningsSection(props: {
         <textarea
           ref={inputRef}
           class="learnings-add-input"
-          placeholder="add an instruction for future runs…"
+          placeholder="add a learning for future runs…"
           disabled={adding}
           {...noAutofill}
           onKeyDown={(event) => {
@@ -378,7 +378,7 @@ function LearningsSection(props: {
               Adding…
             </>
           ) : (
-            'Add instruction'
+            'Add learning'
           )}
         </button>
       </div>
@@ -407,8 +407,8 @@ export function LearningsPanel(props: {
     <LearningsSection
       hidden={props.hidden}
       id="learnings-panel"
-      label="learned instructions from this session"
-      emptyText="Nothing learned in this session — add an instruction to steer future runs."
+      label="learnings from this session"
+      emptyText="Nothing learned in this session — add one to steer future runs."
       fetchList={() => fetchSessionLearnings(props.sessionId, props.token, props.project)}
       addRule={(instruction) =>
         addSessionLearning(props.sessionId, props.token, {
@@ -431,7 +431,7 @@ export function AgentLearningsPanel(props: { project: string; runPath: string })
   return (
     <LearningsSection
       label={null}
-      emptyText="No instructions yet — add one to steer future runs."
+      emptyText="No learnings yet — add one to steer future runs."
       fetchList={() => fetchAgentLearnings(props.project, props.runPath)}
       addRule={(instruction) => addAgentLearning(props.project, props.runPath, instruction)}
       discardRule={(id) => discardAgentLearning(props.project, props.runPath, id)}

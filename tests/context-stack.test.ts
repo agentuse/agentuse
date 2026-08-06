@@ -115,7 +115,7 @@ describe('session context stack', () => {
       ['approval', 'Approval gate instructions'],
       ['skills', 'Skill: slack-formatting'],
       ['skills', 'Skill: fastmail'],
-      ['learnings', 'Recent corrections'],
+      ['learnings', 'Recent learnings'],
     ]);
 
     const body = payload.layers[0]!;

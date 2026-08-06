@@ -151,7 +151,7 @@ async function warnIfCorrectionsAreIgnored(
     const { dormant } = partitionLearnings(await store.load(), effectiveCap(config));
     if (dormant.length === 0) return;
     logger.warn(
-      `${dormant.length} of this agent's corrections never reach it: only the top ${effectiveCap(config)} apply per run. `
+      `${dormant.length} of this agent's learnings never reach it: only the top ${effectiveCap(config)} apply per run. `
       + `Fix: agentuse learnings tidy ${agentFilePath}`
     );
   } catch (error) {

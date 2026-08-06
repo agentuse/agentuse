@@ -78,7 +78,7 @@ function printMigration(verb: string, entry: MigrationEntry): void {
 async function openInEditor(filePath: string): Promise<void> {
   const editor = process.env.EDITOR || process.env.VISUAL;
   if (!editor) {
-    console.error(chalk.red('Set $EDITOR to use --edit. The corrections file is:'));
+    console.error(chalk.red('Set $EDITOR to use --edit. The learnings file is:'));
     console.log(filePath);
     process.exitCode = 1;
     return;
@@ -134,7 +134,7 @@ function printDiff(diff: string): void {
  */
 function printResult(result: ConsolidationResult, dryRun: boolean): void {
   if (!result.ran) {
-    console.log(chalk.green('Nothing to tidy up — every stored correction reaches this agent.'));
+    console.log(chalk.green('Nothing to tidy up — every stored learning reaches this agent.'));
     return;
   }
   if (result.note && result.changes.length === 0) {
@@ -160,7 +160,7 @@ function printResult(result: ConsolidationResult, dryRun: boolean): void {
   }
 
   if (result.diffs.learnings) {
-    console.log(chalk.bold('\nCorrections file'));
+    console.log(chalk.bold('\nLearnings file'));
     printDiff(result.diffs.learnings);
   }
   if (result.diffs.agentFile) {
@@ -191,11 +191,11 @@ function printResult(result: ConsolidationResult, dryRun: boolean): void {
 
 export function createLearningsCommand(): Command {
   const command = new Command('learnings')
-    .description("Inspect and tidy an agent's stored corrections")
+    .description("Inspect and tidy an agent's stored learnings")
     .argument('<agent-file>', 'Path to the .agentuse file')
     .option('-j, --json', 'Output as JSON')
-    .option('--path', 'Print the path of the corrections file and exit')
-    .option('--edit', 'Open the corrections file in $EDITOR')
+    .option('--path', 'Print the path of the learnings file and exit')
+    .option('--edit', 'Open the learnings file in $EDITOR')
     .action(async (agentFileArg: string, options: { json?: boolean; path?: boolean; edit?: boolean }) => {
       const loaded = await loadAgent(agentFileArg);
       if (!loaded) return;
@@ -237,7 +237,7 @@ export function createLearningsCommand(): Command {
       }
 
       if (stored.length === 0) {
-        console.log(chalk.gray(`No corrections stored yet (${store.filePath})`));
+        console.log(chalk.gray(`No learnings stored yet (${store.filePath})`));
         return;
       }
 
@@ -259,14 +259,14 @@ export function createLearningsCommand(): Command {
       }
 
       if (dormant.length > 0) {
-        console.log(chalk.yellow(`\n${dormant.length} correction${dormant.length === 1 ? '' : 's'} never reach this agent: only the top ${cap} apply per run.`));
+        console.log(chalk.yellow(`\n${dormant.length} learning${dormant.length === 1 ? '' : 's'} never reach this agent: only the top ${cap} apply per run.`));
         console.log(chalk.gray(`Fix: agentuse learnings tidy ${agentFileArg}`));
       }
     });
 
   command
     .command('tidy')
-    .description('Merge, sharpen, retire and make permanent, until every correction counts')
+    .description('Merge, sharpen, retire and make permanent, until every learning counts')
     .argument('<agent-file>', 'Path to the .agentuse file')
     .option('--dry-run', 'Show the plan and both diffs without writing anything')
     .option('--model <model>', "Plan with this model instead of the agent's own")
@@ -292,7 +292,7 @@ export function createLearningsCommand(): Command {
           // and without it the command looks like it is going in circles.
           const pass = progress.round > 1 ? `pass ${progress.round}: ` : '';
           if (progress.phase === 'deciding' && progress.step === 0) {
-            console.log(chalk.gray(`  ${pass}reading ${progress.projectedActive} corrections to see what repeats…`));
+            console.log(chalk.gray(`  ${pass}reading ${progress.projectedActive} learnings to see what repeats…`));
           } else if (progress.phase === 'writing' && progress.step === 0 && progress.total > 0) {
             console.log(chalk.gray(`  ${pass}rewriting ${progress.total} rule${progress.total === 1 ? '' : 's'}…`));
           } else if (progress.phase === 'applying' && !options.dryRun) {
@@ -339,7 +339,7 @@ export function createLearningsCommand(): Command {
 
   command
     .command('migrate')
-    .description('Move corrections files from beside the agent file into the AgentUse state directory')
+    .description('Move learnings files from beside the agent file into the AgentUse state directory')
     .argument('[agent-file]', 'Path to the .agentuse file (omit and pass --all for every agent)')
     .option('--all', 'Every agent file in the project')
     .option('--dry-run', 'Report what would move without writing anything')
@@ -405,7 +405,7 @@ export function createLearningsCommand(): Command {
       // authoritative order, and picking one silently would lose the other.
       for (const entry of refused) {
         printMigration(chalk.yellow('refused'), entry);
-        console.log(chalk.yellow('    the destination already holds corrections — inspect both, then delete one'));
+        console.log(chalk.yellow('    the destination already holds learnings — inspect both, then delete one'));
       }
 
       // A corrections file whose agent file is gone. Listed, never touched: the

@@ -31,7 +31,7 @@ Write short productivity blog posts.
 - Include 3 actionable tips
 ```
 
-`learning: true` is sugar for `{ capture: true, apply: true }`. Learnings accumulate in a corrections file inside the AgentUse state directory, not in your repository, and are injected into instructions on the next run. `agentuse learnings ./blog-writer.agentuse --path` prints where; see [Storage](#storage).
+`learning: true` is sugar for `{ capture: true, apply: true }`. Learnings accumulate in a learnings file inside the AgentUse state directory, not in your repository, and are injected into instructions on the next run. `agentuse learnings ./blog-writer.agentuse --path` prints where; see [Storage](#storage).
 
 ## Capture-Only (Review Before Trust)
 
@@ -53,26 +53,26 @@ This is the safer default for agents that touch untrusted input (web pages, emai
 | `capture` | `boolean` | Write learnings after execution (self-evaluation + approval comments). Defaults to `true`. |
 | `apply` | `boolean` | Inject stored learnings into instructions before each run. Defaults to `true`. |
 | `criteria` | `string` | Optional guidance for the capture evaluator (domain-specific extraction). |
-| `max` | `number` | How many corrections apply per run. Defaults to `10`, range 1-50. Each one is paid for on every model request; `agentuse doctor` prints the token cost. |
+| `max` | `number` | How many learnings apply per run. Defaults to `10`, range 1-50. Each one is paid for on every model request; `agentuse doctor` prints the token cost. |
 | `model` | `string` | Model for the helper calls (capture and tidy-up). Defaults to the agent's own model. |
 
 <Note>
-  Two keys were removed in v0.17.0: `evaluate` (long deprecated, replaced by `capture` / `criteria`) and `file` (a custom corrections path, now that corrections live outside your repository, see [Storage](#storage)). Both are rejected by name at parse time, so an agent file still carrying one fails loudly rather than quietly ignoring it.
+  Two keys were removed in v0.17.0: `evaluate` (long deprecated, replaced by `capture` / `criteria`) and `file` (a custom learnings path, now that learnings live outside your repository, see [Storage](#storage)). Both are rejected by name at parse time, so an agent file still carrying one fails loudly rather than quietly ignoring it.
 </Note>
 
 ## Storage
 
-Corrections are stored in the AgentUse state directory, alongside session logs, not in your repository:
+Learnings are stored in the AgentUse state directory, alongside session logs, not in your repository:
 
 ```
 $XDG_DATA_HOME/agentuse/project/{project-hash}/
 ├── session/                                # execution logs
 ├── consolidations/                         # tidy-up undo snapshots
 └── learnings/
-    └── agents/blog/write.learnings.md      # one agent's corrections
+    └── agents/blog/write.learnings.md      # one agent's learnings
 ```
 
-`$XDG_DATA_HOME` defaults to `~/.local/share`. `{project-hash}` is a digest of your git root, so two repositories that both contain `agents/blog/write.agentuse` keep separate corrections, and one agent resolves to one file whichever directory you run it from. The file itself is named after the agent's path relative to the project root, so subdirectories are preserved.
+`$XDG_DATA_HOME` defaults to `~/.local/share`. `{project-hash}` is a digest of your git root, so two repositories that both contain `agents/blog/write.agentuse` keep separate learnings, and one agent resolves to one file whichever directory you run it from. The file itself is named after the agent's path relative to the project root, so subdirectories are preserved.
 
 That path is not one you can type from memory, so nothing asks you to:
 
@@ -81,7 +81,7 @@ agentuse learnings ./blog-writer.agentuse --path   # print it
 agentuse learnings ./blog-writer.agentuse --edit   # open it in $EDITOR
 ```
 
-`agentuse doctor ./blog-writer.agentuse` prints it too, as does `agentuse learnings ./blog-writer.agentuse --json` in its `file` field. Every corrections file also records which agent it belongs to, on the line under its heading:
+`agentuse doctor ./blog-writer.agentuse` prints it too, as does `agentuse learnings ./blog-writer.agentuse --json` in its `file` field. Every learnings file also records which agent it belongs to, on the line under its heading:
 
 ```markdown
 # Learnings for write
@@ -90,19 +90,19 @@ agentuse learnings ./blog-writer.agentuse --edit   # open it in $EDITOR
 
 ### Why it is not next to your agent file
 
-Every run rewrites this file, not only the runs that capture something: applying a correction updates its counters. Kept in the repository, that is a permanently dirty working tree and a stream of commits carrying no decision.
+Every run rewrites this file, not only the runs that capture something: applying a learning updates its counters. Kept in the repository, that is a permanently dirty working tree and a stream of commits carrying no decision.
 
-The file was never meant to be the durable artifact. It is a staging buffer; your agent file is the thing that gets diffed and reviewed, and [graduation](#what-makes-a-correction-permanent) is how a proven correction crosses over into it.
+The file was never meant to be the durable artifact. It is a staging buffer; your agent file is the thing that gets diffed and reviewed, and [graduation](#what-makes-a-learning-permanent) is how a proven learning crosses over into it.
 
 <Warning>
-  **The trade:** corrections are no longer in git. There is no backup, no teammate sharing, and nothing survives a machine rebuild. The state directory holds locally generated data, like session logs. Graduation is the supported path into version control: a rule that has earned its way into your `.agentuse` file is committed, reviewable, and travels with the repository.
+  **The trade:** learnings are no longer in git. There is no backup, no teammate sharing, and nothing survives a machine rebuild. The state directory holds locally generated data, like session logs. Graduation is the supported path into version control: a rule that has earned its way into your `.agentuse` file is committed, reviewable, and travels with the repository.
 
-  Renaming or moving an agent file also starts its corrections over, because the file is keyed by the agent's path. Rules already graduated into the agent file move with it and are unaffected.
+  Renaming or moving an agent file also starts its learnings over, because the file is keyed by the agent's path. Rules already graduated into the agent file move with it and are unaffected.
 </Warning>
 
-### Moving corrections from before v0.17.0
+### Moving learnings from before v0.17.0
 
-Corrections used to live beside the agent file, named after it: `blog-writer.agentuse` paired with `blog-writer.agentuse.learnings.md`. That location is no longer read, not as a fallback, not once. Move them:
+Learnings used to live beside the agent file, named after it: `blog-writer.agentuse` paired with `blog-writer.agentuse.learnings.md`. That location is no longer read, not as a fallback, not once. Move them:
 
 ```bash
 agentuse learnings migrate --all
@@ -113,14 +113,14 @@ git commit -am "chore: move learnings to the agentuse state dir"
 agentuse learnings migrate [<agent-file>|--all] [--dry-run] [--keep-source]
 ```
 
-Name one agent file, or pass `--all` to walk every `.agentuse` file under the project root. It moves by default; `--keep-source` copies instead, and `--dry-run` reports what would move without writing anything. It refuses rather than merges when the destination already holds corrections, and it lists any `*.learnings.md` with no agent file of that name as **orphaned, not migrated**. Those are usually left behind by a rename, and this is the only place they are ever mentioned.
+Name one agent file, or pass `--all` to walk every `.agentuse` file under the project root. It moves by default; `--keep-source` copies instead, and `--dry-run` reports what would move without writing anything. It refuses rather than merges when the destination already holds learnings, and it lists any `*.learnings.md` with no agent file of that name as **orphaned, not migrated**. Those are usually left behind by a rename, and this is the only place they are ever mentioned.
 
-If you skip the migration, the agent simply starts with an empty corrections store. Graduated rules are unaffected. The old files sit inert until you delete them, which is itself the point: inert means they stop churning.
+If you skip the migration, the agent simply starts with an empty learnings store. Graduated rules are unaffected. The old files sit inert until you delete them, which is itself the point: inert means they stop churning.
 
-A run that finds corrections stranded at the old location says so once, and so does `agentuse doctor`:
+A run that finds learnings stranded at the old location says so once, and so does `agentuse doctor`:
 
 ```
-learnings: corrections found at the old location for agents/blog/write.agentuse
+learnings found at the old location for agents/blog/write.agentuse
   agents/blog/write.agentuse.learnings.md
   No longer read. Move them:  agentuse learnings migrate --all
 ```
@@ -151,7 +151,7 @@ learning: true
 ...
 ```
 
-When you leave a note like "Going forward, always cite a source before publishing", a generalizability filter decides whether the comment is a **durable agent-wide rule** or a **one-off edit** to this run. Only durable rules are captured (as `src:approval`, confidence `0.95`); one-off edits (like "fix the typo in paragraph two" or "give me the source link") are ignored. Approval-sourced learnings rank ahead of auto-extracted ones when injected, so your corrections survive the per-run cap.
+When you leave a note like "Going forward, always cite a source before publishing", a generalizability filter decides whether the comment is a **durable agent-wide rule** or a **one-off edit** to this run. Only durable rules are captured (as `src:approval`, confidence `0.95`); one-off edits (like "fix the typo in paragraph two" or "give me the source link") are ignored. Approval-sourced learnings rank ahead of auto-extracted ones when injected, so your learnings survive the per-run cap.
 
 For faster teaching, the approval comment dialog can also save an explicit future rule. Use the comment for the current revision, then check **Remember this as a future rule** and write the durable rule separately. Checking the box is itself the opt-in, so it works on any agent, no `learning` config required to save. Manual rules are stored as `src:manual`, confidence `1.00`, and rank ahead of approval-promoted and auto-extracted learnings. They are only injected into future runs once the agent has `learning.apply` enabled (the dialog says so if it isn't). The CLI equivalent is:
 
@@ -171,7 +171,7 @@ On next run or approval resume (when `apply: true`):
 
 This keeps learnings at the instruction level - where they have the most influence on agent behavior.
 
-Corrections that have [graduated](#tidying-up) live in your agent file's own `## Learned Guidelines` block instead. Both carry the same authority and both override skill defaults; the split just separates the proven rules from the ones still applying per-run.
+Learnings that have [graduated](#tidying-up) live in your agent file's own `## Learned Guidelines` block instead. Both carry the same authority and both override skill defaults; the split just separates the proven rules from the ones still applying per-run.
 
 ### Only 10 apply per run
 
@@ -179,27 +179,27 @@ The cap bounds context growth, and everything past it is dormant: stored and
 visible, but with no effect on the run. Order of precedence:
 
 1. Rules you saved yourself (`--remember`), which always win
-2. Corrections captured from reviewer comments
+2. Learnings captured from reviewer comments
 3. Learnings the agent extracted from its own execution
 
-Within each group the most recent applies first, so a fresh correction (or one a
+Within each group the most recent applies first, so a fresh learning (or one a
 reviewer repeats) displaces the oldest rule of equal standing rather than
 queueing behind it.
 
-Recency keeps the newest corrections in force; it does not make room. A file with
+Recency keeps the newest learnings in force; it does not make room. A file with
 far more than 10 entries leaves most of them dormant no matter how they are
-ordered, and a reviewer correction can sit there having no effect. Every run says
+ordered, and a reviewer learning can sit there having no effect. Every run says
 so, and so does `agentuse doctor`:
 
 ```
 learned guidelines: 10 of 57 applied, ~1.2k tokens/model request
-47 stored corrections never reach the model: only the top 10 are injected per run.
+47 stored learnings never reach the model: only the top 10 are injected per run.
 Fix: agentuse learnings tidy ./blog-writer.agentuse
 ```
 
 ## Tidying up
 
-When corrections outgrow the cap, one action gets them back under it:
+When learnings outgrow the cap, one action gets them back under it:
 
 ```bash
 agentuse learnings tidy ./blog-writer.agentuse
@@ -209,12 +209,12 @@ or the **Tidy up** button in the serve UI, on the session view and the agent's
 Learnings tab. Both run the same thing. It makes four kinds of change:
 
 - **merge** near-duplicates into one rule
-- **rewrite** a correction you have repeated, a repeat means the wording is not
+- **rewrite** a learning you have repeated, a repeat means the wording is not
   landing, so restating it sharply is the fix
 - **retire** what has been superseded, into a `## Retired` section of the same
   file. Nothing is deleted, and a retired rule comes back automatically if you
   ever re-assert it
-- **graduate** the corrections that have proven themselves into the agent's own
+- **graduate** the learnings that have proven themselves into the agent's own
   instructions, where they apply on every run and cost no cap slot
 
 It applies immediately and then shows you what changed: a summary, the rules that
@@ -223,9 +223,9 @@ became permanent named individually, and the diff of **both** files. Undo with
 
 ```
 $ agentuse learnings tidy ./blog-writer.agentuse
-  reading 58 corrections to see what repeats…
+  reading 58 learnings to see what repeats…
   rewriting 4 rules…
-  pass 2: reading 41 corrections to see what repeats…
+  pass 2: reading 41 learnings to see what repeats…
   pass 2: rewriting 3 rules…
   writing both files…
 
@@ -233,13 +233,13 @@ Done
   3 merged, 1 rewritten, 12 retired, 9 now permanent — 58 → 10 in force
 ```
 
-Each pass reads every correction still in force, so a pass takes about a minute.
-It runs in two stages: first it decides which corrections relate to which, in
+Each pass reads every learning still in force, so a pass takes about a minute.
+It runs in two stages: first it decides which learnings relate to which, in
 small groups weighed in parallel, then it writes each replacement rule in its own
 call, again in parallel.
 
 **One tidy-up keeps going until another pass would not help.** A single pass is
-cautious by design, and it compares corrections in small groups, so two
+cautious by design, and it compares learnings in small groups, so two
 duplicates that never share a group both survive it. Rather than making you press
 the button again, the tidy-up goes back over whatever is left, up to five passes,
 and stops as soon as a pass frees no slot. It all happens in memory: both files
@@ -255,13 +255,13 @@ is undoable, whether it was run from the browser or the terminal.
 ### When it ends still over the cap
 
 That is a normal ending for a well-used agent, not a failure, so the result says
-which rule kept each correction that is still in force:
+which rule kept each learning that is still in force:
 
 ```
   Still 20 over the cap, and that is as far as tidying up can take it.
   The rest are still there for a reason:
     14 say different things, so there is nothing left to merge them into
-     4 are less than 14 days old, and a new correction gets that long to prove
+     4 are less than 14 days old, and a new learning gets that long to prove
        itself before it can be retired
      2 you wrote by hand, and those are never retired for you
 
@@ -272,17 +272,17 @@ which rule kept each correction that is still in force:
 
 The counts add up to the number still in force, so nothing is unaccounted for.
 The way past this ending is usually not another tidy-up: it is approving runs
-without a comment, which is what turns a correction into a permanent part of the
+without a comment, which is what turns a learning into a permanent part of the
 agent file. When pressing again genuinely would get further (the five passes ran
-out, or a group of corrections could not be planned), it says so instead.
+out, or a group of learnings could not be planned), it says so instead.
 
 Inspect first with `agentuse learnings ./blog-writer.agentuse` (a list by status)
 or `agentuse learnings tidy ./blog-writer.agentuse --dry-run` (the plan and both
 diffs, nothing written).
 
-### What makes a correction permanent
+### What makes a learning permanent
 
-Graduation is earned, not guessed. A correction qualifies when either:
+Graduation is earned, not guessed. A learning qualifies when either:
 
 - **you wrote it yourself** (`src:manual`), writing it down was the assertion, or
 - **it was in force across 3 runs you approved without leaving a comment.**
@@ -307,12 +307,12 @@ file, it is diffable, reviewable in a pull request, and readable by a teammate
 who wants to know what this agent has been taught. Re-running the tidy-up
 replaces the block rather than appending a second copy.
 
-Corrections still on probation are injected under a separate
+Learnings still on probation are injected under a separate
 `## Recent Corrections` heading, so the two tiers never collide.
 
 <Note>
   Graduation is skipped, and the result says so, when the agent file is not
-  writable. Nothing else can stop it: there is one corrections file per agent,
+  writable. Nothing else can stop it: there is one learnings file per agent,
   so making a rule permanent never affects another agent.
 </Note>
 
@@ -359,7 +359,7 @@ Every field except the date is optional, so older files load unchanged:
 
 - `src:` records provenance, `auto` (self-evaluation), `approval` (promoted from a reviewer comment), or `manual` (explicitly saved by a reviewer). Files without it load as `auto`.
 - `state:` records lifecycle, `graduated` (now permanent in the agent file) or `retired` (archived). Absent means active.
-- `re:` counts how many times a human repeated the correction; `ok:` counts the approved, uncommented runs it was in force for. These are the evidence the tidy-up uses to decide what to rewrite and what to make permanent.
+- `re:` counts how many times a human repeated the learning; `ok:` counts the approved, uncommented runs it was in force for. These are the evidence the tidy-up uses to decide what to rewrite and what to make permanent.
 
 The `<!-- agent: … -->` line under the heading is a breadcrumb, so a file sitting in the state directory can be traced back to the agent that wrote it. Nothing reads it back; it is there for you.
 
@@ -428,13 +428,13 @@ This keeps you in control while still benefiting from extracted patterns.
     Run with `apply: false` first to verify learning quality before enabling auto-injection
   </Card>
   <Card title="Tidy up when prompted" icon="broom">
-    When a run says corrections are not reaching the agent, run `agentuse learnings tidy`, proven ones become permanent parts of your agent file
+    When a run says learnings are not reaching the agent, run `agentuse learnings tidy`, proven ones become permanent parts of your agent file
   </Card>
   <Card title="Use custom prompts" icon="microscope">
     Tailor extraction to your domain with custom evaluation prompts
   </Card>
   <Card title="Graduate what you want in git" icon="code-branch">
-    Corrections live outside your repository, so let the tidy-up graduate proven ones into the agent file, the only copy a teammate or a rebuilt machine will have
+    Learnings live outside your repository, so let the tidy-up graduate proven ones into the agent file, the only copy a teammate or a rebuilt machine will have
   </Card>
 </CardGroup>
 

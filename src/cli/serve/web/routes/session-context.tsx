@@ -330,8 +330,8 @@ function CorrectionsNote(props: { counts: ContextCorrectionCounts; note?: string
     <>
       <span class="ctx-file-meta">
         <span title={active === undefined
-          ? 'This run predates the corrections marker, so how many were stored is not recorded'
-          : `${applied} of the ${active} corrections stored for this agent reached the model`}>
+          ? 'This run predates the learnings marker, so how many were stored is not recorded'
+          : `${applied} of the ${active} learnings stored for this agent reached the model`}>
           {active === undefined ? `${applied} applied` : `${applied} of ${active} applied`}
         </span>
         {dormant > 0 && (
