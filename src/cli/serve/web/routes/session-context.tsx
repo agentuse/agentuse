@@ -16,8 +16,8 @@ const READ_TOOL_LABEL: Record<string, string> = {
   tools__skill_load: 'skill loaded on demand',
 };
 
-/** Short, human labels for each layer kind. Doubles as the filter chip set. */
-const KIND_LABEL: Record<ContextStackLayer['kind'], string> = {
+/** Short, human labels for each layer kind. */
+const KIND_LABEL: Record<ContextStackLayer['kind'] | 'file', string> = {
   system: 'system',
   tools: 'tools',
   instructions: 'agent',
@@ -25,7 +25,13 @@ const KIND_LABEL: Record<ContextStackLayer['kind'], string> = {
   skills: 'skill',
   learnings: 'learned',
   prompt: 'prompt',
+  file: 'file',
 };
+
+/** Send order, and the order segments appear in the mix bar. */
+const STACK_ORDER: Array<ContextStackLayer['kind'] | 'file'> = [
+  'system', 'tools', 'instructions', 'approval', 'skills', 'learnings', 'prompt', 'file',
+];
 
 function formatTokens(value: number): string {
   if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k`;
@@ -44,73 +50,86 @@ function shortenPath(path: string, segments = 3): string {
   return `…/${parts.slice(-segments).join('/')}`;
 }
 
-function LayerRow(props: { layer: ContextStackLayer; share: number; index: number }) {
-  const { layer, share, index } = props;
+/**
+ * One row of the stack. Everything that occupies the context window is a row
+ * here — system prompts, the tool catalog, the agent's own instructions, and
+ * files read mid-run — so the weights are directly comparable against a shared
+ * scale rather than split across sections with their own baselines.
+ */
+function StackRow(props: {
+  kind: ContextStackLayer['kind'] | 'file';
+  index: number;
+  share: number;
+  label: string;
+  labelIsPath?: boolean;
+  title?: string;
+  source?: string;
+  /** Free-form second line: a plain string for layers, a node for file rows. */
+  note?: preact.ComponentChildren;
+  chars: number;
+  estTokens: number;
+  /** Rendered when the row is expanded. Absent means the row does not open. */
+  body?: () => preact.ComponentChildren;
+}) {
+  const { kind, index, share, label, labelIsPath, title, source, note, chars, estTokens, body } = props;
   const [open, setOpen] = useState(false);
 
-  return (
-    <li class={`ctx-layer ctx-kind-${layer.kind}`}>
-      <button
-        type="button"
-        class="ctx-layer-head"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        // A tools layer has no text of its own; its weight is itemised in the
-        // table below, so there is nothing to expand.
-        disabled={layer.text === undefined}
-      >
-        <span class="ctx-order">{index + 1}</span>
-        <span class="ctx-kind">{KIND_LABEL[layer.kind]}</span>
-        <span class="ctx-layer-main">
-          <span class="ctx-layer-label">{layer.label}</span>
-          {layer.source && <code class="ctx-source" title={layer.source}>{shortenPath(layer.source)}</code>}
-          {layer.note && <span class="ctx-note">{layer.note}</span>}
-        </span>
-        <span class="ctx-weight">
-          <span class="ctx-track">
-            <span class="ctx-bar" style={{ width: `${Math.max(share * 100, 1)}%` }}></span>
-          </span>
-          <span class="ctx-tokens" title={`${layer.chars.toLocaleString()} characters`}>
-            ~{formatTokens(layer.estTokens)}
-          </span>
-        </span>
-      </button>
-      {open && layer.text !== undefined && (
-        <pre class="ctx-text"><code>{layer.text}</code></pre>
-      )}
-    </li>
-  );
-}
-
-function FileReadRow(props: { file: ContextFileRead; share: number }) {
-  const { file, share } = props;
-  return (
-    <li class="ctx-file">
-      <span class="ctx-file-main">
-        <code class="ctx-file-path" title={file.path}>{shortenPath(file.path, 4)}</code>
-        <span class="ctx-file-meta">
-          {READ_TOOL_LABEL[file.tool] ?? file.tool}
-          {file.reads > 1 && (
-            <span class="ctx-repeat" title={`Read ${file.reads} times; each read costs its tokens again`}>
-              ×{file.reads}
-            </span>
-          )}
-          {file.truncatedFrom !== undefined && (
-            <span class="muted" title={`Tool truncated the output; the file itself is ${file.truncatedFrom.toLocaleString()} characters`}>
-              truncated from ~{formatTokens(Math.ceil(file.truncatedFrom / 4))}
-            </span>
-          )}
-        </span>
+  const inner = (
+    <>
+      <span class="ctx-order">{index + 1}</span>
+      <span class="ctx-kind">{KIND_LABEL[kind]}</span>
+      <span class="ctx-layer-main">
+        {labelIsPath
+          ? <code class="ctx-layer-label ctx-path" {...(title ? { title } : {})}>{label}</code>
+          : <span class="ctx-layer-label">{label}</span>}
+        {source && <code class="ctx-source" title={source}>{shortenPath(source)}</code>}
+        {note && <span class="ctx-note">{note}</span>}
       </span>
       <span class="ctx-weight">
         <span class="ctx-track">
           <span class="ctx-bar" style={{ width: `${Math.max(share * 100, 1)}%` }}></span>
         </span>
-        <span class="ctx-tokens" title={`${file.chars.toLocaleString()} characters`}>
-          ~{formatTokens(file.estTokens)}
+        <span class="ctx-tokens" title={`${chars.toLocaleString()} characters`}>
+          ~{formatTokens(estTokens)}
         </span>
       </span>
+    </>
+  );
+
+  return (
+    <li class={`ctx-layer ctx-kind-${kind}`}>
+      {/* A row with nothing to expand is a plain div, not a disabled button:
+          the page's shell dims disabled buttons to 45%, which would make half
+          this list read as unavailable rather than simply detail-free. */}
+      {body ? (
+        <button type="button" class="ctx-layer-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          {inner}
+        </button>
+      ) : (
+        <div class="ctx-layer-head ctx-layer-head-static">{inner}</div>
+      )}
+      {open && body && <div class="ctx-body">{body()}</div>}
     </li>
+  );
+}
+
+/** The note line under a file row: which tool read it, how often, truncation. */
+function FileNote(props: { file: ContextFileRead }) {
+  const { file } = props;
+  return (
+    <span class="ctx-file-meta">
+      {READ_TOOL_LABEL[file.tool] ?? file.tool}
+      {file.reads > 1 && (
+        <span class="ctx-repeat" title={`Read ${file.reads} times; each read costs its tokens again`}>
+          ×{file.reads}
+        </span>
+      )}
+      {file.truncatedFrom !== undefined && (
+        <span class="muted" title={`Tool truncated the output; the file itself is ${file.truncatedFrom.toLocaleString()} characters`}>
+          truncated from ~{formatTokens(Math.ceil(file.truncatedFrom / 4))}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -169,20 +188,47 @@ export default function SessionContext() {
   );
 
   const context = data?.context;
-  const [showTools, setShowTools] = useState(false);
 
+  // One scale across the whole stack: the opening layers and the mid-run file
+  // reads compete for the same window, so their bars have to be comparable.
   const peak = useMemo(
-    () => Math.max(1, ...(context?.layers ?? []).map((l) => l.estTokens)),
+    () => Math.max(
+      1,
+      ...(context?.layers ?? []).map((l) => l.estTokens),
+      ...(context?.fileReads ?? []).map((f) => f.estTokens),
+    ),
     [context]
   );
   const toolPeak = useMemo(
     () => Math.max(1, ...(context?.tools ?? []).map((t) => t.estTokens)),
     [context]
   );
-  const filePeak = useMemo(
-    () => Math.max(1, ...(context?.fileReads ?? []).map((f) => f.estTokens)),
-    [context]
-  );
+
+  /**
+   * The whole window as one bar, rows of the same kind summed. Reading order
+   * matches the stack below, so a fat segment can be traced straight to the
+   * rows that caused it.
+   */
+  const mix = useMemo(() => {
+    if (!context) return [];
+    const totals = new Map<string, number>();
+    for (const layer of context.layers) {
+      totals.set(layer.kind, (totals.get(layer.kind) ?? 0) + layer.estTokens);
+    }
+    const fileTokens = context.fileReads.reduce((sum, f) => sum + f.estTokens, 0);
+    if (fileTokens > 0) totals.set('file', fileTokens);
+
+    const total = [...totals.values()].reduce((a, b) => a + b, 0);
+    if (total === 0) return [];
+    return STACK_ORDER
+      .filter((kind) => totals.has(kind))
+      .map((kind) => {
+        const tokens = totals.get(kind)!;
+        return { kind, tokens, pct: (tokens / total) * 100 };
+      });
+  }, [context]);
+
+  const mixTotal = useMemo(() => mix.reduce((sum, s) => sum + s.tokens, 0), [mix]);
   const fileReadTokens = useMemo(
     () => (context?.fileReads ?? []).reduce((sum, f) => sum + f.estTokens, 0),
     [context]
@@ -259,13 +305,83 @@ export default function SessionContext() {
               </div>
             )}
 
+            {mix.length > 0 && (
+              <section class="ctx-mix" aria-label="Context window by input type">
+                <div class="ctx-mix-head">
+                  <span class="ctx-mix-title">what fills the window</span>
+                  <span class="ctx-mix-total">~{formatTokens(mixTotal)} tokens</span>
+                </div>
+                <div class="ctx-mix-bar">
+                  {mix.map((seg) => (
+                    <span
+                      key={seg.kind}
+                      class="ctx-mix-seg"
+                      data-kind={seg.kind}
+                      style={{ width: `${seg.pct}%` }}
+                      title={`${KIND_LABEL[seg.kind]}: ~${formatTokens(seg.tokens)} tokens, ${seg.pct.toFixed(1)}%`}
+                    ></span>
+                  ))}
+                </div>
+                <ul class="ctx-mix-legend">
+                  {mix.map((seg) => (
+                    <li key={seg.kind}>
+                      <span class="ctx-mix-dot" data-kind={seg.kind}></span>
+                      <span class="ctx-mix-name">{KIND_LABEL[seg.kind]}</span>
+                      <span class="ctx-mix-value">~{formatTokens(seg.tokens)}</span>
+                      <span class="ctx-mix-pct">{seg.pct.toFixed(0)}%</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             <div class="section-title">
               <span>stack</span>
               <span class="rule"></span>
             </div>
             <ul class="ctx-layers">
               {context.layers.map((layer, i) => (
-                <LayerRow key={layer.id} layer={layer} index={i} share={layer.estTokens / peak} />
+                <StackRow
+                  key={layer.id}
+                  kind={layer.kind}
+                  index={i}
+                  share={layer.estTokens / peak}
+                  label={layer.label}
+                  {...(layer.source ? { source: layer.source } : {})}
+                  {...(layer.note ? { note: layer.note } : {})}
+                  chars={layer.chars}
+                  estTokens={layer.estTokens}
+                  {...(layer.kind === 'tools'
+                    // The tool catalog opens into its own itemised list rather
+                    // than a blob of text: per-tool weight is what makes a
+                    // 20k-token catalog actionable.
+                    ? {
+                        body: () => (
+                          <ul class="ctx-tools">
+                            {context.tools.map((tool) => (
+                              <ToolRow key={tool.name} tool={tool} share={tool.estTokens / toolPeak} />
+                            ))}
+                          </ul>
+                        ),
+                      }
+                    : layer.text !== undefined
+                      ? { body: () => <pre class="ctx-text"><code>{layer.text}</code></pre> }
+                      : {})}
+                />
+              ))}
+              {context.fileReads.map((file, i) => (
+                <StackRow
+                  key={`file:${file.path}`}
+                  kind="file"
+                  index={context.layers.length + i}
+                  share={file.estTokens / peak}
+                  label={shortenPath(file.path, 4)}
+                  labelIsPath
+                  title={file.path}
+                  note={<FileNote file={file} />}
+                  chars={file.chars}
+                  estTokens={file.estTokens}
+                />
               ))}
             </ul>
             {context.layers.length === 0 && (
@@ -275,55 +391,13 @@ export default function SessionContext() {
               </p>
             )}
 
-            {context.fileReads.length > 0 && (
-              <>
-                <div class="section-title">
-                  <span>files read during the run</span>
-                  <span class="rule"></span>
-                </div>
-                <p class="ctx-hint">
-                  Text the agent pulled in with a read tool after the run started. These are not in
-                  the opening stack above, but they occupy the same window — and a file read more
-                  than once is charged every time. Heaviest first.
-                </p>
-                <ul class="ctx-files">
-                  {context.fileReads.map((file) => (
-                    <FileReadRow key={file.path} file={file} share={file.estTokens / filePeak} />
-                  ))}
-                </ul>
-              </>
-            )}
-
-            {context.tools.length > 0 && (
-              <>
-                <div class="section-title">
-                  <span>tool definitions</span>
-                  <span class="rule"></span>
-                </div>
-                <p class="ctx-hint">
-                  Sent on every request, so this cost repeats each step. Skills that load on demand
-                  are listed inside the <code>skill</code> tool's description rather than as their
-                  own layer.
-                </p>
-                <button type="button" class="session-action-button" onClick={() => setShowTools((v) => !v)}>
-                  {showTools ? 'Hide' : 'Show'} {context.tools.length} tool
-                  {context.tools.length === 1 ? '' : 's'}
-                </button>
-                {showTools && (
-                  <ul class="ctx-tools">
-                    {context.tools.map((tool) => (
-                      <ToolRow key={tool.name} tool={tool} share={tool.estTokens / toolPeak} />
-                    ))}
-                  </ul>
-                )}
-              </>
-            )}
-
             <p class="ctx-footnote">
-              Token counts marked ~ are estimates at 4 characters per token, the same heuristic the
-              runtime uses to decide when to compact. Treat them as proportions, not billing. File
-              reads cover the read tools by name; text that reached the context another way — a
-              <code>cat</code> through bash, an MCP tool returning a document — lands in the run's
+              Rows 1&ndash;{context.layers.length} are the prompt the run opened with; anything below
+              is a file the agent read afterwards, which lands in the same window. Token counts
+              marked ~ are estimates at 4 characters per token, the same heuristic the runtime uses
+              to decide when to compact — treat them as proportions, not billing. File rows cover
+              the read tools by name; text that reached the context another way, such as a
+              <code>cat</code> through bash or an MCP tool returning a document, lands in the run's
               tool output rather than here.
             </p>
           </>

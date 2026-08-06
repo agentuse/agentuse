@@ -219,16 +219,22 @@ function makeLayer(
 }
 
 /**
- * Name a system message by its opening. These are the four the runtime can
- * emit (identity, core, manager, sandbox); anything unrecognised still gets a
- * layer, just a generic label.
+ * The runtime prepends a one-line identity string for Anthropic models. At ~15
+ * tokens it is noise as its own row, so its weight is folded into the AgentUse
+ * system prompt instead of being listed separately.
+ */
+function isIdentityMessage(content: string): boolean {
+  return content.trim() === ANTHROPIC_IDENTITY_PROMPT.trim();
+}
+
+/**
+ * Name a system message by its opening. These are the three the runtime can
+ * emit once identity is folded away (core, manager, sandbox); anything
+ * unrecognised still gets a layer, just a generic label.
  */
 function describeSystemMessage(content: string, index: number): { label: string; note?: string } {
-  if (content.startsWith(ANTHROPIC_IDENTITY_PROMPT)) {
-    return { label: 'Anthropic identity', note: 'Prepended automatically for Anthropic models.' };
-  }
   if (content.startsWith('You are an autonomous AI agent')) {
-    return { label: 'AgentUse core instructions', note: 'Built in. Output style, tool discipline, and the report_complete contract.' };
+    return { label: 'AgentUse system prompt', note: 'Built in. Output style, tool discipline, and the report_complete contract.' };
   }
   if (content.startsWith('You are a team manager agent')) {
     return { label: 'Manager instructions', note: 'Added because this agent is `type: manager`. Lists its subagents.' };
@@ -249,11 +255,36 @@ export function buildSessionContextPayload(options: {
   const { session, message, tools, parts = [] } = options;
   const layers: ContextStackLayer[] = [];
 
-  for (const [i, content] of (message?.assistant.system ?? []).entries()) {
+  const rawSystem = message?.assistant.system ?? [];
+  const identityChars = rawSystem.filter(isIdentityMessage).reduce((sum, c) => sum + c.length, 0);
+  const systemMessages = rawSystem.filter((c) => !isIdentityMessage(c));
+
+  for (const [i, content] of systemMessages.entries()) {
     const { label, note } = describeSystemMessage(content, i);
-    layers.push(makeLayer('system', `system-${i}`, label, content, {
+    // System prompts are fixed runtime text the reader did not write, so the
+    // row carries its weight but not its body. Only the first row absorbs the
+    // folded-in identity line.
+    const chars = content.length + (i === 0 ? identityChars : 0);
+    layers.push({
+      id: `system-${i}`,
+      kind: 'system',
+      label,
       ...(note ? { note } : {}),
-    }));
+      chars,
+      estTokens: estimateTokens(chars),
+    });
+  }
+
+  // An identity line with nothing to fold into still has to be accounted for.
+  if (systemMessages.length === 0 && identityChars > 0) {
+    layers.push({
+      id: 'system-0',
+      kind: 'system',
+      label: 'AgentUse system prompt',
+      note: 'Built in.',
+      chars: identityChars,
+      estTokens: estimateTokens(identityChars),
+    });
   }
 
   const toolRows: ContextToolRow[] = (tools?.tools ?? []).map((tool) => {

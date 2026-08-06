@@ -6082,8 +6082,73 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   color: var(--muted);
 }
 
+/* The whole context window as one bar, rows of a kind summed. Sits above the
+   stack so the shape lands before the detail; segment order matches the list
+   below so a fat band can be traced to its rows. Colours stay in the four
+   origin families used throughout the page - where two kinds share a family
+   they step down in opacity, which keeps "blue means built-in" readable while
+   still separating the segments. */
+.ctx-mix { margin: 28px 0 26px; }
+.ctx-mix-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.ctx-mix-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.ctx-mix-total { font-family: var(--mono); font-size: 12px; color: var(--muted-3); }
+.ctx-mix-bar {
+  display: flex;
+  gap: 2px;
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bar-bg);
+}
+.ctx-mix-seg { display: block; min-width: 2px; background: var(--muted-2); }
+.ctx-mix-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: none;
+  background: var(--muted-2);
+}
+.ctx-mix-seg[data-kind="system"], .ctx-mix-dot[data-kind="system"] { background: var(--chart-1); }
+.ctx-mix-seg[data-kind="tools"], .ctx-mix-dot[data-kind="tools"] { background: var(--chart-1); opacity: 0.6; }
+.ctx-mix-seg[data-kind="instructions"], .ctx-mix-dot[data-kind="instructions"] { background: var(--cyan); }
+.ctx-mix-seg[data-kind="prompt"], .ctx-mix-dot[data-kind="prompt"] { background: var(--cyan); opacity: 0.6; }
+.ctx-mix-seg[data-kind="skills"], .ctx-mix-dot[data-kind="skills"] { background: var(--amber); }
+.ctx-mix-seg[data-kind="approval"], .ctx-mix-dot[data-kind="approval"] { background: var(--amber); opacity: 0.75; }
+.ctx-mix-seg[data-kind="learnings"], .ctx-mix-dot[data-kind="learnings"] { background: var(--amber); opacity: 0.5; }
+.ctx-mix-seg[data-kind="file"], .ctx-mix-dot[data-kind="file"] { background: var(--chart-5); }
+
+.ctx-mix-legend {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+.ctx-mix-legend li { display: flex; align-items: center; gap: 7px; font-size: 11.5px; }
+.ctx-mix-name { color: var(--muted-3); }
+.ctx-mix-value { font-family: var(--mono); color: var(--fg); }
+.ctx-mix-pct { font-family: var(--mono); color: var(--muted); }
+
 .ctx-layers, .ctx-tools { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.ctx-tools { margin-top: 10px; }
+/* The tool catalog is nested inside its own stack row, so it is inset and
+   sits on the page background to read as a level down from the row. */
+.ctx-body { border-top: 1px solid var(--line); }
+.ctx-body > .ctx-text { border-top: 0; }
+.ctx-body > .ctx-tools { padding: 10px 12px; background: var(--bg); }
+.ctx-body > .ctx-tools .ctx-tool { background: var(--panel); }
 
 .ctx-layer, .ctx-tool {
   border: 1px solid var(--line);
@@ -6108,9 +6173,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .ctx-layer-head { grid-template-columns: 22px 64px minmax(0, 1fr) 172px; }
 .ctx-tool-head { grid-template-columns: minmax(0, 220px) minmax(0, 1fr) 172px; }
-.ctx-layer-head:hover, .ctx-tool-head:hover { background: var(--panel-hover); }
-.ctx-layer-head:disabled { cursor: default; }
-.ctx-layer-head:disabled:hover { background: none; }
+button.ctx-layer-head:hover, .ctx-tool-head:hover { background: var(--panel-hover); }
+/* Not interactive, so no pointer and no hover response - but full contrast:
+   these rows carry the same weight as any other. */
+.ctx-layer-head-static { cursor: default; }
 .ctx-layer-head:focus-visible, .ctx-tool-head:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: -2px; }
 
 .ctx-order {
@@ -6177,29 +6243,16 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* Mid-run file reads. Not expandable: the text is already in the run's log,
-   and re-serving whole file bodies here would make the page enormous. */
-.ctx-files { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.ctx-file {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 172px;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-}
-.ctx-file-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.ctx-file-path {
+/* Mid-run file reads share the layer row shape; only the path styling and the
+   bar colour differ. Not expandable: the text is already in the run's log, and
+   re-serving whole file bodies here would make the page enormous. */
+.ctx-path {
   font-family: var(--mono);
-  font-size: 12px;
-  color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ctx-file-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+.ctx-file-meta { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); }
 /* A file read more than once is the cheapest win on this page, so it gets the
    one loud treatment in the list. */
 .ctx-repeat {
@@ -6211,10 +6264,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-family: var(--mono);
   font-size: 10px;
 }
-.ctx-file .ctx-bar { background: var(--chart-5); }
-@media (max-width: 720px) {
-  .ctx-file { grid-template-columns: minmax(0, 1fr); }
-}
+.ctx-kind-file .ctx-kind { color: var(--chart-5); border-color: var(--chart-5); }
+.ctx-kind-file .ctx-bar { background: var(--chart-5); }
 
 .ctx-tool-name { font-family: var(--mono); font-size: 12px; color: var(--fg); }
 .ctx-tool-desc {

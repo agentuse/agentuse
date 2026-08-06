@@ -44,13 +44,15 @@ function message(overrides: {
 }
 
 describe('session context stack', () => {
-  it('names each system message by its opening', () => {
+  it('names each system message by its opening, with identity folded away', () => {
+    const identity = "You are Claude Code, Anthropic's official CLI for Claude.";
+    const core = 'You are an autonomous AI agent outputting to CLI/terminal. When given a task:';
     const payload = buildSessionContextPayload({
       session,
       message: message({
         system: [
-          "You are Claude Code, Anthropic's official CLI for Claude.",
-          'You are an autonomous AI agent outputting to CLI/terminal. When given a task:',
+          identity,
+          core,
           'You are a team manager agent. Your job is to coordinate work.',
           '## Sandbox Environment\n\nYou are running with a Docker sandbox.',
           'Something the runtime does not emit today.',
@@ -59,13 +61,39 @@ describe('session context stack', () => {
       tools: null,
     });
 
-    expect(payload.layers.filter((l) => l.kind === 'system').map((l) => l.label)).toEqual([
-      'Anthropic identity',
-      'AgentUse core instructions',
+    const system = payload.layers.filter((l) => l.kind === 'system');
+    expect(system.map((l) => l.label)).toEqual([
+      'AgentUse system prompt',
       'Manager instructions',
       'Sandbox environment',
-      'System message 5',
+      'System message 4',
     ]);
+    // Identity gets no row of its own, but its weight is not lost.
+    expect(system[0]!.chars).toBe(core.length + identity.length);
+  });
+
+  it('does not ship system prompt bodies, only their weight', () => {
+    const payload = buildSessionContextPayload({
+      session,
+      message: message({ system: ['You are an autonomous AI agent outputting to CLI/terminal.'] }),
+      tools: null,
+    });
+
+    const system = payload.layers.find((l) => l.kind === 'system');
+    expect(system?.text).toBeUndefined();
+    expect(system?.estTokens).toBeGreaterThan(0);
+  });
+
+  it('still accounts for an identity line that has nothing to fold into', () => {
+    const identity = "You are Claude Code, Anthropic's official CLI for Claude.";
+    const payload = buildSessionContextPayload({
+      session,
+      message: message({ system: [identity] }),
+      tools: null,
+    });
+
+    expect(payload.layers.filter((l) => l.kind === 'system')).toHaveLength(1);
+    expect(payload.layers[0]!.chars).toBe(identity.length);
   });
 
   it('splits the resolved instructions into agent body, approval, skills and corrections', () => {
