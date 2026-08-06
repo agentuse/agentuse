@@ -1226,12 +1226,69 @@ a, button, select, summary, label, input, textarea,
   border-top: 1px solid var(--line);
 }
 
+/* `color: inherit` is load-bearing, same as on the approval card: .result-body
+   above declares --fg, but the prose renders into a .content-markdown
+   descendant that sets its own --muted-3, and a direct declaration beats an
+   inherited one. Without it the run's answer - the deliverable of the whole
+   session - reads as muted secondary text under a full-contrast headline. */
 .page-approval-detail .session-result .content-markdown,
 .page-approval-detail .session-result .content-code {
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
+  color: inherit;
+}
+
+/* A report's own headings need rank, and the base rule (.content-markdown
+   h2-h6) flattens every level to one 15px/600 step, so a six-section report
+   arrives as an undifferentiated stack of bold lines. The headline above is
+   17px and must keep outranking all of them, which leaves too little vertical
+   room to separate four levels by size alone - so the lower levels switch
+   treatment (case, tracking, colour) instead, the way the sessions feed
+   already does. Top margin also tightens with depth, so the gaps read as
+   nesting rather than as a flat list. */
+.page-approval-detail :is(.result-body, .run-outcome-body) .content-markdown h2 {
+  margin: 20px 0 7px;
+  font-size: 16.5px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+/* content-html emits `Math.min(6, hashes + 1)`, so a report's `##` sections land
+   on h3 and its `###` subsections on h4 - those two carry almost all real agent
+   output, which is why they get the widest separation in this scale. */
+.page-approval-detail :is(.result-body, .run-outcome-body) .content-markdown h3 {
+  margin: 18px 0 6px;
+  font-size: 15.5px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+}
+.page-approval-detail :is(.result-body, .run-outcome-body) .content-markdown h4 {
+  margin: 15px 0 5px;
+  color: var(--muted-3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.page-approval-detail :is(.result-body, .run-outcome-body) .content-markdown h5,
+.page-approval-detail :is(.result-body, .run-outcome-body) .content-markdown h6 {
+  margin: 13px 0 4px;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.page-approval-detail :is(.result-body, .run-outcome-body) .content-markdown > :first-child { margin-top: 0; }
+
+/* The result card spans the full 960px main column, which runs prose to ~130
+   characters - roughly double a comfortable measure. Cap the text-level blocks
+   only: tables and fenced code keep the full width they need, and their own
+   scroll container still handles overflow. */
+.page-approval-detail :is(.result-body, .run-outcome-body) .content-markdown
+  > :is(p, ul, ol, blockquote, h2, h3, h4, h5, h6) {
+  max-width: 72ch;
 }
 .page-approval-detail .session-result .content-code { color: inherit; white-space: pre-wrap; }
 .page-approval-detail .result-artifacts {
@@ -5679,8 +5736,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
-/* The card supplies the padding; the block inside it must not add a second inset. */
-.page-approval-detail .run-outcome-body .content-markdown { padding: 0; }
+/* The card supplies the padding; the block inside it must not add a second
+   inset. `color: inherit` for the same reason as the result card above: the
+   --fg declared on .run-outcome-body never reaches text that renders into a
+   .content-markdown descendant carrying its own --muted-3. */
+.page-approval-detail .run-outcome-body .content-markdown { padding: 0; color: inherit; }
 .page-approval-detail .run-outcome .subagent-artifacts { margin-top: 8px; }
 
 /* clickable artifact tiles inside an approval card */
