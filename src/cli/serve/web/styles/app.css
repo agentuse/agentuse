@@ -1211,10 +1211,14 @@ a, button, select, summary, label, input, textarea,
 .page-approval-detail .result-headline {
   margin: 0;
   color: var(--fg);
-  font-size: 17px;
-  font-weight: 600;
-  line-height: 1.4;
-  letter-spacing: -0.01em;
+  /* 20px, not 17: the verdict has to stay above the report's own `##` sections,
+     and at 17 there was no room left to separate those from 14px body text -
+     they landed at 15.5px, a 1.11x step that reads as bold prose rather than as
+     a heading. Raising the ceiling is what lets the scale below it breathe. */
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
   overflow-wrap: anywhere;
 }
 
@@ -1249,8 +1253,8 @@ a, button, select, summary, label, input, textarea,
    already does. Top margin also tightens with depth, so the gaps read as
    nesting rather than as a flat list. */
 .page-approval-detail :is(.result-body, .run-outcome-body) .content-markdown h2 {
-  margin: 20px 0 7px;
-  font-size: 16.5px;
+  margin: 26px 0 8px;
+  font-size: 18px;
   font-weight: 650;
   letter-spacing: -0.015em;
 }
@@ -1258,13 +1262,15 @@ a, button, select, summary, label, input, textarea,
    on h3 and its `###` subsections on h4 - those two carry almost all real agent
    output, which is why they get the widest separation in this scale. */
 .page-approval-detail :is(.result-body, .run-outcome-body) .content-markdown h3 {
-  margin: 18px 0 6px;
-  font-size: 15.5px;
+  /* Generous space above, tight below: the gap groups each heading with the
+     prose it introduces, which does as much sectioning work as the size step. */
+  margin: 24px 0 6px;
+  font-size: 16.5px;
   font-weight: 640;
   letter-spacing: -0.01em;
 }
 .page-approval-detail :is(.result-body, .run-outcome-body) .content-markdown h4 {
-  margin: 15px 0 5px;
+  margin: 20px 0 5px;
   color: var(--muted-3);
   font-size: 12px;
   font-weight: 600;
