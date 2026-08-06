@@ -4,6 +4,7 @@ import type {
   ContextFileRead,
   ContextFileReadContent,
   ContextStackLayer,
+  ContextToolCallStat,
   ContextToolRow,
   SessionContextPayload,
 } from './types';
@@ -233,6 +234,25 @@ export function buildFileReads(parts: Part[]): ContextFileRead[] {
   return files;
 }
 
+/**
+ * Tool calls tallied per tool. Counted from the session's parts, so unlike the
+ * session log's own roll-up this never says "loaded entries" - it is the whole
+ * run every time.
+ */
+export function buildToolCalls(parts: Part[]): ContextToolCallStat[] {
+  const byTool = new Map<string, ContextToolCallStat>();
+
+  for (const part of parts) {
+    if (part.type !== 'tool') continue;
+    const stat = byTool.get(part.tool) ?? { tool: part.tool, count: 0, failed: 0 };
+    stat.count += 1;
+    if (part.state.status === 'error') stat.failed += 1;
+    byTool.set(part.tool, stat);
+  }
+
+  return [...byTool.values()].sort((a, b) => b.count - a.count || a.tool.localeCompare(b.tool));
+}
+
 function makeLayer(
   kind: ContextStackLayer['kind'],
   id: string,
@@ -402,6 +422,7 @@ export function buildSessionContextPayload(options: {
     layers,
     tools: toolRows,
     fileReads,
+    toolCalls: buildToolCalls(parts),
     totals: {
       chars: totalChars,
       estTokens: estimateTokens(totalChars),

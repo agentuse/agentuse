@@ -194,6 +194,7 @@ describe('session context stack', () => {
     expect(payload.tools).toEqual([]);
     expect(payload.fileReads).toEqual([]);
     expect(payload.totals).toEqual({ chars: 0, estTokens: 0, withFileReadsEstTokens: 0 });
+    expect(payload.toolCalls).toEqual([]);
     expect(payload.measured).toBeUndefined();
     expect(payload.agent.filePath).toBe('/repo/agents/reporter.agentuse');
   });
@@ -356,5 +357,39 @@ describe('mid-run file reads', () => {
     expect(payload.fileReads.map((f) => f.path)).toEqual(['/repo/ok.md']);
     expect(payload.totals.estTokens).toBe(100);
     expect(payload.totals.withFileReadsEstTokens).toBe(300);
+  });
+});
+
+describe('tool call tallies', () => {
+  it('counts every tool part, not just the reads, and ranks by call count', () => {
+    const parts = [
+      readPart('tools__bash', { command: 'ls' }, 'a'),
+      readPart('tools__bash', { command: 'pwd' }, 'b'),
+      readPart('tools__bash', { command: 'date' }, 'c'),
+      readPart('tools__filesystem_read', { file_path: '/repo/x.md' }, 'd'),
+      readPart('mcp__slack__post', {}, 'e'),
+    ];
+
+    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts });
+
+    expect(payload.toolCalls).toEqual([
+      { tool: 'tools__bash', count: 3, failed: 0 },
+      { tool: 'mcp__slack__post', count: 1, failed: 0 },
+      { tool: 'tools__filesystem_read', count: 1, failed: 0 },
+    ]);
+  });
+
+  it('counts failures separately', () => {
+    const errored = {
+      id: 'p', messageID: 'msg_1', sessionID: session.id, type: 'tool', callID: 'c', tool: 'tools__bash',
+      state: { status: 'error', input: {}, error: 'boom', time: { start: 1, end: 2 } },
+    } as unknown as Part;
+
+    const payload = buildSessionContextPayload({
+      session, message: message({}), tools: null,
+      parts: [readPart('tools__bash', { command: 'ok' }, 'x'), errored],
+    });
+
+    expect(payload.toolCalls).toEqual([{ tool: 'tools__bash', count: 2, failed: 1 }]);
   });
 });

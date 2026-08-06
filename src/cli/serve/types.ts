@@ -183,6 +183,17 @@ export interface ContextFileRead {
   content?: ContextFileReadContent[];
 }
 
+/**
+ * One tool's call tally for this run. Counted from the session's tool parts
+ * rather than from the log the page happens to have loaded, so the totals are
+ * complete even on a long run.
+ */
+export interface ContextToolCallStat {
+  tool: string;
+  count: number;
+  failed: number;
+}
+
 export interface SessionContextPayload {
   sessionId: string;
   model?: string;
@@ -196,6 +207,8 @@ export interface SessionContextPayload {
   tools: ContextToolRow[];
   /** Files read during the run, heaviest first. Empty when the run read none. */
   fileReads: ContextFileRead[];
+  /** Tool calls this run made, most-called first. */
+  toolCalls: ContextToolCallStat[];
   totals: {
     chars: number;
     estTokens: number;

@@ -575,12 +575,9 @@ export default function SessionDetail() {
     () => orderedLogs.reduce((n, e) => n + (e.type === 'tool' ? 1 : 0), 0),
     [orderedLogs]
   );
-  // Per-tool call tallies for the header's stat band, under the meta table.
-  const toolStats = useMemo(() => aggregateToolStats(orderedLogs), [orderedLogs]);
-  // Longest bar sets the scale, so the rows read as shares of the busiest tool.
-  const toolStatsPeak = toolStats.length > 0 ? toolStats[0].count : 0;
-  // The feed pages in; say so rather than passing a partial roll-up off as final.
-  const toolStatsPartial = logsTotal !== null && orderedLogs.length < logsTotal;
+  // The per-tool roll-up moved to the diagnostic subpage, where it is counted
+  // from the session's parts instead of from however much of the log this view
+  // has paged in. aggregateToolStats stays exported for its tests.
   // Business facts the run recorded via record_metric, for the result card's
   // "recorded" chips. The tool's OUTPUT (details.output JSON) confirms the
   // write and names the metric; the call INPUT carries the recorded amounts.
@@ -1232,6 +1229,12 @@ export default function SessionDetail() {
                 // URLs often omit it; the header's stamped project id keeps
                 // "Run new session" working on multi-project daemons.
                 {...(projectId ?? approval.project ? { projectId: projectId ?? approval.project } : {})}
+                contextHref={`/sessions/${encodeURIComponent(sessionId)}/context${location.query.token || projectId
+                  ? `?${new URLSearchParams({
+                      ...(location.query.token ? { token: location.query.token } : {}),
+                      ...(projectId ? { project: projectId } : {}),
+                    }).toString()}`
+                  : ''}`}
               />
             )}
           </div>
@@ -1272,47 +1275,6 @@ export default function SessionDetail() {
               </div>
             )}
           </div>
-          {toolStats.length > 0 && (
-            <section class="tool-stats" aria-label="Tool calls grouped by tool">
-              <div class="tool-stats-head">
-                <span class="tool-stats-title">tool calls</span>
-                <span class="tool-stats-total">
-                  {toolCallCount.toLocaleString()} across {toolStats.length}
-                  {toolStats.length === 1 ? ' tool' : ' tools'}
-                  {toolStatsPartial ? ' (loaded entries)' : ''}
-                </span>
-              </div>
-              <ul class="tool-stats-rows">
-                {toolStats.map((s) => (
-                  <li class="tool-stat" key={s.tool}>
-                    <span class="tool-stat-name" title={s.tool}>{s.label}</span>
-                    <span class="tool-stat-track">
-                      <span
-                        class="tool-stat-bar"
-                        style={{ width: `${Math.max((s.count / toolStatsPeak) * 100, 3)}%` }}
-                      >
-                        {s.failed > 0 && (
-                          <span
-                            class="tool-stat-bar-failed"
-                            style={{ width: `${(s.failed / s.count) * 100}%` }}
-                          ></span>
-                        )}
-                      </span>
-                    </span>
-                    {/* Badge leads the count so the numbers keep a shared right edge. */}
-                    <span class="tool-stat-count">
-                      {s.failed > 0 && (
-                        <span class="tool-stat-failed" title={`${s.failed} of ${s.count} failed`}>
-                          {s.failed} failed
-                        </span>
-                      )}
-                      {s.count.toLocaleString()}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
         </header>
 
         {approval.additionalInstruction && (
@@ -1462,22 +1424,6 @@ export default function SessionDetail() {
               <span>Learnings</span>
             </button>
           )}
-          <a
-            class="session-action-button"
-            href={`/sessions/${encodeURIComponent(sessionId)}/context${location.query.token || projectId
-              ? `?${new URLSearchParams({
-                  ...(location.query.token ? { token: location.query.token } : {}),
-                  ...(projectId ? { project: projectId } : {}),
-                }).toString()}`
-              : ''}`}
-            title="See what was loaded into this run's context window: system prompts, tool schemas, agent instructions, inlined skill files"
-          >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-            </svg>
-            <span>Context stack</span>
-          </a>
           <DebugPromptButton
             context={{
               sessionId: approval.sessionId,

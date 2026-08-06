@@ -7,6 +7,7 @@ import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { LogContent } from '../components/content';
+import { toolChipLabel } from '../components/log-entry';
 import { isMarkdownPath, parseReadOutput } from '../lib/read-output';
 import { pageTitle } from '../lib/brand';
 import type { ContextFileRead, ContextStackLayer, ContextToolRow } from '../../types';
@@ -116,6 +117,28 @@ function StackRow(props: {
 }
 
 /**
+ * Every layer whose text is markdown in the source it came from. The agent
+ * body, SKILL.md files, the approval contract and captured corrections are all
+ * authored as markdown, so they read as documents rather than as a wall of
+ * escaped source. A run prompt is free-form, so it is left to auto-detection.
+ */
+const MARKDOWN_KINDS = new Set<ContextStackLayer['kind']>([
+  'instructions', 'approval', 'skills', 'learnings',
+]);
+
+/**
+ * A scroll-capped pane rendered by the shared log renderer: markdown for
+ * documents, the smart block for JSON, a code block for anything else.
+ */
+function DocPane(props: { value: string; forceMarkdown?: boolean }) {
+  return (
+    <div class="ctx-doc">
+      <LogContent value={props.value} {...(props.forceMarkdown ? { forceMarkdown: true } : {})} />
+    </div>
+  );
+}
+
+/**
  * What the model received for this file, per read. Multiple reads are labelled
  * because they are usually different slices of the same file (an offset/limit
  * range), not repeats of identical text.
@@ -138,12 +161,7 @@ function FileContent(props: { file: ContextFileRead }) {
               </div>
             )}
             {parsed.header && <div class="ctx-subhead ctx-subhead-note">{parsed.header}</div>}
-            {/* The shared log renderer: markdown for documents, a smart block
-                for JSON, a code block for anything else - the same treatment
-                this content gets in the session log. */}
-            <div class="ctx-doc">
-              <LogContent value={parsed.body} {...(markdown ? { forceMarkdown: true } : {})} />
-            </div>
+            <DocPane value={parsed.body} {...(markdown ? { forceMarkdown: true } : {})} />
             {entry.truncated && (
               <div class="ctx-subhead ctx-subhead-note">
                 Preview cut at {entry.text.length.toLocaleString()} of {entry.chars.toLocaleString()} characters.
@@ -202,10 +220,13 @@ function ToolRow(props: { tool: ContextToolRow; share: number }) {
       </button>
       {open && (
         <div class="ctx-tool-body">
-          {tool.description && <pre class="ctx-text"><code>{tool.description}</code></pre>}
+          {/* Auto-detected, not forced: a tool description is prose for some
+              tools and an XML catalog for others (the `skill` tool embeds one). */}
+          {tool.description && <DocPane value={tool.description} />}
           {tool.schema && (
             <>
               <div class="ctx-subhead">input schema</div>
+              {/* Stays a code block: a JSON Schema is read as code, not as data. */}
               <pre class="ctx-text"><code>{tool.schema}</code></pre>
             </>
           )}
@@ -222,7 +243,7 @@ export default function SessionContext() {
   const token = location.query.token || undefined;
   const projectId = location.query.project || undefined;
 
-  useTitle(pageTitle('Session', 'Context'));
+  useTitle(pageTitle('Session', 'Diagnostic'));
 
   const backParams = new URLSearchParams();
   if (token) backParams.set('token', token);
@@ -278,6 +299,12 @@ export default function SessionContext() {
   }, [context]);
 
   const mixTotal = useMemo(() => mix.reduce((sum, s) => sum + s.tokens, 0), [mix]);
+  const toolCallTotal = useMemo(
+    () => (context?.toolCalls ?? []).reduce((sum, s) => sum + s.count, 0),
+    [context]
+  );
+  // Longest bar sets the scale, so rows read as shares of the busiest tool.
+  const toolCallPeak = context?.toolCalls[0]?.count ?? 1;
   const fileReadTokens = useMemo(
     () => (context?.fileReads ?? []).reduce((sum, f) => sum + f.estTokens, 0),
     [context]
@@ -290,20 +317,20 @@ export default function SessionContext() {
     // Reuses the session page's shell class so the header, meta grid and
     // section titles match the page this one is reached from.
     <div class="page-approval-detail page-session-context">
-      <Topbar currentPage="sessions" right={<span class="session-pill">context</span>} />
+      <Topbar currentPage="sessions" right={<span class="session-pill">diagnostic</span>} />
       <main>
         <a class="back-link" href={backHref} onClick={goBack}>Back to session</a>
-        {error && <div class="errors" role="alert">Failed to load the context stack: {error.message}</div>}
-        {loading && !context && <Loading label="Loading context stack…" />}
+        {error && <div class="errors" role="alert">Failed to load diagnostics: {error.message}</div>}
+        {loading && !context && <Loading label="Loading diagnostics…" />}
         {context && (
           <>
             <header>
-              <div class="eyebrow">diagnostics</div>
-              <h1>Context stack</h1>
+              <div class="eyebrow">{context.agent.name}</div>
+              <h1>Diagnostic</h1>
               <p class="lede">
-                Everything loaded into the model's context window at the start of this run, in the
-                order it was sent. Reconstructed from what the run recorded, so it reflects the
-                prompt as the model received it, not the agent file as it reads today.
+                What this run put in the model's context window, and what it did with it.
+                Reconstructed from what the run recorded, so it reflects the prompt as the model
+                received it, not the agent file as it reads today.
               </p>
               <div class="meta">
                 <div class="cell"><span class="label">session</span><code>{context.sessionId}</code></div>
@@ -375,6 +402,48 @@ export default function SessionContext() {
                   </ul>
                 </section>
               )}
+              {/* The per-tool roll-up, moved here from the session view. Counted
+                  from the session's parts, so it is the whole run - the session
+                  log's version could only tally the entries it had paged in. */}
+              {context.toolCalls.length > 0 && (
+                <section class="tool-stats" aria-label="Tool calls grouped by tool">
+                  <div class="tool-stats-head">
+                    <span class="tool-stats-title">tool calls</span>
+                    <span class="tool-stats-total">
+                      {toolCallTotal.toLocaleString()} across {context.toolCalls.length}
+                      {context.toolCalls.length === 1 ? ' tool' : ' tools'}
+                    </span>
+                  </div>
+                  <ul class="tool-stats-rows">
+                    {context.toolCalls.map((s) => (
+                      <li class="tool-stat" key={s.tool}>
+                        <span class="tool-stat-name" title={s.tool}>{toolChipLabel(s.tool)}</span>
+                        <span class="tool-stat-track">
+                          <span
+                            class="tool-stat-bar"
+                            style={{ width: `${Math.max((s.count / toolCallPeak) * 100, 3)}%` }}
+                          >
+                            {s.failed > 0 && (
+                              <span
+                                class="tool-stat-bar-failed"
+                                style={{ width: `${(s.failed / s.count) * 100}%` }}
+                              ></span>
+                            )}
+                          </span>
+                        </span>
+                        <span class="tool-stat-count">
+                          {s.failed > 0 && (
+                            <span class="tool-stat-failed" title={`${s.failed} of ${s.count} failed`}>
+                              {s.failed} failed
+                            </span>
+                          )}
+                          {s.count.toLocaleString()}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
             </header>
 
             {context.compacted && (
@@ -416,7 +485,14 @@ export default function SessionContext() {
                         ),
                       }
                     : layer.text !== undefined
-                      ? { body: () => <pre class="ctx-text"><code>{layer.text}</code></pre> }
+                      ? {
+                          body: () => (
+                            <DocPane
+                              value={layer.text!}
+                              {...(MARKDOWN_KINDS.has(layer.kind) ? { forceMarkdown: true } : {})}
+                            />
+                          ),
+                        }
                       : {})}
                 />
               ))}
@@ -444,13 +520,9 @@ export default function SessionContext() {
             )}
 
             <p class="ctx-footnote">
-              Rows 1&ndash;{context.layers.length} are the prompt the run opened with; anything below
-              is a file the agent read afterwards, which lands in the same window. Token counts
-              marked ~ are estimates at 4 characters per token, the same heuristic the runtime uses
-              to decide when to compact — treat them as proportions, not billing. File rows cover
-              the read tools by name; text that reached the context another way, such as a
-              <code>cat</code> through bash or an MCP tool returning a document, lands in the run's
-              tool output rather than here.
+              Rows 1&ndash;{context.layers.length} opened the run; the rest are files read after it
+              started. Token counts are estimates at 4 characters per token. Text that reached the
+              context another way, such as a <code>cat</code> through bash, is not counted.
             </p>
           </>
         )}
