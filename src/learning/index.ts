@@ -17,6 +17,11 @@ export interface ExtractLearningsOptions {
   agentInstructions: string;
   agentModel: string;
   agentFilePath: string;
+  /** The agent file's own project root (`resolveProjectContext().stateRoot`),
+   *  which decides where the corrections file lives. Deliberately not the
+   *  cwd-derived project root: one agent must have one store no matter which
+   *  shell the run started from. */
+  stateRoot: string;
   config: LearningConfig;
   /** Reviewer comments from this run's approval gates (paired with the work). */
   reviews?: ApprovalReview[];
@@ -53,7 +58,7 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
   }).start();
 
   try {
-    const store = LearningStore.fromAgentFile(agentFilePath, config.file);
+    const store = LearningStore.fromAgentFile(agentFilePath, options.stateRoot, event.agent.name);
     const stored = await store.load();
 
     // Deduplicate against the learnings the model was ACTUALLY given, not the
@@ -163,9 +168,9 @@ function manualLearningTitle(instruction: string): string {
 
 export async function saveManualLearning(options: {
   agentFilePath: string;
-  /** Optional: only used to resolve a custom learnings-file path. A manual rule
-   *  is a human opt-in, so saving it needs no learning config. */
-  config?: LearningConfig | undefined;
+  /** The agent file's own project root, which decides where the corrections
+   *  file lives. See {@link ExtractLearningsOptions.stateRoot}. */
+  stateRoot: string;
   instruction: string;
   /** Agent model used to distill the note into a grounded additional
    *  instruction. Omit to store the note verbatim. */
@@ -183,7 +188,7 @@ export async function saveManualLearning(options: {
     return { status: 'none', source: 'manual', count: 0, titles: [] };
   }
 
-  const store = LearningStore.fromAgentFile(options.agentFilePath, options.config?.file);
+  const store = LearningStore.fromAgentFile(options.agentFilePath, options.stateRoot);
 
   // Turn the note into a grounded additional instruction, using the agent's own
   // instructions + what it did this run + the already-saved instructions. Any
@@ -273,6 +278,8 @@ export function describeLearningOutcome(o: {
 }
 
 export { LearningStore, resolveLearningFilePath, generateLearningId } from './store';
+export { applyLearningMigration, findAgentFiles, findOrphanedLearningFiles, legacyLearningFilePath, planLearningMigration } from './migrate';
+export type { MigrationEntry, MigrationStatus } from './migrate';
 export { MAX_INJECTED_LEARNINGS, activeLearnings, effectiveCap, learningSourceRank, partitionLearnings, rankLearnings } from './ranking';
 export { LEARNED_BLOCK_START, LEARNED_BLOCK_END, renderLearnedBlock, spliceLearnedBlock, writeLearnedBlock } from './graduate';
 export { consolidateLearnings, describeConsolidation, isGraduationEligible, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord } from './consolidate';

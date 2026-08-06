@@ -1,9 +1,12 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join, dirname, resolve, basename } from 'path';
-import { randomUUID } from 'crypto';
+import { join, dirname, resolve, relative, basename, isAbsolute } from 'path';
+import { randomUUID, createHash } from 'crypto';
 import type { Learning, LearningCategory, LearningSource, LearningState } from './types';
 import { learningSourceRank } from './ranking';
+import { getProjectDirSync, sanitizeAgentName } from '../storage/paths';
+import { computeAgentId } from '../utils/agent-id';
+import { logger } from '../utils/logger';
 
 // Serialize read-modify-write sequences on the same learnings file so two
 // concurrent saves (e.g. two serve approval decisions on the same agent) can't
@@ -45,20 +48,170 @@ function toLocalDate(iso: string): string {
 }
 
 /**
- * Resolve learning file path
- * - Default: {agent-dir}/{agent-file-basename}.learnings.md
- * - Custom: config.file relative to agent file
+ * The key one agent's corrections file is stored under, inside the project's
+ * learnings directory.
+ *
+ * Normally {@link computeAgentId} — the project-relative path minus the
+ * extension — so learnings, sessions and stores all key an agent the same way,
+ * and subdirectories keep two `write.agentuse` files apart.
+ */
+function learningKey(agentFilePath: string, stateRoot: string, agentName?: string): string {
+  // A URL or stdin agent has no path to key on, so its own name is the only
+  // stable identifier there is.
+  if (!agentFilePath || /^https?:\/\//i.test(agentFilePath)) {
+    if (!agentName) {
+      throw new Error(
+        `Cannot resolve a corrections file for "${agentFilePath || '(no agent file)'}" without an agent name`
+      );
+    }
+    return sanitizeAgentName(agentName);
+  }
+
+  const absolute = resolve(agentFilePath);
+  // Falling back to the absolute path means a missing stateRoot lands in the
+  // digest branch below rather than producing an id that escapes the directory.
+  const id = computeAgentId(absolute, stateRoot, absolute);
+  if (id && !id.startsWith('..') && !isAbsolute(id)) return id;
+
+  // The agent file sits outside the state root, so `relative()` walked up out of
+  // the tree and there is no project-relative id. Key by name plus a digest of
+  // the absolute path — the same shape, for the same reason, as the
+  // consolidation snapshot directory.
+  const digest = createHash('sha256').update(absolute).digest('hex').slice(0, 8);
+  return `${sanitizeAgentName(basename(absolute, '.agentuse'))}-${digest}`;
+}
+
+/**
+ * Where an agent's corrections file lives:
+ * `{projectDir(stateRoot)}/learnings/{agentId}.learnings.md`.
+ *
+ * One computed path — no fallbacks, no config key, and deliberately not the old
+ * sibling `{agent}.learnings.md`. The file is generated state that every run
+ * rewrites, so it belongs beside the session logs in the AgentUse state
+ * directory rather than in the user's repository.
+ *
+ * Anchored on `stateRoot` (agent-file-derived) rather than the cwd-derived
+ * project root, so one agent resolves to one file whichever shell it ran from.
  */
 export function resolveLearningFilePath(
   agentFilePath: string,
-  customFile?: string
+  stateRoot: string,
+  agentName?: string
 ): string {
-  const agentDir = dirname(agentFilePath);
-  if (customFile) {
-    return resolve(agentDir, customFile);
-  }
-  const agentFileBasename = basename(agentFilePath, '.md');
-  return join(agentDir, `${agentFileBasename}.learnings.md`);
+  return join(
+    getProjectDirSync(stateRoot),
+    'learnings',
+    `${learningKey(agentFilePath, stateRoot, agentName)}.learnings.md`
+  );
+}
+
+/**
+ * Where corrections used to live, before they moved into the state directory:
+ * `{agent-dir}/{agent-basename}.learnings.md`. Reproduces the pre-0.17 resolver,
+ * which stripped only a `.md` extension — so `x.agentuse` paired with
+ * `x.agentuse.learnings.md`, and the rarer `x.md` with `x.learnings.md`.
+ *
+ * Nothing reads this file. It exists so we can *notice* one and say so, and so
+ * `learnings migrate` can move it. Those two must agree on the path or the
+ * notice points at a file the migration will not find, which is why there is one
+ * implementation here rather than a copy in each caller.
+ */
+export function legacyLearningFilePath(agentFilePath: string): string {
+  const absolute = resolve(agentFilePath);
+  return join(dirname(absolute), `${basename(absolute, '.md')}.learnings.md`);
+}
+
+/** Project-relative when the path is inside the project, absolute otherwise.
+ *  A warning that prints the operator's home directory is both harder to read
+ *  and, in a shared serve session view, more than the reader asked for. */
+function displayPath(target: string, root: string): string {
+  const rel = relative(root, target);
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : target;
+}
+
+/**
+ * The "your corrections are somewhere we no longer look" notice, or `null` when
+ * there is nothing to say.
+ *
+ * Reads the sibling's EXISTENCE and nothing else — never its contents, never an
+ * entry count. That is what keeps this a notice rather than a compatibility
+ * path: behaviour is byte-identical whether or not the old file is there, so it
+ * is not a second source of authority and has no expiry date attached to it.
+ *
+ * It exists because the alternative is worse than a missing feature: an
+ * unwatched scheduled fleet silently dropping forty corrections and continuing
+ * as though it never had any.
+ *
+ * This form asks only whether corrections are stranded, which is the right
+ * question for a diagnostic. The run path uses {@link legacyLearningsNotice},
+ * which additionally goes quiet once the keyed file exists.
+ */
+export function strandedLearningsNotice(agentFilePath: string, stateRoot: string): string | null {
+  // A URL or stdin agent never had a sibling file to leave behind.
+  if (!agentFilePath || /^https?:\/\//i.test(agentFilePath)) return null;
+
+  const absolute = resolve(agentFilePath);
+  const sibling = legacyLearningFilePath(absolute);
+  if (!existsSync(sibling)) return null;
+
+  return [
+    `learnings: corrections found at the old location for ${displayPath(absolute, stateRoot)}`,
+    `  ${displayPath(sibling, stateRoot)}`,
+    `  No longer read. Move them:  agentuse learnings migrate --all`,
+  ].join('\n');
+}
+
+/**
+ * {@link strandedLearningsNotice} for the run path: silent once the keyed file
+ * exists, on the reasoning that a run whose corrections are accumulating in the
+ * right place should not nag on every execution.
+ *
+ * That gate is why `doctor` calls the unconditional form instead. An agent that
+ * captured one correction after upgrading has a populated keyed file and forty
+ * still stranded beside it, and that is exactly the state where a silent
+ * diagnostic does the most damage.
+ */
+function legacyLearningsNotice(
+  agentFilePath: string,
+  stateRoot: string,
+  agentName?: string
+): string | null {
+  if (!agentFilePath || /^https?:\/\//i.test(agentFilePath)) return null;
+  if (existsSync(resolveLearningFilePath(resolve(agentFilePath), stateRoot, agentName))) return null;
+  return strandedLearningsNotice(agentFilePath, stateRoot);
+}
+
+/** Agents already reported on in this process. */
+const legacyNoticeGiven = new Set<string>();
+
+/**
+ * {@link legacyLearningsNotice}, but only the first time it is asked about a
+ * given agent; `null` on every later call.
+ *
+ * Consuming rather than merely returning is what makes "warn once" a property of
+ * the notice itself instead of a rule each caller has to remember. A single run
+ * loads a store several times (injection, capture, ranking), and `doctor` both
+ * loads a store and prints its own diagnostic line — one notice per agent per
+ * process, whichever of them asks first.
+ */
+export function takeLegacyLearningsNotice(
+  agentFilePath: string,
+  stateRoot: string,
+  agentName?: string
+): string | null {
+  const key = `${resolve(agentFilePath)}\0${stateRoot}`;
+  // Record the question, not just the answer, so an agent with no old file
+  // doesn't re-stat it on every load for the life of the process.
+  if (legacyNoticeGiven.has(key)) return null;
+  legacyNoticeGiven.add(key);
+  return legacyLearningsNotice(agentFilePath, stateRoot, agentName);
+}
+
+/** The agent a store was built from, kept only so an empty load can point at
+ *  corrections stranded at the old location. */
+interface LegacyNoticeSource {
+  agentFilePath: string;
+  stateRoot: string;
 }
 
 /**
@@ -66,21 +219,44 @@ export function resolveLearningFilePath(
  */
 export class LearningStore {
   public readonly filePath: string;
+  private readonly legacySource: LegacyNoticeSource | undefined;
 
-  constructor(filePath: string) {
+  constructor(filePath: string, legacySource?: LegacyNoticeSource) {
     this.filePath = filePath;
+    this.legacySource = legacySource;
   }
 
-  static fromAgentFile(agentFilePath: string, customFile?: string): LearningStore {
-    const filePath = resolveLearningFilePath(agentFilePath, customFile);
-    return new LearningStore(filePath);
+  /**
+   * @param stateRoot the agent file's own project root (`resolveProjectContext`),
+   *   not the cwd-derived one — it decides which project directory the
+   *   corrections live in.
+   * @param agentName only used for a URL/stdin agent, which has no path to key on.
+   */
+  static fromAgentFile(agentFilePath: string, stateRoot: string, agentName?: string): LearningStore {
+    const filePath = resolveLearningFilePath(agentFilePath, stateRoot, agentName);
+    return new LearningStore(filePath, { agentFilePath, stateRoot });
   }
 
   async load(): Promise<Learning[]> {
-    if (!existsSync(this.filePath)) return [];
+    if (!existsSync(this.filePath)) {
+      this.reportLegacyLocationOnce();
+      return [];
+    }
 
     const content = await readFile(this.filePath, 'utf-8');
     return this.parseMarkdown(content);
+  }
+
+  /**
+   * Say once, on the first empty load, that this agent's corrections are sitting
+   * at the old location. `logger.warn` mirrors into the session log sink, so the
+   * line reaches the terminal and the serve session view from one call — which
+   * is the whole point for a fleet nobody is watching run.
+   */
+  private reportLegacyLocationOnce(): void {
+    if (!this.legacySource) return;
+    const notice = takeLegacyLearningsNotice(this.legacySource.agentFilePath, this.legacySource.stateRoot);
+    if (notice) logger.warn(notice);
   }
 
   async save(learnings: Learning[]): Promise<void> {
@@ -346,7 +522,9 @@ export class LearningStore {
     // parsed positionally-or-by-key. This keeps old files (no `src:`) readable.
     // The `## Retired` heading that separates the archive is not matched by the
     // `###` entry regex, so it needs no special handling here — each retired
-    // entry carries `state:retired` in its own metadata.
+    // entry carries `state:retired` in its own metadata. Same for the `<!-- agent:
+    // … -->` breadcrumb under the H1: a comment is only captured as metadata when
+    // a `### [category] title` line immediately precedes it.
     const regex = /### \[([\w-]+)\] (.+)\n<!-- (.+?) -->\n([\s\S]+?)(?=\n\n###|\n\n## |\n*$)/g;
 
     let match;
@@ -435,8 +613,30 @@ export class LearningStore {
    * {@link addOrEscalate} can only detect if the entry is still there to match.
    */
   private serializeMarkdown(learnings: Learning[]): string {
-    const agentName = this.filePath.split('/').pop()?.replace('.learnings.md', '') || 'agent';
-    let md = `# Learnings for ${agentName}\n\n`;
+    // The file is keyed by agent id, so its path carries the agent's own
+    // subdirectories (`learnings/agents/x/x-news-post.learnings.md`). Only the
+    // last segment is the name.
+    const agentName = basename(this.filePath, '.learnings.md') || 'agent';
+    let md = `# Learnings for ${agentName}\n`;
+
+    // A breadcrumb, deliberately not a mechanism: nothing ever reads this back,
+    // there is no format version behind it and no rename recovery built on it.
+    // It is here because a file sitting under `project/9f2c…/learnings/` is
+    // otherwise unattributable by eye, and because if rename recovery is ever
+    // built the source path is already recorded in every file that would need
+    // it. `parseMarkdown` only matches a metadata comment that follows a
+    // `### [category]` heading, so this one cannot parse back as a learning.
+    const source = this.legacySource;
+    if (source?.agentFilePath) {
+      // A URL agent's address is its source; anything else is shown relative to
+      // the project, since the absolute path leads into the state directory of
+      // whoever happened to run it.
+      const label = /^https?:\/\//i.test(source.agentFilePath)
+        ? source.agentFilePath
+        : displayPath(resolve(source.agentFilePath), source.stateRoot);
+      md += `<!-- agent: ${label} -->\n`;
+    }
+    md += '\n';
 
     for (const l of learnings) {
       if (l.state === 'retired') continue;

@@ -7,6 +7,7 @@ import { AuthenticationError } from '../models';
 import { logger, runWithLogSink } from '../utils/logger';
 import { toErrorMessage } from '../utils/error-message';
 import { extractLearnings, LearningStore } from '../learning/index.js';
+import { findProjectRoot } from '../utils/project';
 import { isMockMode } from './mock-tools';
 import { recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, gatherApprovalContext, type SessionLogSink } from './session-helper';
 import { usageToAssistantTokens, addAssistantTokens, type AssistantTokens } from '../session/usage';
@@ -550,6 +551,7 @@ export async function runAgent(
       result: runResult,
       consoleOutput,
       ...(agentFilePath !== undefined && { agentFilePath }),
+      ...(projectContext !== undefined && { stateRoot: projectContext.stateRoot }),
       ...(startTime !== undefined && { startTime }),
       ...(pluginManager !== undefined && { pluginManager }),
       ...(sessionManager !== undefined && { sessionManager }),
@@ -644,6 +646,11 @@ export async function runPostLifecycle(options: {
   pluginManager?: PluginManager | null | undefined;
   agent: ParsedAgent;
   agentFilePath?: string;
+  /** The agent file's own project root, which decides where this agent's
+   *  corrections file lives. Omitted only by callers with no project context,
+   *  in which case it is derived from the agent file the same way
+   *  `resolveProjectContext` would. */
+  stateRoot?: string;
   result: RunAgentResult;
   startTime?: number;
   consoleOutput: string;
@@ -710,8 +717,10 @@ export async function runPostLifecycle(options: {
       // Credit them BEFORE capture runs, so the counter reflects this run even if
       // capture then merges or re-asserts one of them. A commented gate credits
       // nothing: the reviewer had to correct something.
+      const stateRoot = options.stateRoot ?? findProjectRoot(agentFilePath);
+
       if (approvalContext.humanGates > 0 && reviews.length === 0 && options.learningsInjectedIds?.length) {
-        await LearningStore.fromAgentFile(agentFilePath, agent.config.learning.file)
+        await LearningStore.fromAgentFile(agentFilePath, stateRoot, agent.name)
           .recordApprovedRun(options.learningsInjectedIds)
           .catch((err: unknown) => logger.debug(`[Learning] Could not credit approved run: ${(err as Error).message}`));
       }
@@ -721,6 +730,7 @@ export async function runPostLifecycle(options: {
         agentInstructions: agent.instructions,
         agentModel: agent.config.model,
         agentFilePath,
+        stateRoot,
         config: agent.config.learning,
         reviews,
         sessionId: options.sessionId,

@@ -3297,7 +3297,7 @@ export function createServeCommand(): Command {
         info: WorkerApprovalInfoResult,
         remember: string | undefined,
         sessionId: string,
-      ): Promise<{ agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined; sessionId?: string | undefined } | null> => {
+      ): Promise<{ agentFilePath: string; stateRoot: string; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined; sessionId?: string | undefined } | null> => {
         const instruction = remember?.trim();
         if (!instruction) return null;
         const targetAgent = info.approval.originAgent ?? info.approval.agent;
@@ -3307,16 +3307,19 @@ export function createServeCommand(): Command {
         // A manual "remember" is the reviewer's explicit opt-in, so it does not
         // require learning.apply — the instruction is stored regardless. Whether
         // it is injected into future runs is still governed by learning.apply.
-        // Parse the agent to honor a custom learning.file path and to ground the
-        // note (via the agent's model + instructions + the work at the gate).
+        // Parse the agent to ground the note (via the agent's model +
+        // instructions + the work at the gate).
         const agent = await parseAgent(targetAgent.filePath);
-        return { agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(info.approval.logs), sessionId };
+        const stateRoot = resolveProjectContext(dirname(targetAgent.filePath), {
+          agentFilePath: targetAgent.filePath,
+        }).stateRoot;
+        return { agentFilePath: targetAgent.filePath, stateRoot, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(info.approval.logs), sessionId };
       };
 
       // Persist a resolved manual instruction best-effort: a learnings-file write
       // failure is logged and never aborts the (already kicked-off) resume.
       const persistRememberedLearning = (
-        target: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined; sessionId?: string | undefined } | null,
+        target: { agentFilePath: string; stateRoot: string; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined; sessionId?: string | undefined } | null,
       ): void => {
         if (!target) return;
         void saveManualLearning(target).catch((err) => {
@@ -5259,8 +5262,13 @@ export function createServeCommand(): Command {
           const targetAgent = info.approval.originAgent ?? info.approval.agent;
           if (!targetAgent.filePath) return null;
           const agent = await parseAgent(targetAgent.filePath);
+          // Same agent-file-derived state root the agent-level endpoints use, so
+          // the session view and the agent view address one corrections file.
+          const stateRoot = resolveProjectContext(dirname(targetAgent.filePath), {
+            agentFilePath: targetAgent.filePath,
+          }).stateRoot;
           return {
-            store: LearningStore.fromAgentFile(targetAgent.filePath, agent.config.learning?.file),
+            store: LearningStore.fromAgentFile(targetAgent.filePath, stateRoot, agent.name),
             config: agent.config.learning,
             filePath: targetAgent.filePath,
           };
@@ -5429,7 +5437,10 @@ export function createServeCommand(): Command {
               return;
             }
             const agent = await parseAgent(targetAgent.filePath);
-            await saveManualLearning({ agentFilePath: targetAgent.filePath, config: agent.config.learning, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(found.info.approval.logs), sessionId });
+            const rememberStateRoot = resolveProjectContext(dirname(targetAgent.filePath), {
+              agentFilePath: targetAgent.filePath,
+            }).stateRoot;
+            await saveManualLearning({ agentFilePath: targetAgent.filePath, stateRoot: rememberStateRoot, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(found.info.approval.logs), sessionId });
             // Redraw through the same builder as the GET: a rule added by hand
             // can be the one that pushes the store past the cap, and a response
             // that dropped the tidy target would take the button away at the
@@ -5498,11 +5509,12 @@ export function createServeCommand(): Command {
           }
           const absPath = resolveScopedAgentPath(project, requestedPath);
           const agent = await parseAgent(absPath);
+          const stateRoot = resolveProjectContext(dirname(absPath), { agentFilePath: absPath }).stateRoot;
           return {
-            store: LearningStore.fromAgentFile(absPath, agent.config.learning?.file),
+            store: LearningStore.fromAgentFile(absPath, stateRoot, agent.name),
             agent,
             absPath,
-            stateRoot: resolveProjectContext(dirname(absPath), { agentFilePath: absPath }).stateRoot,
+            stateRoot,
             tidyTarget: { project: project.id, runPath: requestedPath },
           };
         };
@@ -5550,7 +5562,7 @@ export function createServeCommand(): Command {
             if (!target) return;
             await saveManualLearning({
               agentFilePath: target.absPath,
-              config: target.agent.config.learning,
+              stateRoot: target.stateRoot,
               instruction,
               model: target.agent.config.model,
               agentInstructions: target.agent.instructions,

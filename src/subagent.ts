@@ -8,6 +8,7 @@ import { createSessionLogSink, type SessionLogSink } from './runner/session-help
 import { DoomLoopDetector } from './tools/index.js';
 import { resolve, dirname } from 'path';
 import { computeAgentId } from './utils/agent-id';
+import { findProjectRoot } from './utils/project';
 import { resolveModelString } from './utils/model-alias';
 import { SessionManager } from './session/manager';
 import { loadAgentTools } from './runner/tools-loader';
@@ -241,7 +242,11 @@ export async function createSubAgentTool(
           // leafInstructions here so it persists with the task and a resumed child sees
           // the same prompt.
           if (agent.config.learning?.apply) {
-            const learningResult = await buildLearningPrompt(agent, resolvedPath);
+            const learningResult = await buildLearningPrompt(
+              agent,
+              resolvedPath,
+              projectContext?.stateRoot ?? findProjectRoot(resolvedPath),
+            );
             if (learningResult) {
               leafInstructions = `${leafInstructions}\n\n${learningResult.prompt}`;
               logger.debug(`[SubAgent] Appended ${learningResult.count} learning(s) to ${agent.name}`);

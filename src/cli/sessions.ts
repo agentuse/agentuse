@@ -14,7 +14,7 @@ import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
 import { applyResumeToolResult, restoreResumeToolResult, runAgent, describeErrorPart, classifyRunResult } from "../runner";
 import { reconcileOrphanedSessions } from "../runner/resume";
-import { describeLearningOutcome, saveManualLearning, type LearningSource, type LearningConfig } from "../learning";
+import { describeLearningOutcome, saveManualLearning, type LearningSource } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
 
 interface SessionSummary {
@@ -1631,7 +1631,7 @@ async function resumeSession(
       throw new Error(`Session ${summary.id} is waiting on ${pending.part.tool}. Use --tool-result <json>.`);
     }
 
-    let rememberTarget: { agentFilePath: string; config?: LearningConfig | undefined; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionId?: string | undefined } | undefined;
+    let rememberTarget: { agentFilePath: string; stateRoot: string; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionId?: string | undefined } | undefined;
     let rememberAgent: Awaited<ReturnType<typeof parseAgent>> | undefined;
     if (options.remember !== undefined) {
       // Bare --remember defaults to the comment text (mirrors the web checkbox
@@ -1645,11 +1645,13 @@ async function resumeSession(
       }
       // --remember is the operator's explicit opt-in, so saving needs no
       // learning config. Injection into future runs is still gated by
-      // learning.apply. Parse the agent to honor a custom learning.file path.
+      // learning.apply.
       rememberAgent = await parseAgent(found.session.agent.filePath);
       rememberTarget = {
         agentFilePath: found.session.agent.filePath,
-        config: rememberAgent.config.learning,
+        // The session's own state root, the one this agent's storage is keyed
+        // by, not the cwd the resume happens to run from.
+        stateRoot: projectContext.stateRoot,
         instruction: remember,
         model: rememberAgent.config.model,
         agentInstructions: rememberAgent.instructions,

@@ -1,6 +1,4 @@
 import { z } from 'zod';
-// DEPRECATED-COMPAT(learning.evaluate) — delete this import with src/learning/legacy.ts
-import { LegacyLearningSchema, migrateLegacyLearning } from './legacy';
 
 /**
  * Canonical learning config. `capture` writes lessons to the store (from
@@ -11,7 +9,6 @@ export interface CanonicalLearningConfig {
   capture: boolean;
   apply: boolean;
   criteria?: string; // optional guidance for the capture evaluator
-  file?: string;     // custom store path, relative to the agent file
   max?: number;      // injected-per-run cap (default MAX_INJECTED_LEARNINGS)
   model?: string;    // model for helper calls (capture + tidy); defaults to the agent's
 }
@@ -21,7 +18,11 @@ const CanonicalLearningSchema = z
     capture: z.boolean().default(true),
     apply: z.boolean().default(true),
     criteria: z.string().optional(),
-    file: z.string().optional(),
+    // No `file:` key. The corrections file is generated state with one computed
+    // location (see resolveLearningFilePath); the supported way to get rules
+    // into git is to let them graduate into the agent file. `.strict()` below
+    // rejects it outright rather than accepting and ignoring it.
+    //
     // Bounded on purpose: the cap exists to keep the guideline block from
     // crowding out the agent's own instructions, and every injected learning is
     // paid for on every model request. `agentuse doctor` prints the token cost
@@ -39,14 +40,16 @@ const CanonicalLearningSchema = z
 
 /**
  * Config schema for the learning feature in agent config.
- * Accepts `learning: true` (sugar for capture + apply), the canonical object,
- * or the deprecated `{ evaluate, ... }` shape (migrated in ./legacy).
+ * Accepts `learning: true` (sugar for capture + apply) or the canonical object.
+ *
+ * The pre-0.15 `{ evaluate, apply? }` shape is gone: `evaluate` was only ever
+ * translated into `capture` (true) / `criteria` (string), so there is nothing
+ * left to carry. `.strict()` on the canonical schema rejects it by name rather
+ * than accepting and ignoring it.
  */
 export const LearningConfigSchema = z.union([
   z.literal(true).transform((): CanonicalLearningConfig => ({ capture: true, apply: true })),
   CanonicalLearningSchema,
-  // DEPRECATED-COMPAT(learning.evaluate) — delete this branch with src/learning/legacy.ts
-  LegacyLearningSchema.transform(migrateLegacyLearning),
 ]);
 
 export type LearningConfig = z.infer<typeof LearningConfigSchema>;

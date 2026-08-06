@@ -1,10 +1,11 @@
 import { readFile, writeFile, mkdir, readdir, unlink } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join, dirname, basename } from 'path';
+import { join, dirname, basename, relative, isAbsolute } from 'path';
 import { createHash } from 'crypto';
 import { completeText } from '../complete-text';
 import { logger } from '../utils/logger';
 import { unifiedDiff } from '../utils/diff';
+import { getProjectDirSync } from '../storage/paths';
 import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic';
 import { LearningStore } from './store';
 import { activeLearnings, effectiveCap, rankLearnings } from './ranking';
@@ -537,11 +538,18 @@ interface Snapshot {
  * `agents/x/write.agentuse` share a basename, and a shared directory would let
  * `undo` on one restore the other's snapshot — writing agent B's old content
  * back over agent B while the user was undoing agent A.
+ *
+ * Kept in the per-project state directory, beside the corrections file the
+ * snapshots roll back and the session logs, rather than in the user's repo: a
+ * snapshot is generated state with a bounded life, and `{stateRoot}/.agentuse/`
+ * put a `?? .agentuse/consolidations/` in `git status` after every tidy-up.
+ * Nothing migrates the old location — history is pruned to {@link UNDO_HISTORY}
+ * anyway, and an absent snapshot already reports as "nothing to undo".
  */
 function snapshotDir(stateRoot: string, agentFilePath: string): string {
   const digest = createHash('sha256').update(agentFilePath).digest('hex').slice(0, 8);
   const label = basename(agentFilePath).replace(/[^\w.-]/g, '_');
-  return join(stateRoot, '.agentuse', 'consolidations', `${label}-${digest}`);
+  return join(getProjectDirSync(stateRoot), 'consolidations', `${label}-${digest}`);
 }
 
 /** The one file in the snapshot directory that is NOT a snapshot; excluded
@@ -949,13 +957,28 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
 }
 
 /**
+ * The `---`/`+++` header for the agent-file diff: project-relative when the file
+ * is inside the project, absolute only when it genuinely sits outside.
+ *
+ * A tidy-up result is replayed in the serve UI, where it is visible to anyone
+ * holding a gate link, and it is stored verbatim in the tidy record on disk. An
+ * absolute path there publishes the operator's home directory to every reader
+ * for no gain — the reviewer already knows which agent they pressed the button
+ * on.
+ */
+function diffLabel(target: string, root: string): string {
+  const rel = relative(root, target);
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : target;
+}
+
+/**
  * Run a tidy-up. Safe to call when nothing needs doing — it reports `ran: false`
  * rather than spending a model call.
  */
 export async function consolidateLearnings(options: ConsolidateOptions): Promise<ConsolidationResult> {
   const now = options.now ?? Date.now();
   const cap = effectiveCap(options.config);
-  const store = LearningStore.fromAgentFile(options.agentFilePath, options.config?.file);
+  const store = LearningStore.fromAgentFile(options.agentFilePath, options.stateRoot);
   const stored = await store.load();
   const active = activeLearnings(stored);
 
@@ -988,11 +1011,9 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // of any one round, so it is settled once: five rounds should not re-stat the
   // same file, and no round should mark something graduated that will never
   // reach the agent file.
-  const graduationBlocked = options.config?.file
-    ? 'this agent shares its learnings file with other agents, so making a rule permanent here would silently remove it from them'
-    : (await agentFileIsWritable(options.agentFilePath))
-      ? undefined
-      : 'the agent file is not writable';
+  const graduationBlocked = (await agentFileIsWritable(options.agentFilePath))
+    ? undefined
+    : 'the agent file is not writable';
 
   // Read both files before the first round. Every round below works in memory,
   // and the files are written once at the end, so a press that took five rounds
@@ -1124,9 +1145,16 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
       ? { remaining: explainRemaining(remainingActive, cap, now, stoppedEarly || failedBatches > 0) }
       : {}),
     diffs: {
-      learnings: unifiedDiff(beforeLearnings, afterLearnings, { label: store.filePath }),
+      // Named, not located. The corrections file now lives under a project hash
+      // in the state directory, so its absolute path tells a reviewer nothing
+      // they can act on and everything about the machine it ran on.
+      learnings: unifiedDiff(beforeLearnings, afterLearnings, { label: 'corrections file' }),
       ...(agentAfter !== agentBefore
-        ? { agentFile: unifiedDiff(agentBefore, agentAfter, { label: options.agentFilePath }) }
+        ? {
+          agentFile: unifiedDiff(agentBefore, agentAfter, {
+            label: diffLabel(options.agentFilePath, options.stateRoot),
+          }),
+        }
         : {}),
     },
   };

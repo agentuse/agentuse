@@ -1,22 +1,29 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { resolve } from 'path';
+import { spawn } from 'child_process';
+import { dirname, relative, resolve } from 'path';
 import { existsSync } from 'fs';
+import { mkdir } from 'fs/promises';
 import { parseAgent } from '../parser.js';
 import { resolveProjectContext } from '../utils/project.js';
 import {
   LearningStore,
   activeLearnings,
+  applyLearningMigration,
   consolidateLearnings,
   describeConsolidation,
   effectiveCap,
+  findAgentFiles,
+  findOrphanedLearningFiles,
   isGraduationEligible,
   partitionLearnings,
+  planLearningMigration,
   undoConsolidation,
   writeTidyRecord,
   clearTidyRecord,
   type ConsolidationResult,
   type Learning,
+  type MigrationEntry,
 } from '../learning/index.js';
 
 /**
@@ -37,7 +44,62 @@ async function loadAgent(agentFileArg: string) {
     return null;
   }
   const agent = await parseAgent(agentFilePath);
-  return { agent, agentFilePath };
+  // The agent file's own project root, not the cwd's: it decides both where the
+  // corrections file lives and where the tidy-up snapshots go, and `agentuse
+  // learnings` must name the same file the run writes to from any directory.
+  const { stateRoot } = resolveProjectContext(process.cwd(), { agentFilePath });
+  return { agent, agentFilePath, stateRoot };
+}
+
+/** Repo-relative where that is shorter, absolute where it is not (the state
+ *  directory is never under the cwd, so it always prints in full). */
+function displayPath(filePath: string): string {
+  const rel = relative(process.cwd(), filePath);
+  return rel.startsWith('..') ? filePath : rel;
+}
+
+/** One line per file, `<verb>  from → to`, so a migration of fifty agents stays
+ *  scannable and greppable. */
+function printMigration(verb: string, entry: MigrationEntry): void {
+  console.log(`  ${verb}  ${displayPath(entry.from)} ${chalk.gray('→')} ${entry.to}`);
+}
+
+/**
+ * Open the corrections file in the user's editor.
+ *
+ * The parent directory is created first: an agent that has never captured
+ * anything has no file and possibly no project directory yet, and an editor
+ * opened on a path inside a missing directory cannot save what the user types.
+ *
+ * No default editor. Guessing `vi` would drop someone into a modal editor they
+ * did not ask for; naming the path instead leaves them able to open it however
+ * they like.
+ */
+async function openInEditor(filePath: string): Promise<void> {
+  const editor = process.env.EDITOR || process.env.VISUAL;
+  if (!editor) {
+    console.error(chalk.red('Set $EDITOR to use --edit. The corrections file is:'));
+    console.log(filePath);
+    process.exitCode = 1;
+    return;
+  }
+
+  await mkdir(dirname(filePath), { recursive: true });
+
+  // $EDITOR carries arguments often enough ("code -w", "emacsclient -nw") that
+  // splitting on whitespace is the convention. Spawned without a shell, so the
+  // file path is never re-parsed by one.
+  const [command, ...args] = editor.split(/\s+/).filter(Boolean);
+  await new Promise<void>((done, fail) => {
+    const child = spawn(command!, [...args, filePath], { stdio: 'inherit' });
+    child.on('error', fail);
+    child.on('exit', (code) => {
+      // The editor's own failure is the command's failure — a non-zero exit here
+      // usually means it never opened the file.
+      if (code) process.exitCode = code;
+      done();
+    });
+  });
 }
 
 function statusLabel(learning: Learning, injectedIds: Set<string>): string {
@@ -132,12 +194,27 @@ export function createLearningsCommand(): Command {
     .description("Inspect and tidy an agent's stored corrections")
     .argument('<agent-file>', 'Path to the .agentuse file')
     .option('-j, --json', 'Output as JSON')
-    .action(async (agentFileArg: string, options: { json?: boolean }) => {
+    .option('--path', 'Print the path of the corrections file and exit')
+    .option('--edit', 'Open the corrections file in $EDITOR')
+    .action(async (agentFileArg: string, options: { json?: boolean; path?: boolean; edit?: boolean }) => {
       const loaded = await loadAgent(agentFileArg);
       if (!loaded) return;
-      const { agent, agentFilePath } = loaded;
+      const { agent, agentFilePath, stateRoot } = loaded;
 
-      const store = LearningStore.fromAgentFile(agentFilePath, agent.config.learning?.file);
+      const store = LearningStore.fromAgentFile(agentFilePath, stateRoot, agent.name);
+
+      // Both of these answer "where is it now that it is no longer next to my
+      // agent file", so they come before the file is read: they must work for an
+      // agent that has never captured a correction.
+      if (options.path) {
+        console.log(store.filePath);
+        return;
+      }
+      if (options.edit) {
+        await openInEditor(store.filePath);
+        return;
+      }
+
       const stored = await store.load();
       const cap = effectiveCap(agent.config.learning);
       const { injected, dormant } = partitionLearnings(stored, cap);
@@ -196,8 +273,7 @@ export function createLearningsCommand(): Command {
     .action(async (agentFileArg: string, options: { dryRun?: boolean; model?: string }) => {
       const loaded = await loadAgent(agentFileArg);
       if (!loaded) return;
-      const { agent, agentFilePath } = loaded;
-      const projectContext = resolveProjectContext(process.cwd(), { agentFilePath });
+      const { agent, agentFilePath, stateRoot } = loaded;
 
       // A pass over a large file is minutes of model work. Say what it is doing
       // while it does it, or the command looks hung.
@@ -207,7 +283,7 @@ export function createLearningsCommand(): Command {
         agentInstructions: agent.instructions,
         agentModel: agent.config.model,
         config: agent.config.learning,
-        stateRoot: projectContext.stateRoot,
+        stateRoot,
         onProgress: (progress) => {
           // One line per phase, not per unit: the writes finish out of order
           // (they run concurrently), so counting them up in a terminal would
@@ -232,7 +308,7 @@ export function createLearningsCommand(): Command {
       // still reviewable and undoable from the browser. Same record either way:
       // one agent has one last tidy-up, whoever ran it.
       if (!options.dryRun && result.undoId) {
-        await writeTidyRecord(projectContext.stateRoot, agentFilePath, {
+        await writeTidyRecord(stateRoot, agentFilePath, {
           jobId: `cli-${result.undoId}`,
           agentFilePath,
           startedAt,
@@ -249,17 +325,115 @@ export function createLearningsCommand(): Command {
     .action(async (agentFileArg: string) => {
       const loaded = await loadAgent(agentFileArg);
       if (!loaded) return;
-      const { agentFilePath } = loaded;
-      const projectContext = resolveProjectContext(process.cwd(), { agentFilePath });
+      const { agentFilePath, stateRoot } = loaded;
 
-      const restored = await undoConsolidation(projectContext.stateRoot, agentFilePath);
+      const restored = await undoConsolidation(stateRoot, agentFilePath);
       if (!restored) {
         console.log(chalk.yellow('Nothing to undo — no tidy-up has been applied to this agent.'));
         return;
       }
-      await clearTidyRecord(projectContext.stateRoot, agentFilePath);
+      await clearTidyRecord(stateRoot, agentFilePath);
       console.log(chalk.green('Restored:'));
       for (const path of restored.restored) console.log(chalk.gray(`  ${path}`));
+    });
+
+  command
+    .command('migrate')
+    .description('Move corrections files from beside the agent file into the AgentUse state directory')
+    .argument('[agent-file]', 'Path to the .agentuse file (omit and pass --all for every agent)')
+    .option('--all', 'Every agent file in the project')
+    .option('--dry-run', 'Report what would move without writing anything')
+    .option('--keep-source', 'Copy instead of moving, leaving the old file in place')
+    .action(async (
+      agentFileArg: string | undefined,
+      options: { all?: boolean; dryRun?: boolean; keepSource?: boolean },
+    ) => {
+      if (Boolean(agentFileArg) === Boolean(options.all)) {
+        console.error(chalk.red('Name one agent file, or pass --all — not both, not neither.'));
+        process.exitCode = 1;
+        return;
+      }
+
+      const cwd = process.cwd();
+      const { projectRoot } = resolveProjectContext(cwd);
+
+      let agentFiles: string[] = [];
+      if (agentFileArg) {
+        const agentFilePath = resolve(cwd, agentFileArg);
+        if (!existsSync(agentFilePath)) {
+          console.error(chalk.red(`Agent file not found: ${agentFilePath}`));
+          process.exitCode = 1;
+          return;
+        }
+        agentFiles = [agentFilePath];
+      } else {
+        agentFiles = await findAgentFiles(projectRoot);
+        // Say which root was searched. "0 moved" from the wrong directory is
+        // indistinguishable from "already migrated" otherwise.
+        if (agentFiles.length === 0) {
+          console.log(chalk.gray(`No agent files under ${projectRoot}`));
+        }
+      }
+
+      const entries = await planLearningMigration(agentFiles, cwd);
+      const movable = entries.filter((e) => e.status === 'ready');
+      const refused = entries.filter((e) => e.status === 'collision');
+      const untouched = entries.length - movable.length - refused.length;
+
+      const dryRun = Boolean(options.dryRun);
+      const keepSource = Boolean(options.keepSource);
+      const verb = keepSource ? 'copied' : 'moved';
+      const failures: { entry: MigrationEntry; detail: string }[] = [];
+
+      for (const entry of movable) {
+        if (dryRun) {
+          printMigration(chalk.cyan(keepSource ? 'would copy' : 'would move'), entry);
+          continue;
+        }
+        try {
+          await applyLearningMigration(entry, { keepSource });
+          printMigration(chalk.green(verb), entry);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          failures.push({ entry, detail });
+          printMigration(chalk.red('failed'), entry);
+          console.log(chalk.red(`    ${detail}`));
+        }
+      }
+
+      // Refused, never merged: two sets of corrections for one agent have no
+      // authoritative order, and picking one silently would lose the other.
+      for (const entry of refused) {
+        printMigration(chalk.yellow('refused'), entry);
+        console.log(chalk.yellow('    the destination already holds corrections — inspect both, then delete one'));
+      }
+
+      // A corrections file whose agent file is gone. Listed, never touched: the
+      // load-time warning cannot fire for it either, so this is the only place
+      // it is ever mentioned. Project-wide by nature, so only for --all.
+      const orphans = agentFileArg ? [] : await findOrphanedLearningFiles(projectRoot);
+      if (orphans.length > 0) {
+        console.log(chalk.bold('\nOrphaned, not migrated — no agent file of that name:'));
+        for (const orphan of orphans) console.log(chalk.gray(`  ${displayPath(orphan)}`));
+        console.log(chalk.gray('  Rename them back beside their agent to migrate, or delete them.'));
+      }
+
+      const done = movable.length - failures.length;
+      const summary = [
+        dryRun ? `${movable.length} to ${keepSource ? 'copy' : 'move'}` : `${done} ${verb}`,
+        ...(refused.length > 0 ? [`${refused.length} refused`] : []),
+        ...(failures.length > 0 ? [`${failures.length} failed`] : []),
+        ...(untouched > 0 ? [`${untouched} with nothing to move`] : []),
+        ...(orphans.length > 0 ? [`${orphans.length} orphaned`] : []),
+      ].join(', ');
+      console.log(`\n${summary}.`);
+
+      if (!dryRun && done > 0 && !keepSource) {
+        console.log(chalk.gray('Commit the deletions: git commit -am "chore: move learnings to the agentuse state dir"'));
+      }
+      // Nothing to migrate is a fine outcome. A refusal or a failed write is not:
+      // in both cases corrections are still sitting where nothing will read them.
+      if (refused.length > 0 || failures.length > 0) process.exitCode = 1;
     });
 
   return command;

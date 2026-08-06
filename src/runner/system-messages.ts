@@ -217,13 +217,11 @@ export interface LearningPromptResult {
 async function renderLearningPrompt(
   agent: ParsedAgent,
   agentFilePath: string,
+  stateRoot: string,
   recordUsage: boolean,
 ): Promise<LearningPromptResult | undefined> {
   try {
-    const store = LearningStore.fromAgentFile(
-      agentFilePath,
-      agent.config.learning?.file
-    );
+    const store = LearningStore.fromAgentFile(agentFilePath, stateRoot, agent.name);
     const learnings = await store.load();
 
     if (learnings.length === 0) {
@@ -273,14 +271,18 @@ ${injected.map(l => `- [${l.category}] ${l.instruction}`).join('\n')}`;
 /**
  * Build the learning prompt to append to agent instructions
  * Called when learning.apply is enabled
+ *
+ * `stateRoot` is the agent file's own project root — the same root that keys
+ * this run's session and agentId — so the corrections a run reads and the ones
+ * it later writes are the same file.
  */
-export async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: string): Promise<LearningPromptResult | undefined> {
-  return renderLearningPrompt(agent, agentFilePath, true);
+export async function buildLearningPrompt(agent: ParsedAgent, agentFilePath: string, stateRoot: string): Promise<LearningPromptResult | undefined> {
+  return renderLearningPrompt(agent, agentFilePath, stateRoot, true);
 }
 
 /**
  * The exact block a run would inject, without recording usage. Inspection only.
  */
-export async function previewLearningPrompt(agent: ParsedAgent, agentFilePath: string): Promise<LearningPromptResult | undefined> {
-  return renderLearningPrompt(agent, agentFilePath, false);
+export async function previewLearningPrompt(agent: ParsedAgent, agentFilePath: string, stateRoot: string): Promise<LearningPromptResult | undefined> {
+  return renderLearningPrompt(agent, agentFilePath, stateRoot, false);
 }

@@ -1,5 +1,6 @@
 import { dirname } from 'path';
 import { computeAgentId } from '../utils/agent-id';
+import { findProjectRoot } from '../utils/project';
 import { createSubAgentTools } from '../subagent';
 import {
   DoomLoopDetector,
@@ -93,7 +94,14 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   let learningsStored = 0;
   let learningsInjectedIds: string[] = [];
   if (!existingSessionId && agent.config.learning?.apply && agentFilePath) {
-    const learningResult = await buildLearningPrompt(agent, agentFilePath);
+    // Same state root that keys this run's session and agentId. Derived from the
+    // agent file when the caller supplied no project context, which is exactly
+    // how `resolveProjectContext` would have computed it.
+    const learningResult = await buildLearningPrompt(
+      agent,
+      agentFilePath,
+      projectContext?.stateRoot ?? findProjectRoot(agentFilePath),
+    );
     if (learningResult) {
       resolvedInstructions = `${resolvedInstructions}\n\n${learningResult.prompt}`;
       learningsApplied = learningResult.count;

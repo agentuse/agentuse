@@ -15,6 +15,7 @@ import { parseBashCommand } from '../tools/bash-parser.js';
 import { looksEffectful, grantsUnnamedSubcommands, grantsArbitraryCode, commandHead } from '../tools/effectful-heuristic.js';
 import { isEffectful } from '../runner/approval-lease.js';
 import { previewLearningPrompt } from '../runner/system-messages.js';
+import { resolveLearningFilePath, strandedLearningsNotice } from '../learning/store.js';
 import type { Message, Part, SessionInfo, ToolPart } from '../session/types.js';
 
 interface DoctorOptions {
@@ -297,12 +298,24 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
     .sort((a, b) => b.tokens - a.tokens);
   const estimatedPreloadedTokens = preloadedCosts.reduce((total, skill) => total + skill.tokens, 0);
 
+  // Claimed before the preview below loads the store, so this report prints the
+  // stranded-corrections notice inside its own Prompt size block rather than
+  // letting the store's `logger.warn` land above the report as a stray line.
+  // Reported whether or not `learning.apply` is on: corrections left at the
+  // pre-0.17 sibling path are equally invisible either way, and an agent that
+  // has since turned application off is exactly where nobody would notice.
+  //
+  // Unconditional, unlike the run-path notice, which stops once the keyed file
+  // exists. A diagnostic that reports "corrections file: <new path>" while an
+  // old one sits unread beside the agent is answering a question nobody asked.
+  const strandedLearnings = strandedLearningsNotice(agentFilePath, projectContext.stateRoot);
+
   // Learned guidelines are appended to the instructions at run time too, and only
   // the highest-ranked few are: the rest are stored but have no effect on any run.
   // Report both numbers here, because a large learnings file otherwise looks
   // healthy while most of its corrections never reach the model.
   const learningPreview = agent.config.learning?.apply
-    ? await previewLearningPrompt(agent, agentFilePath)
+    ? await previewLearningPrompt(agent, agentFilePath, projectContext.stateRoot)
     : undefined;
   const estimatedLearningTokens = learningPreview ? estimateTextTokens(learningPreview.prompt) : 0;
 
@@ -339,6 +352,16 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
       console.log(chalk.yellow(`  ${dormant} stored correction${dormant === 1 ? '' : 's'} never reach the model: only the top ${learningPreview.cap} are injected per run.`));
       console.log(chalk.gray(`  Fix: agentuse learnings tidy ${agentFilePath}`));
     }
+  }
+  // The corrections file no longer sits beside the agent, and its path carries a
+  // project digest nobody can construct by hand, so name it here — including for
+  // an agent that has captured nothing yet, which is when "where did it go?" is
+  // the actual question.
+  if (agent.config.learning) {
+    console.log(chalk.gray(`  corrections file: ${resolveLearningFilePath(agentFilePath, projectContext.stateRoot)}`));
+  }
+  if (strandedLearnings) {
+    for (const line of strandedLearnings.split('\n')) console.log(chalk.yellow(`  ${line}`));
   }
   console.log(chalk.gray(`  total: ${formatEstimatedTokens(estimatedRequestTokens)} tokens/model request (agent body + preloaded skills + skill catalog${learningPreview ? ' + learned guidelines' : ''})`));
 

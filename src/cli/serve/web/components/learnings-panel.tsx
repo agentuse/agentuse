@@ -41,7 +41,15 @@ export function statusBadge(learning: SessionLearning): { label: string; kind: s
   return null; // older server with no status in the payload: say nothing rather than guess
 }
 
-/** Colourless unified-diff rendering: +/- lines carry the meaning. */
+/**
+ * Colourless unified-diff rendering: +/- lines carry the meaning.
+ *
+ * The `---`/`+++` header inside `diff` is rendered verbatim, so whatever the
+ * server labelled the diff with ends up in the DOM of a page any gate link can
+ * reach. It is kept — a diff copied out of here should still say what it is —
+ * but that is why the server labels these `corrections file` and a
+ * project-relative agent path rather than absolute paths from its own disk.
+ */
 function DiffBlock(props: { label: string; diff: string }) {
   return (
     <div class="learnings-diff">
