@@ -494,6 +494,11 @@ export class Store {
       const needle = options.q.toLowerCase();
       results = results.filter(item => searchHaystack(item).includes(needle));
     }
+    if (options.since) {
+      // Both sides are ISO-8601 UTC, so lexicographic order is chronological.
+      const since = options.since;
+      results = results.filter(item => item.createdAt >= since);
+    }
 
     // Sort by createdAt descending (newest first)
     results.sort((a, b) => b.createdAt.localeCompare(a.createdAt));

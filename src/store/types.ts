@@ -72,6 +72,14 @@ export interface StoreListOptions {
   where?: Record<string, string | number | boolean> | undefined;
   /** Case-insensitive substring search across title, type, tags and data. */
   q?: string | undefined;
+  /**
+   * Keep only items created at or after this instant, as an ISO-8601 string.
+   * Compared lexicographically against `createdAt`, which is also ISO-8601 UTC.
+   * Callers coming from the tool layer pass an already-resolved timestamp;
+   * relative forms like "3d" are parsed there so a bad value can be reported
+   * as a tool error instead of silently matching everything.
+   */
+  since?: string | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
 }

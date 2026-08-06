@@ -142,7 +142,8 @@ describe("Store", () => {
 
       expect(result.success).toBe(true);
       expect(result.items[0].data).toBeUndefined();
-      expect(result.items[0].dataKeys).toEqual(["body", "score"]);
+      expect(result.items[0].dataKeys).toBeUndefined();
+      expect(result.dataKeysByType).toEqual({ draft: ["body", "score"] });
     });
 
     it("store_list can include selected data fields", async () => {
@@ -156,7 +157,9 @@ describe("Store", () => {
       const result = await (tools.store_list as any).execute({ fields: ["score"] });
 
       expect(result.items[0].data).toEqual({ score: 7 });
-      expect(result.items[0].dataKeys).toEqual(["body", "score"]);
+      // The caller named its fields, so the key list is noise, not information.
+      expect(result.items[0].dataKeys).toBeUndefined();
+      expect(result.dataKeysByType).toBeUndefined();
     });
   });
 
@@ -663,13 +666,48 @@ describe("createStoreTools", () => {
     expect(items.every((i) => typeof i.id === "string")).toBe(true);
   });
 
-  it("store_list summary rows list available data keys without values", async () => {
+  it("store_list names available data keys once per type, not once per row", async () => {
     const res = await call(tools.store_list, {});
+    const items = res.items as Array<Record<string, unknown>>;
+
+    expect(items.every((i) => i.data === undefined)).toBe(true);
+    expect(items.every((i) => i.dataKeys === undefined)).toBe(true);
+    expect(res.dataKeysByType).toEqual({ task: ["body", "n"], note: ["body", "n"] });
+  });
+
+  it("store_list legend unions keys across items of the same type", async () => {
+    await store.create({ type: "task", title: "Fourth", data: { body: "delta", extra: true } });
+    const res = await call(tools.store_list, { type: "task" });
+
+    expect(res.dataKeysByType).toEqual({ task: ["body", "extra", "n"] });
+  });
+
+  it("store_list buckets untyped items in the legend without dropping them", async () => {
+    await store.create({ title: "Loose", data: { note: "no type" } });
+    const res = await call(tools.store_list, {});
+
+    expect((res.dataKeysByType as Record<string, string[]>)["(untyped)"]).toEqual(["note"]);
+  });
+
+  it("store_list omits the key legend when fields were requested", async () => {
+    const res = await call(tools.store_list, { fields: ["n"] });
+
+    expect(res.dataKeysByType).toBeUndefined();
+    expect((res.items as Array<Record<string, unknown>>).every((i) => i.dataKeys === undefined)).toBe(true);
+  });
+
+  it("store_list reports requested fields that the item does not carry", async () => {
+    const res = await call(tools.store_list, { type: "note", fields: ["n", "nope"] });
     const first = (res.items as Array<Record<string, unknown>>)[0];
 
-    expect(first.data).toBeUndefined();
-    expect(Array.isArray(first.dataKeys)).toBe(true);
-    expect((first.dataKeys as string[]).sort()).toEqual(["body", "n"]);
+    expect(first.data).toEqual({ n: 3 });
+    expect(first.missingFields).toEqual(["nope"]);
+  });
+
+  it("store_list leaves missingFields off when every requested field resolved", async () => {
+    const res = await call(tools.store_list, { type: "note", fields: ["n"] });
+
+    expect((res.items as Array<Record<string, unknown>>)[0].missingFields).toBeUndefined();
   });
 
   it("store_list includeData returns full payloads", async () => {
@@ -700,6 +738,59 @@ describe("createStoreTools", () => {
     expect(items).toHaveLength(1);
     expect(typeof items[0].match).toBe("string");
     expect((items[0].match as string).toLowerCase()).toContain("needle");
+  });
+
+  it("store_list since keeps only items created inside the window", async () => {
+    const recent = await call(tools.store_list, { since: "1h" });
+    expect(recent.count).toBe(3);
+
+    const future = await call(tools.store_list, { since: "2999-01-01" });
+    expect(future.count).toBe(0);
+    expect(future.total).toBe(0);
+  });
+
+  it("store_list since accepts a bare date and a full ISO timestamp", async () => {
+    const byDate = await call(tools.store_list, { since: "2000-01-01" });
+    const byIso = await call(tools.store_list, { since: "2000-01-01T00:00:00.000Z" });
+
+    expect(byDate.count).toBe(3);
+    expect(byIso.count).toBe(3);
+  });
+
+  it("store_list rejects an unparseable since instead of silently matching everything", async () => {
+    const res = await call(tools.store_list, { since: "last tuesday" });
+
+    expect(res.success).toBe(false);
+    expect(res.error).toContain("Invalid \"since\" value");
+    expect(res.items).toBeUndefined();
+  });
+
+  it("store_list countOnly tallies the matching set without returning rows", async () => {
+    const res = await call(tools.store_list, { countOnly: true });
+
+    expect(res.total).toBe(3);
+    expect(res.items).toBeUndefined();
+    expect(res.byType).toEqual({ task: 2, note: 1 });
+    expect(res.byStatus).toEqual({ open: 1, done: 1, "(untyped)": 1 });
+    expect(typeof res.oldest).toBe("string");
+    expect(typeof res.newest).toBe("string");
+    expect(res.oldest as string <= (res.newest as string)).toBe(true);
+  });
+
+  it("store_list countOnly respects filters but ignores limit", async () => {
+    const res = await call(tools.store_list, { countOnly: true, type: "task", limit: 1 });
+
+    expect(res.total).toBe(2);
+    expect(res.byType).toEqual({ task: 2 });
+  });
+
+  it("store_list countOnly on an empty match reports zero without timestamps", async () => {
+    const res = await call(tools.store_list, { countOnly: true, type: "absent" });
+
+    expect(res.total).toBe(0);
+    expect(res.byType).toEqual({});
+    expect(res.oldest).toBeUndefined();
+    expect(res.newest).toBeUndefined();
   });
 
   it("store_create echoes id and metadata but not the data payload", async () => {

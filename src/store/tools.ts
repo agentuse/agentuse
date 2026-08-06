@@ -88,6 +88,55 @@ function matchSnippet(item: StoreItem, q: string, window = 60): string | undefin
   return undefined;
 }
 
+/** Legend/tally key standing in for items created without a `type`. */
+const UNTYPED_KEY = '(untyped)';
+
+/**
+ * Build the per-type union of `data` keys across a page of summary rows.
+ * Items sharing a type carry near-identical key sets, so naming the keys once
+ * per type rather than once per row is the same information far cheaper.
+ */
+function dataKeysByType(items: StoreItem[]): Record<string, string[]> {
+  const byType = new Map<string, Set<string>>();
+  for (const item of items) {
+    const type = item.type ?? UNTYPED_KEY;
+    let keys = byType.get(type);
+    if (!keys) {
+      keys = new Set<string>();
+      byType.set(type, keys);
+    }
+    for (const key of Object.keys(item.data)) keys.add(key);
+  }
+  return Object.fromEntries([...byType].map(([type, keys]) => [type, [...keys].sort()]));
+}
+
+const RELATIVE_WINDOW = /^(\d+)([mhd])$/;
+const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
+
+/**
+ * Resolve a `since` argument to an ISO-8601 instant. Accepts a relative window
+ * ("30m", "12h", "7d"), a bare date ("2026-08-06", read as UTC midnight), or a
+ * full ISO timestamp. Throws on anything else: quietly ignoring a malformed
+ * value would widen the query to the entire store, the opposite of the intent.
+ */
+function resolveSince(value: string): string {
+  const trimmed = value.trim();
+  const relative = RELATIVE_WINDOW.exec(trimmed);
+  if (relative) {
+    const unit = relative[2] as keyof typeof UNIT_MS;
+    return new Date(Date.now() - Number(relative[1]) * UNIT_MS[unit]).toISOString();
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return `${trimmed}T00:00:00.000Z`;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(
+      `Invalid "since" value: ${JSON.stringify(value)}. ` +
+      `Use a relative window ("7d", "12h", "30m"), a date ("2026-08-06"), or an ISO timestamp.`
+    );
+  }
+  return parsed.toISOString();
+}
+
 /**
  * Create store tools for an agent
  * @param store The Store instance
@@ -266,9 +315,11 @@ export function createStoreTools(store: Store): Record<string, Tool> {
     store_list: {
       description:
         `List/search items in the "${storeName}" store, newest first. ` +
-        `Returns lightweight summary rows (no "data" payload, but a "dataKeys" list of available keys) ` +
-        `so you can scan many items cheaply, then call store_get for the full data of the one you want. ` +
-        `Narrow with filters or "q" before reading; set includeData/fields only when you truly need payloads.`,
+        `THERE IS NO DEFAULT LIMIT: an unfiltered call returns every item and can blow the tool-output cap. ` +
+        `Size the store first with countOnly:true (totals by type and status, plus oldest/newest, for a few tokens), ` +
+        `then narrow with since/type/status/q and pass an explicit limit. ` +
+        `Rows omit the "data" payload by default; the response's "dataKeysByType" says what each type carries. ` +
+        `Use fields for a few keys, includeData only when you need whole payloads, or store_get for one item.`,
       inputSchema: z.object({
         type: z.string().optional().describe('Filter by item type'),
         status: z.string().optional().describe('Filter by status'),
@@ -278,12 +329,16 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         where: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
           .describe('Exact-match filters on keys inside item data, e.g. { "stage": "review" }'),
         q: z.string().optional().describe('Case-insensitive substring search across title, type, tags and data'),
+        since: z.string().optional()
+          .describe('Only items created at or after this point: a relative window ("7d", "12h", "30m" = minutes), a date ("2026-08-06", UTC midnight), or an ISO timestamp'),
+        countOnly: z.boolean().optional()
+          .describe('Return only totals for the matching set (total, byType, byStatus, oldest, newest) and no item rows. Cheap way to size a store before choosing a limit; ignores limit/offset'),
         includeData: z.boolean().optional().describe('Include the full data payload of each item (default false)'),
         fields: z.array(z.string()).optional().describe('Include only these keys from each item data (ignored if includeData is true)'),
         limit: z.number().positive().optional().describe('Maximum number of items to return'),
         offset: z.number().nonnegative().optional().describe('Number of items to skip'),
       }),
-      execute: async ({ type, status, parentId, tag, ids, where, q, includeData, fields, limit, offset }: {
+      execute: async ({ type, status, parentId, tag, ids, where, q, since, countOnly, includeData, fields, limit, offset }: {
         type?: string;
         status?: string;
         parentId?: string;
@@ -291,21 +346,63 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         ids?: string[];
         where?: Record<string, string | number | boolean>;
         q?: string;
+        since?: string;
+        countOnly?: boolean;
         includeData?: boolean;
         fields?: string[];
         limit?: number;
         offset?: number;
       }) => {
-        const options: StoreListOptions = filterUndefined({ type, status, parentId, tag, ids, where, q, limit, offset });
+        let resolvedSince: string | undefined;
+        if (since !== undefined) {
+          try {
+            resolvedSince = resolveSince(since);
+          } catch (error) {
+            return { success: false, error: (error as Error).message };
+          }
+        }
+        const filters = filterUndefined({ type, status, parentId, tag, ids, where, q, since: resolvedSince });
+
+        if (countOnly) {
+          // No limit/offset: the tally must describe the whole matching set,
+          // otherwise it cannot answer "what limit should I pass?".
+          const { items: matched, total } = await store.query(filters);
+          const tally = (pick: (item: StoreItem) => string | undefined): Record<string, number> => {
+            const counts: Record<string, number> = {};
+            for (const item of matched) {
+              const key = pick(item) ?? UNTYPED_KEY;
+              counts[key] = (counts[key] ?? 0) + 1;
+            }
+            return counts;
+          };
+          const createdAt = matched.map(item => item.createdAt).sort();
+          return {
+            success: true,
+            store: storeName,
+            total,
+            byType: tally(item => item.type),
+            byStatus: tally(item => item.status),
+            ...(createdAt.length > 0
+              ? { oldest: createdAt[0], newest: createdAt[createdAt.length - 1] }
+              : {}),
+          };
+        }
+
+        const options: StoreListOptions = { ...filters, ...filterUndefined({ limit, offset }) };
         const { items, total } = await store.query(options);
 
+        const projecting = Boolean(fields && fields.length > 0);
         const projection = { ...(includeData ? { includeData } : {}), ...(fields ? { fields } : {}) };
         const rows = items.map(item => {
           const row = projectItem(item, projection);
           if (includeData) return row;
-          // Summary/fields rows omit some or all data: list available keys so the
-          // agent knows what it could request, and show why a `q` match hit.
-          const extra: Record<string, unknown> = { dataKeys: Object.keys(item.data) };
+          const extra: Record<string, unknown> = {};
+          // A caller that named its fields already knows the key list; repeating
+          // it per row is pure noise. Report only what it asked for and missed.
+          if (projecting) {
+            const missing = fields!.filter(key => !(key in item.data));
+            if (missing.length > 0) extra.missingFields = missing;
+          }
           if (q) {
             const snippet = matchSnippet(item, q);
             if (snippet) extra.match = snippet;
@@ -318,6 +415,9 @@ export function createStoreTools(store: Store): Record<string, Tool> {
           store: storeName,
           count: rows.length,
           total,
+          // Summary rows carry no `data`: name the available keys once per type
+          // instead of once per row, so a wide page stays affordable.
+          ...(includeData || projecting ? {} : { dataKeysByType: dataKeysByType(items) }),
           items: rows,
         };
       },
