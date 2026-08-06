@@ -257,6 +257,10 @@ function LearningsSection(props: {
   fetchList: () => Promise<SessionLearningsPayload>;
   addRule: (instruction: string) => Promise<SessionLearningsPayload>;
   discardRule: (id: string) => Promise<SessionLearningsPayload>;
+  /** Render nothing at all when this agent has no learnings, nothing over the
+   *  cap and nothing stranded. For hosts where the panel is incidental to why
+   *  the reader is on the page. */
+  hideWhenEmpty?: boolean;
   /** Take the stranded-learnings path and render the warning yourself, higher up
    *  the page. Passed by hosts that keep this panel behind a tab, where a banner
    *  inside it would only be seen by someone who already went looking. */
@@ -339,11 +343,15 @@ function LearningsSection(props: {
    * Nothing to report: no rules here, no rules over the cap, nothing stranded,
    * no tidy-up to undo.
    *
-   * A panel in this state was a bordered box saying only that it had nothing to
-   * say — pure furniture on a page someone opened to read a run. It collapses to
-   * the bare "add" affordance instead. Not removed entirely: adding the FIRST
-   * learning to an agent has to start somewhere, and this is the only place in
-   * the web UI it can.
+   * Hosts that show this panel incidentally (the session view, where the reader
+   * came for the run) pass `hideWhenEmpty` and get nothing at all in this state.
+   * A box whose entire content says it is empty is furniture, and on a page
+   * shown for every run it is furniture repeated forever.
+   *
+   * Hosts whose whole surface IS the learnings — the agent page's Learnings tab
+   * — do not pass it. Clicking a tab named "Learnings" and landing on a blank
+   * area reads as a broken page, and it would leave no way to write an agent's
+   * first rule.
    */
   const nothingToReport =
     learnings !== null &&
@@ -354,16 +362,7 @@ function LearningsSection(props: {
     !lastTidy &&
     (summary === null || summary.active === 0);
 
-  if (nothingToReport) {
-    return (
-      <div class="learnings-panel is-bare" id={props.id}>
-        <button type="button" class="learnings-disclosure" aria-expanded={false} onClick={() => setListOpen(true)}>
-          <span class="learnings-disclosure-caret" aria-hidden="true">▸</span>
-          Add a learning
-        </button>
-      </div>
-    );
-  }
+  if (nothingToReport && props.hideWhenEmpty) return null;
 
   return (
     <div class="learnings-panel" id={props.id}>
@@ -394,10 +393,10 @@ function LearningsSection(props: {
         <p class="learnings-empty">{props.emptyText}</p>
       )}
 
-      {/* The rules themselves, and the box for writing another, fold away. The
-          counts and warnings above do not: those are what someone who opened
-          this page for another reason needs to see without asking for it. */}
-      {learnings !== null && (items.length > 0 || listOpen) && (
+      {/* Only the rules fold, and only when there are rules to fold. The counts
+          and warnings above stay put — they are what someone who opened this
+          page for another reason needs to see without asking for it. */}
+      {items.length > 0 && (
         <button
           type="button"
           class="learnings-disclosure"
@@ -408,12 +407,6 @@ function LearningsSection(props: {
           {listOpen
             ? 'Hide learnings'
             : `Show ${items.length} ${items.length === 1 ? 'learning' : 'learnings'}`}
-        </button>
-      )}
-      {!listOpen && learnings !== null && items.length === 0 && !nothingToReport && (
-        <button type="button" class="learnings-disclosure" aria-expanded={false} onClick={() => setListOpen(true)}>
-          <span class="learnings-disclosure-caret" aria-hidden="true">▸</span>
-          Add a learning
         </button>
       )}
 
@@ -443,7 +436,10 @@ function LearningsSection(props: {
           </ul>
         </div>
       ))}
-      <div class="learnings-add" hidden={!listOpen}>
+      {/* Never collapsed. Writing a correction is the one thing a reviewer comes
+          to this panel to DO; folding it away behind the same toggle as the
+          reading material had it backwards. */}
+      <div class="learnings-add">
         <textarea
           ref={inputRef}
           class="learnings-add-input"
@@ -498,6 +494,7 @@ export function LearningsPanel(props: {
   return (
     <LearningsSection
       hidden={props.hidden}
+      hideWhenEmpty
       id="learnings-panel"
       label="learnings from this session"
       emptyText="Nothing learned in this session — add one to steer future runs."

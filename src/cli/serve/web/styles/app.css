@@ -3007,16 +3007,6 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
      than one that wraps mid-path. */
   overflow-wrap: anywhere;
 }
-/* Nothing to report: no border, no background, no padding — just the one row
-   that lets someone add the first learning. A bordered box whose entire content
-   is "there is nothing here" is furniture. */
-.learnings-panel.is-bare {
-  margin-top: 12px;
-  padding: 0;
-  border: 0;
-  background: none;
-}
-
 /* Opens the rules themselves. Deliberately quiet — a plain text row, not a
    button: the loud things in this panel are the warnings above it, and a
    disclosure that competes with them defeats the point of showing them. */
