@@ -179,7 +179,7 @@ export function TidyResultView(props: { result: TidyResult; onUndo: () => void; 
  * The fix is a terminal command, so this cannot offer a button. Naming the file
  * and the exact command is the most a browser page can honestly do.
  */
-function StrandedLearningsBanner(props: { strandedAt: string | null }) {
+export function StrandedLearningsBanner(props: { strandedAt: string | null }) {
   if (!props.strandedAt) return null;
   return (
     <div class="learnings-banner is-stranded" role="status">
@@ -257,6 +257,10 @@ function LearningsSection(props: {
   fetchList: () => Promise<SessionLearningsPayload>;
   addRule: (instruction: string) => Promise<SessionLearningsPayload>;
   discardRule: (id: string) => Promise<SessionLearningsPayload>;
+  /** Take the stranded-learnings path and render the warning yourself, higher up
+   *  the page. Passed by hosts that keep this panel behind a tab, where a banner
+   *  inside it would only be seen by someone who already went looking. */
+  hoistStranded?: (strandedAt: string | null) => void;
 }) {
   const [learnings, setLearnings] = useState<SessionLearning[] | null>(null);
   const [summary, setSummary] = useState<LearningSummary | null>(null);
@@ -267,6 +271,8 @@ function LearningsSection(props: {
   const [lastTidy, setLastTidy] = useState<{ jobId: string; finishedAt: number } | null>(null);
   const [runningTidy, setRunningTidy] = useState<{ jobId: string } | null>(null);
   const [strandedAt, setStrandedAt] = useState<string | null>(null);
+  // The rules fold away; the counts and warnings above them do not.
+  const [listOpen, setListOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -279,6 +285,7 @@ function LearningsSection(props: {
     setLastTidy(payload.lastTidy ?? null);
     setRunningTidy(payload.runningTidy ?? null);
     setStrandedAt(payload.strandedAt ?? null);
+    props.hoistStranded?.(payload.strandedAt ?? null);
   };
 
   useEffect(() => {
@@ -332,7 +339,10 @@ function LearningsSection(props: {
     <div class="learnings-panel" id={props.id}>
       {props.label !== null && <div class="learnings-label">{props.label}</div>}
 
-      <StrandedLearningsBanner strandedAt={strandedAt} />
+      {/* Never inside the collapsed part. The whole reason this panel is no
+          longer behind a toggle is that its warnings were unreachable, and a
+          warning one click away from being seen is a warning nobody sees. */}
+      {!props.hoistStranded && <StrandedLearningsBanner strandedAt={strandedAt} />}
 
       <LearningsHeadline summary={summary} tidyTarget={tidyTarget} runningTidy={runningTidy} />
 
@@ -353,7 +363,31 @@ function LearningsSection(props: {
       {learnings !== null && items.length === 0 && (
         <p class="learnings-empty">{props.emptyText}</p>
       )}
-      {grouped.map((g) => (
+
+      {/* The rules themselves, and the box for writing another, fold away. The
+          counts and warnings above do not: those are what someone who opened
+          this page for another reason needs to see without asking for it. */}
+      {learnings !== null && (items.length > 0 || listOpen) && (
+        <button
+          type="button"
+          class="learnings-disclosure"
+          aria-expanded={listOpen}
+          onClick={() => setListOpen((v) => !v)}
+        >
+          <span class="learnings-disclosure-caret" aria-hidden="true">{listOpen ? '▾' : '▸'}</span>
+          {listOpen
+            ? 'Hide learnings'
+            : `Show ${items.length} ${items.length === 1 ? 'learning' : 'learnings'}`}
+        </button>
+      )}
+      {!listOpen && learnings !== null && items.length === 0 && (
+        <button type="button" class="learnings-disclosure" aria-expanded={false} onClick={() => setListOpen(true)}>
+          <span class="learnings-disclosure-caret" aria-hidden="true">▸</span>
+          Add a learning
+        </button>
+      )}
+
+      {listOpen && grouped.map((g) => (
         <div class="learnings-group" key={g.source}>
           <div class="learnings-group-label">{g.label}</div>
           <ul class="learnings-list">
@@ -379,7 +413,7 @@ function LearningsSection(props: {
           </ul>
         </div>
       ))}
-      <div class="learnings-add">
+      <div class="learnings-add" hidden={!listOpen}>
         <textarea
           ref={inputRef}
           class="learnings-add-input"
@@ -455,7 +489,11 @@ export function LearningsPanel(props: {
  * Agent-detail panel: the agent's entire learning store across all sessions.
  * Discarding removes the rule for all future runs.
  */
-export function AgentLearningsPanel(props: { project: string; runPath: string }) {
+export function AgentLearningsPanel(props: {
+  project: string;
+  runPath: string;
+  hoistStranded?: (strandedAt: string | null) => void;
+}) {
   return (
     <LearningsSection
       label={null}
@@ -463,6 +501,7 @@ export function AgentLearningsPanel(props: { project: string; runPath: string })
       fetchList={() => fetchAgentLearnings(props.project, props.runPath)}
       addRule={(instruction) => addAgentLearning(props.project, props.runPath, instruction)}
       discardRule={(id) => discardAgentLearning(props.project, props.runPath, id)}
+      {...(props.hoistStranded ? { hoistStranded: props.hoistStranded } : {})}
     />
   );
 }

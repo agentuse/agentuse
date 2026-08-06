@@ -3007,6 +3007,25 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
      than one that wraps mid-path. */
   overflow-wrap: anywhere;
 }
+/* Opens the rules themselves. Deliberately quiet — a plain text row, not a
+   button: the loud things in this panel are the warnings above it, and a
+   disclosure that competes with them defeats the point of showing them. */
+.learnings-disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.learnings-disclosure:hover { color: var(--fg); }
+.learnings-disclosure-caret { font-size: 9px; line-height: 1; }
+
 .learnings-summary { color: var(--muted); font-size: 12px; }
 .learnings-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 

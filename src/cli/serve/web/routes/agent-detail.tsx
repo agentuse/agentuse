@@ -9,7 +9,7 @@ import { useRunAgent } from '../hooks/use-run-agent';
 import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
-import { AgentLearningsPanel } from '../components/learnings-panel';
+import { AgentLearningsPanel, StrandedLearningsBanner } from '../components/learnings-panel';
 import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
 import { RunInstructionDialog } from '../components/run-instruction-dialog';
 import { LogContent } from '../components/content';
@@ -228,14 +228,22 @@ function RecentRuns(props: { agentId: string; project: string }) {
 }
 
 /** The agent's full learning store (every session), editable in place. */
-function LearningsGroup(props: { project: string; runPath: string }) {
+function LearningsGroup(props: {
+  project: string;
+  runPath: string;
+  hoistStranded: (strandedAt: string | null) => void;
+}) {
   return (
     <section class="group">
       <div class="group-title">
         <span class="count">all sessions</span>
         <span class="rule" />
       </div>
-      <AgentLearningsPanel project={props.project} runPath={props.runPath} />
+      <AgentLearningsPanel
+        project={props.project}
+        runPath={props.runPath}
+        hoistStranded={props.hoistStranded}
+      />
     </section>
   );
 }
@@ -330,6 +338,11 @@ export default function AgentDetail() {
   const runPath = (params.agent ?? '').split('/').map(decodeURIComponent).join('/');
   const [tab, setTab] = useState<AgentTab>('history');
   const [runOpen, setRunOpen] = useState(false);
+  // Reported up out of the Learnings tab. The tab is mounted from the start, so
+  // this arrives on load without anyone opening it — which is the point: an
+  // agent whose learnings stopped being read must say so on the page you land
+  // on, not on the one you would only visit if you already suspected it.
+  const [strandedAt, setStrandedAt] = useState<string | null>(null);
 
   const { data, error, loading } = useFetch(
     `agent-detail:${project}:${runPath}`,
@@ -381,6 +394,8 @@ export default function AgentDetail() {
 
             <Capabilities meta={data.meta} model={data.model} schedule={data.schedule} scheduleHuman={data.scheduleHuman} metadata={data.metadata} />
 
+            <StrandedLearningsBanner strandedAt={strandedAt} />
+
             <div class="tabs" role="tablist" aria-label="Agent views">
               {AGENT_TABS.filter((t) => t.id !== 'source' || data.source !== undefined).map((t) => (
                 <button
@@ -401,7 +416,7 @@ export default function AgentDetail() {
               <RecentRuns agentId={agentIdFromPath(data.path)} project={data.projectId} />
             </div>
             <div id="panel-learnings" class="tab-panel" role="tabpanel" aria-labelledby="tab-learnings" hidden={tab !== 'learnings'}>
-              <LearningsGroup project={data.projectId} runPath={data.runPath} />
+              <LearningsGroup project={data.projectId} runPath={data.runPath} hoistStranded={setStrandedAt} />
             </div>
             {data.source !== undefined && (
               <div id="panel-source" class="tab-panel" role="tabpanel" aria-labelledby="tab-source" hidden={tab !== 'source'}>
