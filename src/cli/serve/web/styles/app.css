@@ -6235,6 +6235,18 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
      only won on the non-button rows, so the list rendered in two faces. */
   color: inherit;
 }
+/* The shell's blanket button rule (`.page-approval-detail button:where(...)`)
+   sets `min-height: 40px; padding: 0 16px` and out-specifies a bare class, so
+   every row head that is a button silently lost its padding - the text sat on
+   the border once the row stacked. These page-scoped selectors take it back. */
+.page-approval-detail .ctx-layer-head,
+.page-approval-detail .ctx-tool-head,
+.page-approval-detail .ctx-result {
+  min-height: 0;
+}
+.page-approval-detail .ctx-layer-head { padding: 10px 14px; }
+.page-approval-detail .ctx-tool-head { padding: 10px 14px; }
+.page-approval-detail .ctx-result { padding: 5px 6px; }
 .ctx-layer-head { grid-template-columns: 22px 64px minmax(0, 1fr) 172px 14px; }
 .ctx-tool-head { grid-template-columns: minmax(0, 220px) minmax(0, 1fr) 172px; }
 button.ctx-layer-head:hover, .ctx-tool-head:hover { background: var(--panel-hover); }
@@ -6467,13 +6479,28 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
 .ctx-subhead + .ctx-doc, .ctx-subhead-note + .ctx-doc { border-top: 0; }
 
 /* Narrow screens: the weight bar drops to its own row rather than crushing
-   the label, matching how the tool-call band stacks on the session page. */
+   the label, matching how the tool-call band stacks on the session page.
+   Stacking turns one line into three, so the card needs more room than the
+   single-line desktop row - at the desktop padding the text sits against the
+   border on a phone. */
 @media (max-width: 720px) {
-  .ctx-layer-head { grid-template-columns: 22px minmax(0, 1fr) 14px; grid-auto-rows: min-content; }
+  .ctx-layer-head {
+    grid-template-columns: 22px minmax(0, 1fr) 14px;
+    grid-auto-rows: min-content;
+    gap: 11px 12px;
+  }
+  .page-approval-detail .ctx-layer-head { padding: 13px 16px 15px; }
+  .page-approval-detail .ctx-tool-head { padding: 12px 16px; }
+  .page-approval-detail .ctx-result { padding: 8px; }
   .ctx-kind { grid-area: 1 / 2; }
-  .ctx-chevron { grid-area: 1 / 3; }
-  .ctx-layer-main { grid-area: 2 / 1 / 3 / -1; }
+  .ctx-chevron { grid-area: 1 / 3; align-items: start; }
+  .ctx-layer-main { grid-area: 2 / 1 / 3 / -1; gap: 4px; }
   .ctx-weight { grid-area: 3 / 1 / 4 / -1; }
   .ctx-tool-head { grid-template-columns: minmax(0, 1fr); }
   .ctx-tool-desc { white-space: normal; }
+  .ctx-results { padding: 10px 12px; }
+  .ctx-result { gap: 10px 12px; }
+  .ctx-calls { padding: 8px 8px 8px 14px; }
+  .ctx-doc, .ctx-text { padding-left: 16px; padding-right: 16px; }
+  .ctx-subhead, .ctx-subhead-note { padding-left: 16px; padding-right: 16px; }
 }
