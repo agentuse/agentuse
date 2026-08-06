@@ -253,6 +253,37 @@ export function buildToolCalls(parts: Part[]): ContextToolCallStat[] {
   return [...byTool.values()].sort((a, b) => b.count - a.count || a.tool.localeCompare(b.tool));
 }
 
+/**
+ * What the run itself added to the window after the opening prompt: the
+ * model's own words, and the results its tool calls returned.
+ *
+ * Both re-enter the context on every later step, so on a long run they are
+ * usually the larger half of the window - the opening stack is charged once,
+ * these accumulate. Read-tool results are excluded because they are already
+ * itemised as file rows; counting them here would double up.
+ */
+export function buildRunTraffic(parts: Part[]): { outputChars: number; toolResultChars: number } {
+  let outputChars = 0;
+  let toolResultChars = 0;
+
+  for (const part of parts) {
+    if (part.type === 'text' && part.role !== 'user') {
+      outputChars += part.text.length;
+    } else if (part.type === 'reasoning') {
+      outputChars += part.text.length;
+    } else if (part.type === 'tool' && !READ_TOOLS.has(part.tool)) {
+      if (part.state.status !== 'completed') continue;
+      // The arguments the model wrote are output; the result it got back is
+      // input on the next step. Both sit in the window either way.
+      outputChars += JSON.stringify(part.state.input ?? '').length;
+      toolResultChars += readOutputText(part.state)?.length
+        ?? JSON.stringify(part.state.output ?? '').length;
+    }
+  }
+
+  return { outputChars, toolResultChars };
+}
+
 function makeLayer(
   kind: ContextStackLayer['kind'],
   id: string,
@@ -423,6 +454,15 @@ export function buildSessionContextPayload(options: {
     tools: toolRows,
     fileReads,
     toolCalls: buildToolCalls(parts),
+    traffic: (() => {
+      const t = buildRunTraffic(parts);
+      return {
+        outputChars: t.outputChars,
+        outputEstTokens: estimateTokens(t.outputChars),
+        toolResultChars: t.toolResultChars,
+        toolResultEstTokens: estimateTokens(t.toolResultChars),
+      };
+    })(),
     totals: {
       chars: totalChars,
       estTokens: estimateTokens(totalChars),

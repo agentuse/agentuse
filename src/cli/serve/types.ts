@@ -209,6 +209,17 @@ export interface SessionContextPayload {
   fileReads: ContextFileRead[];
   /** Tool calls this run made, most-called first. */
   toolCalls: ContextToolCallStat[];
+  /**
+   * What the run added to the window as it went: the model's own words and
+   * tool arguments, and the results its tools returned. Read-tool results are
+   * not included here - they are itemised as `fileReads`.
+   */
+  traffic: {
+    outputChars: number;
+    outputEstTokens: number;
+    toolResultChars: number;
+    toolResultEstTokens: number;
+  };
   totals: {
     chars: number;
     estTokens: number;

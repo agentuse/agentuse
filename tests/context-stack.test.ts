@@ -393,3 +393,49 @@ describe('tool call tallies', () => {
     expect(payload.toolCalls).toEqual([{ tool: 'tools__bash', count: 2, failed: 1 }]);
   });
 });
+
+describe('what the run added to the window', () => {
+  it('separates the model\'s output from what its tools returned', () => {
+    const text = {
+      id: 't1', messageID: 'msg_1', sessionID: session.id, type: 'text', role: 'assistant',
+      text: 'a'.repeat(400),
+    } as unknown as Part;
+    const reasoning = {
+      id: 'r1', messageID: 'msg_1', sessionID: session.id, type: 'reasoning',
+      text: 'b'.repeat(200), time: { start: 1 },
+    } as unknown as Part;
+    const call = readPart('tools__bash', { command: 'ls' }, 'c'.repeat(1000));
+
+    const payload = buildSessionContextPayload({
+      session, message: message({}), tools: null, parts: [text, reasoning, call],
+    });
+
+    expect(payload.traffic.toolResultChars).toBe(1000);
+    // Assistant text + reasoning + the JSON of the tool arguments the model wrote.
+    expect(payload.traffic.outputChars).toBe(400 + 200 + JSON.stringify({ command: 'ls' }).length);
+  });
+
+  it('does not double count read-tool results, which are already file rows', () => {
+    const payload = buildSessionContextPayload({
+      session, message: message({}), tools: null,
+      parts: [readPart('tools__filesystem_read', { file_path: '/repo/a.md' }, 'x'.repeat(500))],
+    });
+
+    expect(payload.fileReads[0]!.chars).toBe(500);
+    expect(payload.traffic.toolResultChars).toBe(0);
+    expect(payload.traffic.outputChars).toBe(0);
+  });
+
+  it('ignores user text, which is prompt rather than output', () => {
+    const userText = {
+      id: 'u1', messageID: 'msg_1', sessionID: session.id, type: 'text', role: 'user',
+      text: 'z'.repeat(300),
+    } as unknown as Part;
+
+    const payload = buildSessionContextPayload({
+      session, message: message({}), tools: null, parts: [userText],
+    });
+
+    expect(payload.traffic.outputChars).toBe(0);
+  });
+});

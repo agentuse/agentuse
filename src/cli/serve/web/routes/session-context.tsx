@@ -19,8 +19,15 @@ const READ_TOOL_LABEL: Record<string, string> = {
   tools__skill_load: 'skill loaded on demand',
 };
 
-/** Short, human labels for each layer kind. */
-const KIND_LABEL: Record<ContextStackLayer['kind'] | 'file', string> = {
+/** Rows and segments that are not one of the opening prompt's layers. */
+type RunKind = 'file' | 'results' | 'output';
+type RowKind = ContextStackLayer['kind'] | RunKind;
+
+/** Everything that accumulated while the run was going, rather than before it. */
+const RUN_KINDS = new Set<RunKind>(['file', 'results', 'output']);
+
+/** Short, human labels for each kind. */
+const KIND_LABEL: Record<RowKind, string> = {
   system: 'system',
   tools: 'tools',
   instructions: 'agent',
@@ -29,11 +36,17 @@ const KIND_LABEL: Record<ContextStackLayer['kind'] | 'file', string> = {
   learnings: 'learned',
   prompt: 'prompt',
   file: 'file',
+  results: 'results',
+  output: 'output',
 };
 
-/** Send order, and the order segments appear in the mix bar. */
-const STACK_ORDER: Array<ContextStackLayer['kind'] | 'file'> = [
-  'system', 'tools', 'instructions', 'approval', 'skills', 'learnings', 'prompt', 'file',
+/**
+ * Send order for the opening layers, then what the run added as it went. The
+ * mix bar and the stack share it, so a segment can be traced down to its rows.
+ */
+const STACK_ORDER: RowKind[] = [
+  'system', 'tools', 'instructions', 'approval', 'skills', 'learnings', 'prompt',
+  'file', 'results', 'output',
 ];
 
 function formatTokens(value: number): string {
@@ -60,7 +73,7 @@ function shortenPath(path: string, segments = 3): string {
  * scale rather than split across sections with their own baselines.
  */
 function StackRow(props: {
-  kind: ContextStackLayer['kind'] | 'file';
+  kind: RowKind;
   index: number;
   share: number;
   label: string;
@@ -266,6 +279,8 @@ export default function SessionContext() {
       1,
       ...(context?.layers ?? []).map((l) => l.estTokens),
       ...(context?.fileReads ?? []).map((f) => f.estTokens),
+      context?.traffic.toolResultEstTokens ?? 0,
+      context?.traffic.outputEstTokens ?? 0,
     ),
     [context]
   );
@@ -287,18 +302,41 @@ export default function SessionContext() {
     }
     const fileTokens = context.fileReads.reduce((sum, f) => sum + f.estTokens, 0);
     if (fileTokens > 0) totals.set('file', fileTokens);
+    // What the run itself added. On a tool-heavy run these dominate: the
+    // opening prompt is assembled once, but every result and every reply stays
+    // in the window for each step after it.
+    if (context.traffic.toolResultEstTokens > 0) {
+      totals.set('results', context.traffic.toolResultEstTokens);
+    }
+    if (context.traffic.outputEstTokens > 0) {
+      totals.set('output', context.traffic.outputEstTokens);
+    }
 
     const total = [...totals.values()].reduce((a, b) => a + b, 0);
     if (total === 0) return [];
-    return STACK_ORDER
-      .filter((kind) => totals.has(kind))
-      .map((kind) => {
-        const tokens = totals.get(kind)!;
-        return { kind, tokens, pct: (tokens / total) * 100 };
-      });
+    const present = STACK_ORDER.filter((kind) => totals.has(kind));
+    // The two halves have different levers: the opening prompt is edited, what
+    // the run accumulated is changed by what the agent does. One bar keeps them
+    // comparable; a break marks where one ends.
+    const firstRun = present.find((kind) => RUN_KINDS.has(kind as RunKind));
+    return present.map((kind) => {
+      const tokens = totals.get(kind)!;
+      return {
+        kind,
+        tokens,
+        pct: (tokens / total) * 100,
+        run: RUN_KINDS.has(kind as RunKind),
+        boundary: kind === firstRun,
+      };
+    });
   }, [context]);
 
   const mixTotal = useMemo(() => mix.reduce((sum, s) => sum + s.tokens, 0), [mix]);
+  const openingTotal = useMemo(
+    () => mix.filter((s) => !s.run).reduce((sum, s) => sum + s.tokens, 0),
+    [mix]
+  );
+  const runTotal = mixTotal - openingTotal;
   const toolCallTotal = useMemo(
     () => (context?.toolCalls ?? []).reduce((sum, s) => sum + s.count, 0),
     [context]
@@ -338,12 +376,8 @@ export default function SessionContext() {
                 {context.model && (
                   <div class="cell"><span class="label">model</span><span class="value">{context.model}</span></div>
                 )}
-                <div class="cell">
-                  <span class="label">est. opening size</span>
-                  <span class="value" title={`${context.totals.chars.toLocaleString()} characters at ~4 chars/token`}>
-                    ~{formatTokens(context.totals.estTokens)} tokens
-                  </span>
-                </div>
+                {/* No "opening size" cell: the bar below states it, and the two
+                    sat a hundred pixels apart saying the same number. */}
                 {context.fileReads.length > 0 && (
                   <div class="cell">
                     <span class="label">files read</span>
@@ -377,7 +411,10 @@ export default function SessionContext() {
                 <section class="ctx-mix" aria-label="Context window by input type">
                   <div class="ctx-mix-head">
                     <span class="ctx-mix-title">what fills the window</span>
-                    <span class="ctx-mix-total">~{formatTokens(mixTotal)} tokens</span>
+                    <span class="ctx-mix-total">
+                      ~{formatTokens(openingTotal)} opening
+                      {runTotal > 0 && <> · ~{formatTokens(runTotal)} added by the run</>}
+                    </span>
                   </div>
                   <div class="ctx-mix-bar">
                     {mix.map((seg) => (
@@ -385,6 +422,7 @@ export default function SessionContext() {
                         key={seg.kind}
                         class="ctx-mix-seg"
                         data-kind={seg.kind}
+                        {...(seg.boundary && openingTotal > 0 ? { 'data-boundary': 'true' } : {})}
                         style={{ width: `${seg.pct}%` }}
                         title={`${KIND_LABEL[seg.kind]}: ~${formatTokens(seg.tokens)} tokens, ${seg.pct.toFixed(1)}%`}
                       ></span>
@@ -511,6 +549,29 @@ export default function SessionContext() {
                   {...(file.content?.length ? { body: () => <FileContent file={file} /> } : {})}
                 />
               ))}
+              {context.traffic.toolResultEstTokens > 0 && (
+                <StackRow
+                  kind="results"
+                  index={context.layers.length + context.fileReads.length}
+                  share={context.traffic.toolResultEstTokens / peak}
+                  label="Tool results"
+                  note="What the run's tool calls returned, other than the file reads above. Read the individual results in the session log."
+                  chars={context.traffic.toolResultChars}
+                  estTokens={context.traffic.toolResultEstTokens}
+                />
+              )}
+              {context.traffic.outputEstTokens > 0 && (
+                <StackRow
+                  kind="output"
+                  index={context.layers.length + context.fileReads.length
+                    + (context.traffic.toolResultEstTokens > 0 ? 1 : 0)}
+                  share={context.traffic.outputEstTokens / peak}
+                  label="Model output"
+                  note="The agent's own replies, reasoning and tool arguments. Billed as output, but it stays in the window as input for every step after it."
+                  chars={context.traffic.outputChars}
+                  estTokens={context.traffic.outputEstTokens}
+                />
+              )}
             </ul>
             {context.layers.length === 0 && (
               <p class="empty">
@@ -520,9 +581,9 @@ export default function SessionContext() {
             )}
 
             <p class="ctx-footnote">
-              Rows 1&ndash;{context.layers.length} opened the run; the rest are files read after it
-              started. Token counts are estimates at 4 characters per token. Text that reached the
-              context another way, such as a <code>cat</code> through bash, is not counted.
+              Rows 1&ndash;{context.layers.length} opened the run; the rest accumulated as it went.
+              Token counts are estimates at 4 characters per token, so they read as proportions
+              rather than as the live window, which is larger.
             </p>
           </>
         )}

@@ -6125,6 +6125,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   background: var(--line);
 }
 .ctx-mix-seg { display: block; min-width: 2px; background: var(--muted-2); }
+/* A wider break where the opening prompt ends and the run's own traffic
+   begins. One bar keeps the two halves comparable - which is the point, since
+   a bloated tool catalog and a chatty agent compete for the same window - but
+   they are fixed by different things, so the seam is worth seeing. */
+.ctx-mix-seg[data-boundary] { margin-left: 9px; }
 .ctx-mix-dot {
   width: 9px;
   height: 9px;
@@ -6139,7 +6144,13 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .ctx-mix-seg[data-kind="skills"], .ctx-mix-dot[data-kind="skills"] { background: var(--amber); }
 .ctx-mix-seg[data-kind="approval"], .ctx-mix-dot[data-kind="approval"] { background: var(--amber); opacity: 0.75; }
 .ctx-mix-seg[data-kind="learnings"], .ctx-mix-dot[data-kind="learnings"] { background: var(--amber); opacity: 0.5; }
+/* Produced during the run rather than assembled before it: files and tool
+   results both came back from tools, so they share the purple family; the
+   model's own output gets gold. Still no red or green - nothing here is a pass
+   or a failure. */
 .ctx-mix-seg[data-kind="file"], .ctx-mix-dot[data-kind="file"] { background: var(--chart-5); }
+.ctx-mix-seg[data-kind="results"], .ctx-mix-dot[data-kind="results"] { background: var(--chart-5); opacity: 0.6; }
+.ctx-mix-seg[data-kind="output"], .ctx-mix-dot[data-kind="output"] { background: var(--chart-3); }
 
 .ctx-mix-legend {
   list-style: none;
@@ -6282,7 +6293,8 @@ button.ctx-layer-head:hover, .ctx-tool-head:hover { background: var(--panel-hove
   font-family: var(--mono);
   font-size: 10px;
 }
-.ctx-kind-file .ctx-kind { color: var(--chart-5); border-color: var(--chart-5); }
+.ctx-kind-file .ctx-kind, .ctx-kind-results .ctx-kind { color: var(--chart-5); border-color: var(--chart-5); }
+.ctx-kind-output .ctx-kind { color: var(--chart-3); border-color: var(--chart-3); }
 
 .ctx-tool-name { font-family: var(--mono); font-size: 12px; color: var(--fg); }
 .ctx-tool-desc {
