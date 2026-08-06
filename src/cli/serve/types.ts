@@ -426,6 +426,14 @@ export interface ApprovalLogEntry {
   title: string;
   message?: string;
   time?: number;
+  /** On a `type: 'corrections'` entry: how many stored corrections the run
+   *  injected, how many were active, and the cap that decided the split. The
+   *  row is worded client-side, so these travel as numbers rather than a
+   *  sentence — the session log and the result verdict phrase them differently
+   *  and would otherwise need the server to compose both. */
+  applied?: number;
+  active?: number;
+  cap?: number;
   subagentSession?: LogSubagentSession;
   details?: ApprovalLogDetails;
 }

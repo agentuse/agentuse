@@ -1054,11 +1054,26 @@ export default function SessionDetail() {
   // Verdict line for the summary-first result card: wall-clock duration
   // (createdAt → last log entry, so approval wait time counts) + tool calls.
   const lastLogTime = orderedLogs.length > 0 ? orderedLogs[orderedLogs.length - 1].time : undefined;
+  // The corrections row lives in the session log, which is collapsed by default.
+  // A run that silently applied 10 of its 26 corrections would stay silent until
+  // someone expanded it, so the count is repeated here where it cannot be
+  // missed. Only the shortfall is worth a line: a run that applied everything it
+  // had has nothing to warn about and stays out of the verdict.
+  const correctionsShortfall = useMemo(
+    () => {
+      const row = orderedLogs.find((e) => e.type === 'corrections');
+      if (!row || typeof row.applied !== 'number' || typeof row.active !== 'number') return undefined;
+      const dormant = row.active - row.applied;
+      return dormant > 0 ? `${row.applied} of ${row.active} corrections` : undefined;
+    },
+    [orderedLogs]
+  );
   const resultMeta = [
     approval.createdAt !== undefined && lastLogTime !== undefined && lastLogTime > approval.createdAt
       ? `finished in ${formatDuration(lastLogTime - approval.createdAt)}`
       : undefined,
     toolCallCount > 0 ? `${toolCallCount} tool call${toolCallCount === 1 ? '' : 's'}` : undefined,
+    correctionsShortfall,
   ].filter(Boolean).join(' · ');
   // '' unless the session ended in error; leads the result card so a failed
   // run's outcome is the failure, not a mid-thought final message.
