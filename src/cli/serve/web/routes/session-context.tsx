@@ -65,6 +65,18 @@ function formatTokens(value: number): string {
  * ("Users/…/x.agentuse/"), which reads as a different path. Full path stays on
  * the title attribute.
  */
+/**
+ * Truncate from the middle. A command's distinguishing part is often at the
+ * end (`uv run /very/long/path/which_script.py`), so an end ellipsis renders a
+ * list of calls as several identical lines. Full text stays on the title.
+ */
+function middleTruncate(value: string, max = 84): string {
+  if (value.length <= max) return value;
+  const head = Math.ceil((max - 1) / 2);
+  const tail = Math.floor((max - 1) / 2);
+  return `${value.slice(0, head)}…${value.slice(-tail)}`;
+}
+
 function shortenPath(path: string, segments = 3): string {
   const parts = path.split('/').filter(Boolean);
   if (parts.length <= segments) return path;
@@ -212,6 +224,94 @@ function FileContent(props: { file: ContextFileRead }) {
  * themselves are in the session log, and re-serving them here would be a lot
  * of bytes for something already one click away.
  */
+/** One tool's row, opening to the individual calls behind its total. */
+function ToolResultRow(props: { stat: ContextToolResultStat; share: number }) {
+  const { stat, share } = props;
+  const [open, setOpen] = useState(false);
+  const details = stat.callDetails ?? [];
+  const shown = details.length;
+  const totalCalls = stat.calls + stat.failed + stat.pending;
+  const callPeak = Math.max(1, ...details.map((d) => d.estTokens));
+
+  const inner = (
+    <>
+      <code class="ctx-result-name" title={stat.tool}>{toolChipLabel(stat.tool)}</code>
+      <span class="ctx-result-calls">
+        {totalCalls.toLocaleString()} call{totalCalls === 1 ? '' : 's'}
+        {stat.failed > 0 && (
+          <span class="ctx-result-failed" title={`${stat.failed} call${stat.failed === 1 ? '' : 's'} errored, returning no result`}>
+            {stat.failed} failed
+          </span>
+        )}
+        {stat.pending > 0 && (
+          <span class="ctx-result-pending" title="Still running, or parked on an approval gate, so it has no result yet">
+            {stat.pending} in flight
+          </span>
+        )}
+      </span>
+      {stat.countedAsFiles ? (
+        // A read tool: its bytes are the file rows above, so it shows its
+        // activity here but contributes nothing to this row's total.
+        <span class="ctx-result-elsewhere">counted as files above</span>
+      ) : (
+        <span class="ctx-weight">
+          <span class="ctx-track">
+            <span class="ctx-bar" style={{ width: `${Math.max(share * 100, 2)}%` }}></span>
+          </span>
+          <span class="ctx-tokens" title={`${stat.chars.toLocaleString()} characters`}>
+            ~{formatTokens(stat.estTokens)}
+          </span>
+        </span>
+      )}
+      <span class="ctx-chevron" aria-hidden="true">
+        {shown > 0 && (
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 6.5 8 10.5l4-4" />
+          </svg>
+        )}
+      </span>
+    </>
+  );
+
+  return (
+    <li class="ctx-result-group">
+      {shown > 0 ? (
+        <button type="button" class="ctx-result" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          {inner}
+        </button>
+      ) : (
+        <div class="ctx-result ctx-result-static">{inner}</div>
+      )}
+      {open && (
+        <ul class="ctx-calls">
+          {details.map((d, i) => (
+            <li class="ctx-call" key={i}>
+              <code class="ctx-call-label" title={d.label}>{middleTruncate(d.label)}</code>
+              {d.status === 'ok' ? (
+                <span class="ctx-weight">
+                  <span class="ctx-track">
+                    <span class="ctx-bar" style={{ width: `${Math.max((d.estTokens / callPeak) * 100, 2)}%` }}></span>
+                  </span>
+                  <span class="ctx-tokens" title={`${d.chars.toLocaleString()} characters`}>
+                    ~{formatTokens(d.estTokens)}
+                  </span>
+                </span>
+              ) : (
+                <span class={d.status === 'failed' ? 'ctx-result-failed' : 'ctx-result-pending'}>
+                  {d.status === 'failed' ? 'failed' : 'in flight'}
+                </span>
+              )}
+            </li>
+          ))}
+          {totalCalls > shown && (
+            <li class="ctx-call-more">Showing the {shown} heaviest of {totalCalls} calls.</li>
+          )}
+        </ul>
+      )}
+    </li>
+  );
+}
+
 function ToolResultBreakdown(props: { results: ContextToolResultStat[] }) {
   const { results } = props;
   const peak = Math.max(1, ...results.map((r) => r.estTokens));
@@ -219,36 +319,7 @@ function ToolResultBreakdown(props: { results: ContextToolResultStat[] }) {
   return (
     <ul class="ctx-results">
       {results.map((r) => (
-        <li class="ctx-result" key={r.tool}>
-          <code class="ctx-result-name" title={r.tool}>{toolChipLabel(r.tool)}</code>
-          <span class="ctx-result-calls">
-            {r.calls.toLocaleString()} call{r.calls === 1 ? '' : 's'}
-            {r.failed > 0 && (
-              <span class="ctx-result-failed" title={`${r.failed} call${r.failed === 1 ? '' : 's'} errored, returning no result`}>
-                {r.failed} failed
-              </span>
-            )}
-            {r.pending > 0 && (
-              <span class="ctx-result-pending" title="Still running, or parked on an approval gate, so it has no result yet">
-                {r.pending} in flight
-              </span>
-            )}
-          </span>
-          {r.countedAsFiles ? (
-            // A read tool: its bytes are the file rows above, so it shows its
-            // activity here but contributes nothing to this row's total.
-            <span class="ctx-result-elsewhere">counted as files above</span>
-          ) : (
-            <span class="ctx-weight">
-              <span class="ctx-track">
-                <span class="ctx-bar" style={{ width: `${Math.max((r.estTokens / peak) * 100, 2)}%` }}></span>
-              </span>
-              <span class="ctx-tokens" title={`${r.chars.toLocaleString()} characters`}>
-                ~{formatTokens(r.estTokens)}
-              </span>
-            </span>
-          )}
-        </li>
+        <ToolResultRow key={r.tool} stat={r} share={r.estTokens / peak} />
       ))}
     </ul>
   );

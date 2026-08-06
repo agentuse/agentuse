@@ -444,10 +444,50 @@ describe('tool result breakdown', () => {
       parts: [readPart('tools__bash', { command: 'ok' }, 'x'.repeat(80)), errored('tools__bash'), errored('mcp__flaky')],
     });
 
-    expect(payload.traffic.toolResults).toEqual([
-      { tool: 'tools__bash', calls: 1, failed: 1, pending: 0, chars: 80, estTokens: 20 },
-      { tool: 'mcp__flaky', calls: 0, failed: 1, pending: 0, chars: 0, estTokens: 0 },
+    expect(payload.traffic.toolResults.map((r) => [r.tool, r.calls, r.failed, r.chars])).toEqual([
+      ['tools__bash', 1, 1, 80],
+      ['mcp__flaky', 0, 1, 0],
     ]);
     expect(payload.traffic.toolResultChars).toBe(80);
+    /* The failed call is still listed, so a tool that only ever errored is visible. */
+    expect(payload.traffic.toolResults[1]!.callDetails).toEqual([
+      { label: '{"a":1}', chars: 0, estTokens: 0, status: 'failed' },
+    ]);
+  });
+
+  it('names each call by the argument that says what it did, heaviest first', () => {
+    const parts = [
+      readPart('sandbox__exec', { command: 'npm run build' }, 'x'.repeat(400)),
+      readPart('sandbox__exec', { command: 'cat big.log' }, 'x'.repeat(8000)),
+      readPart('mcp__search', { query: 'quarterly report' }, 'y'.repeat(120)),
+      readPart('mcp__odd', { somethingElse: true }, 'z'.repeat(40)),
+    ];
+
+    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts });
+    const exec = payload.traffic.toolResults.find((r) => r.tool === 'sandbox__exec')!;
+
+    expect(exec.callDetails!.map((d) => [d.label, d.chars])).toEqual([
+      ['cat big.log', 8000],
+      ['npm run build', 400],
+    ]);
+    expect(payload.traffic.toolResults.find((r) => r.tool === 'mcp__search')!.callDetails![0]!.label)
+      .toBe('quarterly report');
+    /* No recognised argument key: falls back to a compact preview. */
+    expect(payload.traffic.toolResults.find((r) => r.tool === 'mcp__odd')!.callDetails![0]!.label)
+      .toBe('{"somethingElse":true}');
+  });
+
+  it('keeps only the heaviest calls when a tool ran many times', () => {
+    const parts = Array.from({ length: 30 }, (_, i) =>
+      readPart('tools__bash', { command: `cmd ${i}` }, 'x'.repeat((i + 1) * 10))
+    );
+
+    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts });
+    const bash = payload.traffic.toolResults[0]!;
+
+    expect(bash.calls).toBe(30);
+    expect(bash.callDetails).toHaveLength(12);
+    /* The heaviest call survives the cap, which is the one worth seeing. */
+    expect(bash.callDetails![0]!.label).toBe('cmd 29');
   });
 });

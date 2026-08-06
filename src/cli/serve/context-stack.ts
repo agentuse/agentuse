@@ -4,6 +4,7 @@ import type {
   ContextFileRead,
   ContextFileReadContent,
   ContextStackLayer,
+  ContextToolCallDetail,
   ContextToolResultStat,
   ContextToolRow,
   SessionContextPayload,
@@ -144,6 +145,29 @@ function readTargetPath(tool: string, input: unknown): string | undefined {
   // tools__skill_load pulls a whole SKILL.md in on demand.
   const name = typeof args.name === 'string' ? args.name : undefined;
   return name ? `${name}/SKILL.md` : undefined;
+}
+
+/** Per-tool cap on the individual calls shipped to the page. */
+const MAX_CALL_DETAILS = 12;
+
+/**
+ * A one-line identity for a single tool call, taken from whichever argument
+ * actually says what it did. Mirrors the fields the CLI logger prints for the
+ * builtin tools, then falls back to a compact preview of the arguments so an
+ * MCP tool still gets something better than "call 3".
+ */
+function describeCall(input: unknown): string {
+  const args = asRecord(input);
+  for (const key of ['command', 'file_path', 'path', 'name', 'query', 'url', 'prompt', 'pattern']) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const line = value.trim().split('\n')[0]!;
+      return line.length > 140 ? `${line.slice(0, 140)}…` : line;
+    }
+  }
+  const preview = Object.keys(args).length > 0 ? JSON.stringify(args) : '';
+  if (!preview) return 'no arguments';
+  return preview.length > 140 ? `${preview.slice(0, 140)}…` : preview;
 }
 
 /** The text the tool actually returned, which is what the model then carries. */
@@ -308,16 +332,27 @@ export function buildRunTraffic(parts: Part[]): {
     if (part.type !== 'tool') continue;
 
     const stat = statFor(part.tool);
+    const detail = (status: ContextToolCallDetail['status'], chars: number) => {
+      (stat.callDetails ??= []).push({
+        label: describeCall(part.state.input),
+        chars,
+        estTokens: estimateTokens(chars),
+        status,
+      });
+    };
+
     if (part.state.status === 'error') {
       // A failed call still costs its arguments and an error string, but it
       // returns no result text - so it is worth seeing, and adds no chars.
       stat.failed += 1;
+      detail('failed', 0);
       continue;
     }
     if (part.state.status !== 'completed') {
       // Running, or parked on a gate. Its arguments are already in the window,
       // but there is no result yet.
       stat.pending += 1;
+      detail('pending', 0);
       continue;
     }
 
@@ -325,10 +360,23 @@ export function buildRunTraffic(parts: Part[]): {
     // input on the next step. Both sit in the window either way.
     outputChars += JSON.stringify(part.state.input ?? '').length;
     stat.calls += 1;
+    const chars = stat.countedAsFiles
+      ? 0
+      : readOutputText(part.state)?.length ?? JSON.stringify(part.state.output ?? '').length;
     if (!stat.countedAsFiles) {
-      stat.chars += readOutputText(part.state)?.length
-        ?? JSON.stringify(part.state.output ?? '').length;
+      stat.chars += chars;
       stat.estTokens = estimateTokens(stat.chars);
+    }
+    detail('ok', chars);
+  }
+
+  // Heaviest call first: the question a reader has when a tool's total is
+  // large is which call caused it.
+  for (const stat of byTool.values()) {
+    if (!stat.callDetails) continue;
+    stat.callDetails.sort((a, b) => b.chars - a.chars);
+    if (stat.callDetails.length > MAX_CALL_DETAILS) {
+      stat.callDetails = stat.callDetails.slice(0, MAX_CALL_DETAILS);
     }
   }
 

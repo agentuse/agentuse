@@ -192,6 +192,19 @@ export interface ContextFileRead {
  * a tool called twice can return more text than one called twenty times, and
  * it is the characters, not the calls, that occupy the context.
  */
+/**
+ * One call of one tool: what it was asked to do, and how much its result
+ * added. A tool's total says it was expensive; this says which call made it
+ * so, which is usually the thing worth changing.
+ */
+export interface ContextToolCallDetail {
+  /** The command, path, or argument that identifies this call. */
+  label: string;
+  chars: number;
+  estTokens: number;
+  status: 'ok' | 'failed' | 'pending';
+}
+
 export interface ContextToolResultStat {
   tool: string;
   /** Completed calls. */
@@ -212,6 +225,11 @@ export interface ContextToolResultStat {
    * two are never counted twice.
    */
   countedAsFiles?: boolean;
+  /**
+   * The individual calls, heaviest first. Capped, so `calls` can exceed its
+   * length on a tool called very often.
+   */
+  callDetails?: ContextToolCallDetail[];
 }
 
 export interface SessionContextPayload {

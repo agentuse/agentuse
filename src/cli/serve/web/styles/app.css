@@ -6350,12 +6350,55 @@ button.ctx-layer-head[aria-expanded="true"] .ctx-chevron { transform: rotate(180
 /* Per-tool result sizes inside the "Tool results" row. Static rows, not
    buttons: there is nothing to open, because the results themselves live in
    the session log. */
-.ctx-results { list-style: none; margin: 0; padding: 10px 12px; background: var(--bg); display: flex; flex-direction: column; gap: 8px; }
+.ctx-results { list-style: none; margin: 0; padding: 10px 12px; background: var(--bg); display: flex; flex-direction: column; gap: 4px; }
+.ctx-result-group { display: flex; flex-direction: column; }
 .ctx-result {
   display: grid;
-  grid-template-columns: minmax(0, 220px) max-content minmax(0, 1fr);
+  grid-template-columns: minmax(0, 220px) max-content minmax(0, 1fr) 12px;
   align-items: center;
   gap: 12px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+button.ctx-result:hover { background: var(--panel-hover); }
+button.ctx-result:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: -2px; }
+.ctx-result-static { cursor: default; }
+button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg); }
+
+/* The calls behind one tool's total, heaviest first. Indented under their
+   tool so three levels of nesting still read as a hierarchy. */
+.ctx-calls {
+  list-style: none;
+  margin: 2px 0 6px;
+  padding: 6px 6px 6px 18px;
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ctx-call {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 220px);
+  align-items: center;
+  gap: 12px;
+}
+.ctx-call-label {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-call-more { font-size: 11px; color: var(--muted-2); }
+@media (max-width: 720px) {
+  .ctx-call { grid-template-columns: minmax(0, 1fr); }
 }
 .ctx-result-name {
   font-family: var(--mono);
@@ -6378,8 +6421,12 @@ button.ctx-layer-head[aria-expanded="true"] .ctx-chevron { transform: rotate(180
 .ctx-result-pending { color: var(--amber); }
 .ctx-result-elsewhere { font-size: 11px; color: var(--muted-2); justify-self: end; }
 @media (max-width: 720px) {
-  .ctx-result { grid-template-columns: minmax(0, 1fr) max-content; }
-  .ctx-result .ctx-weight { grid-area: 2 / 1 / 3 / -1; }
+  .ctx-result { grid-template-columns: minmax(0, 1fr) max-content 12px; }
+  .ctx-result-name { grid-area: 1 / 1; }
+  .ctx-result-calls { grid-area: 1 / 2; }
+  .ctx-chevron { grid-area: 1 / 3; }
+  .ctx-result .ctx-weight, .ctx-result-elsewhere { grid-area: 2 / 1 / 3 / -1; }
+  .ctx-result-elsewhere { justify-self: start; }
 }
 
 .ctx-tool-name { font-family: var(--mono); font-size: 12px; color: var(--fg); }
