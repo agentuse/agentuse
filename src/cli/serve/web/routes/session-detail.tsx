@@ -731,9 +731,13 @@ export default function SessionDetail() {
   const canRememberLearning = Boolean(approval?.agent.filePath);
   const rememberApplies = approval?.learning?.apply === true;
   const continueActionable = ended && !live && Boolean(approval?.agent.filePath) && !fatalError;
-  // The learnings panel shows on any ended session that has an agent file to
-  // read/write learnings for — independent of whether resume is available.
-  const learningsVisible = ended && Boolean(approval?.agent.filePath);
+  // Any session with an agent file to read/write learnings for, not only an
+  // ended one. A run suspended at an approval is the moment a reviewer is most
+  // likely to want to correct the agent, and it is also when a stranded-
+  // learnings warning matters most — they are about to approve work produced
+  // without any of it. The panel renders nothing at all when it has nothing to
+  // report, so extending it to live and suspended runs adds no empty box.
+  const learningsVisible = Boolean(approval?.agent.filePath);
   const stopActionable = approval !== null && !ended && !expired && !submittingStop && !fatalError;
   // Same Discard button on an ended failed run: stamps the run as reviewed
   // (dismissedAt) so it clears from Home's "Needs your attention". Stopped-by-
@@ -1379,6 +1383,17 @@ export default function SessionDetail() {
             {artifactTiles}
           </div>
         )}
+        {/* Above the session log, not below it. The log is the long thing on
+            this page: anything under it is read only by someone who scrolled
+            past every tool call to get there, which is not where a warning that
+            the agent's learnings have stopped being read belongs. */}
+        <LearningsPanel
+          hidden={!learningsVisible}
+          sessionId={sessionId}
+          token={token}
+          {...(projectId ? { project: projectId } : {})}
+        />
+
         {summaryFirst ? (
           <details class="session-transcript" key={`transcript-${sessionId}`}>
             <summary>
@@ -1486,13 +1501,6 @@ export default function SessionDetail() {
           disabled={submittingContinue || !continueActionable}
           busy={submittingContinue}
           onSubmit={(prompt) => void submitContinue(prompt)}
-        />
-
-        <LearningsPanel
-          hidden={!learningsVisible}
-          sessionId={sessionId}
-          token={token}
-          {...(projectId ? { project: projectId } : {})}
         />
 
         <div class="inactive-banner" hidden={actionable || continueActionable || stopActionable || dismissActionable || reopenActionable || live || busy}>

@@ -335,6 +335,36 @@ function LearningsSection(props: {
     (g) => g.items.length > 0,
   );
 
+  /**
+   * Nothing to report: no rules here, no rules over the cap, nothing stranded,
+   * no tidy-up to undo.
+   *
+   * A panel in this state was a bordered box saying only that it had nothing to
+   * say — pure furniture on a page someone opened to read a run. It collapses to
+   * the bare "add" affordance instead. Not removed entirely: adding the FIRST
+   * learning to an agent has to start somewhere, and this is the only place in
+   * the web UI it can.
+   */
+  const nothingToReport =
+    learnings !== null &&
+    !error &&
+    !listOpen &&
+    items.length === 0 &&
+    !strandedAt &&
+    !lastTidy &&
+    (summary === null || summary.active === 0);
+
+  if (nothingToReport) {
+    return (
+      <div class="learnings-panel is-bare" id={props.id}>
+        <button type="button" class="learnings-disclosure" aria-expanded={false} onClick={() => setListOpen(true)}>
+          <span class="learnings-disclosure-caret" aria-hidden="true">▸</span>
+          Add a learning
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div class="learnings-panel" id={props.id}>
       {props.label !== null && <div class="learnings-label">{props.label}</div>}
@@ -380,7 +410,7 @@ function LearningsSection(props: {
             : `Show ${items.length} ${items.length === 1 ? 'learning' : 'learnings'}`}
         </button>
       )}
-      {!listOpen && learnings !== null && items.length === 0 && (
+      {!listOpen && learnings !== null && items.length === 0 && !nothingToReport && (
         <button type="button" class="learnings-disclosure" aria-expanded={false} onClick={() => setListOpen(true)}>
           <span class="learnings-disclosure-caret" aria-hidden="true">▸</span>
           Add a learning
