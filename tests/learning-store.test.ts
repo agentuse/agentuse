@@ -1,12 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 import { tmpdir } from "os";
-import { writeFileSync } from "fs";
-import { LearningStore, resolveLearningFilePath } from "../src/learning/store";
+import {
+  LearningStore,
+  resolveLearningFilePath,
+  takeLegacyLearningsNotice,
+} from "../src/learning/store";
 import { partitionLearnings } from "../src/learning/ranking";
 import type { Learning } from "../src/learning/types";
 import { saveManualLearning } from "../src/learning";
+import { getProjectDir, getProjectDirSync } from "../src/storage/paths";
 import { buildLearningPrompt, previewLearningPrompt } from "../src/runner/system-messages";
 
 const baseLearning: Learning = {
@@ -22,27 +26,167 @@ const baseLearning: Learning = {
   approvedRuns: 0,
 };
 
+/** Where corrections used to live, before v0.17 moved them into the state
+ *  directory: `{agent}.learnings.md`, right next to the agent file. */
+function legacySibling(agentFilePath: string): string {
+  return `${agentFilePath}.learnings.md`;
+}
+
 describe("LearningStore", () => {
   let tempDir: string;
+  /** The agent file's own project root — what decides which project directory
+   *  the corrections live in. Kept separate from the state directory below so a
+   *  path that leaks back into the repo is visible as such. */
+  let projectRoot: string;
+  let agentFile: string;
   let store: LearningStore;
+  let originalXdg: string | undefined;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "learning-store-"));
-    store = new LearningStore(join(tempDir, "agent.learnings.md"));
+    // Corrections now land under $XDG_DATA_HOME. Point it at the temp tree so no
+    // test can write into (or read from) the developer's real state directory.
+    originalXdg = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = join(tempDir, "state");
+
+    projectRoot = join(tempDir, "project");
+    agentFile = join(projectRoot, "agents", "blog.agentuse");
+    mkdirSync(dirname(agentFile), { recursive: true });
+    writeFileSync(agentFile, "---\nmodel: demo:test\n---\nDo work.\n");
+
+    store = LearningStore.fromAgentFile(agentFile, projectRoot);
   });
 
   afterEach(() => {
+    if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = originalXdg;
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("resolves default and custom learning file paths", () => {
-    const agentFile = join(tempDir, "agents", "blog.md");
+  describe("path resolution", () => {
+    it("keys the corrections file by agent id inside the project state directory", () => {
+      expect(resolveLearningFilePath(agentFile, projectRoot)).toBe(
+        join(getProjectDirSync(projectRoot), "learnings", "agents", "blog.learnings.md")
+      );
+      // The whole point of the move: nothing lands in the user's repository.
+      expect(store.filePath.startsWith(projectRoot)).toBe(false);
+    });
 
-    const defaultPath = resolveLearningFilePath(agentFile);
-    expect(defaultPath.endsWith("agents/blog.learnings.md")).toBe(true);
+    it("preserves the agent's subdirectories, so two write.agentuse files stay apart", () => {
+      const write = join(projectRoot, "agents", "blog", "write.agentuse");
+      const publish = join(projectRoot, "agents", "social", "write.agentuse");
 
-    const customPath = resolveLearningFilePath(agentFile, "./notes/learnings.md");
-    expect(customPath.endsWith("agents/notes/learnings.md")).toBe(true);
+      expect(resolveLearningFilePath(write, projectRoot)).toBe(
+        join(getProjectDirSync(projectRoot), "learnings", "agents", "blog", "write.learnings.md")
+      );
+      expect(resolveLearningFilePath(write, projectRoot)).not.toBe(
+        resolveLearningFilePath(publish, projectRoot)
+      );
+    });
+
+    it("gives two projects with the same agent path distinct files", () => {
+      // `agents/blog/write.agentuse` exists in several of a user's repos; the
+      // project hash is what stops them sharing one corrections file.
+      const first = join(tempDir, "repo-a");
+      const second = join(tempDir, "repo-b");
+      const relative = join("agents", "blog", "write.agentuse");
+
+      const firstPath = resolveLearningFilePath(join(first, relative), first);
+      const secondPath = resolveLearningFilePath(join(second, relative), second);
+
+      expect(firstPath).not.toBe(secondPath);
+      // Same key, different project directory — not two different keys.
+      expect(firstPath.endsWith(join("learnings", "agents", "blog", "write.learnings.md"))).toBe(true);
+      expect(secondPath.endsWith(join("learnings", "agents", "blog", "write.learnings.md"))).toBe(true);
+    });
+
+    it("resolves one file for one agent whichever cwd the run started from", () => {
+      const originalCwd = process.cwd();
+      try {
+        process.chdir(projectRoot);
+        const fromInside = resolveLearningFilePath(agentFile, projectRoot);
+        process.chdir(tmpdir());
+        const fromOutside = resolveLearningFilePath(agentFile, projectRoot);
+
+        expect(fromOutside).toBe(fromInside);
+        // And the anchoring choice is load-bearing rather than incidental: the
+        // cwd-derived root that `stateRoot` deliberately isn't would have put the
+        // second run's corrections in a different project directory entirely.
+        expect(getProjectDirSync(process.cwd())).not.toBe(getProjectDirSync(projectRoot));
+      } finally {
+        process.chdir(originalCwd);
+      }
+    });
+
+    it("agrees between the sync and async project-dir helpers", async () => {
+      // Sessions resolve their storage asynchronously and learnings resolve it
+      // synchronously; a drifting digest would silently split one project in two.
+      expect(await getProjectDir(projectRoot)).toBe(getProjectDirSync(projectRoot));
+      // Also exercise the git-root branch, which the temp dirs above never hit.
+      expect(await getProjectDir(process.cwd())).toBe(getProjectDirSync(process.cwd()));
+    });
+  });
+
+  describe("the break with the old location", () => {
+    // THE regression guard for this release. A sibling fallback is a one-line
+    // change to make and impossible to notice in review, and reintroducing one
+    // would resurrect exactly what the move fixed: a generated file rewritten in
+    // the user's repo on every run. If this test is failing, the question is not
+    // "how do I make it pass" — it is whether the project has decided to take
+    // the old location back.
+    const populatedLegacy = [
+      "# Learnings for blog",
+      "",
+      "### [warning] Never publish without review",
+      "<!-- id:old001 | confidence:0.88 | applied:3 | 2024-01-15 -->",
+      "Always wait for explicit approval before publishing.",
+      "",
+    ].join("\n");
+
+    it("never reads a populated corrections file left at the old location", async () => {
+      const sibling = legacySibling(agentFile);
+      writeFileSync(sibling, populatedLegacy);
+
+      expect(await store.load()).toEqual([]);
+      expect(store.filePath).not.toBe(sibling);
+    });
+
+    it("leaves the old file's bytes untouched when it writes the new one", async () => {
+      const sibling = legacySibling(agentFile);
+      writeFileSync(sibling, populatedLegacy);
+
+      await store.save([baseLearning]);
+
+      expect(readFileSync(sibling, "utf-8")).toBe(populatedLegacy);
+      expect(existsSync(store.filePath)).toBe(true);
+      expect((await store.load()).map((l) => l.id)).toEqual(["learn001"]);
+    });
+
+    it("warns once when corrections are stranded at the old location", () => {
+      writeFileSync(legacySibling(agentFile), populatedLegacy);
+
+      const notice = takeLegacyLearningsNotice(agentFile, projectRoot);
+      expect(notice).toContain("old location");
+      expect(notice).toContain(join("agents", "blog.agentuse"));
+      expect(notice).toContain(join("agents", "blog.agentuse.learnings.md"));
+      expect(notice).toContain("agentuse learnings migrate --all");
+
+      // Once per agent per process: a single run loads its store several times.
+      expect(takeLegacyLearningsNotice(agentFile, projectRoot)).toBeNull();
+    });
+
+    it("stays silent once the keyed file exists", async () => {
+      writeFileSync(legacySibling(agentFile), populatedLegacy);
+      await store.save([baseLearning]);
+
+      // The corrections have been migrated (or re-earned); the old file is now
+      // just a leftover, and saying so on every run would be noise.
+      expect(takeLegacyLearningsNotice(agentFile, projectRoot)).toBeNull();
+    });
+
+    it("stays silent when there was never a file at the old location", () => {
+      expect(takeLegacyLearningsNotice(agentFile, projectRoot)).toBeNull();
+    });
   });
 
   it("keeps a stored date stable across repeated save/load cycles", async () => {
@@ -81,6 +225,26 @@ describe("LearningStore", () => {
     expect(loaded[1].extractedAt.startsWith("2024-02-10")).toBe(true);
   });
 
+  it("records the source agent as a breadcrumb that never parses back as a learning", async () => {
+    // A file under `project/9f2c…/learnings/` is otherwise unattributable by eye.
+    await store.save([baseLearning]);
+    const raw = readFileSync(store.filePath, "utf-8");
+    expect(raw.startsWith(`# Learnings for blog\n<!-- agent: ${join("agents", "blog.agentuse")} -->\n`)).toBe(true);
+
+    const loaded = await store.load();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]!.id).toBe("learn001");
+    // Round-trips: the breadcrumb survives load+render unchanged, and adds no
+    // entry of its own on the way back in.
+    expect(store.render(loaded)).toBe(raw);
+  });
+
+  it("produces no phantom learning from a file holding only the breadcrumb", async () => {
+    await store.save([]);
+    expect(readFileSync(store.filePath, "utf-8")).toContain("<!-- agent: ");
+    expect(await store.load()).toEqual([]);
+  });
+
   it("round-trips provenance", async () => {
     await store.save([
       baseLearning,
@@ -108,10 +272,9 @@ describe("LearningStore", () => {
   });
 
   it("stamps the originating session on manual rules and re-owns upgraded ones", async () => {
-    const agentFile = join(tempDir, "agent.md");
-
     await saveManualLearning({
       agentFilePath: agentFile,
+      stateRoot: projectRoot,
       instruction: "Always include source links before publishing.",
       sessionId: "sess-one",
     });
@@ -123,6 +286,7 @@ describe("LearningStore", () => {
     // takes over the session provenance.
     await saveManualLearning({
       agentFilePath: agentFile,
+      stateRoot: projectRoot,
       instruction: "Always include source links when publishing.",
       sessionId: "sess-two",
     });
@@ -132,14 +296,15 @@ describe("LearningStore", () => {
   });
 
   it("clears stale session provenance when a similar rule is upgraded at agent level", async () => {
-    const agentFile = join(tempDir, "agent.md");
     await saveManualLearning({
       agentFilePath: agentFile,
+      stateRoot: projectRoot,
       instruction: "Always include source links before publishing.",
       sessionId: "sess-one",
     });
     await saveManualLearning({
       agentFilePath: agentFile,
+      stateRoot: projectRoot,
       instruction: "Always include source links when publishing.",
     });
 
@@ -148,15 +313,17 @@ describe("LearningStore", () => {
     expect(loaded[0].sessionId).toBeUndefined();
   });
 
-  it("reads legacy learnings files written without a src field", async () => {
-    // Pre-provenance format: metadata comment has no `src:` token.
+  it("reads corrections written before the src field existed", async () => {
+    // Pre-provenance FORMAT (no `src:` token) at the current LOCATION — an old
+    // file that was migrated, not an old file left where it was.
     const legacy = `# Learnings for agent
 
 ### [warning] Never publish without review
 <!-- id:old001 | confidence:0.88 | applied:3 | 2024-01-15 -->
 Always wait for explicit approval before publishing.
 `;
-    writeFileSync(join(tempDir, "agent.learnings.md"), legacy);
+    mkdirSync(dirname(store.filePath), { recursive: true });
+    writeFileSync(store.filePath, legacy);
     const loaded = await store.load();
 
     expect(loaded).toHaveLength(1);
@@ -197,11 +364,9 @@ Always wait for explicit approval before publishing.
   });
 
   it("saves explicit manual learnings", async () => {
-    const agentFile = join(tempDir, "agent.md");
-
     const outcome = await saveManualLearning({
       agentFilePath: agentFile,
-      config: { capture: true, apply: true },
+      stateRoot: projectRoot,
       instruction: "Always include source links before publishing.",
     });
 
@@ -217,10 +382,9 @@ Always wait for explicit approval before publishing.
   });
 
   it("saves a manual rule with no learning config (the reviewer's action is the opt-in)", async () => {
-    const agentFile = join(tempDir, "agent.md");
-
     const outcome = await saveManualLearning({
       agentFilePath: agentFile,
+      stateRoot: projectRoot,
       instruction: "Ask before deleting files.",
     });
 
@@ -236,7 +400,6 @@ Always wait for explicit approval before publishing.
   });
 
   it("upserts a manual rule by upgrading a similar existing learning instead of dropping it", async () => {
-    const agentFile = join(tempDir, "agent.md");
     await store.save([
       {
         ...baseLearning,
@@ -250,7 +413,7 @@ Always wait for explicit approval before publishing.
 
     const outcome = await saveManualLearning({
       agentFilePath: agentFile,
-      config: { capture: true, apply: true },
+      stateRoot: projectRoot,
       instruction: "Always include source links before publishing.",
     });
 
@@ -263,11 +426,9 @@ Always wait for explicit approval before publishing.
   });
 
   it("upserts a manual rule as a fresh insert when nothing similar exists", async () => {
-    const agentFile = join(tempDir, "agent.md");
-
     const outcome = await saveManualLearning({
       agentFilePath: agentFile,
-      config: { capture: true, apply: true },
+      stateRoot: projectRoot,
       instruction: "Never delete files without an explicit confirmation step.",
     });
 
@@ -278,16 +439,14 @@ Always wait for explicit approval before publishing.
   });
 
   it("generates distinct 8-char hex ids for dissimilar manual rules", async () => {
-    const agentFile = join(tempDir, "agent.md");
-
     await saveManualLearning({
       agentFilePath: agentFile,
-      config: { capture: true, apply: true },
+      stateRoot: projectRoot,
       instruction: "Always cite primary sources in the final report.",
     });
     await saveManualLearning({
       agentFilePath: agentFile,
-      config: { capture: true, apply: true },
+      stateRoot: projectRoot,
       instruction: "Never delete files without an explicit confirmation step.",
     });
 
@@ -300,7 +459,6 @@ Always wait for explicit approval before publishing.
   });
 
   it("injects manual learnings before approval and auto learnings", async () => {
-    const agentFile = join(tempDir, "agent.md");
     await store.save([
       { ...baseLearning, id: "auto001", instruction: "Auto rule", source: "auto", confidence: 0.99 },
       { ...baseLearning, id: "appr001", instruction: "Approval rule", source: "approval", confidence: 0.95 },
@@ -311,7 +469,7 @@ Always wait for explicit approval before publishing.
       name: "agent",
       instructions: "Do work.",
       config: { model: "demo:test", skills: { auto: false, trusted: false, explicit: {} }, learning: { capture: true, apply: true } },
-    }, agentFile);
+    } as never, agentFile, projectRoot);
 
     const prompt = result?.prompt ?? "";
     expect(prompt.indexOf("Manual rule")).toBeLessThan(prompt.indexOf("Approval rule"));
@@ -319,7 +477,6 @@ Always wait for explicit approval before publishing.
   });
 
   it("reports the stored total alongside what it injected", async () => {
-    const agentFile = join(tempDir, "agent.md");
     await store.save(Array.from({ length: 14 }, (_, i) => ({
       ...baseLearning,
       id: `appr${String(i).padStart(3, "0")}`,
@@ -333,7 +490,7 @@ Always wait for explicit approval before publishing.
       name: "agent",
       instructions: "Do work.",
       config: { model: "demo:test", skills: { auto: false, trusted: false, explicit: {} }, learning: { capture: true, apply: true } },
-    }, agentFile);
+    } as never, agentFile, projectRoot);
 
     // count must not be mistaken for the file size: 4 of these never reach the
     // model, and callers need to be able to say so.
@@ -342,7 +499,6 @@ Always wait for explicit approval before publishing.
   });
 
   it("previewLearningPrompt renders the same block without recording usage", async () => {
-    const agentFile = join(tempDir, "agent.md");
     await store.save([{ ...baseLearning, id: "prev0001", appliedCount: 3 }]);
     const agent = {
       name: "agent",
@@ -350,11 +506,11 @@ Always wait for explicit approval before publishing.
       config: { model: "demo:test", skills: { auto: false, trusted: false, explicit: {} }, learning: { capture: true, apply: true } },
     };
 
-    const preview = await previewLearningPrompt(agent as never, agentFile);
+    const preview = await previewLearningPrompt(agent as never, agentFile, projectRoot);
     // A diagnostic must not mutate what it measures.
     expect((await store.load())[0]!.appliedCount).toBe(3);
 
-    const applied = await buildLearningPrompt(agent as never, agentFile);
+    const applied = await buildLearningPrompt(agent as never, agentFile, projectRoot);
     expect(preview?.prompt).toBe(applied?.prompt ?? "");
   });
 

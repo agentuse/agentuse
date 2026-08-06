@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { AgentCompleteEvent } from "../src/plugin/types";
-import { LearningStore } from "../src/learning/store";
+import { LearningStore, resolveLearningFilePath } from "../src/learning/store";
 
 // extractLearnings now goes through completeText() (streaming) instead of
 // generateText(), which is required for the ChatGPT Codex backend. Mock
@@ -33,7 +33,18 @@ mock.module("ora", () => ({
 
 let extractLearnings: typeof import("../src/learning/index").extractLearnings;
 let tempDir: string;
+let xdgDir: string;
 let agentFilePath: string;
+/** Where this agent's corrections actually land: keyed under the project state
+ *  directory, NOT beside the agent file. Resolved through the same helper the
+ *  code uses, since the path contains a sha256 of the project root that a test
+ *  cannot spell out by hand. */
+let learningsPath: string;
+
+// Corrections are generated state, so they live under $XDG_DATA_HOME rather
+// than in the project. Point it at a temp directory or the suite would write
+// into the developer's real ~/.local/share/agentuse.
+const priorXdgDataHome = process.env.XDG_DATA_HOME;
 
 const event: AgentCompleteEvent = {
   agent: { name: "demo-agent", model: "gpt-4" },
@@ -48,7 +59,10 @@ beforeAll(async () => {
 
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "learning-extract-"));
-  agentFilePath = join(tempDir, "agents", "demo.md");
+  xdgDir = mkdtempSync(join(tmpdir(), "learning-extract-xdg-"));
+  process.env.XDG_DATA_HOME = xdgDir;
+  agentFilePath = join(tempDir, "agents", "demo.agentuse");
+  learningsPath = resolveLearningFilePath(agentFilePath, tempDir);
   completeTextMock.mockReset();
   succeedMock.mockReset();
   failMock.mockReset();
@@ -69,9 +83,12 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
+  rmSync(xdgDir, { recursive: true, force: true });
 });
 
 afterAll(() => {
+  if (priorXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = priorXdgDataHome;
   mock.restore();
 });
 
@@ -82,15 +99,19 @@ describe("extractLearnings", () => {
       agentInstructions: "Do things",
       agentModel: "gpt-4",
       agentFilePath,
+      stateRoot: tempDir,
       config: { capture: true, apply: false },
     });
 
-    const defaultPath = join(tempDir, "agents", "demo.learnings.md");
-    expect(existsSync(defaultPath)).toBe(true);
-    const content = readFileSync(defaultPath, "utf-8");
+    expect(existsSync(learningsPath)).toBe(true);
+    // The point of the move: the run wrote state, and the user's repository is
+    // exactly as it was.
+    expect(learningsPath.startsWith(xdgDir)).toBe(true);
+    expect(existsSync(join(tempDir, "agents", "demo.agentuse.learnings.md"))).toBe(false);
+    const content = readFileSync(learningsPath, "utf-8");
     expect(content).toContain("Shorten prompts");
     expect(succeedMock).toHaveBeenCalledWith(
-      `Extracted 1 learning(s) → ${defaultPath}`
+      `Extracted 1 learning(s) → ${learningsPath}`
     );
     expect(outcome).toEqual({
       status: "captured",
@@ -108,10 +129,11 @@ describe("extractLearnings", () => {
       agentInstructions: "Do things",
       agentModel: "gpt-4",
       agentFilePath,
+      stateRoot: tempDir,
       config: { capture: true, apply: false },
     });
 
-    expect(existsSync(join(tempDir, "agents", "demo.learnings.md"))).toBe(false);
+    expect(existsSync(learningsPath)).toBe(false);
     expect(succeedMock).toHaveBeenCalledWith("No new learnings extracted");
     expect(outcome.status).toBe("none");
     expect(outcome.count).toBe(0);
@@ -121,7 +143,7 @@ describe("extractLearnings", () => {
     // The old code reported the evaluator's count before the store filtered
     // similars, so the session marker could claim a lesson was learned while
     // nothing was written.
-    const store = new LearningStore(join(tempDir, "agents", "demo.learnings.md"));
+    const store = LearningStore.fromAgentFile(agentFilePath, tempDir);
     await store.save([{
       id: "manual01",
       category: "warning",
@@ -148,6 +170,7 @@ describe("extractLearnings", () => {
       agentInstructions: "Do things",
       agentModel: "gpt-4",
       agentFilePath,
+      stateRoot: tempDir,
       config: { capture: true, apply: false },
     });
 
@@ -161,7 +184,7 @@ describe("extractLearnings", () => {
     // The regression: a correction stored past the injection cap has no effect on
     // the run, but was still handed to the evaluator as a rule not to duplicate,
     // so the reviewer repeating it produced nothing at all.
-    const store = new LearningStore(join(tempDir, "agents", "demo.learnings.md"));
+    const store = LearningStore.fromAgentFile(agentFilePath, tempDir);
     const dormant = {
       id: "dormant1",
       category: "warning" as const,
@@ -196,6 +219,7 @@ describe("extractLearnings", () => {
       agentInstructions: "Do things",
       agentModel: "gpt-4",
       agentFilePath,
+      stateRoot: tempDir,
       config: { capture: true, apply: false },
       reviews: [{ comment: "Don't lecture" }],
       sessionId: "sess-repeat",
@@ -233,6 +257,7 @@ describe("extractLearnings", () => {
       agentInstructions: "Do things",
       agentModel: "openai:gpt-5.5",
       agentFilePath,
+      stateRoot: tempDir,
       config: { capture: true, apply: false },
     });
 

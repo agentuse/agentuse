@@ -1,9 +1,21 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach, mock } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from "fs";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, mock } from "bun:test";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { LearningStore } from "../src/learning/store";
+import { getProjectDirSync } from "../src/storage/paths";
+import { LEARNED_BLOCK_START } from "../src/learning/graduate";
 import type { Learning } from "../src/learning/types";
+
+// Corrections and undo snapshots are generated state under $XDG_DATA_HOME, not
+// files in the user's repo. Every describe block points it at a temp directory,
+// or the suite would write into the developer's real ~/.local/share/agentuse.
+const priorXdgDataHome = process.env.XDG_DATA_HOME;
+
+afterAll(() => {
+  if (priorXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = priorXdgDataHome;
+});
 
 // The tidy-up runs in two passes: one call decides what relates to what (ids
 // only), then one small call per group writes the replacement rule. The mock
@@ -59,6 +71,7 @@ Do the work.
 
 describe("tidying up an over-cap corrections file", () => {
   let tempDir: string;
+  let xdgDir: string;
   let agentFilePath: string;
   let store: LearningStore;
 
@@ -70,9 +83,14 @@ describe("tidying up an over-cap corrections file", () => {
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "learning-tidy-"));
+    xdgDir = mkdtempSync(join(tmpdir(), "learning-tidy-xdg-"));
+    process.env.XDG_DATA_HOME = xdgDir;
     agentFilePath = join(tempDir, "demo.agentuse");
     writeFileSync(agentFilePath, AGENT_FILE);
-    store = LearningStore.fromAgentFile(agentFilePath);
+    // `tempDir` is the state root, so the store resolves to
+    // {xdgDir}/agentuse/project/{hash}/learnings/demo.learnings.md — the same
+    // file the tidy-up under test opens.
+    store = LearningStore.fromAgentFile(agentFilePath, tempDir);
     decideResponse = JSON.stringify({});
     writeResponse = JSON.stringify({ category: "tip", title: "Merged", instruction: "One rule covering both." });
     completeTextMock.mockClear();
@@ -85,6 +103,7 @@ describe("tidying up an over-cap corrections file", () => {
 
   afterEach(() => {
     rmSync(tempDir, { recursive: true, force: true });
+    rmSync(xdgDir, { recursive: true, force: true });
   });
 
   const run = (opts: { dryRun?: boolean } = {}) =>
@@ -97,6 +116,11 @@ describe("tidying up an over-cap corrections file", () => {
       now: NOW,
       ...opts,
     });
+
+  /** Undo snapshots live beside the corrections file they roll back, under the
+   *  project's state directory — not in `{stateRoot}/.agentuse/`, which put a
+   *  `?? .agentuse/consolidations/` in `git status` after every tidy-up. */
+  const consolidationsDir = () => join(getProjectDirSync(tempDir), "consolidations");
 
   /** 12 stored rules against a cap of 10: two over. */
   async function seed(extra: Partial<Learning>[] = []) {
@@ -223,27 +247,28 @@ describe("tidying up an over-cap corrections file", () => {
     expect(result.diffs.agentFile).toBeTruthy();
   });
 
-  it("never edits an agent file that shares its corrections with other agents", async () => {
-    const shared = join(tempDir, "shared.md");
-    const sharedStore = new LearningStore(shared);
-    await sharedStore.save([
-      ...Array.from({ length: 12 }, (_, i) => learning({ id: `rule${i}` })),
-      learning({ id: "proven01", approvedRuns: 5 }),
-    ]);
+  // Root ignores the mode bits, so the only way to make a file unwritable there
+  // is not to be root. Skipped rather than asserted-around: a test that quietly
+  // proves nothing is worse than one that says it did not run.
+  it.skipIf(process.getuid?.() === 0)("never edits an agent file it cannot write, and says so", async () => {
+    // The only remaining reason graduation can be blocked. (It used to also
+    // cover an agent whose `learning.file` pointed at a shared corrections file;
+    // that config key no longer exists, and every agent now has a file of its
+    // own keyed by agent id, so the case is unreachable rather than untested.)
+    await seed();
+    await store.save([...(await store.load()), learning({ id: "proven01", approvedRuns: 5 })]);
     decideResponse = JSON.stringify({ graduate: [{ id: "proven01", why: "proven" }] });
+    chmodSync(agentFilePath, 0o444);
 
-    const result = await consolidateLearnings({
-      agentFilePath,
-      agentInstructions: "Do the work.",
-      agentModel: "demo:test",
-      config: { capture: true, apply: true, file: "./shared.md" },
-      stateRoot: tempDir,
-      now: NOW,
-    });
+    try {
+      const result = await run();
 
-    expect(result.graduated).toEqual([]);
-    expect(result.graduationSkipped).toContain("shares its learnings file");
-    expect(readFileSync(agentFilePath, "utf-8")).toBe(AGENT_FILE);
+      expect(result.graduated).toEqual([]);
+      expect(result.graduationSkipped).toContain("not writable");
+      expect(readFileSync(agentFilePath, "utf-8")).toBe(AGENT_FILE);
+    } finally {
+      chmodSync(agentFilePath, 0o644);
+    }
   });
 
   it("writes nothing when the model returns an unusable plan", async () => {
@@ -354,10 +379,26 @@ describe("tidying up an over-cap corrections file", () => {
     expect(result.remaining).toBeUndefined();
     // One press, one undo: the rounds happen in memory and both files are
     // written once at the end.
-    const snapshots = readdirSync(join(tempDir, ".agentuse", "consolidations")).flatMap((d) =>
-      readdirSync(join(tempDir, ".agentuse", "consolidations", d)),
+    const snapshots = readdirSync(consolidationsDir()).flatMap((d) =>
+      readdirSync(join(consolidationsDir(), d)),
     );
     expect(snapshots).toHaveLength(1);
+  });
+
+  it("keeps its undo snapshots out of the user's repository", async () => {
+    await seed();
+    decideResponse = JSON.stringify({ retire: [{ id: "rule4", why: "superseded" }] });
+
+    const result = await run();
+
+    expect(result.undoId).toBeTruthy();
+    expect(consolidationsDir().startsWith(xdgDir)).toBe(true);
+    const dirs = readdirSync(consolidationsDir());
+    expect(dirs).toHaveLength(1);
+    expect(readdirSync(join(consolidationsDir(), dirs[0]!))).toHaveLength(1);
+    // The whole point of the move: the tidy-up wrote state, and the project
+    // directory has nothing new in it to commit or ignore.
+    expect(existsSync(join(tempDir, ".agentuse"))).toBe(false);
   });
 
   it("stops the moment a pass stops paying, rather than running the limit out", async () => {
@@ -482,6 +523,51 @@ describe("tidying up an over-cap corrections file", () => {
 
   it("reports nothing to undo when no tidy-up has run", async () => {
     expect(await undoConsolidation(tempDir, agentFilePath)).toBeNull();
+  });
+
+  it("reports nothing to undo once the history is spent, rather than failing", async () => {
+    // This is what makes the snapshot move need no migration: snapshots left
+    // behind at the old location are simply not found, and an absent snapshot
+    // was always a supported state — the history is pruned anyway.
+    await seed();
+    decideResponse = JSON.stringify({ retire: [{ id: "rule4", why: "superseded" }] });
+    await run();
+
+    expect(await undoConsolidation(tempDir, agentFilePath)).not.toBeNull();
+    // The snapshot directory now exists but holds no snapshot, which is the
+    // case a missing-file check alone would miss.
+    expect(readdirSync(consolidationsDir())).toHaveLength(1);
+    expect(await undoConsolidation(tempDir, agentFilePath)).toBeNull();
+  });
+
+  it("starts a renamed agent with an empty corrections file, its graduated rules still in force", async () => {
+    // ACCEPTED LIMITATION, not a bug — pinned here so it stays a decision.
+    // Corrections are keyed by the agent's path, so `git mv` orphans them; the
+    // spec ships without rename recovery because the cost is bounded, and this
+    // test is what states the bound: what a rename loses is the staging buffer,
+    // and what it keeps is everything that earned its way into the agent file.
+    await seed();
+    await store.save([...(await store.load()), learning({
+      id: "proven01",
+      approvedRuns: 5,
+      instruction: "Cite a source before publishing anything.",
+    })]);
+    decideResponse = JSON.stringify({ graduate: [{ id: "proven01", why: "5 approved runs" }] });
+    await run();
+    expect((await store.load()).length).toBeGreaterThan(0);
+
+    const renamed = join(tempDir, "demo-renamed.agentuse");
+    renameSync(agentFilePath, renamed);
+    const afterRename = LearningStore.fromAgentFile(renamed, tempDir);
+
+    // The buffer is gone: a different path is a different agent.
+    expect(afterRename.filePath).not.toBe(store.filePath);
+    expect(await afterRename.load()).toEqual([]);
+    // The graduated rule is not lost with it. It lives in the agent file, which
+    // the rename carried along, so it still reaches the model.
+    const renamedText = readFileSync(renamed, "utf-8");
+    expect(renamedText).toContain(LEARNED_BLOCK_START);
+    expect(renamedText).toContain("Cite a source before publishing anything.");
   });
 
   it("keeps the calls it runs at once bounded", async () => {
@@ -625,6 +711,7 @@ describe("who shares a decide call", () => {
 
 describe("the record of an agent's last tidy-up", () => {
   let tempDir: string;
+  let xdgDir: string;
   let agentFilePath: string;
   let store: LearningStore;
   let mod: typeof import("../src/learning/consolidate");
@@ -635,9 +722,11 @@ describe("the record of an agent's last tidy-up", () => {
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "learning-record-"));
+    xdgDir = mkdtempSync(join(tmpdir(), "learning-record-xdg-"));
+    process.env.XDG_DATA_HOME = xdgDir;
     agentFilePath = join(tempDir, "demo.agentuse");
     writeFileSync(agentFilePath, AGENT_FILE);
-    store = LearningStore.fromAgentFile(agentFilePath);
+    store = LearningStore.fromAgentFile(agentFilePath, tempDir);
     decideResponse = JSON.stringify({ retire: [{ id: "rule4", why: "superseded" }] });
     completeTextMock.mockClear();
     completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) =>
@@ -646,6 +735,7 @@ describe("the record of an agent's last tidy-up", () => {
 
   afterEach(() => {
     rmSync(tempDir, { recursive: true, force: true });
+    rmSync(xdgDir, { recursive: true, force: true });
   });
 
   const record = (over: Partial<import("../src/learning/consolidate").TidyRecord> = {}) => ({
