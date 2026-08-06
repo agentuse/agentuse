@@ -10,6 +10,19 @@ export function formatLogTime(value?: number): string {
 }
 
 /**
+ * Token counts at reading size: "8.0k", "19k", "1M". One decimal below ten
+ * thousand, where the difference between 8.0k and 8.9k is worth seeing, and
+ * none above it. A trailing `.0` is dropped at million scale, since a window
+ * limit reads worse as "1.0M" than as "1M".
+ */
+export function formatTokens(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (value >= 10_000) return `${Math.round(value / 1000)}k`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
+  return value.toLocaleString();
+}
+
+/**
  * Compact relative time ("3m ago", "2h ago", "5d ago") for list rows; falls back
  * to a localized date past a week. Pair with `title={formatApprovalTime(value)}`
  * so the exact timestamp stays available on hover.

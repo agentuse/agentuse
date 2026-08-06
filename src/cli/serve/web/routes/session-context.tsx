@@ -9,7 +9,10 @@ import { Loading } from '../components/loading';
 import { LogContent } from '../components/content';
 import { toolChipLabel } from '../components/log-entry';
 import { isMarkdownPath, parseReadOutput } from '../lib/read-output';
+import { shortenCommand } from '../lib/shorten-command';
+import { formatTokens } from '../lib/format';
 import { pageTitle } from '../lib/brand';
+import { TokenPromptButton } from '../components/token-prompt-button';
 import type {
   ContextFileRead,
   ContextStackLayer,
@@ -53,32 +56,6 @@ const STACK_ORDER: RowKind[] = [
   'system', 'tools', 'instructions', 'approval', 'skills', 'learnings', 'prompt',
   'file', 'results', 'output',
 ];
-
-function formatTokens(value: number): string {
-  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k`;
-  return value.toLocaleString();
-}
-
-/** An absolute or relative path of three or more segments, inside a command. */
-const PATH_IN_COMMAND = /(?:~|\.{1,2})?(?:\/[^\s'"`|;&<>()]+){2,}/g;
-
-/**
- * Shorten the paths inside a command rather than the command itself.
- *
- * A sandbox call reads `uv run /Users/x/.claude/skills/some-skill/scripts/
- * get_conversation.py --number 301607`. The directory is noise repeated across
- * every call; the script name and the arguments are what tell them apart. So
- * collapse each path to its last couple of segments and leave the rest alone -
- * truncating the string blindly cuts exactly the informative end.
- */
-export function shortenCommand(value: string, keep = 2, max = 96): string {
-  const shortened = value.replace(PATH_IN_COMMAND, (match) => {
-    const parts = match.split('/').filter(Boolean);
-    if (parts.length <= keep) return match;
-    return `…/${parts.slice(-keep).join('/')}`;
-  });
-  return shortened.length > max ? `${shortened.slice(0, max - 1)}…` : shortened;
-}
 
 /**
  * Keep the informative tail of an absolute path. Truncating in JS rather than
@@ -695,6 +672,13 @@ export default function SessionContext() {
               Token counts are estimates at 4 characters per token, so they read as proportions
               rather than as the live window, which is larger.
             </p>
+
+            {/* Same slot the session page gives its actions. The prompt carries
+                the numbers above inline, so the agent starts from the diagnosis
+                rather than re-deriving it. */}
+            <div class="session-actions">
+              <TokenPromptButton context={context} />
+            </div>
           </>
         )}
       </main>

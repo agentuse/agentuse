@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { shortenCommand } from '../src/cli/serve/web/routes/session-context';
+import { shortenCommand } from '../src/cli/serve/web/lib/shorten-command';
 
 describe('shortening a command for display', () => {
   it('collapses a long path to its last segments, keeping the script and args', () => {
