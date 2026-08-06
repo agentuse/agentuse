@@ -1,16 +1,19 @@
 /**
- * Move corrections files from beside the agent file into the AgentUse state
+ * Move learnings files from beside the agent file into the AgentUse state
  * directory.
  *
  * Not a compatibility path — the only way across. The destination contains a
  * sha256 of the project root, so no user can type it out, and nothing reads the
  * old sibling location any more. Everything here is path arithmetic and file
- * moves: an agent file is never parsed, so a repository whose agent files no
+ * copies: an agent file is never parsed, so a repository whose agent files no
  * longer parse (the removed `learning.file` key is exactly that case) can still
  * be migrated.
+ *
+ * Copying and deleting are two calls, not one, so the caller can put a
+ * confirmation between them. See {@link applyLearningMigration}.
  */
 
-import { copyFile, mkdir, readFile, rename, unlink } from 'fs/promises';
+import { copyFile, mkdir, readFile, unlink } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { glob } from 'glob';
@@ -31,7 +34,17 @@ export { legacyLearningFilePath };
 export type MigrationStatus =
   /** A sibling exists and the destination is free. */
   | 'ready'
-  /** The destination already holds corrections; refused rather than merged. */
+  /**
+   * The destination already holds this exact file: a previous run copied it and
+   * the source was kept. Nothing left to copy, but the source is still there to
+   * offer to delete.
+   *
+   * Distinguishing this from a collision is what makes the command safe to run
+   * twice. Since the copy no longer removes the source, the second run would
+   * otherwise report the file it wrote itself as an unresolvable conflict.
+   */
+  | 'already-copied'
+  /** The destination holds DIFFERENT learnings; refused rather than merged. */
   | 'collision'
   /** No sibling to move. The common case once an agent has been migrated. */
   | 'nothing-to-move';
@@ -70,44 +83,57 @@ export async function planLearningMigration(
     const from = legacyLearningFilePath(agentFilePath);
     const to = resolveLearningFilePath(agentFilePath, stateRoot);
 
-    const status: MigrationStatus = !(await hasContent(from))
-      ? 'nothing-to-move'
-      : (await hasContent(to))
-        ? 'collision'
-        : 'ready';
+    let status: MigrationStatus;
+    if (!(await hasContent(from))) {
+      status = 'nothing-to-move';
+    } else if (!(await hasContent(to))) {
+      status = 'ready';
+    } else {
+      // Byte equality, not a heuristic. Anything short of identical is two
+      // different sets of learnings for one agent, which is the collision this
+      // command refuses to resolve on the user's behalf.
+      const [source, destination] = await Promise.all([
+        readFile(from, 'utf-8'),
+        readFile(to, 'utf-8'),
+      ]);
+      status = source === destination ? 'already-copied' : 'collision';
+    }
     entries.push({ agentFilePath, from, to, status });
   }
   return entries;
 }
 
 /**
- * Carry out one planned move. Moving is the default: the user asked for this,
- * and leaving the source behind would keep the file churning in their
- * repository, which is the whole point of the change.
+ * Carry out one planned migration: copy, never move.
+ *
+ * The copy and the deletion are separate steps on purpose. Deleting a file out
+ * of someone's repository is the irreversible half — a surprise deletion, a
+ * dirty working tree, a diff they have to explain — and it should not happen as
+ * a side effect of the half they asked for. Writing into our own state directory
+ * is ours to do; removing their file is theirs to confirm. {@link
+ * deleteMigrationSource} is that second step.
  */
-export async function applyLearningMigration(
-  entry: MigrationEntry,
-  options: { keepSource?: boolean } = {},
-): Promise<void> {
+export async function applyLearningMigration(entry: MigrationEntry): Promise<void> {
   if (entry.status !== 'ready') {
     throw new Error(`Refusing to migrate ${entry.from}: ${entry.status}`);
   }
   await mkdir(dirname(entry.to), { recursive: true });
+  await copyFile(entry.from, entry.to);
+}
 
-  if (options.keepSource) {
-    await copyFile(entry.from, entry.to);
-    return;
+/**
+ * Remove a source file whose copy is confirmed present.
+ *
+ * Re-checks the destination rather than trusting the caller's bookkeeping. This
+ * is the only destructive call in the migration, and the cost of the two states
+ * is wildly asymmetric: a leftover source is untidy, a deleted source with no
+ * copy is lost learnings.
+ */
+export async function deleteMigrationSource(entry: MigrationEntry): Promise<void> {
+  if (!(await hasContent(entry.to))) {
+    throw new Error(`Refusing to delete ${entry.from}: nothing was copied to ${entry.to}`);
   }
-
-  try {
-    await rename(entry.from, entry.to);
-  } catch (error) {
-    // The state directory lives under the home volume and the agent file need
-    // not, so a cross-device rename is an ordinary outcome here, not a failure.
-    if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error;
-    await copyFile(entry.from, entry.to);
-    await unlink(entry.from);
-  }
+  await unlink(entry.from);
 }
 
 /** Every agent file in the project, absolute and sorted. */

@@ -175,13 +175,15 @@ describe("LearningStore", () => {
       expect(takeLegacyLearningsNotice(agentFile, projectRoot)).toBeNull();
     });
 
-    it("stays silent once the keyed file exists", async () => {
+    it("still warns once the keyed file exists, which is the dangerous case", async () => {
       writeFileSync(legacySibling(agentFile), populatedLegacy);
       await store.save([baseLearning]);
 
-      // The corrections have been migrated (or re-earned); the old file is now
-      // just a leftover, and saying so on every run would be noise.
-      expect(takeLegacyLearningsNotice(agentFile, projectRoot)).toBeNull();
+      // An agent that captured one learning after upgrading has a populated new
+      // file and forty still stranded beside it. Going quiet here would be the
+      // worst possible moment for it: every surface now shows learnings, so the
+      // whole thing looks healthy while most of the history is unread.
+      expect(takeLegacyLearningsNotice(agentFile, projectRoot)).toContain("old location");
     });
 
     it("stays silent when there was never a file at the old location", () => {

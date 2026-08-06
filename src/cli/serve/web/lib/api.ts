@@ -293,6 +293,10 @@ export interface SessionLearningsPayload {
    *  parent agent, not the session's own, and only the server knows which. Its
    *  absence is what hides the button. */
   tidyTarget?: { project: string; runPath: string };
+  /** Where this agent's learnings are stranded at the pre-0.17 location beside
+   *  the agent file, if they are. Absent is the normal case. A path and not a
+   *  sentence: the server should not be writing the panel's copy. */
+  strandedAt?: string;
   tidy?: TidyResult;
   job?: TidyJob;
   /** A tidy-up running right now, so the panel can point at it instead of

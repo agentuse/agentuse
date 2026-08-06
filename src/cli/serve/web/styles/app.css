@@ -2989,6 +2989,24 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
   border-radius: 8px; min-height: 32px; padding: 0 14px; cursor: pointer;
 }
 .learnings-banner button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Learnings stranded at the old on-disk location. Amber rather than the neutral
+   banner above it, because this one is not a tuning note: rules the operator
+   wrote are being ignored entirely, and the page it appears on otherwise looks
+   perfectly healthy. */
+.learnings-banner.is-stranded {
+  border-color: var(--amber-border);
+  background: var(--amber-soft);
+}
+.learnings-banner.is-stranded .learnings-banner-text { color: var(--fg); }
+.learnings-banner.is-stranded code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--amber);
+  /* Long paths are the norm here, and a panel that scrolls sideways is worse
+     than one that wraps mid-path. */
+  overflow-wrap: anywhere;
+}
 .learnings-summary { color: var(--muted); font-size: 12px; }
 .learnings-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 

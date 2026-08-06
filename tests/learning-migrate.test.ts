@@ -3,8 +3,10 @@ import { existsSync } from 'fs';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'fs/promises';
 import { basename, dirname, join } from 'path';
 import { tmpdir } from 'os';
+import { PassThrough } from 'stream';
 import { createLearningsCommand } from '../src/cli/learnings';
 import {
+  deleteMigrationSource,
   findAgentFiles,
   findOrphanedLearningFiles,
   legacyLearningFilePath,
@@ -14,7 +16,12 @@ import { resolveLearningFilePath } from '../src/learning/store';
 
 /**
  * `agentuse learnings migrate` — the only route from the pre-0.17 sibling
- * corrections file to the keyed one in the state directory.
+ * learnings file to the keyed one in the state directory.
+ *
+ * The migration is deliberately two halves: it always COPIES, and only deletes
+ * the original once the user has said so. Most of what is asserted below is that
+ * second half staying shut — a surprise deletion out of someone's repository is
+ * the one outcome this command must never produce on its own.
  *
  * The destination contains a sha256 of the project root, so these tests always
  * resolve it through {@link resolveLearningFilePath} rather than spelling it
@@ -37,9 +44,17 @@ describe('agentuse learnings migrate', () => {
   let stateDir: string;
   let originalCwd: string;
   let originalXdg: string | undefined;
+  let originalIsTTY: boolean | undefined;
   const spies: ReturnType<typeof spyOn>[] = [];
 
   beforeEach(async () => {
+    // Whether stdin is a terminal decides whether the command asks about
+    // deleting. Pinned to false so the suite behaves the same run from a
+    // terminal as from CI — otherwise these tests hang on a prompt locally and
+    // pass on the build machine.
+    originalIsTTY = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+
     projectDir = await realpath(await mkdtemp(join(tmpdir(), 'learning-migrate-project-')));
     stateDir = await realpath(await mkdtemp(join(tmpdir(), 'learning-migrate-state-')));
     originalCwd = process.cwd();
@@ -57,6 +72,7 @@ describe('agentuse learnings migrate', () => {
 
   afterEach(async () => {
     for (const spy of spies.splice(0)) spy.mockRestore();
+    Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
     process.chdir(originalCwd);
     if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
     else process.env.XDG_DATA_HOME = originalXdg;
@@ -109,21 +125,24 @@ describe('agentuse learnings migrate', () => {
       .toBe(join(projectDir, 'agents', 'blog.learnings.md'));
   });
 
-  it('moves the corrections file into the state directory by default', async () => {
+  it('copies into the state directory and never deletes unasked', async () => {
     const { legacy, destination } = await writeAgent('agents/blog.agentuse', '# Learnings for blog\n');
 
     const output = await runMigrate(['agents/blog.agentuse']);
 
     expect(await readFile(destination, 'utf-8')).toBe('# Learnings for blog\n');
-    // A move, not a copy: the source is dead weight and leaving it behind keeps
-    // the file churning in the user's repository.
-    expect(existsSync(legacy)).toBe(false);
-    expect(output).toContain('moved');
-    expect(output).toContain('1 moved');
+    // The heart of it. Nobody answered a prompt, so the user's file is still
+    // exactly where they left it — no surprise deletion, no dirty working tree.
+    expect(await readFile(legacy, 'utf-8')).toBe('# Learnings for blog\n');
+    expect(output).toContain('1 copied');
+    // And it says so, with the way to finish the job later. Silence here would
+    // leave a file nothing reads and nothing mentions.
+    expect(output).toContain('still in place and no longer read');
+    expect(output).toContain('--delete-source');
     expect(process.exitCode).toBeFalsy();
   });
 
-  it('copies rather than moves with --keep-source', async () => {
+  it('keeps the original without asking under --keep-source', async () => {
     const { legacy, destination } = await writeAgent('agents/blog.agentuse', 'keep me\n');
 
     const output = await runMigrate(['agents/blog.agentuse', '--keep-source']);
@@ -132,6 +151,139 @@ describe('agentuse learnings migrate', () => {
     expect(await readFile(legacy, 'utf-8')).toBe('keep me\n');
     expect(output).toContain('copied');
     expect(process.exitCode).toBeFalsy();
+  });
+
+  it('deletes the original under --delete-source, the way a script asks for it', async () => {
+    const { legacy, destination } = await writeAgent('agents/blog.agentuse', 'move me\n');
+
+    const output = await runMigrate(['agents/blog.agentuse', '--delete-source']);
+
+    // The copy landed first, which is the only reason deleting is safe.
+    expect(await readFile(destination, 'utf-8')).toBe('move me\n');
+    expect(existsSync(legacy)).toBe(false);
+    expect(output).toContain('1 copied');
+    expect(output).toContain('1 deleted');
+    expect(process.exitCode).toBeFalsy();
+  });
+
+  it('is safe to run twice, and the second run still offers to clean up', async () => {
+    const { legacy, destination } = await writeAgent('agents/blog.agentuse', 'twice\n');
+
+    // First run copies and, with nobody to answer, keeps the source.
+    await runMigrate(['agents/blog.agentuse']);
+    expect(await readFile(legacy, 'utf-8')).toBe('twice\n');
+
+    const second = await runMigrate(['agents/blog.agentuse']);
+
+    // The file it wrote itself must not come back as an unresolvable conflict:
+    // that would make "run migrate again" a dead end and exit non-zero for a
+    // repository in a perfectly correct state.
+    expect(second).toContain('already copied');
+    expect(second).not.toContain('refused');
+    expect(process.exitCode).toBeFalsy();
+    // And the offer to finish the job is still open.
+    expect(second).toContain('still in place and no longer read');
+
+    const third = await runMigrate(['agents/blog.agentuse', '--delete-source']);
+    expect(third).toContain('1 deleted');
+    expect(existsSync(legacy)).toBe(false);
+    expect(await readFile(destination, 'utf-8')).toBe('twice\n');
+  });
+
+  it('still refuses when the destination holds genuinely different learnings', async () => {
+    const { legacy, destination } = await writeAgent('agents/blog.agentuse', 'from the repo\n');
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, 'a different set\n');
+
+    const output = await runMigrate(['agents/blog.agentuse']);
+
+    // Same-bytes is a resumed migration; different bytes is two histories for
+    // one agent, and nothing here is entitled to pick a winner.
+    expect(output).toContain('refused');
+    expect(output).not.toContain('already copied');
+    expect(await readFile(legacy, 'utf-8')).toBe('from the repo\n');
+    expect(await readFile(destination, 'utf-8')).toBe('a different set\n');
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('refuses two flags that say opposite things rather than picking one', async () => {
+    const { legacy } = await writeAgent('agents/blog.agentuse', 'ambiguous\n');
+
+    const output = await runMigrate(['agents/blog.agentuse', '--keep-source', '--delete-source']);
+
+    // Guessing which one the user meant risks guessing "delete".
+    expect(output).toContain('Pick one');
+    expect(await readFile(legacy, 'utf-8')).toBe('ambiguous\n');
+    expect(process.exitCode).toBe(1);
+  });
+
+  /**
+   * Run with a terminal attached and `answer` already typed into it.
+   *
+   * A real stream through the real `readline` rather than a stubbed prompt: the
+   * question being asked at all is the feature, so a test that fakes the asking
+   * would pass on a build that never asks. `PassThrough` buffers while paused,
+   * so writing the answer before the command reaches the prompt is safe.
+   */
+  async function runMigrateAnswering(answer: string, args: string[]): Promise<string> {
+    const fakeStdin = new PassThrough();
+    Object.defineProperty(fakeStdin, 'isTTY', { value: true, configurable: true });
+    const realStdin = process.stdin;
+    Object.defineProperty(process, 'stdin', { value: fakeStdin, configurable: true });
+    fakeStdin.write(`${answer}\n`);
+    try {
+      return await runMigrate(args);
+    } finally {
+      Object.defineProperty(process, 'stdin', { value: realStdin, configurable: true });
+    }
+  }
+
+  it('takes no for an answer at the prompt, and still says where the file is', async () => {
+    const { legacy, destination } = await writeAgent('agents/blog.agentuse', 'declined\n');
+
+    const output = await runMigrateAnswering('n', ['agents/blog.agentuse']);
+
+    expect(await readFile(destination, 'utf-8')).toBe('declined\n');
+    expect(await readFile(legacy, 'utf-8')).toBe('declined\n');
+    // A declined prompt that then goes quiet is how a stranded file gets
+    // forgotten, so "no" still owes the user the path.
+    expect(output).toContain('still in place and no longer read');
+    expect(process.exitCode).toBeFalsy();
+  });
+
+  it('deletes at the prompt only on an explicit yes', async () => {
+    const { legacy, destination } = await writeAgent('agents/blog.agentuse', 'accepted\n');
+
+    const output = await runMigrateAnswering('y', ['agents/blog.agentuse']);
+
+    expect(await readFile(destination, 'utf-8')).toBe('accepted\n');
+    expect(existsSync(legacy)).toBe(false);
+    expect(output).toContain('1 deleted');
+    expect(process.exitCode).toBeFalsy();
+  });
+
+  it('treats a bare Enter as no, because the default must never be deletion', async () => {
+    const { legacy } = await writeAgent('agents/blog.agentuse', 'reflex\n');
+
+    // Someone clearing prompts on autopilot should end up with their file.
+    const output = await runMigrateAnswering('', ['agents/blog.agentuse']);
+
+    expect(await readFile(legacy, 'utf-8')).toBe('reflex\n');
+    expect(output).not.toContain('deleted');
+  });
+
+  it('will not delete a source whose copy is not on disk', async () => {
+    const { legacy, destination } = await writeAgent('agents/blog.agentuse', 'unique\n');
+
+    // The guard is the last thing between a bookkeeping slip and lost learnings,
+    // so it re-checks the destination instead of trusting the caller.
+    let failure: unknown;
+    await deleteMigrationSource({
+      agentFilePath: 'agents/blog.agentuse', from: legacy, to: destination, status: 'ready',
+    }).catch((error: unknown) => { failure = error; });
+
+    expect((failure as Error | undefined)?.message).toContain('nothing was copied');
+    expect(await readFile(legacy, 'utf-8')).toBe('unique\n');
   });
 
   it('writes nothing at all under --dry-run, and still names the collisions it would refuse', async () => {
@@ -151,8 +303,8 @@ describe('agentuse learnings migrate', () => {
     expect(await readFile(clash.legacy, 'utf-8')).toBe('source side\n');
     expect(await readFile(clash.destination, 'utf-8')).toBe('destination side\n');
 
-    expect(output).toContain('would move');
-    expect(output).toContain('1 to move');
+    expect(output).toContain('would copy');
+    expect(output).toContain('1 to copy');
     // A collision is a real problem whether or not this was a rehearsal, so the
     // dry run has to say so rather than reporting a clean plan.
     expect(output).toContain('refused');
@@ -173,8 +325,8 @@ describe('agentuse learnings migrate', () => {
     expect(await readFile(destination, 'utf-8')).toBe('already migrated\n');
     expect(await readFile(legacy, 'utf-8')).toBe('from the repo\n');
     expect(output).toContain('refused');
-    expect(output).toContain('the destination already holds learnings');
-    expect(output).not.toContain('1 moved');
+    expect(output).toContain('the destination already holds different learnings');
+    expect(output).not.toContain('1 copied');
     expect(process.exitCode).toBe(1);
   });
 
@@ -191,12 +343,14 @@ describe('agentuse learnings migrate', () => {
     expect(blog.destination).not.toBe(news.destination);
     expect(await readFile(blog.destination, 'utf-8')).toBe('blog corrections\n');
     expect(await readFile(news.destination, 'utf-8')).toBe('news corrections\n');
-    expect(existsSync(blog.legacy)).toBe(false);
-    expect(existsSync(news.legacy)).toBe(false);
+    // Both originals survive: --all is still a copy, and fifty files is when a
+    // surprise deletion would hurt most.
+    expect(await readFile(blog.legacy, 'utf-8')).toBe('blog corrections\n');
+    expect(await readFile(news.legacy, 'utf-8')).toBe('news corrections\n');
 
     // An agent that never captured anything is counted, not moved.
     expect(existsSync(bare.destination)).toBe(false);
-    expect(output).toContain('2 moved');
+    expect(output).toContain('2 copied');
     expect(output).toContain('1 with nothing to move');
 
     // The walk uses the same exclusions as the agent listing, so a vendored
@@ -239,7 +393,7 @@ describe('agentuse learnings migrate', () => {
     // in — otherwise a migration run from `agents/` quietly skips half of them.
     expect(await readFile(top.destination, 'utf-8')).toBe('top\n');
     expect(await readFile(nested.destination, 'utf-8')).toBe('nested\n');
-    expect(output).toContain('2 moved');
+    expect(output).toContain('2 copied');
   });
 
   it('reports orphans only for --all, where a project-wide scan makes sense', async () => {
@@ -249,7 +403,7 @@ describe('agentuse learnings migrate', () => {
     const output = await runMigrate(['agents/blog.agentuse']);
 
     expect(output).not.toContain('Orphaned');
-    expect(output).toContain('1 moved');
+    expect(output).toContain('1 copied');
   });
 
   it('classifies each agent before touching anything', async () => {

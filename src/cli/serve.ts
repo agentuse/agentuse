@@ -27,7 +27,7 @@ import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-l
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, loadSlackSdk, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
-import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, consolidateLearnings, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord, type LearningConfig, type ConsolidationResult, type TidyProgress } from "../learning";
+import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, consolidateLearnings, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord, strandedLearningsFile, type LearningConfig, type ConsolidationResult, type TidyProgress } from "../learning";
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
@@ -5326,9 +5326,18 @@ export function createServeCommand(): Command {
           // A pass takes minutes, longer than anyone waits on one page. Say it
           // is running, or coming back here reads as "nothing happened".
           const inFlight = opts.agentFilePath ? runningTidyJobForFile(opts.agentFilePath) : undefined;
+          // Learnings left at the pre-0.17 location beside the agent file. The
+          // terminal warns about these and `doctor` reports them; a reviewer who
+          // only ever opens the web UI would otherwise see an ordinary-looking
+          // panel and never learn that forty rules are sitting one directory
+          // away, unread. The path only — the sentence is the panel's to write.
+          const strandedAt = opts.stateRoot && opts.agentFilePath
+            ? strandedLearningsFile(opts.agentFilePath, opts.stateRoot)
+            : null;
           return {
             success: true,
             ...(opts.tidyTarget ? { tidyTarget: opts.tidyTarget } : {}),
+            ...(strandedAt ? { strandedAt } : {}),
             ...(inFlight ? { runningTidy: { jobId: inFlight.id } } : {}),
             ...(record ? { lastTidy: { jobId: record.jobId, finishedAt: record.finishedAt } } : {}),
             summary: {

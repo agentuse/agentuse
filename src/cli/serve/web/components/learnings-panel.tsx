@@ -169,6 +169,30 @@ export function TidyResultView(props: { result: TidyResult; onUndo: () => void; 
 }
 
 /**
+ * Learnings sitting at the pre-0.17 location, where nothing reads them.
+ *
+ * Above everything else in the panel, and shown whether or not the list below is
+ * empty. Both states mislead on their own: an empty panel reads as a new agent
+ * rather than a stranded one, and a populated panel reads as healthy while the
+ * bulk of the agent's history sits one directory away.
+ *
+ * The fix is a terminal command, so this cannot offer a button. Naming the file
+ * and the exact command is the most a browser page can honestly do.
+ */
+function StrandedLearningsBanner(props: { strandedAt: string | null }) {
+  if (!props.strandedAt) return null;
+  return (
+    <div class="learnings-banner is-stranded" role="status">
+      <span class="learnings-banner-text">
+        Older learnings for this agent are still at their previous location and are no longer
+        read: <code>{props.strandedAt}</code>. Move them with{' '}
+        <code>agentuse learnings migrate</code>.
+      </span>
+    </div>
+  );
+}
+
+/**
  * The line above the list, and the way to act on it.
  *
  * Two states, never both: corrections are being ignored, or they are not. The
@@ -242,6 +266,7 @@ function LearningsSection(props: {
   const [tidyTarget, setTidyTarget] = useState<{ project: string; runPath: string } | null>(null);
   const [lastTidy, setLastTidy] = useState<{ jobId: string; finishedAt: number } | null>(null);
   const [runningTidy, setRunningTidy] = useState<{ jobId: string } | null>(null);
+  const [strandedAt, setStrandedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -253,6 +278,7 @@ function LearningsSection(props: {
     setTidyTarget(payload.tidyTarget ?? null);
     setLastTidy(payload.lastTidy ?? null);
     setRunningTidy(payload.runningTidy ?? null);
+    setStrandedAt(payload.strandedAt ?? null);
   };
 
   useEffect(() => {
@@ -305,6 +331,8 @@ function LearningsSection(props: {
   return (
     <div class="learnings-panel" id={props.id}>
       {props.label !== null && <div class="learnings-label">{props.label}</div>}
+
+      <StrandedLearningsBanner strandedAt={strandedAt} />
 
       <LearningsHeadline summary={summary} tidyTarget={tidyTarget} runningTidy={runningTidy} />
 

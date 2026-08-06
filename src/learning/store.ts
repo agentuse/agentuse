@@ -130,62 +130,55 @@ function displayPath(target: string, root: string): string {
 }
 
 /**
- * The "your corrections are somewhere we no longer look" notice, or `null` when
- * there is nothing to say.
+ * Where this agent's learnings are stranded, ready to show a reader, or `null`
+ * when nothing is stranded.
  *
  * Reads the sibling's EXISTENCE and nothing else — never its contents, never an
  * entry count. That is what keeps this a notice rather than a compatibility
  * path: behaviour is byte-identical whether or not the old file is there, so it
  * is not a second source of authority and has no expiry date attached to it.
  *
- * It exists because the alternative is worse than a missing feature: an
- * unwatched scheduled fleet silently dropping forty corrections and continuing
- * as though it never had any.
- *
- * This form asks only whether corrections are stranded, which is the right
- * question for a diagnostic. The run path uses {@link legacyLearningsNotice},
- * which additionally goes quiet once the keyed file exists.
+ * The single detector behind all three surfaces that report this — the run
+ * warning, `doctor`, and the web learnings panel. They must agree, because a
+ * surface that stays quiet is read as "nothing stranded here".
  */
-export function strandedLearningsNotice(agentFilePath: string, stateRoot: string): string | null {
+export function strandedLearningsFile(agentFilePath: string, stateRoot: string): string | null {
   // A URL or stdin agent never had a sibling file to leave behind.
   if (!agentFilePath || /^https?:\/\//i.test(agentFilePath)) return null;
 
-  const absolute = resolve(agentFilePath);
-  const sibling = legacyLearningFilePath(absolute);
-  if (!existsSync(sibling)) return null;
-
-  return [
-    `learnings found at the old location for ${displayPath(absolute, stateRoot)}`,
-    `  ${displayPath(sibling, stateRoot)}`,
-    `  No longer read. Move them:  agentuse learnings migrate --all`,
-  ].join('\n');
+  const sibling = legacyLearningFilePath(resolve(agentFilePath));
+  return existsSync(sibling) ? displayPath(sibling, stateRoot) : null;
 }
 
 /**
- * {@link strandedLearningsNotice} for the run path: silent once the keyed file
- * exists, on the reasoning that a run whose corrections are accumulating in the
- * right place should not nag on every execution.
+ * The "your learnings are somewhere we no longer look" notice, or `null` when
+ * there is nothing to say.
  *
- * That gate is why `doctor` calls the unconditional form instead. An agent that
- * captured one correction after upgrading has a populated keyed file and forty
- * still stranded beside it, and that is exactly the state where a silent
- * diagnostic does the most damage.
+ * It exists because the alternative is worse than a missing feature: an
+ * unwatched scheduled fleet silently dropping forty learnings and continuing as
+ * though it never had any.
+ *
+ * Deliberately NOT gated on whether the keyed file already exists. An agent that
+ * captured one learning after upgrading has a populated new file and forty still
+ * stranded beside it — exactly the state where going quiet does the most damage,
+ * because the panel now shows learnings and everything looks healthy.
  */
-function legacyLearningsNotice(
-  agentFilePath: string,
-  stateRoot: string,
-  agentName?: string
-): string | null {
-  if (!agentFilePath || /^https?:\/\//i.test(agentFilePath)) return null;
-  if (existsSync(resolveLearningFilePath(resolve(agentFilePath), stateRoot, agentName))) return null;
-  return strandedLearningsNotice(agentFilePath, stateRoot);
+export function strandedLearningsNotice(agentFilePath: string, stateRoot: string): string | null {
+  const sibling = strandedLearningsFile(agentFilePath, stateRoot);
+  if (!sibling) return null;
+
+  return [
+    `learnings found at the old location for ${displayPath(resolve(agentFilePath), stateRoot)}`,
+    `  ${sibling}`,
+    `  No longer read. Move them:  agentuse learnings migrate --all`,
+  ].join('\n');
 }
 
 /** Agents already reported on in this process. */
 const legacyNoticeGiven = new Set<string>();
 
 /**
- * {@link legacyLearningsNotice}, but only the first time it is asked about a
+ * {@link strandedLearningsNotice}, but only the first time it is asked about a
  * given agent; `null` on every later call.
  *
  * Consuming rather than merely returning is what makes "warn once" a property of
@@ -194,17 +187,13 @@ const legacyNoticeGiven = new Set<string>();
  * loads a store and prints its own diagnostic line — one notice per agent per
  * process, whichever of them asks first.
  */
-export function takeLegacyLearningsNotice(
-  agentFilePath: string,
-  stateRoot: string,
-  agentName?: string
-): string | null {
+export function takeLegacyLearningsNotice(agentFilePath: string, stateRoot: string): string | null {
   const key = `${resolve(agentFilePath)}\0${stateRoot}`;
   // Record the question, not just the answer, so an agent with no old file
   // doesn't re-stat it on every load for the life of the process.
   if (legacyNoticeGiven.has(key)) return null;
   legacyNoticeGiven.add(key);
-  return legacyLearningsNotice(agentFilePath, stateRoot, agentName);
+  return strandedLearningsNotice(agentFilePath, stateRoot);
 }
 
 /** The agent a store was built from, kept only so an empty load can point at
@@ -238,20 +227,21 @@ export class LearningStore {
   }
 
   async load(): Promise<Learning[]> {
-    if (!existsSync(this.filePath)) {
-      this.reportLegacyLocationOnce();
-      return [];
-    }
+    // Asked on every load, not only an empty one. An agent that captured a
+    // learning after upgrading loads a non-empty store and still has the old
+    // file beside it; that is the case worth warning about, not the easy one.
+    this.reportLegacyLocationOnce();
+    if (!existsSync(this.filePath)) return [];
 
     const content = await readFile(this.filePath, 'utf-8');
     return this.parseMarkdown(content);
   }
 
   /**
-   * Say once, on the first empty load, that this agent's corrections are sitting
-   * at the old location. `logger.warn` mirrors into the session log sink, so the
-   * line reaches the terminal and the serve session view from one call — which
-   * is the whole point for a fleet nobody is watching run.
+   * Say once that this agent's learnings are sitting at the old location.
+   * `logger.warn` mirrors into the session log sink, so the line reaches the
+   * terminal and the serve session view from one call — which is the whole point
+   * for a fleet nobody is watching run.
    */
   private reportLegacyLocationOnce(): void {
     if (!this.legacySource) return;

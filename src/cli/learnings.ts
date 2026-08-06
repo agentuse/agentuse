@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { spawn } from 'child_process';
+import { createInterface } from 'readline';
 import { dirname, relative, resolve } from 'path';
 import { existsSync } from 'fs';
 import { mkdir } from 'fs/promises';
@@ -11,6 +12,7 @@ import {
   activeLearnings,
   applyLearningMigration,
   consolidateLearnings,
+  deleteMigrationSource,
   describeConsolidation,
   effectiveCap,
   findAgentFiles,
@@ -62,6 +64,82 @@ function displayPath(filePath: string): string {
  *  scannable and greppable. */
 function printMigration(verb: string, entry: MigrationEntry): void {
   console.log(`  ${verb}  ${displayPath(entry.from)} ${chalk.gray('→')} ${entry.to}`);
+}
+
+/**
+ * Ask a yes/no question, defaulting to no.
+ *
+ * Defaulting to no matters more than usual here: the only question this asks is
+ * whether to delete the user's files, and a stray Enter should never be the
+ * thing that removes them.
+ */
+async function confirmDestructive(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await new Promise<boolean>((resolveAnswer) => {
+      rl.on('SIGINT', () => resolveAnswer(false));
+      // Ctrl-D, or a terminal that goes away mid-question. Without this the
+      // promise never settles: the command would exit silently at the prompt,
+      // skipping even the line that says where the kept file is.
+      rl.on('close', () => resolveAnswer(false));
+      rl.question(question, (answer) => resolveAnswer(/^y(es)?$/i.test(answer.trim())));
+    });
+  } finally {
+    rl.close();
+  }
+}
+
+/**
+ * The second half of the migration: remove the originals, once their copies are
+ * on disk and the user has said so.
+ *
+ * Keeping is the default everywhere the user has not answered — `--keep-source`,
+ * a bare Enter, a Ctrl-C, or a pipe with nobody at the other end. The leftover
+ * file is inert (nothing reads it any more), so the worst case for keeping is an
+ * untidy repository; the worst case for deleting unasked is someone's learnings
+ * gone from a working tree they were mid-commit on.
+ */
+async function offerToDeleteSources(
+  copied: MigrationEntry[],
+  options: { keepSource?: boolean; deleteSource?: boolean },
+): Promise<void> {
+  if (copied.length === 0) return;
+
+  const one = copied.length === 1;
+  const noun = one ? 'the old file' : `all ${copied.length} old files`;
+  const keepNote = () => {
+    console.log(chalk.gray(`\nThe old ${one ? 'file is' : 'files are'} still in place and no longer read:`));
+    for (const entry of copied) console.log(chalk.gray(`  ${displayPath(entry.from)}`));
+    console.log(chalk.gray(`  Delete ${one ? 'it' : 'them'} whenever you like, or re-run with --delete-source.`));
+  };
+
+  if (options.keepSource) return keepNote();
+
+  if (!options.deleteSource) {
+    // No terminal means no one to answer. A prompt here would either hang a
+    // CI job or read one byte of unrelated piped input as consent.
+    if (!process.stdin.isTTY) return keepNote();
+
+    console.log(chalk.bold(`\nCopied. ${copied.length === 1 ? 'The original' : 'The originals'} can go now:`));
+    for (const entry of copied) console.log(chalk.gray(`  ${displayPath(entry.from)}`));
+    const yes = await confirmDestructive(chalk.yellow(`Delete ${noun}? [y/N] `));
+    if (!yes) return keepNote();
+  }
+
+  let deleted = 0;
+  for (const entry of copied) {
+    try {
+      await deleteMigrationSource(entry);
+      deleted++;
+    } catch (error) {
+      console.log(chalk.red(`  could not delete ${displayPath(entry.from)}`));
+      console.log(chalk.red(`    ${error instanceof Error ? error.message : String(error)}`));
+      process.exitCode = 1;
+    }
+  }
+  if (deleted > 0) {
+    console.log(chalk.gray(`\n${deleted} deleted. Commit it: git commit -am "chore: move learnings to the agentuse state dir"`));
+  }
 }
 
 /**
@@ -339,17 +417,23 @@ export function createLearningsCommand(): Command {
 
   command
     .command('migrate')
-    .description('Move learnings files from beside the agent file into the AgentUse state directory')
+    .description('Copy learnings files into the AgentUse state directory, then offer to delete the originals')
     .argument('[agent-file]', 'Path to the .agentuse file (omit and pass --all for every agent)')
     .option('--all', 'Every agent file in the project')
     .option('--dry-run', 'Report what would move without writing anything')
-    .option('--keep-source', 'Copy instead of moving, leaving the old file in place')
+    .option('--keep-source', 'Keep the old files without asking')
+    .option('--delete-source', 'Delete the old files without asking')
     .action(async (
       agentFileArg: string | undefined,
-      options: { all?: boolean; dryRun?: boolean; keepSource?: boolean },
+      options: { all?: boolean; dryRun?: boolean; keepSource?: boolean; deleteSource?: boolean },
     ) => {
       if (Boolean(agentFileArg) === Boolean(options.all)) {
         console.error(chalk.red('Name one agent file, or pass --all — not both, not neither.'));
+        process.exitCode = 1;
+        return;
+      }
+      if (options.keepSource && options.deleteSource) {
+        console.error(chalk.red('--keep-source and --delete-source say opposite things. Pick one.'));
         process.exitCode = 1;
         return;
       }
@@ -377,22 +461,26 @@ export function createLearningsCommand(): Command {
 
       const entries = await planLearningMigration(agentFiles, cwd);
       const movable = entries.filter((e) => e.status === 'ready');
+      // Copied by an earlier run whose source was kept. Running this command
+      // twice has to be safe, so these are reported and then join the delete
+      // offer rather than being refused as conflicts with themselves.
+      const alreadyCopied = entries.filter((e) => e.status === 'already-copied');
       const refused = entries.filter((e) => e.status === 'collision');
-      const untouched = entries.length - movable.length - refused.length;
+      const untouched = entries.length - movable.length - alreadyCopied.length - refused.length;
 
       const dryRun = Boolean(options.dryRun);
-      const keepSource = Boolean(options.keepSource);
-      const verb = keepSource ? 'copied' : 'moved';
       const failures: { entry: MigrationEntry; detail: string }[] = [];
+      const copied: MigrationEntry[] = [];
 
       for (const entry of movable) {
         if (dryRun) {
-          printMigration(chalk.cyan(keepSource ? 'would copy' : 'would move'), entry);
+          printMigration(chalk.cyan('would copy'), entry);
           continue;
         }
         try {
-          await applyLearningMigration(entry, { keepSource });
-          printMigration(chalk.green(verb), entry);
+          await applyLearningMigration(entry);
+          copied.push(entry);
+          printMigration(chalk.green('copied'), entry);
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           failures.push({ entry, detail });
@@ -401,11 +489,16 @@ export function createLearningsCommand(): Command {
         }
       }
 
+      for (const entry of alreadyCopied) {
+        printMigration(chalk.gray('already copied'), entry);
+        if (!dryRun) copied.push(entry);
+      }
+
       // Refused, never merged: two sets of corrections for one agent have no
       // authoritative order, and picking one silently would lose the other.
       for (const entry of refused) {
         printMigration(chalk.yellow('refused'), entry);
-        console.log(chalk.yellow('    the destination already holds learnings — inspect both, then delete one'));
+        console.log(chalk.yellow('    the destination already holds different learnings — inspect both, then delete one'));
       }
 
       // A corrections file whose agent file is gone. Listed, never touched: the
@@ -418,9 +511,9 @@ export function createLearningsCommand(): Command {
         console.log(chalk.gray('  Rename them back beside their agent to migrate, or delete them.'));
       }
 
-      const done = movable.length - failures.length;
       const summary = [
-        dryRun ? `${movable.length} to ${keepSource ? 'copy' : 'move'}` : `${done} ${verb}`,
+        dryRun ? `${movable.length} to copy` : `${copied.length - alreadyCopied.length} copied`,
+        ...(alreadyCopied.length > 0 ? [`${alreadyCopied.length} already copied`] : []),
         ...(refused.length > 0 ? [`${refused.length} refused`] : []),
         ...(failures.length > 0 ? [`${failures.length} failed`] : []),
         ...(untouched > 0 ? [`${untouched} with nothing to move`] : []),
@@ -428,11 +521,13 @@ export function createLearningsCommand(): Command {
       ].join(', ');
       console.log(`\n${summary}.`);
 
-      if (!dryRun && done > 0 && !keepSource) {
-        console.log(chalk.gray('Commit the deletions: git commit -am "chore: move learnings to the agentuse state dir"'));
-      }
+      // The copies are safe on disk; only now is deleting the originals on the
+      // table. Asked last and asked once, because the answer is the same for
+      // every file and nobody wants fifty prompts.
+      await offerToDeleteSources(copied, options);
+
       // Nothing to migrate is a fine outcome. A refusal or a failed write is not:
-      // in both cases corrections are still sitting where nothing will read them.
+      // in both cases learnings are still sitting where nothing will read them.
       if (refused.length > 0 || failures.length > 0) process.exitCode = 1;
     });
 

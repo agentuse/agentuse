@@ -1114,7 +1114,7 @@ Inspect and tidy an agent's stored learnings. Only the top few apply per run (10
 agentuse learnings <agent-file> [--json] [--path] [--edit]
 agentuse learnings tidy <agent-file> [--dry-run] [--model <model>]
 agentuse learnings undo <agent-file>
-agentuse learnings migrate [<agent-file>|--all] [--dry-run] [--keep-source]
+agentuse learnings migrate [<agent-file>|--all] [--dry-run] [--keep-source|--delete-source]
 ```
 
 ### Subcommands
@@ -1124,7 +1124,7 @@ agentuse learnings migrate [<agent-file>|--all] [--dry-run] [--keep-source]
 | *(none)* | List every learning by status: applied, never reaches the agent, in the agent file, retired. |
 | `tidy` | Merge near-duplicates, sharpen learnings you have repeated, retire what is superseded, and make proven learnings permanent in the agent file. Applies immediately, then shows both diffs. Keeps making passes until another one would not help, up to five, and writes both files once at the end, so one run is one undo. Says what it is doing as it goes: a long list takes a few minutes. If it ends still over the cap, it accounts for every learning it left in force. |
 | `undo` | Restore the learnings file **and** the agent file to their state before the last tidy-up. |
-| `migrate` | Move learnings written before v0.17.0 from beside the agent file into the AgentUse state directory. Moves by default; refuses a destination that already holds learnings rather than merging; also lists any `*.learnings.md` with no matching agent file as orphaned. |
+| `migrate` | Move learnings written before v0.17.0 from beside the agent file into the AgentUse state directory. Copies first, then asks once before deleting the originals; refuses a destination that already holds learnings rather than merging; also lists any `*.learnings.md` with no matching agent file as orphaned. |
 
 ### Options
 
@@ -1136,7 +1136,8 @@ agentuse learnings migrate [<agent-file>|--all] [--dry-run] [--keep-source]
 | `--dry-run` | (`tidy`) Show the plan and both diffs without writing anything. (`migrate`) Report what would move, including refusals, without writing anything. |
 | `--model <model>` | (`tidy`) Plan with this model instead of the agent's own. |
 | `--all` | (`migrate`) Every agent file in the project, not one named agent. |
-| `--keep-source` | (`migrate`) Copy instead of moving, leaving the old file in place. |
+| `--keep-source` | (`migrate`) Keep the old files without asking. |
+| `--delete-source` | (`migrate`) Delete the old files without asking. Required to delete anything when stdin is not a terminal — a non-interactive run never deletes on its own. |
 
 ### Examples
 
@@ -1165,7 +1166,7 @@ git commit -am "chore: move learnings to the agentuse state dir"
 </Note>
 
 <Warning>
-  Learnings no longer live beside your agent file. As of v0.17.0 they live under the AgentUse state directory, and the old location is never read. Run `agentuse learnings migrate --all` once per repo to move them, then commit the deletions. `migrate` exits non-zero if it refused any file.
+  Learnings no longer live beside your agent file. As of v0.17.0 they live under the AgentUse state directory, and the old location is never read. Run `agentuse learnings migrate --all` once per repo to copy them across; it will ask before removing the originals. `migrate` exits non-zero if it refused any file.
 </Warning>
 
 ---

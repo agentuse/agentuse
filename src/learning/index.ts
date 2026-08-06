@@ -277,8 +277,8 @@ export function describeLearningOutcome(o: {
   };
 }
 
-export { LearningStore, resolveLearningFilePath, generateLearningId } from './store';
-export { applyLearningMigration, findAgentFiles, findOrphanedLearningFiles, legacyLearningFilePath, planLearningMigration } from './migrate';
+export { LearningStore, resolveLearningFilePath, generateLearningId, strandedLearningsFile } from './store';
+export { applyLearningMigration, deleteMigrationSource, findAgentFiles, findOrphanedLearningFiles, legacyLearningFilePath, planLearningMigration } from './migrate';
 export type { MigrationEntry, MigrationStatus } from './migrate';
 export { MAX_INJECTED_LEARNINGS, activeLearnings, effectiveCap, learningSourceRank, partitionLearnings, rankLearnings } from './ranking';
 export { LEARNED_BLOCK_START, LEARNED_BLOCK_END, renderLearnedBlock, spliceLearnedBlock, writeLearnedBlock } from './graduate';

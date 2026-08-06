@@ -110,14 +110,18 @@ git commit -am "chore: move learnings to the agentuse state dir"
 ```
 
 ```
-agentuse learnings migrate [<agent-file>|--all] [--dry-run] [--keep-source]
+agentuse learnings migrate [<agent-file>|--all] [--dry-run] [--keep-source|--delete-source]
 ```
 
-Name one agent file, or pass `--all` to walk every `.agentuse` file under the project root. It moves by default; `--keep-source` copies instead, and `--dry-run` reports what would move without writing anything. It refuses rather than merges when the destination already holds learnings, and it lists any `*.learnings.md` with no agent file of that name as **orphaned, not migrated**. Those are usually left behind by a rename, and this is the only place they are ever mentioned.
+Name one agent file, or pass `--all` to walk every `.agentuse` file under the project root.
+
+**It copies first and asks before deleting anything.** Once the copies are on disk it lists the originals and asks once whether to remove them; anything other than an explicit yes leaves them alone. Deleting files out of your repository is not something a migration should do on its own, so the destructive half is always yours to confirm. `--delete-source` answers yes up front (for scripts and non-interactive shells, where nothing is ever deleted without it), `--keep-source` answers no, and `--dry-run` reports what would be copied without writing anything.
+
+It refuses rather than merges when the destination already holds learnings, and it lists any `*.learnings.md` with no agent file of that name as **orphaned, not migrated**. Those are usually left behind by a rename, and this is the only place they are ever mentioned.
 
 If you skip the migration, the agent simply starts with an empty learnings store. Graduated rules are unaffected. The old files sit inert until you delete them, which is itself the point: inert means they stop churning.
 
-A run that finds learnings stranded at the old location says so once, and so does `agentuse doctor`:
+A run that finds learnings stranded at the old location says so once, and so do `agentuse doctor` and the learnings panel in the serve web UI:
 
 ```
 learnings found at the old location for agents/blog/write.agentuse
@@ -125,7 +129,7 @@ learnings found at the old location for agents/blog/write.agentuse
   No longer read. Move them:  agentuse learnings migrate --all
 ```
 
-This reads only whether that file exists, never what is in it, so the agent behaves identically with or without it.
+This reads only whether that file exists, never what is in it, so the agent behaves identically with or without it. It keeps saying so even after the agent has captured new learnings into the new location — that is exactly when a populated panel makes a half-migrated agent look healthy.
 
 ## How Extraction Works
 
