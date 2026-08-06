@@ -6125,11 +6125,22 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   background: var(--line);
 }
 .ctx-mix-seg { display: block; min-width: 2px; background: var(--muted-2); }
-/* A wider break where the opening prompt ends and the run's own traffic
-   begins. One bar keeps the two halves comparable - which is the point, since
-   a bloated tool catalog and a chatty agent compete for the same window - but
-   they are fixed by different things, so the seam is worth seeing. */
-.ctx-mix-seg[data-boundary] { margin-left: 9px; }
+
+/* Two groups, each its own bar. A single row of eight segments was accurate
+   but not skimmable; split, each bar holds three to five and its legend fits
+   one line. The group totals carry the cross-group comparison the single bar
+   used to give. */
+.ctx-mix-group + .ctx-mix-group { margin-top: 16px; }
+.ctx-mix-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.ctx-mix-group-label { color: var(--muted-3); }
+.ctx-mix-group-total { color: var(--fg); font-variant-numeric: tabular-nums; }
 .ctx-mix-dot {
   width: 9px;
   height: 9px;

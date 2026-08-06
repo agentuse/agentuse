@@ -315,28 +315,35 @@ export default function SessionContext() {
     const total = [...totals.values()].reduce((a, b) => a + b, 0);
     if (total === 0) return [];
     const present = STACK_ORDER.filter((kind) => totals.has(kind));
-    // The two halves have different levers: the opening prompt is edited, what
-    // the run accumulated is changed by what the agent does. One bar keeps them
-    // comparable; a break marks where one ends.
-    const firstRun = present.find((kind) => RUN_KINDS.has(kind as RunKind));
-    return present.map((kind) => {
-      const tokens = totals.get(kind)!;
-      return {
-        kind,
-        tokens,
-        pct: (tokens / total) * 100,
-        run: RUN_KINDS.has(kind as RunKind),
-        boundary: kind === firstRun,
-      };
-    });
+
+    // Two groups rather than one long bar. They answer different questions -
+    // "is my prompt bloated" and "is my agent doing too much" - and are fixed
+    // by different things, so each gets its own bar, its own subtotal, and
+    // percentages of itself. Eight segments in one row was a lot to scan.
+    return [
+      { id: 'opening' as const, label: 'the prompt it opened with', run: false },
+      { id: 'run' as const, label: 'what the run added', run: true },
+    ]
+      .map((group) => {
+        const kinds = present.filter((k) => RUN_KINDS.has(k as RunKind) === group.run);
+        const tokens = kinds.reduce((sum, k) => sum + totals.get(k)!, 0);
+        return {
+          ...group,
+          tokens,
+          shareOfTotal: (tokens / total) * 100,
+          segments: kinds.map((kind) => ({
+            kind,
+            tokens: totals.get(kind)!,
+            // Of its own group: "tools are 79% of your prompt" is a more
+            // useful sentence than "79% of everything".
+            pct: (totals.get(kind)! / tokens) * 100,
+          })),
+        };
+      })
+      .filter((group) => group.tokens > 0);
   }, [context]);
 
-  const mixTotal = useMemo(() => mix.reduce((sum, s) => sum + s.tokens, 0), [mix]);
-  const openingTotal = useMemo(
-    () => mix.filter((s) => !s.run).reduce((sum, s) => sum + s.tokens, 0),
-    [mix]
-  );
-  const runTotal = mixTotal - openingTotal;
+  const mixTotal = useMemo(() => mix.reduce((sum, g) => sum + g.tokens, 0), [mix]);
   const toolCallTotal = useMemo(
     () => (context?.toolCalls ?? []).reduce((sum, s) => sum + s.count, 0),
     [context]
@@ -411,33 +418,42 @@ export default function SessionContext() {
                 <section class="ctx-mix" aria-label="Context window by input type">
                   <div class="ctx-mix-head">
                     <span class="ctx-mix-title">what fills the window</span>
-                    <span class="ctx-mix-total">
-                      ~{formatTokens(openingTotal)} opening
-                      {runTotal > 0 && <> · ~{formatTokens(runTotal)} added by the run</>}
-                    </span>
+                    <span class="ctx-mix-total">~{formatTokens(mixTotal)} tokens</span>
                   </div>
-                  <div class="ctx-mix-bar">
-                    {mix.map((seg) => (
-                      <span
-                        key={seg.kind}
-                        class="ctx-mix-seg"
-                        data-kind={seg.kind}
-                        {...(seg.boundary && openingTotal > 0 ? { 'data-boundary': 'true' } : {})}
-                        style={{ width: `${seg.pct}%` }}
-                        title={`${KIND_LABEL[seg.kind]}: ~${formatTokens(seg.tokens)} tokens, ${seg.pct.toFixed(1)}%`}
-                      ></span>
-                    ))}
-                  </div>
-                  <ul class="ctx-mix-legend">
-                    {mix.map((seg) => (
-                      <li key={seg.kind}>
-                        <span class="ctx-mix-dot" data-kind={seg.kind}></span>
-                        <span class="ctx-mix-name">{KIND_LABEL[seg.kind]}</span>
-                        <span class="ctx-mix-value">~{formatTokens(seg.tokens)}</span>
-                        <span class="ctx-mix-pct">{seg.pct.toFixed(0)}%</span>
-                      </li>
-                    ))}
-                  </ul>
+                  {mix.map((group) => (
+                    <div class="ctx-mix-group" key={group.id}>
+                      <div class="ctx-mix-group-head">
+                        <span class="ctx-mix-group-label">{group.label}</span>
+                        <span class="ctx-mix-group-total">
+                          ~{formatTokens(group.tokens)}
+                          <span class="ctx-mix-pct"> {group.shareOfTotal.toFixed(0)}%</span>
+                        </span>
+                      </div>
+                      {/* Each group's bar is full width, so a segment's length
+                          reads as its share of that group, not of the run. */}
+                      <div class="ctx-mix-bar">
+                        {group.segments.map((seg) => (
+                          <span
+                            key={seg.kind}
+                            class="ctx-mix-seg"
+                            data-kind={seg.kind}
+                            style={{ width: `${seg.pct}%` }}
+                            title={`${KIND_LABEL[seg.kind]}: ~${formatTokens(seg.tokens)} tokens, ${seg.pct.toFixed(1)}% of ${group.label}`}
+                          ></span>
+                        ))}
+                      </div>
+                      <ul class="ctx-mix-legend">
+                        {group.segments.map((seg) => (
+                          <li key={seg.kind}>
+                            <span class="ctx-mix-dot" data-kind={seg.kind}></span>
+                            <span class="ctx-mix-name">{KIND_LABEL[seg.kind]}</span>
+                            <span class="ctx-mix-value">~{formatTokens(seg.tokens)}</span>
+                            <span class="ctx-mix-pct">{seg.pct.toFixed(0)}%</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
                 </section>
               )}
               {/* The per-tool roll-up, moved here from the session view. Counted
