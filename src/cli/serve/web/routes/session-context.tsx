@@ -244,7 +244,7 @@ export default function SessionContext() {
       <Topbar currentPage="sessions" right={<span class="session-pill">context</span>} />
       <main>
         <a class="back-link" href={backHref} onClick={goBack}>Back to session</a>
-        {error && <div class="errors">Failed to load the context stack: {error.message}</div>}
+        {error && <div class="errors" role="alert">Failed to load the context stack: {error.message}</div>}
         {loading && !context && <Loading label="Loading context stack…" />}
         {context && (
           <>
@@ -294,6 +294,38 @@ export default function SessionContext() {
                   </div>
                 )}
               </div>
+              {/* Inside the header, directly under the meta table: the same slot
+                  and rhythm the session page gives its tool-call roll-up, so the
+                  two bands read as one block. */}
+              {mix.length > 0 && (
+                <section class="ctx-mix" aria-label="Context window by input type">
+                  <div class="ctx-mix-head">
+                    <span class="ctx-mix-title">what fills the window</span>
+                    <span class="ctx-mix-total">~{formatTokens(mixTotal)} tokens</span>
+                  </div>
+                  <div class="ctx-mix-bar">
+                    {mix.map((seg) => (
+                      <span
+                        key={seg.kind}
+                        class="ctx-mix-seg"
+                        data-kind={seg.kind}
+                        style={{ width: `${seg.pct}%` }}
+                        title={`${KIND_LABEL[seg.kind]}: ~${formatTokens(seg.tokens)} tokens, ${seg.pct.toFixed(1)}%`}
+                      ></span>
+                    ))}
+                  </div>
+                  <ul class="ctx-mix-legend">
+                    {mix.map((seg) => (
+                      <li key={seg.kind}>
+                        <span class="ctx-mix-dot" data-kind={seg.kind}></span>
+                        <span class="ctx-mix-name">{KIND_LABEL[seg.kind]}</span>
+                        <span class="ctx-mix-value">~{formatTokens(seg.tokens)}</span>
+                        <span class="ctx-mix-pct">{seg.pct.toFixed(0)}%</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
             </header>
 
             {context.compacted && (
@@ -303,36 +335,6 @@ export default function SessionContext() {
                 <em> opened</em> with; after a compaction the live window holds a summary instead of
                 the earlier turns.
               </div>
-            )}
-
-            {mix.length > 0 && (
-              <section class="ctx-mix" aria-label="Context window by input type">
-                <div class="ctx-mix-head">
-                  <span class="ctx-mix-title">what fills the window</span>
-                  <span class="ctx-mix-total">~{formatTokens(mixTotal)} tokens</span>
-                </div>
-                <div class="ctx-mix-bar">
-                  {mix.map((seg) => (
-                    <span
-                      key={seg.kind}
-                      class="ctx-mix-seg"
-                      data-kind={seg.kind}
-                      style={{ width: `${seg.pct}%` }}
-                      title={`${KIND_LABEL[seg.kind]}: ~${formatTokens(seg.tokens)} tokens, ${seg.pct.toFixed(1)}%`}
-                    ></span>
-                  ))}
-                </div>
-                <ul class="ctx-mix-legend">
-                  {mix.map((seg) => (
-                    <li key={seg.kind}>
-                      <span class="ctx-mix-dot" data-kind={seg.kind}></span>
-                      <span class="ctx-mix-name">{KIND_LABEL[seg.kind]}</span>
-                      <span class="ctx-mix-value">~{formatTokens(seg.tokens)}</span>
-                      <span class="ctx-mix-pct">{seg.pct.toFixed(0)}%</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
             )}
 
             <div class="section-title">

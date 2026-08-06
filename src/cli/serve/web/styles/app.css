@@ -866,7 +866,10 @@ a, button, select, summary, label, input, textarea,
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 1px;
   margin: 28px 0 0;
-  background: var(--line);
+  /* Page background, not the line colour: the hairlines are drawn by the cells
+     themselves (below), so an unfilled track on a partial last row simply shows
+     nothing instead of a block of grid colour. */
+  background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 10px;
   overflow: hidden;
@@ -874,15 +877,14 @@ a, button, select, summary, label, input, textarea,
 .page-approval-detail .meta .cell {
   background: var(--bg);
   padding: 14px 16px;
+  /* Each cell paints its own hairline into the surrounding 1px gap. Two
+     neighbours' rings land in the same gap and read as one line; the outermost
+     ring is clipped by the container's radius + overflow. */
+  box-shadow: 0 0 0 1px var(--line);
 }
-/* A meta field with no value renders an empty .cell. Collapse it so the grid's
-   line-colored track doesn't read as a faint shaded placeholder in a partial
-   last row; auto-fit reflows the remaining cells to fill the width. */
+/* A meta field with no value renders an empty .cell. Collapse it so an empty
+   box doesn't sit in the table; auto-fit reflows the rest to fill the width. */
 .page-approval-detail .meta .cell:empty { display: none; }
-/* A partial last row would otherwise expose the grid's line-colored background
-   in the unfilled tracks (no cell element exists there, so :empty can't help);
-   stretching the final cell to the row end keeps every track painted. */
-.page-approval-detail .meta .cell:last-child { grid-column-end: -1; }
 .page-approval-detail .meta .label {
   display: block;
   color: var(--muted);
@@ -3272,7 +3274,12 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .lede,
 .page-agents .lede,
 .page-schedules .lede,
-.page-stores .lede { margin: 0; color: var(--muted-3); font-family: var(--sans); font-size: 15px; }
+.page-stores .lede,
+/* The session shell was missing from this list, so a `.lede` on any page built
+   on it fell through to the body's mono 14px instead of the sans lede
+   treatment. session-detail itself uses `.prompt`, so adding it here changes
+   nothing that already ships. */
+.page-approval-detail .lede { margin: 0; color: var(--muted-3); font-family: var(--sans); font-size: 15px; }
 .page-home .panel,
 .page-agents .panel,
 .page-schedules .panel,
@@ -3361,6 +3368,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .empty,
 .page-schedules .empty,
 .page-stores .empty,
+.page-approval-detail .empty,
 .page-agent-detail .empty { padding: 18px; color: var(--muted); font-style: italic; }
 /* "Clear filter" escape hatch in the agents empty state. */
 .page-agents .empty .empty-action {
@@ -5025,7 +5033,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   text-underline-offset: 3px;
 }
 .page-sessions .empty .empty-action:hover { color: var(--cyan); }
-.page-sessions .errors {
+.page-sessions .errors,
+.page-approval-detail .errors {
   margin: 16px 0 0;
   padding: 12px 14px;
   border: 1px solid var(--red-border);
@@ -6042,23 +6051,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
    expensive" into something readable at a glance. */
 .session-action-button { text-decoration: none; }
 .page-session-context .lede { max-width: 68ch; }
-/* This page shows 4-6 meta fields, so it reliably lands on a partial last row.
-   The shared meta table paints its grid gaps with a line colour and relies on
-   the last cell reaching the end line to cover the unfilled tracks, which only
-   works when the row happens to be full. Separate bordered cards sidestep it
-   and match the layer cards below. */
-.page-session-context .meta {
-  background: none;
-  border: 0;
-  gap: 8px;
-  border-radius: 0;
-}
-.page-session-context .meta .cell {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-}
-.page-session-context .meta .cell:last-child { grid-column-end: auto; }
 .page-session-context .ctx-banner {
   margin-top: 14px;
   padding: 10px 14px;
@@ -6082,35 +6074,42 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   color: var(--muted);
 }
 
-/* The whole context window as one bar, rows of a kind summed. Sits above the
-   stack so the shape lands before the detail; segment order matches the list
-   below so a fat band can be traced to its rows. Colours stay in the four
-   origin families used throughout the page - where two kinds share a family
-   they step down in opacity, which keeps "blue means built-in" readable while
-   still separating the segments. */
-.ctx-mix { margin: 28px 0 26px; }
+/* The whole context window as one bar, rows of a kind summed. Sits directly
+   under the meta table in the slot the session page gives its tool-call
+   roll-up, and borrows that band's card treatment so the two pages read as one
+   product. Colours stay in the four origin families used throughout the page;
+   where two kinds share a family they step down in opacity, which keeps "blue
+   means built-in" legible while still separating the segments. */
+.ctx-mix {
+  margin: 10px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 14px 16px;
+}
 .ctx-mix-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
 }
-.ctx-mix-title {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.ctx-mix-title { color: var(--muted); font-size: 11px; letter-spacing: 0.06em; }
+.ctx-mix-title::before { content: "⋮ "; color: var(--cyan); opacity: 0.6; }
+.ctx-mix-total {
   color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
 }
-.ctx-mix-total { font-family: var(--mono); font-size: 12px; color: var(--muted-3); }
 .ctx-mix-bar {
   display: flex;
   gap: 2px;
-  height: 14px;
-  border-radius: 999px;
+  height: 8px;
+  border-radius: 4px;
   overflow: hidden;
-  background: var(--bar-bg);
+  background: var(--line);
 }
 .ctx-mix-seg { display: block; min-width: 2px; background: var(--muted-2); }
 .ctx-mix-dot {
@@ -6131,16 +6130,16 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 
 .ctx-mix-legend {
   list-style: none;
-  margin: 10px 0 0;
+  margin: 12px 0 0;
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 18px;
+  gap: 7px 18px;
 }
-.ctx-mix-legend li { display: flex; align-items: center; gap: 7px; font-size: 11.5px; }
+.ctx-mix-legend li { display: flex; align-items: baseline; gap: 7px; font-size: 12px; }
 .ctx-mix-name { color: var(--muted-3); }
-.ctx-mix-value { font-family: var(--mono); color: var(--fg); }
-.ctx-mix-pct { font-family: var(--mono); color: var(--muted); }
+.ctx-mix-value { color: var(--fg); font-variant-numeric: tabular-nums; }
+.ctx-mix-pct { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 
 .ctx-layers, .ctx-tools { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 /* The tool catalog is nested inside its own stack row, so it is inset and
@@ -6168,7 +6167,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   background: none;
   text-align: left;
   cursor: pointer;
-  font-family: var(--sans);
+  /* No font-family: the serve UI sets Geist Mono on the body and every data
+     surface (meta values, tool-stat names) inherits it. Declaring --sans here
+     only won on the non-button rows, so the list rendered in two faces. */
   color: inherit;
 }
 .ctx-layer-head { grid-template-columns: 22px 64px minmax(0, 1fr) 172px; }
@@ -6216,17 +6217,21 @@ button.ctx-layer-head:hover, .ctx-tool-head:hover { background: var(--panel-hove
 }
 .ctx-note { font-size: 11.5px; line-height: 1.45; color: var(--muted); }
 
-.ctx-weight { display: flex; align-items: center; gap: 10px; justify-self: end; width: 100%; }
-.ctx-track { flex: 1; height: 5px; border-radius: 999px; background: var(--bar-bg); overflow: hidden; }
-.ctx-bar { display: block; height: 100%; border-radius: 999px; background: var(--cyan); }
-.ctx-kind-skills .ctx-bar, .ctx-kind-learnings .ctx-bar, .ctx-kind-approval .ctx-bar { background: var(--amber); }
-.ctx-kind-system .ctx-bar, .ctx-kind-tools .ctx-bar { background: var(--chart-1); }
+.ctx-mix-dot { align-self: center; }
+
+/* Row bars carry magnitude only, in the one accent the session page uses for
+   its tool-call bars. Category is already said twice - by the chip and by the
+   segment colour above - and a third encoding just competes with the
+   distribution bar for the eye. */
+.ctx-weight { display: flex; align-items: center; gap: 12px; justify-self: end; width: 100%; }
+.ctx-track { flex: 1; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.ctx-bar { display: block; height: 100%; border-radius: 4px; background: var(--cyan); opacity: 0.75; }
 .ctx-tokens {
   min-width: 52px;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--muted-3);
+  font-size: 13px;
+  color: var(--fg);
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .ctx-text {
@@ -6265,7 +6270,6 @@ button.ctx-layer-head:hover, .ctx-tool-head:hover { background: var(--panel-hove
   font-size: 10px;
 }
 .ctx-kind-file .ctx-kind { color: var(--chart-5); border-color: var(--chart-5); }
-.ctx-kind-file .ctx-bar { background: var(--chart-5); }
 
 .ctx-tool-name { font-family: var(--mono); font-size: 12px; color: var(--fg); }
 .ctx-tool-desc {
