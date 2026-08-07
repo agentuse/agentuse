@@ -369,15 +369,20 @@ export function buildRunTraffic(parts: Part[]): {
     };
 
     if (part.state.status === 'error') {
-      // A failed call still costs its arguments and an error string, but it
-      // returns no result text - so it is worth seeing, and adds no chars.
+      // Rehydration emits both the assistant's call and a synthetic tool result
+      // carrying this error, so both are in the next model window.
+      outputChars += JSON.stringify(part.state.input ?? '').length;
+      const chars = JSON.stringify({ success: false, error: part.state.error }).length;
       stat.failed += 1;
-      detail('failed', 0);
+      stat.chars += chars;
+      stat.estTokens = estimateTokens(stat.chars);
+      detail('failed', chars);
       continue;
     }
     if (part.state.status !== 'completed') {
       // Running, or parked on a gate. Its arguments are already in the window,
       // but there is no result yet.
+      outputChars += JSON.stringify(part.state.input ?? '').length;
       stat.pending += 1;
       detail('pending', 0);
       continue;

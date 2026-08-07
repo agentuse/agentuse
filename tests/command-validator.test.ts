@@ -41,6 +41,16 @@ describe('CommandValidator', () => {
       expect(result.allowed).toBe(true);
     });
 
+    test('multi-word patterns are positional prefixes, not argv subsequences', async () => {
+      const validator = new CommandValidator(['npm run *'], projectRoot);
+      const result = await validator.validate(
+        'npm --prefix /tmp/untrusted-package run pwn'
+      );
+
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('not in allowlist');
+    });
+
     test('blocks commands not in allowlist', async () => {
       const validator = new CommandValidator(['git status'], projectRoot);
       const result = await validator.validate('git push origin main');

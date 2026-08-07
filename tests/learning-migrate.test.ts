@@ -6,6 +6,7 @@ import { tmpdir } from 'os';
 import { PassThrough } from 'stream';
 import { createLearningsCommand } from '../src/cli/learnings';
 import {
+  applyLearningMigration,
   deleteMigrationSource,
   findAgentFiles,
   findOrphanedLearningFiles,
@@ -140,6 +141,42 @@ describe('agentuse learnings migrate', () => {
     expect(output).toContain('still in place and no longer read');
     expect(output).toContain('--delete-source');
     expect(process.exitCode).toBeFalsy();
+  });
+
+  it('recovers the removed learning.file source without parsing the old schema', async () => {
+    const { agent, legacy, destination } = await writeAgent('agents/custom.agentuse');
+    const custom = join(projectDir, 'history', 'custom-corrections.md');
+    await mkdir(dirname(custom), { recursive: true });
+    await writeFile(agent, `---\nmodel: demo:test\nlearning:\n  capture: true\n  file: ../history/custom-corrections.md\n---\n\n# Agent\n`);
+    await writeFile(custom, 'custom-path corrections\n');
+
+    const [entry] = await planLearningMigration([agent], projectDir);
+
+    expect(entry?.from).toBe(custom);
+    expect(entry?.status).toBe('ready');
+    await applyLearningMigration(entry!);
+    expect(await readFile(destination, 'utf-8')).toBe('custom-path corrections\n');
+    expect(existsSync(legacy)).toBe(false);
+  });
+
+  it('refuses a stale plan when the source changes before copy', async () => {
+    const { agent, legacy, destination } = await writeAgent('agents/blog.agentuse', 'planned\n');
+    const [entry] = await planLearningMigration([agent], projectDir);
+    await writeFile(legacy, 'changed later\n');
+
+    await expect(applyLearningMigration(entry!)).rejects.toThrow('source changed');
+    expect(existsSync(destination)).toBe(false);
+    expect(await readFile(legacy, 'utf-8')).toBe('changed later\n');
+  });
+
+  it('will not delete a source when the destination is merely non-empty', async () => {
+    const { agent, legacy, destination } = await writeAgent('agents/blog.agentuse', 'source\n');
+    const [entry] = await planLearningMigration([agent], projectDir);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, 'different\n');
+
+    await expect(deleteMigrationSource(entry!)).rejects.toThrow('not an exact copy');
+    expect(await readFile(legacy, 'utf-8')).toBe('source\n');
   });
 
   it('keeps the original without asking under --keep-source', async () => {

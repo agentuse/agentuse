@@ -63,6 +63,7 @@ import {
 // The context payload is elaborate enough that a hand-kept local copy (as the
 // older session types above are) would drift from the page that consumes it.
 import type { SessionContextPayload } from "./serve/types";
+import { startOrphanReconcileLoop } from "./serve/orphan-reconcile";
 
 const APPROVAL_LIST_SSE_INTERVAL_MS = 10_000;
 const SESSION_LIST_SSE_INTERVAL_MS = 10_000;
@@ -1052,6 +1053,11 @@ class AgentWorker {
     return this.activeRuns.size;
   }
 
+  /** Every request whose worker response has not settled yet, runs included. */
+  activeRequestCount(): number {
+    return this.pendingRequests.size;
+  }
+
   /**
    * Cut the worker loose instead of killing it: it finishes the runs it already
    * has, writes them to storage exactly as it would have, and exits on its own.
@@ -1107,6 +1113,7 @@ class AgentWorker {
     if (!shouldRecycleWorker({
       rssBytes,
       activeRuns: this.activeRuns.size,
+      activeRequests: this.pendingRequests.size,
       ageMs: Date.now() - this.spawnedAt,
     })) return false;
     const rssMb = (rssBytes ?? 0) / (1024 * 1024);
@@ -1196,6 +1203,7 @@ const WORKER_RECYCLE_MIN_AGE_MS = 2 * 60 * 1000;
 function shouldRecycleWorker(state: {
   rssBytes: number | undefined;
   activeRuns: number;
+  activeRequests?: number;
   ageMs: number;
   thresholdMb?: number;
   minAgeMs?: number;
@@ -1204,6 +1212,7 @@ function shouldRecycleWorker(state: {
   if (thresholdMb <= 0) return false;                       // disabled
   if (state.rssBytes === undefined) return false;           // worker did not report
   if (state.activeRuns > 0) return false;                   // busy; try again next settle
+  if ((state.activeRequests ?? 0) > 0) return false;         // another RPC still needs this worker
   if (state.ageMs < (state.minAgeMs ?? WORKER_RECYCLE_MIN_AGE_MS)) return false;  // too young
   return state.rssBytes / (1024 * 1024) >= thresholdMb;
 }
@@ -1446,6 +1455,25 @@ type SessionMockFilter = 'exclude' | 'include' | 'only';
 
 function parseSessionMockFilter(value: string | undefined): SessionMockFilter {
   return value === 'include' || value === 'only' ? value : 'exclude';
+}
+
+/** Every filter captured by the first SSE subscriber must partition the hub. */
+function sessionListStreamKey(requestUrl: URL): string {
+  return [
+    'sessions',
+    requestUrl.searchParams.get('window') ?? '',
+    requestUrl.searchParams.get('days') ?? '',
+    requestUrl.searchParams.get('hours') ?? '',
+    requestUrl.searchParams.get('status') ?? '',
+    requestUrl.searchParams.get('triage') ?? '',
+    requestUrl.searchParams.get('trigger') ?? '',
+    requestUrl.searchParams.get('agent') ?? '',
+    requestUrl.searchParams.get('approval') ?? '',
+    requestUrl.searchParams.get('mock') ?? '',
+    requestUrl.searchParams.get('detail') ?? '',
+    requestUrl.searchParams.get('limit') ?? '',
+    requestUrl.searchParams.get('cursor') ?? '',
+  ].join(':');
 }
 
 /**
@@ -2347,6 +2375,14 @@ function validateApiKey(req: IncomingMessage, expectedKey: string | undefined): 
   return validateApiKeyHeader(req.headers.authorization, expectedKey);
 }
 
+/** A session capability can review a run, but only an operator may rewrite its agent file. */
+function sessionLearningTidyAllowed(
+  authorization: string | undefined,
+  apiKey: string | undefined,
+): boolean {
+  return validateApiKeyHeader(authorization, apiKey);
+}
+
 function isSessionCapabilityAuthorized(options: {
   authorization?: string | undefined;
   sessionToken?: string | undefined;
@@ -2657,37 +2693,53 @@ export function createServeCommand(): Command {
       // .env / .env.local on each execute request, so per-project env stays
       // isolated from the parent process and from sibling projects.
       const workers = new Map<string, AgentWorker>();
+      const activeCascadeRecoveries = new Set<string>();
       // Recover sessions a dead worker left stuck 'running' with no live process.
-      // cutoff = the reconciling worker's ready time, so only sessions last touched
-      // before this worker existed (provably orphaned) are flipped; work this live
-      // worker owns is newer and untouched. Best-effort; never blocks startup.
-      const reconcileWorkerOrphans = (worker: AgentWorker, projectId: string, projectRoot: string, readyAt: number): void => {
-        void worker.reconcileOrphans(projectRoot, readyAt).then((r) => {
-          if (!r.success || r.reconciled.length === 0) return;
-          const finishable = r.reconciled.filter((o) => o.reason === 'finishable');
-          const stranded = r.reconciled.filter((o) => o.reason === 'stranded').length;
-          const interrupted = r.reconciled.length - finishable.length - stranded;
-          if (interrupted > 0) {
-            logger.warn(`Recovered ${interrupted} interrupted session(s) in ${projectId} (stuck 'running' after a worker restart)`);
-          }
-          if (stranded > 0) {
-            logger.warn(`Ended ${stranded} stranded session(s) in ${projectId} (parked on a delegated sub-agent that had already ended)`);
-          }
-          // A restart killed the worker between a delegated child finishing and
-          // its manager being resumed. The child's result is durable, so finish
-          // the chain instead of orphaning it (issue #199).
-          for (const orphan of finishable) {
-            logger.warn(`Resuming ${orphan.agentName} (${orphan.sessionId}) in ${projectId}: its delegated sub-agent finished, folding the result in`);
-            void worker.finishCascade(projectRoot, orphan.sessionId).then((res) => {
-              if (!res.success) {
-                logger.warn(`Cascade finish for ${orphan.sessionId} failed: ${res.error.message}`);
-              } else {
-                logger.info(`Cascade finished for ${orphan.agentName} (${orphan.sessionId})`);
-              }
-            }).catch(() => {/* best-effort recovery */});
-          }
-        }).catch(() => {/* best-effort recovery */});
+      // A replacement's first pass intentionally skips released predecessors
+      // that are still alive. Keep sweeping so a predecessor that dies later is
+      // reconciled without requiring another daemon restart.
+      const reconcileWorkerOrphans = async (worker: AgentWorker, projectId: string, projectRoot: string, cutoff: number): Promise<void> => {
+        const r = await worker.reconcileOrphans(projectRoot, cutoff);
+        if (!r.success || r.reconciled.length === 0) return;
+        const finishable = r.reconciled.filter((o) => o.reason === 'finishable');
+        const stranded = r.reconciled.filter((o) => o.reason === 'stranded').length;
+        const interrupted = r.reconciled.length - finishable.length - stranded;
+        if (interrupted > 0) {
+          logger.warn(`Recovered ${interrupted} interrupted session(s) in ${projectId} (stuck 'running' after a worker restart)`);
+        }
+        if (stranded > 0) {
+          logger.warn(`Ended ${stranded} stranded session(s) in ${projectId} (parked on a delegated sub-agent that had already ended)`);
+        }
+        // A restart killed the worker between a delegated child finishing and
+        // its manager being resumed. The child's result is durable, so finish
+        // the chain instead of orphaning it (issue #199). Keep one local driver;
+        // the worker's durable claim arbitrates with other daemon processes.
+        for (const orphan of finishable) {
+          const recoveryKey = `${projectId}:${orphan.sessionId}`;
+          if (activeCascadeRecoveries.has(recoveryKey)) continue;
+          activeCascadeRecoveries.add(recoveryKey);
+          logger.warn(`Resuming ${orphan.agentName} (${orphan.sessionId}) in ${projectId}: its delegated sub-agent finished, folding the result in`);
+          void worker.finishCascade(projectRoot, orphan.sessionId).then((res) => {
+            if (!res.success) {
+              logger.warn(`Cascade finish for ${orphan.sessionId} failed: ${res.error.message}`);
+            } else {
+              logger.info(`Cascade finished for ${orphan.agentName} (${orphan.sessionId})`);
+            }
+          }).catch(() => {/* best-effort recovery */}).finally(() => {
+            activeCascadeRecoveries.delete(recoveryKey);
+          });
+        }
       };
+      const orphanReconcileLoop = startOrphanReconcileLoop(async () => {
+        const cutoff = Date.now();
+        await Promise.all(projectSeeds.map(async (project) => {
+          const worker = workers.get(project.id);
+          if (!worker?.isReady()) return;
+          await reconcileWorkerOrphans(worker, project.id, project.root, cutoff);
+        }));
+      }, {
+        onError: (error) => logger.debug(`Orphan reconciliation failed: ${(error as Error).message}`),
+      });
       for (const p of projectSeeds) {
         const w = new AgentWorker({
           AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
@@ -2701,10 +2753,11 @@ export function createServeCommand(): Command {
           process.exit(1);
         }
         workers.set(p.id, w);
-        // Sweep once for this fresh startup worker, and again on every respawn.
-        reconcileWorkerOrphans(w, p.id, p.root, Date.now());
-        w.onReady = (readyAt) => reconcileWorkerOrphans(w, p.id, p.root, readyAt);
+        // Respawns request an immediate pass; overlapping requests collapse into
+        // one trailing sweep in the loop coordinator.
+        w.onReady = () => orphanReconcileLoop.runNow();
       }
+      orphanReconcileLoop.runNow();
       logger.debug(`Spawned ${workers.size} agent worker(s)`);
 
       // Execution stats tracking
@@ -4760,20 +4813,7 @@ export function createServeCommand(): Command {
           // every param that shapes the payload must be part of the key —
           // including limit/cursor, or a limitless Home subscriber would share
           // (and be truncated by) a limit-50 sessions-list snapshot.
-          const streamKey = [
-            'sessions',
-            requestUrl.searchParams.get('window') ?? '',
-            requestUrl.searchParams.get('days') ?? '',
-            requestUrl.searchParams.get('hours') ?? '',
-            requestUrl.searchParams.get('status') ?? '',
-            requestUrl.searchParams.get('triage') ?? '',
-            requestUrl.searchParams.get('trigger') ?? '',
-            requestUrl.searchParams.get('agent') ?? '',
-            requestUrl.searchParams.get('approval') ?? '',
-            requestUrl.searchParams.get('detail') ?? '',
-            requestUrl.searchParams.get('limit') ?? '',
-            requestUrl.searchParams.get('cursor') ?? ''
-          ].join(':');
+          const streamKey = sessionListStreamKey(requestUrl);
           const poll: import("./serve/sse").ApprovalListPoll<SessionsPayload> = async () => {
             const result = await buildSessionsPayload(requestUrl);
             return result.success
@@ -5402,13 +5442,14 @@ export function createServeCommand(): Command {
           project: Project,
           resolved: NonNullable<Awaited<ReturnType<typeof resolveSessionLearningStore>>>,
           sessionId: string,
+          allowTidy: boolean,
         ) =>
           learningListPayload(resolved.store, {
             forSessionId: sessionId,
             config: resolved.config,
             stateRoot: resolveProjectContext(dirname(resolved.filePath), { agentFilePath: resolved.filePath }).stateRoot,
             agentFilePath: resolved.filePath,
-            tidyTarget: sessionTidyTarget(project, resolved.filePath),
+            ...(allowTidy ? { tidyTarget: sessionTidyTarget(project, resolved.filePath) } : {}),
           });
 
         // GET /sessions/:id/learnings: list the learnings captured in this session.
@@ -5428,8 +5469,9 @@ export function createServeCommand(): Command {
               return;
             }
             const resolved = await resolveSessionLearningStore(found.info);
+            const allowTidy = sessionLearningTidyAllowed(req.headers.authorization, apiKey);
             sendJSON(res, 200, resolved
-              ? await sessionLearningPayload(found.project, resolved, sessionId)
+              ? await sessionLearningPayload(found.project, resolved, sessionId, allowTidy)
               : { success: true, learnings: [] });
           } catch (err) {
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
@@ -5474,8 +5516,9 @@ export function createServeCommand(): Command {
             // that dropped the tidy target would take the button away at the
             // moment it started to matter.
             const resolved = await resolveSessionLearningStore(found.info);
+            const allowTidy = sessionLearningTidyAllowed(req.headers.authorization, apiKey);
             sendJSON(res, 200, resolved
-              ? await sessionLearningPayload(found.project, resolved, sessionId)
+              ? await sessionLearningPayload(found.project, resolved, sessionId, allowTidy)
               : { success: true, learnings: [] });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
@@ -5504,8 +5547,9 @@ export function createServeCommand(): Command {
             }
             const resolved = await resolveSessionLearningStore(found.info);
             if (resolved) await resolved.store.remove(learningId);
+            const allowTidy = sessionLearningTidyAllowed(req.headers.authorization, apiKey);
             sendJSON(res, 200, resolved
-              ? await sessionLearningPayload(found.project, resolved, sessionId)
+              ? await sessionLearningPayload(found.project, resolved, sessionId, allowTidy)
               : { success: true, learnings: [] });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
@@ -6757,6 +6801,10 @@ export function createServeCommand(): Command {
       const shutdown = async () => {
         console.log("\nShutting down...");
 
+        // Do not enqueue another maintenance RPC while workers are being cut
+        // loose; any pass already in flight is included in activeRequestCount.
+        orphanReconcileLoop.stop();
+
         // Decide the fate of the workers FIRST, before any awaits. A supervisor
         // gives us its own grace period and then SIGKILLs -- pm2 defaults to
         // 1.6s -- so anything queued behind a drain or a socket teardown may
@@ -6764,18 +6812,21 @@ export function createServeCommand(): Command {
         // write per worker, so it always fits.
         let releasedWorkers = 0;
         let releasedRuns = 0;
+        let releasedRequests = 0;
         const releaseEnabled = process.env.AGENTUSE_RELEASE_WORKERS !== "0";
         for (const w of workers.values()) {
           const runs = w.activeRunCount();
-          if (releaseEnabled && runs > 0 && w.release()) {
+          const requests = w.activeRequestCount();
+          if (releaseEnabled && requests > 0 && w.release()) {
             releasedWorkers += 1;
             releasedRuns += runs;
+            releasedRequests += requests;
             continue;
           }
           w.shutdown();
         }
         if (releasedWorkers > 0) {
-          logger.info(`Released ${releasedWorkers} worker(s) still running ${releasedRuns} agent(s) — they finish on their own and their results land as usual. Restarting now will not interrupt them.`);
+          logger.info(`Released ${releasedWorkers} worker(s) with ${releasedRequests} request(s) still draining (${releasedRuns} agent run(s)) — they finish on their own and their results land as usual.`);
         }
 
         // Unregister from process registry and release per-project scheduler locks
@@ -6800,7 +6851,7 @@ export function createServeCommand(): Command {
         // the daemon-side promise tracking it will never settle here and waiting
         // on it would only burn the window. Drain what stayed behind: the tail
         // of work that runs in THIS process after the worker has replied.
-        if (releasedWorkers === 0) {
+        if (releasedRuns === 0) {
           const inflight = [...activeApprovalResumes.values(), ...activeSessionContinuations.values()];
           if (inflight.length > 0) {
             logger.info(`Draining ${inflight.length} in-flight resume/continuation(s) before shutdown (up to ${SHUTDOWN_DRAIN_MS}ms)...`);
@@ -7282,4 +7333,6 @@ export const __testing = {
   sessionMatchesStatusFilter,
   parseSessionMockFilter,
   sessionMatchesMockFilter,
+  sessionListStreamKey,
+  sessionLearningTidyAllowed,
 };

@@ -1,6 +1,7 @@
-import { readFile, writeFile, access } from 'fs/promises';
+import { readFile, access } from 'fs/promises';
 import { constants } from 'fs';
 import type { Learning } from './types';
+import { atomicWriteFile } from '../utils/atomic-write';
 
 /**
  * Graduation: moving a proven correction out of the learnings file and into the
@@ -92,6 +93,6 @@ export async function writeLearnedBlock(
   const before = await readFile(agentFilePath, 'utf-8');
   const after = spliceLearnedBlock(before, learnings);
   if (after === before) return { before, after, changed: false };
-  await writeFile(agentFilePath, after, 'utf-8');
+  await atomicWriteFile(agentFilePath, after);
   return { before, after, changed: true };
 }

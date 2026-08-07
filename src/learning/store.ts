@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname, resolve, relative, basename, isAbsolute } from 'path';
 import { randomUUID, createHash } from 'crypto';
@@ -7,14 +7,18 @@ import { learningSourceRank } from './ranking';
 import { getProjectDirSync, sanitizeAgentName } from '../storage/paths';
 import { computeAgentId } from '../utils/agent-id';
 import { logger } from '../utils/logger';
+import { withOwnershipLock } from '../utils/ownership-lock';
+import { atomicWriteFile } from '../utils/atomic-write';
 
 // Serialize read-modify-write sequences on the same learnings file so two
 // concurrent saves (e.g. two serve approval decisions on the same agent) can't
-// clobber each other. Intra-process only; cross-process races remain rare.
+// clobber each other. The promise chain orders callers in this process; the
+// ownership lock orders the runner, serve daemon, and CLI across processes.
 const fileLocks = new Map<string, Promise<unknown>>();
-async function withFileLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+export async function withLearningFileLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = fileLocks.get(key) ?? Promise.resolve();
-  const run = prev.then(fn, fn); // run fn once, after prev settles either way
+  const locked = () => withOwnershipLock(`${key}.lock`, fn, { label: 'learnings' });
+  const run = prev.then(locked, locked); // run fn once, after prev settles either way
   fileLocks.set(key, run.then(() => {}, () => {}));
   return run;
 }
@@ -254,7 +258,7 @@ export class LearningStore {
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true });
     }
-    await writeFile(this.filePath, this.render(learnings), 'utf-8');
+    await atomicWriteFile(this.filePath, this.render(learnings));
   }
 
   /** The exact file contents a given set would be saved as. Lets the tidy-up
@@ -264,7 +268,7 @@ export class LearningStore {
   }
 
   async add(newLearnings: Learning[]): Promise<void> {
-    await withFileLock(this.filePath, async () => {
+    await withLearningFileLock(this.filePath, async () => {
       const existing = await this.load();
       const toAdd = newLearnings.filter(n =>
         !existing.some(e => this.similar(e.instruction, n.instruction))
@@ -311,7 +315,7 @@ export class LearningStore {
   async addOrEscalate(
     incoming: Learning[],
   ): Promise<{ inserted: Learning[]; escalated: Learning[]; alreadyGraduated: Learning[] }> {
-    return withFileLock(this.filePath, async () => {
+    return withLearningFileLock(this.filePath, async () => {
       const existing = await this.load();
       const inserted: Learning[] = [];
       const escalated: Learning[] = [];
@@ -381,7 +385,7 @@ export class LearningStore {
    * @returns the ids that actually changed state
    */
   async setState(ids: string[], state: LearningState): Promise<string[]> {
-    return withFileLock(this.filePath, async () => {
+    return withLearningFileLock(this.filePath, async () => {
       const learnings = await this.load();
       const wanted = new Set(ids);
       const changed: string[] = [];
@@ -406,7 +410,7 @@ export class LearningStore {
    */
   async recordApprovedRun(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
-    await withFileLock(this.filePath, async () => {
+    await withLearningFileLock(this.filePath, async () => {
       const learnings = await this.load();
       let changed = false;
       for (const l of learnings) {
@@ -430,7 +434,7 @@ export class LearningStore {
    * copy that is actually in force.
    */
   async upsertManual(draft: Learning): Promise<{ upgraded: boolean; graduated: boolean }> {
-    return withFileLock(this.filePath, async () => {
+    return withLearningFileLock(this.filePath, async () => {
       const existing = await this.load();
       const idx = existing.findIndex(e => this.similar(e.instruction, draft.instruction));
       if (idx >= 0) {
@@ -469,7 +473,7 @@ export class LearningStore {
   }
 
   async incrementApplied(ids: string[]): Promise<void> {
-    await withFileLock(this.filePath, async () => {
+    await withLearningFileLock(this.filePath, async () => {
       const learnings = await this.load();
       let changed = false;
       for (const l of learnings) {
@@ -486,7 +490,7 @@ export class LearningStore {
 
   /** Remove a learning by id. Returns whether anything was removed. */
   async remove(id: string): Promise<boolean> {
-    return withFileLock(this.filePath, async () => {
+    return withLearningFileLock(this.filePath, async () => {
       const learnings = await this.load();
       const next = learnings.filter((l) => l.id !== id);
       if (next.length === learnings.length) return false;

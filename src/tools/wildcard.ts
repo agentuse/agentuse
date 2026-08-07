@@ -86,21 +86,37 @@ export function matchStructured(
  * Handles wildcards in argument patterns
  */
 function matchSequence(items: string[], patterns: string[]): boolean {
-  if (patterns.length === 0) return true;
+  const memo = new Map<string, boolean>();
 
-  const [pattern, ...rest] = patterns;
+  const visit = (itemIndex: number, patternIndex: number): boolean => {
+    // Patterns intentionally match a prefix; trailing argv entries are allowed.
+    if (patternIndex >= patterns.length) return true;
 
-  // * wildcard matches any number of items (including zero)
-  if (pattern === '*') {
-    return matchSequence(items, rest);
-  }
+    const key = `${itemIndex}:${patternIndex}`;
+    const cached = memo.get(key);
+    if (cached !== undefined) return cached;
 
-  // Try to match pattern against each item
-  for (let i = 0; i < items.length; i++) {
-    if (match(items[i], pattern) && matchSequence(items.slice(i + 1), rest)) {
-      return true;
+    const pattern = patterns[patternIndex];
+    let result: boolean;
+
+    // A standalone * spans any number of argv items (including zero), retaining
+    // patterns such as `curl * https://example.test/*`. Memoization keeps
+    // multiple stars linear in the number of item/pattern states.
+    if (pattern === '*') {
+      result = visit(itemIndex, patternIndex + 1)
+        || (itemIndex < items.length && visit(itemIndex + 1, patternIndex));
+    } else {
+      // Literal/wildcard-bearing argument patterns are positional. Searching
+      // later argv entries widened `npm run *` to include
+      // `npm --prefix /outside run ...`.
+      result = itemIndex < items.length
+        && match(items[itemIndex], pattern)
+        && visit(itemIndex + 1, patternIndex + 1);
     }
-  }
 
-  return false;
+    memo.set(key, result);
+    return result;
+  };
+
+  return visit(0, 0);
 }

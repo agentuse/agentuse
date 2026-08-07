@@ -251,6 +251,69 @@ describe("wrapToolsWithGatedMock", () => {
     expect(completeTextMock).toHaveBeenCalledTimes(1);
   });
 
+  it("mocks the entire call when a later compound command is gated", async () => {
+    const real = mock(() => {
+      throw new Error("a compound call containing a gated command must not execute for real");
+    });
+    completeTextMock.mockImplementation(async () => "fabricated");
+    const wrapped = mod.wrapToolsWithGatedMock({ tools__bash: fakeTool(real) }, GATED);
+
+    const result = await (wrapped.tools__bash as any).execute(
+      { command: "echo ok; birdc reply 123 ok" },
+      {},
+    );
+
+    expect(result).toStartWith("fabricated");
+    expect(result).toContain("[mock] This command was NOT executed");
+    expect(real).toHaveBeenCalledTimes(0);
+    expect(completeTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat gated-looking text in an inert quoted here-doc as executable", async () => {
+    const real = mock(() => "real-output");
+    const wrapped = mod.wrapToolsWithGatedMock({ tools__bash: fakeTool(real) }, GATED);
+
+    const result = await (wrapped.tools__bash as any).execute(
+      { command: "node <<'EOF'\nbirdc reply 123 ok\nEOF" },
+      {},
+    );
+
+    expect(result).toBe("real-output");
+    expect(real).toHaveBeenCalledTimes(1);
+    expect(completeTextMock).toHaveBeenCalledTimes(0);
+  });
+
+  it("does not treat gated-looking text in a quoted here-string as executable", async () => {
+    const real = mock(() => "real-output");
+    const wrapped = mod.wrapToolsWithGatedMock({ tools__bash: fakeTool(real) }, GATED);
+
+    const result = await (wrapped.tools__bash as any).execute(
+      { command: "node <<< 'birdc reply 123 ok'" },
+      {},
+    );
+
+    expect(result).toBe("real-output");
+    expect(real).toHaveBeenCalledTimes(1);
+    expect(completeTextMock).toHaveBeenCalledTimes(0);
+  });
+
+  it("mocks an executable gated command substitution inside an unquoted here-doc", async () => {
+    const real = mock(() => {
+      throw new Error("an expanded gated command must not execute for real");
+    });
+    completeTextMock.mockImplementation(async () => "fabricated");
+    const wrapped = mod.wrapToolsWithGatedMock({ tools__bash: fakeTool(real) }, GATED);
+
+    const result = await (wrapped.tools__bash as any).execute(
+      { command: "node <<EOF\n$(birdc reply 123 ok)\nEOF" },
+      {},
+    );
+
+    expect(result).toStartWith("fabricated");
+    expect(real).toHaveBeenCalledTimes(0);
+    expect(completeTextMock).toHaveBeenCalledTimes(1);
+  });
+
   it("runs non-gated bash commands for real with no LLM call", async () => {
     const real = mock(() => "real-output");
     const wrapped = mod.wrapToolsWithGatedMock({ tools__bash: fakeTool(real) }, GATED);

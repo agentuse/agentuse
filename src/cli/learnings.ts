@@ -401,9 +401,15 @@ export function createLearningsCommand(): Command {
     .description('Restore both files to their state before the last tidy-up')
     .argument('<agent-file>', 'Path to the .agentuse file')
     .action(async (agentFileArg: string) => {
-      const loaded = await loadAgent(agentFileArg);
-      if (!loaded) return;
-      const { agentFilePath, stateRoot } = loaded;
+      // Undo is the recovery path for a failed rewrite, so it must not require
+      // the file it is about to restore to parse successfully.
+      const agentFilePath = resolve(process.cwd(), agentFileArg);
+      if (!existsSync(agentFilePath)) {
+        console.error(chalk.red(`Agent file not found: ${agentFilePath}`));
+        process.exitCode = 1;
+        return;
+      }
+      const { stateRoot } = resolveProjectContext(process.cwd(), { agentFilePath });
 
       const restored = await undoConsolidation(stateRoot, agentFilePath);
       if (!restored) {

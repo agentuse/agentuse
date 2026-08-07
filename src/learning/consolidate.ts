@@ -1,16 +1,18 @@
-import { readFile, writeFile, mkdir, readdir, unlink } from 'fs/promises';
+import { readFile, mkdir, readdir, unlink } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname, basename, relative, isAbsolute } from 'path';
 import { createHash } from 'crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { completeText } from '../complete-text';
 import { logger } from '../utils/logger';
 import { unifiedDiff } from '../utils/diff';
 import { getProjectDirSync } from '../storage/paths';
 import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic';
-import { LearningStore } from './store';
+import { LearningStore, withLearningFileLock } from './store';
 import { activeLearnings, effectiveCap, rankLearnings } from './ranking';
-import { agentFileIsWritable, writeLearnedBlock, spliceLearnedBlock } from './graduate';
+import { agentFileIsWritable, spliceLearnedBlock } from './graduate';
 import type { Learning, LearningCategory, LearningConfig } from './types';
+import { atomicWriteFile } from '../utils/atomic-write';
 
 /**
  * The tidy-up pass: bring an agent's stored corrections back under the per-run
@@ -564,7 +566,7 @@ async function listSnapshots(dir: string): Promise<string[]> {
 async function writeSnapshot(stateRoot: string, agentFilePath: string, snapshot: Snapshot): Promise<void> {
   const dir = snapshotDir(stateRoot, agentFilePath);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `${snapshot.id}.json`), JSON.stringify(snapshot, null, 2), 'utf-8');
+  await atomicWriteFile(join(dir, `${snapshot.id}.json`), JSON.stringify(snapshot, null, 2));
 
   const entries = await listSnapshots(dir);
   for (const stale of entries.slice(0, Math.max(0, entries.length - UNDO_HISTORY))) {
@@ -588,10 +590,67 @@ export interface TidyRecord {
   result: ConsolidationResult;
 }
 
+/**
+ * Apply a tidy plan to the latest file without erasing work that landed while
+ * the model was thinking.
+ *
+ * New and independently-changed entries are preserved. If both the tidy pass
+ * and another writer changed the same entry, neither version is silently
+ * chosen: the pass aborts and can be retried against the new source of truth.
+ */
+export function reconcileConcurrentLearnings(
+  original: Learning[],
+  proposed: Learning[],
+  latest: Learning[],
+): Learning[] {
+  const originalById = new Map(original.map((learning) => [learning.id, learning]));
+  const proposedById = new Map(proposed.map((learning) => [learning.id, learning]));
+  const latestById = new Map(latest.map((learning) => [learning.id, learning]));
+  const reconciled: Learning[] = [];
+  const conflicts: string[] = [];
+
+  for (const current of latest) {
+    const before = originalById.get(current.id);
+    if (!before) {
+      reconciled.push(current); // captured after tidy started
+      continue;
+    }
+
+    const planned = proposedById.get(current.id);
+    if (!planned) {
+      if (!isDeepStrictEqual(current, before)) conflicts.push(current.id);
+      // A proposal may remove an entry in a future tidy implementation.
+      continue;
+    }
+
+    const currentChanged = !isDeepStrictEqual(current, before);
+    const plannedChanged = !isDeepStrictEqual(planned, before);
+    if (currentChanged && plannedChanged && !isDeepStrictEqual(current, planned)) {
+      conflicts.push(current.id);
+      continue;
+    }
+    reconciled.push(plannedChanged ? planned : current);
+  }
+
+  // A concurrent deletion wins over the stale tidy proposal. Proposed entries
+  // that genuinely did not exist at planning time are still retained.
+  for (const planned of proposed) {
+    if (!originalById.has(planned.id) && !latestById.has(planned.id)) reconciled.push(planned);
+  }
+
+  if (conflicts.length > 0) {
+    throw new Error(
+      `Learnings changed while tidy-up was running (conflicting ids: ${conflicts.join(', ')}). `
+      + 'Nothing was overwritten; run tidy-up again.'
+    );
+  }
+  return reconciled;
+}
+
 export async function writeTidyRecord(stateRoot: string, agentFilePath: string, record: TidyRecord): Promise<void> {
   const dir = snapshotDir(stateRoot, agentFilePath);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, RECORD_FILE), JSON.stringify(record, null, 2), 'utf-8');
+  await atomicWriteFile(join(dir, RECORD_FILE), JSON.stringify(record, null, 2));
 }
 
 export async function readTidyRecord(stateRoot: string, agentFilePath: string): Promise<TidyRecord | null> {
@@ -622,11 +681,18 @@ export async function undoConsolidation(
   if (!latest) return null;
 
   const snapshot: Snapshot = JSON.parse(await readFile(join(dir, latest), 'utf-8'));
-  for (const file of snapshot.files) {
-    await mkdir(dirname(file.path), { recursive: true });
-    await writeFile(file.path, file.content, 'utf-8');
-  }
-  await unlink(join(dir, latest)).catch(() => {});
+  const learningPath = snapshot.files[0]?.path;
+  const restore = async () => {
+    for (const file of snapshot.files) {
+      await mkdir(dirname(file.path), { recursive: true });
+      await atomicWriteFile(file.path, file.content);
+    }
+    // Keep the snapshot until every destination has been durably replaced. A
+    // failed partial restore can then be retried instead of becoming permanent.
+    await unlink(join(dir, latest)).catch(() => {});
+  };
+  if (learningPath) await withLearningFileLock(learningPath, restore);
+  else await restore();
   return { restored: snapshot.files.map((f) => f.path) };
 }
 
@@ -1162,22 +1228,55 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   if (options.dryRun || changes.length === 0) return result;
 
   const undoId = new Date(now).toISOString().replace(/[:.]/g, '-');
-  await writeSnapshot(options.stateRoot, options.agentFilePath, {
-    id: undoId,
-    files: [
-      { path: store.filePath, content: beforeLearnings },
-      { path: options.agentFilePath, content: agentBefore },
-    ],
-  });
+  const committed = await withLearningFileLock(store.filePath, async () => {
+    const latest = await store.load();
+    const reconciled = reconcileConcurrentLearnings(stored, working, latest);
+    const latestLearnings = existsSync(store.filePath)
+      ? await readFile(store.filePath, 'utf-8')
+      : '';
+    const latestAgent = await readFile(options.agentFilePath, 'utf-8');
+    const reconciledGraduated = reconciled.filter((learning) => learning.state === 'graduated');
+    const reconciledAgent = graduationBlocked
+      ? latestAgent
+      : spliceLearnedBlock(latestAgent, reconciledGraduated);
 
-  // Agent file first. A crash between the two writes then leaves a rule stated
-  // twice, which is harmless and self-correcting on the next pass; the reverse
-  // order would lose it from both places.
-  if (!graduationBlocked) await writeLearnedBlock(options.agentFilePath, graduatedAll);
-  await store.save(working);
+    // The snapshot is of the actual commit-time inputs, not the stale files the
+    // model read minutes ago. Undo therefore preserves concurrent additions.
+    await writeSnapshot(options.stateRoot, options.agentFilePath, {
+      id: undoId,
+      files: [
+        { path: store.filePath, content: latestLearnings },
+        { path: options.agentFilePath, content: latestAgent },
+      ],
+    });
+
+    // Agent file first. A crash between the two writes leaves a rule stated
+    // twice, which is harmless; the reverse order could lose it from both.
+    if (!graduationBlocked && reconciledAgent !== latestAgent) {
+      await atomicWriteFile(options.agentFilePath, reconciledAgent);
+    }
+    await store.save(reconciled);
+    return { reconciled, latestLearnings, latestAgent, reconciledAgent };
+  });
   reportAt('done');
 
-  return { ...result, undoId };
+  return {
+    ...result,
+    activeAfter: activeLearnings(committed.reconciled).length,
+    diffs: {
+      learnings: unifiedDiff(committed.latestLearnings, store.render(committed.reconciled), {
+        label: 'learnings file',
+      }),
+      ...(committed.reconciledAgent !== committed.latestAgent
+        ? {
+          agentFile: unifiedDiff(committed.latestAgent, committed.reconciledAgent, {
+            label: diffLabel(options.agentFilePath, options.stateRoot),
+          }),
+        }
+        : {}),
+    },
+    undoId,
+  };
 }
 
 /** One-line summary for a session marker or CLI line. */

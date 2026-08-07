@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'bun:test';
+import { spawn } from 'child_process';
 import { mkdtemp, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { initStorage } from '../src/storage';
 import { SessionManager } from '../src/session';
 import { reconcileOrphanedSessions, reopenSuspendedGate } from '../src/runner';
+import { startOrphanReconcileLoop } from '../src/cli/serve/orphan-reconcile';
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function makeSession(task = 'Draft a post') {
   const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-reconcile-'));
@@ -112,6 +116,55 @@ describe('reconcileOrphanedSessions', () => {
       delete process.env.XDG_DATA_HOME;
     }
   });
+
+  it('rechecks a released owner that dies after the replacement startup pass', async () => {
+    const { projectRoot, sessionManager, sessionID, agentId } = await makeSession();
+    const oldWorker = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+    });
+    await new Promise<void>((resolve, reject) => {
+      oldWorker.once('spawn', resolve);
+      oldWorker.once('error', reject);
+    });
+
+    let firstSweepResolve!: () => void;
+    const firstSweep = new Promise<void>((resolve) => { firstSweepResolve = resolve; });
+    let sweepCount = 0;
+    let loop: ReturnType<typeof startOrphanReconcileLoop> | undefined;
+
+    try {
+      await sessionManager.updateSession(sessionID, agentId, { owner: { pid: oldWorker.pid! } });
+      loop = startOrphanReconcileLoop(async () => {
+        await reconcileOrphanedSessions({ sessionManager, cutoff: Date.now() + 60_000 });
+        sweepCount += 1;
+        if (sweepCount === 1) firstSweepResolve();
+      }, { intervalMs: 20 });
+      loop.runNow();
+      await firstSweep;
+
+      // The replacement's first pass must preserve a released predecessor that
+      // is genuinely alive, which is the state present during a clean restart.
+      expect((await sessionManager.findSession(sessionID))?.session.status).toBe('running');
+
+      const exited = new Promise<void>((resolve) => oldWorker.once('exit', () => resolve()));
+      oldWorker.kill('SIGTERM');
+      await exited;
+
+      const deadline = Date.now() + 2_000;
+      while ((await sessionManager.findSession(sessionID))?.session.status === 'running' && Date.now() < deadline) {
+        await sleep(20);
+      }
+      const recovered = await sessionManager.findSession(sessionID);
+      expect(recovered?.session.status).toBe('error');
+      expect(recovered?.session.error?.code).toBe('WORKER_INTERRUPTED');
+      expect(sweepCount).toBeGreaterThan(1);
+    } finally {
+      loop?.stop();
+      if (oldWorker.exitCode === null && !oldWorker.killed) oldWorker.kill('SIGKILL');
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  }, 10_000);
 
   it('reports what it would settle without writing when dryRun is set', async () => {
     const { projectRoot, sessionManager, sessionID, agentId } = await makeSession();

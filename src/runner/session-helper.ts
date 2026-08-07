@@ -532,8 +532,9 @@ function readGateComment(output: unknown): string | undefined {
  * Gather every reviewer comment across a run's resolved approval gates, each
  * paired with the work shown at that gate, so the learning evaluator can ground
  * a deictic comment ("this is too long") in the actual output instead of judging
- * it in a vacuum. Scans the whole session because a revise loop produces several
- * gates and only the run that finally completes captures learnings.
+ * it in a vacuum. When the lifecycle supplies a message id, scans only that
+ * run's message: a revise loop keeps all its gates there, while comments from
+ * prior continuations must not be captured again.
  *
  * Best-effort: returns `{ reviews: [] }` on any failure. Capturing learnings
  * must never break a run.
@@ -542,12 +543,14 @@ export async function gatherApprovalContext(
   sessionManager: SessionManager,
   sessionID: string,
   agentId: string,
+  messageId?: string,
 ): Promise<ApprovalContext> {
   try {
     const messages = await sessionManager.getSessionMessages(sessionID, agentId);
+    const inRun = messageId ? messages.filter((message) => message.id === messageId) : messages;
     const reviews: ApprovalReview[] = [];
     let humanGates = 0;
-    for (const message of messages) {
+    for (const message of inRun) {
       const parts = await sessionManager.getMessageParts(sessionID, agentId, message.id);
       for (const part of parts) {
         if (part.type !== 'tool' || part.tool !== 'await_human') continue;

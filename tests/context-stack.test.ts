@@ -433,7 +433,7 @@ describe('tool result breakdown', () => {
     expect(results[0]!.estTokens).toBe(250);
   });
 
-  it('shows a tool that only ever failed, with no result weight', () => {
+  it('charges failed calls for both their arguments and rehydrated error result', () => {
     const errored = (tool: string) => ({
       id: `e${Math.random()}`, messageID: 'msg_1', sessionID: session.id, type: 'tool', callID: 'c', tool,
       state: { status: 'error', input: { a: 1 }, error: 'boom', time: { start: 1, end: 2 } },
@@ -444,15 +444,28 @@ describe('tool result breakdown', () => {
       parts: [readPart('tools__bash', { command: 'ok' }, 'x'.repeat(80)), errored('tools__bash'), errored('mcp__flaky')],
     });
 
+    const errorChars = JSON.stringify({ success: false, error: 'boom' }).length;
     expect(payload.traffic.toolResults.map((r) => [r.tool, r.calls, r.failed, r.chars])).toEqual([
-      ['tools__bash', 1, 1, 80],
-      ['mcp__flaky', 0, 1, 0],
+      ['tools__bash', 1, 1, 80 + errorChars],
+      ['mcp__flaky', 0, 1, errorChars],
     ]);
-    expect(payload.traffic.toolResultChars).toBe(80);
+    expect(payload.traffic.toolResultChars).toBe(80 + errorChars * 2);
     /* The failed call is still listed, so a tool that only ever errored is visible. */
     expect(payload.traffic.toolResults[1]!.callDetails).toEqual([
-      { label: '{"a":1}', chars: 0, estTokens: 0, status: 'failed' },
+      { label: '{"a":1}', chars: errorChars, estTokens: Math.ceil(errorChars / 4), status: 'failed' },
     ]);
+  });
+
+  it('charges a pending call for the arguments already in model context', () => {
+    const pending = {
+      id: 'pending', messageID: 'msg_1', sessionID: session.id, type: 'tool', callID: 'p', tool: 'await_human',
+      state: { status: 'pending', input: { prompt: 'Approve?' }, suspendedAt: 1 },
+    } as unknown as Part;
+
+    const payload = buildSessionContextPayload({ session, message: message({}), tools: null, parts: [pending] });
+
+    expect(payload.traffic.outputChars).toBe(JSON.stringify({ prompt: 'Approve?' }).length);
+    expect(payload.traffic.toolResults[0]).toMatchObject({ pending: 1, chars: 0 });
   });
 
   it('names each call by the argument that says what it did, heaviest first', () => {

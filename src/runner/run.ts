@@ -725,7 +725,12 @@ export async function runPostLifecycle(options: {
       // site, so a comment and the run that produced the reviewed work are
       // evaluated together and deduped in one call.
       const approvalContext = (options.sessionManager && options.sessionId && options.agentId)
-        ? await gatherApprovalContext(options.sessionManager, options.sessionId, options.agentId)
+        ? await gatherApprovalContext(
+          options.sessionManager,
+          options.sessionId,
+          options.agentId,
+          options.messageId,
+        )
         : { reviews: [], humanGates: 0 };
       const reviews = approvalContext.reviews;
 

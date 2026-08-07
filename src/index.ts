@@ -10,6 +10,7 @@ import { LIVE_OUTPUT_METADATA_KEY } from './tools/types';
 import { composeSubagentResult, formatOutcomeLine, normalizeHeadline, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from './tools/report-outcome';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findStaleCascadeChild, describeStaleCascade, isFinishableStale, loadStoredSubagentResult, CASCADE_ORPHANED_CODE, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
 import { currentProcessRef } from './utils/process-info';
+import { withOwnershipLock } from './utils/ownership-lock';
 import { contextUsageFromSnapshot } from './session/usage';
 import { repairEscapedText } from './utils/display-text';
 import { Command } from 'commander';
@@ -2356,70 +2357,86 @@ async function runInternalWorker() {
       session.status === 'suspended' ||
       (session.status === 'error' && session.error?.code === CASCADE_ORPHANED_CODE);
 
-    const rootFound = await sessionManager.findSession(rootSessionId);
-    if (!rootFound) {
+    const initialRoot = await sessionManager.findSession(rootSessionId);
+    if (!initialRoot) {
       return { id: reqId, success: false, error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${rootSessionId}` } };
     }
-    // Anything else means a live process already resumed it (or it ended):
-    // finishing twice is the double-fire this whole path exists to avoid.
-    if (!recoverableStrand(rootFound.session)) {
-      return { id: reqId, success: false, error: { code: 'SESSION_NOT_SUSPENDED', message: `SESSION_NOT_SUSPENDED: ${rootFound.session.status}` } };
-    }
+    const rootDirectory = await sessionManager.getSessionDirectory(rootSessionId, initialRoot.agentId);
 
-    // Follow pending bookmarks down to the child that ended with a durable
-    // result. A live human gate or a still-running descendant means the chain
-    // is healthy and there is nothing to finish.
-    const chain: Array<{ sessionId: string; agentId: string; agentName: string }> = [
-      { sessionId: rootSessionId, agentId: rootFound.agentId, agentName: rootFound.session.agent.name },
-    ];
-    let cursorChildId = findPendingSubagentWaitChildId(await loadSessionPartsFlat(sessionManager, rootSessionId, rootFound.agentId));
-    let ended: { sessionId: string; agentId: string; agentName: string } | undefined;
-    for (let i = 0; i < MAX_CASCADE_DEPTH && cursorChildId; i++) {
-      const f = await sessionManager.findSession(cursorChildId);
-      if (!f) break;
-      if (isFinishableStale(f.session)) {
-        ended = { sessionId: cursorChildId, agentId: f.agentId, agentName: f.session.agent.name || f.agentId };
-        break;
+    // The recoverable status is only a predicate, not a claim. Two daemons can
+    // discover the same stranded root in the same sweep, so serialize the whole
+    // read/complete/run transition on a durable lock shared by every process.
+    return withOwnershipLock(join(rootDirectory, '.finish-cascade-claim'), async () => {
+      const rootFound = await sessionManager.findSession(rootSessionId);
+      if (!rootFound) {
+        return { id: reqId, success: false, error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${rootSessionId}` } };
       }
-      if (!recoverableStrand(f.session)) break;
-      const parts = await loadSessionPartsFlat(sessionManager, cursorChildId, f.agentId);
-      if (findPendingAwaitHumanPart(parts)) break;
-      const next = findPendingSubagentWaitChildId(parts);
-      if (!next) break;
-      chain.push({ sessionId: cursorChildId, agentId: f.agentId, agentName: f.session.agent.name || f.agentId });
-      cursorChildId = next;
-    }
-    if (!ended) {
-      return { id: reqId, success: false, error: { code: 'CASCADE_NOT_FINISHABLE', message: `Session ${rootSessionId} is not parked on a delegated sub-agent that ended with a durable result` } };
-    }
-
-    // This process drives the chain now: stamp liveness, and clear any stale
-    // CASCADE_ORPHANED verdict so the resumed levels report a clean run.
-    await claimCascadeChain(sessionManager, chain);
-    for (const level of chain) {
-      const f = await sessionManager.findSession(level.sessionId);
-      if (f?.session.error?.code === CASCADE_ORPHANED_CODE) {
-        await sessionManager.updateSession(level.sessionId, level.agentId, { status: 'suspended', error: undefined } as any).catch(() => {});
+      // Anything else means a live process already resumed it (or it ended):
+      // finishing twice is the double-fire this whole path exists to avoid.
+      if (!recoverableStrand(rootFound.session)) {
+        return { id: reqId, success: false, error: { code: 'SESSION_NOT_SUSPENDED', message: `SESSION_NOT_SUSPENDED: ${rootFound.session.status}` } };
       }
-    }
 
-    const stored = await loadStoredSubagentResult(sessionManager, ended.sessionId, ended.agentId);
-    const walked = await walkUpCascadeChain({
-      sessionManager,
-      ancestors: chain,
-      childSessionId: ended.sessionId,
-      childAgentName: ended.agentName,
-      childResult: stored,
-      projectRoot,
-      abortController,
-      startTime,
-      ...(debug !== undefined && { debug }),
-      ...(maxSteps !== undefined && { maxSteps }),
+      // Follow pending bookmarks down to the child that ended with a durable
+      // result. A live human gate or a still-running descendant means the chain
+      // is healthy and there is nothing to finish.
+      const chain: Array<{ sessionId: string; agentId: string; agentName: string }> = [
+        { sessionId: rootSessionId, agentId: rootFound.agentId, agentName: rootFound.session.agent.name },
+      ];
+      let cursorChildId = findPendingSubagentWaitChildId(await loadSessionPartsFlat(sessionManager, rootSessionId, rootFound.agentId));
+      let ended: { sessionId: string; agentId: string; agentName: string } | undefined;
+      for (let i = 0; i < MAX_CASCADE_DEPTH && cursorChildId; i++) {
+        const f = await sessionManager.findSession(cursorChildId);
+        if (!f) break;
+        if (isFinishableStale(f.session)) {
+          ended = { sessionId: cursorChildId, agentId: f.agentId, agentName: f.session.agent.name || f.agentId };
+          break;
+        }
+        if (!recoverableStrand(f.session)) break;
+        const parts = await loadSessionPartsFlat(sessionManager, cursorChildId, f.agentId);
+        if (findPendingAwaitHumanPart(parts)) break;
+        const next = findPendingSubagentWaitChildId(parts);
+        if (!next) break;
+        chain.push({ sessionId: cursorChildId, agentId: f.agentId, agentName: f.session.agent.name || f.agentId });
+        cursorChildId = next;
+      }
+      if (!ended) {
+        return { id: reqId, success: false, error: { code: 'CASCADE_NOT_FINISHABLE', message: `Session ${rootSessionId} is not parked on a delegated sub-agent that ended with a durable result` } };
+      }
+
+      // This process drives the chain now: stamp liveness, and clear any stale
+      // CASCADE_ORPHANED verdict so the resumed levels report a clean run.
+      await claimCascadeChain(sessionManager, chain);
+      for (const level of chain) {
+        const f = await sessionManager.findSession(level.sessionId);
+        if (f?.session.error?.code === CASCADE_ORPHANED_CODE) {
+          await sessionManager.updateSession(level.sessionId, level.agentId, { status: 'suspended', error: undefined } as any).catch(() => {});
+        }
+      }
+
+      const stored = await loadStoredSubagentResult(sessionManager, ended.sessionId, ended.agentId);
+      const walked = await walkUpCascadeChain({
+        sessionManager,
+        ancestors: chain,
+        childSessionId: ended.sessionId,
+        childAgentName: ended.agentName,
+        childResult: stored,
+        projectRoot,
+        abortController,
+        startTime,
+        ...(debug !== undefined && { debug }),
+        ...(maxSteps !== undefined && { maxSteps }),
+      });
+      if (walked.suspended) {
+        return cascadeReparkedResponse(reqId, rootSessionId);
+      }
+      return workerRunResponse(reqId, walked.result, Date.now() - startTime, rootSessionId);
+    }, {
+      staleMs: 30_000,
+      retryMs: 10,
+      maxWaitMs: 35_000,
+      label: `finish-cascade:${rootSessionId}`,
     });
-    if (walked.suspended) {
-      return cascadeReparkedResponse(reqId, rootSessionId);
-    }
-    return workerRunResponse(reqId, walked.result, Date.now() - startTime, rootSessionId);
   }
 
   async function getApprovalInfo(req: ExecuteRequest) {
@@ -4017,12 +4034,21 @@ async function runInternalWorker() {
    */
   let inFlightRuns = 0;
   /**
+   * Async non-run RPCs still executing. Some are reads, but several mutate
+   * durable state (expiration, orphan reconciliation, stop, gate reopen), so a
+   * release must drain this entire class before it acknowledges or exits.
+   */
+  let inFlightOperations = 0;
+  /**
    * Set by a `release` request: serve is going down but this worker still has
    * work, so it has been cut loose to finish on its own instead of being killed
    * mid-run. A released worker deliberately outlives its parent.
    */
   let released = false;
-  /** An exit that arrived mid-run and was deferred until the runs drain. */
+  let pendingReleaseRequest: ExecuteRequest | undefined;
+  let releaseAcknowledged = false;
+  let releaseBackstopTimer: NodeJS.Timeout | undefined;
+  /** An exit that arrived mid-work and was deferred until every request drains. */
   let pendingExitCode: number | null = null;
   /** Project roots seen on run requests. A worker only ever serves one. */
   const inFlightProjectRoots = new Set<string>();
@@ -4115,29 +4141,30 @@ async function runInternalWorker() {
 
   const exitWorker = (code = 0, options: { force?: boolean } = {}) => {
     if (workerExiting) return;
-    // A run in flight is never abandoned voluntarily. Ctrl-C and supervisor
+    // Work in flight is never abandoned voluntarily. Ctrl-C and supervisor
     // tree-kills (pm2's default, systemd's control-group default) are delivered
-    // to this process directly and land here mid-run -- obeying them is what
-    // destroyed minutes of work on every restart. serve owns the decision
-    // instead: it either releases us to finish, or kills us after its own grace
-    // period. `force` is the reparenting watchdog, the one caller whose entire
-    // job is reaping a worker whose serve has already gone.
-    if (inFlightRuns > 0 && !options.force) {
+    // to this process directly and land here mid-request. Runs and state-changing
+    // maintenance RPCs both need to reach a durable terminal write before exit.
+    // `force` is reserved for the released-run backstop / dead-parent watchdog.
+    if ((inFlightRuns > 0 || inFlightOperations > 0) && !options.force) {
       pendingExitCode = code;
       return;
     }
     workerExiting = true;
     if (parentWatchTimer) clearInterval(parentWatchTimer);
+    if (releasedStopWatch) clearInterval(releasedStopWatch);
+    if (releaseBackstopTimer) clearTimeout(releaseBackstopTimer);
     rl.close();
     process.exit(code);
   };
 
-  /** Settle a run and take any exit that was deferred while it was running. */
+  /** Settle a run and take any release/exit that was deferred while it ran. */
   const runFinished = () => {
     inFlightRuns = Math.max(0, inFlightRuns - 1);
-    if (inFlightRuns > 0) return;
-    if (released) return exitWorker(0);
-    if (pendingExitCode !== null) exitWorker(pendingExitCode);
+    if (released) return finishReleaseIfDrained();
+    if (inFlightRuns === 0 && inFlightOperations === 0 && pendingExitCode !== null) {
+      exitWorker(pendingExitCode);
+    }
   };
 
   // A released worker outlives serve, so its stdout pipe can close underneath
@@ -4167,6 +4194,69 @@ async function runInternalWorker() {
     }
   };
 
+  const startReleasedRunProtection = () => {
+    if (inFlightRuns === 0) return;
+    watchForStopWhileReleased();
+    if (releaseBackstopTimer) return;
+    // Runs are bounded by their own timeout. Outliving it by this margin means
+    // something downstream of abort is wedged and the process would otherwise
+    // stay resident forever. This timer starts only after non-run RPCs drain.
+    const backstopSeconds = Number.isFinite(releaseBackstopOverride) && releaseBackstopOverride > 0
+      ? releaseBackstopOverride
+      : maxRunTimeoutSeconds + RELEASE_BACKSTOP_GRACE_SECONDS;
+    releaseBackstopTimer = setTimeout(() => {
+      writeStderr(`[worker] released run outlived its ${backstopSeconds}s deadline; exiting\n`);
+      exitWorker(0, { force: true });
+    }, backstopSeconds * 1000);
+    releaseBackstopTimer.unref?.();
+  };
+
+  /** Acknowledge release only once every non-run RPC that preceded it is done. */
+  function finishReleaseIfDrained(): void {
+    if (!released || inFlightOperations > 0) return;
+    if (!releaseAcknowledged) {
+      releaseAcknowledged = true;
+      reply({
+        id: pendingReleaseRequest?.id ?? 'release',
+        success: true,
+        inFlightRuns,
+        inFlightOperations,
+      });
+    }
+    if (inFlightRuns === 0) {
+      exitWorker(0);
+      return;
+    }
+    startReleasedRunProtection();
+  }
+
+  const operationFinished = () => {
+    inFlightOperations = Math.max(0, inFlightOperations - 1);
+    if (released) {
+      finishReleaseIfDrained();
+      return;
+    }
+    if (inFlightRuns === 0 && inFlightOperations === 0 && pendingExitCode !== null) {
+      exitWorker(pendingExitCode);
+    }
+  };
+
+  /** Dispatch an async non-run RPC under the worker drain barrier. */
+  const dispatchOperation = (request: ExecuteRequest, operation: () => Promise<unknown>) => {
+    inFlightOperations += 1;
+    void Promise.resolve()
+      .then(operation)
+      .then(
+        (response) => reply(response),
+        (error) => reply({
+          id: request.id,
+          success: false,
+          error: { code: 'WORKER_ERROR', message: toErrorMessage(error) },
+        })
+      )
+      .finally(operationFinished);
+  };
+
   // Reap a worker whose serve died without releasing it (a crash, a SIGKILL).
   // `release` clears this timer, which is what lets a released worker outlive
   // its parent on purpose.
@@ -4179,7 +4269,11 @@ async function runInternalWorker() {
     }
     orphanTicks += 1;
     // Idle: nothing to protect, and a stray worker helps nobody.
-    if (inFlightRuns === 0) return exitWorker(0, { force: true });
+    if (inFlightRuns === 0 && inFlightOperations === 0) return exitWorker(0, { force: true });
+    // State-changing maintenance work is normally short and has no safe replay
+    // boundary. Let it reach its durable write even after an unclean parent
+    // death; the release/reconcile paths reap the process once it drains.
+    if (inFlightOperations > 0) return;
     // Mid-run, allow a few ticks first. A clean shutdown writes the release
     // line and exits, so the parent can be gone a moment before that line is
     // read -- and reaping a run we were about to be released to finish is
@@ -4203,30 +4297,26 @@ async function runInternalWorker() {
 
     try {
       const request = JSON.parse(line) as ExecuteRequest;
+      if (released) {
+        reply({
+          id: request.id,
+          success: false,
+          error: { code: 'WORKER_RELEASED', message: 'Worker is draining and no longer accepts requests' },
+        });
+        continue;
+      }
       if (request.type === 'approval-info') {
-        getApprovalInfo(request).then((response) => {
-          reply(response);
-        });
+        dispatchOperation(request, () => getApprovalInfo(request));
       } else if (request.type === 'session-status') {
-        getSessionStatusInfo(request).then((response) => {
-          reply(response);
-        });
+        dispatchOperation(request, () => getSessionStatusInfo(request));
       } else if (request.type === 'session-context') {
-        getSessionContext(request).then((response) => {
-          reply(response);
-        });
+        dispatchOperation(request, () => getSessionContext(request));
       } else if (request.type === 'sweep-expired') {
-        sweepExpiredApprovals(request).then((response) => {
-          reply(response);
-        });
+        dispatchOperation(request, () => sweepExpiredApprovals(request));
       } else if (request.type === 'reconcile-orphans') {
-        reconcileOrphanSessions(request).then((response) => {
-          reply(response);
-        });
+        dispatchOperation(request, () => reconcileOrphanSessions(request));
       } else if (request.type === 'list-approvals') {
-        listAllApprovals(request).then((response) => {
-          reply(response);
-        });
+        dispatchOperation(request, () => listAllApprovals(request));
       } else if (request.type === 'invalidate-lists') {
         // A run this worker didn't start just changed state (see the runner's
         // started/finished pokes in runner/announce.ts). Drop the cached lists
@@ -4239,54 +4329,25 @@ async function runInternalWorker() {
         invalidateListCaches(request.projectRoot);
         reply({ id: request.id, success: true });
       } else if (request.type === 'list-sessions') {
-        listSessions(request).then((response) => {
-          reply(response);
-        });
+        dispatchOperation(request, () => listSessions(request));
       } else if (request.type === 'session-final-responses') {
-        getSessionFinalResponses(request).then((response) => {
-          reply(response);
-        });
+        dispatchOperation(request, () => getSessionFinalResponses(request));
       } else if (request.type === 'stop-session') {
-        stopSession(request).then((response) => {
-          reply(response);
-        });
+        dispatchOperation(request, () => stopSession(request));
       } else if (request.type === 'reopen-gate') {
-        reopenGate(request).then((response) => {
-          reply(response);
-        });
+        dispatchOperation(request, () => reopenGate(request));
       } else if (request.type === 'release') {
-        // serve is shutting down and we still have work. Cut the tethers that
-        // would otherwise kill these runs the moment it goes: the reparenting
-        // watchdog is the aggressive one -- it fires within a second of the
-        // parent dying -- while stdin EOF and SIGTERM are handled by the
-        // `released` guard in exitWorker.
+        // Cut the parent-death tethers immediately, but do not acknowledge or
+        // exit until every earlier non-run RPC has drained. The for-await loop
+        // starts each operation before it can consume this line, so this is a
+        // strict barrier for stop/reopen/reconcile and similar storage writes.
         released = true;
+        pendingReleaseRequest = request;
         if (parentWatchTimer) {
           clearInterval(parentWatchTimer);
           parentWatchTimer = undefined;
         }
-        reply({ id: request.id, success: true, inFlightRuns });
-        // Nothing to protect -- leave now rather than linger as a stray process.
-        if (inFlightRuns === 0) {
-          exitWorker(0);
-        } else {
-          watchForStopWhileReleased();
-          // Clearing the watchdog above removed the only thing that reaps this
-          // process, and serve is gone, so nothing else will. Runs are bounded
-          // by their own timeout; outliving it by this margin means something
-          // downstream of the abort is wedged (an MCP client that will not
-          // close, a write that never settles) and we would otherwise stay
-          // resident forever. Leaving loses nothing -- the run's progress is
-          // already in storage, and the next startup sweep reconciles it.
-          const backstopSeconds = Number.isFinite(releaseBackstopOverride) && releaseBackstopOverride > 0
-            ? releaseBackstopOverride
-            : maxRunTimeoutSeconds + RELEASE_BACKSTOP_GRACE_SECONDS;
-          const backstop = setTimeout(() => {
-            writeStderr(`[worker] released run outlived its ${backstopSeconds}s deadline; exiting\n`);
-            exitWorker(0, { force: true });
-          }, backstopSeconds * 1000);
-          backstop.unref?.();
-        }
+        finishReleaseIfDrained();
       } else if (request.type === 'execute' || request.type === 'resume' || request.type === 'continue-session' || request.type === 'finish-cascade') {
         // Don't await - handle requests concurrently
         // Each request runs in parallel, response sent when complete

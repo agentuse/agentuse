@@ -13,12 +13,15 @@
  * confirmation between them. See {@link applyLearningMigration}.
  */
 
-import { copyFile, mkdir, readFile, unlink } from 'fs/promises';
+import { mkdir, readFile, unlink } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname, resolve } from 'path';
+import { createHash } from 'node:crypto';
 import { glob } from 'glob';
+import matter from 'gray-matter';
 import { resolveProjectContext } from '../utils/project';
-import { legacyLearningFilePath, resolveLearningFilePath } from './store';
+import { legacyLearningFilePath, resolveLearningFilePath, withLearningFileLock } from './store';
+import { atomicWriteFile } from '../utils/atomic-write';
 
 const LEARNINGS_SUFFIX = '.learnings.md';
 
@@ -56,6 +59,26 @@ export interface MigrationEntry {
   /** Absolute path of the keyed corrections file. */
   to: string;
   status: MigrationStatus;
+  /** Source bytes observed while planning; rejects a stale copy/delete plan. */
+  sourceHash?: string;
+}
+
+function hash(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+/** Recover the pre-0.17 custom source without validating the removed schema. */
+async function migrationSource(agentFilePath: string): Promise<string> {
+  try {
+    const raw = await readFile(agentFilePath, 'utf-8');
+    const learning = matter(raw).data?.learning as { file?: unknown } | undefined;
+    if (typeof learning?.file === 'string' && learning.file.trim()) {
+      return resolve(dirname(agentFilePath), learning.file);
+    }
+  } catch {
+    // A malformed agent still gets the deterministic legacy sibling fallback.
+  }
+  return legacyLearningFilePath(agentFilePath);
 }
 
 /** True when the file exists and holds something other than whitespace. An
@@ -80,7 +103,7 @@ export async function planLearningMigration(
   for (const agentFileArg of agentFilePaths) {
     const agentFilePath = resolve(agentFileArg);
     const { stateRoot } = resolveProjectContext(cwd, { agentFilePath });
-    const from = legacyLearningFilePath(agentFilePath);
+    const from = await migrationSource(agentFilePath);
     const to = resolveLearningFilePath(agentFilePath, stateRoot);
 
     let status: MigrationStatus;
@@ -98,7 +121,10 @@ export async function planLearningMigration(
       ]);
       status = source === destination ? 'already-copied' : 'collision';
     }
-    entries.push({ agentFilePath, from, to, status });
+    const sourceHash = await hasContent(from)
+      ? hash(await readFile(from, 'utf-8'))
+      : undefined;
+    entries.push({ agentFilePath, from, to, status, ...(sourceHash ? { sourceHash } : {}) });
   }
   return entries;
 }
@@ -117,8 +143,21 @@ export async function applyLearningMigration(entry: MigrationEntry): Promise<voi
   if (entry.status !== 'ready') {
     throw new Error(`Refusing to migrate ${entry.from}: ${entry.status}`);
   }
-  await mkdir(dirname(entry.to), { recursive: true });
-  await copyFile(entry.from, entry.to);
+  await withLearningFileLock(entry.to, async () => {
+    const source = await readFile(entry.from, 'utf-8');
+    if (!source.trim()) throw new Error(`Refusing to migrate ${entry.from}: source is empty`);
+    if (entry.sourceHash && hash(source) !== entry.sourceHash) {
+      throw new Error(`Refusing to migrate ${entry.from}: source changed after the migration was planned`);
+    }
+
+    if (await hasContent(entry.to)) {
+      const destination = await readFile(entry.to, 'utf-8');
+      if (destination === source) return; // a concurrent identical copy won
+      throw new Error(`Refusing to migrate ${entry.from}: destination changed after planning`);
+    }
+    await mkdir(dirname(entry.to), { recursive: true });
+    await atomicWriteFile(entry.to, source);
+  });
 }
 
 /**
@@ -130,10 +169,22 @@ export async function applyLearningMigration(entry: MigrationEntry): Promise<voi
  * copy is lost learnings.
  */
 export async function deleteMigrationSource(entry: MigrationEntry): Promise<void> {
-  if (!(await hasContent(entry.to))) {
-    throw new Error(`Refusing to delete ${entry.from}: nothing was copied to ${entry.to}`);
-  }
-  await unlink(entry.from);
+  await withLearningFileLock(entry.to, async () => {
+    const [source, destination] = await Promise.all([
+      readFile(entry.from, 'utf-8'),
+      readFile(entry.to, 'utf-8').catch(() => ''),
+    ]);
+    if (!destination.trim()) {
+      throw new Error(`Refusing to delete ${entry.from}: nothing was copied to ${entry.to}`);
+    }
+    if (!source.trim() || source !== destination) {
+      throw new Error(`Refusing to delete ${entry.from}: destination is not an exact copy`);
+    }
+    if (entry.sourceHash && hash(source) !== entry.sourceHash) {
+      throw new Error(`Refusing to delete ${entry.from}: source changed after the migration was planned`);
+    }
+    await unlink(entry.from);
+  });
 }
 
 /** Every agent file in the project, absolute and sorted. */

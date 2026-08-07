@@ -18,6 +18,7 @@ import { term, termTitle } from '../src/cli/serve/web/lib/terms';
 import { AgentGraphView } from '../src/cli/serve/web/components/agent-graph-view';
 import { statusBadge, LearningsHeadline, TidyResultView } from '../src/cli/serve/web/components/learnings-panel';
 import { TidyProgressView } from '../src/cli/serve/web/routes/learnings-tidy';
+import { sessionContextFetchKey } from '../src/cli/serve/web/routes/session-context';
 import { learningsTidyHref } from '../src/cli/serve/web/lib/links';
 import type { LearningSummary, SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
 
@@ -1387,5 +1388,12 @@ describe('learningsTidyHref', () => {
 
   it('addresses one finished run when given its job', () => {
     expect(learningsTidyHref('p', 'a.agentuse', { job: 'J1' })).toContain('job=J1');
+  });
+});
+
+describe('session context fetch identity', () => {
+  it('refetches the same session when its capability token changes', () => {
+    expect(sessionContextFetchKey('session-1', 'project', 'expired'))
+      .not.toBe(sessionContextFetchKey('session-1', 'project', 'valid'));
   });
 });

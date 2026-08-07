@@ -6,6 +6,7 @@ import { LearningStore } from "../src/learning/store";
 import { getProjectDirSync } from "../src/storage/paths";
 import { LEARNED_BLOCK_START } from "../src/learning/graduate";
 import type { Learning } from "../src/learning/types";
+import { createLearningsCommand } from "../src/cli/learnings";
 
 // Corrections and undo snapshots are generated state under $XDG_DATA_HOME, not
 // files in the user's repo. Every describe block points it at a temp directory,
@@ -39,6 +40,7 @@ function idsIn(prompt: string): string[] {
 
 let consolidateLearnings: typeof import("../src/learning/consolidate").consolidateLearnings;
 let undoConsolidation: typeof import("../src/learning/consolidate").undoConsolidation;
+let reconcileConcurrentLearnings: typeof import("../src/learning/consolidate").reconcileConcurrentLearnings;
 
 const NOW = Date.parse("2026-08-01T00:00:00.000Z");
 const DAY = 86_400_000;
@@ -79,6 +81,7 @@ describe("tidying up an over-cap corrections file", () => {
     const mod = await import("../src/learning/consolidate");
     consolidateLearnings = mod.consolidateLearnings;
     undoConsolidation = mod.undoConsolidation;
+    reconcileConcurrentLearnings = mod.reconcileConcurrentLearnings;
   });
 
   beforeEach(() => {
@@ -519,6 +522,38 @@ describe("tidying up an over-cap corrections file", () => {
     expect(restored!.restored).toHaveLength(2);
     expect(readFileSync(agentFilePath, "utf-8")).toBe(AGENT_FILE);
     expect(readFileSync(store.filePath, "utf-8")).toBe(storeBefore);
+  });
+
+  it("CLI undo restores an agent even when the current file no longer parses", async () => {
+    await seed();
+    decideResponse = JSON.stringify({ retire: [{ id: "rule4", why: "superseded" }] });
+    const result = await run();
+    expect(result.undoId).toBeTruthy();
+    writeFileSync(agentFilePath, "---\ninvalid: [\n---\n");
+
+    await createLearningsCommand().parseAsync(["undo", agentFilePath], { from: "user" });
+
+    expect(readFileSync(agentFilePath, "utf-8")).toBe(AGENT_FILE);
+  });
+
+  it("preserves a correction captured while tidy-up was thinking", () => {
+    const original = [learning({ id: "original" })];
+    const proposed = [{ ...original[0]!, state: "retired" as const }];
+    const captured = learning({ id: "captured", instruction: "A newly captured correction." });
+
+    const reconciled = reconcileConcurrentLearnings(original, proposed, [...original, captured]);
+
+    expect(reconciled.map((item) => item.id)).toEqual(["original", "captured"]);
+    expect(reconciled[0]?.state).toBe("retired");
+  });
+
+  it("aborts instead of overwriting a correction changed concurrently", () => {
+    const original = [learning({ id: "same" })];
+    const proposed = [{ ...original[0]!, instruction: "Tidy wording." }];
+    const concurrent = [{ ...original[0]!, appliedCount: 1 }];
+
+    expect(() => reconcileConcurrentLearnings(original, proposed, concurrent))
+      .toThrow("Nothing was overwritten");
   });
 
   it("reports nothing to undo when no tidy-up has run", async () => {

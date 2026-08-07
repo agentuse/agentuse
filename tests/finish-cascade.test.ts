@@ -6,6 +6,9 @@ import { join } from 'path';
 import { createInterface, type Interface as ReadlineInterface } from 'readline';
 import { initStorage } from '../src/storage';
 import { SessionManager } from '../src/session';
+import { acquireOwnershipLock } from '../src/utils/ownership-lock';
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Drive the internal worker over its stdin/stdout JSON RPC and read the response
 // matching a request id (ignoring diagnostic / non-matching lines).
@@ -118,12 +121,14 @@ async function makeStrandedCascade(projectRoot: string) {
 }
 
 describe('finish-cascade (worker integration)', () => {
-  let worker: { child: ChildProcessWithoutNullStreams; rl: ReadlineInterface } | undefined;
+  let workers: Array<{ child: ChildProcessWithoutNullStreams; rl: ReadlineInterface }> = [];
 
   afterEach(() => {
-    worker?.rl.close();
-    worker?.child.kill();
-    worker = undefined;
+    for (const worker of workers) {
+      worker.rl.close();
+      worker.child.kill();
+    }
+    workers = [];
   });
 
   it('completes a stranded manager from the child\'s stored result', async () => {
@@ -138,7 +143,7 @@ describe('finish-cascade (worker integration)', () => {
 
       const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], { cwd: process.cwd(), env: { ...process.env } });
       const rl = createInterface({ input: child.stdout });
-      worker = { child, rl };
+      workers.push({ child, rl });
       await readReady(rl);
 
       child.stdin.write(`${JSON.stringify({ id: 'finish', type: 'finish-cascade', projectRoot, sessionId: rootId })}\n`);
@@ -185,7 +190,7 @@ describe('finish-cascade (worker integration)', () => {
 
       const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], { cwd: process.cwd(), env: { ...process.env } });
       const rl = createInterface({ input: child.stdout });
-      worker = { child, rl };
+      workers.push({ child, rl });
       await readReady(rl);
 
       child.stdin.write(`${JSON.stringify({ id: 'finish', type: 'finish-cascade', projectRoot, sessionId: rootId })}\n`);
@@ -218,7 +223,7 @@ describe('finish-cascade (worker integration)', () => {
 
       const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], { cwd: process.cwd(), env: { ...process.env } });
       const rl = createInterface({ input: child.stdout });
-      worker = { child, rl };
+      workers.push({ child, rl });
       await readReady(rl);
 
       child.stdin.write(`${JSON.stringify({ id: 'finish', type: 'finish-cascade', projectRoot, sessionId: rootId })}\n`);
@@ -231,4 +236,63 @@ describe('finish-cascade (worker integration)', () => {
       await rm(dataHome, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it('allows only one cross-process recovery to claim a stranded root', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const dataHome = await mkdtemp(join(tmpdir(), 'agentuse-finish-concurrent-'));
+    const projectRoot = join(dataHome, 'project');
+    process.env.XDG_DATA_HOME = dataHome;
+    let blocker: Awaited<ReturnType<typeof acquireOwnershipLock>> | undefined;
+    try {
+      await mkdir(projectRoot, { recursive: true });
+      await initStorage(projectRoot);
+      const { rootSm, rootId, rootAgentId } = await makeStrandedCascade(projectRoot);
+      const sessionDirectory = await rootSm.getSessionDirectory(rootId, rootAgentId);
+
+      // Hold the shared claim while both workers enter finish-cascade. This
+      // makes the simultaneous precondition deterministic instead of relying
+      // on process scheduling to place both requests in the race window.
+      blocker = await acquireOwnershipLock(join(sessionDirectory, '.finish-cascade-claim'), {
+        label: 'test-blocker',
+      });
+
+      for (let i = 0; i < 2; i++) {
+        const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], {
+          cwd: process.cwd(),
+          env: { ...process.env },
+        });
+        const rl = createInterface({ input: child.stdout });
+        workers.push({ child, rl });
+        await readReady(rl);
+      }
+
+      let responseLanded = false;
+      const responses = workers.map(({ child, rl }, index) => {
+        const id = `finish-${index + 1}`;
+        const response = readResponseFor(rl, id).then((value) => {
+          responseLanded = true;
+          return value;
+        });
+        child.stdin.write(`${JSON.stringify({ id, type: 'finish-cascade', projectRoot, sessionId: rootId })}\n`);
+        return response;
+      });
+
+      await sleep(200);
+      expect(responseLanded).toBe(false);
+      await blocker.release();
+      blocker = undefined;
+
+      const results = await Promise.all(responses);
+      expect(results.filter((result) => result.success)).toHaveLength(1);
+      expect(results.filter((result) => !result.success)).toEqual([
+        expect.objectContaining({ error: expect.objectContaining({ code: 'SESSION_NOT_SUSPENDED' }) }),
+      ]);
+      expect((await rootSm.findSession(rootId))?.session.status).toBe('completed');
+    } finally {
+      await blocker?.release();
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(dataHome, { recursive: true, force: true });
+    }
+  }, 45_000);
 });

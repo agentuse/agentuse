@@ -121,6 +121,15 @@ describe('header-gate exemption (capability routes)', () => {
     }
   });
 
+  it('never offers a source-rewriting tidy action to a token-only reviewer', () => {
+    const apiKey = 'operator-secret';
+    expect(__testing.sessionLearningTidyAllowed(undefined, undefined)).toBe(true);
+    expect(__testing.sessionLearningTidyAllowed(`Bearer ${apiKey}`, apiKey)).toBe(true);
+    // Session tokens are intentionally not an input: they authorize review,
+    // not mutation of the agent source file.
+    expect(__testing.sessionLearningTidyAllowed(undefined, apiKey)).toBe(false);
+  });
+
   it('serves the app shell on the tidy-up page so a direct link to it works', () => {
     // The page is where a tidy-up reports progress and offers its undo, so it is
     // linked to and reloaded directly; without this it 404s on a hard load.
@@ -187,6 +196,14 @@ describe('header-gate exemption (capability routes)', () => {
 });
 
 describe('session list helpers', () => {
+  it('partitions SSE snapshots by the mock filter', () => {
+    const realOnly = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events'));
+    const include = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events?mock=include'));
+    const only = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events?mock=only'));
+
+    expect(new Set([realOnly, include, only]).size).toBe(3);
+  });
+
   const rows = [
     {
       projectId: 'project-1',

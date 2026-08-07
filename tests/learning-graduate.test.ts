@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync, statSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
@@ -103,5 +103,11 @@ describe("graduating rules into the agent file", () => {
     expect(await agentFileIsWritable(agentFile)).toBe(false);
     chmodSync(agentFile, 0o644);
     expect(await agentFileIsWritable(agentFile)).toBe(true);
+  });
+
+  it("keeps the source file mode across the atomic replacement", async () => {
+    chmodSync(agentFile, 0o640);
+    await writeLearnedBlock(agentFile, [rule("a", "Preserve permissions.")]);
+    expect(statSync(agentFile).mode & 0o777).toBe(0o640);
   });
 });

@@ -1,6 +1,7 @@
 import type { Tool } from 'ai';
 import { completeText } from '../complete-text';
 import { isEffectful } from './approval-lease';
+import { parseBashCommand } from '../tools/bash-parser';
 import { logger } from '../utils/logger';
 
 /**
@@ -287,6 +288,36 @@ function annotateUnexecuted(result: unknown): unknown {
   return { result, _mock: UNEXECUTED_NOTE };
 }
 
+/**
+ * Whether a bash tool call contains any executable command covered by the
+ * agent's gated patterns. Checking only the complete shell string misses a
+ * gated command after an otherwise-safe segment (`echo ok; birdc reply ...`).
+ * Tree-sitter gives us the commands the shell actually evaluates, including
+ * command/process substitutions, while keeping quoted here-doc and here-string
+ * payloads inert. If a command that reached execute can no longer be parsed,
+ * fail closed into the mock rather than risk a real side effect.
+ */
+async function containsGatedBashCommand(
+  command: string,
+  gatedPatterns: string[],
+): Promise<boolean> {
+  if (isEffectful(command, gatedPatterns)) return true;
+
+  try {
+    const commands = await parseBashCommand(command);
+    if (commands.length === 0) return true;
+    return commands.some((parsed) => (
+      isEffectful(parsed.raw, gatedPatterns)
+      // `raw` can include leading environment assignments. Also compare the
+      // parsed executable/arguments so `FOO=bar gated-command ...` is covered.
+      || isEffectful([parsed.head, ...parsed.tail].join(' '), gatedPatterns)
+    ));
+  } catch (error) {
+    logger.debug(`[Mock] unable to parse bash command for gated scope; mocking it fail-closed: ${(error as Error).message}`);
+    return true;
+  }
+}
+
 /** Build the LLM-backed mock execute for one tool. */
 function llmMockExecute(name: string, tool: Tool, mockModel: string) {
   const description = typeof (tool as any).description === 'string' ? (tool as any).description : '';
@@ -371,7 +402,7 @@ export function wrapToolsWithGatedMock(
             execute: async (...args: unknown[]) => {
               const input = args[0] as { command?: unknown } | undefined;
               const command = typeof input?.command === 'string' ? input.command : '';
-              if (command && isEffectful(command, gatedPatterns)) {
+              if (command && await containsGatedBashCommand(command, gatedPatterns)) {
                 logger.debug(`[Mock] gated bash command mocked (not executed): ${command}`);
                 return annotateUnexecuted(await mocked(...args));
               }

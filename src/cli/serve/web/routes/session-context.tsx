@@ -32,6 +32,14 @@ const READ_TOOL_LABEL: Record<string, string> = {
 type RunKind = 'file' | 'results' | 'output';
 type RowKind = ContextStackLayer['kind'] | RunKind;
 
+export function sessionContextFetchKey(
+  sessionId: string,
+  projectId: string | undefined,
+  token: string | undefined,
+): string {
+  return `session-context:${sessionId}:${projectId ?? ''}:${token ?? ''}`;
+}
+
 /** Everything that accumulated while the run was going, rather than before it. */
 const RUN_KINDS = new Set<RunKind>(['file', 'results', 'output']);
 
@@ -418,7 +426,7 @@ export default function SessionContext() {
   const goBack = useSmartBack(backHref);
 
   const { data, error, loading } = useFetch(
-    `session-context:${sessionId}:${projectId ?? ''}`,
+    sessionContextFetchKey(sessionId, projectId, token),
     () => fetchSessionContext(sessionId, token, projectId)
   );
 

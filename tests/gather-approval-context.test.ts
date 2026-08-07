@@ -145,6 +145,39 @@ describe('gatherApprovalContext', () => {
     });
   });
 
+  it('scopes lifecycle capture to the current run message', async () => {
+    await withSession('agentuse-approval-ctx-run-', async ({ sessionManager, sessionID, messageID }) => {
+      await sessionManager.addPart(sessionID, AGENT_ID, messageID, {
+        type: 'tool', callID: 'old', tool: 'await_human',
+        state: {
+          status: 'completed', input: { prompt: 'Old run?' },
+          output: { status: 'comment', comment: 'old correction' },
+          time: { start: 1, end: 2 },
+        },
+      } as any);
+      const currentMessageID = await sessionManager.createMessage(sessionID, AGENT_ID, {
+        user: { prompt: { task: 'continue' } },
+        assistant: {
+          system: [], modelID: 'demo:test', providerID: 'demo', mode: 'build',
+          path: { cwd: process.cwd(), root: process.cwd() }, cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+      await sessionManager.addPart(sessionID, AGENT_ID, currentMessageID, {
+        type: 'tool', callID: 'current', tool: 'await_human',
+        state: {
+          status: 'completed', input: { prompt: 'Current run?' },
+          output: { status: 'approve' }, time: { start: 3, end: 4 },
+        },
+      } as any);
+
+      const ctx = await gatherApprovalContext(sessionManager, sessionID, AGENT_ID, currentMessageID);
+
+      expect(ctx.reviews).toEqual([]);
+      expect(ctx.humanGates).toBe(1);
+    });
+  });
+
   it('excludes judge, preflight and runtime comments so they cannot become human learnings', async () => {
     // These resolve await_human with the same shape a person does. Captured as
     // reviews they become confidence-0.95 "reviewer corrections" that outrank

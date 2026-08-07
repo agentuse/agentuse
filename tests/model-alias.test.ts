@@ -20,6 +20,7 @@ import { SessionManager } from '../src/session';
 import { initStorage } from '../src/storage';
 import {
   currentModelsFromRegistry,
+  findCurrentModel,
   isLiveVersionAlias,
   rewriteAgentFileModels,
   toVersionAlias,
@@ -327,6 +328,40 @@ describe('rewriting model references in agent files', () => {
   it('leaves a file with no frontmatter alone', () => {
     const file = 'Just prose mentioning anthropic:claude-sonnet-4-0.\n';
     expect(rewriteAgentFileModels(file, providers, toVersionAlias).changes).toHaveLength(0);
+  });
+
+  it('rewrites only configured model fields, never custom-provider prefixes or metadata', () => {
+    const file = [
+      '---',
+      'model: anthropic:claude-haiku-4-5',
+      'metadata:',
+      '  note: "Compare anthropic:claude-haiku-4-5 before switching"',
+      '  custom: myopenai:gpt-5.4-mini',
+      'mcpServers:',
+      '  reporter:',
+      '    headers:',
+      '      X-Model: openai:gpt-5.4-mini',
+      'verify:',
+      '  model: openai:gpt-5.4-mini',
+      'learning:',
+      '  capture: true',
+      '  model: anthropic:claude-haiku-4-5',
+      '---',
+      'Work.',
+      '',
+    ].join('\n');
+    const { content, changes } = rewriteAgentFileModels(file, providers, toVersionAlias);
+    expect(changes).toHaveLength(3);
+    expect(content).toContain('model: anthropic:claude-haiku\n');
+    expect(content).toContain('  model: openai:gpt-mini\n');
+    expect(content).toContain('  model: anthropic:claude-haiku\n');
+    expect(content).toContain('Compare anthropic:claude-haiku-4-5 before switching');
+    expect(content).toContain('custom: myopenai:gpt-5.4-mini');
+    expect(content).toContain('X-Model: openai:gpt-5.4-mini');
+  });
+
+  it('does not bump an OpenRouter model to a different vendor', () => {
+    expect(findCurrentModel('openrouter', 'unknown-vendor/model-4-pro', currentModels)).toBeNull();
   });
 
   it('recognizes a live version alias, so bump never re-pins it', () => {

@@ -175,6 +175,16 @@ function assertUnpublished(version: string): void {
   }
 }
 
+/** In CI, a pushed tag is the release intent and must name the manifest exactly. */
+function assertTriggeredTagMatchesManifest(): void {
+  if (!isCI() || process.env.GITHUB_REF_TYPE !== 'tag') return;
+  const version = manifest().version;
+  const tag = process.env.GITHUB_REF_NAME;
+  if (tag !== `v${version}`) {
+    fail(`Triggered by tag ${tag || '(missing)'} but package.json says ${version}. Refusing this release run.`);
+  }
+}
+
 /**
  * The pinned bun is what the published artifact is built with. A mismatch means
  * the tarball a reviewer approves was produced by a different compiler than the
@@ -258,18 +268,28 @@ function prepare(bump: string | undefined, anyBranch: boolean): void {
   dateChangelog(version);
   bumpManifest(version);
 
-  // The files are already rewritten by this point, so a git failure here leaves
-  // the tree edited but uncommitted. Say how to undo it rather than leaving
-  // someone to work out which files were touched.
+  // The files are already rewritten by this point. Track the commit boundary so
+  // recovery advice remains correct if `git tag` fails after a successful commit.
+  let committed = false;
   try {
     capture('git', ['add', 'CHANGELOG.md', 'package.json']);
     capture('git', ['commit', '-m', `Release v${version}`]);
+    committed = true;
     capture('git', ['tag', '-a', `v${version}`, '-m', `Release v${version}`]);
   } catch (error) {
+    const recovery = committed
+      ? `The release commit was created but the tag was not. Retry the tag with:\n` +
+        `  git tag -a v${version} -m "Release v${version}"\n\n` +
+        `Or abandon both commit and edits with:\n` +
+        `  git reset --soft HEAD~1\n` +
+        `  git restore --staged CHANGELOG.md package.json\n` +
+        `  git restore CHANGELOG.md package.json`
+      : `CHANGELOG.md and package.json were rewritten but no release commit was created. Undo with:\n` +
+        `  git restore --staged CHANGELOG.md package.json\n` +
+        `  git restore CHANGELOG.md package.json`;
     fail(
       `${(error as Error).message}\n\n` +
-        `CHANGELOG.md and package.json were already rewritten. Undo with:\n` +
-        `  git checkout -- CHANGELOG.md package.json`,
+        recovery,
     );
   }
 
@@ -303,11 +323,12 @@ interface GateStep {
  * release; it runs as its own advisory job.
  */
 function verify(): void {
-  const steps: Array<{ name: string; script: string }> = [
-    { name: 'typecheck', script: 'typecheck' },
-    { name: 'typecheck:scripts', script: 'typecheck:scripts' },
-    { name: 'build', script: 'build' },
-    { name: 'tests + coverage', script: 'test:coverage' },
+  const steps: Array<{ name: string; run: () => void }> = [
+    { name: 'tag / package version', run: assertTriggeredTagMatchesManifest },
+    { name: 'typecheck', run: () => stream('bun', ['run', 'typecheck']) },
+    { name: 'typecheck:scripts', run: () => stream('bun', ['run', 'typecheck:scripts']) },
+    { name: 'build', run: () => stream('bun', ['run', 'build']) },
+    { name: 'tests + coverage', run: () => stream('bun', ['run', 'test:coverage']) },
   ];
   const results: GateStep[] = steps.map((step) => ({ name: step.name, status: 'not run', seconds: null }));
 
@@ -319,13 +340,15 @@ function verify(): void {
   for (const [index, step] of steps.entries()) {
     note(`\n=== ${step.name} ===`);
     const started = Date.now();
-    const run = spawnSync('bun', ['run', step.script], { cwd: root, stdio: 'inherit' });
-    const seconds = Number(((Date.now() - started) / 1000).toFixed(1));
-    const passed = run.status === 0;
-    results[index] = { name: step.name, status: passed ? 'pass' : 'FAIL', seconds };
-    if (!passed) {
+    try {
+      step.run();
+      const seconds = Number(((Date.now() - started) / 1000).toFixed(1));
+      results[index] = { name: step.name, status: 'pass', seconds };
+    } catch (error) {
+      const seconds = Number(((Date.now() - started) / 1000).toFixed(1));
+      results[index] = { name: step.name, status: 'FAIL', seconds };
       writeGate(false);
-      fail(`Gate failed at ${step.name} (bun run ${step.script} exited ${run.status}).`);
+      fail(`Gate failed at ${step.name}: ${(error as Error).message}`);
     }
   }
 
@@ -379,6 +402,17 @@ function publish(): void {
   }
   assertRepositoryMatches();
 
+  // A failed `finish` leaves npm published but the GitHub Release absent. A
+  // normal Actions rerun starts this job from its first step, so recognize the
+  // exact published version and continue to finish instead of stopping on npm's
+  // immutable-version error. The tag/version check above still prevents a tag
+  // from silently claiming a different manifest.
+  const existing = spawnSync('npm', ['view', `${name}@${version}`, 'version'], { cwd: root, encoding: 'utf8' });
+  if (existing.status === 0 && existing.stdout.trim() === version) {
+    note(`${name}@${version} is already published; continuing to GitHub Release recovery.`);
+    return;
+  }
+
   note(`Publishing ${name}@${version} under dist-tag "${tag}".`);
   stream('npm', ['publish', '--access', 'public', '--tag', tag]);
 }
@@ -401,7 +435,8 @@ function finish(version: string): void {
   const repo = process.env.GITHUB_REPOSITORY ?? PUBLIC_REPO;
   const existing = spawnSync('gh', ['release', 'view', `v${version}`, '-R', repo], { cwd: root, encoding: 'utf8' });
   if (existing.status === 0) {
-    fail(`A GitHub Release for v${version} already exists. Edit it by hand; do not republish to npm.`);
+    note(`GitHub Release v${version} already exists on ${repo}; nothing to finish.`);
+    return;
   }
 
   mkdirSync(join(root, 'tmp'), { recursive: true });

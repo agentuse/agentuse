@@ -848,6 +848,11 @@ describe('worker recycling', () => {
     expect(shouldRecycleWorker({ ...base, activeRuns: 1 })).toBe(false);
   });
 
+  it('never retires a worker while another RPC still needs its response', async () => {
+    const { shouldRecycleWorker } = (await import('../src/cli/serve')).__testing;
+    expect(shouldRecycleWorker({ ...base, activeRequests: 1 })).toBe(false);
+  });
+
   it('holds off until the worker is past its minimum age, so runs cannot thrash it', async () => {
     const { shouldRecycleWorker } = (await import('../src/cli/serve')).__testing;
     expect(shouldRecycleWorker({ ...base, ageMs: 30_000 })).toBe(false);

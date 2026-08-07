@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { createServer, type ServerResponse } from 'http';
-import { mkdtemp, mkdir, writeFile } from 'fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { initStorage } from '../src/storage';
+import { SessionManager } from '../src/session';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -156,6 +158,67 @@ describe('internal worker lifecycle', () => {
       if (!child.killed && child.exitCode === null) child.kill('SIGKILL');
     }
   });
+
+  it('drains a stop-session request before acknowledging release or exiting', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const sandbox = await mkdtemp(join(tmpdir(), 'agentuse-release-stop-'));
+    const projectRoot = join(sandbox, 'project');
+    const dataHome = join(sandbox, 'xdg-data');
+    await mkdir(projectRoot, { recursive: true });
+    await mkdir(dataHome, { recursive: true });
+    process.env.XDG_DATA_HOME = dataHome;
+    await initStorage(projectRoot);
+
+    const sessionManager = new SessionManager();
+    const agentId = 'agents/release-stop';
+    const sessionId = await sessionManager.createSession({
+      agent: { id: agentId, name: 'release-stop', isSubAgent: false },
+      model: 'demo:test',
+      version: 'test',
+      config: {},
+      project: { root: projectRoot, cwd: projectRoot },
+    });
+
+    const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], {
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, XDG_DATA_HOME: dataHome, HOME: sandbox },
+    });
+
+    try {
+      await waitForReady(child);
+      const stopped = waitForMessage(child, (message) => message.id === 'stop-before-release');
+      const released = waitForMessage(child, (message) => message.id === 'release-after-stop');
+      const exited = waitForExit(child);
+
+      // One pipe batch reproduces the lifecycle race: the worker starts the
+      // async stop, then consumes release before that storage write resolves.
+      child.stdin.write(
+        `${JSON.stringify({ id: 'stop-before-release', type: 'stop-session', projectRoot, sessionId })}\n` +
+        `${JSON.stringify({ id: 'release-after-stop', type: 'release' })}\n`
+      );
+
+      expect(await stopped).toMatchObject({
+        success: true,
+        stopped: [expect.objectContaining({ sessionId, stopped: true })],
+      });
+      expect(await released).toMatchObject({
+        success: true,
+        inFlightRuns: 0,
+        inFlightOperations: 0,
+      });
+      expect(await exited).toMatchObject({ code: 0 });
+
+      const persisted = await sessionManager.findSession(sessionId);
+      expect(persisted?.session.status).toBe('error');
+      expect(persisted?.session.error?.code).toBe('USER_STOPPED');
+    } finally {
+      if (!child.killed && child.exitCode === null) child.kill('SIGKILL');
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   it('does not abandon a run in flight when serve goes away', async () => {
     const api = await startStalledApi();
