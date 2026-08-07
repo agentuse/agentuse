@@ -98,6 +98,19 @@ describe('header-gate exemption (capability routes)', () => {
     }
   });
 
+  it("shows the session's own learnings on a cascaded gate, not the leaf's", () => {
+    // A manager parked on a delegated child is titled with its own agent and its
+    // log counts its own applied learnings, so the panel must read that store.
+    // Following originAgent showed an empty box (and hid the manager's over-cap
+    // warning) whenever the leaf had captured nothing yet.
+    const manager = { id: 'agents/manager', filePath: '/p/agents/manager.agentuse' };
+    const leaf = { id: 'agents/leaf', filePath: '/p/agents/leaf.agentuse' };
+
+    expect(__testing.sessionLearningTargetAgent({ agent: manager, originAgent: leaf })).toBe(manager);
+    // A session with no cascade is unaffected.
+    expect(__testing.sessionLearningTargetAgent({ agent: leaf })).toBe(leaf);
+  });
+
   it('keeps the agent-level learning routes behind the operator gate', () => {
     // A session-view link is handed out to reviewers; these routes rewrite the
     // agent's own `.agentuse` file, so they must stay on the operator surface

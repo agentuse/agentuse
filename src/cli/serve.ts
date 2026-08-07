@@ -2389,6 +2389,25 @@ function selectSessionProjects<T extends { id: string }>(
   };
 }
 
+/**
+ * Whose learnings a session view shows: always THIS session's agent, never the
+ * cascade's origin agent.
+ *
+ * A manager parked on a delegated child ran under its own learnings. They are
+ * what the log's "N of M applied" badge counts, and the page is titled with that
+ * agent, so they are the rules a reviewer is judging the run against. Reading
+ * the leaf's store instead showed nothing at all whenever the leaf had not
+ * captured anything yet, which hid the manager's own over-cap warning on the one
+ * page where it changes a decision.
+ *
+ * A `remember` correction left at the gate still belongs to `originAgent`: that
+ * note is about the draft on screen, so it goes to whoever wrote it. The two
+ * deliberately differ, and the panel names the agent it is showing.
+ */
+function sessionLearningTargetAgent<T>(approval: { agent: T; originAgent?: T }): T {
+  return approval.agent;
+}
+
 function resolveScopedAgentPath(project: Project | Omit<Project, 'agentFiles'>, agentPath: string): string {
   return resolve(project.scopeRoot, agentPath);
 }
@@ -5259,7 +5278,7 @@ export function createServeCommand(): Command {
         const resolveSessionLearningStore = async (
           info: WorkerApprovalInfoResult,
         ): Promise<{ store: LearningStore; config: LearningConfig | undefined; filePath: string } | null> => {
-          const targetAgent = info.approval.originAgent ?? info.approval.agent;
+          const targetAgent = sessionLearningTargetAgent(info.approval);
           if (!targetAgent.filePath) return null;
           const agent = await parseAgent(targetAgent.filePath);
           // Same agent-file-derived state root the agent-level endpoints use, so
@@ -7247,6 +7266,7 @@ export const __testing = {
   isHeaderGateExemptRoute,
   isSessionCapabilityAuthorized,
   selectSessionProjects,
+  sessionLearningTargetAgent,
   workerExecutionErrorResponse,
   isSpaPageRoute,
   collectAgents,
