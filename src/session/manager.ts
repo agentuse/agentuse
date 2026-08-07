@@ -441,7 +441,7 @@ export class SessionManager {
 
     const childDirs = hasSessionJson
       ? entries.filter((entry) => entry.isDirectory() && entry.name === 'subagent')
-      : entries.filter((entry) => entry.isDirectory());
+      : entries.filter((entry) => entry.isDirectory() && entry.name !== SESSION_INDEX_DIR);
 
     for (const entry of childDirs) {
       const found = await this.findSessionDirById(baseDir, sessionID, path.join(relativeDir, entry.name));
@@ -449,6 +449,59 @@ export class SessionManager {
     }
 
     return null;
+  }
+
+  /**
+   * Resolve a session id to its directory, cheapest probe first.
+   *
+   * The last resort, findSessionDirById, readdirs every session directory in the
+   * store. That cost is paid on *misses*, not hits: a multi-project daemon
+   * resolving a bare `/sessions/{id}` URL asks each project's worker in turn, so
+   * every project that does not hold the session walks its whole store first. On
+   * a store with thousands of sessions that is seconds per project, per request,
+   * and no cache absorbs it because only found paths are remembered. The durable
+   * index already maps every id — nested subagents included — to its directory,
+   * so consult it before scanning, and trust its silence to skip the scan.
+   */
+  private async resolveSessionDirById(baseDir: string, sessionID: string): Promise<string | null> {
+    const topLevel = await this.findTopLevelSessionDirById(baseDir, sessionID);
+    if (topLevel) return topLevel;
+
+    const indexed = await this.indexedSessionDirById(sessionID);
+    if (indexed.path) return indexed.path;
+    if (indexed.authoritative) return null;
+
+    return this.findSessionDirById(baseDir, sessionID);
+  }
+
+  /**
+   * Look a session up in the durable index. `authoritative` says the index was
+   * readable with no mutation in flight: every write path stamps session.json
+   * and the index inside one dirty-marked critical section, so a clean index
+   * that omits an id proves the session is not in this store and the caller can
+   * skip the full scan. An absent, corrupt, mid-mutation, or stale-entry index
+   * is inconclusive and falls back to scanning.
+   */
+  private async indexedSessionDirById(
+    sessionID: string
+  ): Promise<{ path: string | null; authoritative: boolean }> {
+    const inconclusive = { path: null, authoritative: false };
+    const state = await getStorageState();
+    const index = await this.readSessionIndex().catch(() => null);
+    if (!index) return inconclusive;
+
+    // A dirty marker means a session write and its index update are only
+    // half-applied, so absence proves nothing yet.
+    const dirtyPath = path.join(state.dir, `${SESSION_INDEX_DIRTY_KEY}.json`);
+    const dirty = await fs.access(dirtyPath).then(() => true, () => false);
+    if (dirty) return inconclusive;
+
+    const indexedPath = index.sessions[sessionID]?.path;
+    if (!indexedPath) return { path: null, authoritative: true };
+
+    // Session files stay the source of truth; never resolve a stale entry.
+    const session = await readJSON<SessionInfo>(`${indexedPath}/session`).catch(() => null);
+    return session?.id === sessionID ? { path: indexedPath, authoritative: true } : inconclusive;
   }
 
   private async findTopLevelSessionDirById(baseDir: string, sessionID: string): Promise<string | null> {
@@ -849,8 +902,7 @@ export class SessionManager {
       : null;
     const sessionPath = cachedSession?.id === sessionID
       ? cachedPath!
-      : await this.findTopLevelSessionDirById(state.dir, sessionID)
-        ?? await this.findSessionDirById(state.dir, sessionID);
+      : await this.resolveSessionDirById(state.dir, sessionID);
     if (!sessionPath) return null;
 
     const session = await readJSON<SessionInfo>(`${sessionPath}/session`);
