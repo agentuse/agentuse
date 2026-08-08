@@ -432,6 +432,43 @@ describe("tidying up an over-cap corrections file", () => {
     expect(completeTextMock).not.toHaveBeenCalled();
   });
 
+  it("still reviews the permanent block when the staging set is under the cap", async () => {
+    // The staging set and the permanent block are two different piles. Gating
+    // on the cap alone meant the block was only ever read as a side effect of
+    // staging overflowing — so the agents that keep staging tidy, the ones whose
+    // blocks quietly accumulate for months, were exactly the ones never looked
+    // at. Measured across four agents carrying blocks: three reported "nothing
+    // to tidy up" while holding rules that had never been reconciled.
+    await store.save([learning({ id: "only1" })]);
+    writeFileSync(agentFilePath, [
+      AGENT_FILE.trimEnd(), "", "<!-- agentuse:learned -->", "## Learned Guidelines", "",
+      "- [tip] Cite a source.", "- [tip] Always cite a primary source.",
+      "<!-- /agentuse:learned -->", "",
+    ].join("\n"));
+    blockResponse = JSON.stringify({
+      rules: [{ category: "tip", instruction: "Always cite a primary source.", covers: [0, 1], why: "one states the other" }],
+    });
+
+    const result = await run();
+
+    expect(result.ran).toBe(true);
+    expect(result.changes.some((c) => c.kind === "merge-permanent")).toBe(true);
+    expect(readFileSync(agentFilePath, "utf-8").match(/^- \[/gm)).toHaveLength(1);
+  });
+
+  it("does not run for a block of one, which has nothing to compare against", async () => {
+    await store.save([learning({ id: "only1" })]);
+    writeFileSync(agentFilePath, [
+      AGENT_FILE.trimEnd(), "", "<!-- agentuse:learned -->", "## Learned Guidelines", "",
+      "- [tip] Cite a source.", "<!-- /agentuse:learned -->", "",
+    ].join("\n"));
+
+    const result = await run();
+
+    expect(result.ran).toBe(false);
+    expect(completeTextMock).not.toHaveBeenCalled();
+  });
+
   it("merges near-duplicates, dropping the absorbed entry into the merged rule", async () => {
     await seed();
     decideResponse = JSON.stringify({

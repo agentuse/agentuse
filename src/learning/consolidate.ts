@@ -1422,7 +1422,21 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     diffs: { learnings: '' },
   };
 
-  if (active.length <= cap) return base;
+  // Read once, here, because whether there is anything to do depends on it.
+  const agentBefore = await readFile(options.agentFilePath, 'utf-8');
+
+  // Two piles, two failure modes, either one is reason to run.
+  //
+  // Gating on the cap alone meant the permanent block was only ever looked at
+  // as a side effect of the staging set overflowing — so an agent that keeps
+  // its staging tidy never had its block read at all, and that block is the one
+  // nothing else revisits. Measured across the four agents carrying blocks:
+  // three reported "nothing to tidy up" while holding rules that had never once
+  // been reconciled against each other.
+  //
+  // Two rules, because a block of one has nothing to compare against.
+  const permanentBefore = parseLearnedBlock(agentBefore);
+  if (active.length <= cap && permanentBefore.length < 2) return base;
 
   // Helper calls run on the agent's own model unless overridden: whatever
   // provider and auth the agent already works with is guaranteed to work here,
@@ -1441,11 +1455,10 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     ? undefined
     : 'the agent file is not writable';
 
-  // Read both files before the first round. Every round below works in memory,
-  // and the files are written once at the end, so a press that took five rounds
-  // is still one undo.
+  // The corrections file, to match the agent file already read above. Every
+  // round below works in memory and both files are written once at the end, so
+  // a press that took five rounds is still one undo.
   const beforeLearnings = existsSync(store.filePath) ? await readFile(store.filePath, 'utf-8') : '';
-  const agentBefore = await readFile(options.agentFilePath, 'utf-8');
 
   let working: Learning[] = stored.map((l) => ({ ...l }));
   const changes: ConsolidationChange[] = [];
@@ -1551,7 +1564,6 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // the file the input to its own next edit, and leaves exactly one copy of
   // each rule instead of two that can drift apart.
   const newlyPermanent = working.filter((l) => l.state === 'graduated');
-  const permanentBefore = parseLearnedBlock(agentBefore);
   const appended: PermanentRule[] = graduationBlocked
     ? permanentBefore
     : [
