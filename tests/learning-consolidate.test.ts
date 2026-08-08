@@ -18,19 +18,28 @@ afterAll(() => {
   else process.env.XDG_DATA_HOME = priorXdgDataHome;
 });
 
-// The tidy-up runs in two passes: one call decides what relates to what (ids
-// only), then one small call per group writes the replacement rule. The mock
-// answers by prompt kind so every test can drive an exact decision and assert
-// what the guardrails do with it.
+// The tidy-up runs in three passes: one call decides what relates to what (ids
+// only), one small call per group writes the replacement rule, then one call
+// rewrites the agent file's permanent block as a whole. The mock answers by
+// prompt kind so every test can drive an exact decision and assert what the
+// guardrails do with it.
 let decideResponse = "{}";
 let writeResponse = JSON.stringify({ category: "tip", title: "Merged", instruction: "One rule covering both." });
+// "{}" carries no rules, which the coverage check rejects — so by default the
+// block is left exactly as it was. Only the tests that exercise the block pass
+// set this, and every other test keeps the append-only behaviour it asserts.
+let blockResponse = "{}";
 
 function isWriteCall(prompt: string): boolean {
   return prompt.includes("say substantially the same thing") || prompt.includes("has repeated this correction");
 }
 
+function isBlockCall(prompt: string): boolean {
+  return prompt.includes("Rewrite them as one coherent set");
+}
+
 const completeTextMock = mock(async (_model: string, opts: { prompt: string }) =>
-  isWriteCall(opts.prompt) ? writeResponse : decideResponse);
+  isBlockCall(opts.prompt) ? blockResponse : isWriteCall(opts.prompt) ? writeResponse : decideResponse);
 mock.module("../src/complete-text", () => ({ completeText: completeTextMock }));
 
 /** Ids of the corrections a decide prompt was given, in prompt order. */
@@ -108,12 +117,12 @@ describe("tidying up an over-cap corrections file", () => {
 
       expect(prompt).toContain(permanentRule);
       expect(prompt).toContain("Rules already PERMANENT");
-      // Addressable, because nothing else ever prunes them. Graduation only
-      // appends to this block and every earlier pass skipped it, so it grew
-      // forever — the same pile as the staging file, one level up, and more
-      // expensive because these apply on every run.
-      expect(prompt).toContain("id:perm0");
-      expect(prompt).toContain("dropPermanent");
+      // Visible but not addressable: this pass decides what happens to STAGED
+      // corrections, and the block is rewritten whole by a later pass. It still
+      // has to be readable here, or a rule the block already states gets
+      // graduated a second time.
+      expect(prompt).not.toContain("id:perm0");
+      expect(prompt).toContain("never graduate something they already cover");
     });
 
     it("keeps truncating the body, so a long agent file still bounds the prompt", () => {
@@ -147,54 +156,219 @@ describe("tidying up an over-cap corrections file", () => {
       "",
     ].join("\n");
 
-    it("removes a permanent rule another one now covers, and names it", async () => {
+    it("combines two rules that are halves of one procedure", async () => {
+      // The move that per-rule surgery could not make. On a real agent the block
+      // held a pair that each cross-referenced the other for its missing half:
+      // dropping either loses a constraint, so a delete-only pass correctly
+      // declined to touch them and the redundancy survived every tidy-up.
+      await seed();
+      writeFileSync(agentFilePath, withPermanent([
+        "If the gate is older than 24h, use the orphaned-gate handling below.",
+        "For a fresh gate, see the sibling-gate rule above.",
+      ]));
+      blockResponse = JSON.stringify({
+        rules: [{
+          category: "pattern",
+          instruction: "Gate older than 24h: treat as abandoned. Fresher: pick a different target.",
+          covers: [0, 1],
+          why: "two halves of one gate procedure",
+        }],
+      });
+
+      const result = await run();
+
+      const after = readFileSync(agentFilePath, "utf-8");
+      expect(after).toContain("Gate older than 24h: treat as abandoned.");
+      expect(after).not.toContain("use the orphaned-gate handling below");
+      expect(after).not.toContain("see the sibling-gate rule above");
+      expect(result.changes).toContainEqual(expect.objectContaining({
+        kind: "merge-permanent",
+        why: "two halves of one gate procedure",
+      }));
+    });
+
+    it("discards the whole rewrite when a rule would vanish", async () => {
+      // The one failure that would be invisible in review. A block that comes
+      // back one rule shorter still reads perfectly; the loss only surfaces the
+      // next time the agent makes the mistake that rule used to prevent. So an
+      // unaccounted rule costs the rewrite, not the rule.
+      await seed();
+      writeFileSync(agentFilePath, withPermanent([
+        "Always cite a primary source.",
+        "Never publish without a fact check.",
+        "Keep the closing line plain.",
+      ]));
+      // One rule is genuinely reworded, so this plan WOULD be written if the
+      // coverage check let it through — otherwise the rewrite is all untouched
+      // rules, produces no changes, and the file is left alone for a reason
+      // that has nothing to do with the guard under test.
+      blockResponse = JSON.stringify({
+        rules: [
+          { category: "tip", instruction: "Cite a primary source, never a summary.", covers: [0], why: "tightened" },
+          { category: "tip", instruction: "Keep the closing line plain.", covers: [2] },
+        ],
+      });
+
+      const result = await run();
+
+      const after = readFileSync(agentFilePath, "utf-8");
+      expect(after).toContain("Never publish without a fact check.");
+      // The rewrite is discarded whole, so even the good edit in it is dropped.
+      expect(after).toContain("- [tip] Always cite a primary source.");
+      expect(result.droppedPermanent).toEqual([]);
+      expect(result.changes.some((c) => c.kind.endsWith("-permanent"))).toBe(false);
+    });
+
+    it("keeps the originals when a merge summarises instead of merging", async () => {
+      // Coverage alone does not protect content. Measured on the first real run
+      // against a real agent: two rules totalling 1,850 characters — what the
+      // word "connect" means in each of its two senses, and what to do about
+      // each — came back as "Keep the two senses of 'connect' apart." Every
+      // index was accounted for, so the coverage check passed, and the surviving
+      // rule named the topic while deleting the instruction.
+      const long = (n: number) => `Rule ${n}. ${"detail ".repeat(120)}`;
+      await seed();
+      writeFileSync(agentFilePath, withPermanent([long(1), long(2), "Keep it short."]));
+      blockResponse = JSON.stringify({
+        rules: [
+          { category: "tip", instruction: "Keep rules 1 and 2 in mind.", covers: [0, 1], why: "same topic" },
+          { category: "tip", instruction: "Keep it short.", covers: [2] },
+        ],
+      });
+
+      const result = await run();
+
+      const after = readFileSync(agentFilePath, "utf-8");
+      expect(after).toContain(long(1).trim());
+      expect(after).toContain(long(2).trim());
+      expect(after).not.toContain("Keep rules 1 and 2 in mind.");
+      expect(result.changes.some((c) => c.kind === "merge-permanent")).toBe(false);
+    });
+
+    it("lets one bad merge fail without costing the good ones beside it", async () => {
+      // Rejecting the whole rewrite would put the block back where it started
+      // every time the model gutted any single rule — the same never-pruned dead
+      // end this pass exists to escape.
+      const long = (n: number) => `Rule ${n}. ${"detail ".repeat(120)}`;
+      await seed();
+      writeFileSync(agentFilePath, withPermanent([long(1), long(2), "First half.", "Second half."]));
+      blockResponse = JSON.stringify({
+        rules: [
+          { category: "tip", instruction: "Keep rules 1 and 2 in mind.", covers: [0, 1], why: "gutted" },
+          { category: "tip", instruction: "First half. Second half.", covers: [2, 3], why: "two halves of one rule" },
+        ],
+      });
+
+      const result = await run();
+
+      const after = readFileSync(agentFilePath, "utf-8");
+      expect(after).toContain(long(1).trim());
+      expect(after).toContain("- [tip] First half. Second half.");
+      expect(result.changes.filter((c) => c.kind === "merge-permanent")).toHaveLength(1);
+    });
+
+    it("allows a single rule to be tightened, but not hollowed out", async () => {
+      const long = `Cite the primary source. ${"reason ".repeat(100)}`.trim();
+      const tightened = `Cite the primary source. ${"reason ".repeat(70)}`.trim();
+      await seed();
+      writeFileSync(agentFilePath, withPermanent([long, "Keep it short."]));
+      blockResponse = JSON.stringify({
+        rules: [
+          // Two thirds of the original: a real tightening, so it is kept.
+          { category: "tip", instruction: tightened, covers: [0], why: "trimmed repetition" },
+          { category: "tip", instruction: "Keep it short.", covers: [1] },
+        ],
+      });
+
+      const result = await run();
+
+      expect(result.changes.some((c) => c.kind === "rewrite-permanent")).toBe(true);
+      expect(readFileSync(agentFilePath, "utf-8")).toContain(tightened);
+    });
+
+    it("drops a rule only when it is named as dropped, with a reason", async () => {
       await seed();
       writeFileSync(agentFilePath, withPermanent([
         "Always cite a primary source.",
         "Cite a source.",
       ]));
-      decideResponse = JSON.stringify({
-        dropPermanent: [{ id: "perm1", why: "perm0 covers this outright" }],
+      blockResponse = JSON.stringify({
+        rules: [{ category: "tip", instruction: "Always cite a primary source.", covers: [0] }],
+        dropped: [{ index: 1, why: "the rule covering 0 states this outright" }],
       });
 
       const result = await run();
 
       expect(result.droppedPermanent).toEqual([
-        { instruction: "Cite a source.", why: "perm0 covers this outright" },
+        { instruction: "Cite a source.", why: "the rule covering 0 states this outright" },
       ]);
       const after = readFileSync(agentFilePath, "utf-8");
       expect(after).toContain("Always cite a primary source.");
       expect(after).not.toContain("- [tip] Cite a source.");
     });
 
-    it("refuses an id that names no permanent rule", async () => {
+    it("reports nothing for rules it returned untouched", async () => {
+      // Rewording a rule that is already fine is churn in the user's own file.
+      // A rule that comes back byte-identical is not a change and must not be
+      // announced as one, or every tidy-up reads as having edited the lot.
       await seed();
-      writeFileSync(agentFilePath, withPermanent(["Always cite a primary source."]));
-      decideResponse = JSON.stringify({
-        dropPermanent: [{ id: "perm9", why: "invented" }, { id: "rule0", why: "wrong id space" }],
+      writeFileSync(agentFilePath, withPermanent(["Always cite a primary source.", "Keep it short."]));
+      blockResponse = JSON.stringify({
+        rules: [
+          { category: "tip", instruction: "Always cite a primary source.", covers: [0] },
+          { category: "tip", instruction: "Keep it short.", covers: [1] },
+        ],
       });
 
       const result = await run();
 
-      expect(result.droppedPermanent).toEqual([]);
-      expect(readFileSync(agentFilePath, "utf-8")).toContain("Always cite a primary source.");
+      expect(result.changes.some((c) => c.kind.endsWith("-permanent"))).toBe(false);
+      // Asserted on the rules rather than on the whole diff: re-rendering the
+      // block also normalises its heading, which is a change to the file but
+      // not to anything the agent is being told.
+      const rules = readFileSync(agentFilePath, "utf-8").match(/^- \[.*$/gm);
+      expect(rules).toEqual(["- [tip] Always cite a primary source.", "- [tip] Keep it short."]);
     });
 
-    it("drops a rule named by two batches only once", async () => {
-      // Every batch is shown the same permanent rules, so the same one can be
-      // named twice. Dropping it twice would shift every later index by one.
-      await store.save(Array.from({ length: 30 }, (_, i) => learning({ id: `rule${String(i).padStart(2, "0")}` })));
-      writeFileSync(agentFilePath, withPermanent(["Keep this one.", "Drop this one."]));
-      decideResponse = JSON.stringify({
-        dropPermanent: [{ id: "perm1", why: "duplicate" }],
+    it("folds a newly graduated rule into the block instead of appending it", async () => {
+      // Graduation used to append, which is why the block only ever grew: a
+      // promoted rule landed at the end without ever being read against what
+      // was already there.
+      await seed([{ id: "proven", instruction: "Cite the primary source, never a summary.", reasserted: 2 }]);
+      writeFileSync(agentFilePath, withPermanent(["Always cite a primary source."]));
+      decideResponse = JSON.stringify({ graduate: [{ id: "proven", why: "held up across runs" }] });
+      blockResponse = JSON.stringify({
+        rules: [{
+          category: "tip",
+          instruction: "Always cite the primary source, never a summary.",
+          covers: [0, 1],
+          why: "the promoted rule restates the standing one",
+        }],
       });
 
-      const result = await run();
+      await run();
 
-      expect(result.droppedPermanent).toHaveLength(1);
       const after = readFileSync(agentFilePath, "utf-8");
-      expect(after).toContain("Keep this one.");
-      expect(after).not.toContain("Drop this one.");
+      expect(after).toContain("Always cite the primary source, never a summary.");
+      // One rule where appending would have left two saying the same thing.
+      expect(after.match(/^- \[/gm)).toHaveLength(1);
+    });
+
+    it("sees every rule in the block, however long the block is", async () => {
+      // The pass gets the rules themselves, not the agent file, so nothing
+      // truncates them. A block cut in half would fail the coverage check and
+      // silently disable the only thing that prunes it.
+      await seed();
+      const long = Array.from({ length: 12 }, (_, i) => `Rule number ${i} ${"y".repeat(1_000)}`);
+      writeFileSync(agentFilePath, withPermanent(long));
+
+      await run();
+
+      const blockPrompt = completeTextMock.mock.calls
+        .map((c) => (c[1] as { prompt: string }).prompt)
+        .find(isBlockCall);
+      expect(blockPrompt).toBeDefined();
+      for (const [i] of long.entries()) expect(blockPrompt).toContain(`Rule number ${i} `);
     });
   });
 
@@ -210,12 +384,13 @@ describe("tidying up an over-cap corrections file", () => {
     store = LearningStore.fromAgentFile(agentFilePath, tempDir);
     decideResponse = JSON.stringify({});
     writeResponse = JSON.stringify({ category: "tip", title: "Merged", instruction: "One rule covering both." });
+    blockResponse = "{}";
     completeTextMock.mockClear();
     // Restore the default implementation here rather than at the end of the
     // tests that override it: an assertion failing mid-test would otherwise
     // leave the stub broken and cascade into every test after it.
     completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) =>
-      isWriteCall(opts.prompt) ? writeResponse : decideResponse);
+      isBlockCall(opts.prompt) ? blockResponse : isWriteCall(opts.prompt) ? writeResponse : decideResponse);
   });
 
   afterEach(() => {

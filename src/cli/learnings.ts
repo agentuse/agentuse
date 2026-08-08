@@ -24,6 +24,7 @@ import {
   writeTidyRecord,
   clearTidyRecord,
   type ConsolidationResult,
+  type ConsolidationChange,
   type Learning,
   type MigrationEntry,
 } from '../learning/index.js';
@@ -227,9 +228,20 @@ function printResult(result: ConsolidationResult, dryRun: boolean): void {
   // having covered everything when part of the file was never looked at.
   if (result.note) console.log(chalk.yellow(`  ${result.note}`));
 
+  // Say which file a change lands in. "merge" and "merge-permanent" are the
+  // same shape of edit against very different things: one reorganises a staging
+  // buffer nobody reads directly, the other edits the user's own agent file.
+  const verbs: Record<ConsolidationChange['kind'], string> = {
+    merge: 'merge',
+    rewrite: 'rewrite',
+    retire: 'retire',
+    graduate: 'permanent',
+    'merge-permanent': 'agent file, combined',
+    'rewrite-permanent': 'agent file, tightened',
+    'drop-permanent': 'agent file, removed',
+  };
   for (const change of result.changes) {
-    const verb = change.kind === 'graduate' ? 'permanent' : change.kind;
-    console.log(`  ${chalk.bold(verb)}: ${change.titles.join(' + ')}`);
+    console.log(`  ${chalk.bold(verbs[change.kind])}: ${change.titles.join(' + ')}`);
     if (change.why) console.log(chalk.gray(`    ${change.why}`));
   }
 

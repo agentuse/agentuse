@@ -271,19 +271,30 @@ agentuse learnings tidy ./blog-writer.agentuse
 ```
 
 or the **Tidy up** button in the serve UI, on the session view and the agent's
-Learnings tab. Both run the same thing. It makes four kinds of change:
+Learnings tab. Both run the same thing. It makes five kinds of change:
 
 - **merge** near-duplicates into one rule
 - **rewrite** a learning you have repeated, a repeat means the wording is not
   landing, so restating it sharply is the fix
-- **retire** what has been superseded, into a `## Retired` section of the same
-  file. Nothing is deleted, and a retired rule comes back automatically if you
-  ever re-assert it
+- **retire** what has been superseded. A retired rule is removed, and re-asserting
+  it later simply adds it back
 - **graduate** the learnings that have proven themselves into the agent's own
   instructions, where they apply on every run and cost no cap slot
+- **rewrite the permanent block** in your agent file as one document, combining
+  rules that overlap and dropping any another rule now fully states
+
+That last one is the only thing that ever makes the permanent block smaller.
+Graduation alone only ever added to it, so on a long-running agent it accumulated
+the same way the staging file did, and more expensively: those rules apply on
+every single run. The rewrite reads the whole block at once, which is what lets
+it combine two rules that are halves of one procedure, or fold a correction into
+the rule it corrects. Every rule that goes in must come back out, inside some
+rule or named as dropped with a reason; if one goes missing the whole rewrite is
+discarded rather than written.
 
 It applies immediately and then shows you what changed: a summary, the rules that
-became permanent named individually, and the diff of **both** files. Undo with
+became permanent named individually, each edit to the permanent block, and the
+diff of **both** files. Undo with
 `agentuse learnings undo ./blog-writer.agentuse` or the Undo button.
 
 ```
@@ -356,12 +367,20 @@ diffs, nothing written).
 
 ### What makes a learning permanent
 
-Graduation is earned, not guessed. A learning qualifies when either:
+Graduation is earned, not guessed. A learning qualifies when any of:
 
-- **you wrote it yourself** (`src:manual`), writing it down was the assertion, or
+- **you repeated it** (`re:` above zero), saying the same thing twice is the
+  clearest evidence a rule matters, or
 - **it was in force across 3 runs you approved without leaving a comment.**
   Approving with no notes is a vote for every rule that applied that run; a run
-  you commented on credits nothing, because you had to correct something.
+  you commented on credits nothing, because you had to correct something, or
+- **it has been in force for 10 runs.** Surviving that long without ever being
+  contradicted is weaker evidence than the other two, but it is evidence, and
+  without it a rule nobody comments on either way waits forever.
+
+Writing a rule yourself does not graduate it on its own. It used to, and the
+result was that hand-written rules went permanent before they had ever been
+checked against the rules already there.
 
 Graduated rules are written into your agent file inside a marked block:
 
@@ -380,6 +399,10 @@ formatting are left exactly as they were. Because the block is part of the agent
 file, it is diffable, reviewable in a pull request, and readable by a teammate
 who wants to know what this agent has been taught. Re-running the tidy-up
 replaces the block rather than appending a second copy.
+
+The block in the file is the source of truth for these rules, not a printout of
+one held elsewhere: the tidy-up reads it back before every edit, so wording you
+change by hand survives, and is what the next rewrite works from.
 
 Learnings still on probation are injected under a separate
 `## Recent Corrections` heading, so the two tiers never collide.
@@ -422,17 +445,12 @@ Each actionable tip should include a specific time estimate
 <!-- id:i9j0k1l2 | confidence:1.00 | applied:0 | src:manual | ok:4 | state:graduated | 2026-01-27 -->
 Always include source links before publishing.
 
-## Retired
-
-### [tip] Open with a question
-<!-- id:m3n4o5p6 | confidence:0.85 | applied:2 | src:auto | state:retired | 2026-01-10 -->
-Start posts with a question to draw the reader in.
 ```
 
 Every field except the date is optional, so older files load unchanged:
 
 - `src:` records provenance, `auto` (self-evaluation), `approval` (promoted from a reviewer comment), or `manual` (explicitly saved by a reviewer). Files without it load as `auto`.
-- `state:` records lifecycle, `graduated` (now permanent in the agent file) or `retired` (archived). Absent means active.
+- `state:graduated` means the rule now lives in the agent file and this staged copy is on its way out. Absent means active. A `state:retired` entry in an older file is skipped on read and dropped on the next write, so retired rules do not accumulate.
 - `re:` counts how many times a human repeated the learning; `ok:` counts the approved, uncommented runs it was in force for. These are the evidence the tidy-up uses to decide what to rewrite and what to make permanent.
 
 The `<!-- agent: … -->` line under the heading is a breadcrumb, so a file sitting in the state directory can be traced back to the agent that wrote it. Nothing reads it back; it is there for you.
