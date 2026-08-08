@@ -125,9 +125,14 @@ export async function refineManualLearning(
   context?: {
     agentInstructions?: string | undefined;
     sessionTranscript?: string | undefined;
-    existingInstructions?: string[] | undefined;
+    /** The rules this agent already carries, with ids, so the note can be
+     *  reconciled against them instead of merely deduped. */
+    existing?: Learning[] | undefined;
+    /** How many rules the agent keeps. When the set is full the note has to
+     *  replace one, exactly as a captured learning does. */
+    cap?: number | undefined;
   },
-): Promise<{ category: LearningCategory; title: string; instruction: string } | null> {
+): Promise<{ category: LearningCategory; title: string; instruction: string; supersedes?: string } | null> {
   const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '\n...(truncated)' : s);
   const instructionsBlock = context?.agentInstructions
     ? `\n\n## The agent's current instructions\n${trunc(context.agentInstructions, 2000)}`
@@ -135,9 +140,24 @@ export async function refineManualLearning(
   const runBlock = context?.sessionTranscript
     ? `\n\n## What the agent actually did this run (what the reviewer was looking at)\n${trunc(context.sessionTranscript, 6000)}`
     : '';
-  const existing = (context?.existingInstructions ?? []).filter((i) => i && i.trim());
+  // Same reconcile contract as capture, for the same reason. A note typed with
+  // --remember used to be shown the stored rules under "do not duplicate", which
+  // is a matching test: it catches a restatement and is blind to a contradiction.
+  // That is how a rule and the later note overruling it both survived, and the
+  // manual path is the one people use precisely when they are correcting
+  // something, so it is the LAST place that test belongs.
+  const existing = (context?.existing ?? []).filter((l) => l.instruction?.trim());
+  const cap = context?.cap;
+  const full = cap !== undefined && existing.length >= cap;
   const existingBlock = existing.length > 0
-    ? `\n\n## Additional instructions already saved (do not duplicate; if the note is about the same thing, produce the improved version)\n${existing.map((i) => `- ${i}`).join('\n')}`
+    ? `\n\n## Rules this agent already carries${cap !== undefined ? ` (${existing.length}/${cap} slots used)` : ''}
+Check the reviewer's note against these, as one ruleset the agent must obey all at once:
+- Says the same thing as one of them, in better words? Return it with "supersedes" set to that rule's id.
+- CONTRADICTS one, or narrows it so the two cannot both be followed? That is the most important case and the easiest to miss, because two rules can collide while sharing no wording at all. Return ONE rule that satisfies the reviewer's note AND carries whatever the old rule still gets right, with "supersedes" set to its id.
+- Genuinely new ground? Leave "supersedes" out.${full ? `
+
+The set is FULL, so there is no free slot: you MUST set "supersedes" to the id of the rule this note replaces. If nothing is related, name the least valuable rule in the list.` : ''}
+${existing.map((l) => `- (id ${l.id}) [${l.category}] ${l.title}: ${trunc(l.instruction, 300)}`).join('\n')}`
     : '';
 
   const prompt = `A human reviewer, after seeing this run, wants to teach the agent so future runs go better. Turn their note into ONE additional instruction to APPEND to the agent's instructions.${instructionsBlock}${runBlock}${existingBlock}
@@ -151,10 +171,11 @@ Requirements:
 - It must read as a natural extension of the agent's instructions (same voice), complement them, and NOT contradict or duplicate them.
 - Ground it in what actually happened this run — target the real cause (the output, the process, or how a tool was used), not a surface reword of the note.
 - Be specific and directly actionable. Do NOT decide whether it is worth keeping — always produce an instruction.
+- Set "supersedes" per the rules above when this note replaces one the agent already carries. Superseding is combining, not choosing: the reviewer's intent wins outright, but anything the old rule constrained that the note does not contradict must survive into your wording.
 
 Pick the best category: tip | warning | pattern | tool-usage | error-fix.
-Respond with ONLY a JSON object, no other text:
-{"category": "tip", "title": "short title (max 6 words)", "instruction": "the additional instruction"}`;
+Respond with ONLY a JSON object, no other text ("supersedes" is optional):
+{"category": "tip", "title": "short title (max 6 words)", "instruction": "the additional instruction", "supersedes": "id of the rule this replaces"}`;
 
   const instructions = isAnthropicModel(agentModel)
     ? ANTHROPIC_IDENTITY_PROMPT
@@ -171,7 +192,14 @@ Respond with ONLY a JSON object, no other text:
     const title = typeof parsed?.title === 'string' && parsed.title.trim()
       ? parsed.title.trim()
       : cleaned.split('\n')[0];
-    return { category, title, instruction: cleaned };
+    // Only an id the model was actually shown may be superseded, so a
+    // hallucinated one degrades to a plain insert rather than silently
+    // retiring nothing while reporting a fold.
+    const shown = new Set((context?.existing ?? []).map((l) => l.id));
+    const supersedes = typeof parsed?.supersedes === 'string' && shown.has(parsed.supersedes)
+      ? parsed.supersedes
+      : undefined;
+    return { category, title, instruction: cleaned, ...(supersedes ? { supersedes } : {}) };
   } catch {
     logger.debug(`[Learning] Failed to parse refined manual instruction: ${responseText.slice(0, 200)}`);
     return null;

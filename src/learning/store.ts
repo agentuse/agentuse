@@ -528,13 +528,16 @@ export class LearningStore {
   }
 
   /**
-   * Credit the injected set for a run that a human approved without leaving a
-   * comment — the only positive evidence the system gets that a rule is working.
+   * Credit the injected set for approval GATES a human resolved without leaving
+   * a comment — the only positive evidence the system gets that a rule works.
    *
-   * Deliberately NOT incremented for a run that drew a comment: the reviewer
-   * corrected something, so the rules in force that run did not fully do their
-   * job, and crediting them would let a bad rule graduate on the strength of
-   * runs it was failing.
+   * Deliberately not credited for a gate that drew a comment: the reviewer had
+   * to correct something, and crediting the rules in force would let a bad rule
+   * graduate on the strength of the runs it was failing.
+   *
+   * The unit is the gate, not the run. Requiring a whole run to pass
+   * uncommented made this unreachable on any agent whose reviewer steers it —
+   * measured at 0 across 750 rules.
    */
   async recordApprovedRun(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
@@ -561,10 +564,31 @@ export class LearningStore {
    * re-render the agent file's block so the reviewer's new wording reaches the
    * copy that is actually in force.
    */
-  async upsertManual(draft: Learning): Promise<{ upgraded: boolean; graduated: boolean }> {
+  async upsertManual(
+    draft: LearningDraft,
+  ): Promise<{ upgraded: boolean; graduated: boolean; retired: Learning[] }> {
     return withLearningFileLock(this.filePath, async () => {
       const existing = await this.load();
-      const idx = existing.findIndex(e => this.similar(e.instruction, draft.instruction));
+      const retired: Learning[] = [];
+
+      // An explicit fold named by the refiner. Checked BEFORE the similarity
+      // match, because that matcher needs 60% shared vocabulary and the whole
+      // point of the reconcile step is catching a collision between two rules
+      // that share almost none — which is exactly what a human writes when they
+      // are correcting an earlier note of their own.
+      const named = draft.supersedes
+        ? existing.find(e => e.id === draft.supersedes && (e.state ?? 'active') === 'active')
+        : undefined;
+      if (named) {
+        named.state = 'retired';
+        retired.push(named);
+      }
+
+      // Never re-match the entry just retired above: the upgrade path revives a
+      // retired rule, which would silently undo the fold the refiner asked for.
+      const idx = existing.findIndex(
+        e => e !== named && this.similar(e.instruction, draft.instruction),
+      );
       if (idx >= 0) {
         const prior = existing[idx]!;
         const { sessionId: _priorSessionId, ...priorWithoutSession } = prior;
@@ -589,14 +613,17 @@ export class LearningStore {
           ...(prior.state === 'retired' ? { state: 'active' as const } : {}),
         };
         await this.save(existing);
-        return { upgraded: true, graduated: existing[idx]!.state === 'graduated' };
+        return { upgraded: true, graduated: existing[idx]!.state === 'graduated', retired };
       }
       const taken = new Set(existing.map(l => l.id).filter(Boolean));
       const id = draft.id && draft.id.length >= 4 && !taken.has(draft.id)
         ? draft.id
         : generateLearningId(taken);
-      await this.save([...existing, { ...draft, id }]);
-      return { upgraded: false, graduated: false };
+      // `supersedes` is an instruction to this method, already acted on above;
+      // it must not travel into the stored entry.
+      const { supersedes: _consumed, ...rest } = draft;
+      await this.save([...existing, { ...rest, id }]);
+      return { upgraded: false, graduated: false, retired };
     });
   }
 

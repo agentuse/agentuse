@@ -3369,7 +3369,7 @@ export function createServeCommand(): Command {
         info: WorkerApprovalInfoResult,
         remember: string | undefined,
         sessionId: string,
-      ): Promise<{ agentFilePath: string; stateRoot: string; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined; sessionId?: string | undefined } | null> => {
+      ): Promise<{ agentFilePath: string; stateRoot: string; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined; sessionId?: string | undefined; cap?: number | undefined } | null> => {
         const instruction = remember?.trim();
         if (!instruction) return null;
         const targetAgent = info.approval.originAgent ?? info.approval.agent;
@@ -3385,13 +3385,13 @@ export function createServeCommand(): Command {
         const stateRoot = resolveProjectContext(dirname(targetAgent.filePath), {
           agentFilePath: targetAgent.filePath,
         }).stateRoot;
-        return { agentFilePath: targetAgent.filePath, stateRoot, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(info.approval.logs), sessionId };
+        return { agentFilePath: targetAgent.filePath, stateRoot, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(info.approval.logs), sessionId, cap: effectiveCap(agent.config.learning) };
       };
 
       // Persist a resolved manual instruction best-effort: a learnings-file write
       // failure is logged and never aborts the (already kicked-off) resume.
       const persistRememberedLearning = (
-        target: { agentFilePath: string; stateRoot: string; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined; sessionId?: string | undefined } | null,
+        target: { agentFilePath: string; stateRoot: string; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined; sessionId?: string | undefined; cap?: number | undefined } | null,
       ): void => {
         if (!target) return;
         void saveManualLearning(target).catch((err) => {
@@ -5510,7 +5510,7 @@ export function createServeCommand(): Command {
             const rememberStateRoot = resolveProjectContext(dirname(targetAgent.filePath), {
               agentFilePath: targetAgent.filePath,
             }).stateRoot;
-            await saveManualLearning({ agentFilePath: targetAgent.filePath, stateRoot: rememberStateRoot, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(found.info.approval.logs), sessionId });
+            await saveManualLearning({ agentFilePath: targetAgent.filePath, stateRoot: rememberStateRoot, instruction, model: agent.config.model, agentInstructions: agent.instructions, sessionTranscript: buildRunTranscript(found.info.approval.logs), sessionId, cap: effectiveCap(agent.config.learning) });
             // Redraw through the same builder as the GET: a rule added by hand
             // can be the one that pushes the store past the cap, and a response
             // that dropped the tidy target would take the button away at the
@@ -5638,6 +5638,7 @@ export function createServeCommand(): Command {
               instruction,
               model: target.agent.config.model,
               agentInstructions: target.agent.instructions,
+              cap: effectiveCap(target.agent.config.learning),
             });
             sendJSON(res, 200, await agentLearningPayload(target));
           } catch (err) {

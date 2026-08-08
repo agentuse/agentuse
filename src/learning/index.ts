@@ -191,6 +191,10 @@ export async function saveManualLearning(options: {
   sessionTranscript?: string | undefined;
   /** Session the rule was added from (absent for agent-level rules). */
   sessionId?: string | undefined;
+  /** How many rules this agent keeps. When the set is full, the note has to
+   *  replace one rather than grow the set past the cap — the same contract
+   *  capture follows. Omit to leave the note unbounded (legacy callers). */
+  cap?: number | undefined;
 }): Promise<LearningOutcome> {
   const raw = options.instruction.trim();
   if (!raw) {
@@ -206,25 +210,33 @@ export async function saveManualLearning(options: {
   let category: LearningCategory = 'tip';
   let title = manualLearningTitle(raw);
   let instruction = raw;
+  let supersedes: string | undefined;
   if (options.model) {
     try {
-      const existing = await store.load();
+      // The ACTIVE set, with ids, so the note can be reconciled against it
+      // rather than merely deduped — and the cap, so a full set forces the fold.
+      // This path is the one people reach for when they are correcting an
+      // earlier note of their own, which makes it the last place a
+      // "do not duplicate" test belongs.
+      const existing = activeLearnings(await store.load());
       const refined = await refineManualLearning(raw, options.model, {
         agentInstructions: options.agentInstructions,
         sessionTranscript: options.sessionTranscript,
-        existingInstructions: existing.map((l) => l.instruction),
+        existing,
+        cap: options.cap,
       });
       if (refined) {
         category = refined.category;
         title = manualLearningTitle(refined.title);
         instruction = refined.instruction;
+        supersedes = refined.supersedes;
       }
     } catch (error) {
       logger.debug(`[Learning] Manual refine failed, storing verbatim: ${(error as Error).message}`);
     }
   }
 
-  const { graduated } = await store.upsertManual({
+  const { graduated, retired } = await store.upsertManual({
     id: '',
     category,
     title,
@@ -236,7 +248,15 @@ export async function saveManualLearning(options: {
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     reasserted: 0,
     approvedRuns: 0,
+    ...(supersedes ? { supersedes } : {}),
   });
+
+  // Name what this note replaced. A fold is the right outcome, but it is still
+  // one of the reviewer's own rules being archived, so it is said out loud
+  // rather than shown as a count.
+  for (const l of retired) {
+    logger.info(`[Learning] Replaced an earlier rule: "${l.title}" (archived, id:${l.id})`);
+  }
 
   // The reviewer re-worded a rule that already lives in the agent file. The
   // store now holds the new wording but the copy actually in force is the one in

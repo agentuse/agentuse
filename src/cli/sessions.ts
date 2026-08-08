@@ -14,7 +14,7 @@ import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
 import { applyResumeToolResult, restoreResumeToolResult, runAgent, describeErrorPart, classifyRunResult } from "../runner";
 import { reconcileOrphanedSessions } from "../runner/resume";
-import { describeLearningOutcome, saveManualLearning, type LearningSource } from "../learning";
+import { describeLearningOutcome, effectiveCap, saveManualLearning, type LearningSource } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
 
 interface SessionSummary {
@@ -1631,7 +1631,7 @@ async function resumeSession(
       throw new Error(`Session ${summary.id} is waiting on ${pending.part.tool}. Use --tool-result <json>.`);
     }
 
-    let rememberTarget: { agentFilePath: string; stateRoot: string; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionId?: string | undefined } | undefined;
+    let rememberTarget: { agentFilePath: string; stateRoot: string; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionId?: string | undefined; cap?: number | undefined } | undefined;
     let rememberAgent: Awaited<ReturnType<typeof parseAgent>> | undefined;
     if (options.remember !== undefined) {
       // Bare --remember defaults to the comment text (mirrors the web checkbox
@@ -1656,6 +1656,10 @@ async function resumeSession(
         model: rememberAgent.config.model,
         agentInstructions: rememberAgent.instructions,
         sessionId: summary.id,
+        // So a note lands in the same bounded set a captured learning does: when
+        // it is full the note replaces a rule instead of growing past the cap
+        // into the region that is never injected.
+        cap: effectiveCap(rememberAgent.config.learning),
       };
     }
 

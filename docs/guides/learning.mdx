@@ -165,6 +165,20 @@ agentuse sessions resume 01K... \
   --remember "Always include source links before publishing."
 ```
 
+A note you write this way is reconciled against the rules the agent already
+carries, exactly as a captured learning is. If it restates or **contradicts** one
+of them, it replaces that rule rather than being filed beside it, and the run
+names what it replaced:
+
+```
+[Learning] Replaced an earlier rule: "Cite the source inline" (archived, id:a1b2c3d4)
+```
+
+This matters most on this path, because `--remember` is what you reach for when
+you are correcting an earlier note of your own. Left unreconciled, the rule and
+its own correction both stay in force, and the agent has to satisfy two
+instructions that disagree.
+
 ## How Application Works
 
 On next run or approval resume (when `apply: true`):
@@ -311,21 +325,30 @@ which rule kept each learning that is still in force:
 ```
   Still 20 over the cap, and that is as far as tidying up can take it.
   The rest are still there for a reason:
-    14 say different things, so there is nothing left to merge them into
-     4 are less than 14 days old, and a new learning gets that long to prove
+    18 say different things, so there is nothing left to merge them into
+     2 are less than 14 days old, and a new learning gets that long to prove
        itself before it can be retired
-     2 you wrote by hand, and those are never retired for you
 
-  None of these can move into the agent file yet. That takes 3 runs approved
-  without a comment, and the closest of them has 1. They will become permanent
-  on their own as you keep approving runs.
+  None of the corrections still in force can move into the agent file yet. That
+  takes 3 runs approved without a comment, or 10 runs in force; the closest of
+  them has been applied in 6. They become eligible on their own as the agent
+  keeps running.
 ```
 
 The counts add up to the number still in force, so nothing is unaccounted for.
-The way past this ending is usually not another tidy-up: it is approving runs
-without a comment, which is what turns a learning into a permanent part of the
-agent file. When pressing again genuinely would get further (the five passes ran
-out, or a group of learnings could not be planned), it says so instead.
+When pressing again genuinely would get further (the five passes ran out, or a
+group of learnings could not be planned), it says so instead.
+
+<Note>
+  "You wrote it by hand" is not on that list, and used to be. A rule you typed
+  was once exempt from retirement entirely, which sounds protective and is not:
+  the only thing that can retire one of your rules is a later correction of your
+  own, and a veto put that out of reach. One agent reached 85 corrections it
+  could neither apply nor consolidate. Authorship now weighs heavily in the
+  judgement instead of ending it. What still cannot be retired is a rule you have
+  **repeated**, a repeat means the wording is not landing, so it gets sharpened
+  rather than dropped.
+</Note>
 
 Inspect first with `agentuse learnings ./blog-writer.agentuse` (a list by status)
 or `agentuse learnings tidy ./blog-writer.agentuse --dry-run` (the plan and both

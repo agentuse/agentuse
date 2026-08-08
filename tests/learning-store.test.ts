@@ -914,6 +914,78 @@ Always wait for explicit approval before publishing.
     });
   });
 
+  describe("upsertManual folding an earlier note", () => {
+    // The manual path is the one people reach for when they are CORRECTING an
+    // earlier note of their own, so it is the last place a similarity test
+    // should be the only thing looking for a collision. That matcher needs 60%
+    // shared vocabulary; two rules can overrule each other sharing almost none.
+    const priorNote = (id: string, instruction: string): Learning => ({
+      ...baseLearning,
+      id,
+      title: `Note ${id}`,
+      instruction,
+      source: "manual",
+      confidence: 1,
+    });
+
+    const note = (over: Partial<Learning> & { supersedes?: string }) => ({
+      ...baseLearning,
+      id: "",
+      title: "Newer note",
+      instruction: "Skip jacaranda when done",
+      source: "manual" as const,
+      confidence: 1,
+      extractedAt: "2026-08-01T00:00:00.000Z",
+      ...over,
+    });
+
+    it("retires the named rule and keeps the new one, sharing no wording", async () => {
+      await store.save([
+        priorNote("prior001", "Skip alphabetical when done"),
+        priorNote("prior002", "Skip borogoves when done"),
+      ]);
+
+      const result = await store.upsertManual(note({ supersedes: "prior001" }));
+
+      expect(result.retired.map((l) => l.id)).toEqual(["prior001"]);
+      const loaded = await store.load();
+      expect(loaded.find((l) => l.id === "prior001")!.state).toBe("retired");
+      expect(loaded.filter((l) => (l.state ?? "active") === "active")).toHaveLength(2);
+    });
+
+    it("does not revive the rule it just retired via the similarity path", async () => {
+      // The upgrade branch revives a retired match, which would silently undo
+      // the fold the reviewer asked for.
+      await store.save([priorNote("prior001", "Always cite a source before publishing anything")]);
+
+      const result = await store.upsertManual(
+        note({ supersedes: "prior001", instruction: "Always cite a source before publishing any claim" }),
+      );
+
+      expect(result.retired.map((l) => l.id)).toEqual(["prior001"]);
+      const loaded = await store.load();
+      expect(loaded.find((l) => l.id === "prior001")!.state).toBe("retired");
+      expect(loaded.filter((l) => (l.state ?? "active") === "active")).toHaveLength(1);
+    });
+
+    it("ignores an id that is not an active rule", async () => {
+      await store.save([priorNote("prior001", "Skip alphabetical when done")]);
+
+      const result = await store.upsertManual(note({ supersedes: "nosuchid" }));
+
+      expect(result.retired).toHaveLength(0);
+      expect((await store.load()).filter((l) => (l.state ?? "active") === "active")).toHaveLength(2);
+    });
+
+    it("never writes `supersedes` into the corrections file", async () => {
+      await store.save([priorNote("prior001", "Skip alphabetical when done")]);
+
+      await store.upsertManual(note({ supersedes: "prior001" }));
+
+      expect(readFileSync(store.filePath, "utf-8")).not.toContain("supersedes");
+    });
+  });
+
   describe("lifecycle state", () => {
     it("round-trips state and the evidence counters, defaulting them on older files", async () => {
       await store.save([

@@ -48,12 +48,19 @@ function timeOf(learning: Learning): number {
 }
 
 /**
- * Order learnings by authority, then confidence, then recency.
+ * Order learnings by authority, then recency.
  *
- * The recency comparison is load-bearing, not a cosmetic tiebreak. Every
- * reviewer-sourced learning is stored at a fixed confidence (0.95 in
- * `evaluateExecution`), so source and confidence tie across the whole reviewer
- * set. Without a third key the comparator returns 0 and the stable sort falls
+ * `confidence` used to sit between the two, and it was the model's own guess at
+ * capture time, never revised afterwards. Measured across a 22-agent fleet, 81%
+ * of it landed on three round numbers (0.85, 0.95, 0.80) — a model picking a
+ * plausible-looking figure, not a measurement. Ordering the rules that reach an
+ * agent by that number meant guesswork decided which corrections applied, so it
+ * is gone from the comparison. It survives only as a capture-time filter, where
+ * a self-assessment is at least being used to discard the model's own weakest
+ * output rather than to rank a human's corrections.
+ *
+ * The recency comparison is load-bearing, not a cosmetic tiebreak. Without it
+ * the comparator returns 0 across a whole source tier and the stable sort falls
  * back to file order, which is insertion order, which is oldest first. Combined
  * with the injection cap that made starvation permanent: an agent observed with
  * 26 reviewer corrections applied the same 6 on every run for two months while
@@ -63,10 +70,6 @@ function timeOf(learning: Learning): number {
  * Ordering newest-first means a fresh correction (or a re-asserted one, whose
  * `extractedAt` is refreshed by {@link LearningStore.addOrEscalate}) displaces
  * the oldest rule of equal authority instead of queueing behind it forever.
- *
- * This bounds staleness; it does not create room. A file with far more entries
- * than the cap still leaves most of them dormant, which is why callers report
- * the dormant count rather than hiding it.
  */
 export function rankLearnings(learnings: Learning[]): Learning[] {
   return learnings
@@ -74,8 +77,6 @@ export function rankLearnings(learnings: Learning[]): Learning[] {
     .sort((a, b) => {
       const bySource = learningSourceRank(a.learning.source) - learningSourceRank(b.learning.source);
       if (bySource !== 0) return bySource;
-      const byConfidence = b.learning.confidence - a.learning.confidence;
-      if (byConfidence !== 0) return byConfidence;
       const byRecency = timeOf(b.learning) - timeOf(a.learning);
       if (byRecency !== 0) return byRecency;
       // Dates are persisted to day precision, so same-day entries tie here.

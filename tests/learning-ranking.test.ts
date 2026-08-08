@@ -42,6 +42,18 @@ describe("rankLearnings", () => {
     expect(ranked.map((l) => l.title)).toEqual(["newest", "middle", "oldest"]);
   });
 
+  it("ignores confidence, so a model's own guess cannot reorder corrections", () => {
+    // It was the second sort key, and it is the capture model scoring its own
+    // output: measured across a 22-agent fleet, 81% of it landed on three round
+    // numbers. Recency decides now, whatever number the model wrote down.
+    const ranked = rankLearnings([
+      { ...correction("older-but-confident", "2026-01-01"), confidence: 0.99 },
+      { ...correction("newer-but-hedged", "2026-06-01"), confidence: 0.80 },
+    ]);
+
+    expect(ranked.map((l) => l.title)).toEqual(["newer-but-hedged", "older-but-confident"]);
+  });
+
   it("breaks a same-day tie toward the later write", () => {
     // Dates persist to day precision, so same-day entries tie on recency. The
     // one written later in the file is the more recent assertion.

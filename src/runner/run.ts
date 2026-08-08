@@ -737,11 +737,19 @@ export async function runPostLifecycle(options: {
       // A gate a human resolved without leaving a comment is the only positive
       // evidence the system gets that the rules in force were doing their job.
       // Credit them BEFORE capture runs, so the counter reflects this run even if
-      // capture then merges or re-asserts one of them. A commented gate credits
-      // nothing: the reviewer had to correct something.
+      // capture then merges or re-asserts one of them.
+      //
+      // Counted per GATE, not per run. The test used to be "this run drew no
+      // comment anywhere", which on an agent whose reviewer steers it through a
+      // revise loop is never satisfied: a run that took one correction and then
+      // shipped something perfect scored nothing. Measured across a 22-agent
+      // fleet, 0 of 750 rules had ever reached a single approved run, so the
+      // counter that gates graduation was dead on arrival. Per gate, two clean
+      // gates still count even when a third drew a correction.
       const stateRoot = options.stateRoot ?? findProjectRoot(agentFilePath);
+      const cleanGates = approvalContext.humanGates - reviews.length;
 
-      if (approvalContext.humanGates > 0 && reviews.length === 0 && options.learningsInjectedIds?.length) {
+      if (cleanGates > 0 && options.learningsInjectedIds?.length) {
         await LearningStore.fromAgentFile(agentFilePath, stateRoot, agent.name)
           .recordApprovedRun(options.learningsInjectedIds)
           .catch((err: unknown) => logger.debug(`[Learning] Could not credit approved run: ${(err as Error).message}`));
