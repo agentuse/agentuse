@@ -305,9 +305,10 @@ export class LearningStore {
    * it back into the store would state it twice. It is returned separately so
    * the caller can say "already permanent" rather than reporting nothing.
    *
-   * A match against a RETIRED rule revives it. A human re-asserting something we
-   * retired is proof the retirement was wrong, and it is the only correction
-   * signal the archive can ever receive.
+   * There is no revival path, because there is no archive to revive from: a
+   * retired rule is deleted, not filed. Re-asserting something that was removed
+   * simply stores it again as a new rule, which is the same outcome by a
+   * simpler route.
    *
    * When `cap` is given, the ACTIVE set is bounded and a genuinely new rule has
    * to be paid for. In order:
@@ -457,9 +458,6 @@ export class LearningStore {
           // Counting it is what later lets the tidy-up REWRITE the rule instead
           // of retiring it or stacking a near-copy beside it.
           reasserted: (prior.reasserted ?? 0) + 1,
-          // Revive on re-assertion: a human repeating something we archived is
-          // the archive being overruled.
-          state: 'active',
         };
         // Move it to the tail rather than rewriting it in place. Dates persist to
         // day precision, so a rule re-asserted on the same day as its peers ties
@@ -605,12 +603,11 @@ export class LearningStore {
           ...(draft.sessionId ? { sessionId: draft.sessionId } : {}),
           // A human writing a rule we already hold is a repeat like any other.
           reasserted: (prior.reasserted ?? 0) + 1,
-          // Revive a retired rule, but leave a GRADUATED one graduated: it lives
-          // in the agent file, and flipping it back to active would state the
-          // same rule twice, once there and once in the injected block. The
-          // reviewer's new wording still wins — the caller re-renders the agent
-          // file block so the permanent copy is the one that changes.
-          ...(prior.state === 'retired' ? { state: 'active' as const } : {}),
+          // A GRADUATED match stays graduated: it lives in the agent file, and
+          // flipping it back to active would state the same rule twice, once
+          // there and once in the injected block. The reviewer's new wording
+          // still wins — the caller re-renders the agent file block so the
+          // permanent copy is the one that changes.
         };
         await this.save(existing);
         return { upgraded: true, graduated: existing[idx]!.state === 'graduated', retired };
@@ -679,6 +676,12 @@ export class LearningStore {
     let match;
     while ((match = regex.exec(content)) !== null) {
       const meta = this.parseMeta(match[3]);
+      // Drop a legacy archive on the way in, so files written before retirement
+      // meant deletion converge on the first save rather than needing a
+      // migration. Nothing in memory ever sees a retired entry, which is what
+      // makes "retired" purely a marker one operation uses to report what it
+      // removed.
+      if (meta.state === 'retired') continue;
       learnings.push({
         category: match[1] as LearningCategory,
         title: match[2],
@@ -755,11 +758,24 @@ export class LearningStore {
   }
 
   /**
-   * Retired entries sink to a trailing `## Retired` section rather than being
-   * deleted. The system never destroys a lesson a human or a run produced: a
-   * retirement is a judgement that something is superseded, and the evidence
-   * that it was wrong is a human re-asserting the rule — which
-   * {@link addOrEscalate} can only detect if the entry is still there to match.
+   * Retired entries are DROPPED, not archived.
+   *
+   * They used to sink to a trailing `## Retired` section, kept on the reasoning
+   * that a human re-asserting a rule should revive it, and that the archive was
+   * the only place that signal could land. Measured across a 22-agent fleet,
+   * that reasoning did not survive contact: 468 of 888 entries — 53% of every
+   * file — were retired, and revival had fired for essentially none of them. It
+   * could not: revival runs through {@link similar}, which needs 60% shared
+   * vocabulary, and two rules that supersede each other routinely share almost
+   * none (measured at 0.154 on a real pair).
+   *
+   * Most of the archive was duplication anyway. A merge-absorbed entry's content
+   * survives verbatim inside the rule that absorbed it, so keeping the original
+   * stored the same lesson twice.
+   *
+   * The real safety net is the tidy-up's undo snapshot, which captures both
+   * files byte-for-byte before any change — stronger than a ghost entry, and
+   * what people actually reach for. Its depth was raised alongside this.
    */
   private serializeMarkdown(learnings: Learning[]): string {
     // The file is keyed by agent id, so its path carries the agent's own
@@ -790,12 +806,6 @@ export class LearningStore {
     for (const l of learnings) {
       if (l.state === 'retired') continue;
       md += this.serializeEntry(l);
-    }
-
-    const retired = learnings.filter((l) => l.state === 'retired');
-    if (retired.length > 0) {
-      md += `## Retired\n\n`;
-      for (const l of retired) md += this.serializeEntry(l);
     }
     return md.trim() + '\n';
   }

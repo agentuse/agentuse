@@ -66,8 +66,17 @@ const GRADUATE_MIN_APPROVED_RUNS = 3;
  * has to judge the rule against everything else, permanent rules included. */
 const GRADUATE_MIN_APPLIED_RUNS = 10;
 
-/** Most recent snapshots kept per agent for undo. */
-const UNDO_HISTORY = 5;
+/**
+ * Most recent snapshots kept per agent for undo.
+ *
+ * Raised from 5 when retirement became deletion. A retired rule used to linger
+ * in the file as a ghost entry, so a bad merge noticed late was still readable
+ * somewhere; now the snapshot is the only copy. Snapshots capture both files
+ * byte-for-byte, which is a better record than the ghost ever was — there just
+ * need to be enough of them that "I noticed six tidy-ups later" is still
+ * recoverable. A snapshot is two text files; depth is cheap.
+ */
+const UNDO_HISTORY = 20;
 
 /**
  * Output budget for a decide call.

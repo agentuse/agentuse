@@ -663,14 +663,21 @@ Always wait for explicit approval before publishing.
       expect(loaded[0]!.reasserted).toBe(2);
     });
 
-    it("revives a retired rule when a human re-asserts it", async () => {
-      // The archive's only correction signal: a human saying it again.
+    it("stores a re-asserted rule fresh, since a retired one no longer exists to revive", async () => {
+      // Retirement is deletion now, so there is no archive to bring anything
+      // back from. Saying it again simply stores it — the same outcome the
+      // revival path produced, by a route with no ghost entries behind it.
       await store.save([{ ...stored, state: "retired" }]);
 
-      const { escalated } = await store.addOrEscalate([{ ...stored, id: "again001", extractedAt: "2026-07-28T00:00:00.000Z" }]);
+      const { inserted, escalated } = await store.addOrEscalate([
+        { ...stored, id: "again001", extractedAt: "2026-07-28T00:00:00.000Z" },
+      ]);
 
-      expect(escalated).toHaveLength(1);
-      expect((await store.load())[0]!.state).toBeUndefined();
+      expect(escalated).toHaveLength(0);
+      expect(inserted).toHaveLength(1);
+      const loaded = await store.load();
+      expect(loaded).toHaveLength(1);
+      expect(loaded[0]!.state).toBeUndefined();
     });
 
     it("leaves a graduated rule alone rather than stating it twice", async () => {
@@ -734,8 +741,9 @@ Always wait for explicit approval before publishing.
       expect(result.retired.map((l) => l.id)).toEqual(["fill0001"]);
       const loaded = await store.load();
       expect(activeOf(loaded)).toHaveLength(3);
-      // Superseded, not deleted: still there to be revived if a human re-asserts it.
-      expect(loaded.find((l) => l.id === "fill0001")!.state).toBe("retired");
+      // Superseded means gone: the set stays at its size rather than keeping a
+      // ghost beside the rule that replaced it.
+      expect(loaded.find((l) => l.id === "fill0001")).toBeUndefined();
     });
 
     it("never lets an auto draft supersede a human correction", async () => {
@@ -949,13 +957,14 @@ Always wait for explicit approval before publishing.
 
       expect(result.retired.map((l) => l.id)).toEqual(["prior001"]);
       const loaded = await store.load();
-      expect(loaded.find((l) => l.id === "prior001")!.state).toBe("retired");
+      expect(loaded.find((l) => l.id === "prior001")).toBeUndefined();
       expect(loaded.filter((l) => (l.state ?? "active") === "active")).toHaveLength(2);
     });
 
-    it("does not revive the rule it just retired via the similarity path", async () => {
-      // The upgrade branch revives a retired match, which would silently undo
-      // the fold the reviewer asked for.
+    it("does not re-absorb the rule it just replaced via the similarity path", async () => {
+      // The named rule is marked retired in memory but is still in the working
+      // array, so the upgrade branch could match it and write it back — quietly
+      // undoing the fold the reviewer asked for.
       await store.save([priorNote("prior001", "Always cite a source before publishing anything")]);
 
       const result = await store.upsertManual(
@@ -964,7 +973,7 @@ Always wait for explicit approval before publishing.
 
       expect(result.retired.map((l) => l.id)).toEqual(["prior001"]);
       const loaded = await store.load();
-      expect(loaded.find((l) => l.id === "prior001")!.state).toBe("retired");
+      expect(loaded.find((l) => l.id === "prior001")).toBeUndefined();
       expect(loaded.filter((l) => (l.state ?? "active") === "active")).toHaveLength(1);
     });
 
@@ -995,27 +1004,54 @@ Always wait for explicit approval before publishing.
 
       const loaded = await store.load();
       const permanent = loaded.find((l) => l.id === "perm0001")!;
-      const archived = loaded.find((l) => l.id === "arch0001")!;
 
       expect(permanent.state).toBe("graduated");
       expect(permanent.approvedRuns).toBe(7);
-      expect(archived.state).toBe("retired");
-      expect(archived.reasserted).toBe(2);
+      // The retired entry never made it to disk, so it cannot come back off it.
+      expect(loaded.find((l) => l.id === "arch0001")).toBeUndefined();
       // An entry with nothing to say writes no extra metadata, so a file that
       // predates these fields round-trips unchanged.
       expect(store.render([baseLearning])).not.toContain("state:");
     });
 
-    it("sinks retired entries into an archive section instead of deleting them", async () => {
+    it("deletes retired entries instead of archiving them", async () => {
       await store.save([
         baseLearning,
         { ...baseLearning, id: "arch0001", title: "Archived", instruction: "Something entirely different about archives here.", state: "retired" },
       ]);
 
-      const raw = store.render(await store.load());
-      expect(raw).toContain("## Retired");
-      expect(raw.indexOf("## Retired")).toBeLessThan(raw.indexOf("Archived"));
-      expect(await store.load()).toHaveLength(2);
+      // Measured on a real fleet before this changed: 468 of 888 entries were
+      // retired — 53% of every file — kept for a revival path that had fired
+      // for essentially none of them, because it runs through a similarity test
+      // needing 60% shared vocabulary. Undo snapshots are the safety net.
+      const raw = readFileSync(store.filePath, "utf-8");
+      expect(raw).not.toContain("## Retired");
+      expect(raw).not.toContain("Archived");
+      expect(await store.load()).toHaveLength(1);
+    });
+
+    it("drops a legacy archive on read, so an old file converges on first save", async () => {
+      mkdirSync(dirname(store.filePath), { recursive: true });
+      writeFileSync(store.filePath, [
+        "# Learnings for agent",
+        "",
+        "### [tip] Live rule",
+        "<!-- id:live0001 | confidence:0.90 | applied:0 | src:auto | 2026-01-02 -->",
+        "Still in force.",
+        "",
+        "## Retired",
+        "",
+        "### [tip] Old rule",
+        "<!-- id:old00001 | confidence:0.90 | applied:0 | src:auto | state:retired | 2026-01-02 -->",
+        "Long since superseded.",
+        "",
+      ].join("\n"));
+
+      const loaded = await store.load();
+
+      expect(loaded.map((l) => l.id)).toEqual(["live0001"]);
+      await store.save(loaded);
+      expect(readFileSync(store.filePath, "utf-8")).not.toContain("## Retired");
     });
 
     it("credits only the injected rules for an approved run", async () => {

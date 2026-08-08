@@ -186,7 +186,7 @@ describe("tidying up an over-cap corrections file", () => {
     expect(completeTextMock).not.toHaveBeenCalled();
   });
 
-  it("merges near-duplicates, retiring the absorbed entries rather than deleting them", async () => {
+  it("merges near-duplicates, dropping the absorbed entry into the merged rule", async () => {
     await seed();
     decideResponse = JSON.stringify({
       merge: [{ ids: ["rule0", "rule1"], keep: "rule0", why: "same thing" }],
@@ -197,9 +197,13 @@ describe("tidying up an over-cap corrections file", () => {
     expect(result.merged).toBe(1);
     const loaded = await store.load();
     expect(loaded.find((l) => l.id === "rule0")!.instruction).toBe("One rule covering both.");
-    // Nothing is destroyed: the absorbed entry is archived, still readable.
-    expect(loaded.find((l) => l.id === "rule1")!.state).toBe("retired");
-    expect(loaded).toHaveLength(12);
+    // The absorbed entry is gone, not archived. Its content survives verbatim in
+    // the rule that absorbed it, so keeping the original stored the same lesson
+    // twice — which is how 53% of a real fleet's entries became ghosts.
+    expect(loaded.find((l) => l.id === "rule1")).toBeUndefined();
+    // 12 seeded, one absorbed and removed. The file shrinks by a merge now
+    // instead of staying the same size with a ghost in it.
+    expect(loaded).toHaveLength(11);
   });
 
   it("takes the max applied and approved counts on a merge, never the sum", async () => {
@@ -232,7 +236,7 @@ describe("tidying up an over-cap corrections file", () => {
     const result = await run();
 
     expect(result.retired).toBe(1);
-    expect((await store.load()).find((l) => l.id === "human01")!.state).toBe("retired");
+    expect((await store.load()).find((l) => l.id === "human01")).toBeUndefined();
   });
 
   it("still refuses to retire a rule a human has repeated", async () => {
@@ -391,10 +395,12 @@ describe("tidying up an over-cap corrections file", () => {
 
     expect(result.merged).toBe(0);
     const loaded = await store.load();
+    // Still present and untouched — a half-applied merge would have dropped it
+    // into a rule that was never written.
     expect(loaded.find((l) => l.id === "rule1")!.state).toBeUndefined();
     expect(loaded.find((l) => l.id === "rule0")!.instruction).toContain("Guidance number rule0");
     // The retirement, which needed no wording, still lands.
-    expect(loaded.find((l) => l.id === "rule5")!.state).toBe("retired");
+    expect(loaded.find((l) => l.id === "rule5")).toBeUndefined();
     // Counted once, though a later round retried the same group and failed
     // again: the user has one broken rule, not two.
     expect(result.note).toContain("1 rewrite could not be written");
@@ -583,7 +589,11 @@ describe("tidying up an over-cap corrections file", () => {
 
     const result = await run({ dryRun: true });
 
-    expect(result.diffs.learnings).toContain("state:retired");
+    // A retirement now shows as the entry being removed rather than gaining a
+    // state flag, so the diff says exactly what was lost — a better record than
+    // the ghost entry it replaced, and the thing undo restores byte-for-byte.
+    expect(result.diffs.learnings).toContain("-### [tip] Rule rule4");
+    expect(result.diffs.learnings).not.toContain("state:retired");
     expect(result.diffs.agentFile).toContain("agentuse:learned");
     expect(readFileSync(store.filePath, "utf-8")).toBe(storeBefore);
     expect(readFileSync(agentFilePath, "utf-8")).toBe(AGENT_FILE);
