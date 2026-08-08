@@ -260,14 +260,34 @@ interface RawBlockRewrite {
   dropped?: { index?: number; why?: string }[];
 }
 
-/** A checked block rewrite: the new set, what it removed, and what it changed. */
+/** One rule of a proposed block, still carrying which originals it claims. */
+interface ProposedRule extends PermanentRule {
+  /** Indices into the block this replaces. */
+  covers: number[];
+  /** The one-line reason given for changing it, for the change list. */
+  why?: string;
+}
+
+/** A structurally sound proposal, before anything has checked what it means. */
+interface CheckedRewrite {
+  rules: ProposedRule[];
+  dropped: { instruction: string; why: string }[];
+}
+
+/** A block rewrite that has also been audited: the new set, what it removed,
+ *  and what it changed. */
 interface BlockRewrite {
   rules: PermanentRule[];
   dropped: { instruction: string; why: string }[];
   edited: ConsolidationChange[];
-  /** Proposed edits kept out for losing too much. Diagnostic only — the rules
-   *  they targeted are in `rules` unchanged. */
+  /** Proposed edits kept out for losing an instruction, with what went missing.
+   *  Diagnostic only — the rules they targeted are in `rules` unchanged. */
   refused: string[];
+}
+
+/** What a merge audit returns: the instructions it could not find. */
+interface RawAudit {
+  missing?: string[];
 }
 
 /** What a write call returns for one group. */
@@ -547,9 +567,18 @@ Combine, tighten, and reorder freely. Specifically look for:
 - **The same instruction stated more than once** in different words or different scopes.
 - **Leftovers from staging** — phrases like "CORRECTION of an auto-learning from this session", "on the 2026-07-14 run", or an id like "id:a37rttpa". These made sense while the rule was a pending correction. In a permanent rule they are noise: state the rule, keep the concrete evidence that makes it credible, drop the bookkeeping.
 
-## What NOT to change
-- **Do not summarise. A combined rule must be as long as it needs to be to carry everything its sources carried** — every case, every exception, every threshold, and the specific examples that show what the rule means in practice. Combining two rules of 900 characters into one of 100 is not a merge; it is a heading, and it deletes the instruction while keeping the topic. Expect a rule that covers two others to be at least as long as the longer of them. Shorter is only better when the words removed were genuinely saying the same thing twice.
-- Do not drop a constraint, even one that looks like a detail. The concrete bits — a 24h threshold, a reviewer's verbatim complaint, a named failure — are what make a rule actionable rather than a slogan.
+## Be concise, but lose nothing
+
+Aim for the shortest text that still tells the agent every single thing its sources told it. Those are two demands at once and both are real:
+
+- **Cut words freely.** Repetition, throat-clearing, the same point made twice in different sentences, narration of how the rule came to exist. A merged rule that is half the length of its sources is a good outcome when the removed words were not carrying an instruction.
+- **Cut instructions never.** Every case, exception, threshold, trigger, named failure and worked example is load-bearing. A 24h cutoff, a reviewer's verbatim complaint, "do X but NOT when Y" — those are the rule. Drop one and the agent behaves differently, which is the whole cost of getting this wrong.
+
+The failure to avoid is writing the topic instead of the instruction. "Keep the two senses of 'connect' apart" names a subject; it does not tell anyone what either sense is or what to do about them, so it replaces a rule with a label. If your merged text would leave a reader asking "yes, but what do I actually do?", it is too short — not because of its length, but because an instruction went missing.
+
+Each merged rule is checked against its sources afterwards, instruction by instruction. Anything found missing puts the originals back unchanged, so a merge that quietly drops a case buys nothing.
+
+Two more:
 - Do not add guidance none of the sources gave.
 - Leave a rule exactly as written when nothing above applies to it. Rewording a rule that is already fine is churn in a human's own file. Most rules in a healthy set should come back untouched.
 
@@ -570,29 +599,68 @@ Respond with ONLY a JSON object, no other text:
 }
 
 /**
- * Check a proposed block against the one it replaces.
+ * Pass three, the audit: one rewritten rule against the originals it claims.
  *
- * The guarantee this enforces is coverage, not quality: every rule that went in
- * comes out inside something or is named as dropped with a reason. A model
- * rewriting twelve rules into eleven while quietly forgetting the twelfth is
- * the one failure that would be invisible in review — the block would read
- * perfectly well, and the missing rule only surfaces the next time the agent
- * makes the mistake it used to prevent. An unaccounted input rejects the whole
- * rewrite rather than the offending rule, because a partial rewrite of a set
- * that was reorganised as a whole is not something to salvage.
+ * Asked separately, and asked backwards. The pass that wrote the rule cannot
+ * be trusted to mark its own work — it has just argued to itself that the merge
+ * was sound — so this call sees only the sources and the result, is never told
+ * the reasoning, and is asked what is MISSING rather than whether the merge is
+ * good. "Is this faithful?" collects yes; "what did it drop?" collects a list.
+ *
+ * The question is about instructions, not text. A merge that halves the wording
+ * while keeping every case should pass; one that keeps the length but silently
+ * drops an exception should fail. Length was the previous test here and it got
+ * both of those backwards — it blocked real compression and would have waved
+ * through any padded rewrite.
+ */
+export function buildMergeAuditPrompt(sources: PermanentRule[], merged: string): string {
+  const listed = sources.map((s, i) => `SOURCE ${i + 1}:\n${s.instruction}`).join('\n\n');
+  return `An agent's rules were rewritten. Your only job is to find what the rewrite lost.
+
+${listed}
+
+REWRITTEN:
+${merged}
+
+Go through the sources one instruction at a time. An instruction is anything that would change what the agent does: a rule, a case, an exception, a threshold or number, a trigger condition, a named failure to avoid, a required output, a worked example that shows what the rule means in practice.
+
+For each one, decide whether the rewritten text still tells the agent that same thing. Different wording is fine — shorter is fine — as long as an agent following only the rewritten text would behave the same way.
+
+List every instruction you cannot find. Be specific: name the instruction, not the topic. Report it as missing when the rewrite mentions the subject but no longer says what to do about it, when it generalises a specific threshold or example into a vague principle, or when it keeps one side of a "do X but not when Y" and drops the other.
+
+Do not list wording changes, reordering, removed repetition, or removed narration about how the rule came to exist. Those are the point of the rewrite. Only list things an agent would now get wrong.
+
+If nothing is missing, return an empty list. Empty is a real answer — say so when the rewrite genuinely carries everything.
+
+Respond with ONLY a JSON object, no other text:
+{"missing": ["the 24h cutoff that decides abandoned vs live", "what to do when the reviewer leaves no comment"]}`;
+}
+
+/**
+ * Check the SHAPE of a proposed block against the one it replaces.
+ *
+ * Coverage only: every rule that went in comes out inside something, or is
+ * named as dropped with a reason. A model rewriting twelve rules into eleven
+ * while quietly forgetting the twelfth is the one failure that would be
+ * invisible in review — the block reads perfectly well, and the missing rule
+ * surfaces only the next time the agent makes the mistake it used to prevent.
+ * An unaccounted input rejects the whole rewrite rather than the offending
+ * rule, because a partial rewrite of a set reorganised as a whole is not
+ * something to salvage.
+ *
+ * Whether the surviving text still SAYS what its sources said is a different
+ * question, and not one any property of a string can answer. {@link auditEdits}
+ * asks it directly.
  */
 export function validateBlockRewrite(
   raw: RawBlockRewrite,
   before: PermanentRule[],
-): BlockRewrite | { rejected: string } {
+): CheckedRewrite | { rejected: string } {
   const proposed = Array.isArray(raw.rules) ? raw.rules : [];
   if (proposed.length === 0) return { rejected: 'returned no rules' };
 
   const claimed = new Map<number, string>();
-  const rules: PermanentRule[] = [];
-  const edited: ConsolidationChange[] = [];
-  /** Proposed edits kept out because they lost too much; logged, not applied. */
-  const refused: string[] = [];
+  const rules: ProposedRule[] = [];
 
   for (const r of proposed) {
     const instruction = typeof r.instruction === 'string' ? r.instruction.trim() : '';
@@ -610,49 +678,10 @@ export function validateBlockRewrite(
       claimed.set(index, instruction);
     }
 
-    // Did it merge, or just write a heading?
-    //
-    // Coverage alone does not protect content. Measured on the first real run:
-    // two rules totalling 1,850 characters — what "connect" means in each of its
-    // two senses, and what to do about each — came back as the 85-character
-    // "Keep the two senses of 'connect' apart when selecting a move or a
-    // target." Every index was accounted for, so the check passed; the rule that
-    // survived names the topic and drops the instruction entirely. A four-step
-    // triage procedure was flattened the same way, to 110 characters.
-    //
-    // The floor is what "covers" has to mean. A rule that claims to carry two
-    // others cannot be shorter than the longer of them and still hold both.
-    // Below it, keep the sources verbatim: one bad merge costs itself, not the
-    // three good ones beside it, and not the rewrite's ability to run at all.
-    const longestSource = Math.max(...covers.map((i) => before[i]!.instruction.length));
-    const gutted = covers.length > 1
-      ? instruction.length < longestSource
-      // A single-rule tightening is allowed to get shorter — that is the point —
-      // but not to lose most of itself. Half is a judgement call, chosen to sit
-      // well clear of a real tightening and well above a heading.
-      : instruction.length < longestSource / 2;
-
-    if (gutted) {
-      refused.push(
-        `${covers.length > 1 ? 'merge of' : 'rewrite of'} ${covers.map((i) => `rule ${i}`).join(' + ')} `
-        + `dropped too much (${instruction.length} chars against a source of ${longestSource})`,
-      );
-      for (const i of covers) rules.push(before[i]!);
-      continue;
-    }
-
-    rules.push({ category, instruction });
-
-    // Anything but a byte-identical single-source rule is a real edit to the
-    // human's file, and belongs in the change list where they will see it.
-    const untouched = covers.length === 1 && before[covers[0]!]!.instruction === instruction;
-    if (!untouched) {
-      edited.push({
-        kind: covers.length > 1 ? 'merge-permanent' : 'rewrite-permanent',
-        titles: covers.map((i) => before[i]!.instruction.slice(0, 60)),
-        why: r.why?.trim() || (covers.length > 1 ? 'combined overlapping permanent rules' : 'tightened in place'),
-      });
-    }
+    // Structure only. Whether the text still SAYS everything its sources said
+    // is a question about meaning, and no property of this string answers it —
+    // see auditEdits, which asks about the instructions rather than the prose.
+    rules.push({ category, instruction, covers, ...(r.why ? { why: r.why } : {}) });
   }
 
   const dropped: { instruction: string; why: string }[] = [];
@@ -671,8 +700,7 @@ export function validateBlockRewrite(
     return { rejected: `rule${missing.length === 1 ? '' : 's'} ${missing.join(', ')} vanished — neither kept nor dropped` };
   }
 
-  for (const note of refused) logger.debug(`[Learning] Permanent-block ${note}; kept the original`);
-  return { rules, dropped, edited, refused };
+  return { rules, dropped };
 }
 
 /**
@@ -1378,7 +1406,86 @@ async function rewritePermanentBlock(
     logger.debug(`[Learning] Permanent-block rewrite discarded: ${checked.rejected}`);
     return null;
   }
-  return checked;
+  return auditEdits(checked, rules, ctx);
+}
+
+/**
+ * Ask, of every rule the rewrite changed, what it dropped — and put the
+ * originals back where the answer is "something".
+ *
+ * Runs per edited rule and concurrently, so the cost is the slowest single
+ * audit rather than their sum, and an untouched rule costs nothing at all.
+ *
+ * A failed audit restores that rule's sources verbatim and leaves every other
+ * rule alone. Rejecting the whole rewrite over one bad merge would put the
+ * block back exactly where it started, which on an agent whose model keeps
+ * making the same bad merge means it is never tidied again — the never-pruned
+ * dead end this pass exists to escape. One bad merge should cost itself.
+ *
+ * An audit that errors or comes back unreadable also restores the sources.
+ * Unverified and unfaithful are different things, but the safe response to both
+ * is the same, and it is the one that changes nothing.
+ */
+async function auditEdits(
+  checked: CheckedRewrite,
+  before: PermanentRule[],
+  ctx: { model: string; instructions: string },
+): Promise<BlockRewrite> {
+  const verdicts = await mapConcurrent(checked.rules, TIDY_CONCURRENCY, async (rule) => {
+    const sources = rule.covers.map((i) => before[i]!);
+    const untouched = rule.covers.length === 1 && sources[0]!.instruction === rule.instruction;
+    if (untouched) return { rule, missing: [] as string[] };
+
+    let text: string | undefined;
+    try {
+      text = await completeText(ctx.model, {
+        instructions: ctx.instructions,
+        prompt: buildMergeAuditPrompt(sources, rule.instruction),
+        maxOutputTokens: WRITE_MAX_OUTPUT_TOKENS,
+      });
+    } catch (error) {
+      return { rule, missing: [`the audit call failed: ${error}`] };
+    }
+    const raw = text ? parseJsonObject<RawAudit>(text) : null;
+    if (!raw) return { rule, missing: ['the audit returned nothing readable'] };
+    const missing = (Array.isArray(raw.missing) ? raw.missing : [])
+      .filter((m): m is string => typeof m === 'string' && m.trim().length > 0);
+    return { rule, missing };
+  });
+
+  const rules: PermanentRule[] = [];
+  const edited: ConsolidationChange[] = [];
+  const refused: string[] = [];
+
+  for (const [index, verdict] of verdicts.entries()) {
+    // mapConcurrent resolves a thrown worker to null; the rule it was checking
+    // is unverified, so it keeps its sources like any other failed audit.
+    const rule = verdict?.rule ?? checked.rules[index]!;
+    const sources = rule.covers.map((i) => before[i]!);
+    const missing = verdict ? verdict.missing : ['the audit did not complete'];
+    const untouched = rule.covers.length === 1 && sources[0]!.instruction === rule.instruction;
+
+    if (missing.length > 0) {
+      refused.push(
+        `${rule.covers.length > 1 ? 'merge of' : 'rewrite of'} ${rule.covers.map((i) => `rule ${i}`).join(' + ')} `
+        + `dropped: ${missing.join('; ')}`,
+      );
+      rules.push(...sources);
+      continue;
+    }
+
+    rules.push({ category: rule.category, instruction: rule.instruction });
+    if (!untouched) {
+      edited.push({
+        kind: rule.covers.length > 1 ? 'merge-permanent' : 'rewrite-permanent',
+        titles: sources.map((s) => s.instruction.slice(0, 60)),
+        why: rule.why?.trim() || (rule.covers.length > 1 ? 'combined overlapping permanent rules' : 'tightened in place'),
+      });
+    }
+  }
+
+  for (const note of refused) logger.debug(`[Learning] Permanent-block ${note}; kept the originals`);
+  return { rules, dropped: checked.dropped, edited, refused };
 }
 
 /**

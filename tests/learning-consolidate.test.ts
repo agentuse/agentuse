@@ -29,6 +29,10 @@ let writeResponse = JSON.stringify({ category: "tip", title: "Merged", instructi
 // block is left exactly as it was. Only the tests that exercise the block pass
 // set this, and every other test keeps the append-only behaviour it asserts.
 let blockResponse = "{}";
+// Every rule the block pass changes is then audited against its sources for
+// dropped instructions. Nothing missing by default, so a test that cares only
+// about the rewrite does not have to think about the audit.
+let auditResponse = JSON.stringify({ missing: [] });
 
 function isWriteCall(prompt: string): boolean {
   return prompt.includes("say substantially the same thing") || prompt.includes("has repeated this correction");
@@ -38,8 +42,15 @@ function isBlockCall(prompt: string): boolean {
   return prompt.includes("Rewrite them as one coherent set");
 }
 
+function isAuditCall(prompt: string): boolean {
+  return prompt.includes("Your only job is to find what the rewrite lost");
+}
+
 const completeTextMock = mock(async (_model: string, opts: { prompt: string }) =>
-  isBlockCall(opts.prompt) ? blockResponse : isWriteCall(opts.prompt) ? writeResponse : decideResponse);
+  isAuditCall(opts.prompt) ? auditResponse
+    : isBlockCall(opts.prompt) ? blockResponse
+    : isWriteCall(opts.prompt) ? writeResponse
+    : decideResponse);
 mock.module("../src/complete-text", () => ({ completeText: completeTextMock }));
 
 /** Ids of the corrections a decide prompt was given, in prompt order. */
@@ -219,52 +230,129 @@ describe("tidying up an over-cap corrections file", () => {
       expect(result.changes.some((c) => c.kind.endsWith("-permanent"))).toBe(false);
     });
 
-    it("keeps the originals when a merge summarises instead of merging", async () => {
+    it("keeps the originals when the audit finds a dropped instruction", async () => {
       // Coverage alone does not protect content. Measured on the first real run
       // against a real agent: two rules totalling 1,850 characters — what the
       // word "connect" means in each of its two senses, and what to do about
       // each — came back as "Keep the two senses of 'connect' apart." Every
       // index was accounted for, so the coverage check passed, and the surviving
       // rule named the topic while deleting the instruction.
-      const long = (n: number) => `Rule ${n}. ${"detail ".repeat(120)}`;
       await seed();
-      writeFileSync(agentFilePath, withPermanent([long(1), long(2), "Keep it short."]));
+      writeFileSync(agentFilePath, withPermanent([
+        "When the human says 'connect post' they mean a visibility thread. Reply with a lane statement plus a link.",
+        "When scoring targets, prefer posts that invite dialogue, but only when the post is also substantive.",
+        "Keep it short.",
+      ]));
       blockResponse = JSON.stringify({
         rules: [
-          { category: "tip", instruction: "Keep rules 1 and 2 in mind.", covers: [0, 1], why: "same topic" },
+          { category: "tip", instruction: "Keep the two senses of 'connect' apart.", covers: [0, 1], why: "same topic" },
           { category: "tip", instruction: "Keep it short.", covers: [2] },
         ],
       });
-
-      const result = await run();
-
-      const after = readFileSync(agentFilePath, "utf-8");
-      expect(after).toContain(long(1).trim());
-      expect(after).toContain(long(2).trim());
-      expect(after).not.toContain("Keep rules 1 and 2 in mind.");
-      expect(result.changes.some((c) => c.kind === "merge-permanent")).toBe(false);
-    });
-
-    it("lets one bad merge fail without costing the good ones beside it", async () => {
-      // Rejecting the whole rewrite would put the block back where it started
-      // every time the model gutted any single rule — the same never-pruned dead
-      // end this pass exists to escape.
-      const long = (n: number) => `Rule ${n}. ${"detail ".repeat(120)}`;
-      await seed();
-      writeFileSync(agentFilePath, withPermanent([long(1), long(2), "First half.", "Second half."]));
-      blockResponse = JSON.stringify({
-        rules: [
-          { category: "tip", instruction: "Keep rules 1 and 2 in mind.", covers: [0, 1], why: "gutted" },
-          { category: "tip", instruction: "First half. Second half.", covers: [2, 3], why: "two halves of one rule" },
-        ],
+      auditResponse = JSON.stringify({
+        missing: ["what to reply with on a visibility thread", "that a dialogue-inviting post must also be substantive"],
       });
 
       const result = await run();
 
       const after = readFileSync(agentFilePath, "utf-8");
-      expect(after).toContain(long(1).trim());
+      expect(after).toContain("Reply with a lane statement plus a link.");
+      expect(after).toContain("but only when the post is also substantive");
+      expect(after).not.toContain("Keep the two senses of 'connect' apart.");
+      expect(result.changes.some((c) => c.kind === "merge-permanent")).toBe(false);
+    });
+
+    it("accepts a merge that halves the wording but keeps every instruction", async () => {
+      // The point of replacing the length floor. A merge is judged on what it
+      // still tells the agent, not on how many characters it spends telling it —
+      // the floor blocked exactly this and forced the block to grow.
+      await seed();
+      writeFileSync(agentFilePath, withPermanent([
+        `Cite the primary source, never a summary. ${"This has been said before in other words. ".repeat(20)}`,
+        `Never publish without a fact check. ${"Repeating the same point at length. ".repeat(20)}`,
+      ]));
+      blockResponse = JSON.stringify({
+        rules: [{
+          category: "tip",
+          instruction: "Cite the primary source, never a summary, and fact-check before publishing.",
+          covers: [0, 1],
+          why: "both are one sourcing rule; the rest was repetition",
+        }],
+      });
+
+      const result = await run();
+
+      const after = readFileSync(agentFilePath, "utf-8");
+      expect(after).toContain("Cite the primary source, never a summary, and fact-check before publishing.");
+      expect(after).not.toContain("Repeating the same point at length.");
+      expect(result.changes.filter((c) => c.kind === "merge-permanent")).toHaveLength(1);
+    });
+
+    it("lets one failed audit cost itself and not the good merges beside it", async () => {
+      // Rejecting the whole rewrite would put the block back where it started
+      // every time the model gutted any single rule — the same never-pruned dead
+      // end this pass exists to escape.
+      await seed();
+      writeFileSync(agentFilePath, withPermanent(["Rule one.", "Rule two.", "First half.", "Second half."]));
+      blockResponse = JSON.stringify({
+        rules: [
+          { category: "tip", instruction: "Bad merge.", covers: [0, 1], why: "gutted" },
+          { category: "tip", instruction: "First half. Second half.", covers: [2, 3], why: "two halves of one rule" },
+        ],
+      });
+      // Only the first merge is reported as lossy; the audit runs per rule.
+      completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) => {
+        if (isAuditCall(opts.prompt)) {
+          return opts.prompt.includes("Bad merge.")
+            ? JSON.stringify({ missing: ["everything rule two said"] })
+            : JSON.stringify({ missing: [] });
+        }
+        return isBlockCall(opts.prompt) ? blockResponse : isWriteCall(opts.prompt) ? writeResponse : decideResponse;
+      });
+
+      const result = await run();
+
+      const after = readFileSync(agentFilePath, "utf-8");
+      expect(after).toContain("- [tip] Rule one.");
+      expect(after).toContain("- [tip] Rule two.");
       expect(after).toContain("- [tip] First half. Second half.");
       expect(result.changes.filter((c) => c.kind === "merge-permanent")).toHaveLength(1);
+    });
+
+    it("keeps the originals when the audit itself cannot be read", async () => {
+      // Unverified and unfaithful are different things, but the safe response to
+      // both is the one that changes nothing.
+      await seed();
+      writeFileSync(agentFilePath, withPermanent(["Rule one.", "Rule two."]));
+      blockResponse = JSON.stringify({
+        rules: [{ category: "tip", instruction: "Merged.", covers: [0, 1], why: "combined" }],
+      });
+      auditResponse = "the model said something conversational instead";
+
+      const result = await run();
+
+      const after = readFileSync(agentFilePath, "utf-8");
+      expect(after).toContain("- [tip] Rule one.");
+      expect(after).toContain("- [tip] Rule two.");
+      expect(result.changes.some((c) => c.kind === "merge-permanent")).toBe(false);
+    });
+
+    it("does not audit a rule it left untouched", async () => {
+      await seed();
+      writeFileSync(agentFilePath, withPermanent(["Rule one.", "Rule two."]));
+      blockResponse = JSON.stringify({
+        rules: [
+          { category: "tip", instruction: "Rule one.", covers: [0] },
+          { category: "tip", instruction: "Rule two.", covers: [1] },
+        ],
+      });
+
+      await run();
+
+      const audits = completeTextMock.mock.calls
+        .map((c) => (c[1] as { prompt: string }).prompt)
+        .filter(isAuditCall);
+      expect(audits).toHaveLength(0);
     });
 
     it("allows a single rule to be tightened, but not hollowed out", async () => {
@@ -385,12 +473,16 @@ describe("tidying up an over-cap corrections file", () => {
     decideResponse = JSON.stringify({});
     writeResponse = JSON.stringify({ category: "tip", title: "Merged", instruction: "One rule covering both." });
     blockResponse = "{}";
+    auditResponse = JSON.stringify({ missing: [] });
     completeTextMock.mockClear();
     // Restore the default implementation here rather than at the end of the
     // tests that override it: an assertion failing mid-test would otherwise
     // leave the stub broken and cascade into every test after it.
     completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) =>
-      isBlockCall(opts.prompt) ? blockResponse : isWriteCall(opts.prompt) ? writeResponse : decideResponse);
+      isAuditCall(opts.prompt) ? auditResponse
+        : isBlockCall(opts.prompt) ? blockResponse
+        : isWriteCall(opts.prompt) ? writeResponse
+        : decideResponse);
   });
 
   afterEach(() => {

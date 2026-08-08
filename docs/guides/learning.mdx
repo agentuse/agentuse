@@ -288,9 +288,24 @@ Graduation alone only ever added to it, so on a long-running agent it accumulate
 the same way the staging file did, and more expensively: those rules apply on
 every single run. The rewrite reads the whole block at once, which is what lets
 it combine two rules that are halves of one procedure, or fold a correction into
-the rule it corrects. Every rule that goes in must come back out, inside some
-rule or named as dropped with a reason; if one goes missing the whole rewrite is
-discarded rather than written.
+the rule it corrects.
+
+Two things check the result, because it edits a file you wrote:
+
+- **Nothing may vanish.** Every rule that goes in must come back inside some
+  rule, or be named as dropped with a reason. If one goes missing the whole
+  rewrite is discarded rather than written.
+- **Nothing may be quietly summarised away.** Each rewritten rule is then
+  audited against the originals it claims, and asked what instructions it no
+  longer carries, a case, a threshold, an exception, a worked example. Anything
+  reported missing puts those originals back untouched, and the rest of the
+  rewrite still applies.
+
+The audit asks about meaning, not length. A merge that halves the wording while
+keeping every instruction passes; one that keeps the length but drops an
+exception does not. That matters because the tidy-up is supposed to make the
+block *denser*, shorter for the same instructions, and a length-based check
+would have blocked exactly the merges worth having.
 
 It applies immediately and then shows you what changed: a summary, the rules that
 became permanent named individually, each edit to the permanent block, and the
@@ -422,6 +437,19 @@ Learnings are categorized for context:
 - **pattern** - Successful approaches
 - **tool-usage** - How to use specific tools
 - **error-fix** - Solutions to known errors
+
+### How long a learning should be
+
+A captured rule is written as an order, not an explanation: one behaviour, a few
+sentences, and under 800 characters. It keeps the specifics that change what the
+agent does - a threshold, a trigger, an exception, the one example that shows
+what the rule means - and drops the incident it came from. Dates, session ids,
+names and quoted complaints are almost never load-bearing.
+
+This matters more than it looks. A rule too long to hold beside its peers cannot
+be compared against them, and comparison is what stops two contradicting rules
+being in force at once. If a rule needs headings or numbered sections, it is more
+than one rule.
 
 ## Storage Format
 

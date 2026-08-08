@@ -232,6 +232,26 @@ describe("evaluateExecution", () => {
     expect(prompt).not.toContain("The set is FULL");
   });
 
+  it("asks for a rule, not an essay", async () => {
+    // Captured rules were arriving as multi-section documents — measured on one
+    // fleet agent, five rules of 3,400 to 6,100 characters each, which is what a
+    // permanent block of 24,000 characters is made of. A bare character limit
+    // did not hold, and the example format said "Detailed instruction", which
+    // asked for the opposite of what the limit wanted.
+    completeTextMock.mockImplementation(async () => "[]");
+
+    await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, []);
+
+    const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
+    expect(prompt).toContain("One rule, one behaviour");
+    expect(prompt).toContain("State the behaviour, not the incident");
+    expect(prompt).toContain("No preamble, no justification");
+    // The example is the strongest instruction in any prompt: it must show a
+    // real short rule rather than describe a long one.
+    expect(prompt).not.toContain("Detailed instruction");
+    expect(prompt).toContain("Keep intros factual. No promotional language.");
+  });
+
   it("only accepts a supersedes id the model was actually shown", async () => {
     completeTextMock.mockImplementation(async () =>
       JSON.stringify([

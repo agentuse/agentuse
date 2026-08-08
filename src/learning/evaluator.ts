@@ -173,6 +173,7 @@ Requirements:
 - Ground it in what actually happened this run — target the real cause (the output, the process, or how a tool was used), not a surface reword of the note.
 - Be specific and directly actionable. Do NOT decide whether it is worth keeping — always produce an instruction.
 - Set "supersedes" per the rules above when this note replaces one the agent already carries. Superseding is combining, not choosing: the reviewer's intent wins outright, but anything the old rule constrained that the note does not contradict must survive into your wording.
+- **Write it as an order, not an explanation.** A few sentences, under ${MAX_INSTRUCTION_CHARS} characters. State the behaviour, not the incident that prompted it: keep a threshold, a trigger or the one example that shows what the rule means, and cut the dates, the ids, the names and the quoted complaint. No preamble and no justification — the agent already knows these are its rules. If it will not fit in a few sentences, the rule is not narrow enough yet.
 
 Pick the best category: tip | warning | pattern | tool-usage | error-fix.
 Respond with ONLY a JSON object, no other text ("supersedes" is optional):
@@ -315,9 +316,19 @@ Rules:
 - If nothing is worth keeping, return an empty array []
 - For "auto" learnings, only include ones you're confident about (confidence ≥ 0.8). For "approval" learnings, set confidence to 0.95.
 - Each learning must be a clear, specific, output-grounded instruction (not a restatement of the comment).
-- Keep each instruction under ${MAX_INSTRUCTION_CHARS} characters. A rule too long to hold beside the others cannot be checked against them.
 - Avoid generic or obvious learnings that wouldn't add value.
 - Set "supersedes" to an existing rule's id whenever your learning restates, sharpens, or collides with that rule (see "Before You Add Anything" above). Omit it only for a learning that genuinely covers new ground.
+
+## How to write the instruction
+
+Write it the way you would give an order, not the way you would explain one. Under ${MAX_INSTRUCTION_CHARS} characters, and usually far under.
+
+- **One rule, one behaviour.** If the instruction needs headings, numbered sections, or the word "also", it is more than one rule. Return the most important one and drop the rest. A rule too long to hold beside the others cannot be checked against them, and a rule that is never checked is how two contradicting rules end up in force at once.
+- **State the behaviour, not the incident.** "Cite the primary source, never a summary" is the rule. How it was discovered, who objected, which run it happened on, what the draft said instead, and how many attempts it took are not part of it. The agent reading this rule later was not there.
+- **Keep only the specifics that change what the agent does**: a threshold, a trigger condition, an exception, or the single example that shows what the rule means in practice. Cut every other concrete detail. Dates, session ids, people's names and quoted complaints are almost never load-bearing.
+- **No preamble, no justification.** Not "It is important to remember that when drafting a reply you should..." — just the instruction. The agent already knows these are its rules and does not need to be sold on them.
+
+If you cannot state it in a few sentences, you have not worked out what the rule is yet. Narrow it until you can.
 
 Categories:
 - tip: Positive guidance ("Do X for better results")
@@ -329,8 +340,8 @@ Categories:
 Respond with ONLY a JSON array of learnings. No other text.
 Example format ("supersedes" is optional and names the id of the rule this one replaces):
 [
-  {"source": "approval", "category": "warning", "title": "Short title", "instruction": "Detailed instruction", "confidence": 0.95, "supersedes": "a1b2c3d4"},
-  {"source": "auto", "category": "tip", "title": "Short title", "instruction": "Detailed instruction", "confidence": 0.9}
+  {"source": "approval", "category": "warning", "title": "Short title", "instruction": "Keep intros factual. No promotional language.", "confidence": 0.95, "supersedes": "a1b2c3d4"},
+  {"source": "auto", "category": "tip", "title": "Short title", "instruction": "When the search tool returns no results, narrow the query before widening it.", "confidence": 0.9}
 ]
 
 If no learnings are applicable, respond with an empty array: []`;
