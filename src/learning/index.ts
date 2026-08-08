@@ -9,7 +9,6 @@ import type { ApprovalReview, LearningCategory, LearningConfig, LearningOutcome,
 import { evaluateExecution, refineManualLearning } from './evaluator';
 import { LearningStore } from './store';
 import { activeLearnings, effectiveCap } from './ranking';
-import { writeLearnedBlock } from './graduate';
 import { logger } from '../utils/logger';
 
 export interface ExtractLearningsOptions {
@@ -71,13 +70,12 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     // there the full set is exactly what the reconciling is for.
     const active = activeLearnings(stored);
 
-    // Graduated rules were not injected, but they ARE in force: they live in the
-    // agent's own instructions. Omitting them here would have the evaluator
-    // re-extract every rule the last tidy-up made permanent, undoing the tidy-up
-    // one run later. Passed separately because they are not revisable — only an
-    // active rule can be superseded.
-    const graduated = stored.filter((l) => l.state === 'graduated');
-
+    // Permanent rules are not passed in. They live in the agent's own
+    // instructions, which `evaluateExecution` now reads directly — it excises
+    // the block and shows it in full rather than losing it to the body's
+    // truncation. That blindness was the only reason a duplicate of every
+    // permanent rule had to be carried in the store, and the duplicate was what
+    // let a human's edits to the block be overwritten.
     const learnings = await evaluateExecution(
       event,
       agentInstructions,
@@ -85,7 +83,7 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
       config.criteria,
       active,
       reviews,
-      { cap, graduated },
+      { cap },
     );
 
     if (learnings.length === 0) {
@@ -258,16 +256,19 @@ export async function saveManualLearning(options: {
     logger.info(`[Learning] Replaced an earlier rule: "${l.title}" (archived, id:${l.id})`);
   }
 
-  // The reviewer re-worded a rule that already lives in the agent file. The
-  // store now holds the new wording but the copy actually in force is the one in
-  // the agent file, so re-render the block or the correction reaches nothing.
+  // A permanent rule is the agent file's to change, not this path's.
+  //
+  // This used to reprint the whole block from the store whenever a note matched
+  // a graduated rule, which is what silently reverted anything a human had
+  // edited between the markers. Permanent rules no longer live in the store at
+  // all, so there is nothing here to reprint from — the note is stored as a new
+  // staged rule, and the reviewer is told where the rule it collides with
+  // actually lives. Tidy is what reconciles the two, with the file as its input.
   if (graduated) {
-    try {
-      const all = await store.load();
-      await writeLearnedBlock(options.agentFilePath, all.filter((l) => l.state === 'graduated'));
-    } catch (error) {
-      logger.debug(`[Learning] Could not refresh the graduated block: ${(error as Error).message}`);
-    }
+    logger.info(
+      `[Learning] Saved, but a rule about this is already permanent in ${options.agentFilePath}. `
+      + `Edit it there, or run: agentuse learnings tidy ${options.agentFilePath}`
+    );
   }
 
   return { status: 'captured', source: 'manual', count: 1, titles: [title] };

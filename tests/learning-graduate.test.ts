@@ -5,6 +5,8 @@ import { tmpdir } from "os";
 import {
   LEARNED_BLOCK_START,
   LEARNED_BLOCK_END,
+  parseLearnedBlock,
+  renderLearnedBlock,
   spliceLearnedBlock,
   writeLearnedBlock,
   agentFileIsWritable,
@@ -41,6 +43,46 @@ learning:
 
 Write short posts.
 `;
+
+describe("reading the block back out of an agent file", () => {
+  // The agent file can only be the source of truth if it can be READ as one.
+  // Before this, the block could only be reprinted from a copy in the store, so
+  // anything a human edited between the markers was restored to the stored
+  // wording on the next graduation.
+  it("round-trips what it renders", () => {
+    const rules = [rule("a", "Cite a source."), { ...rule("b", "Keep it short."), category: "warning" as const }];
+    const parsed = parseLearnedBlock(renderLearnedBlock(rules));
+
+    expect(parsed).toEqual([
+      { category: "tip", instruction: "Cite a source." },
+      { category: "warning", instruction: "Keep it short." },
+    ]);
+  });
+
+  it("keeps a multi-line rule whole", () => {
+    // A graduated rule can carry its own numbered list, so a bullet runs until
+    // the next bullet starts, not to the end of its line.
+    const multi = "Two triggers to watch for:\n\n1. The first one.\n\n2. The second one.";
+    const parsed = parseLearnedBlock(renderLearnedBlock([rule("a", multi), rule("b", "Something else.")]));
+
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0]!.instruction).toBe(multi);
+    expect(parsed[1]!.instruction).toBe("Something else.");
+  });
+
+  it("survives a human editing the text between the markers", () => {
+    const edited = spliceLearnedBlock(AGENT_FILE, [rule("a", "Cite a source.")])
+      .replace("Cite a source.", "Cite a primary source, never a summary.");
+
+    expect(parseLearnedBlock(edited)).toEqual([
+      { category: "tip", instruction: "Cite a primary source, never a summary." },
+    ]);
+  });
+
+  it("returns nothing when the file has no block", () => {
+    expect(parseLearnedBlock(AGENT_FILE)).toEqual([]);
+  });
+});
 
 describe("graduating rules into the agent file", () => {
   let tempDir: string;

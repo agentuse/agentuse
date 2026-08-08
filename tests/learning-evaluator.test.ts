@@ -195,6 +195,33 @@ describe("evaluateExecution", () => {
     expect(prompt).toContain("satisfies both");
   });
 
+  it("reads the permanent block from the agent file, however far down it sits", async () => {
+    // The block is appended to the END of the agent file and the body is cut at
+    // 3000 characters, so on any real agent it fell outside the cut and this
+    // pass never saw it. Measured on one: 46,063-character file, block at
+    // 30,685. That blindness was the only reason a duplicate of every permanent
+    // rule had to be kept in the store — and the duplicate is what let a human's
+    // edits to the block be overwritten.
+    completeTextMock.mockImplementation(async () => "[]");
+    const instructions = [
+      "x".repeat(30_000),
+      "<!-- agentuse:learned -->",
+      "## Learned Guidelines",
+      "",
+      "- [warning] Never cite a summary when the primary source exists.",
+      "<!-- /agentuse:learned -->",
+    ].join("\n");
+
+    await evaluateExecution(baseEvent, instructions, "gpt-4", undefined, [rule(0)], [], { cap: 3 });
+
+    const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
+    expect(prompt).toContain("Never cite a summary when the primary source exists.");
+    expect(prompt).toContain("Already Permanent");
+    // The body is still bounded — the block is excised before the cut, not
+    // counted toward it, so it can never be sliced in half either.
+    expect(prompt).not.toContain("x".repeat(3_100));
+  });
+
   it("asks for reconciliation but not a fold while the set has room", async () => {
     completeTextMock.mockImplementation(async () => "[]");
 

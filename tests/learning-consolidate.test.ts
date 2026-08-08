@@ -311,10 +311,40 @@ describe("tidying up an over-cap corrections file", () => {
 
     expect(result.graduated).toEqual(["Rule proven01"]);
     expect(readFileSync(agentFilePath, "utf-8")).toContain("Cite a source before publishing anything.");
-    expect((await store.load()).find((l) => l.id === "proven01")!.state).toBe("graduated");
+    // MOVED, not copied. The agent file is the source of truth for a permanent
+    // rule; a second copy in the store is what let a human's edits to the block
+    // be reprinted away on the next graduation.
+    expect((await store.load()).find((l) => l.id === "proven01")).toBeUndefined();
     // Both diffs are produced, because the change landed in two files.
     expect(result.diffs.learnings).not.toBe("");
     expect(result.diffs.agentFile).toBeTruthy();
+  });
+
+  it("adds to the block a human has edited instead of reprinting over it", async () => {
+    // The whole point of the file being the source of truth. Graduation used to
+    // splice in whatever the STORE held, so anything edited between the markers
+    // was silently restored to the stored wording.
+    await seed();
+    await store.save([...(await store.load()), learning({ id: "proven01", approvedRuns: 5, instruction: "Cite a source before publishing anything." })]);
+    writeFileSync(agentFilePath, [
+      AGENT_FILE.trimEnd(),
+      "",
+      "<!-- agentuse:learned -->",
+      "## Learned Guidelines (override skill defaults on conflict)",
+      "",
+      "Corrections graduated from previous runs. These take precedence over Skills — if one contradicts a skill's default, follow the guideline:",
+      "",
+      "- [tip] A rule the human rewrote by hand, in their own words.",
+      "<!-- /agentuse:learned -->",
+      "",
+    ].join("\n"));
+    decideResponse = JSON.stringify({ graduate: [{ id: "proven01", why: "5 approved runs" }] });
+
+    await run();
+
+    const after = readFileSync(agentFilePath, "utf-8");
+    expect(after).toContain("A rule the human rewrote by hand, in their own words.");
+    expect(after).toContain("Cite a source before publishing anything.");
   });
 
   // Root ignores the mode bits, so the only way to make a file unwritable there

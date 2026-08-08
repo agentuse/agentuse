@@ -10,7 +10,7 @@ import { getProjectDirSync } from '../storage/paths';
 import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic';
 import { LearningStore, withLearningFileLock } from './store';
 import { activeLearnings, effectiveCap, rankLearnings } from './ranking';
-import { LEARNED_BLOCK_END, LEARNED_BLOCK_START, agentFileIsWritable, spliceLearnedBlock } from './graduate';
+import { LEARNED_BLOCK_END, LEARNED_BLOCK_START, agentFileIsWritable, parseLearnedBlock, spliceLearnedBlock } from './graduate';
 import type { Learning, LearningCategory, LearningConfig } from './types';
 import { atomicWriteFile } from '../utils/atomic-write';
 
@@ -1272,9 +1272,25 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     });
   reportAt('applying');
 
-  const graduatedAll = working.filter((l) => l.state === 'graduated');
-  const afterLearnings = store.render(working);
-  const agentAfter = graduationBlocked ? agentBefore : spliceLearnedBlock(agentBefore, graduatedAll);
+  // Graduation MOVES a rule: it is appended to whatever the agent file already
+  // says, and dropped from the store. It is not reprinted from a stored copy.
+  //
+  // Reprinting was why a human editing the block got their wording silently
+  // restored to the stored version on the next graduation — the file was a
+  // printout, not the source. Reading the current block and adding to it makes
+  // the file the input to its own next edit, and leaves exactly one copy of
+  // each rule instead of two that can drift apart.
+  const newlyPermanent = working.filter((l) => l.state === 'graduated');
+  const permanentAfter = graduationBlocked
+    ? parseLearnedBlock(agentBefore)
+    : [...parseLearnedBlock(agentBefore), ...newlyPermanent.map((l) => ({
+        category: l.category,
+        instruction: l.instruction,
+      }))];
+  // A rule that reached the agent file has no staged copy left to keep.
+  const stagedAfter = graduationBlocked ? working : working.filter((l) => l.state !== 'graduated');
+  const afterLearnings = store.render(stagedAfter);
+  const agentAfter = graduationBlocked ? agentBefore : spliceLearnedBlock(agentBefore, permanentAfter);
 
   // Only mention the block when it cost something: an unwritable agent file that
   // nothing wanted to graduate into is not news.
@@ -1333,10 +1349,19 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
       ? await readFile(store.filePath, 'utf-8')
       : '';
     const latestAgent = await readFile(options.agentFilePath, 'utf-8');
+    // Append to what the agent file says NOW, at commit time — not to the copy
+    // the model read minutes ago, and not from a stored duplicate. A rule that
+    // lands in the file is dropped from the store in the same write.
     const reconciledGraduated = reconciled.filter((learning) => learning.state === 'graduated');
+    const reconciledStaged = graduationBlocked
+      ? reconciled
+      : reconciled.filter((learning) => learning.state !== 'graduated');
     const reconciledAgent = graduationBlocked
       ? latestAgent
-      : spliceLearnedBlock(latestAgent, reconciledGraduated);
+      : spliceLearnedBlock(latestAgent, [
+          ...parseLearnedBlock(latestAgent),
+          ...reconciledGraduated.map((l) => ({ category: l.category, instruction: l.instruction })),
+        ]);
 
     // The snapshot is of the actual commit-time inputs, not the stale files the
     // model read minutes ago. Undo therefore preserves concurrent additions.
@@ -1353,8 +1378,8 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     if (!graduationBlocked && reconciledAgent !== latestAgent) {
       await atomicWriteFile(options.agentFilePath, reconciledAgent);
     }
-    await store.save(reconciled);
-    return { reconciled, latestLearnings, latestAgent, reconciledAgent };
+    await store.save(reconciledStaged);
+    return { reconciled: reconciledStaged, latestLearnings, latestAgent, reconciledAgent };
   });
   reportAt('done');
 

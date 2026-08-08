@@ -1,6 +1,6 @@
 import { readFile, access } from 'fs/promises';
 import { constants } from 'fs';
-import type { Learning } from './types';
+import type { Learning, LearningCategory } from './types';
 import { atomicWriteFile } from '../utils/atomic-write';
 
 /**
@@ -19,6 +19,51 @@ import { atomicWriteFile } from '../utils/atomic-write';
 export const LEARNED_BLOCK_START = '<!-- agentuse:learned -->';
 export const LEARNED_BLOCK_END = '<!-- /agentuse:learned -->';
 
+/** One permanent rule, as it exists in the agent file. No id, no counters: once
+ *  a rule is permanent there is nothing further to decide about it, and the
+ *  bullet in the file is the whole record. */
+export interface PermanentRule {
+  category: LearningCategory;
+  instruction: string;
+}
+
+/**
+ * Read the block back out of an agent file.
+ *
+ * This is what makes the agent file the source of truth rather than a printout
+ * of one. Before it existed the block could only be REPRINTED from a copy held
+ * in the store, so anything a human edited between the markers was silently
+ * restored to the stored wording on the next graduation. Parsing it means the
+ * text in the file is the input to every later edit, not something to overwrite.
+ *
+ * Bullets may span lines — a graduated rule can carry its own numbered list — so
+ * a bullet runs until the next one starts rather than to the end of its line.
+ */
+export function parseLearnedBlock(source: string): PermanentRule[] {
+  const start = source.indexOf(LEARNED_BLOCK_START);
+  const end = source.indexOf(LEARNED_BLOCK_END);
+  if (start === -1 || end <= start) return [];
+
+  const body = source.slice(start + LEARNED_BLOCK_START.length, end);
+  const rules: PermanentRule[] = [];
+  // Split on a bullet at the start of a line, keeping whatever follows it until
+  // the next one. `[\w-]+` matches the category names, which are the only thing
+  // rendered inside the brackets.
+  //
+  // Deliberately NOT multiline: with `m`, `$` matches at every line ending, so
+  // the lazy capture stopped at the first blank line and a rule carrying its own
+  // numbered list lost everything after its opening sentence. The line anchor is
+  // written explicitly as `(?:^|\n)` instead.
+  const regex = /(?:^|\n)- \[([\w-]+)\] ([\s\S]*?)(?=\n- \[[\w-]+\] |$)/g;
+  let match;
+  while ((match = regex.exec(body)) !== null) {
+    const category = match[1] as LearningCategory;
+    const instruction = match[2]!.trim();
+    if (instruction) rules.push({ category, instruction });
+  }
+  return rules;
+}
+
 /**
  * The heading is deliberately identical in meaning to the runtime block in
  * ../runner/system-messages, so a graduated rule behaves exactly as it did while
@@ -26,7 +71,7 @@ export const LEARNED_BLOCK_END = '<!-- /agentuse:learned -->';
  * two do not collide as duplicate `## Learned Guidelines` headings once an agent
  * file carries a graduated block.
  */
-export function renderLearnedBlock(learnings: Learning[]): string {
+export function renderLearnedBlock(learnings: (Learning | PermanentRule)[]): string {
   const bullets = learnings.map((l) => `- [${l.category}] ${l.instruction}`).join('\n');
   return `${LEARNED_BLOCK_START}
 ## Learned Guidelines (override skill defaults on conflict)
@@ -49,7 +94,7 @@ ${LEARNED_BLOCK_END}`;
  * An empty learning set removes the block entirely rather than leaving an empty
  * heading behind.
  */
-export function spliceLearnedBlock(source: string, learnings: Learning[]): string {
+export function spliceLearnedBlock(source: string, learnings: (Learning | PermanentRule)[]): string {
   const start = source.indexOf(LEARNED_BLOCK_START);
   const end = source.indexOf(LEARNED_BLOCK_END);
   const block = learnings.length > 0 ? renderLearnedBlock(learnings) : '';
@@ -88,7 +133,7 @@ export async function agentFileIsWritable(agentFilePath: string): Promise<boolea
  */
 export async function writeLearnedBlock(
   agentFilePath: string,
-  learnings: Learning[],
+  learnings: (Learning | PermanentRule)[],
 ): Promise<{ before: string; after: string; changed: boolean }> {
   const before = await readFile(agentFilePath, 'utf-8');
   const after = spliceLearnedBlock(before, learnings);

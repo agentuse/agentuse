@@ -3,6 +3,7 @@ import type { AgentCompleteEvent, ToolCallTrace } from '../plugin/types';
 import type { ApprovalReview, Learning, LearningCategory, LearningDraft, LearningSource } from './types';
 import { logger } from '../utils/logger';
 import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic';
+import { LEARNED_BLOCK_END, LEARNED_BLOCK_START } from './graduate';
 
 /**
  * Stringify a tool input/output value for the evaluator, truncated to keep the
@@ -60,8 +61,8 @@ const MAX_INSTRUCTION_CHARS = 800;
  * list, so listing the second without ids makes the illegal move unspeakable
  * rather than merely forbidden.
  */
-function formatRulesInForce(active: Learning[], graduated: Learning[], cap: number): string {
-  if (active.length === 0 && graduated.length === 0) return '';
+function formatRulesInForce(active: Learning[], permanentText: string, cap: number): string {
+  if (active.length === 0 && !permanentText) return '';
 
   const full = active.length >= cap;
   const sections: string[] = [];
@@ -72,10 +73,10 @@ These were in force during the run above, so the agent already had them. Every o
 ${active.map(l => `- (id ${l.id}) [${l.category}] ${l.title}: ${l.instruction.slice(0, 200)}${l.instruction.length > 200 ? '...' : ''}`).join('\n')}`);
   }
 
-  if (graduated.length > 0) {
+  if (permanentText) {
     sections.push(`## Already Permanent (in the agent's own instructions)
-These apply on every run and are NOT yours to revise. Do not restate them.
-${graduated.map(l => `- [${l.category}] ${l.title}: ${l.instruction.slice(0, 150)}${l.instruction.length > 150 ? '...' : ''}`).join('\n')}`);
+These apply on every run and are NOT yours to revise — they live in the agent's own file, which only a human edits. Do not restate one, and do not return a learning that contradicts one; if this run makes you think one of them is wrong, say so in the instruction text rather than adding a rule that fights it.
+${permanentText}`);
   }
 
   // The instruction that decides whether this list gets reconciled against or
@@ -236,7 +237,7 @@ export async function evaluateExecution(
   criteria: string | undefined,
   existingLearnings: Learning[] = [],
   reviews: ApprovalReview[] = [],
-  capacity?: { cap: number; graduated?: Learning[] },
+  capacity?: { cap: number },
 ): Promise<LearningDraft[]> {
   const customCriteria = criteria
     ? `\n\nAdditional evaluation criteria:\n${criteria}`
@@ -251,10 +252,28 @@ export async function evaluateExecution(
     consoleOutput = `${first}\n\n...(${consoleOutput.length - 3000} chars truncated)...\n\n${last}`;
   }
 
-  // Truncate agent instructions if too long
-  const truncatedInstructions = agentInstructions.length > 3000
-    ? agentInstructions.slice(0, 3000) + '\n...(truncated)'
+  // The permanent rules are excised and shown in full, separately from the
+  // truncated body.
+  //
+  // They live in a block appended to the END of the agent file, and the body is
+  // cut at 3000 characters, so on any real agent the block fell outside the cut
+  // and this pass never saw it. Measured on one: 46,063-character file, block
+  // starting at 30,685. That blindness is the only reason a duplicate copy of
+  // every permanent rule had to be kept in the store and passed in alongside —
+  // and a stored duplicate is what let a human's edits to the block be
+  // overwritten. Reading the file fixes both.
+  const blockStart = agentInstructions.indexOf(LEARNED_BLOCK_START);
+  const blockEnd = agentInstructions.indexOf(LEARNED_BLOCK_END);
+  const hasBlock = blockStart !== -1 && blockEnd > blockStart;
+  const permanentText = hasBlock
+    ? agentInstructions.slice(blockStart + LEARNED_BLOCK_START.length, blockEnd).trim()
+    : '';
+  const bodyOnly = hasBlock
+    ? `${agentInstructions.slice(0, blockStart)}${agentInstructions.slice(blockEnd + LEARNED_BLOCK_END.length)}`
     : agentInstructions;
+  const truncatedInstructions = bodyOnly.length > 3000
+    ? bodyOnly.slice(0, 3000) + '\n...(truncated)'
+    : bodyOnly;
 
   const hasReviews = reviews.length > 0;
   const reviewerSection = hasReviews
@@ -283,7 +302,7 @@ ${consoleOutput || '(No console output)'}
 ## Agent Text Output
 ${event.result.text || '(No text output)'}${reviewerSection}
 ${customCriteria}
-${formatRulesInForce(existingLearnings, capacity?.graduated ?? [], capacity?.cap ?? existingLearnings.length)}
+${formatRulesInForce(existingLearnings, permanentText, capacity?.cap ?? existingLearnings.length)}
 
 ## Task
 Extract actionable learnings that would improve future runs. Each learning is tagged with a "source":
