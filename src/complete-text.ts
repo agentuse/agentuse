@@ -6,6 +6,15 @@ import { resolveModelProvider } from './utils/model-utils';
 export interface CompleteTextOptions {
   /** System prompt (v7 `instructions`). On the Codex backend this is also sent as the required provider-level `instructions`. */
   instructions: string;
+  /**
+   * A second system block, sent after `instructions`.
+   *
+   * Exists because Anthropic OAuth requires `instructions` to be exactly the
+   * Claude Code identity line, leaving nowhere to say what job the call is
+   * doing. See `helperSystemPrompt`, which is how callers should build the
+   * pair rather than setting this by hand.
+   */
+  extraSystem?: string | undefined;
   /** User prompt. */
   prompt: string;
   /** Output cap. Omitted on the Codex backend, which rejects `max_output_tokens`. */
@@ -47,7 +56,19 @@ export async function completeText(modelString: string, options: CompleteTextOpt
   const result = streamText({
     model,
     instructions: options.instructions,
-    prompt: options.prompt,
+    // A second system block has to travel in `messages`, which v7 rejects
+    // unless told the system role is intentional — the same opt-in the agent
+    // loop uses. Without `extraSystem` the plain `prompt` form is kept, so
+    // every existing caller sends the identical request it sent before.
+    ...(options.extraSystem
+      ? {
+          allowSystemInMessages: true,
+          messages: [
+            { role: 'system' as const, content: options.extraSystem },
+            { role: 'user' as const, content: options.prompt },
+          ],
+        }
+      : { prompt: options.prompt }),
     maxRetries: options.maxRetries ?? 2,
     // Codex rejects max_output_tokens; honor the cap on every other provider.
     ...(!usesCodexBackend && options.maxOutputTokens !== undefined && { maxOutputTokens: options.maxOutputTokens }),

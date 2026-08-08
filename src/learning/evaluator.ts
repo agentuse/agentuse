@@ -2,7 +2,7 @@ import { completeText } from '../complete-text';
 import type { AgentCompleteEvent, ToolCallTrace } from '../plugin/types';
 import type { ApprovalReview, Learning, LearningCategory, LearningDraft, LearningSource } from './types';
 import { logger } from '../utils/logger';
-import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic';
+import { helperSystemPrompt } from '../utils/anthropic';
 import { LEARNED_BLOCK_END, LEARNED_BLOCK_START } from './graduate';
 
 /**
@@ -179,11 +179,12 @@ Pick the best category: tip | warning | pattern | tool-usage | error-fix.
 Respond with ONLY a JSON object, no other text ("supersedes" is optional):
 {"category": "tip", "title": "short title (max 6 words)", "instruction": "the additional instruction", "supersedes": "id of the rule this replaces"}`;
 
-  const instructions = isAnthropicModel(agentModel)
-    ? ANTHROPIC_IDENTITY_PROMPT
-    : 'You turn a human note into one concise additional agent instruction, grounded in the run, and reply with a JSON object only.';
+  const system = helperSystemPrompt(
+    agentModel,
+    'You turn a human note into one concise additional agent instruction, grounded in the run, and reply with a JSON object only. State the behaviour the agent should adopt in a sentence or two, not the incident that prompted it.',
+  );
 
-  const responseText = await completeText(agentModel, { instructions, prompt });
+  const responseText = await completeText(agentModel, { ...system, prompt });
   try {
     const text = responseText.trim();
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || [null, text];
@@ -348,15 +349,16 @@ If no learnings are applicable, respond with an empty array: []`;
 
   // Use completeText (streaming) so this works on the ChatGPT Codex backend,
   // which rejects the non-streaming generateText() path and silently 400s the
-  // moment a Codex-authed user triggers learning. For Anthropic OAuth the Claude
-  // Code identity prompt must be the system prompt; other providers get a short
-  // evaluator role (which also becomes Codex's required `instructions`).
-  const instructions = isAnthropicModel(agentModel)
-    ? ANTHROPIC_IDENTITY_PROMPT
-    : 'You extract concise, high-signal learnings from an agent run and its reviewer feedback, and reply with a JSON array only.';
+  // moment a Codex-authed user triggers learning. The role reaches Anthropic
+  // models as a second system block rather than being dropped for the identity
+  // line — see helperSystemPrompt.
+  const system = helperSystemPrompt(
+    agentModel,
+    'You extract concise, high-signal learnings from an agent run and its reviewer feedback, and reply with a JSON array only. Each learning is one instruction the agent can act on, stated in a sentence or two — never a document, and never a retelling of what happened.',
+  );
 
   const responseText = await completeText(agentModel, {
-    instructions,
+    ...system,
     prompt,
   });
 

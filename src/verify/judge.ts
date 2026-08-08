@@ -13,7 +13,7 @@ import { dirname, resolve } from 'path';
 import { tool } from 'ai';
 import { z } from 'zod';
 import { completeText } from '../complete-text.js';
-import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic.js';
+import { helperSystemPrompt } from '../utils/anthropic.js';
 import { parseAgent } from '../parser.js';
 import { connectMCP, type MCPServersConfig } from '../mcp.js';
 import { executeAgentCore } from '../runner/execution.js';
@@ -158,14 +158,16 @@ async function judgeBuiltin(
   const judgeModel = config.model ?? agentModel;
   const prompt = buildJudgePrompt(input, config.criteria ?? GENERIC_CRITERIA, VERDICT_FORMAT_INSTRUCTIONS);
 
-  // For Anthropic OAuth the Claude Code identity prompt must be the system
-  // prompt; completeText streams so the ChatGPT Codex backend works too.
-  const instructions = isAnthropicModel(judgeModel)
-    ? ANTHROPIC_IDENTITY_PROMPT
-    : 'You are a strict evaluator that judges agent output against criteria and ends your reply with a JSON verdict object.';
+  // completeText streams so the ChatGPT Codex backend works too. On Anthropic
+  // the judge role rides as a second system block, because the identity line
+  // has to stand alone — see helperSystemPrompt.
+  const system = helperSystemPrompt(
+    judgeModel,
+    'You are a strict evaluator that judges agent output against criteria and ends your reply with a JSON verdict object.',
+  );
 
   const responseText = await completeText(judgeModel, {
-    instructions,
+    ...system,
     prompt,
     // Room for rubric-by-rubric reasoning before the trailing verdict object;
     // a too-small cap truncates the response before the JSON ever appears.

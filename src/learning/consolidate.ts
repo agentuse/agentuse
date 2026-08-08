@@ -7,7 +7,7 @@ import { completeText } from '../complete-text';
 import { logger } from '../utils/logger';
 import { unifiedDiff } from '../utils/diff';
 import { getProjectDirSync } from '../storage/paths';
-import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic';
+import { helperSystemPrompt, type HelperSystemPrompt } from '../utils/anthropic';
 import { LearningStore, withLearningFileLock } from './store';
 import { activeLearnings, effectiveCap, rankLearnings } from './ranking';
 import { LEARNED_BLOCK_END, LEARNED_BLOCK_START, agentFileIsWritable, parseLearnedBlock, spliceLearnedBlock } from './graduate';
@@ -1113,7 +1113,7 @@ export interface ConsolidateOptions {
 /** Everything a round needs that does not change between rounds. */
 interface RoundContext {
   model: string;
-  instructions: string;
+  system: HelperSystemPrompt;
   agentInstructions: string;
   cap: number;
   now: number;
@@ -1184,7 +1184,7 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
   ctx.report('deciding', 0, batches.length, projectedActive);
   const decisions = await mapConcurrent(batches, TIDY_CONCURRENCY, async (batch) => {
     const responseText = await completeText(ctx.model, {
-      instructions: ctx.instructions,
+      ...ctx.system,
       prompt: buildDecidePrompt(batch, ctx.agentInstructions, ctx.cap, ctx.now),
       maxOutputTokens: DECIDE_MAX_OUTPUT_TOKENS,
     });
@@ -1244,7 +1244,7 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
       ? buildMergePrompt([job.merge.keep, ...job.merge.absorbed])
       : buildRewritePrompt(job.rewrite.target, job.rewrite.why);
     const responseText = await completeText(ctx.model, {
-      instructions: ctx.instructions,
+      ...ctx.system,
       prompt,
       maxOutputTokens: WRITE_MAX_OUTPUT_TOKENS,
     });
@@ -1378,7 +1378,7 @@ async function rewritePermanentBlock(
   freshCount: number,
   ctx: {
     model: string;
-    instructions: string;
+    system: HelperSystemPrompt;
     reportAt: (phase: TidyProgress['phase']) => void;
   },
 ): Promise<BlockRewrite | null> {
@@ -1386,7 +1386,7 @@ async function rewritePermanentBlock(
   let responseText: string | undefined;
   try {
     responseText = await completeText(ctx.model, {
-      instructions: ctx.instructions,
+      ...ctx.system,
       prompt: buildBlockRewritePrompt(rules, freshCount),
       maxOutputTokens: BLOCK_MAX_OUTPUT_TOKENS,
     });
@@ -1429,7 +1429,7 @@ async function rewritePermanentBlock(
 async function auditEdits(
   checked: CheckedRewrite,
   before: PermanentRule[],
-  ctx: { model: string; instructions: string },
+  ctx: { model: string; system: HelperSystemPrompt },
 ): Promise<BlockRewrite> {
   const verdicts = await mapConcurrent(checked.rules, TIDY_CONCURRENCY, async (rule) => {
     const sources = rule.covers.map((i) => before[i]!);
@@ -1439,7 +1439,7 @@ async function auditEdits(
     let text: string | undefined;
     try {
       text = await completeText(ctx.model, {
-        instructions: ctx.instructions,
+        ...ctx.system,
         prompt: buildMergeAuditPrompt(sources, rule.instruction),
         maxOutputTokens: WRITE_MAX_OUTPUT_TOKENS,
       });
@@ -1550,9 +1550,10 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // and the model that will follow these instructions should be the one that
   // writes them.
   const model = options.model ?? options.config?.model ?? options.agentModel;
-  const instructions = isAnthropicModel(model)
-    ? ANTHROPIC_IDENTITY_PROMPT
-    : 'You consolidate an agent\'s stored corrections into a smaller set without losing meaning, and reply with a JSON object only.';
+  const system = helperSystemPrompt(
+    model,
+    'You consolidate an agent\'s stored corrections into a smaller set without losing meaning, and reply with a JSON object only.',
+  );
 
   // Whether a rule may become permanent at all is a property of this agent, not
   // of any one round, so it is settled once: five rounds should not re-stat the
@@ -1587,7 +1588,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
 
     const outcome = await tidyRound(working, before, {
       model,
-      instructions,
+      system,
       // The FILE, not the caller's copy of the instructions.
       //
       // `perm0`, `perm1`… are positions in the permanent block, and the drops
@@ -1688,7 +1689,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // the appended set stands, which is precisely the old behaviour.
   const blockOutcome = graduationBlocked || appended.length < 2
     ? null
-    : await rewritePermanentBlock(appended, newlyPermanent.length, { model, instructions, reportAt });
+    : await rewritePermanentBlock(appended, newlyPermanent.length, { model, system, reportAt });
 
   const permanentAfter = blockOutcome?.rules ?? appended;
   const droppedPermanent = blockOutcome?.dropped ?? [];

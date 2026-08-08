@@ -252,6 +252,21 @@ describe("evaluateExecution", () => {
     expect(prompt).toContain("Keep intros factual. No promotional language.");
   });
 
+  it("tells an Anthropic model what job it is doing, and asks for it short", async () => {
+    // The system prompt used to be a ternary: identity OR role. Every agent in
+    // an Anthropic-authed fleet took the identity branch, so the extractor was
+    // never told it was extracting, and the one place conciseness could be
+    // demanded outside the buried user prompt went unused.
+    completeTextMock.mockImplementation(async () => "[]");
+
+    await evaluateExecution(baseEvent, "Agent instructions", "anthropic:claude-opus-5", undefined, []);
+
+    const [, opts] = completeTextMock.mock.calls[0] as unknown as [string, { instructions: string; extraSystem?: string }];
+    expect(opts.instructions).toBe("You are Claude Code, Anthropic's official CLI for Claude.");
+    expect(opts.extraSystem).toContain("high-signal learnings");
+    expect(opts.extraSystem).toContain("never a document");
+  });
+
   it("only accepts a supersedes id the model was actually shown", async () => {
     completeTextMock.mockImplementation(async () =>
       JSON.stringify([

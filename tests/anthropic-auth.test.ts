@@ -5,6 +5,7 @@ import path from 'path';
 import { AnthropicAuth } from '../src/auth/anthropic';
 import { AuthStorage } from '../src/auth/storage';
 import type { OAuthTokens } from '../src/auth/types';
+import { ANTHROPIC_IDENTITY_PROMPT, helperSystemPrompt } from '../src/utils/anthropic';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -112,5 +113,36 @@ describe('AnthropicAuth.access refresh buffer', () => {
       access: 'fresh-access',
       refresh: 'fresh-refresh',
     }));
+  });
+});
+
+describe("helperSystemPrompt", () => {
+  const ROLE = "You extract learnings and reply with JSON only.";
+
+  // The old shape was a ternary that picked the identity OR the role. On any
+  // Anthropic-authed fleet that meant the role was never sent at all: the
+  // extractor was told nothing about extracting, the judge nothing about
+  // judging.
+  it("keeps the role on an Anthropic model instead of dropping it for the identity", () => {
+    const { instructions, extraSystem } = helperSystemPrompt("anthropic:claude-opus-5", ROLE);
+
+    expect(instructions).toBe(ANTHROPIC_IDENTITY_PROMPT);
+    expect(extraSystem).toBe(ROLE);
+  });
+
+  // Concatenation is what this exists to prevent: the API rejects an identity
+  // block with anything appended, disguised as a 429 rate_limit_error.
+  it("never concatenates the role onto the identity", () => {
+    const { instructions } = helperSystemPrompt("anthropic:claude-sonnet-5", ROLE);
+
+    expect(instructions).toBe(ANTHROPIC_IDENTITY_PROMPT);
+    expect(instructions).not.toContain("extract");
+  });
+
+  it("gives a non-Anthropic provider the role as its whole system prompt", () => {
+    const { instructions, extraSystem } = helperSystemPrompt("openai:gpt-5", ROLE);
+
+    expect(instructions).toBe(ROLE);
+    expect(extraSystem).toBeUndefined();
   });
 });

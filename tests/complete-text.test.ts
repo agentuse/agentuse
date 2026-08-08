@@ -74,6 +74,38 @@ describe("completeText", () => {
     });
   }
 
+  // Anthropic OAuth takes the identity line only as an exact, standalone system
+  // block — appending the role to it comes back as a 429 whose body says
+  // rate_limit_error. So a second block is the only way a helper call can say
+  // what job it is doing, and it has to travel in `messages`.
+  it("sends a second system block when the caller has a role to state", async () => {
+    await completeText("anthropic:claude-opus-4-8", {
+      instructions: "You are Claude Code, Anthropic's official CLI for Claude.",
+      extraSystem: "You extract learnings and reply with JSON only.",
+      prompt: "hi",
+    });
+
+    expect(calls[0]).toMatchObject({
+      instructions: "You are Claude Code, Anthropic's official CLI for Claude.",
+      allowSystemInMessages: true,
+      messages: [
+        { role: "system", content: "You extract learnings and reply with JSON only." },
+        { role: "user", content: "hi" },
+      ],
+    });
+    // The identity must not be diluted by carrying the role too.
+    expect(calls[0]!.instructions).not.toContain("extract learnings");
+    expect(calls[0]).not.toHaveProperty("prompt");
+  });
+
+  it("leaves a caller with no role sending the request it always sent", async () => {
+    await completeText("anthropic:claude-opus-4-8", { instructions: "sys", prompt: "hi" });
+
+    expect(calls[0]).toMatchObject({ instructions: "sys", prompt: "hi" });
+    expect(calls[0]).not.toHaveProperty("messages");
+    expect(calls[0]).not.toHaveProperty("allowSystemInMessages");
+  });
+
   it("does not start a helper provider request when stop/timeout already fired", async () => {
     const controller = new AbortController();
     controller.abort();
