@@ -62,6 +62,7 @@ let consolidateLearnings: typeof import("../src/learning/consolidate").consolida
 let undoConsolidation: typeof import("../src/learning/consolidate").undoConsolidation;
 let reconcileConcurrentLearnings: typeof import("../src/learning/consolidate").reconcileConcurrentLearnings;
 let buildDecidePrompt: typeof import("../src/learning/consolidate").buildDecidePrompt;
+let describeConsolidation: typeof import("../src/learning/consolidate").describeConsolidation;
 
 const NOW = Date.parse("2026-08-01T00:00:00.000Z");
 const DAY = 86_400_000;
@@ -104,6 +105,7 @@ describe("tidying up an over-cap corrections file", () => {
     undoConsolidation = mod.undoConsolidation;
     reconcileConcurrentLearnings = mod.reconcileConcurrentLearnings;
     buildDecidePrompt = mod.buildDecidePrompt;
+    describeConsolidation = mod.describeConsolidation;
   });
 
   describe("the rules already permanent", () => {
@@ -335,6 +337,22 @@ describe("tidying up an over-cap corrections file", () => {
       expect(after).toContain("- [tip] Rule one.");
       expect(after).toContain("- [tip] Rule two.");
       expect(result.changes.some((c) => c.kind === "merge-permanent")).toBe(false);
+    });
+
+    it("says so in the summary when the block was its only work", async () => {
+      // The summary counts staged corrections, so a pass that only tightened
+      // the agent file reported "Nothing safe to change" directly above a diff
+      // showing two of the user's permanent rules rewritten.
+      await store.save([learning({ id: "only1" })]);
+      writeFileSync(agentFilePath, withPermanent(["Rule one.", "Rule two."]));
+      blockResponse = JSON.stringify({
+        rules: [{ category: "tip", instruction: "One rule covering both.", covers: [0, 1], why: "same rule twice" }],
+      });
+
+      const result = await run();
+
+      expect(describeConsolidation(result)).toContain("1 permanent rule tightened in the agent file");
+      expect(describeConsolidation(result)).not.toContain("Nothing safe to change");
     });
 
     it("does not audit a rule it left untouched", async () => {

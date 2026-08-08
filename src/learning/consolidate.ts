@@ -1838,6 +1838,20 @@ export function describeConsolidation(result: ConsolidationResult): string {
   if (result.rewritten > 0) parts.push(`${result.rewritten} rewritten`);
   if (result.retired > 0) parts.push(`${result.retired} retired`);
   if (result.graduated.length > 0) parts.push(`${result.graduated.length} now permanent`);
-  if (parts.length === 0) return 'Nothing safe to change';
-  return `${parts.join(', ')} — ${result.activeBefore} → ${result.activeAfter} in force`;
+
+  // Edits to the agent file's own block, counted separately: they are not
+  // staged corrections and do not move the "in force" number. Without this, a
+  // pass whose only work was tidying that block reported "Nothing safe to
+  // change" while having just rewritten two of the user's permanent rules —
+  // the summary contradicting the diff printed directly underneath it.
+  const blockEdits = result.changes.filter((c) => c.kind.endsWith('-permanent')).length;
+  const staged = parts.length > 0
+    ? `${parts.join(', ')} — ${result.activeBefore} → ${result.activeAfter} in force`
+    : '';
+  const block = blockEdits > 0
+    ? `${blockEdits} permanent rule${blockEdits === 1 ? '' : 's'} tightened in the agent file`
+    : '';
+
+  if (staged && block) return `${staged}; ${block}`;
+  return staged || block || 'Nothing safe to change';
 }
