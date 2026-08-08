@@ -320,11 +320,21 @@ export class LearningStore {
    *     wins it if it outranks the rule it would displace, so the set keeps the
    *     best N rather than the last N.
    *  3. If nothing may be dropped — every active rule is a human correction —
-   *     an auto draft is REFUSED and a human correction is inserted anyway,
-   *     over cap. The system never silently discards a human's correction to
-   *     satisfy its own bookkeeping; it reports the overage instead (see
-   *     `overCap`), because a ruleset that is all human corrections and still
-   *     too big is a sign the agent file does not describe the job.
+   *     an auto draft is REFUSED, and a human correction is inserted over cap.
+   *
+   * Step 3 is a fallback for a model that ignored the instruction, NOT the way
+   * a full set is meant to absorb a correction. Capture asks for `supersedes`
+   * on every learning once the set is full, human ones included, and folding
+   * there is what keeps the set at its size. Letting a correction land over cap
+   * as policy is what builds a backlog, and a backlog cannot drain: rules past
+   * the cap are never injected, so nothing about them can ever be observed, and
+   * they cannot be evicted either. Measured before this changed: one agent held
+   * 70 human corrections outside the cap, permanently unreachable.
+   *
+   * It stays as a fallback because the alternative is worse. Dropping a
+   * reviewer's correction because a helper model failed to name a rule to fold
+   * it into would lose the highest-signal input the system gets. Over cap and
+   * reported beats silently gone.
    *
    * A re-asserted rule is never evictable: the repeat is evidence the wording
    * needs rewriting, which is the opposite of evidence it should be dropped.
@@ -420,8 +430,10 @@ export class LearningStore {
               refused.push(draft);
               continue;
             }
-            // A human correction with nothing evictable falls through and is
-            // inserted over cap. Reported, never dropped.
+            // A human correction the evaluator did not fold, with nothing
+            // evictable behind it. Falls through and lands over cap: reported,
+            // never dropped. See the note on step 3 above — this is the
+            // non-compliance path, not the intended one.
           }
 
           insert(draft);

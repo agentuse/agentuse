@@ -164,4 +164,60 @@ describe("evaluateExecution", () => {
     expect(result[0].source).toBe("auto");
     expect(result[0].confidence).toBe(0.9);
   });
+
+  const rule = (i: number) => ({
+    id: `rule000${i}`,
+    category: "warning" as const,
+    title: `Rule ${i}`,
+    instruction: `Skip subject ${i} entirely.`,
+    confidence: 0.95,
+    appliedCount: 0,
+    extractedAt: "2026-07-01T00:00:00.000Z",
+    source: "approval" as const,
+    reasserted: 0,
+    approvedRuns: 0,
+  });
+
+  it("demands a fold from every learning once the set is full, reviewer ones included", async () => {
+    completeTextMock.mockImplementation(async () => "[]");
+    const active = [rule(0), rule(1), rule(2)];
+
+    await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, active, [], { cap: 3 });
+
+    const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
+    expect(prompt).toContain("The set is FULL (3/3)");
+    expect(prompt).toContain("EVERY learning you return must set \"supersedes\"");
+    // The carve-out that let a reviewer correction land without folding is what
+    // built the backlog: rules past the cap are never injected, so they can
+    // neither prove themselves nor be evicted.
+    expect(prompt).toContain("applies to reviewer-sourced learnings too");
+    // Folding must not be read as picking a winner.
+    expect(prompt).toContain("satisfies both");
+  });
+
+  it("asks for reconciliation but not a fold while the set has room", async () => {
+    completeTextMock.mockImplementation(async () => "[]");
+
+    await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, [rule(0)], [], { cap: 3 });
+
+    const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
+    expect(prompt).toContain("CONTRADICT an existing rule");
+    expect(prompt).not.toContain("The set is FULL");
+  });
+
+  it("only accepts a supersedes id the model was actually shown", async () => {
+    completeTextMock.mockImplementation(async () =>
+      JSON.stringify([
+        { source: "auto", category: "tip", title: "Real", instruction: "Fold into a real rule.", confidence: 0.9, supersedes: "rule0001" },
+        { source: "auto", category: "tip", title: "Bogus", instruction: "Fold into a rule that does not exist.", confidence: 0.9, supersedes: "made-up" },
+      ]),
+    );
+
+    const result = await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, [rule(0), rule(1)], [], { cap: 2 });
+
+    // A hallucinated id must fall through to the store's capacity handling. A
+    // fold that quietly became an append is the exact failure this prevents.
+    expect(result[0].supersedes).toBe("rule0001");
+    expect(result[1].supersedes).toBeUndefined();
+  });
 });

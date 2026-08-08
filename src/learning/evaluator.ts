@@ -68,7 +68,7 @@ function formatRulesInForce(active: Learning[], graduated: Learning[], cap: numb
 
   if (active.length > 0) {
     sections.push(`## Rules This Agent Already Carries (${active.length}/${cap} slots used)
-These were in force during the run above, so the agent already had them. Each one can be revised: to replace it, return your learning with "supersedes" set to its id.
+These were in force during the run above, so the agent already had them. Every one can be revised, including rules that came from a reviewer: to replace one, return your learning with "supersedes" set to its id. Replacing is not discarding — the rule you name is archived, and your wording is expected to carry whatever it constrained.
 ${active.map(l => `- (id ${l.id}) [${l.category}] ${l.title}: ${l.instruction.slice(0, 200)}${l.instruction.length > 200 ? '...' : ''}`).join('\n')}`);
   }
 
@@ -90,7 +90,13 @@ Read the list above as one ruleset the agent must obey ALL of at once, and check
 - Does it CONTRADICT an existing rule, or narrow it so far the two cannot both be satisfied? That is the most important case and the easiest to miss — two rules can collide while sharing no wording at all. Return ONE rule that resolves the collision, with "supersedes" set to the rule it replaces.
 - Is it genuinely about something no existing rule covers? Add it.${full ? `
 
-The set is FULL (${active.length}/${cap}). Every learning you return MUST set "supersedes" to the id of the rule it replaces — either the one it reconciles with, or, if it is genuinely new, the LEAST valuable rule in the list, which it is traded against. A learning returned without "supersedes" while the set is full will be dropped unless it came from a reviewer comment.` : ''}`);
+The set is FULL (${active.length}/${cap}), so there is no free slot and EVERY learning you return must set "supersedes" to the id of the rule it takes the place of. This applies to reviewer-sourced learnings too — a correction that arrives with nowhere to go is the reason agents end up carrying dozens of rules none of which reach them.
+
+Pick the id this way:
+- A rule about the same subject? Name it, and write ONE rule that satisfies both. The point is to combine them, not to pick a winner: if the old rule constrains a case yours does not mention, your wording has to carry that case too, or it is lost.
+- Nothing related? Name the LEAST valuable rule in the list and trade against it.
+
+Never widen or weaken a reviewer's correction to make a merge read more smoothly. If two rules genuinely cannot be expressed as one without losing a constraint, say so by returning the sharper of the two as a replacement for the weaker.` : ''}`);
 
   return `\n${sections.join('\n\n')}\n`;
 }

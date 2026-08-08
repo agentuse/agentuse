@@ -191,38 +191,54 @@ separate rejections, each perfectly reasonable alone - and nothing would notice.
 
 So when the set is full, a new learning has to be paid for. In order:
 
-1. **Supersede.** The evaluator sees every rule the agent already carries, each
-   with its id, and is asked to reconcile rather than merely avoid duplicating.
-   If its new learning restates, sharpens, or *contradicts* an existing rule, it
-   returns one rule that resolves the collision, naming the id it replaces. The
-   replaced rule is retired, not deleted.
-2. **Trade.** Otherwise the weakest auto-extracted rule is retired to make room -
-   but only if the new rule is worth more than the one it displaces, so the set
-   keeps the best rules rather than the last ones.
-3. **Ask you.** If nothing may be dropped, because every rule in the set is a
-   human correction, an auto-extracted learning is refused and *your* correction
-   is kept anyway, over the cap. Your corrections are never discarded to satisfy
-   the system's own bookkeeping.
+1. **Fold.** The evaluator sees every rule the agent already carries, each with
+   its id, and is asked to reconcile rather than merely avoid duplicating. If its
+   new learning restates, sharpens, or *contradicts* an existing rule, it returns
+   **one** rule that satisfies both, naming the id it replaces. The replaced rule
+   is retired, not deleted.
+2. **Trade.** Nothing related in the set? The weakest auto-extracted rule is
+   retired to make room - but only if the new rule is worth more than the one it
+   displaces, so the set keeps the best rules rather than the last ones.
 
-Two things are never evicted: a rule you wrote or approved, and a rule you have
-repeated. A repeat means the wording is not landing, which is a reason to rewrite
-it, not to drop it.
+Once the set is full this applies to reviewer corrections too. They cannot be
+traded away, so for them the answer is always to fold. That is the part that
+keeps the set at its size.
+
+Folding is not picking a winner. The merged wording has to carry every case the
+originals covered, and the model writing it can see all of them. Two things are
+never evicted: a rule you wrote or approved, and a rule you have repeated. A
+repeat means the wording is not landing, which is a reason to rewrite it, not to
+drop it.
 
 Precedence within the set is unchanged - rules you saved yourself, then reviewer
 comments, then self-extracted - with the most recent first inside each group.
 
-Case 3 is the one worth interrupting for, and the run says so:
+### When a correction does not fit
+
+If the capture model returns a correction without naming a rule to fold it into,
+and no auto-extracted rule is left to trade away, the correction is kept anyway,
+outside the cap. It is not dropped - losing a reviewer's correction because a
+helper model failed to pick an id would be worse. But a rule outside the cap is
+never injected, so the run tells you plainly:
 
 ```
-learned guidelines: 15 of 19 applied, ~1.8k tokens/model request
-This agent holds 4 correction(s) beyond its 15-rule limit, and all of them are
-human corrections - nothing can be dropped automatically.
-Fold them into the agent's instructions: agentuse learnings tidy ./blog-writer.agentuse
+learned guidelines: 15 of 16 applied, ~1.8k tokens/model request
+1 correction(s) sit outside this agent's 15-rule limit and do NOT reach it -
+they could not be folded into an existing rule, and no auto-extracted rule was
+left to trade away.
+Fold the set down: agentuse learnings tidy ./blog-writer.agentuse
 ```
 
-That is not a storage problem. It means your agent file does not describe the
-job, and the corrections are carrying what the instructions should have said.
-Only you can move them there.
+This should be rare. If it is not, the corrections are carrying what your agent
+file should have said, and the fix is in the instructions rather than the store.
+
+<Warning>
+  A rule outside the cap cannot recover on its own. It is never injected, so
+  nothing about it is ever observed, and it is a human correction so it is never
+  evicted either. Left alone it stays there having no effect. This is why a full
+  set folds rather than grows - an earlier design let corrections accumulate past
+  the cap, and one agent reached 70 of them, permanently unreachable.
+</Warning>
 
 <Note>
   A store written before the cap was enforced can hold far more than `max`. The

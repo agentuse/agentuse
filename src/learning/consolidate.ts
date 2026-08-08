@@ -335,7 +335,8 @@ ${inventory}
 
 ## Rules
 - Every id you name must come from the list. Each id may appear in AT MOST ONE move.
-- Never drop a distinction that matters. If two corrections look similar but constrain different situations, leave them both alone.
+- Merge two corrections whenever both can be stated as one rule, even when they constrain different situations. Merging is not discarding: the merged wording must carry every case the originals covered, and whoever writes it sees all of them. Leaving a pair alone is right only when no single rule can hold both without losing a constraint — a judgement about the wording, not about whether the subjects match.
+- This set is over its limit, so some of these corrections do not reach the agent at all. Leaving a pair alone is not the safe choice; it is a choice to leave something dormant.
 - Do NOT write any replacement text. Ids and a one-line reason each, nothing more.
 - If nothing can be safely improved, return empty arrays.
 

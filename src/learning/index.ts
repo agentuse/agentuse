@@ -143,14 +143,18 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
 
 /**
  * Say, at the moment a human has just corrected the agent, that the correction
- * may not reach it.
+ * did not reach it.
  *
- * Under the cap this fires in exactly one situation, and it is the situation
- * worth interrupting for: the rule set is over its limit and every rule in it is
- * a human correction, so the system has nothing left it is allowed to drop. That
- * is not a storage problem to be tidied away — it means the agent's own
- * instructions do not describe the job, and the corrections are carrying what
- * the agent file should have said. Only a human can move them there.
+ * A full set is supposed to absorb a correction by folding it into an existing
+ * rule, which keeps the set at its size. This fires only when that did not
+ * happen: the capture model returned a correction without naming a rule to fold
+ * it into, and there was no auto-extracted rule left to trade away. The
+ * correction was kept rather than dropped, but it landed outside the cap, and
+ * rules outside the cap are never injected.
+ *
+ * So this is not a nag about file hygiene, and it is not routine. It means a
+ * specific correction is sitting there having no effect, and the one thing that
+ * reliably fixes it is folding the set down by hand.
  *
  * `logger.warn` mirrors into the session log sink, so the same line reaches both
  * the terminal and the serve session view without a second call site.
@@ -158,9 +162,9 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
 function warnIfCorrectionsAreIgnored(overCap: number, cap: number, agentFilePath: string): void {
   if (overCap <= 0) return;
   logger.warn(
-    `This agent holds ${overCap} correction(s) beyond its ${cap}-rule limit, and all of them are human `
-    + `corrections — nothing can be dropped automatically. Only the top ${cap} apply per run. `
-    + `Fold them into the agent's instructions: agentuse learnings tidy ${agentFilePath}`
+    `${overCap} correction(s) sit outside this agent's ${cap}-rule limit and do NOT reach it — `
+    + `they could not be folded into an existing rule, and no auto-extracted rule was left to trade away. `
+    + `Fold the set down: agentuse learnings tidy ${agentFilePath}`
   );
 }
 

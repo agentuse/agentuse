@@ -791,7 +791,25 @@ Always wait for explicit approval before publishing.
       expect(activeOf(await store.load())).toHaveLength(3);
     });
 
-    it("takes a reviewer correction over cap when nothing may be dropped, and says so", async () => {
+    it("folds a reviewer correction into an existing human rule instead of growing the set", async () => {
+      await store.save(fill(3, "approval"));
+
+      const result = await store.addOrEscalate(
+        [{ ...draft({ source: "approval", confidence: 0.95 }), supersedes: "fill0001" }],
+        { cap: 3 },
+      );
+
+      // The intended path for a full set. Without it a correction lands outside
+      // the cap, and rules outside the cap are never injected — so nothing about
+      // them can ever be observed and they can never be evicted. That is how an
+      // agent ends up holding 70 corrections none of which reach it.
+      expect(result.inserted).toHaveLength(1);
+      expect(result.retired.map((l) => l.id)).toEqual(["fill0001"]);
+      expect(result.overCap).toBe(0);
+      expect(activeOf(await store.load())).toHaveLength(3);
+    });
+
+    it("keeps an unfolded reviewer correction over cap rather than dropping it", async () => {
       await store.save(fill(3, "manual"));
 
       const result = await store.addOrEscalate(
@@ -799,8 +817,9 @@ Always wait for explicit approval before publishing.
         { cap: 3 },
       );
 
-      // The one case worth interrupting a human for: the ruleset is all human
-      // corrections and still too big. Never resolved by discarding one.
+      // The fallback, not the policy: the capture model returned a correction
+      // without naming a rule to fold it into. Losing the highest-signal input
+      // the system gets would be worse than landing over cap and reporting it.
       expect(result.inserted).toHaveLength(1);
       expect(result.retired).toHaveLength(0);
       expect(result.overCap).toBe(1);
