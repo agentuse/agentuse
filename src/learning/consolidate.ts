@@ -10,7 +10,7 @@ import { getProjectDirSync } from '../storage/paths';
 import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic';
 import { LearningStore, withLearningFileLock } from './store';
 import { activeLearnings, effectiveCap, rankLearnings } from './ranking';
-import { agentFileIsWritable, spliceLearnedBlock } from './graduate';
+import { LEARNED_BLOCK_END, LEARNED_BLOCK_START, agentFileIsWritable, spliceLearnedBlock } from './graduate';
 import type { Learning, LearningCategory, LearningConfig } from './types';
 import { atomicWriteFile } from '../utils/atomic-write';
 
@@ -48,10 +48,23 @@ import { atomicWriteFile } from '../utils/atomic-write';
  *  is never retired, however stale the model judges it. */
 const RETIRE_MIN_AGE_DAYS = 14;
 
-/** Approved, uncommented runs a captured rule must survive before it can become
- *  a permanent part of the agent file. A human-written rule needs none: writing
- *  it down was the assertion. */
+/** Approved, uncommented runs a rule must survive before it may be considered
+ *  permanent. Strong evidence, and rare: measured across a 22-agent fleet, not
+ *  one rule of 750 had ever reached 1, because the counter only moves when a
+ *  human approves a whole run without leaving a single comment — which never
+ *  happens on an agent whose reviewer steers it. Kept as one route in, not the
+ *  only one. */
 const GRADUATE_MIN_APPROVED_RUNS = 3;
+
+/** Runs a rule has been in force as the alternative route in.
+ *
+ * Under the injection cap a rule is only applied when it is inside the set, so
+ * surviving N runs means N rounds of newer rules arriving and failing to
+ * displace it. That is the cheapest honest evidence available, and unlike
+ * {@link GRADUATE_MIN_APPROVED_RUNS} it is actually reachable. It is a floor for
+ * being CONSIDERED, never a reason to promote on its own — the decide pass still
+ * has to judge the rule against everything else, permanent rules included. */
+const GRADUATE_MIN_APPLIED_RUNS = 10;
 
 /** Most recent snapshots kept per agent for undo. */
 const UNDO_HISTORY = 5;
@@ -221,20 +234,44 @@ function ageInDays(learning: Learning, now: number): number {
 }
 
 /**
- * Whether a correction has earned a permanent place in the agent file.
+ * Whether a correction may be considered for a permanent place in the agent
+ * file.
  *
- * Computed here, not chosen by the model: the model picks wording, the code
- * decides what is proven. `appliedCount` is deliberately not a factor — it
- * counts injections, which measures what a rule COSTS, not whether it works.
+ * Deliberately NOT a proof test any more, and deliberately not satisfied by who
+ * wrote the rule. It used to return true for every `manual` entry, on the
+ * reasoning that a human typing a rule is a human vouching for it. That reads
+ * well and produced the exact failure it was meant to prevent: a human rule and
+ * the later human rule correcting it were both auto-eligible, both promoted, and
+ * ended up four lines apart in one agent's permanent instructions, with the
+ * second announcing itself as a correction of the first.
+ *
+ * Who wrote a rule says how much it should weigh. It cannot say whether the rule
+ * is still true, because the person who wrote it is also the person who later
+ * changed their mind. Only comparing it against the rest of the set can say
+ * that, so eligibility is now a floor — old enough to have been observed — and
+ * the judgement of whether it belongs is made in the decide pass, against
+ * everything else, including the rules already permanent.
  */
 export function isGraduationEligible(learning: Learning): boolean {
-  if (learning.source === 'manual') return true;
-  return learning.approvedRuns >= GRADUATE_MIN_APPROVED_RUNS;
+  return learning.approvedRuns >= GRADUATE_MIN_APPROVED_RUNS
+    || learning.reasserted > 0
+    || learning.appliedCount >= GRADUATE_MIN_APPLIED_RUNS;
 }
 
-/** Entries this pass is forbidden to retire, with the reason, for the prompt. */
+/**
+ * Entries this pass is forbidden to retire, with the reason, for the prompt.
+ *
+ * `manual` is no longer among them. A rule a human wrote is strong evidence and
+ * is weighted as such in the prompt, but a veto is not evidence — it is an
+ * instruction to stop thinking, and it is what left one agent holding 85
+ * corrections that could be neither applied nor consolidated. A newer correction
+ * can only retire the older one it overrules if the older one is touchable.
+ *
+ * What remains is not about authorship: a rule a human has REPEATED is evidence
+ * the wording is not landing (rewrite it, do not drop it), and a rule too young
+ * to have been observed has not yet earned a verdict either way.
+ */
 function retireBlocked(learning: Learning, now: number): string | undefined {
-  if (learning.source === 'manual') return 'a human wrote this rule';
   if (learning.reasserted > 0) return 'a human has repeated this; rewrite it instead';
   if (ageInDays(learning, now) < RETIRE_MIN_AGE_DAYS) return `less than ${RETIRE_MIN_AGE_DAYS} days old`;
   return undefined;
@@ -243,13 +280,19 @@ function retireBlocked(learning: Learning, now: number): string | undefined {
 /** One correction as the decide pass sees it: the full text plus the evidence
  *  that decides what may be done to it. */
 function inventoryEntry(learning: Learning, now: number): string {
-  const flags: string[] = [`src:${learning.source}`];
+  const weight = learning.source === 'manual'
+    ? 'src:manual (a human wrote this one deliberately — weigh it heavily)'
+    : learning.source === 'approval'
+      ? 'src:approval (from a human reviewer comment — weigh it heavily)'
+      : 'src:auto (the agent extracted this from its own run — weigh it lightly)';
+  const flags: string[] = [weight];
   if (learning.reasserted > 0) flags.push(`repeated by a human ${learning.reasserted}x`);
   if (learning.approvedRuns > 0) flags.push(`in force across ${learning.approvedRuns} approved runs`);
+  if (learning.appliedCount > 0) flags.push(`applied in ${learning.appliedCount} runs`);
   flags.push(`${Math.round(ageInDays(learning, now))}d old`);
   const blocked = retireBlocked(learning, now);
   if (blocked) flags.push(`CANNOT RETIRE: ${blocked}`);
-  if (isGraduationEligible(learning)) flags.push('ELIGIBLE TO GRADUATE');
+  if (isGraduationEligible(learning)) flags.push('may be graduated');
   return `- id:${learning.id} [${learning.category}] ${learning.title} (${flags.join('; ')})\n  ${learning.instruction}`;
 }
 
@@ -318,10 +361,39 @@ export function buildDecidePrompt(
 ): string {
   const inventory = learnings.map((l) => inventoryEntry(l, now)).join('\n');
 
+  // The already-permanent rules are pulled out and shown IN FULL, separately
+  // from the truncated body.
+  //
+  // They live in a marked block that graduation appends to the END of the agent
+  // file, and the body is cut at 6000 characters — so on any real agent the
+  // block fell outside the cut and the model never saw it. Measured on a
+  // 56k-character agent file: the block started at character 30,685. Every
+  // instruction telling this pass to check a candidate against the rules already
+  // permanent was unfollowable, which is exactly how a rule and the later
+  // correction overruling it both ended up in that block.
+  const blockStart = agentInstructions.indexOf(LEARNED_BLOCK_START);
+  const blockEnd = agentInstructions.indexOf(LEARNED_BLOCK_END);
+  const hasBlock = blockStart !== -1 && blockEnd > blockStart;
+  const permanent = hasBlock
+    ? agentInstructions.slice(blockStart + LEARNED_BLOCK_START.length, blockEnd).trim()
+    : '';
+  // Truncate the BODY only, with the block excised so it cannot be cut in half.
+  const body = hasBlock
+    ? `${agentInstructions.slice(0, blockStart)}${agentInstructions.slice(blockEnd + LEARNED_BLOCK_END.length)}`
+    : agentInstructions;
+
+  const permanentSection = permanent
+    ? `
+
+## Rules already PERMANENT in this agent (part of the same ruleset)
+These were graduated by an earlier pass and apply on every run. They are not in the list below and you cannot move them, but they count: a stored correction that restates one of these is redundant, and one that CONTRADICTS one of these is the most important thing you can find here.
+${permanent}`
+    : '';
+
   return `An agent has accumulated ${learnings.length} stored corrections, but only the top ${cap} are put in front of the model on any run. The rest have no effect. Your job is to decide how to get the active set to ${cap} or fewer without losing anything the agent needs.
 
 ## The agent's own instructions
-${agentInstructions.slice(0, 6000)}
+${body.slice(0, 6000)}${permanentSection}
 
 ## Stored corrections
 ${inventory}
@@ -331,10 +403,16 @@ ${inventory}
 1. **merge** — two or more corrections saying substantially the same thing become one. Name the ids and which one to keep; someone else writes the merged wording.
 2. **rewrite** — a correction a human has REPEATED is not wrong, it is not landing. Name it and it will be restated more sharply. Prefer this over retiring anything marked as repeated.
 3. **retire** — a correction that another one now fully covers, or that the agent's own instructions above already state. Only entries with no "CANNOT RETIRE" flag.
-4. **graduate** — a correction that has proven itself moves into the agent's permanent instructions. Only entries marked "ELIGIBLE TO GRADUATE". Prefer graduating over merging when a rule stands on its own: it stops competing for a slot.
+4. **graduate** — a correction moves into the agent's permanent instructions above, where it applies on every run and never competes for a slot. Only entries marked "may be graduated", and only after step 1 below.
+
+## How to decide, in order
+
+1. **Reconcile before you promote anything.** Read the whole list, plus the agent's own instructions above, as ONE ruleset the agent has to obey all at once. Look for pairs that say the same thing, and for pairs that CONTRADICT — where a later correction overrules an earlier one, or narrows it so far they cannot both be followed. Contradictions are the most important thing on this page and the easiest to miss, because two rules can collide while sharing no wording at all. Resolve those first, by merging them or by retiring the one that was overruled.
+2. **Only then graduate.** A rule earns permanence AFTER it has been checked against everything else, not instead of being checked. Never graduate a rule that another correction in this list overrules, and never graduate one that restates or contradicts something already in the agent's instructions above — that block is part of the ruleset, and a second permanent copy of a rule you cannot later reconcile is the worst outcome available here.
 
 ## Rules
 - Every id you name must come from the list. Each id may appear in AT MOST ONE move.
+- **Who wrote a rule is evidence, not a verdict.** A rule marked src:manual or src:approval came from a human and should weigh heavily — but the same human wrote the correction that may now overrule it, so authorship cannot decide whether a rule is still true. Judge each one on whether it still earns a place: is it current, is it covered by another, has it been superseded? A newer human correction retiring an older human rule is exactly the right outcome, not something to avoid.
 - Merge two corrections whenever both can be stated as one rule, even when they constrain different situations. Merging is not discarding: the merged wording must carry every case the originals covered, and whoever writes it sees all of them. Leaving a pair alone is right only when no single rule can hold both without losing a constraint — a judgement about the wording, not about whether the subjects match.
 - This set is over its limit, so some of these corrections do not reach the agent at all. Leaving a pair alone is not the safe choice; it is a choice to leave something dormant.
 - Do NOT write any replacement text. Ids and a one-line reason each, nothing more.
@@ -486,11 +564,15 @@ export function validateDecisions(raw: RawDecisions, learnings: Learning[], now:
     const target = claim(g.id, 'graduate');
     if (!target) continue;
     if (!isGraduationEligible(target)) {
-      out.rejected.push(`graduate ${target.id}: not proven yet (${target.approvedRuns} approved runs, needs ${GRADUATE_MIN_APPROVED_RUNS})`);
+      out.rejected.push(
+        `graduate ${target.id}: not observed enough yet `
+        + `(${target.approvedRuns} approved runs, needs ${GRADUATE_MIN_APPROVED_RUNS}; `
+        + `or ${target.appliedCount} runs in force, needs ${GRADUATE_MIN_APPLIED_RUNS})`
+      );
       continue;
     }
     claimed.add(target.id);
-    out.graduates.push({ target, why: g.why ?? 'proven across approved runs' });
+    out.graduates.push({ target, why: g.why ?? 'held up across runs' });
   }
 
   return out;
@@ -710,7 +792,6 @@ export function explainRemaining(
   now: number,
   moreToDo: boolean,
 ): TidyRemaining {
-  let manual = 0;
   let repeated = 0;
   let tooNew = 0;
   let distinct = 0;
@@ -719,10 +800,13 @@ export function explainRemaining(
 
   for (const learning of active) {
     if (isGraduationEligible(learning)) eligible++;
-    else closest = Math.max(closest, learning.approvedRuns);
+    else closest = Math.max(closest, learning.appliedCount);
 
-    if (learning.source === 'manual') manual++;
-    else if (learning.reasserted > 0) repeated++;
+    // First reason wins, so order is the claim. Authorship is no longer among
+    // them: a rule a human wrote is weighed heavily but can be retired by a
+    // later human correction, so "you wrote it" no longer explains why anything
+    // stayed.
+    if (learning.reasserted > 0) repeated++;
     else if (ageInDays(learning, now) < RETIRE_MIN_AGE_DAYS) tooNew++;
     else distinct++;
   }
@@ -735,15 +819,19 @@ export function explainRemaining(
       because: `are less than ${RETIRE_MIN_AGE_DAYS} days old, and a new learning gets that long to prove itself before it can be retired`,
     });
   }
-  if (manual > 0) reasons.push({ count: manual, because: 'you wrote by hand, and those are never retired for you' });
   if (repeated > 0) reasons.push({ count: repeated, because: 'you have corrected more than once, so they get sharpened rather than dropped' });
 
   // The question this answers is the one users actually ask: not "why is it
   // still 30" but "why did nothing become permanent". Naming the best score so
   // far turns a rule into a distance.
+  //
+  // Scoped to the corrections still ACTIVE after the pass, which is what makes
+  // it truthful: it used to read "None of these can move into the agent file
+  // yet" on a run that had just made six rules permanent, because every manual
+  // rule was auto-eligible and this line only counted the ones left behind.
   const graduationWait = eligible > 0
     ? undefined
-    : `None of these can move into the agent file yet. That takes ${GRADUATE_MIN_APPROVED_RUNS} runs approved without a comment, and the closest of them has ${closest}. They will become permanent on their own as you keep approving runs.`;
+    : `None of the corrections still in force can move into the agent file yet. That takes ${GRADUATE_MIN_APPROVED_RUNS} runs approved without a comment, or ${GRADUATE_MIN_APPLIED_RUNS} runs in force; the closest of them has been applied in ${closest}. They become eligible on their own as the agent keeps running.`;
 
   return {
     active: active.length,

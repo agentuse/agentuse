@@ -41,6 +41,7 @@ function idsIn(prompt: string): string[] {
 let consolidateLearnings: typeof import("../src/learning/consolidate").consolidateLearnings;
 let undoConsolidation: typeof import("../src/learning/consolidate").undoConsolidation;
 let reconcileConcurrentLearnings: typeof import("../src/learning/consolidate").reconcileConcurrentLearnings;
+let buildDecidePrompt: typeof import("../src/learning/consolidate").buildDecidePrompt;
 
 const NOW = Date.parse("2026-08-01T00:00:00.000Z");
 const DAY = 86_400_000;
@@ -82,6 +83,48 @@ describe("tidying up an over-cap corrections file", () => {
     consolidateLearnings = mod.consolidateLearnings;
     undoConsolidation = mod.undoConsolidation;
     reconcileConcurrentLearnings = mod.reconcileConcurrentLearnings;
+    buildDecidePrompt = mod.buildDecidePrompt;
+  });
+
+  describe("the rules already permanent", () => {
+    // Graduation appends its block to the END of the agent file, and the body
+    // was truncated at 6000 characters, so on any real agent the block fell
+    // outside the cut. Measured on a 56k-character agent file: the block started
+    // at character 30,685. Every instruction telling this pass to compare a
+    // candidate against the permanent rules was therefore unfollowable, and a
+    // rule plus the later correction overruling it both ended up in that block.
+    const permanentRule = "Human 'connect post' means a visibility-thread, NOT a connecting-score target";
+
+    const agentFileWithBlock = (bodyChars: number) =>
+      `${"x".repeat(bodyChars)}\n\n${LEARNED_BLOCK_START}\n## Learned Guidelines\n\n- [pattern] ${permanentRule}\n<!-- /agentuse:learned -->\n`;
+
+    it("survives truncation however far down the agent file it sits", () => {
+      const prompt = buildDecidePrompt(
+        [learning({ id: "rule0" })],
+        agentFileWithBlock(30_000),
+        10,
+        NOW,
+      );
+
+      expect(prompt).toContain(permanentRule);
+      expect(prompt).toContain("Rules already PERMANENT");
+      expect(prompt).toContain("CONTRADICTS one of these");
+    });
+
+    it("keeps truncating the body, so a long agent file still bounds the prompt", () => {
+      const prompt = buildDecidePrompt([learning({ id: "rule0" })], agentFileWithBlock(30_000), 10, NOW);
+
+      // The block is excised before the cut rather than counting toward it, so
+      // it can never be sliced in half either.
+      expect(prompt).not.toContain("x".repeat(6_100));
+      expect(prompt.length).toBeLessThan(12_000);
+    });
+
+    it("says nothing about permanent rules when the agent has none", () => {
+      const prompt = buildDecidePrompt([learning({ id: "rule0" })], "Just instructions.", 10, NOW);
+
+      expect(prompt).not.toContain("Rules already PERMANENT");
+    });
   });
 
   beforeEach(() => {
@@ -177,15 +220,32 @@ describe("tidying up an over-cap corrections file", () => {
     expect(merged.approvedRuns).toBe(2);
   });
 
-  it("refuses to retire a rule a human wrote", async () => {
+  it("lets a rule a human wrote be retired when it has been overruled", async () => {
+    // Authorship is evidence, not a veto. It used to be a veto, and that is
+    // what left one agent holding 85 corrections it could neither apply nor
+    // consolidate: the only thing that can retire a human rule is a later human
+    // correction, and it could not reach it. The same human wrote both.
     await seed();
     await store.save([...(await store.load()), learning({ id: "human01", source: "manual" })]);
-    decideResponse = JSON.stringify({ retire: [{ id: "human01", why: "looks stale" }] });
+    decideResponse = JSON.stringify({ retire: [{ id: "human01", why: "a newer correction overrules this" }] });
+
+    const result = await run();
+
+    expect(result.retired).toBe(1);
+    expect((await store.load()).find((l) => l.id === "human01")!.state).toBe("retired");
+  });
+
+  it("still refuses to retire a rule a human has repeated", async () => {
+    // The one guard that survives, and it is not about authorship: a repeat is
+    // evidence the wording is not landing, so it gets sharpened, never dropped.
+    await seed();
+    await store.save([...(await store.load()), learning({ id: "again001", source: "manual", reasserted: 2 })]);
+    decideResponse = JSON.stringify({ retire: [{ id: "again001", why: "looks stale" }] });
 
     const result = await run();
 
     expect(result.retired).toBe(0);
-    expect((await store.load()).find((l) => l.id === "human01")!.state).toBeUndefined();
+    expect((await store.load()).find((l) => l.id === "again001")!.state).toBeUndefined();
   });
 
   it("refuses to retire a correction younger than two weeks", async () => {
@@ -439,9 +499,12 @@ describe("tidying up an over-cap corrections file", () => {
     // Every remaining correction is accounted for exactly once.
     expect(remaining.reasons.reduce((n, r) => n + r.count, 0)).toBe(13);
     expect(remaining.reasons.find((r) => r.because.includes("14 days old"))!.count).toBe(8);
-    expect(remaining.reasons.find((r) => r.because.includes("by hand"))!.count).toBe(3);
     expect(remaining.reasons.find((r) => r.because.includes("more than once"))!.count).toBe(1);
-    expect(remaining.reasons.find((r) => r.because.includes("say different things"))!.count).toBe(1);
+    // "you wrote it by hand" is no longer a reason anything survives, because it
+    // is no longer a veto. The 3 manual rules fall through to the ordinary
+    // reason: nothing was found to merge them into.
+    expect(remaining.reasons.some((r) => r.because.includes("by hand"))).toBe(false);
+    expect(remaining.reasons.find((r) => r.because.includes("say different things"))!.count).toBe(4);
     // Three of these are hand-written, and a hand-written rule can become
     // permanent whenever the model picks it, so waiting is not what is holding
     // this file up and saying it would be a red herring.
@@ -450,14 +513,34 @@ describe("tidying up an over-cap corrections file", () => {
 
   it("answers the question people actually ask: why did nothing become permanent", async () => {
     // A distance, not a rule. "Needs three approved runs" is policy; "the
-    // closest of them has one" is how far off they are.
-    await store.save(Array.from({ length: 13 }, (_, i) => learning({ id: `rule${i}`, approvedRuns: i === 0 ? 1 : 0 })));
+    // closest has been applied in four" is how far off they are.
+    await store.save(Array.from({ length: 13 }, (_, i) => learning({ id: `rule${i}`, appliedCount: i === 0 ? 4 : 0 })));
     decideResponse = JSON.stringify({});
 
     const result = await run();
 
     expect(result.remaining!.graduationWait).toContain("3 runs approved");
-    expect(result.remaining!.graduationWait).toContain("has 1");
+    expect(result.remaining!.graduationWait).toContain("applied in 4");
+  });
+
+  it("does not claim nothing graduated on a run that graduated something", async () => {
+    // The line is scoped to what is STILL in force. It used to count only the
+    // leftovers while every manual rule was auto-eligible, so a run that had
+    // just made six rules permanent still reported "None of these can move into
+    // the agent file yet".
+    await store.save([
+      ...Array.from({ length: 12 }, (_, i) => learning({ id: `rule${i}` })),
+      learning({ id: "proven01", appliedCount: 40 }),
+    ]);
+    decideResponse = JSON.stringify({ graduate: [{ id: "proven01", why: "held up across 40 runs" }] });
+
+    const result = await run();
+
+    // The leftovers genuinely cannot graduate, so the line still appears — it
+    // just has to say WHICH corrections it is talking about. Unscoped, it read
+    // as a claim about the whole run.
+    expect(result.graduated).toHaveLength(1);
+    expect(result.remaining!.graduationWait).toContain("still in force");
   });
 
   it("does not explain the leftovers when there are none", async () => {
