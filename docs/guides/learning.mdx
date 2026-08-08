@@ -53,7 +53,7 @@ This is the safer default for agents that touch untrusted input (web pages, emai
 | `capture` | `boolean` | Write learnings after execution (self-evaluation + approval comments). Defaults to `true`. |
 | `apply` | `boolean` | Inject stored learnings into instructions before each run. Defaults to `true`. |
 | `criteria` | `string` | Optional guidance for the capture evaluator (domain-specific extraction). |
-| `max` | `number` | How many learnings apply per run. Defaults to `10`, range 1-50. Each one is paid for on every model request; `agentuse doctor` prints the token cost. |
+| `max` | `number` | How many rules this agent keeps, and therefore how many apply per run. Defaults to `15`, range 1-50. Enforced when capture writes, not just when rules are injected - see [An agent keeps 15 rules](#an-agent-keeps-15-rules-not-15-of-many). Each one is paid for on every model request; `agentuse doctor` prints the token cost. |
 | `model` | `string` | Model for the helper calls (capture and tidy-up). Defaults to the agent's own model. |
 
 <Note>
@@ -129,7 +129,7 @@ learnings found at the old location for agents/blog/write.agentuse
   No longer read. Move them:  agentuse learnings migrate --all
 ```
 
-This reads only whether that file exists, never what is in it, so the agent behaves identically with or without it. It keeps saying so even after the agent has captured new learnings into the new location — that is exactly when a populated panel makes a half-migrated agent look healthy.
+This reads only whether that file exists, never what is in it, so the agent behaves identically with or without it. It keeps saying so even after the agent has captured new learnings into the new location, that is exactly when a populated panel makes a half-migrated agent look healthy.
 
 ## How Extraction Works
 
@@ -169,7 +169,7 @@ agentuse sessions resume 01K... \
 
 On next run or approval resume (when `apply: true`):
 
-1. Loads up to 10 learnings from storage
+1. Loads the agent's rules from storage (up to `max`, 15 by default)
 2. Appends them to your agent instructions as a `## Recent Corrections` section
 3. Tracks which learnings were applied (for analytics)
 
@@ -177,29 +177,60 @@ This keeps learnings at the instruction level - where they have the most influen
 
 Learnings that have [graduated](#tidying-up) live in your agent file's own `## Learned Guidelines` block instead. Both carry the same authority and both override skill defaults; the split just separates the proven rules from the ones still applying per-run.
 
-### Only 10 apply per run
+### An agent keeps 15 rules, not 15 of many
 
-The cap bounds context growth, and everything past it is dormant: stored and
-visible, but with no effect on the run. Order of precedence:
+`max` is how many rules an agent **keeps**, not how many of a larger pile get
+injected. Capture enforces it when it writes, so the set stays small enough that
+every rule in it has been weighed against every other one.
 
-1. Rules you saved yourself (`--remember`), which always win
-2. Learnings captured from reviewer comments
-3. Learnings the agent extracted from its own execution
+That last part is the reason for the cap, and it matters more than the token
+cost. While the store could grow without limit and only the top slice was
+injected, nothing ever compared one rule against another. An agent could hold
+two corrections that could not both be satisfied - captured weeks apart, from
+separate rejections, each perfectly reasonable alone - and nothing would notice.
 
-Within each group the most recent applies first, so a fresh learning (or one a
-reviewer repeats) displaces the oldest rule of equal standing rather than
-queueing behind it.
+So when the set is full, a new learning has to be paid for. In order:
 
-Recency keeps the newest learnings in force; it does not make room. A file with
-far more than 10 entries leaves most of them dormant no matter how they are
-ordered, and a reviewer learning can sit there having no effect. Every run says
-so, and so does `agentuse doctor`:
+1. **Supersede.** The evaluator sees every rule the agent already carries, each
+   with its id, and is asked to reconcile rather than merely avoid duplicating.
+   If its new learning restates, sharpens, or *contradicts* an existing rule, it
+   returns one rule that resolves the collision, naming the id it replaces. The
+   replaced rule is retired, not deleted.
+2. **Trade.** Otherwise the weakest auto-extracted rule is retired to make room -
+   but only if the new rule is worth more than the one it displaces, so the set
+   keeps the best rules rather than the last ones.
+3. **Ask you.** If nothing may be dropped, because every rule in the set is a
+   human correction, an auto-extracted learning is refused and *your* correction
+   is kept anyway, over the cap. Your corrections are never discarded to satisfy
+   the system's own bookkeeping.
+
+Two things are never evicted: a rule you wrote or approved, and a rule you have
+repeated. A repeat means the wording is not landing, which is a reason to rewrite
+it, not to drop it.
+
+Precedence within the set is unchanged - rules you saved yourself, then reviewer
+comments, then self-extracted - with the most recent first inside each group.
+
+Case 3 is the one worth interrupting for, and the run says so:
 
 ```
-learned guidelines: 10 of 57 applied, ~1.2k tokens/model request
-47 stored learnings never reach the model: only the top 10 are injected per run.
-Fix: agentuse learnings tidy ./blog-writer.agentuse
+learned guidelines: 15 of 19 applied, ~1.8k tokens/model request
+This agent holds 4 correction(s) beyond its 15-rule limit, and all of them are
+human corrections - nothing can be dropped automatically.
+Fold them into the agent's instructions: agentuse learnings tidy ./blog-writer.agentuse
 ```
+
+That is not a storage problem. It means your agent file does not describe the
+job, and the corrections are carrying what the instructions should have said.
+Only you can move them there.
+
+<Note>
+  A store written before the cap was enforced can hold far more than `max`. The
+  first capture after upgrading drains the excess by retiring auto-extracted
+  rules from the bottom of the ranking - the ones that were not reaching the
+  model anyway. Nothing is deleted, and rules you wrote or repeated are never
+  touched, so the drain tends to *promote* a starved correction into force.
+</Note>
 
 ## Tidying up
 
@@ -234,7 +265,7 @@ $ agentuse learnings tidy ./blog-writer.agentuse
   writing both files…
 
 Done
-  3 merged, 1 rewritten, 12 retired, 9 now permanent — 58 → 10 in force
+  3 merged, 1 rewritten, 12 retired, 9 now permanent — 58 → 15 in force
 ```
 
 Each pass reads every learning still in force, so a pass takes about a minute.

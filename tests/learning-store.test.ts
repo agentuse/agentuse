@@ -7,7 +7,7 @@ import {
   resolveLearningFilePath,
   takeLegacyLearningsNotice,
 } from "../src/learning/store";
-import { partitionLearnings } from "../src/learning/ranking";
+import { MAX_INJECTED_LEARNINGS, partitionLearnings } from "../src/learning/ranking";
 import type { Learning } from "../src/learning/types";
 import { saveManualLearning } from "../src/learning";
 import { getProjectDir, getProjectDirSync } from "../src/storage/paths";
@@ -479,7 +479,10 @@ Always wait for explicit approval before publishing.
   });
 
   it("reports the stored total alongside what it injected", async () => {
-    await store.save(Array.from({ length: 14 }, (_, i) => ({
+    // A store written before capture enforced the cap can hold more than the cap
+    // allows; the excess must be reported, not silently truncated.
+    const total = MAX_INJECTED_LEARNINGS + 4;
+    await store.save(Array.from({ length: total }, (_, i) => ({
       ...baseLearning,
       id: `appr${String(i).padStart(3, "0")}`,
       instruction: `Correction number ${i} about a distinct subject ${i}`,
@@ -496,8 +499,8 @@ Always wait for explicit approval before publishing.
 
     // count must not be mistaken for the file size: 4 of these never reach the
     // model, and callers need to be able to say so.
-    expect(result?.count).toBe(10);
-    expect(result?.total).toBe(14);
+    expect(result?.count).toBe(MAX_INJECTED_LEARNINGS);
+    expect(result?.total).toBe(total);
   });
 
   it("previewLearningPrompt renders the same block without recording usage", async () => {
@@ -643,7 +646,9 @@ Always wait for explicit approval before publishing.
 
       const result = await store.addOrEscalate([{ ...stored, id: "auto0002", source: "auto", confidence: 0.9 }]);
 
-      expect(result).toEqual({ inserted: [], escalated: [], alreadyGraduated: [] });
+      expect(result).toEqual({
+        inserted: [], escalated: [], alreadyGraduated: [], retired: [], refused: [], overCap: 0,
+      });
       expect(await store.load()).toEqual(before);
     });
 
@@ -677,6 +682,216 @@ Always wait for explicit approval before publishing.
       expect(result.inserted).toHaveLength(0);
       expect(result.escalated).toHaveLength(0);
       expect((await store.load())[0]!.state).toBe("graduated");
+    });
+  });
+
+  describe("addOrEscalate under a cap", () => {
+    // Instructions that share no word over four characters, so `similar()` can
+    // never match two of them and every draft below is genuinely new. Without
+    // this the escalate path would absorb the drafts and the cap would never be
+    // exercised at all.
+    const WORDS = [
+      "alphabetical", "borogoves", "cantilever", "dendrites", "effervesce",
+      "fandangos", "gravitons", "hesperides", "ionosphere", "jacaranda",
+    ];
+    const distinct = (i: number) => `Skip ${WORDS[i]} when done`;
+
+    /** `n` rules of one source, oldest first, so the last one added ranks
+     *  highest and the first is the one eviction should reach for. */
+    const fill = (n: number, source: Learning["source"]): Learning[] =>
+      Array.from({ length: n }, (_, i) => ({
+        ...baseLearning,
+        id: `fill000${i}`,
+        title: `Rule ${i}`,
+        instruction: distinct(i),
+        source,
+        confidence: 0.9,
+        extractedAt: `2026-06-0${i + 1}T00:00:00.000Z`,
+      }));
+
+    const draft = (over: Partial<Learning> = {}): Learning => ({
+      ...baseLearning,
+      id: "newdraft",
+      title: "Fresh rule",
+      instruction: distinct(9),
+      source: "auto",
+      confidence: 0.9,
+      extractedAt: "2026-07-01T00:00:00.000Z",
+      ...over,
+    });
+
+    const activeOf = (all: Learning[]) => all.filter((l) => (l.state ?? "active") === "active");
+
+    it("retires the rule a draft supersedes and inserts it in the freed slot", async () => {
+      await store.save(fill(3, "auto"));
+
+      const result = await store.addOrEscalate(
+        [{ ...draft(), supersedes: "fill0001" }],
+        { cap: 3 },
+      );
+
+      expect(result.inserted).toHaveLength(1);
+      expect(result.retired.map((l) => l.id)).toEqual(["fill0001"]);
+      const loaded = await store.load();
+      expect(activeOf(loaded)).toHaveLength(3);
+      // Superseded, not deleted: still there to be revived if a human re-asserts it.
+      expect(loaded.find((l) => l.id === "fill0001")!.state).toBe("retired");
+    });
+
+    it("never lets an auto draft supersede a human correction", async () => {
+      await store.save(fill(3, "manual"));
+
+      // The named rule outranks the draft, so the instruction is ignored — and
+      // with nothing evictable left, the draft is refused rather than quietly
+      // costing a human correction its place.
+      const result = await store.addOrEscalate(
+        [{ ...draft(), supersedes: "fill0001" }],
+        { cap: 3 },
+      );
+
+      expect(result.retired).toHaveLength(0);
+      expect(result.inserted).toHaveLength(0);
+      expect(result.refused).toHaveLength(1);
+      expect(activeOf(await store.load())).toHaveLength(3);
+    });
+
+    it("trades away the weakest auto rule when a full set gets a stronger draft", async () => {
+      await store.save(fill(3, "auto"));
+
+      const result = await store.addOrEscalate([draft()], { cap: 3 });
+
+      expect(result.inserted).toHaveLength(1);
+      // The oldest auto rule, which was the last one injection would have reached.
+      expect(result.retired.map((l) => l.id)).toEqual(["fill0000"]);
+      expect(activeOf(await store.load())).toHaveLength(3);
+    });
+
+    it("refuses an auto draft that is worth less than what it would displace", async () => {
+      await store.save(fill(3, "auto"));
+
+      const result = await store.addOrEscalate(
+        [draft({ confidence: 0.8, extractedAt: "2026-01-01T00:00:00.000Z" })],
+        { cap: 3 },
+      );
+
+      // Keeps the best three, not the last three.
+      expect(result.inserted).toHaveLength(0);
+      expect(result.refused).toHaveLength(1);
+      expect(result.retired).toHaveLength(0);
+    });
+
+    it("refuses an auto draft rather than drop a human correction to fit it", async () => {
+      await store.save(fill(3, "manual"));
+
+      const result = await store.addOrEscalate([draft()], { cap: 3 });
+
+      expect(result.refused).toHaveLength(1);
+      expect(result.inserted).toHaveLength(0);
+      expect(result.retired).toHaveLength(0);
+      expect(activeOf(await store.load())).toHaveLength(3);
+    });
+
+    it("takes a reviewer correction over cap when nothing may be dropped, and says so", async () => {
+      await store.save(fill(3, "manual"));
+
+      const result = await store.addOrEscalate(
+        [draft({ source: "approval", confidence: 0.95 })],
+        { cap: 3 },
+      );
+
+      // The one case worth interrupting a human for: the ruleset is all human
+      // corrections and still too big. Never resolved by discarding one.
+      expect(result.inserted).toHaveLength(1);
+      expect(result.retired).toHaveLength(0);
+      expect(result.overCap).toBe(1);
+      expect(activeOf(await store.load())).toHaveLength(4);
+    });
+
+    it("never evicts a rule a human has already repeated", async () => {
+      const rules = fill(3, "auto");
+      // The oldest, so it is exactly what eviction would otherwise reach for.
+      rules[0]!.reasserted = 1;
+      await store.save(rules);
+
+      const result = await store.addOrEscalate([draft()], { cap: 3 });
+
+      // A repeat is evidence the wording needs rewriting, the opposite of
+      // evidence it should be dropped.
+      expect(result.retired.map((l) => l.id)).toEqual(["fill0001"]);
+      expect((await store.load()).find((l) => l.id === "fill0000")!.state ?? "active").toBe("active");
+    });
+
+    it("drains a store that was already over cap, taking only auto rules", async () => {
+      await store.save([...fill(6, "auto"), {
+        ...baseLearning,
+        id: "human001",
+        title: "Human rule",
+        instruction: distinct(8),
+        source: "manual",
+        confidence: 1,
+        extractedAt: "2026-06-09T00:00:00.000Z",
+      }]);
+
+      const result = await store.addOrEscalate([draft()], { cap: 3 });
+
+      const loaded = await store.load();
+      expect(activeOf(loaded)).toHaveLength(3);
+      expect(result.overCap).toBe(0);
+      // Behaviour-neutral: it retires from the bottom of the same ranking that
+      // injection reads from the top of, and never touches the human rule.
+      expect(loaded.find((l) => l.id === "human001")!.state ?? "active").toBe("active");
+      expect(result.retired.every((l) => l.source === "auto")).toBe(true);
+    });
+
+    it("promotes a starved re-asserted rule into force as the pile around it drains", async () => {
+      // Taken from a real store: a rule a human had repeated three times sat at
+      // rank 27 of 70 active and had never once been injected. It cannot be
+      // evicted, so draining the auto pile around it is what finally puts it in
+      // force — the outcome the cap exists for, not a side effect of it.
+      const rules = fill(6, "auto");
+      rules[0]!.reasserted = 3;          // oldest, so ranked last of the six
+      rules[0]!.confidence = 0.85;       // and weakest, so ranked last on every key
+      await store.save(rules);
+
+      await store.addOrEscalate([], { cap: 3 });
+
+      const survivors = activeOf(await store.load());
+      expect(survivors).toHaveLength(3);
+      expect(survivors.map((l) => l.id)).toContain("fill0000");
+    });
+
+    it("stops draining when only human corrections are left, and reports the overage", async () => {
+      await store.save(fill(5, "manual"));
+
+      const result = await store.addOrEscalate(
+        [draft({ source: "approval", confidence: 0.95 })],
+        { cap: 3 },
+      );
+
+      expect(result.retired).toHaveLength(0);
+      expect(activeOf(await store.load())).toHaveLength(6);
+      expect(result.overCap).toBe(3);
+    });
+
+    it("leaves the set alone when no cap is given", async () => {
+      await store.save(fill(3, "auto"));
+
+      const result = await store.addOrEscalate([draft()]);
+
+      expect(result.inserted).toHaveLength(1);
+      expect(result.retired).toHaveLength(0);
+      expect(result.overCap).toBe(0);
+      expect(activeOf(await store.load())).toHaveLength(4);
+    });
+
+    it("never writes `supersedes` into the corrections file", async () => {
+      await store.save(fill(3, "auto"));
+
+      await store.addOrEscalate([{ ...draft(), supersedes: "fill0001" }], { cap: 3 });
+
+      // It is an instruction to the store, not a property of the rule. Persisting
+      // it would leave a dangling id in the file the moment the target is tidied.
+      expect(readFileSync(store.filePath, "utf-8")).not.toContain("supersedes");
     });
   });
 

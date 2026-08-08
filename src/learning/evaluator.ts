@@ -1,6 +1,6 @@
 import { completeText } from '../complete-text';
 import type { AgentCompleteEvent, ToolCallTrace } from '../plugin/types';
-import type { ApprovalReview, Learning, LearningCategory, LearningSource } from './types';
+import type { ApprovalReview, Learning, LearningCategory, LearningDraft, LearningSource } from './types';
 import { logger } from '../utils/logger';
 import { ANTHROPIC_IDENTITY_PROMPT, isAnthropicModel } from '../utils/anthropic';
 
@@ -42,6 +42,57 @@ interface RawLearning {
   instruction: string;
   confidence: number;
   source?: 'auto' | 'approval';
+  supersedes?: string;
+}
+
+/** The longest a captured rule may be. A rule the model cannot hold in view
+ *  beside its peers cannot be compared against them, which is the one thing the
+ *  reconcile step needs. Advisory in the prompt, not truncated in code: cutting
+ *  an instruction mid-clause destroys the meaning the length was protecting. */
+const MAX_INSTRUCTION_CHARS = 800;
+
+/**
+ * Render the rules the agent already carries, split by whether the evaluator is
+ * allowed to touch them.
+ *
+ * Ids are shown for the revisable set and withheld from the permanent one. That
+ * is the whole affordance: `supersedes` can only name something in the first
+ * list, so listing the second without ids makes the illegal move unspeakable
+ * rather than merely forbidden.
+ */
+function formatRulesInForce(active: Learning[], graduated: Learning[], cap: number): string {
+  if (active.length === 0 && graduated.length === 0) return '';
+
+  const full = active.length >= cap;
+  const sections: string[] = [];
+
+  if (active.length > 0) {
+    sections.push(`## Rules This Agent Already Carries (${active.length}/${cap} slots used)
+These were in force during the run above, so the agent already had them. Each one can be revised: to replace it, return your learning with "supersedes" set to its id.
+${active.map(l => `- (id ${l.id}) [${l.category}] ${l.title}: ${l.instruction.slice(0, 200)}${l.instruction.length > 200 ? '...' : ''}`).join('\n')}`);
+  }
+
+  if (graduated.length > 0) {
+    sections.push(`## Already Permanent (in the agent's own instructions)
+These apply on every run and are NOT yours to revise. Do not restate them.
+${graduated.map(l => `- [${l.category}] ${l.title}: ${l.instruction.slice(0, 150)}${l.instruction.length > 150 ? '...' : ''}`).join('\n')}`);
+  }
+
+  // The instruction that decides whether this list gets reconciled against or
+  // merely deduped. "Do not duplicate" is a matching test, and it passes for two
+  // rules that share no vocabulary and contradict each other outright — which is
+  // exactly the failure this replaces: a rule listing forbidden shapes and a
+  // rule requiring those shapes, captured weeks apart from separate rejections,
+  // both scoring high, together leaving the agent no legal move.
+  sections.push(`## Before You Add Anything
+Read the list above as one ruleset the agent must obey ALL of at once, and check your learning against it:
+- Does it say the same thing as an existing rule, in better words? Return it with "supersedes" set to that rule's id.
+- Does it CONTRADICT an existing rule, or narrow it so far the two cannot both be satisfied? That is the most important case and the easiest to miss — two rules can collide while sharing no wording at all. Return ONE rule that resolves the collision, with "supersedes" set to the rule it replaces.
+- Is it genuinely about something no existing rule covers? Add it.${full ? `
+
+The set is FULL (${active.length}/${cap}). Every learning you return MUST set "supersedes" to the id of the rule it replaces — either the one it reconciles with, or, if it is genuinely new, the LEAST valuable rule in the list, which it is traded against. A learning returned without "supersedes" while the set is full will be dropped unless it came from a reviewer comment.` : ''}`);
+
+  return `\n${sections.join('\n\n')}\n`;
 }
 
 const LEARNING_CATEGORIES: LearningCategory[] = ['tip', 'warning', 'pattern', 'tool-usage', 'error-fix'];
@@ -151,7 +202,8 @@ export async function evaluateExecution(
   criteria: string | undefined,
   existingLearnings: Learning[] = [],
   reviews: ApprovalReview[] = [],
-): Promise<Learning[]> {
+  capacity?: { cap: number; graduated?: Learning[] },
+): Promise<LearningDraft[]> {
   const customCriteria = criteria
     ? `\n\nAdditional evaluation criteria:\n${criteria}`
     : '';
@@ -197,11 +249,7 @@ ${consoleOutput || '(No console output)'}
 ## Agent Text Output
 ${event.result.text || '(No text output)'}${reviewerSection}
 ${customCriteria}
-${existingLearnings.length > 0 ? `
-## Learnings Already In Force (DO NOT DUPLICATE)
-These were injected into the agent's instructions for this run, so it already had them. Do NOT extract learnings that cover the same concepts. Note this list is only what was in force — the store may hold others that were NOT injected, so a reviewer restating one of those is genuinely new signal, not a duplicate:
-${existingLearnings.map(l => `- [${l.category}] ${l.title}: ${l.instruction.slice(0, 150)}${l.instruction.length > 150 ? '...' : ''}`).join('\n')}
-` : ''}
+${formatRulesInForce(existingLearnings, capacity?.graduated ?? [], capacity?.cap ?? existingLearnings.length)}
 
 ## Task
 Extract actionable learnings that would improve future runs. Each learning is tagged with a "source":
@@ -214,7 +262,9 @@ Rules:
 - If nothing is worth keeping, return an empty array []
 - For "auto" learnings, only include ones you're confident about (confidence ≥ 0.8). For "approval" learnings, set confidence to 0.95.
 - Each learning must be a clear, specific, output-grounded instruction (not a restatement of the comment).
+- Keep each instruction under ${MAX_INSTRUCTION_CHARS} characters. A rule too long to hold beside the others cannot be checked against them.
 - Avoid generic or obvious learnings that wouldn't add value.
+- Set "supersedes" to an existing rule's id whenever your learning restates, sharpens, or collides with that rule (see "Before You Add Anything" above). Omit it only for a learning that genuinely covers new ground.
 
 Categories:
 - tip: Positive guidance ("Do X for better results")
@@ -224,9 +274,9 @@ Categories:
 - error-fix: Error recovery patterns
 
 Respond with ONLY a JSON array of learnings. No other text.
-Example format:
+Example format ("supersedes" is optional and names the id of the rule this one replaces):
 [
-  {"source": "approval", "category": "warning", "title": "Short title", "instruction": "Detailed instruction", "confidence": 0.95},
+  {"source": "approval", "category": "warning", "title": "Short title", "instruction": "Detailed instruction", "confidence": 0.95, "supersedes": "a1b2c3d4"},
   {"source": "auto", "category": "tip", "title": "Short title", "instruction": "Detailed instruction", "confidence": 0.9}
 ]
 
@@ -267,8 +317,14 @@ If no learnings are applicable, respond with an empty array: []`;
     logger.debug(`[Learning] Raw learnings: ${rawLearnings.map(l => `${l.title} (${l.source ?? 'auto'}, ${l.confidence})`).join(', ')}`);
   }
 
+  // Only an id the model was actually shown can be superseded. A hallucinated or
+  // stale id must fall through to the store's own capacity handling rather than
+  // silently retiring nothing (a fold that quietly became an append is the exact
+  // failure the reconcile step exists to prevent).
+  const revisable = new Set(existingLearnings.map(l => l.id));
+
   const now = new Date().toISOString();
-  const learnings: Learning[] = [];
+  const learnings: LearningDraft[] = [];
   for (const l of rawLearnings) {
     if (!l?.title || !l?.instruction || !l?.category) continue;
     // The model can only claim "approval" provenance when a reviewer actually
@@ -277,6 +333,9 @@ If no learnings are applicable, respond with an empty array: []`;
     // confidence floor; execution learnings keep the ≥0.8 filter.
     const source: LearningSource = hasReviews && l.source === 'approval' ? 'approval' : 'auto';
     if (source === 'auto' && !(l.confidence >= 0.8)) continue;
+    const supersedes = typeof l.supersedes === 'string' && revisable.has(l.supersedes)
+      ? l.supersedes
+      : undefined;
     learnings.push({
       category: l.category as LearningCategory,
       title: l.title,
@@ -288,6 +347,7 @@ If no learnings are applicable, respond with an empty array: []`;
       source,
       reasserted: 0,
       approvedRuns: 0,
+      ...(supersedes ? { supersedes } : {}),
     });
   }
   return learnings;

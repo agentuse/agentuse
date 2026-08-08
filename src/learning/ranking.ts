@@ -1,13 +1,22 @@
 import type { Learning, LearningConfig, LearningSource } from './types';
 
 /**
- * How many stored learnings are injected into the system prompt per run.
+ * How many rules an agent keeps — and therefore how many are injected per run.
  *
- * The cap exists to bound context growth; everything past it stays dormant and
- * has no effect on the run. {@link partitionLearnings} makes that split explicit
- * so callers can report it instead of silently truncating.
+ * One number, deliberately, on both sides of the boundary. When the store could
+ * grow without limit while injection took the top 10, the difference was not a
+ * safety margin, it was a silent failure mode: rules accumulated that no run
+ * ever saw, nothing ever compared them against each other, and an agent could
+ * hold two corrections that could not both be satisfied without anything
+ * noticing. Capture now enforces this at write time
+ * ({@link LearningStore.addOrEscalate}), so the set stays small enough that
+ * every rule in it has been weighed against every other.
+ *
+ * {@link partitionLearnings} still reports the split, because a store written
+ * before the cap existed can be over it, and the excess must be visible rather
+ * than silently truncated.
  */
-export const MAX_INJECTED_LEARNINGS = 10;
+export const MAX_INJECTED_LEARNINGS = 15;
 
 /**
  * The cap actually in force for an agent: `learning.max` when set, otherwise

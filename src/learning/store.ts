@@ -2,8 +2,8 @@ import { readFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname, resolve, relative, basename, isAbsolute } from 'path';
 import { randomUUID, createHash } from 'crypto';
-import type { Learning, LearningCategory, LearningSource, LearningState } from './types';
-import { learningSourceRank } from './ranking';
+import type { Learning, LearningCategory, LearningDraft, LearningSource, LearningState } from './types';
+import { learningSourceRank, rankLearnings } from './ranking';
 import { getProjectDirSync, sanitizeAgentName } from '../storage/paths';
 import { computeAgentId } from '../utils/agent-id';
 import { logger } from '../utils/logger';
@@ -309,17 +309,78 @@ export class LearningStore {
    * retired is proof the retirement was wrong, and it is the only correction
    * signal the archive can ever receive.
    *
+   * When `cap` is given, the ACTIVE set is bounded and a genuinely new rule has
+   * to be paid for. In order:
+   *
+   *  1. `draft.supersedes` names a rule → retire it, insert the draft. This is
+   *     the move the capture evaluator is asked to make, and it covers both
+   *     folding two rules into one and trading away the least valuable rule.
+   *  2. Otherwise, if the set is full, retire the weakest AUTO rule to make
+   *     room. A reviewer correction always wins that trade; an auto draft only
+   *     wins it if it outranks the rule it would displace, so the set keeps the
+   *     best N rather than the last N.
+   *  3. If nothing may be dropped — every active rule is a human correction —
+   *     an auto draft is REFUSED and a human correction is inserted anyway,
+   *     over cap. The system never silently discards a human's correction to
+   *     satisfy its own bookkeeping; it reports the overage instead (see
+   *     `overCap`), because a ruleset that is all human corrections and still
+   *     too big is a sign the agent file does not describe the job.
+   *
+   * A re-asserted rule is never evictable: the repeat is evidence the wording
+   * needs rewriting, which is the opposite of evidence it should be dropped.
+   *
    * @returns the learnings actually persisted, split by how they landed, so the
    * caller can report a truthful count instead of what the evaluator proposed.
    */
   async addOrEscalate(
-    incoming: Learning[],
-  ): Promise<{ inserted: Learning[]; escalated: Learning[]; alreadyGraduated: Learning[] }> {
+    incoming: LearningDraft[],
+    options?: { cap?: number | undefined },
+  ): Promise<{
+    inserted: Learning[];
+    escalated: Learning[];
+    alreadyGraduated: Learning[];
+    /** Rules retired to make room, whether superseded, traded away, or drained
+     *  from a file that was already over cap before this write. */
+    retired: Learning[];
+    /** Auto drafts dropped because the set was full and nothing was evictable. */
+    refused: LearningDraft[];
+    /** Active rules above the cap after the write. Non-zero only when they are
+     *  all human corrections, which is the one case worth interrupting for. */
+    overCap: number;
+  }> {
     return withLearningFileLock(this.filePath, async () => {
       const existing = await this.load();
       const inserted: Learning[] = [];
       const escalated: Learning[] = [];
       const alreadyGraduated: Learning[] = [];
+      const retired: Learning[] = [];
+      const refused: LearningDraft[] = [];
+      const cap = options?.cap;
+
+      const active = () => existing.filter(l => (l.state ?? 'active') === 'active');
+      const retire = (l: Learning) => { l.state = 'retired'; retired.push(l); };
+
+      /** The active rule we are most willing to lose: lowest-ranked, auto-only,
+       *  never one a human has repeated. `undefined` when nothing qualifies,
+       *  which is what makes "never drop a human correction" structural. */
+      const weakestEvictable = (): Learning | undefined => {
+        const candidates = active().filter(l => l.source === 'auto' && (l.reasserted ?? 0) === 0);
+        return candidates.length > 0 ? rankLearnings(candidates).at(-1) : undefined;
+      };
+
+      const insert = (draft: LearningDraft): void => {
+        const taken = new Set(existing.map(l => l.id).filter(Boolean));
+        const id = draft.id && draft.id.length >= 4 && !taken.has(draft.id)
+          ? draft.id
+          : generateLearningId(taken);
+        // `supersedes` is an instruction to this method, not a property of the
+        // rule; it has been acted on by the time we get here, so it must not
+        // travel into the stored entry.
+        const { supersedes: _consumed, ...rest } = draft;
+        const next: Learning = { ...rest, id };
+        existing.push(next);
+        inserted.push(next);
+      };
 
       for (const draft of incoming) {
         const idx = existing.findIndex(e => this.similar(e.instruction, draft.instruction));
@@ -330,13 +391,40 @@ export class LearningStore {
         }
 
         if (idx < 0) {
-          const taken = new Set(existing.map(l => l.id).filter(Boolean));
-          const id = draft.id && draft.id.length >= 4 && !taken.has(draft.id)
-            ? draft.id
-            : generateLearningId(taken);
-          const next = { ...draft, id };
-          existing.push(next);
-          inserted.push(next);
+          // The draft names a rule it replaces. Honour it only for an ACTIVE
+          // rule of equal or weaker provenance — a graduated rule lives in the
+          // agent file and is not the store's to retire, and an auto capture
+          // may not evict a human correction by naming it.
+          const target = draft.supersedes
+            ? existing.find(e =>
+                e.id === draft.supersedes
+                && (e.state ?? 'active') === 'active'
+                && learningSourceRank(draft.source) <= learningSourceRank(e.source))
+            : undefined;
+
+          if (target) {
+            retire(target);
+            insert(draft);
+            continue;
+          }
+
+          if (cap !== undefined && active().length >= cap) {
+            const victim = weakestEvictable();
+            // An auto draft has to be worth more than what it displaces; a
+            // reviewer correction outranks every auto rule by definition.
+            const wins = victim !== undefined
+              && (draft.source !== 'auto' || rankLearnings([victim, draft]).at(-1) === victim);
+            if (wins) {
+              retire(victim);
+            } else if (draft.source === 'auto') {
+              refused.push(draft);
+              continue;
+            }
+            // A human correction with nothing evictable falls through and is
+            // inserted over cap. Reported, never dropped.
+          }
+
+          insert(draft);
           continue;
         }
 
@@ -372,10 +460,38 @@ export class LearningStore {
         escalated.push(next);
       }
 
-      if (inserted.length > 0 || escalated.length > 0) {
+      // Drain a file that was already over cap before this write — every store
+      // predating the cap is. It takes from the bottom of the same ranking
+      // injection reads from the top of, so the rules it retires are ones that
+      // were not reaching the model anyway, and it stops the moment only human
+      // corrections are left (the state `overCap` exists to report).
+      //
+      // What it removes is inert; what it PROMOTES is the point. The entries
+      // eviction may not touch — human corrections, and rules a human has
+      // repeated — rise into the injected window as the auto pile around them
+      // retires. Measured on a real store: a rule re-asserted three times sat at
+      // rank 27 of 70 and had never once reached the agent; draining to the cap
+      // moved it into force. A correction someone gave three times not applying
+      // is the failure this whole cap exists to end.
+      if (cap !== undefined) {
+        while (active().length > cap) {
+          const victim = weakestEvictable();
+          if (!victim) break;
+          retire(victim);
+        }
+      }
+
+      if (inserted.length > 0 || escalated.length > 0 || retired.length > 0) {
         await this.save(existing);
       }
-      return { inserted, escalated, alreadyGraduated };
+      return {
+        inserted,
+        escalated,
+        alreadyGraduated,
+        retired,
+        refused,
+        overCap: cap === undefined ? 0 : Math.max(0, active().length - cap),
+      };
     });
   }
 

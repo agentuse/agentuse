@@ -180,10 +180,16 @@ describe("extractLearnings", () => {
     expect(await store.load()).toHaveLength(1);
   });
 
-  it("re-asserts a dormant correction a reviewer repeats, and never shows it as already in force", async () => {
-    // The regression: a correction stored past the injection cap has no effect on
-    // the run, but was still handed to the evaluator as a rule not to duplicate,
-    // so the reviewer repeating it produced nothing at all.
+  it("shows the evaluator every active rule with its id, and re-asserts a repeat", async () => {
+    // Two properties in one run, because they are the same mechanism.
+    //
+    // The evaluator is shown the WHOLE active set, each entry with the id that
+    // makes it revisable. Withholding any of it was the older behaviour and it
+    // is what let contradictory rules accumulate: a rule the model cannot see is
+    // a rule it cannot notice its new one collides with.
+    //
+    // And a reviewer repeating a correction still refreshes the stored entry
+    // rather than appending a near-copy beside it.
     const store = LearningStore.fromAgentFile(agentFilePath, tempDir);
     const dormant = {
       id: "dormant1",
@@ -225,11 +231,14 @@ describe("extractLearnings", () => {
       sessionId: "sess-repeat",
     });
 
-    // The dormant rule was NOT presented to the evaluator as already in force.
+    // Every active rule reached the evaluator, each addressable by id, together
+    // with the instruction to reconcile rather than merely avoid duplicating.
     const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
-    expect(prompt).toContain("Already In Force");
     expect(prompt).toContain("Filler 9");
-    expect(prompt).not.toContain("Cut teaching-mode lines");
+    expect(prompt).toContain("Cut teaching-mode lines");
+    expect(prompt).toContain("(id dormant1)");
+    expect(prompt).toContain("CONTRADICT an existing rule");
+    expect(prompt).toContain('"supersedes"');
 
     // And the repeat refreshed the existing entry rather than appending a near-copy.
     expect(outcome.status).toBe("captured");

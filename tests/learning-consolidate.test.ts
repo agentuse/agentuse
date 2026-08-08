@@ -114,7 +114,10 @@ describe("tidying up an over-cap corrections file", () => {
       agentFilePath,
       agentInstructions: "Do the work.",
       agentModel: "demo:test",
-      config: { capture: true, apply: true },
+      // Pinned, not inherited: every fixture in this file counts rules against a
+      // cap of 10, so the cap belongs in the test rather than in whatever the
+      // shipped default happens to be.
+      config: { capture: true, apply: true, max: 10 },
       stateRoot: tempDir,
       now: NOW,
       ...opts,
@@ -666,7 +669,10 @@ describe("tidying up an over-cap corrections file", () => {
       agentFilePath,
       agentInstructions: "Do the work.",
       agentModel: "demo:test",
-      config: { capture: true, apply: true },
+      // Pinned, not inherited: every fixture in this file counts rules against a
+      // cap of 10, so the cap belongs in the test rather than in whatever the
+      // shipped default happens to be.
+      config: { capture: true, apply: true, max: 10 },
       stateRoot: tempDir,
       now: NOW,
       onProgress: (p) => seen.push(`${p.phase}:${p.step}/${p.total}`),
@@ -694,7 +700,10 @@ describe("tidying up an over-cap corrections file", () => {
       agentFilePath,
       agentInstructions: "Do the work.",
       agentModel: "demo:test",
-      config: { capture: true, apply: true },
+      // Pinned, not inherited: every fixture in this file counts rules against a
+      // cap of 10, so the cap belongs in the test rather than in whatever the
+      // shipped default happens to be.
+      config: { capture: true, apply: true, max: 10 },
       stateRoot: tempDir,
       now: NOW,
       onProgress: (p) => seen.push(`${p.phase}:${p.step}/${p.total}`),
@@ -807,7 +816,10 @@ describe("the record of an agent's last tidy-up", () => {
       agentFilePath,
       agentInstructions: "Do the work.",
       agentModel: "demo:test",
-      config: { capture: true, apply: true },
+      // Pinned, not inherited: every fixture in this file counts rules against a
+      // cap of 10, so the cap belongs in the test rather than in whatever the
+      // shipped default happens to be.
+      config: { capture: true, apply: true, max: 10 },
       stateRoot: tempDir,
       now: NOW,
     });

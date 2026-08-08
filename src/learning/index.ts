@@ -8,7 +8,7 @@ import type { AgentCompleteEvent } from '../plugin/types';
 import type { ApprovalReview, LearningCategory, LearningConfig, LearningOutcome, LearningSource } from './types';
 import { evaluateExecution, refineManualLearning } from './evaluator';
 import { LearningStore } from './store';
-import { effectiveCap, partitionLearnings } from './ranking';
+import { activeLearnings, effectiveCap } from './ranking';
 import { writeLearnedBlock } from './graduate';
 import { logger } from '../utils/logger';
 
@@ -61,18 +61,21 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     const store = LearningStore.fromAgentFile(agentFilePath, options.stateRoot, event.agent.name);
     const stored = await store.load();
 
-    // Deduplicate against the learnings the model was ACTUALLY given, not the
-    // whole file. Anything past the injection cap is dormant: it had no effect on
-    // this run, so a reviewer re-asserting it is new information, not a
-    // duplicate. Passing the full file here is what silently discarded repeat
-    // corrections; addOrEscalate below then folds a genuine repeat onto the
-    // existing entry instead of appending a near-copy.
-    const { injected } = partitionLearnings(stored, effectiveCap(config));
+    const cap = effectiveCap(config);
+
+    // The evaluator gets the WHOLE active set, not just the slice that fit the
+    // injection cap. It is being asked to reconcile — to notice that its new
+    // rule restates or contradicts one already stored — and it cannot reconcile
+    // against rules it was never shown. Under the cap the two are the same list
+    // anyway; they diverge only for a store built before the cap existed, and
+    // there the full set is exactly what the reconciling is for.
+    const active = activeLearnings(stored);
 
     // Graduated rules were not injected, but they ARE in force: they live in the
     // agent's own instructions. Omitting them here would have the evaluator
     // re-extract every rule the last tidy-up made permanent, undoing the tidy-up
-    // one run later.
+    // one run later. Passed separately because they are not revisable — only an
+    // active rule can be superseded.
     const graduated = stored.filter((l) => l.state === 'graduated');
 
     const learnings = await evaluateExecution(
@@ -80,8 +83,9 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
       agentInstructions,
       config.model ?? agentModel,
       config.criteria,
-      [...injected, ...graduated],
+      active,
       reviews,
+      { cap, graduated },
     );
 
     if (learnings.length === 0) {
@@ -92,7 +96,10 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     if (options.sessionId) {
       for (const l of learnings) l.sessionId = options.sessionId;
     }
-    const { inserted, escalated } = await store.addOrEscalate(learnings);
+    const { inserted, escalated, retired, refused, overCap } = await store.addOrEscalate(
+      learnings,
+      { cap },
+    );
     const persisted = [...inserted, ...escalated];
 
     // Report what landed, not what the evaluator proposed. The old code reported
@@ -100,18 +107,23 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     // marker could claim "Learned 2 lessons" when nothing was written.
     if (persisted.length === 0) {
       spinner.succeed('No new learnings extracted');
+      if (refused.length > 0) {
+        logger.debug(`[Learning] ${refused.length} auto learning(s) refused: rule set full at ${cap}`);
+      }
       return { status: 'none', source: hadReviews ? 'approval' : 'auto', count: 0, titles: [] };
     }
 
     const reasserted = escalated.length > 0 ? `, ${escalated.length} re-asserted` : '';
-    spinner.succeed(`Extracted ${persisted.length} learning(s)${reasserted} → ${store.filePath}`);
+    const madeRoom = retired.length > 0 ? `, ${retired.length} retired to stay under ${cap}` : '';
+    spinner.succeed(`Extracted ${persisted.length} learning(s)${reasserted}${madeRoom} → ${store.filePath}`);
+    if (refused.length > 0) {
+      logger.debug(`[Learning] ${refused.length} auto learning(s) refused: rule set full at ${cap}`);
+    }
 
     // Say it at the moment it matters. The user has just corrected the agent and
-    // reasonably believes the correction took; if the store is over the cap it
-    // may not have. A count of what is being ignored, not a scolding about file
-    // hygiene. `logger.warn` mirrors into the session log sink, so the same line
-    // reaches the terminal and the serve session view.
-    await warnIfCorrectionsAreIgnored(store, config, agentFilePath);
+    // reasonably believes the correction took; if the set is over cap it may not
+    // have. A count of what is being ignored, not a scolding about file hygiene.
+    warnIfCorrectionsAreIgnored(overCap, cap, agentFilePath);
     // A run can yield both reviewer-sourced and execution-sourced learnings;
     // label the marker by the higher-signal source when any is present.
     const source = persisted.some(l => l.source === 'approval') ? 'approval' : 'auto';
@@ -133,30 +145,23 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
  * Say, at the moment a human has just corrected the agent, that the correction
  * may not reach it.
  *
- * This is the point of maximum misunderstanding: the reviewer believes their
- * note took effect, and for anything past the cap it did not. The line states a
- * count and the one command that fixes it — a fact, not a lecture about file
- * hygiene. Re-reading the store costs one file read and is worth it for a number
- * that is exactly right rather than inferred from what this run happened to add.
+ * Under the cap this fires in exactly one situation, and it is the situation
+ * worth interrupting for: the rule set is over its limit and every rule in it is
+ * a human correction, so the system has nothing left it is allowed to drop. That
+ * is not a storage problem to be tidied away — it means the agent's own
+ * instructions do not describe the job, and the corrections are carrying what
+ * the agent file should have said. Only a human can move them there.
  *
  * `logger.warn` mirrors into the session log sink, so the same line reaches both
  * the terminal and the serve session view without a second call site.
  */
-async function warnIfCorrectionsAreIgnored(
-  store: LearningStore,
-  config: LearningConfig,
-  agentFilePath: string,
-): Promise<void> {
-  try {
-    const { dormant } = partitionLearnings(await store.load(), effectiveCap(config));
-    if (dormant.length === 0) return;
-    logger.warn(
-      `${dormant.length} of this agent's learnings never reach it: only the top ${effectiveCap(config)} apply per run. `
-      + `Fix: agentuse learnings tidy ${agentFilePath}`
-    );
-  } catch (error) {
-    logger.debug(`[Learning] Could not report dormant corrections: ${(error as Error).message}`);
-  }
+function warnIfCorrectionsAreIgnored(overCap: number, cap: number, agentFilePath: string): void {
+  if (overCap <= 0) return;
+  logger.warn(
+    `This agent holds ${overCap} correction(s) beyond its ${cap}-rule limit, and all of them are human `
+    + `corrections — nothing can be dropped automatically. Only the top ${cap} apply per run. `
+    + `Fold them into the agent's instructions: agentuse learnings tidy ${agentFilePath}`
+  );
 }
 
 function manualLearningTitle(instruction: string): string {
@@ -284,5 +289,5 @@ export { MAX_INJECTED_LEARNINGS, activeLearnings, effectiveCap, learningSourceRa
 export { LEARNED_BLOCK_START, LEARNED_BLOCK_END, renderLearnedBlock, spliceLearnedBlock, writeLearnedBlock } from './graduate';
 export { consolidateLearnings, describeConsolidation, isGraduationEligible, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord } from './consolidate';
 export type { ConsolidationResult, ConsolidationChange, TidyProgress, TidyRecord } from './consolidate';
-export type { ApprovalReview, Learning, LearningConfig, LearningOutcome, LearningSource } from './types';
+export type { ApprovalReview, Learning, LearningConfig, LearningDraft, LearningOutcome, LearningSource } from './types';
 export { LearningConfigSchema } from './types';

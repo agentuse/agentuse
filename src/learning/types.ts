@@ -23,10 +23,16 @@ const CanonicalLearningSchema = z
     // into git is to let them graduate into the agent file. `.strict()` below
     // rejects it outright rather than accepting and ignoring it.
     //
-    // Bounded on purpose: the cap exists to keep the guideline block from
-    // crowding out the agent's own instructions, and every injected learning is
-    // paid for on every model request. `agentuse doctor` prints the token cost
-    // next to the count so raising it shows its own price.
+    // How many rules this agent KEEPS, not merely how many of a larger pile get
+    // injected. Capture enforces it at write time (see
+    // `LearningStore.addOrEscalate`), so a full set forces a choice — supersede
+    // an existing rule, or drop an auto-captured one — instead of appending a
+    // near-copy nobody ever compares against the rest.
+    //
+    // Bounded on purpose: the cap keeps the guideline block from crowding out
+    // the agent's own instructions, and every injected learning is paid for on
+    // every model request. `agentuse doctor` prints the token cost next to the
+    // count so raising it shows its own price.
     max: z.number().int().min(1).max(50).optional(),
     // Helper calls (capture, tidy) run on the agent's own model by default:
     // whatever provider and auth the agent already works with is guaranteed to
@@ -139,4 +145,32 @@ export interface Learning {
    * value. Graduating a rule into the agent file permanently is gated on it.
    */
   approvedRuns: number;
+}
+
+/**
+ * A learning on its way into the store, before the store has decided what to do
+ * with it.
+ *
+ * Separate from {@link Learning} because `supersedes` is an instruction TO the
+ * store, not a property OF the rule: it names the entry this draft is meant to
+ * replace. Once the draft lands the relationship is already expressed — the
+ * named entry is retired, the draft is active — so there is nothing left to
+ * persist, and keeping the field off {@link Learning} is what guarantees the
+ * serializer can never write a dangling id into a corrections file.
+ */
+export interface LearningDraft extends Learning {
+  /**
+   * Id of an existing ACTIVE entry this draft replaces.
+   *
+   * Set by the capture evaluator when the rule set is full. It covers both moves
+   * the evaluator is allowed to make: folding (the named rule is about the same
+   * thing and the new wording covers both) and eviction (the named rule is the
+   * least valuable one and is being traded away for this one). The store treats
+   * them identically — retire the named entry, insert this one — so the archive
+   * records what was given up either way.
+   *
+   * Ignored when it names a graduated, retired, or unknown entry, or one whose
+   * source outranks the draft's: a weaker source never evicts a stronger one.
+   */
+  supersedes?: string;
 }
