@@ -128,6 +128,8 @@ high: latency and cost with no lift. Start moderate, tune on observed output.
 - Inputs, outputs, destinations, and success criteria stated in the body.
 - Every body rule placed on purpose: about this job, not about a tool or a past
   run (see Pick the Layer Before You Write the Rule).
+- Edits compressed, not just appended: rule in the body, provenance in the commit
+  message, body no longer than before (see Write Lean).
 - Multi-role work: subagents with clear names and `maxSteps` limits.
 - Recurring work: YAML `schedule:` + a note that `agentuse serve` must run.
 - Custom labels (draft, owner, team): put them under `metadata:`. It is the
@@ -219,6 +221,21 @@ Run a compression pass after every substantive edit:
 2. Move reusable mechanics and learnings to their proper layers.
 3. Split dense lines; preserve unambiguous negation, conditions, order, scope.
 4. Run `agentuse doctor <file>`.
+
+**Editing a live agent is where bloat actually enters.** New agents get reviewed
+whole; edits get appended and never re-read. When adding a rule to an existing
+agent:
+
+- Ship the rule, not the case for it. The measurement, the date, the incident,
+  the "added because..." belong in the commit message. Provenance inline is paid
+  on every run, forever, and changes no behavior.
+- Budget the edit net-neutral: a new rule means cutting one or compressing its
+  neighbors. Growth is added constraint count, and constraint count is itself a
+  defect - an agent satisfying 200 rules writes output that demonstrates
+  compliance instead of doing the job.
+- Keep worked examples, cut explanations. One FAIL/PASS pair teaches more than a
+  paragraph on why the rule exists, and costs less.
+- Writing the same rule into N agents means it belongs one layer up. Put it there.
 
 Size guidance is advisory, not a parser limit:
 
