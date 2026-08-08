@@ -108,7 +108,12 @@ describe("tidying up an over-cap corrections file", () => {
 
       expect(prompt).toContain(permanentRule);
       expect(prompt).toContain("Rules already PERMANENT");
-      expect(prompt).toContain("CONTRADICTS one of these");
+      // Addressable, because nothing else ever prunes them. Graduation only
+      // appends to this block and every earlier pass skipped it, so it grew
+      // forever — the same pile as the staging file, one level up, and more
+      // expensive because these apply on every run.
+      expect(prompt).toContain("id:perm0");
+      expect(prompt).toContain("dropPermanent");
     });
 
     it("keeps truncating the body, so a long agent file still bounds the prompt", () => {
@@ -124,6 +129,72 @@ describe("tidying up an over-cap corrections file", () => {
       const prompt = buildDecidePrompt([learning({ id: "rule0" })], "Just instructions.", 10, NOW);
 
       expect(prompt).not.toContain("Rules already PERMANENT");
+    });
+  });
+
+  describe("pruning the permanent block", () => {
+    // Nothing pruned it before. Graduation only appended, and every decide pass
+    // skipped it, so the block grew without limit — and unlike a staged rule,
+    // every one of these applies on every single run.
+    const withPermanent = (rules: string[]) => [
+      AGENT_FILE.trimEnd(),
+      "",
+      "<!-- agentuse:learned -->",
+      "## Learned Guidelines",
+      "",
+      ...rules.map((r) => `- [tip] ${r}`),
+      "<!-- /agentuse:learned -->",
+      "",
+    ].join("\n");
+
+    it("removes a permanent rule another one now covers, and names it", async () => {
+      await seed();
+      writeFileSync(agentFilePath, withPermanent([
+        "Always cite a primary source.",
+        "Cite a source.",
+      ]));
+      decideResponse = JSON.stringify({
+        dropPermanent: [{ id: "perm1", why: "perm0 covers this outright" }],
+      });
+
+      const result = await run();
+
+      expect(result.droppedPermanent).toEqual([
+        { instruction: "Cite a source.", why: "perm0 covers this outright" },
+      ]);
+      const after = readFileSync(agentFilePath, "utf-8");
+      expect(after).toContain("Always cite a primary source.");
+      expect(after).not.toContain("- [tip] Cite a source.");
+    });
+
+    it("refuses an id that names no permanent rule", async () => {
+      await seed();
+      writeFileSync(agentFilePath, withPermanent(["Always cite a primary source."]));
+      decideResponse = JSON.stringify({
+        dropPermanent: [{ id: "perm9", why: "invented" }, { id: "rule0", why: "wrong id space" }],
+      });
+
+      const result = await run();
+
+      expect(result.droppedPermanent).toEqual([]);
+      expect(readFileSync(agentFilePath, "utf-8")).toContain("Always cite a primary source.");
+    });
+
+    it("drops a rule named by two batches only once", async () => {
+      // Every batch is shown the same permanent rules, so the same one can be
+      // named twice. Dropping it twice would shift every later index by one.
+      await store.save(Array.from({ length: 30 }, (_, i) => learning({ id: `rule${String(i).padStart(2, "0")}` })));
+      writeFileSync(agentFilePath, withPermanent(["Keep this one.", "Drop this one."]));
+      decideResponse = JSON.stringify({
+        dropPermanent: [{ id: "perm1", why: "duplicate" }],
+      });
+
+      const result = await run();
+
+      expect(result.droppedPermanent).toHaveLength(1);
+      const after = readFileSync(agentFilePath, "utf-8");
+      expect(after).toContain("Keep this one.");
+      expect(after).not.toContain("Drop this one.");
     });
   });
 

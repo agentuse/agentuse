@@ -159,7 +159,7 @@ export interface TidyProgress {
 }
 
 export interface ConsolidationChange {
-  kind: 'merge' | 'rewrite' | 'retire' | 'graduate';
+  kind: 'merge' | 'rewrite' | 'retire' | 'graduate' | 'drop-permanent';
   /** Titles involved, for the human-readable summary. */
   titles: string[];
   why: string;
@@ -210,6 +210,11 @@ export interface ConsolidationResult {
   /** Titles of the rules that are now permanent — named because this is the only
    *  part of a tidy-up that edits a file the user considers theirs. */
   graduated: string[];
+  /** Permanent rules removed from the agent file, with why. Named individually
+   *  for the same reason: this edits the human's own file, and dropping a rule
+   *  they accepted is the one change here they are most likely to want to
+   *  argue with. */
+  droppedPermanent: { instruction: string; why: string }[];
   /** Why graduation was skipped, when it was. */
   graduationSkipped?: string;
   diffs: { learnings: string; agentFile?: string };
@@ -225,6 +230,7 @@ interface RawDecisions {
   rewrite?: { id?: string; why?: string }[];
   retire?: { id?: string; why?: string }[];
   graduate?: { id?: string; why?: string }[];
+  dropPermanent?: { id?: string; why?: string }[];
 }
 
 /** What a write call returns for one group. */
@@ -383,20 +389,25 @@ export function buildDecidePrompt(
   const blockStart = agentInstructions.indexOf(LEARNED_BLOCK_START);
   const blockEnd = agentInstructions.indexOf(LEARNED_BLOCK_END);
   const hasBlock = blockStart !== -1 && blockEnd > blockStart;
-  const permanent = hasBlock
-    ? agentInstructions.slice(blockStart + LEARNED_BLOCK_START.length, blockEnd).trim()
-    : '';
   // Truncate the BODY only, with the block excised so it cannot be cut in half.
   const body = hasBlock
     ? `${agentInstructions.slice(0, blockStart)}${agentInstructions.slice(blockEnd + LEARNED_BLOCK_END.length)}`
     : agentInstructions;
 
-  const permanentSection = permanent
+  // Permanent rules are addressable, because nothing else prunes them.
+  //
+  // Graduation only ever appended to this block, and every pass here skipped it,
+  // so it grew forever — the same pile the staging file had, one level up, and
+  // more expensive because these apply on every single run. Giving each one an
+  // id lets this pass merge two that say the same thing, or drop one a newer
+  // rule has overruled.
+  const permanentRules = parseLearnedBlock(agentInstructions);
+  const permanentSection = permanentRules.length > 0
     ? `
 
 ## Rules already PERMANENT in this agent (part of the same ruleset)
-These were graduated by an earlier pass and apply on every run. They are not in the list below and you cannot move them, but they count: a stored correction that restates one of these is redundant, and one that CONTRADICTS one of these is the most important thing you can find here.
-${permanent}`
+Graduated by an earlier pass. They apply on EVERY run and cost no slot, so they are the most expensive rules here to get wrong, and nothing else ever revisits them.
+${permanentRules.map((r, i) => `- id:perm${i} [${r.category}] ${r.instruction}`).join('\n')}`
     : '';
 
   return `An agent has accumulated ${learnings.length} stored corrections, but only the top ${cap} are put in front of the model on any run. The rest have no effect. Your job is to decide how to get the active set to ${cap} or fewer without losing anything the agent needs.
@@ -413,6 +424,7 @@ ${inventory}
 2. **rewrite** — a correction a human has REPEATED is not wrong, it is not landing. Name it and it will be restated more sharply. Prefer this over retiring anything marked as repeated.
 3. **retire** — a correction that another one now fully covers, or that the agent's own instructions above already state. Only entries with no "CANNOT RETIRE" flag.
 4. **graduate** — a correction moves into the agent's permanent instructions above, where it applies on every run and never competes for a slot. Only entries marked "may be graduated", and only after step 1 below.
+5. **dropPermanent** — a PERMANENT rule (an id:permN above) that a newer rule now overrules, or that says the same thing as another permanent rule. Name the id and a one-line reason. Use this sparingly and only when you are sure: these are rules a human accepted into their own file. When two permanent rules overlap, drop the weaker and say which one now covers it — do NOT rewrite the survivor, since its exact wording is the human's.
 
 ## How to decide, in order
 
@@ -432,7 +444,8 @@ Respond with ONLY a JSON object, no other text:
   "merge":    [{"ids": ["ab12cd34", "ef56gh78"], "keep": "ab12cd34", "why": "one line"}],
   "rewrite":  [{"id": "ij90kl12", "why": "reviewer repeated this 3 times; sharpen it"}],
   "retire":   [{"id": "mn34op56", "why": "superseded by ab12cd34"}],
-  "graduate": [{"id": "qr78st90", "why": "in force across 12 approved runs"}]
+  "graduate": [{"id": "qr78st90", "why": "in force across 12 approved runs"}],
+  "dropPermanent": [{"id": "perm3", "why": "perm1 now covers this outright"}]
 }`;
 }
 
@@ -500,6 +513,8 @@ interface DecidedPlan {
   rewrites: { target: Learning; why: string }[];
   retires: { target: Learning; why: string }[];
   graduates: { target: Learning; why: string }[];
+  /** Indices into the agent file's permanent block, not store ids. */
+  dropsPermanent: { index: number; why: string }[];
   rejected: string[];
 }
 
@@ -510,10 +525,15 @@ interface DecidedPlan {
  * good plan should cost that entry, not the whole tidy-up. They are logged at
  * debug so a model that keeps proposing forbidden moves is diagnosable.
  */
-export function validateDecisions(raw: RawDecisions, learnings: Learning[], now: number): DecidedPlan {
+export function validateDecisions(
+  raw: RawDecisions,
+  learnings: Learning[],
+  now: number,
+  permanentCount = 0,
+): DecidedPlan {
   const byId = new Map(learnings.map((l) => [l.id, l]));
   const claimed = new Set<string>();
-  const out: DecidedPlan = { merges: [], rewrites: [], retires: [], graduates: [], rejected: [] };
+  const out: DecidedPlan = { merges: [], rewrites: [], retires: [], graduates: [], dropsPermanent: [], rejected: [] };
 
   const claim = (id: string | undefined, label: string): Learning | undefined => {
     if (!id) {
@@ -582,6 +602,30 @@ export function validateDecisions(raw: RawDecisions, learnings: Learning[], now:
     }
     claimed.add(target.id);
     out.graduates.push({ target, why: g.why ?? 'held up across runs' });
+  }
+
+  // Permanent rules are addressed by position in the agent file's block
+  // (`perm0`, `perm1`, …), not by store id — they have no store entry. Only a
+  // drop is allowed: the surviving rule's exact wording belongs to whoever wrote
+  // it, so this pass may remove one it can show is covered, never reword one.
+  const seenPermanent = new Set<number>();
+  for (const d of raw.dropPermanent ?? []) {
+    const match = /^perm(\d+)$/.exec(d.id ?? '');
+    if (!match) {
+      out.rejected.push(`dropPermanent: not a permanent-rule id (${d.id ?? 'missing'})`);
+      continue;
+    }
+    const index = Number(match[1]);
+    if (index >= permanentCount) {
+      out.rejected.push(`dropPermanent ${d.id}: no such permanent rule`);
+      continue;
+    }
+    if (seenPermanent.has(index)) {
+      out.rejected.push(`dropPermanent ${d.id}: already claimed in this plan`);
+      continue;
+    }
+    seenPermanent.add(index);
+    out.dropsPermanent.push({ index, why: d.why ?? 'covered by another permanent rule' });
   }
 
   return out;
@@ -890,6 +934,10 @@ interface RoundOutcome {
   rewritten: number;
   retired: number;
   graduated: Learning[];
+  /** Permanent rules this round wants removed from the agent file, by their
+   *  position in its block. Positions, because permanent rules have no store
+   *  entry to name — the block in the file is the whole record. */
+  dropsPermanent: { index: number; why: string }[];
   /** Graduations the model asked for, applied or not, so a press can tell
    *  whether a graduation block actually cost anything. */
   graduatesProposed: number;
@@ -918,6 +966,7 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
     rewritten: 0,
     retired: 0,
     graduated: [],
+    dropsPermanent: [],
     graduatesProposed: 0,
     batches: 0,
     failedBatches: 0,
@@ -935,6 +984,11 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
     batches.push(ordered.slice(i, i + DECIDE_BATCH_SIZE));
   }
 
+  // Every batch is shown the SAME permanent rules, so two batches can
+  // independently propose dropping the same one. The count bounds which ids are
+  // valid; the dedupe below settles the collision.
+  const permanentCount = parseLearnedBlock(ctx.agentInstructions).length;
+
   let projectedActive = active.length;
   let decided = 0;
 
@@ -951,10 +1005,10 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
       logger.debug(`[Learning] Tidy-up decide call returned unusable JSON: ${responseText.slice(0, 500)}`);
       return { plan: null, sample: responseText.trim().slice(0, 120).replace(/\s+/g, ' ') };
     }
-    return { plan: validateDecisions(raw, batch, ctx.now), sample: '' };
+    return { plan: validateDecisions(raw, batch, ctx.now, permanentCount), sample: '' };
   });
 
-  const plan: DecidedPlan = { merges: [], rewrites: [], retires: [], graduates: [], rejected: [] };
+  const plan: DecidedPlan = { merges: [], rewrites: [], retires: [], graduates: [], dropsPermanent: [], rejected: [] };
   let failedBatches = 0;
   let sample = '';
   for (const outcome of decisions) {
@@ -969,6 +1023,12 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
     plan.rewrites.push(...outcome.plan.rewrites);
     plan.retires.push(...outcome.plan.retires);
     plan.graduates.push(...outcome.plan.graduates);
+    // First proposal wins: batches see the same permanent rules, so the same
+    // one can be named twice, and dropping it twice would shift every later
+    // index by one.
+    for (const drop of outcome.plan.dropsPermanent) {
+      if (!plan.dropsPermanent.some((d) => d.index === drop.index)) plan.dropsPermanent.push(drop);
+    }
     plan.rejected.push(...outcome.plan.rejected);
   }
 
@@ -1108,6 +1168,7 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
   return {
     next,
     changes,
+    dropsPermanent: plan.dropsPermanent,
     merged: merges.length,
     rewritten: rewrites.length,
     retired: plan.retires.length + merges.reduce((n, m) => n + m.absorbed.length, 0),
@@ -1153,6 +1214,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     cap,
     rounds: 0,
     changes: [],
+    droppedPermanent: [],
     merged: 0,
     rewritten: 0,
     retired: 0,
@@ -1188,6 +1250,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   let working: Learning[] = stored.map((l) => ({ ...l }));
   const changes: ConsolidationChange[] = [];
   const graduated: Learning[] = [];
+  const dropsPermanent: { index: number; why: string }[] = [];
   let merged = 0;
   let rewritten = 0;
   let retired = 0;
@@ -1206,7 +1269,15 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     const outcome = await tidyRound(working, before, {
       model,
       instructions,
-      agentInstructions: options.agentInstructions,
+      // The FILE, not the caller's copy of the instructions.
+      //
+      // `perm0`, `perm1`… are positions in the permanent block, and the drops
+      // are applied against the block parsed from this same file text. Indexing
+      // the prompt off a separately-parsed copy would mean a stale or
+      // differently-derived snapshot could number the rules one way while the
+      // write removed them another — dropping the wrong rule out of a file the
+      // human owns. One source for both, so they cannot disagree.
+      agentInstructions: agentBefore,
       cap,
       now,
       nowIso: new Date(now).toISOString(),
@@ -1247,6 +1318,12 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     working = outcome.next;
     changes.push(...outcome.changes);
     graduated.push(...outcome.graduated);
+    // Indices address the block as it stood at the START of the press, and every
+    // round is shown that same text, so a later round naming an index an earlier
+    // one already claimed is the same rule, not a different one.
+    for (const drop of outcome.dropsPermanent) {
+      if (!dropsPermanent.some((d) => d.index === drop.index)) dropsPermanent.push(drop);
+    }
     merged += outcome.merged;
     rewritten += outcome.rewritten;
     retired += outcome.retired;
@@ -1281,12 +1358,27 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // the file the input to its own next edit, and leaves exactly one copy of
   // each rule instead of two that can drift apart.
   const newlyPermanent = working.filter((l) => l.state === 'graduated');
+  const permanentBefore = parseLearnedBlock(agentBefore);
+  const dropped = new Set(dropsPermanent.map((d) => d.index));
+  const droppedPermanent = dropsPermanent
+    .filter((d) => permanentBefore[d.index])
+    .map((d) => ({ instruction: permanentBefore[d.index]!.instruction, why: d.why }));
+  // Counted as changes so a press whose ONLY effect is pruning the block still
+  // writes, and still shows up in the change list. Removing a rule from the
+  // human's own file is the least invisible thing here, not the most.
+  if (!graduationBlocked) {
+    changes.push(...droppedPermanent.map((d): ConsolidationChange => ({
+      kind: 'drop-permanent',
+      titles: [d.instruction.slice(0, 80)],
+      why: d.why,
+    })));
+  }
   const permanentAfter = graduationBlocked
-    ? parseLearnedBlock(agentBefore)
-    : [...parseLearnedBlock(agentBefore), ...newlyPermanent.map((l) => ({
-        category: l.category,
-        instruction: l.instruction,
-      }))];
+    ? permanentBefore
+    : [
+        ...permanentBefore.filter((_, i) => !dropped.has(i)),
+        ...newlyPermanent.map((l) => ({ category: l.category, instruction: l.instruction })),
+      ];
   // A rule that reached the agent file has no staged copy left to keep.
   const stagedAfter = graduationBlocked ? working : working.filter((l) => l.state !== 'graduated');
   const afterLearnings = store.render(stagedAfter);
@@ -1317,6 +1409,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     rewritten,
     retired,
     graduated: graduated.map((l) => l.title),
+    droppedPermanent: graduationBlocked ? [] : droppedPermanent,
     ...(graduationSkipped ? { graduationSkipped } : {}),
     ...(incomplete ? { note: incomplete } : {}),
     // Only when it ends over the cap. At or under it there is nothing to
@@ -1359,7 +1452,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     const reconciledAgent = graduationBlocked
       ? latestAgent
       : spliceLearnedBlock(latestAgent, [
-          ...parseLearnedBlock(latestAgent),
+          ...parseLearnedBlock(latestAgent).filter((_, i) => !dropped.has(i)),
           ...reconciledGraduated.map((l) => ({ category: l.category, instruction: l.instruction })),
         ]);
 
