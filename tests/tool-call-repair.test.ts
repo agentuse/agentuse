@@ -3,8 +3,22 @@ import { InvalidToolInputError, NoSuchToolError } from 'ai';
 import {
   findXmlToolMarkup,
   repairSmuggledXmlToolCall,
-  unsmuggleXmlParams
+  unsmuggleXmlParams,
+  unsmuggleXmlStructure
 } from '../src/runner/tool-call-repair';
+
+// The verbatim raw input from session 01KZPV8JYM3B (substack-engage-reply,
+// 2026-08-10): the `reference` object's opening `{"label": "` was emitted as
+// `<parameter name="label">`, so the payload is not JSON at all and the outer
+// brace is never closed. Trimmed in the excerpt only, structure untouched.
+const STRUCTURAL_DRIFT =
+  '{"prompt": "Approve this reply to Ilya\'s automation note? It posts and likes directly.", ' +
+  '"summary": "Ilya (@ilyanobsai), 10h old, 7 likes / 4 replies. formula: operator-receipt - his claim is abstract ' +
+  '(\\"a machine can only copy a job you can describe the same way twice\\") and Leon has hit it in production.", ' +
+  '"reference": \n<parameter name="label">Replying to, ' +
+  '"author": "Ilya (No BS AI, @ilyanobsai)", ' +
+  '"url": "https://substack.com/@ilyanobsai/note/c-311102730", ' +
+  '"excerpt": "Most people think automation fails because the tools are too hard.\\n\\nWhile in reality the tool is the easy part."}';
 
 // The verbatim drift shape from session 01KXXQZC34J7 (substack-connect):
 // `changes` smuggled into `summary`, `risk` smuggled into `context`, closed
@@ -116,8 +130,58 @@ describe('repairSmuggledXmlToolCall', () => {
     expect(await repairSmuggledXmlToolCall({ toolCall: call, error: invalidInput(call.input) })).toBeNull();
   });
 
-  it('returns null for unparseable input', async () => {
+  it('returns null for unparseable input carrying no markup', async () => {
     const call = toolCall('{"prompt": "truncated');
     expect(await repairSmuggledXmlToolCall({ toolCall: call, error: invalidInput(call.input) })).toBeNull();
+  });
+
+  it('repairs the structural drift that breaks JSON outright (real payload)', async () => {
+    const call = toolCall(STRUCTURAL_DRIFT);
+    const repaired = await repairSmuggledXmlToolCall({ toolCall: call, error: invalidInput(call.input) });
+
+    expect(repaired).not.toBeNull();
+    const input = JSON.parse(repaired!.input);
+    expect(input.prompt).toBe("Approve this reply to Ilya's automation note? It posts and likes directly.");
+    expect(input.reference).toEqual({
+      label: 'Replying to',
+      author: 'Ilya (No BS AI, @ilyanobsai)',
+      url: 'https://substack.com/@ilyanobsai/note/c-311102730',
+      excerpt: 'Most people think automation fails because the tools are too hard.\n\nWhile in reality the tool is the easy part.'
+    });
+    expect(findXmlToolMarkup(input)).toBe(false);
+  });
+});
+
+describe('unsmuggleXmlStructure', () => {
+  it('rebuilds the nested object and closes the outer brace', () => {
+    const rebuilt = unsmuggleXmlStructure(STRUCTURAL_DRIFT);
+    expect(rebuilt).not.toBeNull();
+    expect(JSON.parse(rebuilt!).reference.label).toBe('Replying to');
+  });
+
+  it('preserves the excerpt verbatim - an approval card must not be paraphrased', () => {
+    const rebuilt = unsmuggleXmlStructure(STRUCTURAL_DRIFT);
+    const excerpt = JSON.parse(rebuilt!).reference.excerpt;
+    expect(excerpt).toContain('Most people think automation fails because the tools are too hard.');
+    expect(excerpt).toContain('While in reality the tool is the easy part.');
+  });
+
+  it('leaves clean JSON alone', () => {
+    expect(unsmuggleXmlStructure('{"prompt": "fine", "summary": "also fine"}')).toBeNull();
+  });
+
+  it('does not fire when the markup is inside a string (the other shape owns it)', () => {
+    expect(unsmuggleXmlStructure(JSON.stringify(DRIFTED_INPUT))).toBeNull();
+  });
+
+  it('refuses a smuggled scalar whose value carries a quote or newline', () => {
+    expect(unsmuggleXmlStructure(
+      '{"reference": <parameter name="label">say "hi", "author": "x"}'
+    )).toBeNull();
+  });
+
+  it('will not silently drop content it cannot rebuild', () => {
+    // No `, "key":` boundary after the smuggled scalar: nothing to anchor on.
+    expect(unsmuggleXmlStructure('{"reference": <parameter name="label">dangling tail')).toBeNull();
   });
 });

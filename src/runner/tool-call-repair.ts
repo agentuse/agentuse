@@ -91,6 +91,58 @@ export function unsmuggleXmlParams(input: Record<string, unknown>): Record<strin
 }
 
 /**
+ * The same drift in its structural form: instead of landing inside a string
+ * value (where the JSON still parses), the markup replaces the syntax that
+ * OPENS a nested value, so the payload is not JSON at all:
+ *
+ *   "reference": \n<parameter name="label">Replying to, "author": "Ilya", …}
+ *
+ * The model meant `"reference": {"label": "Replying to", "author": "Ilya", …}`.
+ * It spent the object's opening brace on the XML tag, so the matching closing
+ * brace at the end closes the nested object and the outer one is never closed.
+ *
+ * This runs on the raw text, before parsing, and is deliberately narrow:
+ *  - the tag must sit in value position (right after `"key":`);
+ *  - the smuggled scalar must be a single line with no quotes, terminated by
+ *    the next `, "key":` boundary - prose that merely contains a comma cannot
+ *    be mistaken for the boundary;
+ *  - only unclosed braces/brackets are appended, never removed;
+ *  - the result is returned ONLY if it parses and carries no leftover markup.
+ * Anything else returns null and takes the normal retry path.
+ */
+const VALUE_POSITION_PARAM =
+  /("[^"]+"\s*:\s*)<(?:antml:)?parameter\s+name="([^"]+)"\s*>([^"\n]*?)(?=,\s*"[A-Za-z_][A-Za-z0-9_]*"\s*:)/g;
+
+const MAX_APPENDED_CLOSERS = 4;
+
+export function unsmuggleXmlStructure(raw: string): string | null {
+  if (!XML_TOOL_MARKUP.test(raw)) return null;
+
+  let repaired = raw.replace(
+    VALUE_POSITION_PARAM,
+    (_m, keyPrefix: string, name: string, scalar: string) =>
+      `${keyPrefix}{"${name}": "${scalar.trim()}"`
+  );
+  if (repaired === raw) return null;
+
+  // Drop any residual closing tags the drift left behind.
+  repaired = repaired.replace(/<\/(?:antml:)?(?:parameter|invoke|function_calls)>/g, '');
+  if (XML_TOOL_MARKUP.test(repaired)) return null;
+
+  for (let extra = 0; extra <= MAX_APPENDED_CLOSERS; extra++) {
+    const candidate = repaired + '}'.repeat(extra);
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      return candidate;
+    } catch {
+      // try one more closer
+    }
+  }
+  return null;
+}
+
+/**
  * streamText `repairToolCall` hook. Deterministic only: fixes the known
  * XML-smuggling drift and nothing else. Returning null hands the original
  * validation error back to the model as a tool error, which is the normal
@@ -103,15 +155,25 @@ export async function repairSmuggledXmlToolCall({ toolCall, error }: {
   if (!InvalidToolInputError.isInstance(error)) return null;
 
   let parsed: unknown;
+  let structurallyRepaired = false;
   try {
     parsed = JSON.parse(toolCall.input);
   } catch {
-    return null;
+    // Not JSON at all: the drift may have eaten structural syntax rather than
+    // hidden inside a string. Try the structural repair before giving up.
+    const rebuilt = unsmuggleXmlStructure(toolCall.input);
+    if (!rebuilt) return null;
+    parsed = JSON.parse(rebuilt);
+    structurallyRepaired = true;
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
 
-  const repaired = unsmuggleXmlParams(parsed as Record<string, unknown>);
-  if (!repaired) return null;
+  // Both shapes can co-occur, so still run the in-string pass. If it finds
+  // nothing, only a completed structural repair counts as a repair - otherwise
+  // we would hand back an unchanged input and mask the normal retry path.
+  const repaired = unsmuggleXmlParams(parsed as Record<string, unknown>)
+    ?? (structurallyRepaired ? (parsed as Record<string, unknown>) : null);
+  if (!repaired || findXmlToolMarkup(repaired)) return null;
 
   return { ...toolCall, input: JSON.stringify(repaired) };
 }
