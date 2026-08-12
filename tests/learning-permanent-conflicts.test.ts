@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildBlockRewritePrompt, validateBlockRewrite } from "../src/learning/consolidate";
+import { buildBlockRewritePrompt, buildMergeAuditPrompt, validateBlockRewrite } from "../src/learning/consolidate";
 import { LEARNED_BLOCK_START, LEARNED_BLOCK_END } from "../src/learning/graduate";
 import type { PermanentRule } from "../src/learning/graduate";
 
@@ -50,6 +50,34 @@ describe("showing the rewrite pass what the rules sit beside", () => {
     const deep = "The FIRST sentence must already carry the new thing.";
     const prompt = buildBlockRewritePrompt(rules, 0, `${filler}\n${deep}`);
     expect(prompt).toContain(deep);
+  });
+});
+
+// Measured cause of the 2.5% saving: the rewrite was allowed to cut a passage
+// the body already states, and the audit then read every such cut as a dropped
+// instruction and restored the original. Both halves have to know about the
+// body or the largest available saving is unreachable.
+describe("cutting a passage the body already states", () => {
+  test("the rewrite is told it may cut inside a rule, not only drop a whole one", () => {
+    const prompt = buildBlockRewritePrompt(rules, 0, "Put the target URL in the gate.");
+    expect(prompt).toContain("A passage inside a rule that the body already states");
+    expect(prompt).toContain("not merely the same subject");
+  });
+
+  test("the audit sees the body, so a cut it covers is not counted as missing", () => {
+    const prompt = buildMergeAuditPrompt(rules, "one merged rule", "Put the target URL in the gate.");
+    expect(prompt).toContain("Put the target URL in the gate.");
+    expect(prompt).toContain("dropping something the body already states is fine");
+  });
+
+  test("the audit holds coverage to the instruction, not the topic", () => {
+    const prompt = buildMergeAuditPrompt(rules, "merged", "gate the reply");
+    expect(prompt).toContain("does not cover a source that says which fields the gate must carry");
+  });
+
+  test("the audit says nothing about a body it was not given", () => {
+    const prompt = buildMergeAuditPrompt(rules, "merged");
+    expect(prompt).not.toContain("THE AGENT'S OWN INSTRUCTIONS");
   });
 });
 

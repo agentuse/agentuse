@@ -625,6 +625,7 @@ Combine, tighten, and reorder freely. Specifically look for:
 - **The same instruction stated more than once** in different words or different scopes.
 - **Leftovers from staging** — phrases like "CORRECTION of an auto-learning from this session", "on the 2026-07-14 run", or an id like "id:a37rttpa". These made sense while the rule was a pending correction. In a permanent rule they are noise: state the rule, keep the concrete evidence that makes it credible, drop the bookkeeping.
 - **A rule the body already states.** Drop it. The body outranks it anyway, so the copy here only adds length and a second place to drift.
+- **A passage inside a rule that the body already states.** Cut the passage, keep the rule. This is usually the largest saving available and the one most often missed: a rule earns its place on one instruction and carries three paragraphs restating steps, gate fields, or constraints the body already spells out. Cut only where the body gives the same instruction, not merely the same subject — if the body mentions the topic without saying what to do, the passage is the only place the instruction exists and it stays.
 - **One rule that has been appended to.** A long rule is not automatically a bad one, but a word count in the hundreds usually means corrections were bolted on over time, each with the story of why it was added. Work that rule hardest: keep every instruction, cut the accumulated narration around them. Answer with one rule per input rule — do not split one into several, the answer format cannot express it and the whole rewrite is discarded when it tries.
 
 ## Be concise, but lose nothing
@@ -724,22 +725,36 @@ function bodyWithoutBlock(agentInstructions: string): string {
  * both of those backwards — it blocked real compression and would have waved
  * through any padded rewrite.
  */
-export function buildMergeAuditPrompt(sources: PermanentRule[], merged: string): string {
+export function buildMergeAuditPrompt(sources: PermanentRule[], merged: string, agentBody?: string): string {
   const listed = sources.map((s, i) => `SOURCE ${i + 1}:\n${s.instruction}`).join('\n\n');
+  // The body, for the same reason the rewrite gets it: an instruction the body
+  // already gives is not lost when a rule stops repeating it. Without this the
+  // audit reads every such cut as a dropped instruction and restores the
+  // original, which makes the largest available saving unreachable — the
+  // rewrite is allowed to make the cut and then it is always reverted.
+  const bodySection = agentBody
+    ? `
+
+THE AGENT'S OWN INSTRUCTIONS, which run on every run alongside these rules:
+${truncatedBody(bodyWithoutBlock(agentBody))}`
+    : '';
+
   return `An agent's rules were rewritten. Your only job is to find what the rewrite lost.
 
 ${listed}
 
 REWRITTEN:
-${merged}
+${merged}${bodySection}
 
 Go through the sources one instruction at a time. An instruction is anything that would change what the agent does: a rule, a case, an exception, a threshold or number, a trigger condition, a named failure to avoid, a required output, a worked example that shows what the rule means in practice.
 
-For each one, decide whether the rewritten text still tells the agent that same thing. Different wording is fine — shorter is fine — as long as an agent following only the rewritten text would behave the same way.
+For each one, decide whether the agent is still told that same thing — by the rewritten text, or by its own instructions above. Different wording is fine, shorter is fine, and dropping something the body already states is fine, as long as an agent reading both would behave the same way.
+
+Hold that last one to the instruction, not the topic. The body saying "gate the reply" does not cover a source that says which fields the gate must carry. Count it as covered only where the body tells the agent the same thing to do.
 
 List every instruction you cannot find. Be specific: name the instruction, not the topic. Report it as missing when the rewrite mentions the subject but no longer says what to do about it, when it generalises a specific threshold or example into a vague principle, or when it keeps one side of a "do X but not when Y" and drops the other.
 
-Do not list wording changes, reordering, removed repetition, or removed narration about how the rule came to exist. Those are the point of the rewrite. Only list things an agent would now get wrong.
+Do not list wording changes, reordering, removed repetition, removed narration about how the rule came to exist, or a passage removed because the agent's own instructions already give that instruction. Those are the point of the rewrite. Only list things an agent would now get wrong.
 
 If nothing is missing, return an empty list. Empty is a real answer — say so when the rewrite genuinely carries everything.
 
@@ -1581,7 +1596,7 @@ async function rewritePermanentBlock(
 async function auditEdits(
   checked: CheckedRewrite,
   before: PermanentRule[],
-  ctx: { model: string; system: HelperSystemPrompt },
+  ctx: { model: string; system: HelperSystemPrompt; agentBody?: string },
 ): Promise<BlockRewrite> {
   const verdicts = await mapConcurrent(checked.rules, TIDY_CONCURRENCY, async (rule) => {
     const sources = rule.covers.map((i) => before[i]!);
@@ -1592,7 +1607,7 @@ async function auditEdits(
     try {
       text = await completeText(ctx.model, {
         ...ctx.system,
-        prompt: buildMergeAuditPrompt(sources, rule.instruction),
+        prompt: buildMergeAuditPrompt(sources, rule.instruction, ctx.agentBody),
         maxOutputTokens: WRITE_MAX_OUTPUT_TOKENS,
       });
     } catch (error) {
