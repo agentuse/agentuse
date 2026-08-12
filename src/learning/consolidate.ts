@@ -634,6 +634,7 @@ Aim for the shortest text that still tells the agent every single thing its sour
 
 - **Cut words freely.** Repetition, throat-clearing, the same point made twice in different sentences, narration of how the rule came to exist. A merged rule that is half the length of its sources is a good outcome when the removed words were not carrying an instruction.
 - **Cut instructions never.** Every case, exception, threshold, trigger, named failure and worked example is load-bearing. A 24h cutoff, a reviewer's verbatim complaint, "do X but NOT when Y" — those are the rule. Drop one and the agent behaves differently, which is the whole cost of getting this wrong.
+- **Cut a repeated example freely.** The line above protects the FIRST example of a point, not the fourth. A rule that quotes six phrasings of what "light register" sounds like is teaching one thing six times, and every copy after the clearest costs a slot in every future run while adding nothing. Keep the sharpest illustration — a fail/pass contrast beats a lone specimen — and cut the rest. Distinct examples that each carry a DIFFERENT case all stay: the test is whether deleting one loses an instruction, not whether it loses a sentence.
 
 The failure to avoid is writing the topic instead of the instruction. "Keep the two senses of 'connect' apart" names a subject; it does not tell anyone what either sense is or what to do about them, so it replaces a rule with a label. If your merged text would leave a reader asking "yes, but what do I actually do?", it is too short — not because of its length, but because an instruction went missing.
 
@@ -746,7 +747,9 @@ ${listed}
 REWRITTEN:
 ${merged}${bodySection}
 
-Go through the sources one instruction at a time. An instruction is anything that would change what the agent does: a rule, a case, an exception, a threshold or number, a trigger condition, a named failure to avoid, a required output, a worked example that shows what the rule means in practice.
+Go through the sources one instruction at a time. An instruction is anything that would change what the agent does: a rule, a case, an exception, a threshold or number, a trigger condition, a named failure to avoid, a worked example that shows what the rule means in practice.
+
+Count an example ONCE. Where the sources illustrate the same point several times over, that point is one instruction, and a rewrite keeping the clearest illustration has kept it. Only report a dropped example when it carried a case none of the surviving ones do.
 
 For each one, decide whether the agent is still told that same thing — by the rewritten text, or by its own instructions above. Different wording is fine, shorter is fine, and dropping something the body already states is fine, as long as an agent reading both would behave the same way.
 

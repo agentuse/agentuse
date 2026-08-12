@@ -81,6 +81,27 @@ describe("cutting a passage the body already states", () => {
   });
 });
 
+// Measured: 53 of 272 learnings carry 3+ quoted examples and hold 53% of the
+// corpus. One of them illustrates "light register" nine times for one rule. The
+// two prompts disagreed on this — the rewrite called every worked example
+// load-bearing while the audit called removed repetition the point of the
+// rewrite — and the stricter one governed what was proposed.
+describe("cutting a repeated example", () => {
+  test("the rewrite is told the protection covers the first example, not the fourth", () => {
+    const prompt = buildBlockRewritePrompt(rules, 0);
+    expect(prompt).toContain("Cut a repeated example freely");
+    expect(prompt).toContain("protects the FIRST example of a point, not the fourth");
+    // The distinct-case carve-out has to survive alongside it.
+    expect(prompt).toContain("Distinct examples that each carry a DIFFERENT case all stay");
+  });
+
+  test("the audit counts a repeated illustration once", () => {
+    const prompt = buildMergeAuditPrompt(rules, "merged");
+    expect(prompt).toContain("Count an example ONCE");
+    expect(prompt).toContain("carried a case none of the surviving ones do");
+  });
+});
+
 describe("reporting a permanent rule the body contradicts", () => {
   const kept = { rules: [{ category: "pattern", instruction: rules[0]!.instruction, covers: [0] }, { category: "warning", instruction: rules[1]!.instruction, covers: [1] }] };
 
