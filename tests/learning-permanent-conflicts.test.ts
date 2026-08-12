@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildBlockRewritePrompt, buildMergeAuditPrompt, validateBlockRewrite } from "../src/learning/consolidate";
+import { buildBlockRewritePrompt, buildCompressPrompt, buildMergeAuditPrompt, validateBlockRewrite, validateDecisions } from "../src/learning/consolidate";
+import type { Learning } from "../src/learning/types";
 import { LEARNED_BLOCK_START, LEARNED_BLOCK_END } from "../src/learning/graduate";
 import type { PermanentRule } from "../src/learning/graduate";
 
@@ -86,6 +87,60 @@ describe("cutting a passage the body already states", () => {
 // two prompts disagreed on this — the rewrite called every worked example
 // load-bearing while the audit called removed repetition the point of the
 // rewrite — and the stricter one governed what was proposed.
+// The staging path had no size-triggered move at all. `rewrite` fires only when
+// a human REPEATS a correction, and deliberately makes it more specific;
+// `merge` fires only when two say the same thing. A learning captured once,
+// applied often and never repeated was never revisited, at any length.
+// Measured: 267 of 272 learnings live in staging, holding ~40k of the 43k words.
+describe("compressing an over-long staged learning", () => {
+  const staged: Learning = {
+    id: "uv12wx34",
+    category: "warning",
+    title: "Every slate needs a light candidate",
+    instruction: "Long text. ".repeat(200),
+    source: "approval",
+    confidence: 0.9,
+    appliedCount: 8,
+    approvedRuns: 3,
+    reasserted: 0,
+    extractedAt: "2026-08-01T00:00:00.000Z",
+    state: "active",
+  };
+  const NOW = Date.parse("2026-08-12T00:00:00.000Z");
+
+  test("the plan accepts a compress move", () => {
+    const plan = validateDecisions({ compress: [{ id: "uv12wx34", why: "620 words for one rule" }] }, [staged], NOW);
+    expect(plan.compresses).toHaveLength(1);
+    expect(plan.compresses[0]!.target.id).toBe("uv12wx34");
+    expect(plan.rejected).toHaveLength(0);
+  });
+
+  test("an id already used by another move cannot also be compressed", () => {
+    const old = { ...staged, extractedAt: "2026-01-01T00:00:00.000Z" };
+    const plan = validateDecisions(
+      { retire: [{ id: "uv12wx34", why: "superseded" }], compress: [{ id: "uv12wx34", why: "long" }] },
+      [old],
+      NOW,
+    );
+    expect(plan.retires).toHaveLength(1);
+    expect(plan.compresses).toHaveLength(0);
+    expect(plan.rejected.join(" ")).toContain("already used by another move");
+  });
+
+  test("the compress prompt carries the three measured cuts and the too-short guard", () => {
+    const prompt = buildCompressPrompt(staged, "620 words for one rule", "Gate the reply before posting.");
+    expect(prompt).toContain("The story of how it came to exist");
+    expect(prompt).toContain("Anything the agent's own instructions already say");
+    expect(prompt).toContain("The second through Nth example of one point");
+    expect(prompt).toContain("writing the topic instead of the instruction");
+    expect(prompt).toContain("Gate the reply before posting.");
+  });
+
+  test("it states the real word count, since that is why it was flagged", () => {
+    expect(buildCompressPrompt(staged, "too long")).toContain("It is 400 words");
+  });
+});
+
 describe("cutting a repeated example", () => {
   test("the rewrite is told the protection covers the first example, not the fourth", () => {
     const prompt = buildBlockRewritePrompt(rules, 0);

@@ -172,7 +172,7 @@ export interface TidyProgress {
 }
 
 export interface ConsolidationChange {
-  kind: 'merge' | 'rewrite' | 'retire' | 'graduate' | 'drop-permanent' | 'merge-permanent' | 'rewrite-permanent';
+  kind: 'merge' | 'rewrite' | 'compress' | 'retire' | 'graduate' | 'drop-permanent' | 'merge-permanent' | 'rewrite-permanent';
   /** Titles involved, for the human-readable summary. */
   titles: string[];
   why: string;
@@ -246,6 +246,7 @@ export interface ConsolidationResult {
 interface RawDecisions {
   merge?: { ids?: string[]; keep?: string; why?: string }[];
   rewrite?: { id?: string; why?: string }[];
+  compress?: { id?: string; why?: string }[];
   retire?: { id?: string; why?: string }[];
   graduate?: { id?: string; why?: string }[];
 }
@@ -384,6 +385,12 @@ function inventoryEntry(learning: Learning, now: number): string {
   if (learning.approvedRuns > 0) flags.push(`in force across ${learning.approvedRuns} approved runs`);
   if (learning.appliedCount > 0) flags.push(`applied in ${learning.appliedCount} runs`);
   flags.push(`${Math.round(ageInDays(learning, now))}d old`);
+  // The full text is below, but nothing drew attention to its length, and this
+  // pass was framed purely as a COUNT problem — get the set to `cap`. A 485-word
+  // correction and a 60-word one read as one slot each. Measured across a real
+  // store: median 69 words, but 53 of 272 learnings carried 3+ quoted examples
+  // and held 53% of all the words.
+  flags.push(`${countWords(learning.instruction)} words`);
   const blocked = retireBlocked(learning, now);
   if (blocked) flags.push(`CANNOT RETIRE: ${blocked}`);
   if (isGraduationEligible(learning)) flags.push('may be graduated');
@@ -488,7 +495,7 @@ Graduated by an earlier pass. They apply on EVERY run and cost no slot, so they 
 ${permanentRules.map((r) => `- [${r.category}] ${r.instruction}`).join('\n')}`
     : '';
 
-  return `An agent has accumulated ${learnings.length} stored corrections, but only the top ${cap} are put in front of the model on any run. The rest have no effect. Your job is to decide how to get the active set to ${cap} or fewer without losing anything the agent needs.
+  return `An agent has accumulated ${learnings.length} stored corrections, but only the top ${cap} are put in front of the model on any run. The rest have no effect. Your job is to decide how to get the active set to ${cap} or fewer without losing anything the agent needs — and to keep what survives paying its way, since every word of every surviving correction is re-read on every single run of this agent, forever.
 
 ## The agent's own instructions
 ${body.slice(0, 6000)}${permanentSection}
@@ -500,8 +507,9 @@ ${inventory}
 
 1. **merge** — two or more corrections saying substantially the same thing become one. Name the ids and which one to keep; someone else writes the merged wording.
 2. **rewrite** — a correction a human has REPEATED is not wrong, it is not landing. Name it and it will be restated more sharply. Prefer this over retiring anything marked as repeated.
-3. **retire** — a correction that another one now fully covers, or that the agent's own instructions above already state. Only entries with no "CANNOT RETIRE" flag.
-4. **graduate** — a correction moves into the agent's permanent instructions above, where it applies on every run and never competes for a slot. Only entries marked "may be graduated", and only after step 1 below.
+3. **compress** — a correction that is right, and far longer than the thing it has to say. Name it and it will be shortened without losing a case. This is the only move that fires on SIZE, so nothing else will ever reach a correction that was captured once, is doing its job, and happens to run to several hundred words. Reach for it when an entry's word count is out of proportion to the number of distinct things it tells the agent to do — a rule illustrated five times over, paragraphs restating instructions the agent's own text above already gives, or the story of the run that produced it. Not a substitute for retire: compress keeps every case, so use it on corrections worth keeping.
+4. **retire** — a correction that another one now fully covers, or that the agent's own instructions above already state. Only entries with no "CANNOT RETIRE" flag.
+5. **graduate** — a correction moves into the agent's permanent instructions above, where it applies on every run and never competes for a slot. Only entries marked "may be graduated", and only after step 1 below.
 
 The permanent rules above are not yours to edit in this pass — a later pass rewrites that block as a whole. Read them, and never graduate something they already cover.
 
@@ -514,7 +522,9 @@ The permanent rules above are not yours to edit in this pass — a later pass re
 - Every id you name must come from the list. Each id may appear in AT MOST ONE move.
 - **Who wrote a rule is evidence, not a verdict.** A rule marked src:manual or src:approval came from a human and should weigh heavily — but the same human wrote the correction that may now overrule it, so authorship cannot decide whether a rule is still true. Judge each one on whether it still earns a place: is it current, is it covered by another, has it been superseded? A newer human correction retiring an older human rule is exactly the right outcome, not something to avoid.
 - Merge two corrections whenever both can be stated as one rule, even when they constrain different situations. Merging is not discarding: the merged wording must carry every case the originals covered, and whoever writes it sees all of them. Leaving a pair alone is right only when no single rule can hold both without losing a constraint — a judgement about the wording, not about whether the subjects match.
-- This set is over its limit, so some of these corrections do not reach the agent at all. Leaving a pair alone is not the safe choice; it is a choice to leave something dormant.
+${learnings.length > cap
+  ? '- This set is over its limit, so some of these corrections do not reach the agent at all. Leaving a pair alone is not the safe choice; it is a choice to leave something dormant.'
+  : '- This set already fits the limit, so nothing here is dormant and there is no pressure to cut the count. What brought you here is length: one or more of these is far longer than the thing it has to say, and every word is re-read on every run. Compress those. Do not manufacture merges or retirements to look busy.'}
 - Do NOT write any replacement text. Ids and a one-line reason each, nothing more.
 - If nothing can be safely improved, return empty arrays.
 
@@ -522,6 +532,7 @@ Respond with ONLY a JSON object, no other text:
 {
   "merge":    [{"ids": ["ab12cd34", "ef56gh78"], "keep": "ab12cd34", "why": "one line"}],
   "rewrite":  [{"id": "ij90kl12", "why": "reviewer repeated this 3 times; sharpen it"}],
+  "compress": [{"id": "uv12wx34", "why": "620 words for one rule; quotes six phrasings of the same point"}],
   "retire":   [{"id": "mn34op56", "why": "superseded by ab12cd34"}],
   "graduate": [{"id": "qr78st90", "why": "in force across 12 approved runs"}]
 }`;
@@ -538,6 +549,52 @@ Write ONE correction that replaces them. It must cover everything all of them co
 
 Respond with ONLY a JSON object, no other text:
 {"category": "tip|warning|pattern|tool-usage|error-fix", "title": "short title", "instruction": "the merged instruction"}`;
+}
+
+/**
+ * Pass two, compress: one over-long correction in, the same rule shorter out.
+ *
+ * Deliberately NOT the rewrite prompt with a length note bolted on. Rewrite
+ * exists because a human repeated a correction, and it makes the text MORE
+ * specific — the opposite instruction. Sharing one prompt would mean one of the
+ * two callers always reading guidance written for the other.
+ *
+ * The three cuts named here are the ones measured to be safe on the permanent
+ * block: run narration, a passage the agent body already states, and the second
+ * through Nth illustration of one point. The same audit that protects a block
+ * merge protects this, so a compression that drops a case is reverted.
+ */
+export function buildCompressPrompt(learning: Learning, why: string, agentBody?: string): string {
+  const bodySection = agentBody
+    ? `
+
+THE AGENT'S OWN INSTRUCTIONS, which it reads on every run alongside this correction:
+${truncatedBody(bodyWithoutBlock(agentBody))}`
+    : '';
+
+  return `This stored correction for an agent says the right thing at too great a length. It is ${countWords(learning.instruction)} words, and every one of them is re-read on every run of this agent.
+
+- [${learning.category}] ${learning.title}
+  ${learning.instruction}
+
+Why it was flagged: ${why}${bodySection}
+
+Write it shorter. Keep the rule and every case it makes, cut everything that is not one.
+
+Cut freely:
+- **The story of how it came to exist.** Which run, which date, which reviewer said what, what the first draft got wrong. The rule is the output; the incident is not.
+- **Anything the agent's own instructions already say.** If the body above gives the same instruction, this correction repeating it costs a re-read every run and adds nothing. Cut where the body gives the same INSTRUCTION, not merely the same subject.
+- **The second through Nth example of one point.** Keep the sharpest illustration — a fail/pass contrast beats a lone specimen — and drop the rest. Examples that each carry a DIFFERENT case all stay.
+- Repetition, throat-clearing, and the same point restated in new words.
+
+Cut never: a case, an exception, a threshold or number, a trigger condition, a named failure, a required output. Those ARE the rule.
+
+The failure to avoid is writing the topic instead of the instruction. "Keep the register light" names a subject; it does not tell the agent what light means or when to reach for it. If your shorter text leaves a reader asking "yes, but what do I actually do?", it is too short — not because of its length, but because an instruction went missing.
+
+Do not broaden the rule, and do not add guidance it did not carry. This is checked against the original afterwards, instruction by instruction; anything found missing restores the original text, so a compression that quietly drops a case buys nothing.
+
+Respond with ONLY a JSON object, no other text:
+{"title": "short title", "instruction": "the shorter instruction"}`;
 }
 
 /** Pass two, rewrite: one repeated correction in, a sharper one out. */
@@ -679,6 +736,20 @@ Respond with ONLY a JSON object, no other text:
 /** Words in a rule, for the size signal in the rewrite prompt. */
 function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * When one correction is long enough to be worth a look on its own.
+ *
+ * A local word count, never a model call: this decides whether to SPEND a pass,
+ * so it has to be free. Set well above normal — measured across 272 stored
+ * learnings the median is 69 words, while the entries that hold half the corpus
+ * run to 415 — so an ordinary set never trips it and never pays for a round.
+ */
+const OVERLONG_WORDS = 200;
+
+export function isOverlong(learning: Learning): boolean {
+  return countWords(learning.instruction) > OVERLONG_WORDS;
 }
 
 /** Guard against a pathological agent file, not a context budget. Set far above
@@ -897,6 +968,12 @@ function parseJsonObject<T>(responseText: string): T | null {
 interface DecidedPlan {
   merges: { keep: Learning; absorbed: Learning[]; why: string }[];
   rewrites: { target: Learning; why: string }[];
+  /** Same rule, fewer words. Distinct from `rewrites`, which fires only when a
+   *  human repeated a correction and deliberately makes it MORE specific. A
+   *  learning captured once, applied often and never repeated had no move at
+   *  all before this: nothing in the staging path was triggered by size, so a
+   *  485-word correction stayed 485 words for as long as it lived. */
+  compresses: { target: Learning; why: string }[];
   retires: { target: Learning; why: string }[];
   graduates: { target: Learning; why: string }[];
   rejected: string[];
@@ -916,7 +993,7 @@ export function validateDecisions(
 ): DecidedPlan {
   const byId = new Map(learnings.map((l) => [l.id, l]));
   const claimed = new Set<string>();
-  const out: DecidedPlan = { merges: [], rewrites: [], retires: [], graduates: [], rejected: [] };
+  const out: DecidedPlan = { merges: [], rewrites: [], compresses: [], retires: [], graduates: [], rejected: [] };
 
   const claim = (id: string | undefined, label: string): Learning | undefined => {
     if (!id) {
@@ -970,6 +1047,17 @@ export function validateDecisions(
     }
     claimed.add(target.id);
     out.retires.push({ target, why: r.why ?? 'superseded' });
+  }
+
+  // After retire, deliberately. Both moves are supposed to be exclusive per id,
+  // but if a plan ever names one twice, deleting beats shortening: compressing
+  // an entry on its way out spends a model call and an audit call on text
+  // nobody will read again.
+  for (const c of raw.compress ?? []) {
+    const target = claim(c.id, 'compress');
+    if (!target) continue;
+    claimed.add(target.id);
+    out.compresses.push({ target, why: c.why ?? 'over-long for what it says' });
   }
 
   for (const g of raw.graduate ?? []) {
@@ -1357,7 +1445,7 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
     return { plan: validateDecisions(raw, batch, ctx.now), sample: '' };
   });
 
-  const plan: DecidedPlan = { merges: [], rewrites: [], retires: [], graduates: [], rejected: [] };
+  const plan: DecidedPlan = { merges: [], rewrites: [], compresses: [], retires: [], graduates: [], rejected: [] };
   let failedBatches = 0;
   let sample = '';
   for (const outcome of decisions) {
@@ -1370,6 +1458,7 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
     }
     plan.merges.push(...outcome.plan.merges);
     plan.rewrites.push(...outcome.plan.rewrites);
+    plan.compresses.push(...outcome.plan.compresses);
     plan.retires.push(...outcome.plan.retires);
     plan.graduates.push(...outcome.plan.graduates);
     plan.rejected.push(...outcome.plan.rejected);
@@ -1391,10 +1480,12 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
   // longer wait behind text they never had a use for.
   type WriteJob =
     | { kind: 'merge'; merge: DecidedPlan['merges'][number] }
-    | { kind: 'rewrite'; rewrite: DecidedPlan['rewrites'][number] };
+    | { kind: 'rewrite'; rewrite: DecidedPlan['rewrites'][number] }
+    | { kind: 'compress'; compress: DecidedPlan['compresses'][number] };
   const jobs: WriteJob[] = [
     ...plan.merges.map((merge): WriteJob => ({ kind: 'merge', merge })),
     ...plan.rewrites.map((rewrite): WriteJob => ({ kind: 'rewrite', rewrite })),
+    ...plan.compresses.map((compress): WriteJob => ({ kind: 'compress', compress })),
   ];
 
   let written = 0;
@@ -1402,7 +1493,9 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
   const drafts = await mapConcurrent(jobs, TIDY_CONCURRENCY, async (job) => {
     const prompt = job.kind === 'merge'
       ? buildMergePrompt([job.merge.keep, ...job.merge.absorbed])
-      : buildRewritePrompt(job.rewrite.target, job.rewrite.why);
+      : job.kind === 'compress'
+        ? buildCompressPrompt(job.compress.target, job.compress.why, ctx.agentInstructions)
+        : buildRewritePrompt(job.rewrite.target, job.rewrite.why);
     const responseText = await completeText(ctx.model, {
       ...ctx.system,
       prompt,
@@ -1423,11 +1516,16 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
   // an entry into a merge that never got written.
   const merges: { keep: Learning; absorbed: Learning[]; category: LearningCategory; title: string; instruction: string; why: string }[] = [];
   const rewrites: { target: Learning; title: string; instruction: string; why: string }[] = [];
+  const compressions: { target: Learning; title: string; instruction: string; why: string }[] = [];
   const failedWrites: string[] = [];
   jobs.forEach((job, index) => {
     const draft = drafts[index];
     if (!draft) {
-      failedWrites.push(job.kind === 'merge' ? job.merge.keep.id : job.rewrite.target.id);
+      failedWrites.push(
+        job.kind === 'merge' ? job.merge.keep.id
+          : job.kind === 'compress' ? job.compress.target.id
+            : job.rewrite.target.id,
+      );
       return;
     }
     const title = typeof draft.raw?.title === 'string' && draft.raw.title.trim() ? draft.raw.title.trim() : undefined;
@@ -1442,6 +1540,13 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
         instruction: draft.instruction,
         why: job.merge.why,
       });
+    } else if (job.kind === 'compress') {
+      compressions.push({
+        target: job.compress.target,
+        title: title ?? job.compress.target.title,
+        instruction: draft.instruction,
+        why: job.compress.why,
+      });
     } else {
       rewrites.push({
         target: job.rewrite.target,
@@ -1451,6 +1556,47 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
       });
     }
   });
+
+  // Every compression audited against the text it replaces, before any of it is
+  // applied. Same question the block merge is asked, asked the same way round:
+  // not "is this good" but "what did it drop". A compression is the one move
+  // here that is pure loss when it goes wrong — the rule stays, quieter, minus
+  // a case nobody notices is gone until the agent makes that mistake again.
+  const keptCompressions: typeof compressions = [];
+  if (compressions.length > 0) {
+    const verdicts = await mapConcurrent(compressions, TIDY_CONCURRENCY, async (c) => {
+      let text: string | undefined;
+      try {
+        text = await completeText(ctx.model, {
+          ...ctx.system,
+          prompt: buildMergeAuditPrompt(
+            [{ category: c.target.category, instruction: c.target.instruction }],
+            c.instruction,
+            ctx.agentInstructions,
+          ),
+          maxOutputTokens: WRITE_MAX_OUTPUT_TOKENS,
+        });
+      } catch (error) {
+        return [`the audit call failed: ${error}`];
+      }
+      const raw = text ? parseJsonObject<RawAudit>(text) : null;
+      if (!raw) return ['the audit returned nothing readable'];
+      return (Array.isArray(raw.missing) ? raw.missing : [])
+        .filter((m): m is string => typeof m === 'string' && m.trim().length > 0);
+    });
+    compressions.forEach((c, index) => {
+      // mapConcurrent resolves a thrown worker to null: unverified, so it keeps
+      // its original text like any other failed audit.
+      const missing = verdicts[index] ?? ['the audit did not complete'];
+      if (missing.length === 0) {
+        keptCompressions.push(c);
+        return;
+      }
+      logger.debug(
+        `[Learning] Compression of ${c.target.id} dropped: ${missing.join('; ')}; kept the original`,
+      );
+    });
+  }
 
   const graduating = ctx.graduationBlocked ? [] : plan.graduates.map((g) => g.target);
 
@@ -1490,6 +1636,14 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
     target.instruction = rewrite.instruction;
     target.extractedAt = ctx.nowIso;
   }
+  // Same rule, fewer words — so unlike a rewrite this does NOT restamp
+  // extractedAt. The correction is not newer than it was; shortening it must not
+  // reorder the set or reset any age-based judgement about it.
+  for (const compression of keptCompressions) {
+    const target = byId.get(compression.target.id)!;
+    target.title = compression.title;
+    target.instruction = compression.instruction;
+  }
   for (const retire of plan.retires) byId.get(retire.target.id)!.state = 'retired';
   for (const target of graduating) byId.get(target.id)!.state = 'graduated';
 
@@ -1500,6 +1654,11 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
       why: m.why,
     })),
     ...rewrites.map((r): ConsolidationChange => ({ kind: 'rewrite', titles: [r.target.title], why: r.why })),
+    ...keptCompressions.map((c): ConsolidationChange => ({
+      kind: 'compress',
+      titles: [c.target.title],
+      why: `${countWords(c.target.instruction)} -> ${countWords(c.instruction)} words; ${c.why}`,
+    })),
     ...plan.retires.map((r): ConsolidationChange => ({ kind: 'retire', titles: [r.target.title], why: r.why })),
     ...graduating.map((t): ConsolidationChange => ({
       kind: 'graduate',
@@ -1713,8 +1872,13 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // been reconciled against each other.
   //
   // Two rules, because a block of one has nothing to compare against.
+  //
+  // Three piles now: an over-long staged entry is the third reason. A set at
+  // cap with a tidy block still returned "nothing to tidy up" while holding
+  // corrections of several hundred words, because neither pile was counted in
+  // anything but entries.
   const permanentBefore = parseLearnedBlock(agentBefore);
-  if (active.length <= cap && permanentBefore.length < 2) return base;
+  if (active.length <= cap && permanentBefore.length < 2 && !active.some(isOverlong)) return base;
 
   // Helper calls run on the agent's own model unless overridden: whatever
   // provider and auth the agent already works with is guaranteed to work here,
@@ -1755,7 +1919,14 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     const before = activeLearnings(working);
-    if (before.length <= cap) break;
+    // Two reasons to run, not one. The count reason is the original: entries
+    // past the cap are stored and never injected. The size reason is that a set
+    // sitting exactly AT the cap is the normal steady state — 13 of 22 agents
+    // in the store this was measured on — and under a count-only condition
+    // nothing ever looked at them again however long they grew. Every word of
+    // every active entry is re-read on every run, so an at-cap set of 485-word
+    // corrections is the expensive case, not the finished one.
+    if (before.length <= cap && !before.some(isOverlong)) break;
 
     const outcome = await tidyRound(working, before, {
       model,

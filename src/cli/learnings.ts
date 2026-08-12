@@ -234,6 +234,7 @@ function printResult(result: ConsolidationResult, dryRun: boolean): void {
   const verbs: Record<ConsolidationChange['kind'], string> = {
     merge: 'merge',
     rewrite: 'rewrite',
+    compress: 'shortened',
     retire: 'retire',
     graduate: 'permanent',
     'merge-permanent': 'agent file, combined',
