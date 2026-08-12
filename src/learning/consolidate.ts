@@ -588,9 +588,21 @@ export function buildBlockRewritePrompt(
     : '';
 
   // The body, block excised, so a rule can be read against the instructions it
-  // actually runs beside. Truncated because this is context for a judgement,
-  // not the thing being rewritten.
-  const body = agentBody ? bodyWithoutBlock(agentBody).slice(0, BODY_CONTEXT_CHARS) : '';
+  // actually runs beside. Sent WHOLE.
+  //
+  // A character cut here does not degrade the answer, it silently deletes the
+  // question: a rule can only be found to contradict text that is in the
+  // prompt, so everything past the cut comes back clean whatever it says.
+  // Measured on x-engage-reply at a 12,000-character cut: body 34,181
+  // characters, two of the four known contradictions sat at 19,709 and 23,476
+  // and were reported as absent. The same mistake is recorded against
+  // buildDecidePrompt above, at 6,000.
+  //
+  // This runs on `learnings tidy`, by hand, occasionally. A whole body is
+  // roughly 9k tokens on a large agent, once, against a pass whose entire
+  // output is a few rewritten rules. The ceiling below is a guard against a
+  // pathological file, not a budget, and it says so when it bites.
+  const body = agentBody ? truncatedBody(bodyWithoutBlock(agentBody)) : '';
   const bodySection = body
     ? `
 
@@ -613,7 +625,7 @@ Combine, tighten, and reorder freely. Specifically look for:
 - **The same instruction stated more than once** in different words or different scopes.
 - **Leftovers from staging** — phrases like "CORRECTION of an auto-learning from this session", "on the 2026-07-14 run", or an id like "id:a37rttpa". These made sense while the rule was a pending correction. In a permanent rule they are noise: state the rule, keep the concrete evidence that makes it credible, drop the bookkeeping.
 - **A rule the body already states.** Drop it. The body outranks it anyway, so the copy here only adds length and a second place to drift.
-- **One rule that is really several.** A long rule is not automatically a bad one, but a word count in the hundreds usually means separate instructions were appended to it over time. Split it so each rule is one thing, then apply everything above to each part.
+- **One rule that has been appended to.** A long rule is not automatically a bad one, but a word count in the hundreds usually means corrections were bolted on over time, each with the story of why it was added. Work that rule hardest: keep every instruction, cut the accumulated narration around them. Answer with one rule per input rule — do not split one into several, the answer format cannot express it and the whole rewrite is discarded when it tries.
 
 ## Be concise, but lose nothing
 
@@ -638,7 +650,12 @@ Return the complete new set. Every input rule must be accounted for exactly once
 
 ## Rules the body CONTRADICTS
 
-Separately from the rewrite, report any rule that tells the agent to do the opposite of what its own instructions say. Not a rule the body merely does not mention — one where following both is impossible.
+Separately from the rewrite, report any rule that cannot do what it was written to do, given what the body says. Two kinds:
+
+- **Opposed.** Following the rule and following the body are not both possible. One requires what the other forbids, or an enum in the body offers a value a rule rejects on sight.
+- **Dead reference.** The rule instructs the agent about a command, field, file, or step the body says it does not have, no longer uses, or reaches a different way. It is unfollowable rather than contradicted, and equally never in force.
+
+Not a rule the body merely does not mention. Silence is not disagreement.
 
 These matter more than anything else on this page. A contradicted rule is not redundant, it is dead: the body outranks it, so it has never once changed what the agent did, and whoever wrote it believes it is in force. Somebody has to decide which side is right, and that is not a decision you can make from here — it usually means editing the body, which you may not touch.
 
@@ -662,8 +679,23 @@ function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
-/** How much of the body to show the rewrite pass as comparison context. */
-const BODY_CONTEXT_CHARS = 12000;
+/** Guard against a pathological agent file, not a context budget. Set far above
+ *  any real agent body: the largest in the repo this was measured on is 34k. */
+const BODY_CONTEXT_CHARS = 200_000;
+
+/** The body, whole unless it is absurd — and loud when it is not.
+ *
+ *  Silent truncation is the failure mode this whole comparison had: a cut body
+ *  returns "no contradictions" for every rule past the cut, which is
+ *  indistinguishable from a clean file. If a body ever is too large to send,
+ *  the person running the tidy has to know the answer was partial. */
+function truncatedBody(body: string): string {
+  if (body.length <= BODY_CONTEXT_CHARS) return body;
+  logger.warn(
+    `[Learning] Agent body is ${body.length} characters; only the first ${BODY_CONTEXT_CHARS} were compared against the permanent rules. Contradictions after that point were not looked for.`,
+  );
+  return body.slice(0, BODY_CONTEXT_CHARS);
+}
 
 /** The agent body with the graduated block cut out.
  *
@@ -752,6 +784,14 @@ export function validateBlockRewrite(
 
     for (const index of covers) {
       if (index < 0 || index >= before.length) return { rejected: `rule ${index} does not exist` };
+      // One input rule may be carried by exactly one output rule. A split — two
+      // output rules both claiming input 0 — is rejected here, and the reject
+      // discards the whole rewrite including its conflict report. Worth naming
+      // because the size guidance above deliberately does NOT ask for splits:
+      // the answer format has no way to say "these two rules together carry
+      // input 0", and auditEdits would then check each half against the whole
+      // source, find the other half missing, and restore the original anyway.
+      // Supporting splits means auditing a covering GROUP rather than a rule.
       const owner = claimed.get(index);
       if (owner !== undefined) return { rejected: `rule ${index} is claimed twice` };
       claimed.set(index, instruction);
@@ -779,10 +819,17 @@ export function validateBlockRewrite(
     return { rejected: `rule${missing.length === 1 ? '' : 's'} ${missing.join(', ')} vanished — neither kept nor dropped` };
   }
 
-  // Diagnostic, so a malformed entry is skipped rather than failing a rewrite
-  // that is otherwise sound. A conflict report changes no text; the worst case
-  // of dropping one is that a human is not told about it, which is where this
-  // stood before.
+  return { rules, dropped, conflicts: conflictsFrom(raw, before) };
+}
+
+/**
+ * The conflict list out of a raw response, independent of the rewrite.
+ *
+ * Diagnostic, so a malformed entry is skipped rather than failing a rewrite
+ * that is otherwise sound. A conflict report changes no text; the worst case of
+ * dropping one is that a human is not told, which is where this stood before.
+ */
+function conflictsFrom(raw: RawBlockRewrite, before: PermanentRule[]): PermanentConflict[] {
   const conflicts: PermanentConflict[] = [];
   for (const c of raw.conflicts ?? []) {
     const index = c.index;
@@ -795,8 +842,7 @@ export function validateBlockRewrite(
       why,
     });
   }
-
-  return { rules, dropped, conflicts };
+  return conflicts;
 }
 
 /**
@@ -1501,7 +1547,16 @@ async function rewritePermanentBlock(
   const checked = validateBlockRewrite(raw, rules);
   if ('rejected' in checked) {
     logger.debug(`[Learning] Permanent-block rewrite discarded: ${checked.rejected}`);
-    return null;
+    // The rewrite is discarded; the conflict report is not. They are separate
+    // answers to separate questions, and only one of them proposes an edit.
+    // Which rules contradict the body is true whether or not the model also
+    // managed to return a well-formed rewrite — and a structural reject is
+    // exactly when a file most needs the finding, since nothing else about
+    // that pass survives. Observed: two of three runs on x-engage-reply were
+    // rejected for shape, and each silently took a real contradiction with it.
+    const conflicts = conflictsFrom(raw, rules);
+    if (conflicts.length === 0) return null;
+    return { rules, dropped: [], conflicts, edited: [], refused: [] };
   }
   return auditEdits(checked, rules, ctx);
 }

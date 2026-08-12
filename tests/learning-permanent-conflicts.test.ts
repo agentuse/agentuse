@@ -40,6 +40,17 @@ describe("showing the rewrite pass what the rules sit beside", () => {
     const prompt = buildBlockRewritePrompt(rules, 0);
     expect(prompt).not.toContain("The agent's own instructions, for comparison");
   });
+
+  // The bug this guards: a cut body does not weaken the answer, it deletes the
+  // question. Everything past the cut comes back "no contradiction" whatever it
+  // says. Measured at a 12,000-character cut on a 34,181-character body: two of
+  // four known contradictions sat past it and were reported absent.
+  test("sends a real agent body whole, however far in the rule it collides with sits", () => {
+    const filler = "Draft one reply per run. ".repeat(1400); // ~35k characters
+    const deep = "The FIRST sentence must already carry the new thing.";
+    const prompt = buildBlockRewritePrompt(rules, 0, `${filler}\n${deep}`);
+    expect(prompt).toContain(deep);
+  });
 });
 
 describe("reporting a permanent rule the body contradicts", () => {
