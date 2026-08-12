@@ -313,6 +313,6 @@ export type { MigrationEntry, MigrationStatus } from './migrate';
 export { MAX_INJECTED_LEARNINGS, activeLearnings, effectiveCap, learningSourceRank, partitionLearnings, rankLearnings } from './ranking';
 export { LEARNED_BLOCK_START, LEARNED_BLOCK_END, renderLearnedBlock, spliceLearnedBlock, writeLearnedBlock } from './graduate';
 export { consolidateLearnings, describeConsolidation, isGraduationEligible, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord } from './consolidate';
-export type { ConsolidationResult, ConsolidationChange, TidyProgress, TidyRecord } from './consolidate';
+export type { ConsolidationResult, ConsolidationChange, PermanentConflict, TidyProgress, TidyRecord } from './consolidate';
 export type { ApprovalReview, Learning, LearningConfig, LearningDraft, LearningOutcome, LearningSource } from './types';
 export { LearningConfigSchema } from './types';

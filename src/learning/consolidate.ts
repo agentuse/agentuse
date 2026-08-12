@@ -228,6 +228,11 @@ export interface ConsolidationResult {
    *  they accepted is the one change here they are most likely to want to
    *  argue with. */
   droppedPermanent: { instruction: string; why: string }[];
+  /** Permanent rules that contradict the agent's own body text, and so have
+   *  never taken effect — the body outranks the block at run time. Reported,
+   *  never resolved: the fix is usually in the body, which a tidy-up may not
+   *  touch. Empty on a healthy file. */
+  permanentConflicts: PermanentConflict[];
   /** Why graduation was skipped, when it was. */
   graduationSkipped?: string;
   diffs: { learnings: string; agentFile?: string };
@@ -258,6 +263,21 @@ interface RawDecisions {
 interface RawBlockRewrite {
   rules?: { category?: string; instruction?: string; covers?: number[]; why?: string }[];
   dropped?: { index?: number; why?: string }[];
+  conflicts?: { index?: number; bodySays?: string; why?: string }[];
+}
+
+/** A permanent rule that contradicts the agent's own body text.
+ *
+ *  Reported, never resolved here. This pass may only rewrite the block, and a
+ *  contradiction is decided in the body — the block sits BELOW the body in
+ *  runtime precedence, so the graduated rule is the side that silently loses.
+ *  Auto-dropping it would delete a correction a human gave on the grounds that
+ *  it never worked, and auto-keeping it leaves it not working. Both are the
+ *  human's call, so this only puts it in front of them. */
+export interface PermanentConflict {
+  instruction: string;
+  bodySays: string;
+  why: string;
 }
 
 /** One rule of a proposed block, still carrying which originals it claims. */
@@ -272,6 +292,7 @@ interface ProposedRule extends PermanentRule {
 interface CheckedRewrite {
   rules: ProposedRule[];
   dropped: { instruction: string; why: string }[];
+  conflicts: PermanentConflict[];
 }
 
 /** A block rewrite that has also been audited: the new set, what it removed,
@@ -279,6 +300,7 @@ interface CheckedRewrite {
 interface BlockRewrite {
   rules: PermanentRule[];
   dropped: { instruction: string; why: string }[];
+  conflicts: PermanentConflict[];
   edited: ConsolidationChange[];
   /** Proposed edits kept out for losing an instruction, with what went missing.
    *  Diagnostic only — the rules they targeted are in `rules` unchanged. */
@@ -548,16 +570,40 @@ Respond with ONLY a JSON object, no other text:
  * Newly graduated rules are folded in here too, so a promotion lands wherever
  * it belongs in the ruleset instead of being appended to the end.
  */
-export function buildBlockRewritePrompt(rules: PermanentRule[], freshCount: number): string {
-  const listed = rules.map((r, i) => `${i}. [${r.category}] ${r.instruction}`).join('\n\n');
+export function buildBlockRewritePrompt(
+  rules: PermanentRule[],
+  freshCount: number,
+  agentBody?: string,
+): string {
+  // Word count per rule, in the prompt. Every other check here is comparative —
+  // does this rule duplicate that one — so a single long rule passed everything
+  // by duplicating nothing, and nothing ever told this pass that one rule of
+  // 1,393 words was itself the problem. Measured on x-engage-reply: five rules,
+  // 3,904 words, two merged, block unchanged in size.
+  const listed = rules
+    .map((r, i) => `${i}. [${r.category}] (${countWords(r.instruction)} words) ${r.instruction}`)
+    .join('\n\n');
   const fresh = freshCount > 0
     ? `\n\nThe last ${freshCount} ${freshCount === 1 ? 'rule was' : 'rules were'} just promoted into this set and have never been edited alongside the others. They are the most likely to duplicate something already here.`
+    : '';
+
+  // The body, block excised, so a rule can be read against the instructions it
+  // actually runs beside. Truncated because this is context for a judgement,
+  // not the thing being rewritten.
+  const body = agentBody ? bodyWithoutBlock(agentBody).slice(0, BODY_CONTEXT_CHARS) : '';
+  const bodySection = body
+    ? `
+
+## The agent's own instructions, for comparison
+These are NOT yours to rewrite. They are here so you can see what each rule sits beside. They OUTRANK every rule above at run time: where a rule and this text disagree, this text is what the agent follows and the rule below is dead.
+
+${body}`
     : '';
 
   return `Below are the permanent rules in one agent's instruction file. They apply on EVERY run of this agent. Rewrite them as one coherent set.${fresh}
 
 ## The rules
-${listed}
+${listed}${bodySection}
 
 ## What to change
 
@@ -566,6 +612,8 @@ Combine, tighten, and reorder freely. Specifically look for:
 - **A rule and the correction to that rule** — where a later rule redefines a term or overrules a case in an earlier one. The correction belongs inside the rule it corrects, not beside it.
 - **The same instruction stated more than once** in different words or different scopes.
 - **Leftovers from staging** — phrases like "CORRECTION of an auto-learning from this session", "on the 2026-07-14 run", or an id like "id:a37rttpa". These made sense while the rule was a pending correction. In a permanent rule they are noise: state the rule, keep the concrete evidence that makes it credible, drop the bookkeeping.
+- **A rule the body already states.** Drop it. The body outranks it anyway, so the copy here only adds length and a second place to drift.
+- **One rule that is really several.** A long rule is not automatically a bad one, but a word count in the hundreds usually means separate instructions were appended to it over time. Split it so each rule is one thing, then apply everything above to each part.
 
 ## Be concise, but lose nothing
 
@@ -586,7 +634,17 @@ Two more:
 
 Return the complete new set. Every input rule must be accounted for exactly once, either inside some output rule's "covers" or in "dropped":
 - "covers" lists the input numbers a rule now carries. One number and identical text means untouched — omit "why". Any other case needs a one-line "why".
-- "dropped" is only for a rule with nothing left to carry, because another rule fully states it. Losing content is a bug; if in doubt, carry it.
+- "dropped" is only for a rule with nothing left to carry, because another rule fully states it, or because the agent's own instructions above already say it. Losing content is a bug; if in doubt, carry it.
+
+## Rules the body CONTRADICTS
+
+Separately from the rewrite, report any rule that tells the agent to do the opposite of what its own instructions say. Not a rule the body merely does not mention — one where following both is impossible.
+
+These matter more than anything else on this page. A contradicted rule is not redundant, it is dead: the body outranks it, so it has never once changed what the agent did, and whoever wrote it believes it is in force. Somebody has to decide which side is right, and that is not a decision you can make from here — it usually means editing the body, which you may not touch.
+
+So do not resolve them. Keep the rule exactly as it is, in "rules", and name it in "conflicts". Quote the body text it collides with so a human can see both sides at once. If nothing collides, return an empty list; empty is the normal answer.
+
+## How to answer
 
 Respond with ONLY a JSON object, no other text:
 {
@@ -594,8 +652,29 @@ Respond with ONLY a JSON object, no other text:
     {"category": "pattern", "instruction": "full text of the rule", "covers": [0]},
     {"category": "warning", "instruction": "full text of the combined rule", "covers": [3, 4], "why": "two halves of one gate procedure"}
   ],
-  "dropped": [{"index": 7, "why": "rule covering 3 and 4 now states this outright"}]
+  "dropped": [{"index": 7, "why": "rule covering 3 and 4 now states this outright"}],
+  "conflicts": [{"index": 2, "bodySays": "verbatim quote of the colliding body text", "why": "rule requires an accepting opener; body auto-rejects one"}]
 }`;
+}
+
+/** Words in a rule, for the size signal in the rewrite prompt. */
+function countWords(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+/** How much of the body to show the rewrite pass as comparison context. */
+const BODY_CONTEXT_CHARS = 12000;
+
+/** The agent body with the graduated block cut out.
+ *
+ *  Without this the block is shown to the pass twice — once as the rules being
+ *  rewritten, once inside the body — and every rule trivially "matches the
+ *  body", which is itself. */
+function bodyWithoutBlock(agentInstructions: string): string {
+  const start = agentInstructions.indexOf(LEARNED_BLOCK_START);
+  const end = agentInstructions.indexOf(LEARNED_BLOCK_END);
+  if (start === -1 || end <= start) return agentInstructions;
+  return `${agentInstructions.slice(0, start)}${agentInstructions.slice(end + LEARNED_BLOCK_END.length)}`;
 }
 
 /**
@@ -700,7 +779,24 @@ export function validateBlockRewrite(
     return { rejected: `rule${missing.length === 1 ? '' : 's'} ${missing.join(', ')} vanished — neither kept nor dropped` };
   }
 
-  return { rules, dropped };
+  // Diagnostic, so a malformed entry is skipped rather than failing a rewrite
+  // that is otherwise sound. A conflict report changes no text; the worst case
+  // of dropping one is that a human is not told about it, which is where this
+  // stood before.
+  const conflicts: PermanentConflict[] = [];
+  for (const c of raw.conflicts ?? []) {
+    const index = c.index;
+    if (!Number.isInteger(index) || index! < 0 || index! >= before.length) continue;
+    const why = c.why?.trim();
+    if (!why) continue;
+    conflicts.push({
+      instruction: before[index!]!.instruction,
+      bodySays: c.bodySays?.trim() || '',
+      why,
+    });
+  }
+
+  return { rules, dropped, conflicts };
 }
 
 /**
@@ -1380,6 +1476,7 @@ async function rewritePermanentBlock(
     model: string;
     system: HelperSystemPrompt;
     reportAt: (phase: TidyProgress['phase']) => void;
+    agentBody?: string;
   },
 ): Promise<BlockRewrite | null> {
   ctx.reportAt('writing');
@@ -1387,7 +1484,7 @@ async function rewritePermanentBlock(
   try {
     responseText = await completeText(ctx.model, {
       ...ctx.system,
-      prompt: buildBlockRewritePrompt(rules, freshCount),
+      prompt: buildBlockRewritePrompt(rules, freshCount, ctx.agentBody),
       maxOutputTokens: BLOCK_MAX_OUTPUT_TOKENS,
     });
   } catch (error) {
@@ -1485,7 +1582,7 @@ async function auditEdits(
   }
 
   for (const note of refused) logger.debug(`[Learning] Permanent-block ${note}; kept the originals`);
-  return { rules, dropped: checked.dropped, edited, refused };
+  return { rules, dropped: checked.dropped, conflicts: checked.conflicts, edited, refused };
 }
 
 /**
@@ -1522,6 +1619,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     rounds: 0,
     changes: [],
     droppedPermanent: [],
+    permanentConflicts: [],
     merged: 0,
     rewritten: 0,
     retired: 0,
@@ -1689,10 +1787,14 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // the appended set stands, which is precisely the old behaviour.
   const blockOutcome = graduationBlocked || appended.length < 2
     ? null
-    : await rewritePermanentBlock(appended, newlyPermanent.length, { model, system, reportAt });
+    : await rewritePermanentBlock(appended, newlyPermanent.length, { model, system, reportAt, agentBody: agentBefore });
 
   const permanentAfter = blockOutcome?.rules ?? appended;
   const droppedPermanent = blockOutcome?.dropped ?? [];
+  const permanentConflicts = blockOutcome?.conflicts ?? [];
+  for (const c of permanentConflicts) {
+    logger.debug(`[Learning] Permanent rule contradicts the agent body: ${c.why}`);
+  }
   // Counted as changes so a press whose ONLY effect is tightening the block
   // still writes, and still shows up in the change list. Editing rules in the
   // human's own file is the least invisible thing here, not the most.
@@ -1735,6 +1837,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     retired,
     graduated: graduated.map((l) => l.title),
     droppedPermanent: graduationBlocked ? [] : droppedPermanent,
+    permanentConflicts,
     ...(graduationSkipped ? { graduationSkipped } : {}),
     ...(incomplete ? { note: incomplete } : {}),
     // Only when it ends over the cap. At or under it there is nothing to
@@ -1853,6 +1956,16 @@ export function describeConsolidation(result: ConsolidationResult): string {
     ? `${blockEdits} permanent rule${blockEdits === 1 ? '' : 's'} tightened in the agent file`
     : '';
 
-  if (staged && block) return `${staged}; ${block}`;
-  return staged || block || 'Nothing safe to change';
+  // Always said, even on a pass that changed nothing else. A contradicted rule
+  // is the one finding here that is not about tidiness: it means a correction
+  // someone gave has never taken effect, and it stays that way until a human
+  // edits the body, which this pass may not do. Reporting it beside the word
+  // counts would bury it.
+  const conflicts = result.permanentConflicts?.length ?? 0;
+  const clash = conflicts > 0
+    ? `${conflicts} permanent rule${conflicts === 1 ? '' : 's'} contradicted by the agent body (never in force — the body outranks them)`
+    : '';
+
+  const summary = staged && block ? `${staged}; ${block}` : staged || block || 'Nothing safe to change';
+  return clash ? `${summary}. ${clash}` : summary;
 }
