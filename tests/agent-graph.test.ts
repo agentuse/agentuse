@@ -114,6 +114,43 @@ describe('buildAgentGraph', () => {
     expect(graph.nodes.find((n) => n.path === 'li.agentuse')!.id).toBe('li.agentuse');
   });
 
+  it('merges clusters that share a junction instead of copying its tail', () => {
+    const graph = buildAgentGraph([
+      row({ path: 'm/daily.agentuse' }),
+      row({ path: 'm/weekly.agentuse' }),
+      row({ path: 'm/entry.agentuse', dependsOn: ['m/daily.agentuse', 'm/weekly.agentuse'] }),
+      row({ path: 'm/rebalance.agentuse', dependsOn: ['m/entry.agentuse'] }),
+    ]);
+    // Two triggers into one pipeline: one band, one copy of each agent.
+    expect(graph.componentCount).toBe(1);
+    expect(graph.nodes).toHaveLength(4);
+    expect(graph.nodes.some((n) => n.shared)).toBe(false);
+    const byPath = new Map(graph.nodes.map((n) => [n.path, n]));
+    expect(byPath.get('m/daily.agentuse')!.rank).toBe(0);
+    expect(byPath.get('m/weekly.agentuse')!.rank).toBe(0);
+    expect(byPath.get('m/entry.agentuse')!.rank).toBe(1);
+    expect(byPath.get('m/rebalance.agentuse')!.rank).toBe(2);
+    // Both triggers stay entry points, on their own rows.
+    expect(byPath.get('m/daily.agentuse')!.entry).toBe(true);
+    expect(byPath.get('m/weekly.agentuse')!.entry).toBe(true);
+    expect(byPath.get('m/daily.agentuse')!.order).not.toBe(byPath.get('m/weekly.agentuse')!.order);
+  });
+
+  it('drops the sink copy once its managers merge into one band', () => {
+    const graph = buildAgentGraph([
+      row({ path: 'a.agentuse', subagents: ['judge.agentuse'] }),
+      row({ path: 'b.agentuse', subagents: ['judge.agentuse'] }),
+      row({ path: 'judge.agentuse' }),
+      row({ path: 'tail.agentuse', dependsOn: ['a.agentuse', 'b.agentuse'] }),
+    ]);
+    // The `tail` junction merges a and b, so the shared judge has one band to
+    // live in and needs no copy.
+    expect(graph.componentCount).toBe(1);
+    expect(graph.nodes.filter((n) => n.path === 'judge.agentuse')).toHaveLength(1);
+    expect(graph.nodes.filter((n) => n.path === 'tail.agentuse')).toHaveLength(1);
+    expect(graph.nodes.some((n) => n.shared)).toBe(false);
+  });
+
   it('ranks a delegation fan-out with manager on the left', () => {
     const graph = buildAgentGraph([
       row({ path: 'manager.agentuse', subagents: ['w1.agentuse', 'w2.agentuse'] }),

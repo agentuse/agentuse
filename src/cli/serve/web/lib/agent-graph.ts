@@ -10,12 +10,14 @@ import type { AgentRow } from "./api";
  * No runtime semantics — this mirrors what the files say, nothing more.
  *
  * Layout model: every root (no incoming edges) claims its reachable subtree as
- * a CLUSTER, drawn as its own contiguous band of rows. A node reachable from
- * several roots (e.g. a judge subagent shared by three managers) is DUPLICATED
- * into each band and flagged `shared` — without duplication one shared utility
- * leaf fuses otherwise-independent workflows into a single tangled component.
- * Node identity therefore splits in two: `path` (the agent) vs `id` (one
- * placed instance of it).
+ * a CLUSTER, drawn as its own contiguous band of rows. A subagent reachable
+ * from several roots (a judge shared by three managers) is DUPLICATED into
+ * each band and flagged `shared` — each manager spawns its own instance, and
+ * without duplication one shared utility leaf fuses otherwise-independent
+ * workflows into a single tangled component. Node identity therefore splits in
+ * two: `path` (the agent) vs `id` (one placed instance of it). An agent shared
+ * through `dependsOn` runs only once, so its clusters MERGE instead — one
+ * pipeline with several entry points (see below).
  */
 
 export type EdgeKind = "delegation" | "dependency";
@@ -115,7 +117,7 @@ export function buildAgentGraph(agents: AgentRow[]): AgentGraph {
   // Clusters: one per root, holding everything the root reaches. Cycle-only
   // subgraphs (no root) fall back to one cluster per leftover group.
   const roots = [...connected].filter((p) => (incomingCount.get(p) ?? 0) === 0).sort();
-  const clusters: string[][] = [];
+  let clusters: string[][] = [];
   const clusterOf = new Map<string, number[]>(); // path -> cluster indexes containing it
   const reach = (start: string): string[] => {
     const out: string[] = [];
@@ -141,6 +143,38 @@ export function buildAgentGraph(agents: AgentRow[]): AgentGraph {
       if (i >= 0) leftovers.splice(i, 1);
     }
   }
+  // Duplication is right for `subagents` only: the child really does run once
+  // inside each manager's run, so two managers own two instances. `dependsOn`
+  // is cross-run ordering — a shared agent reached that way runs ONCE, after
+  // either upstream (daily + weekly → entry → rebalance). Splitting there is a
+  // lie that also copies the whole tail and prints the same tile twice, so
+  // merge those clusters and let the pipeline show its two entry points.
+  const dependencyTargets = new Set(rawEdges.filter((e) => e.kind === "dependency").map((e) => e.to));
+  const parent = clusters.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i]!)));
+  const membership = new Map<string, number[]>();
+  clusters.forEach((cluster, k) => {
+    for (const p of cluster) (membership.get(p) ?? membership.set(p, []).get(p)!).push(k);
+  });
+  for (const [path, ks] of membership) {
+    if (ks.length < 2 || !dependencyTargets.has(path)) continue;
+    for (let i = 1; i < ks.length; i++) {
+      const a = find(ks[0]!);
+      const b = find(ks[i]!);
+      if (a !== b) parent[b] = a;
+    }
+  }
+  const bandOf = new Map<number, number>(); // union root -> merged cluster index
+  const mergedClusters: string[][] = [];
+  clusters.forEach((cluster, k) => {
+    const root = find(k);
+    let band = bandOf.get(root);
+    if (band === undefined) { band = mergedClusters.length; bandOf.set(root, band); mergedClusters.push([]); }
+    const target = mergedClusters[band]!;
+    for (const p of cluster) if (!target.includes(p)) target.push(p);
+  });
+  clusters = mergedClusters;
+
   // Big clusters first, then by root name for determinism.
   clusters.sort((a, b) => b.length - a.length || (a[0] ?? '').localeCompare(b[0] ?? ''));
   clusters.forEach((cluster, k) => {
