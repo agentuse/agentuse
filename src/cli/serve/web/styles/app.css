@@ -2598,9 +2598,11 @@ dialog#decision-dialog::backdrop,
 dialog#decision-dialog form { margin: 0; padding: 0; }
 
 /* ---------------- approval-arrival toast ---------------- */
-/* Slides down when a new gate arrives anywhere in the app: agent name, an
-   excerpt of what it wants, and inline Approve/Reject. Solid backdrop (not
-   the translucent panel token) so it stays readable over any page. */
+/* Slides down when a new gate arrives anywhere in the app: who is asking, what
+   kind of ask, and one line of triage. It notifies, it does not decide — the
+   whole strip is one link to the session page, which is where the thread, the
+   diff and the option bodies actually live. Solid backdrop (not the translucent
+   panel token) so it stays readable over any page. */
 @keyframes approval-toast-in { from { opacity: 0; transform: translate(-50%, -14px); } }
 .approval-toast {
   position: fixed;
@@ -2609,10 +2611,10 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
   transform: translateX(-50%);
   z-index: 60;
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: 4px;
   width: min(680px, calc(100vw - 24px));
-  padding: 13px 16px;
+  padding: 4px 8px 4px 4px;
   border: 1px solid var(--cyan-border);
   border-radius: 12px;
   background: var(--bg);
@@ -2620,100 +2622,66 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
   animation: approval-toast-in 300ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
   font-size: 13px;
 }
+/* One target for the whole notice: anywhere but the ✕ opens the gate. */
+.approval-toast-link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  text-decoration: none;
+  color: inherit;
+  transition: background 120ms ease;
+}
+.approval-toast-link:hover { background: var(--cyan-soft); }
 .approval-toast-dot {
   width: 9px;
   height: 9px;
-  margin-top: 5px;
   border-radius: 50%;
   background: var(--cyan);
   box-shadow: 0 0 8px var(--cyan);
   animation: pulse 1.4s ease-in-out infinite;
   flex-shrink: 0;
 }
-.approval-toast-body { flex: 1; min-width: 0; }
+.approval-toast-body { flex: 1; min-width: 0; display: block; }
 .approval-toast-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .approval-toast-agent { font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--fg); }
 .approval-toast-label { color: var(--cyan); font-size: 12px; }
-.approval-toast-more { font-family: var(--mono); font-size: 11px; color: var(--muted); text-decoration: none; }
-.approval-toast-more:hover { color: var(--cyan); }
-.approval-toast-excerpt {
-  margin-top: 4px;
+.approval-toast-more { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+/* One line only. The full text is on the session page; this is just enough to
+   judge whether it is worth going there now. */
+.approval-toast-line {
+  display: block;
+  margin-top: 2px;
   color: var(--muted-3);
   font-size: 12.5px;
   line-height: 1.45;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
-.approval-toast-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.approval-toast-actions button,
-.approval-toast-actions a.open {
-  font: inherit;
+.approval-toast-go {
+  flex-shrink: 0;
   font-size: 12.5px;
   font-weight: 500;
-  border-radius: 8px;
-  padding: 6px 13px;
-  cursor: pointer;
-  text-decoration: none;
-  transition: background 120ms ease, border-color 120ms ease;
-}
-/* Fixed min-width so the "Approving…"/"Rejecting…" busy labels don't shift
-   the button under the cursor mid-click. */
-.approval-toast-actions .approve,
-.approval-toast-actions .reject {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-width: 96px;
-}
-.approval-toast-actions .approve {
-  border: 1px solid var(--primary-bg);
-  background: var(--primary-bg);
-  color: var(--primary-fg);
-}
-.approval-toast-actions .approve:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
-.approval-toast-actions .reject {
-  border: 1px solid var(--red-border);
-  background: var(--red-soft);
-  color: var(--red);
-}
-.approval-toast-actions .reject:hover { border-color: var(--red); }
-.approval-toast-actions a.open {
-  border: 1px solid var(--line-strong);
-  background: transparent;
   color: var(--muted-3);
-  display: inline-flex;
-  align-items: center;
 }
-.approval-toast-actions a.open:hover { color: var(--fg); border-color: var(--fg); }
-/* On a pick gate "Pick option" is the ONLY forward action (one-tap approve is
-   suppressed), so it takes the primary weight the Approve button normally has. */
-.approval-toast-actions a.open.primary-open {
-  border-color: var(--primary-bg);
-  background: var(--primary-bg);
-  color: var(--primary-fg);
-}
-.approval-toast-actions a.open.primary-open:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); color: var(--primary-fg); }
-.approval-toast-actions .dismiss {
+.approval-toast-link:hover .approval-toast-go { color: var(--cyan); }
+.approval-toast-dismiss {
+  flex-shrink: 0;
   border: 0;
   background: transparent;
   color: var(--muted-2);
+  font: inherit;
   font-size: 14px;
   padding: 6px 4px;
+  cursor: pointer;
 }
-.approval-toast-actions .dismiss:hover { color: var(--fg); }
-.approval-toast-actions button:disabled { opacity: 0.55; cursor: default; }
-.approval-toast.outcome { align-items: center; }
-.approval-toast.outcome .approval-toast-text { color: var(--fg); }
-.approval-toast.outcome.approved { border-color: var(--green-border); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--green-soft); }
-.approval-toast.outcome.approved .approval-toast-dot { background: var(--green); box-shadow: 0 0 8px var(--green); animation: none; }
-.approval-toast.outcome.rejected { border-color: var(--red-border); }
-.approval-toast.outcome.rejected .approval-toast-dot { background: var(--red); box-shadow: none; animation: none; }
+.approval-toast-dismiss:hover { color: var(--fg); }
 @media (max-width: 560px) {
-  .approval-toast { flex-wrap: wrap; }
-  .approval-toast-actions { width: 100%; justify-content: flex-end; }
+  .approval-toast-go { display: none; }
 }
 
 /* ---------------- push notification bell ---------------- */
