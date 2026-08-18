@@ -85,9 +85,9 @@ For fleets, prefer a role alias such as `model: "@judgment"` over repeating a
 vendor name in many agents. `models.aliases` accepts either a string or an
 ordered fallback object such as
 `{"candidates":["anthropic:claude-opus","openai:gpt"],"cooldown":"5m"}`.
-Fallback applies only to transient failures before a fresh session receives
-model output or a tool call; the first successful concrete model stays pinned
-for that session.
+Fallback applies to transient failures and to a provider the machine cannot
+authenticate to, before a fresh session receives model output or a tool call;
+the first successful concrete model stays pinned for that session.
 
 **Thinking / reasoning effort: off by default, on for genuine judgment.**
 Thinking tokens bill at **output rates**, so it is real cost, not free depth.

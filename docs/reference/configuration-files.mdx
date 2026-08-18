@@ -223,8 +223,8 @@ model: "@fast"
 - **`default`** applies to any agent file with no `model:` field. `AGENTUSE_MODEL` overrides it, and an explicit `model:` in the file overrides both.
 - **`aliases`** keys are alphanumeric with hyphens or underscores, referenced with the `@` sigil (define `fast`, write `@fast`). The `@` is required in the reference because a bare name is already a valid OpenAI model id.
 - A string value may be a concrete id, a [version alias](/reference/models#version-aliases), another `@name`, or any of those with an `:env` auth suffix.
-- An object value defines ordered fallback `candidates`. On a transient first-request failure (rate limit, timeout, provider 5xx, or transport failure), AgentUse tries the next candidate only if the model has not produced output or invoked a tool.
-- Optional `cooldown` is a duration string such as `"30s"` or `"5m"`. A transiently failing concrete model is skipped by new runs in the same process until the cooldown expires. Cooldowns are in memory: restarting `agentuse serve` or starting a separate CLI process resets them.
+- An object value defines ordered fallback `candidates`. AgentUse tries the next candidate on a transient first-request failure (rate limit, timeout, provider 5xx, or transport failure) or when the candidate cannot be authenticated at all (no login, an OAuth token that will not refresh, a 401/403), and only if the model has not produced output or invoked a tool.
+- Optional `cooldown` is a duration string such as `"30s"` or `"5m"`. A concrete model that just failed this way is skipped by new runs in the same process until the cooldown expires. Cooldowns are in memory: restarting `agentuse serve` or starting a separate CLI process resets them.
 
 Aliases are resolved when the agent file is parsed. A fallback alias keeps its ordered concrete candidates until execution, then locks the session to the first model that responds successfully. Session logs, cost accounting, and context limits record that concrete model. A suspended run that resumes later stays on the model it started with, even if the alias or provider health has since changed.
 

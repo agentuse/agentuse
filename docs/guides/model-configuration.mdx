@@ -87,9 +87,12 @@ An alias can also carry an ordered fallback list:
 }
 ```
 
-AgentUse falls back only when a fresh session's first model request fails for a
-transient reason before emitting output or invoking a tool. The selected model
-is then fixed for that session. `cooldown` keeps new runs in the same process
+AgentUse falls back when a fresh session cannot get started on a candidate:
+a transient first-request failure (rate limit, timeout, provider 5xx, transport
+error), or a model it cannot authenticate to at all (no login, an OAuth token
+that will not refresh, a 401/403). Either way it only happens before the model
+emits output or invokes a tool, and the selected model is then fixed for that
+session. `cooldown` keeps new runs in the same process
 from repeatedly waiting on a model that just failed; it resets when the process
 restarts.
 

@@ -36,8 +36,8 @@ import { ANTHROPIC_IDENTITY_PROMPT, addAnthropicIdentity } from '../utils/anthro
 import {
   availableModelCandidates,
   clearModelCooldown,
-  isTransientModelError,
   markModelCooldown,
+  shouldTryNextModel,
 } from './model-fallback';
 
 // Constants
@@ -516,7 +516,7 @@ export async function* executeAgentCore(
     try {
       for await (const chunk of attempt) {
         if (isMeaningfulModelChunk(chunk)) meaningfulOutput = true;
-        if (chunk.type === 'error' && !meaningfulOutput && isTransientModelError(chunk.error)) {
+        if (chunk.type === 'error' && !meaningfulOutput && shouldTryNextModel(chunk.error)) {
           markModelCooldown(model, agent.config.modelFallbackCooldownMs);
           if (index + 1 < candidates.length) {
             fallbackError = chunk.error;
@@ -528,7 +528,7 @@ export async function* executeAgentCore(
         yield chunk;
       }
     } catch (error) {
-      if (!meaningfulOutput && isTransientModelError(error)) {
+      if (!meaningfulOutput && shouldTryNextModel(error)) {
         markModelCooldown(model, agent.config.modelFallbackCooldownMs);
         if (index + 1 < candidates.length) fallbackError = error;
         else throw error;

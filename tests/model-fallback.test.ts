@@ -32,6 +32,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   createModelMock.mockClear();
+  createModelMock.mockImplementation(async (model: string) => ({ modelId: model }));
   streamTextMock.mockReset();
   resetModelCooldowns();
 });
@@ -131,14 +132,57 @@ describe('model alias fallback execution', () => {
     expect(chunks.some((chunk) => chunk.type === 'error')).toBe(true);
   });
 
-  it('does not fall back on authentication errors', async () => {
+  it('falls back when the first candidate has no usable credentials', async () => {
+    const authError = new Error('No authentication found for Anthropic');
+    authError.name = 'AuthenticationError';
+    createModelMock.mockImplementationOnce(async () => { throw authError; });
     streamTextMock.mockImplementationOnce(() => ({
-      stream: (async function* () { yield { type: 'error', error: new Error('401 unauthorized') }; })(),
+      stream: (async function* () {
+        yield { type: 'text-delta', text: 'recovered' };
+        yield { type: 'finish', finishReason: 'stop' };
+      })(),
+      response: Promise.resolve({ messages: [] }),
     }));
 
-    const chunks = await drain(executeAgentCore(agent(), {}, options));
-    expect(createModelMock).toHaveBeenCalledTimes(1);
-    expect(chunks.some((chunk) => chunk.type === 'error')).toBe(true);
+    const runAgent = agent();
+    const chunks = await drain(executeAgentCore(runAgent, {}, options));
+
+    expect(createModelMock.mock.calls.map((call) => call[0])).toEqual([
+      'anthropic:claude-opus-5',
+      'openai:gpt-5.6',
+    ]);
+    expect(chunks.filter((chunk) => chunk.type === 'error')).toHaveLength(0);
+    expect(chunks.find((chunk) => chunk.type === 'text')?.text).toBe('recovered');
+    expect(runAgent.config.model).toBe('openai:gpt-5.6');
+  });
+
+  it('falls back when a stored OAuth token cannot be refreshed', async () => {
+    const refreshError = new Error('Anthropic OAuth token refresh failed (HTTP 529)');
+    refreshError.name = 'AnthropicRefreshFailed';
+    createModelMock.mockImplementationOnce(async () => { throw refreshError; });
+    streamTextMock.mockImplementationOnce(() => ({
+      stream: (async function* () { yield { type: 'finish', finishReason: 'stop' }; })(),
+      response: Promise.resolve({ messages: [] }),
+    }));
+
+    const runAgent = agent();
+    await drain(executeAgentCore(runAgent, {}, options));
+
+    expect(createModelMock.mock.calls.map((call) => call[0])).toEqual([
+      'anthropic:claude-opus-5',
+      'openai:gpt-5.6',
+    ]);
+    expect(runAgent.config.model).toBe('openai:gpt-5.6');
+  });
+
+  it('raises the auth error when no candidate can authenticate', async () => {
+    const authError = new Error('No authentication found for Anthropic');
+    authError.name = 'AuthenticationError';
+    createModelMock.mockImplementation(async () => { throw authError; });
+
+    await expect(drain(executeAgentCore(agent(), {}, options)))
+      .rejects.toThrow('No authentication found for Anthropic');
+    expect(createModelMock).toHaveBeenCalledTimes(2);
   });
 
   it('skips a cooling candidate on the next run', async () => {

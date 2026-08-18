@@ -36,6 +36,30 @@ export function isTransientModelError(error: unknown): boolean {
 }
 
 /**
+ * Can this model not be used at all on this machine right now? A missing login,
+ * an OAuth token that would not refresh, a 401/403. Unlike a transient failure
+ * this will not clear on its own, but it is still per-candidate and raised
+ * before a single request leaves the process, so it is the safest possible
+ * moment to move on: naming a second candidate is precisely the instruction to
+ * use it when the first one cannot run.
+ */
+export function isModelUnusableError(error: unknown): boolean {
+  // Name rather than instanceof: the same error crosses module and process
+  // boundaries (subagents, the serve daemon) where the class identity does not
+  // survive but the name does.
+  if (error instanceof Error && (error.name === 'AuthenticationError' || error.name === 'AnthropicRefreshFailed')) {
+    return true;
+  }
+  const api = extractApiErrorDetail(error);
+  return api?.statusCode === 401 || api?.statusCode === 403;
+}
+
+/** Whether an ordered alias should move to its next candidate. */
+export function shouldTryNextModel(error: unknown): boolean {
+  return isTransientModelError(error) || isModelUnusableError(error);
+}
+
+/**
  * Return configured candidates that are not cooling down. If every candidate
  * is cooling down, try the one closest to recovery so fallback never turns a
  * temporary health hint into a synthetic outage.
