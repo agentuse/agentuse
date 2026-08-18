@@ -472,12 +472,17 @@ Commands not matching these patterns will be rejected.`;
             shell: false,
             cwd,
             detached: true, // Create new process group for cleanup
+            // Nothing ever writes to a bash-tool child's stdin, so a piped stdin
+            // is a handle that never reaches EOF. Any CLI that reads stdin then
+            // blocks forever and the call dies at its timeout with zero output.
+            stdio: ['ignore', 'pipe', 'pipe'],
             env: createSafeEnvironment(cwd),
           })
           : spawn(command, {
             shell: true,
             cwd,
             detached: true, // Create new process group for cleanup
+            stdio: ['ignore', 'pipe', 'pipe'],
             env: createSafeEnvironment(cwd),
           });
         activeChild = child;
