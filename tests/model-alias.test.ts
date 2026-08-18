@@ -40,8 +40,18 @@ function useConfig(models: unknown): string {
   return file;
 }
 
+/** A config path that does not exist: "the user has no AgentUse config". */
+function useNoConfig(): void {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentuse-alias-none-'));
+  process.env.AGENTUSE_CONFIG = path.join(dir, 'missing.json');
+  resetModelSettingsCache();
+}
+
 beforeEach(() => {
-  delete process.env.AGENTUSE_CONFIG;
+  // Point at a missing file rather than unsetting: unsetting falls through to
+  // the developer's real ~/.agentuse/config.json, so whichever aliases they
+  // happen to have defined decide whether these tests pass.
+  useNoConfig();
   delete process.env[MODEL_DEFAULT_ENV];
   resetModelSettingsCache();
   resetModelAliasCache();
@@ -220,6 +230,7 @@ describe('user aliases', () => {
   });
 
   it('reports unknown aliases when no config exists at all', () => {
+    useNoConfig();
     expect(() => resolveModelString('@fast')).toThrow('(none defined)');
   });
 });
