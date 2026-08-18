@@ -17,7 +17,10 @@
 # apply to in-flight agents too, use scripts/serve-restart.sh, which waits for
 # idle first.
 #
-# Skip with AGENTUSE_SKIP_SERVE_RESTART=1 (set by prepack) or CI=1.
+# Skip with AGENTUSE_SKIP_SERVE_RESTART=1 (set by prepack) or CI=1. Set
+# AGENTUSE_RESTART_WHEN_IDLE=1 to hand off to scripts/serve-restart.sh instead,
+# which waits for the daemon to have no live run before restarting, so in-flight
+# agents finish on this build rather than carrying the old one to completion.
 #
 set -euo pipefail
 
@@ -27,6 +30,13 @@ NAME="${AGENTUSE_PM2_NAME:-agentuse}"
 [ -n "${CI:-}" ] && exit 0
 command -v pm2 >/dev/null 2>&1 || exit 0
 pm2 describe "$NAME" >/dev/null 2>&1 || exit 0
+
+if [ -n "${AGENTUSE_RESTART_WHEN_IDLE:-}" ]; then
+  DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  bash "$DIR/serve-restart.sh" --timeout "${AGENTUSE_RESTART_TIMEOUT:-1800}" ||
+    echo "==> Daemon left on the old build; run scripts/serve-restart.sh when you want it."
+  exit 0
+fi
 
 echo "==> Restarting pm2 '$NAME' onto this build (AGENTUSE_SKIP_SERVE_RESTART=1 to skip)"
 pm2 restart "$NAME" >/dev/null

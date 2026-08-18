@@ -51,6 +51,7 @@
     "build:clean": "bun run clean && bun run build",
     "watch": "bun build ./src/index.ts --outdir ./dist --target node --format esm --sourcemap --packages external --watch",
     "watch:all": "bun run watch & bun run watch:web & wait",
+    "watch:serve": "bun run watch & bun run watch:web & bash scripts/serve-restart.sh --follow & wait",
     "dev:serve": "bun --watch src/index.ts serve",
     "link": "npm link",
     "unlink": "npm unlink",
