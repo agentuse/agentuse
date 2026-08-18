@@ -83,6 +83,53 @@ describe('AnthropicAuth.access refresh buffer', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  // The failure this pair exists for: a blip on the token endpoint used to
+  // surface as "No authentication found for Anthropic", which is both wrong and
+  // unfixable by the operator it sends to `auth login`.
+  it('retries a 5xx refresh once before giving up', async () => {
+    await AuthStorage.setOAuth('anthropic', {
+      type: 'oauth',
+      refresh: 'old-refresh',
+      access: 'stale-access',
+      expires: Date.now() + 60 * 1000,
+    });
+
+    let call = 0;
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      call++;
+      if (call === 1) return new Response('overloaded', { status: 529 });
+      return new Response(
+        JSON.stringify({ access_token: 'fresh-access', refresh_token: 'fresh-refresh', expires_in: 3600 }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    });
+
+    expect(await AnthropicAuth.access()).toBe('fresh-access');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('raises a refresh failure instead of reporting no credentials', async () => {
+    await AuthStorage.setOAuth('anthropic', {
+      type: 'oauth',
+      refresh: 'old-refresh',
+      access: 'stale-access',
+      expires: Date.now() + 60 * 1000,
+    });
+
+    fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status: 400 }));
+
+    await expect(AnthropicAuth.access()).rejects.toThrow(/refresh failed \(HTTP 400\)/);
+    // A 4xx that is not 429 is a real logout, so it must not be retried.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns undefined when nothing is stored at all', async () => {
+    fetchSpy = spyOn(globalThis, 'fetch');
+
+    expect(await AnthropicAuth.access()).toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('serializes concurrent refreshes and reuses the first refreshed token', async () => {
     const existing: OAuthTokens = {
       type: 'oauth',

@@ -239,8 +239,17 @@ export async function createModel(modelString: string) {
   
   if (config.provider === 'anthropic') {
     const baseURL = resolveBaseURL(config, 'anthropic');
-    // Check for OAuth token first (handles refresh automatically)
-    const oauthToken = await AnthropicAuth.access();
+    // Check for OAuth token first (handles refresh automatically). A stored
+    // login that cannot be refreshed right now is held, not raised: an API key
+    // in the environment still wins, and only an empty API key path reports it.
+    let oauthToken: string | undefined;
+    let oauthRefreshError: Error | undefined;
+    try {
+      oauthToken = await AnthropicAuth.access();
+    } catch (error) {
+      oauthRefreshError = error instanceof Error ? error : new Error(String(error));
+      logger.debug(`Anthropic OAuth unavailable: ${oauthRefreshError.message}`);
+    }
     if (oauthToken) {
       logger.debug('Using Anthropic OAuth token for authentication');
       // For OAuth, we need to use a custom fetch to set Bearer token
@@ -318,7 +327,10 @@ export async function createModel(modelString: string) {
         throw new AuthenticationError(
           'anthropic',
           'ANTHROPIC_API_KEY',
-          'No authentication found for Anthropic. Run `agentuse auth login anthropic` or set ANTHROPIC_API_KEY'
+          oauthRefreshError
+            ? `${oauthRefreshError.message}. Stored credentials were kept - retry, ` +
+              'or run `agentuse auth login anthropic` if it persists'
+            : 'No authentication found for Anthropic. Run `agentuse auth login anthropic` or set ANTHROPIC_API_KEY'
         );
       }
     }
