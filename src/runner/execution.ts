@@ -32,6 +32,13 @@ import { stripToolBlocks, hasReasoningParts, lastAssistantMessage } from '../ses
 import { OUTCOME_NUDGE_PROMPT, shouldRequestOutcome } from './outcome';
 import { REPORT_COMPLETE_TOOL } from '../tools/report-outcome.js';
 import type { RunOutcome } from '../tools/report-outcome.js';
+import { ANTHROPIC_IDENTITY_PROMPT, addAnthropicIdentity } from '../utils/anthropic';
+import {
+  availableModelCandidates,
+  clearModelCooldown,
+  isTransientModelError,
+  markModelCooldown,
+} from './model-fallback';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -415,30 +422,138 @@ function usageFromStreamChunk(chunk: any): { usage?: any; usageKind?: 'cumulativ
 /**
  * Core agent execution as an async generator
  */
+type ExecuteAgentCoreOptions = {
+  userMessage: string;
+  cacheableUserMessage?: string | undefined;
+  systemMessages: Array<{role: string, content: string}>;
+  messages?: ModelMessage[];
+  maxSteps: number;
+  abortSignal?: AbortSignal;
+  subAgentNames?: Set<string>;
+  sessionManager?: SessionManager;
+  sessionID?: string;
+  agentId?: string;
+  messageID?: string;
+  effectWal?: EffectWAL;
+  runOutcome?: RunOutcome;
+};
+
+function systemMessagesForModel(
+  messages: Array<{ role: string; content: string }>,
+  model: string
+): Array<{ role: string; content: string }> {
+  const providerNeutral = messages.filter((message) => message.content !== ANTHROPIC_IDENTITY_PROMPT);
+  return addAnthropicIdentity(providerNeutral, model);
+}
+
+function isMeaningfulModelChunk(chunk: AgentChunk): boolean {
+  return chunk.type === 'llm-first-token'
+    || chunk.type === 'text'
+    || chunk.type === 'reasoning'
+    || chunk.type === 'tool-call'
+    || chunk.type === 'tool-result'
+    || chunk.type === 'suspended';
+}
+
+async function persistSelectedModel(
+  agent: ParsedAgent,
+  model: string,
+  systemMessages: Array<{ role: string; content: string }>,
+  options: ExecuteAgentCoreOptions
+): Promise<void> {
+  agent.config.model = model;
+  if (!options.sessionManager || !options.sessionID || !options.agentId) return;
+  try {
+    await options.sessionManager.updateSession(options.sessionID, options.agentId, { model });
+    if (options.messageID) {
+      await options.sessionManager.updateMessage(options.sessionID, options.agentId, options.messageID, {
+        assistant: {
+          modelID: model,
+          providerID: resolveModelProvider(model),
+          system: systemMessages.map((message) => message.content),
+        },
+      });
+    }
+  } catch (error) {
+    logger.debug(`Failed to persist fallback model ${model}: ${toErrorMessage(error)}`);
+  }
+}
+
+/**
+ * Run a fresh session against an ordered model alias. A transient failure may
+ * move to the next candidate only before the provider emits output or invokes a
+ * tool. Resumes/redos carry messages and therefore stay pinned to one model.
+ */
 export async function* executeAgentCore(
   agent: ParsedAgent,
   tools: ToolSet,
-  options: {
-    userMessage: string;
-    cacheableUserMessage?: string | undefined;
-    systemMessages: Array<{role: string, content: string}>;
-    messages?: ModelMessage[];
-    maxSteps: number;
-    abortSignal?: AbortSignal;
-    subAgentNames?: Set<string>;  // Track which tools are subagents
-    sessionManager?: SessionManager;
-    sessionID?: string;
-    agentId?: string;
-    messageID?: string;
-    /** Effect WAL shared with the bash audit; tool executes are journaled through it. */
-    effectWal?: EffectWAL;
-    /**
-     * Shared slot the report_complete / report_incomplete tools write. Read at
-     * the end of a segment to decide whether to spend the one outcome nudge.
-     * Omitted by hand-built callers, which disables nudging.
-     */
-    runOutcome?: RunOutcome;
+  options: ExecuteAgentCoreOptions
+): AsyncGenerator<AgentChunk> {
+  const configured = options.messages
+    ? [agent.config.model]
+    : (agent.config.modelCandidates ?? [agent.config.model]);
+  const candidates = availableModelCandidates(configured);
+  const initiallyPreparedModel = agent.config.model;
+
+  for (let index = 0; index < candidates.length; index++) {
+    const model = candidates[index]!;
+    const attemptSystemMessages = model === initiallyPreparedModel
+      ? options.systemMessages
+      : systemMessagesForModel(options.systemMessages, model);
+    if (model === initiallyPreparedModel) agent.config.model = model;
+    else await persistSelectedModel(agent, model, attemptSystemMessages, options);
+    const attemptAgent: ParsedAgent = {
+      ...agent,
+      config: { ...agent.config, model },
+    };
+    let meaningfulOutput = false;
+    let fallbackError: unknown;
+    const attempt = executeAgentAttempt(attemptAgent, tools, {
+      ...options,
+      systemMessages: attemptSystemMessages,
+    });
+
+    try {
+      for await (const chunk of attempt) {
+        if (isMeaningfulModelChunk(chunk)) meaningfulOutput = true;
+        if (chunk.type === 'error' && !meaningfulOutput && isTransientModelError(chunk.error)) {
+          markModelCooldown(model, agent.config.modelFallbackCooldownMs);
+          if (index + 1 < candidates.length) {
+            fallbackError = chunk.error;
+            break;
+          }
+          yield chunk;
+          return;
+        }
+        yield chunk;
+      }
+    } catch (error) {
+      if (!meaningfulOutput && isTransientModelError(error)) {
+        markModelCooldown(model, agent.config.modelFallbackCooldownMs);
+        if (index + 1 < candidates.length) fallbackError = error;
+        else throw error;
+      } else {
+        throw error;
+      }
+    }
+
+    if (fallbackError !== undefined) {
+      logger.warn(
+        `Model ${model} failed before producing output; falling back to ${candidates[index + 1]}: ` +
+        toErrorMessage(fallbackError)
+      );
+      continue;
+    }
+
+    clearModelCooldown(model);
+    return;
   }
+}
+
+async function* executeAgentAttempt(
+  agent: ParsedAgent,
+  tools: ToolSet,
+  options: ExecuteAgentCoreOptions
 ): AsyncGenerator<AgentChunk> {
   // SDK-layer execution witness (debug trace of every tool execute via the
   // v7 telemetry integration). Idempotent; complements the effect WAL.

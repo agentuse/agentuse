@@ -136,9 +136,19 @@ export async function createSubAgentTool(
   // model, so a parent can point a subagent at `anthropic:claude-sonnet` or a
   // configured `@name` instead of a pinned version.
   if (modelOverride) {
-    agent.config.model = resolveModelString(modelOverride).model;
-    delete agent.config.modelAlias;
-    delete agent.config.modelSource;
+    const resolved = resolveModelString(modelOverride);
+    agent.config.model = resolved.model;
+    if (resolved.candidates !== undefined) agent.config.modelCandidates = resolved.candidates;
+    else delete agent.config.modelCandidates;
+    if (resolved.cooldownMs !== undefined) agent.config.modelFallbackCooldownMs = resolved.cooldownMs;
+    else delete agent.config.modelFallbackCooldownMs;
+    if (resolved.candidates !== undefined) {
+      agent.config.modelAlias = modelOverride;
+      agent.config.modelSource = resolved.source;
+    } else {
+      delete agent.config.modelAlias;
+      delete agent.config.modelSource;
+    }
   }
 
   return {

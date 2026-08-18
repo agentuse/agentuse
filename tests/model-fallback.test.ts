@@ -1,0 +1,196 @@
+import { beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { aiSdkErrorMocks } from './helpers/ai-sdk-mock';
+
+const createModelMock = mock(async (model: string) => ({ modelId: model }));
+const streamTextMock = mock((_config: any): any => ({
+  stream: (async function* () {
+    yield { type: 'finish', finishReason: 'stop' };
+  })(),
+  response: Promise.resolve({ messages: [] }),
+}));
+
+mock.module('../src/models', () => ({
+  createModel: createModelMock,
+  AuthenticationError: class AuthenticationError extends Error {},
+}));
+
+mock.module('ai', () => ({
+  streamText: streamTextMock,
+  isStepCount: mock((steps: number) => ({ steps })),
+  ...aiSdkErrorMocks(),
+}));
+
+let executeAgentCore: typeof import('../src/runner/execution').executeAgentCore;
+let resetModelCooldowns: typeof import('../src/runner/model-fallback').resetModelCooldowns;
+let availableModelCandidates: typeof import('../src/runner/model-fallback').availableModelCandidates;
+let markModelCooldown: typeof import('../src/runner/model-fallback').markModelCooldown;
+
+beforeAll(async () => {
+  ({ executeAgentCore } = await import('../src/runner/execution'));
+  ({ resetModelCooldowns, availableModelCandidates, markModelCooldown } = await import('../src/runner/model-fallback'));
+});
+
+beforeEach(() => {
+  createModelMock.mockClear();
+  streamTextMock.mockReset();
+  resetModelCooldowns();
+});
+
+function agent() {
+  return {
+    name: 'fallback-test',
+    config: {
+      model: 'anthropic:claude-opus-5',
+      modelAlias: '@judgment',
+      modelSource: 'user-alias',
+      modelCandidates: ['anthropic:claude-opus-5', 'openai:gpt-5.6'],
+      modelFallbackCooldownMs: 300_000,
+    },
+    instructions: 'Complete the task.',
+  } as any;
+}
+
+const options = {
+  userMessage: 'Complete the task.',
+  systemMessages: [{ role: 'system', content: 'base system' }],
+  maxSteps: 3,
+};
+
+async function drain(generator: AsyncGenerator<any>): Promise<any[]> {
+  const chunks: any[] = [];
+  for await (const chunk of generator) chunks.push(chunk);
+  return chunks;
+}
+
+describe('model alias fallback execution', () => {
+  it('expires cooldowns and keeps them keyed by concrete model', () => {
+    markModelCooldown('anthropic:claude-opus-5', 1_000, 10_000);
+    expect(availableModelCandidates(
+      ['anthropic:claude-opus-5', 'openai:gpt-5.6'],
+      10_500
+    )).toEqual(['openai:gpt-5.6']);
+    expect(availableModelCandidates(
+      ['anthropic:claude-opus-5', 'openai:gpt-5.6'],
+      11_000
+    )).toEqual(['anthropic:claude-opus-5', 'openai:gpt-5.6']);
+  });
+
+  it('falls back on a transient error before model output', async () => {
+    streamTextMock
+      .mockImplementationOnce(() => ({
+        stream: (async function* () { yield { type: 'error', error: new Error('429 rate limit') }; })(),
+      }))
+      .mockImplementationOnce(() => ({
+        stream: (async function* () {
+          yield { type: 'text-delta', text: 'recovered' };
+          yield { type: 'finish', finishReason: 'stop' };
+        })(),
+        response: Promise.resolve({ messages: [] }),
+      }));
+
+    const runAgent = agent();
+    const chunks = await drain(executeAgentCore(runAgent, {}, options));
+
+    expect(createModelMock.mock.calls.map((call) => call[0])).toEqual([
+      'anthropic:claude-opus-5',
+      'openai:gpt-5.6',
+    ]);
+    expect(chunks.filter((chunk) => chunk.type === 'error')).toHaveLength(0);
+    expect(chunks.find((chunk) => chunk.type === 'text')?.text).toBe('recovered');
+    expect(runAgent.config.model).toBe('openai:gpt-5.6');
+    const fallbackConfig = streamTextMock.mock.calls[1][0] as any;
+    expect(fallbackConfig.messages.some((message: any) =>
+      message.content === "You are Claude Code, Anthropic's official CLI for Claude."
+    )).toBe(false);
+  });
+
+  it('does not fall back after visible output', async () => {
+    streamTextMock.mockImplementationOnce(() => ({
+      stream: (async function* () {
+        yield { type: 'text-delta', text: 'partial' };
+        yield { type: 'error', error: new Error('503 unavailable') };
+      })(),
+    }));
+
+    const chunks = await drain(executeAgentCore(agent(), {}, options));
+    expect(createModelMock).toHaveBeenCalledTimes(1);
+    expect(chunks.some((chunk) => chunk.type === 'error')).toBe(true);
+  });
+
+  it('does not fall back after a tool call', async () => {
+    streamTextMock.mockImplementationOnce(() => ({
+      stream: (async function* () {
+        yield { type: 'tool-call', toolCallId: 'call-1', toolName: 'read_file', input: {} };
+        yield { type: 'error', error: new Error('503 unavailable') };
+      })(),
+    }));
+
+    const chunks = await drain(executeAgentCore(agent(), { read_file: {} as any }, options));
+    expect(createModelMock).toHaveBeenCalledTimes(1);
+    expect(chunks.some((chunk) => chunk.type === 'tool-call')).toBe(true);
+    expect(chunks.some((chunk) => chunk.type === 'error')).toBe(true);
+  });
+
+  it('does not fall back on authentication errors', async () => {
+    streamTextMock.mockImplementationOnce(() => ({
+      stream: (async function* () { yield { type: 'error', error: new Error('401 unauthorized') }; })(),
+    }));
+
+    const chunks = await drain(executeAgentCore(agent(), {}, options));
+    expect(createModelMock).toHaveBeenCalledTimes(1);
+    expect(chunks.some((chunk) => chunk.type === 'error')).toBe(true);
+  });
+
+  it('skips a cooling candidate on the next run', async () => {
+    let call = 0;
+    streamTextMock.mockImplementation(() => {
+      call++;
+      if (call === 1) {
+        return {
+          stream: (async function* () { yield { type: 'error', error: new Error('503 unavailable') }; })(),
+        };
+      }
+      return {
+        stream: (async function* () { yield { type: 'finish', finishReason: 'stop' }; })(),
+        response: Promise.resolve({ messages: [] }),
+      };
+    });
+
+    await drain(executeAgentCore(agent(), {}, options));
+    createModelMock.mockClear();
+    await drain(executeAgentCore(agent(), {}, options));
+
+    expect(createModelMock.mock.calls.map((call) => call[0])).toEqual(['openai:gpt-5.6']);
+  });
+
+  it('persists the selected fallback model for session resume', async () => {
+    streamTextMock
+      .mockImplementationOnce(() => ({
+        stream: (async function* () { yield { type: 'error', error: new Error('429 rate limit') }; })(),
+      }))
+      .mockImplementationOnce(() => ({
+        stream: (async function* () { yield { type: 'finish', finishReason: 'stop' }; })(),
+        response: Promise.resolve({ messages: [] }),
+      }));
+    const updateSession = mock(async () => {});
+    const updateMessage = mock(async () => {});
+    const sessionOptions = {
+      ...options,
+      sessionManager: {
+        updateSession,
+        updateMessage,
+        getSessionDirectory: mock(async () => '/tmp/fallback-session'),
+      } as any,
+      sessionID: 'session-1',
+      agentId: 'agent-1',
+      messageID: 'message-1',
+    };
+
+    await drain(executeAgentCore(agent(), {}, sessionOptions));
+
+    expect(updateSession.mock.calls.at(-1)?.[2]).toMatchObject({ model: 'openai:gpt-5.6' });
+    expect(updateMessage.mock.calls.at(-1)?.[3]).toMatchObject({
+      assistant: { modelID: 'openai:gpt-5.6', providerID: 'openai' },
+    });
+  });
+});

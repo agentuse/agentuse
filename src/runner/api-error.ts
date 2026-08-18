@@ -61,3 +61,11 @@ export function extractApiErrorDetail(error: unknown): ApiErrorDetail | undefine
     ...(typeof apiError.message === 'string' && apiError.message.length > 0 && { message: apiError.message }),
   };
 }
+
+/** Provider retry hint without widening the persisted diagnostic payload. */
+export function isRetryableApiError(error: unknown): boolean | undefined {
+  const apiError = findApiCallError(error);
+  return apiError && typeof apiError.isRetryable === 'boolean'
+    ? apiError.isRetryable
+    : undefined;
+}

@@ -350,6 +350,38 @@ describe('models config block', () => {
     expect(config?.models?.aliases?.fast).toBe('openai:gpt-mini');
   });
 
+  it('accepts an ordered fallback alias with cooldown', () => {
+    const file = makeTmpConfig({
+      models: {
+        aliases: {
+          judgment: {
+            candidates: [' anthropic:claude-opus ', 'openai:gpt'],
+            cooldown: '5m',
+          },
+        },
+      },
+    });
+    expect(loadGlobalConfig(file)?.models?.aliases?.judgment).toEqual({
+      candidates: ['anthropic:claude-opus', 'openai:gpt'],
+      cooldown: '5m',
+    });
+  });
+
+  it('rejects malformed fallback aliases', () => {
+    expect(() => loadGlobalConfig(makeTmpConfig({
+      models: { aliases: { empty: { candidates: [] } } },
+    }))).toThrow('candidates` must be a non-empty array');
+    expect(() => loadGlobalConfig(makeTmpConfig({
+      models: { aliases: { bad: { candidates: ['openai:gpt', 42] } } },
+    }))).toThrow('candidates[1]` must be a non-empty string');
+    expect(() => loadGlobalConfig(makeTmpConfig({
+      models: { aliases: { bad: { candidates: ['openai:gpt'], cooldown: 'later' } } },
+    }))).toThrow('Invalid duration');
+    expect(() => loadGlobalConfig(makeTmpConfig({
+      models: { aliases: { bad: { candidates: ['openai:gpt'], retry: 3 } } },
+    }))).toThrow('unknown key');
+  });
+
   it('rejects a non-object models block', () => {
     expect(() => loadGlobalConfig(makeTmpConfig({ models: 'anthropic:claude-sonnet' }))).toThrow(
       '`models` must be an object'
@@ -386,7 +418,7 @@ describe('models config block', () => {
   it('rejects a non-string alias target', () => {
     expect(() =>
       loadGlobalConfig(makeTmpConfig({ models: { aliases: { fast: 42 } } }))
-    ).toThrow('`models.aliases.fast` must be a non-empty string');
+    ).toThrow('`models.aliases.fast` must be a non-empty string or fallback object');
   });
 });
 

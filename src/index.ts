@@ -562,7 +562,8 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
       if (options.model) {
         // Accept the same shorthand as frontmatter: a version alias
         // (`anthropic:claude-sonnet`) or a configured `@name`.
-        const overrideModel = resolveModelString(options.model).model;
+        const resolvedOverride = resolveModelString(options.model);
+        const overrideModel = resolvedOverride.model;
         // Bare IDs are canonical OpenAI model IDs; qualified IDs may select a
         // built-in or configured custom provider.
         const provider = resolveModelProvider(overrideModel);
@@ -576,10 +577,25 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
 
         const originalModel = agent.config.model;
         agent.config.model = overrideModel;
-        // An override replaces whatever the file asked for, alias included, so
-        // the run is no longer explained by the frontmatter.
-        delete agent.config.modelAlias;
-        delete agent.config.modelSource;
+        if (resolvedOverride.candidates !== undefined) {
+          agent.config.modelCandidates = resolvedOverride.candidates;
+        } else {
+          delete agent.config.modelCandidates;
+        }
+        if (resolvedOverride.cooldownMs !== undefined) {
+          agent.config.modelFallbackCooldownMs = resolvedOverride.cooldownMs;
+        } else {
+          delete agent.config.modelFallbackCooldownMs;
+        }
+        // Preserve an object alias only as runtime policy metadata so the same
+        // fallback candidates can propagate to delegated subagents.
+        if (resolvedOverride.candidates !== undefined) {
+          agent.config.modelAlias = options.model;
+          agent.config.modelSource = resolvedOverride.source;
+        } else {
+          delete agent.config.modelAlias;
+          delete agent.config.modelSource;
+        }
         logger.info(
           overrideModel === options.model
             ? `Model override: ${originalModel} → ${overrideModel}`
@@ -3794,7 +3810,19 @@ async function runInternalWorker() {
       }
 
       if (req.model) {
-        agent.config.model = req.model;
+        const resolved = resolveModelString(req.model);
+        agent.config.model = resolved.model;
+        if (resolved.candidates !== undefined) agent.config.modelCandidates = resolved.candidates;
+        else delete agent.config.modelCandidates;
+        if (resolved.cooldownMs !== undefined) agent.config.modelFallbackCooldownMs = resolved.cooldownMs;
+        else delete agent.config.modelFallbackCooldownMs;
+        if (resolved.candidates !== undefined) {
+          agent.config.modelAlias = req.model;
+          agent.config.modelSource = resolved.source;
+        } else {
+          delete agent.config.modelAlias;
+          delete agent.config.modelSource;
+        }
       }
 
       const mcpBasePath = dirname(agentPath);

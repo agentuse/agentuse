@@ -25,8 +25,9 @@
 
 import { getModelFromRegistry, getSuggestedModelIds } from '../generated/models';
 import { joinModelString, splitModelString } from './model-utils';
-import { loadModelSettings, type ModelSettings } from './global-config';
+import { loadModelSettings, type ModelAliasConfig, type ModelSettings } from './global-config';
 import { logger } from './logger';
+import { parseDurationMs } from './duration';
 
 /** Marks a user-defined alias from the config `models.aliases` block. */
 export const MODEL_ALIAS_SIGIL = '@';
@@ -50,6 +51,10 @@ export interface ResolvedModel {
   /** What the user actually wrote, when it was not already the concrete id. */
   alias?: string;
   source: ModelResolutionSource;
+  /** Ordered concrete models for an object-form user alias. First is `model`. */
+  candidates?: string[];
+  /** Process-local cooldown applied after a transient first-response failure. */
+  cooldownMs?: number;
 }
 
 /** Raised when a `@name` alias or a configured default cannot be resolved. */
@@ -165,7 +170,7 @@ function logResolution(from: string, to: string): void {
 }
 
 /** Look up a user alias by name, tolerating a leading sigil and any casing. */
-function findUserAlias(name: string, settings: ModelSettings): string | undefined {
+function findUserAlias(name: string, settings: ModelSettings): ModelAliasConfig | undefined {
   const wanted = name.toLowerCase();
   for (const [key, value] of Object.entries(settings.aliases)) {
     if (key.toLowerCase() === wanted) return value;
@@ -201,8 +206,15 @@ export function resolveModelString(input: string): ResolvedModel {
 
   if (written.startsWith(MODEL_ALIAS_SIGIL)) {
     const resolved = resolveUserAlias(written, new Set());
-    logResolution(written, resolved.model);
-    return { model: resolved.model, alias: written, source: 'user-alias' };
+    const model = resolved.candidates[0]!;
+    logResolution(written, model);
+    return {
+      model,
+      alias: written,
+      source: 'user-alias',
+      ...(resolved.candidates.length > 1 && { candidates: resolved.candidates }),
+      ...(resolved.cooldownMs !== undefined && { cooldownMs: resolved.cooldownMs }),
+    };
   }
 
   const resolved = resolveVersionAlias(written);
@@ -217,7 +229,10 @@ export function resolveModelString(input: string): ResolvedModel {
  * Follow a `@name` chain (an alias may point at another alias, or at a version
  * alias) to a concrete model string. `seen` breaks self-referential configs.
  */
-function resolveUserAlias(written: string, seen: Set<string>): { model: string } {
+function resolveUserAlias(
+  written: string,
+  seen: Set<string>
+): { candidates: string[]; cooldownMs?: number } {
   const name = written.slice(MODEL_ALIAS_SIGIL.length);
   if (name === '') {
     throw new ModelAliasError(
@@ -243,11 +258,33 @@ function resolveUserAlias(written: string, seen: Set<string>): { model: string }
     );
   }
 
-  const next = target.trim();
-  if (next.startsWith(MODEL_ALIAS_SIGIL)) {
-    return resolveUserAlias(next, seen);
+  if (typeof target === 'string') {
+    const next = target.trim();
+    if (next.startsWith(MODEL_ALIAS_SIGIL)) {
+      return resolveUserAlias(next, seen);
+    }
+    return { candidates: [resolveVersionAlias(next) ?? next] };
   }
-  return { model: resolveVersionAlias(next) ?? next };
+
+  const candidates: string[] = [];
+  let nestedCooldownMs: number | undefined;
+  for (const candidate of target.candidates) {
+    if (candidate.startsWith(MODEL_ALIAS_SIGIL)) {
+      const nested = resolveUserAlias(candidate, new Set(seen));
+      candidates.push(...nested.candidates);
+      nestedCooldownMs ??= nested.cooldownMs;
+    } else {
+      candidates.push(resolveVersionAlias(candidate) ?? candidate);
+    }
+  }
+  const uniqueCandidates = [...new Set(candidates)];
+  const cooldownMs = target.cooldown !== undefined
+    ? parseDurationMs(target.cooldown, { bareUnit: 'seconds', field: `models.aliases.${name}.cooldown` })
+    : nestedCooldownMs;
+  return {
+    candidates: uniqueCandidates,
+    ...(cooldownMs !== undefined && { cooldownMs }),
+  };
 }
 
 /**
@@ -297,6 +334,8 @@ export function resolveAgentModel(frontmatterModel: string | undefined): Resolve
     model: resolved.model,
     alias: resolved.alias ?? fallback,
     source: 'default',
+    ...(resolved.candidates !== undefined && { candidates: resolved.candidates }),
+    ...(resolved.cooldownMs !== undefined && { cooldownMs: resolved.cooldownMs }),
   };
 }
 

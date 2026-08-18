@@ -167,11 +167,25 @@ function printAliasSections(providers: string[]): void {
     console.log(chalk.cyan.bold('Your aliases'));
     const width = Math.max(...userAliases.map(([name]) => name.length + MODEL_ALIAS_SIGIL.length));
     for (const [name, target] of userAliases) {
-      const resolved = safeResolve(target);
-      const suffix = resolved && resolved !== target ? chalk.gray(` → ${resolved}`) : '';
-      console.log(
-        `  ${chalk.white(`${MODEL_ALIAS_SIGIL}${name}`.padEnd(width))} ${chalk.gray('→')} ${chalk.gray(target)}${suffix}`
-      );
+      if (typeof target === 'string') {
+        const resolved = safeResolve(target);
+        const suffix = resolved && resolved !== target ? chalk.gray(` → ${resolved}`) : '';
+        console.log(
+          `  ${chalk.white(`${MODEL_ALIAS_SIGIL}${name}`.padEnd(width))} ${chalk.gray('→')} ${chalk.gray(target)}${suffix}`
+        );
+      } else {
+        let resolved = target.candidates;
+        try {
+          resolved = resolveModelString(`${MODEL_ALIAS_SIGIL}${name}`).candidates ?? resolved;
+        } catch {
+          // Listing must remain usable so it can show the malformed alias the
+          // user needs to repair; agent parsing still reports the real error.
+        }
+        const cooldown = target.cooldown ? chalk.gray(` (cooldown ${target.cooldown})`) : '';
+        console.log(
+          `  ${chalk.white(`${MODEL_ALIAS_SIGIL}${name}`.padEnd(width))} ${chalk.gray('→')} ${chalk.gray(resolved.join(' → '))}${cooldown}`
+        );
+      }
     }
     console.log();
   }

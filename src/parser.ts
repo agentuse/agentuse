@@ -322,6 +322,10 @@ export type AgentConfig = z.infer<typeof AgentSchema> & {
   modelAlias?: string;
   /** How `model` was determined, when it was not written as a concrete id. */
   modelSource?: ModelResolutionSource;
+  /** Ordered concrete candidates carried by an object-form user alias. */
+  modelCandidates?: string[];
+  /** Process-local cooldown for transient pre-output candidate failures. */
+  modelFallbackCooldownMs?: number;
 };
 
 /**
@@ -356,6 +360,8 @@ function withResolvedModel(parsed: z.infer<typeof AgentSchema>): AgentConfig {
     ...(resolved.alias !== undefined &&
       resolved.alias !== resolved.model && { modelAlias: resolved.alias }),
     ...(resolved.source !== 'literal' && { modelSource: resolved.source }),
+    ...(resolved.candidates !== undefined && { modelCandidates: resolved.candidates }),
+    ...(resolved.cooldownMs !== undefined && { modelFallbackCooldownMs: resolved.cooldownMs }),
   };
 }
 

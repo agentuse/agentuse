@@ -159,6 +159,35 @@ describe('user aliases', () => {
     expect(resolved.model.startsWith('anthropic:claude-haiku-')).toBe(true);
   });
 
+  it('resolves an ordered fallback alias to concrete candidates and cooldown', () => {
+    useConfig({
+      aliases: {
+        judgment: {
+          candidates: ['anthropic:claude-opus', 'openai:gpt'],
+          cooldown: '5m',
+        },
+      },
+    });
+    const resolved = resolveModelString('@judgment');
+    expect(resolved.model.startsWith('anthropic:claude-opus-')).toBe(true);
+    expect(resolved.candidates).toHaveLength(2);
+    expect(resolved.candidates?.[0]).toBe(resolved.model);
+    expect(resolved.candidates?.[1]?.startsWith('openai:gpt-')).toBe(true);
+    expect(resolved.cooldownMs).toBe(300_000);
+  });
+
+  it('flattens and de-duplicates nested fallback aliases', () => {
+    useConfig({
+      aliases: {
+        backup: { candidates: ['openai:gpt', 'anthropic:claude-sonnet'] },
+        judgment: { candidates: ['anthropic:claude-opus', '@backup', 'openai:gpt'] },
+      },
+    });
+    const resolved = resolveModelString('@judgment');
+    expect(resolved.candidates).toHaveLength(3);
+    expect(new Set(resolved.candidates).size).toBe(3);
+  });
+
   it('resolves an alias that points at another alias', () => {
     useConfig({ aliases: { smart: 'anthropic:claude-opus', best: '@smart' } });
     expect(resolveModelString('@best').model.startsWith('anthropic:claude-opus-')).toBe(true);
@@ -218,6 +247,19 @@ describe('configured default model', () => {
     expect(resolved?.source).toBe('default');
     expect(resolved?.model.startsWith('anthropic:claude-haiku-')).toBe(true);
   });
+
+  it('carries fallback policy through a named default', () => {
+    useConfig({
+      default: '@judgment',
+      aliases: {
+        judgment: { candidates: ['anthropic:claude-opus', 'openai:gpt'], cooldown: '1m' },
+      },
+    });
+    const resolved = resolveAgentModel(undefined);
+    expect(resolved?.source).toBe('default');
+    expect(resolved?.candidates).toHaveLength(2);
+    expect(resolved?.cooldownMs).toBe(60_000);
+  });
 });
 
 describe('parseAgentContent model resolution', () => {
@@ -228,6 +270,17 @@ describe('parseAgentContent model resolution', () => {
     expect(parsed.config.model.startsWith('anthropic:claude-sonnet-')).toBe(true);
     expect(parsed.config.modelAlias).toBe('anthropic:claude-sonnet');
     expect(parsed.config.modelSource).toBe('version-alias');
+  });
+
+  it('records fallback candidates on the parsed agent', () => {
+    useConfig({
+      aliases: {
+        judgment: { candidates: ['anthropic:claude-opus', 'openai:gpt'], cooldown: '30s' },
+      },
+    });
+    const parsed = parseAgentContent(`---\nmodel: "@judgment"\n---\n${body}`, 'test');
+    expect(parsed.config.modelCandidates).toHaveLength(2);
+    expect(parsed.config.modelFallbackCooldownMs).toBe(30_000);
   });
 
   it('leaves a concrete model as written, with no alias metadata', () => {

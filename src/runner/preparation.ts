@@ -288,7 +288,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     subAgentTools = await createSubAgentTools(
       agent.config.subagents,
       basePath,
-      agent.config.model,
+      agent.config.modelCandidates ? agent.config.modelAlias ?? agent.config.model : agent.config.model,
       0,
       [],
       sessionManager,

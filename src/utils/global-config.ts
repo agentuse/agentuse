@@ -2,6 +2,16 @@ import { readFileSync, existsSync, statSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 import * as dotenv from 'dotenv';
+import { parseDurationMs } from './duration';
+
+export interface ModelAliasFallbackConfig {
+  /** Ordered model ids or aliases. The first available candidate is preferred. */
+  candidates: string[];
+  /** How long a transiently failing concrete model is skipped by this process. */
+  cooldown?: string;
+}
+
+export type ModelAliasConfig = string | ModelAliasFallbackConfig;
 
 export interface GlobalConfigProject {
   id?: string;
@@ -55,9 +65,10 @@ export interface GlobalModelsConfig {
   /**
    * Named models, referenced from an agent file as `@name` (e.g.
    * `{ "fast": "anthropic:claude-haiku-4-5" }` used as `model: "@fast"`).
-   * A value may be a concrete id, a version alias, or another `@name`.
+   * A value may be a concrete id, a version alias, another `@name`, or an
+   * ordered fallback object with candidates and an optional cooldown.
    */
-  aliases?: Record<string, string>;
+  aliases?: Record<string, ModelAliasConfig>;
 }
 
 export interface GlobalConfig {
@@ -98,7 +109,7 @@ function validateModels(input: unknown, configPath: string): GlobalModelsConfig 
     if (models.aliases === null || typeof models.aliases !== 'object' || Array.isArray(models.aliases)) {
       fail(configPath, '`models.aliases` must be an object');
     }
-    const aliases: Record<string, string> = {};
+    const aliases: Record<string, ModelAliasConfig> = {};
     const seen = new Map<string, string>();
     for (const [name, value] of Object.entries(models.aliases as Record<string, unknown>)) {
       if (name.startsWith('@')) {
@@ -122,10 +133,43 @@ function validateModels(input: unknown, configPath: string): GlobalModelsConfig 
         fail(configPath, `\`models.aliases\` has "${clash}" and "${name}", which differ only in case`);
       }
       seen.set(lower, name);
-      if (typeof value !== 'string' || value.trim().length === 0) {
-        fail(configPath, `\`models.aliases.${name}\` must be a non-empty string`);
+      if (typeof value === 'string') {
+        if (value.trim().length === 0) {
+          fail(configPath, `\`models.aliases.${name}\` must be a non-empty string or fallback object`);
+        }
+        aliases[name] = value.trim();
+        continue;
       }
-      aliases[name] = value.trim();
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        fail(configPath, `\`models.aliases.${name}\` must be a non-empty string or fallback object`);
+      }
+      const fallback = value as Record<string, unknown>;
+      const unknownKeys = Object.keys(fallback).filter((key) => !['candidates', 'cooldown'].includes(key));
+      if (unknownKeys.length > 0) {
+        fail(configPath, `\`models.aliases.${name}\` has unknown key(s): ${unknownKeys.join(', ')}`);
+      }
+      if (!Array.isArray(fallback.candidates) || fallback.candidates.length === 0) {
+        fail(configPath, `\`models.aliases.${name}.candidates\` must be a non-empty array`);
+      }
+      const candidates = fallback.candidates.map((candidate, index) => {
+        if (typeof candidate !== 'string' || candidate.trim().length === 0) {
+          fail(configPath, `\`models.aliases.${name}.candidates[${index}]\` must be a non-empty string`);
+        }
+        return candidate.trim();
+      });
+      let cooldown: string | undefined;
+      if (fallback.cooldown !== undefined) {
+        if (typeof fallback.cooldown !== 'string' || fallback.cooldown.trim().length === 0) {
+          fail(configPath, `\`models.aliases.${name}.cooldown\` must be a duration string such as "5m"`);
+        }
+        cooldown = fallback.cooldown.trim();
+        try {
+          parseDurationMs(cooldown, { bareUnit: 'seconds', field: `models.aliases.${name}.cooldown` });
+        } catch (error) {
+          fail(configPath, (error as Error).message);
+        }
+      }
+      aliases[name] = { candidates, ...(cooldown !== undefined && { cooldown }) };
     }
     out.aliases = aliases;
   }
@@ -192,10 +236,10 @@ export function loadGlobalDefaults(): { envFile: string | undefined; configEnvKe
 /** Model settings with `aliases` always present, so callers can skip the guard. */
 export interface ModelSettings {
   default?: string;
-  aliases: Record<string, string>;
+  aliases: Record<string, ModelAliasConfig>;
 }
 
-const EMPTY_MODEL_SETTINGS: ModelSettings = Object.freeze({ aliases: Object.freeze({}) as Record<string, string> });
+const EMPTY_MODEL_SETTINGS: ModelSettings = Object.freeze({ aliases: Object.freeze({}) as Record<string, ModelAliasConfig> });
 
 let modelSettingsCache: { key: string; settings: ModelSettings } | null = null;
 

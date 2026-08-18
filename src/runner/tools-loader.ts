@@ -153,8 +153,26 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
       // one in a tool result?) so filesystem_read gates media reads on both.
       // toRegistryKey strips a `provider:model:env` auth suffix — the raw
       // string would miss the registry and silently disable media reads.
-      const modelInputModalities = getModelFromRegistry(toRegistryKey(agent.config.model))?.modalities.input;
-      const mediaToolResultSupport = await resolveMediaToolResultSupport(agent.config.model);
+      // Fallback aliases share one prepared toolset. Advertise only media
+      // capabilities supported by every candidate so a provider switch cannot
+      // leave filesystem_read returning payloads the selected transport rejects.
+      const modelCandidates = agent.config.modelCandidates ?? [agent.config.model];
+      const candidateModalities = modelCandidates.map(
+        (model) => getModelFromRegistry(toRegistryKey(model))?.modalities.input
+      );
+      const modelInputModalities = candidateModalities.every(Array.isArray)
+        ? candidateModalities.slice(1).reduce(
+            (shared, modalities) => shared.filter((modality) => modalities!.includes(modality)),
+            [...candidateModalities[0]!]
+          )
+        : undefined;
+      const candidateTransportSupport = await Promise.all(
+        modelCandidates.map((model) => resolveMediaToolResultSupport(model))
+      );
+      const mediaToolResultSupport = {
+        image: candidateTransportSupport.every((support) => support.image),
+        pdf: candidateTransportSupport.every((support) => support.pdf),
+      };
       toolContext = {
         projectRoot: projectContext.projectRoot,
         agentDir,
