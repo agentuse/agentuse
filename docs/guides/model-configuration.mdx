@@ -72,6 +72,27 @@ model: "@fast"
 ---
 ```
 
+An alias can also carry an ordered fallback list:
+
+```json
+{
+  "models": {
+    "aliases": {
+      "smart": {
+        "candidates": ["anthropic:claude-opus", "openai:gpt"],
+        "cooldown": "5m"
+      }
+    }
+  }
+}
+```
+
+AgentUse falls back only when a fresh session's first model request fails for a
+transient reason before emitting output or invoking a tool. The selected model
+is then fixed for that session. `cooldown` keeps new runs in the same process
+from repeatedly waiting on a model that just failed; it resets when the process
+restarts.
+
 **3. Set a default and stop naming models.** With `models.default` (or
 `AGENTUSE_MODEL`) configured, `model:` becomes optional:
 
@@ -79,8 +100,8 @@ model: "@fast"
 { "models": { "default": "anthropic:claude-sonnet" } }
 ```
 
-Aliases resolve once, when the agent file is parsed, so session logs and cost
-accounting record the concrete model that ran. A suspended run resumes on the
+Aliases resolve to concrete models before execution, so session logs and cost
+accounting record the model that actually ran. A suspended run resumes on the
 model it started with, even if the alias has moved since.
 
 To migrate agent files you already have, `agentuse models unpin` swaps pinned

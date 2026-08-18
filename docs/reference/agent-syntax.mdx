@@ -65,6 +65,10 @@ Additional instructions or context.
   model: "@fast"
   ```
 
+  A named alias may be configured with ordered fallback candidates. Fallback is
+  limited to transient failures before a fresh session receives any model output
+  or tool call; resumes remain pinned to the concrete model already recorded.
+
   **Omitting `model`.** With `models.default` (or `AGENTUSE_MODEL`) configured,
   the field is optional and the agent uses that default. Without a default, a
   file that omits `model` fails to parse. See

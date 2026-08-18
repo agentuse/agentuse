@@ -204,7 +204,11 @@ A `models` block in `~/.agentuse/config.json` sets the model used by agent files
     "aliases": {
       "fast": "anthropic:claude-haiku",
       "smart": "anthropic:claude-opus",
-      "cheap-dev": "openai:gpt-mini:dev"
+      "cheap-dev": "openai:gpt-mini:dev",
+      "judgment": {
+        "candidates": ["anthropic:claude-opus", "openai:gpt"],
+        "cooldown": "5m"
+      }
     }
   }
 }
@@ -218,9 +222,11 @@ model: "@fast"
 
 - **`default`** applies to any agent file with no `model:` field. `AGENTUSE_MODEL` overrides it, and an explicit `model:` in the file overrides both.
 - **`aliases`** keys are alphanumeric with hyphens or underscores, referenced with the `@` sigil (define `fast`, write `@fast`). The `@` is required in the reference because a bare name is already a valid OpenAI model id.
-- A value may be a concrete id, a [version alias](/reference/models#version-aliases), another `@name`, or any of those with an `:env` auth suffix.
+- A string value may be a concrete id, a [version alias](/reference/models#version-aliases), another `@name`, or any of those with an `:env` auth suffix.
+- An object value defines ordered fallback `candidates`. On a transient first-request failure (rate limit, timeout, provider 5xx, or transport failure), AgentUse tries the next candidate only if the model has not produced output or invoked a tool.
+- Optional `cooldown` is a duration string such as `"30s"` or `"5m"`. A transiently failing concrete model is skipped by new runs in the same process until the cooldown expires. Cooldowns are in memory: restarting `agentuse serve` or starting a separate CLI process resets them.
 
-Aliases are resolved once, when the agent file is parsed, so session logs, cost accounting, and context limits all record the concrete model that actually ran. A suspended run that resumes later stays on the model it started with, even if the alias has since moved.
+Aliases are resolved when the agent file is parsed. A fallback alias keeps its ordered concrete candidates until execution, then locks the session to the first model that responds successfully. Session logs, cost accounting, and context limits record that concrete model. A suspended run that resumes later stays on the model it started with, even if the alias or provider health has since changed.
 
 To point a repo at its own aliases rather than your user-global ones, set `AGENTUSE_CONFIG` to a config file inside the repo.
 
