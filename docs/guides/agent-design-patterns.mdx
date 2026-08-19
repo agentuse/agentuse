@@ -29,10 +29,12 @@ Agents are designed to:
 - Work in headless environments
 - Integrate into automated workflows
 
+Because nobody is watching the run, the rehearsal has to happen beforehand: [`agentuse test`](/guides/testing-agents) exercises the whole SOP, including approval branches, with side effects fabricated.
+
 ### 2. Agent as Delegated Employee
 
 <Info>
-  Think of agents as specialized employees you delegate work to. Once you hand off a task with clear instructions, they work autonomously until completion—just like delegating to a trusted team member.
+  Think of agents as specialized employees you delegate work to. Once you hand off a task with clear instructions, they work autonomously until completion, just like delegating to a trusted team member.
 </Info>
 
 This delegation model means:
@@ -53,7 +55,7 @@ Agents communicate through:
 - **Handoffs**: Save artifacts to shared filesystems for other agents
 - **Reporting**: Post summaries to webhooks or APIs
 
-This approach mirrors how remote teams collaborate—asynchronously through shared tools rather than constant direct interaction.
+This approach mirrors how remote teams collaborate, asynchronously through shared tools rather than constant direct interaction.
 
 ### 4. Separation of Concerns
 
@@ -71,7 +73,7 @@ Each agent should:
 
 ### Multi-Agent Workflow Pattern
 
-Complex tasks can be decomposed into specialized agents that work together through sub-agent composition. This mirrors how organizations structure teams—each specialist handles their domain, communicating through established channels.
+Complex tasks can be decomposed into specialized agents that work together through sub-agent composition. This mirrors how organizations structure teams, each specialist handles their domain, communicating through established channels.
 
 #### Example: Content Pipeline
 

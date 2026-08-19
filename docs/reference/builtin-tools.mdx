@@ -184,7 +184,7 @@ At least one of `value` or `count` is required.
 
 Records are upserted keyed on `(sessionId, metric)`: a retried or resumed run overwrites its own earlier record instead of double-counting, and recording the same metric twice in one run is last-write-wins. This is what makes the numbers trustworthy enough to display. Runs without a session id (rare) cannot be deduplicated and always create a new record.
 
-The runtime stamps `sessionId` and the agent id onto every record; the model cannot spoof provenance. Each record is a regular store item (`type: "metric"`, tagged with the metric name) in `.agentuse/store/metrics/`, browsable at `/stores/metrics` and readable programmatically via `GET /api/stores/metrics`. In mock mode tool execution is simulated, so no metric records are persisted.
+The runtime stamps `sessionId` and the agent id onto every record; the model cannot spoof provenance. Each record is a regular store item (`type: "metric"`, tagged with the metric name) in `.agentuse/store/metrics/`, browsable at `/stores/metrics` and readable programmatically via `GET /api/stores/metrics`. In mock mode the write is not skipped, it is isolated: the `metrics` store is re-rooted along with every other store under `.agentuse/store-mock/`, so a test run's records are inspectable there and never enter the real `metrics` store the dashboards read. See [the store guide's note on mock runs](/guides/store#what-is-the-store).
 
 ## Bash Tool
 

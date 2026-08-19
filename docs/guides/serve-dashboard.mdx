@@ -24,6 +24,12 @@ Open `http://127.0.0.1:12233`. The Home page streams:
 - recent outcomes and upcoming schedules
 - deterministic metrics written through `record_metric`
 
+Mock and test sessions are excluded by default from all of these list-backed
+surfaces, and they never fire push notifications, so validating an agent does not
+distort the picture of what production is doing. They are still stored in full
+and remain inspectable: a mock session's page is reachable by id at any time, and
+the sessions list can show them on request.
+
 Sessions, Agents, Approvals, Schedules, Stores, and Settings remain directly
 addressable routes. A session page is the durable record for one run: its
 activity, approval gate, tool output, result, metrics, verification verdict,
@@ -40,6 +46,8 @@ server configuration.
 - Agents can use cards, tables, metadata columns, grouping, and filters
 - Sessions can use list or feed views and combine status, agent, trigger,
   triage, and time-window filters
+- Sessions can set a "mock runs" filter to hidden (the default), shown, or only
+  mock
 
 Preferences are stored in `localStorage` and synchronize between tabs through
 browser storage events. Clearing site data resets them.

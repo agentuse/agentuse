@@ -278,6 +278,38 @@ Additional instructions or context.
   ```
 </ParamField>
 
+<ParamField path="learning" type="boolean | object" required={false}>
+  Let the agent keep what reviewers tell it and apply the best of it to later
+  runs. See the [Learning guide](/guides/learning).
+
+  `learning: true` is shorthand for `{ capture: true, apply: true }`.
+
+  ```yaml
+  learning:
+    capture: true
+    apply: true
+    criteria: Only keep instructions about tone and sourcing.
+    max: 20
+    model: anthropic:claude-haiku-4-5
+  ```
+
+  | Key | Type | Description |
+  |-----|------|-------------|
+  | `capture` | boolean | Distil reviewer feedback into stored instructions. Default `true` |
+  | `apply` | boolean | Inject stored instructions into future runs. Default `true` |
+  | `criteria` | string | What is worth keeping, in your own words |
+  | `max` | number | How many learnings may reach the model per run. 1-50, default 15. `agentuse doctor` shows what this costs and how many are stored but never injected |
+  | `model` | string | Helper model used for capture and `agentuse learnings tidy`. Defaults to the agent's own model |
+
+  <Note>
+    `file` and `evaluate` were removed and are now rejected by name at parse
+    time, e.g. `Unrecognized key(s) in object: 'file'`. Learnings live in the
+    AgentUse state directory (`agentuse learnings migrate --all` moves older
+    ones), and an agent that used `evaluate` to capture without applying should
+    now set `apply: false`.
+  </Note>
+</ParamField>
+
 <ParamField path="reasoning" type='"none" | "minimal" | "low" | "medium" | "high" | "xhigh"' required={false}>
   Provider-agnostic reasoning effort, the recommended knob. AgentUse passes it to
   the AI SDK as the top-level `reasoning` level, which each provider maps to its

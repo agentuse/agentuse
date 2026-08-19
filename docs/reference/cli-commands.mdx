@@ -168,7 +168,7 @@ agentuse test my-agent.agentuse --scope all              # fabricate everything
 
 **Gated scope is the closed-loop testing mode**: only the bash commands matching the agent's [`tools.bash.gated`](/guides/approval-gates) patterns (the irreversible subset the author already fenced off) are fabricated, and the gates guarding them auto-approve. Every other tool (reads, non-gated bash, MCP, skills) runs **for real**, so the agent grounds itself in real project state. The run completes end-to-end, unattended, with zero irreversible side effects, and the session log shows the full gate flow (the `await_human` call with its `changes[]`, the deterministic approval, the fabricated command result) for review.
 
-- **Stores are isolated under mock**: reads are seeded by copying the real store, writes land in `<projectRoot>/.agentuse/store-mock/<run-id>/` (kept for inspection), and the real store, including the reserved `metrics` store behind dashboards, is never touched.
+- **Stores are isolated under mock**: reads are seeded by copying the real store, writes land in `<projectRoot>/.agentuse/store-mock/<timestamp>-<pid>/` (kept for inspection), and the real store, including the reserved `metrics` store behind dashboards, is never touched.
 - **Test runs stay out of the ops views**: mock sessions are excluded from the serve home dashboard (latest results, failure triage), agent health/sparklines, and the sessions list by default, and they never fire push notifications. Flip the sessions view's "mock runs" filter to `shown`/`only mock` (API: `?mock=include|only`) to see them; a mock session's detail page is always reachable by id.
 - In the effect WAL, a fabricated gated command has a `lease-approved` entry but **no** `bash-spawn` entry; that absence is the audit signal it never executed.
 - An agent with no `tools.bash.gated` patterns under gated scope gets a warning: nothing is mocked, everything runs real (with gates auto-resolved).
@@ -301,6 +301,7 @@ View and resume AgentUse sessions.
 agentuse sessions list [options]
 agentuse sessions show <id> [options]
 agentuse sessions resume <id> [options]
+agentuse sessions reconcile [options]
 agentuse sessions path [options]
 ```
 
@@ -382,6 +383,43 @@ Resume options:
 --project [path]         Search a project path; defaults to current project
 --all-search             Search all projects if not found in the selected project
 -d, --debug              Enable debug logging for resume
+```
+
+### Reconcile Stuck Sessions
+
+Settle sessions still marked `running` whose owning process is gone. This is the same owner-liveness check `agentuse serve` performs at startup, but it sweeps as far back as you ask instead of the daemon's 30-day window.
+
+```bash
+agentuse sessions reconcile [options]
+```
+
+Reconcile options:
+
+```bash
+--lookback <spec>        How far back to scan: a day count, or "all" (default: all)
+--dry-run                Report what would be settled without writing
+-j, --json               Output as JSON
+--all                    Reconcile across all projects
+--project [path]         Reconcile a project path; defaults to current project
+```
+
+A run that is still executing anywhere is never touched: a live worker, a worker released across a daemon restart, or a plain terminal `agentuse run` all keep their session as-is, because the session records its owning process and reconcile checks that the process is actually alive. A 10-minute recency window backs that up, so a session written to very recently is left alone even if it comes from a build that predates owner tracking.
+
+Sessions suspended on a subagent that died are settled the same way, so a manager waiting on a child that will never report back stops sitting in limbo.
+
+<Note>
+  Why this exists: runs orphaned before serve's 30-day startup window stayed `running` forever, inflating the dashboard's needs-attention counts with work that ended long ago.
+</Note>
+
+```bash
+# See what is stuck without changing anything
+agentuse sessions reconcile --dry-run
+
+# Settle everything in this project, however old
+agentuse sessions reconcile
+
+# Sweep the last week across every project, as JSON
+agentuse sessions reconcile --all --lookback 7 --json
 ```
 
 ### Show Storage Path
@@ -965,6 +1003,13 @@ agentuse skills installed path [name]
 
 Builtin skills are stored in the AgentUse package `skill-data/` directory and match the installed CLI version. This mirrors the `agent-browser skills` model: agents can fetch current official instructions without reading a user's entire local skill library.
 
+| Skill | Covers |
+|-------|--------|
+| `core` | The entry point: what AgentUse is, and which of the three below to fetch next |
+| `runner` | Running agents, listing them, sessions, `serve`, schedules |
+| `creator` | Authoring, improving, and reviewing `.agentuse` files |
+| `tester` | Validating agents without real side effects: choosing a mock model and scope, exercising approval gates unattended, the edit-run-inspect loop, and the fidelity caveats of mock output |
+
 ### AI Coding Assistants
 
 Install the assistant-facing AgentUse skill stub:
@@ -1009,6 +1054,7 @@ agentuse skills list --json
 agentuse skills get core
 agentuse skills get runner
 agentuse skills get creator
+agentuse skills get tester
 agentuse skills get core --full
 agentuse skills get --all --json
 
@@ -1083,6 +1129,7 @@ Static mode:
 - Explicit skills that don't exist on disk.
 - Explicit skills with no `allow` grants.
 - Commands mentioned in skill docs vs. what the agent has granted (advisory; not a permission manifest).
+- Learnings: how many of the stored ones are actually applied per run, and how many are over `learning.max` and so never reach the model, with `agentuse learnings tidy <file>` as the fix. It also prints the resolved `learnings file:` path, and warns when learnings are still sitting beside the agent file at the pre-0.17.0 location where nothing reads them.
 
 `--last-run` mode:
 - Finds the latest non-subagent session for this agent.
@@ -1098,6 +1145,17 @@ agentuse doctor agents/research.agentuse
 agentuse doctor agents/research.agentuse --last-run
 ```
 
+### Prompt Size Warnings
+
+Two costs recur on **every** model request, so doctor flags them:
+
+| What | Warns above | Warns harder above |
+|------|-------------|--------------------|
+| Preloaded skills (the full text of everything in `skills:`) | ~2,000 tokens | ~4,000 tokens |
+| Visible skill catalog (a name and description per discoverable skill) | ~1,500 tokens | ~3,000 tokens |
+
+The fix for either is the same shape: preload only what every run needs, and close discovery with `skills.auto: false` plus a shorter explicit list. Open discovery is the expensive default at scale, a machine with 100 skills installed pays roughly 11k tokens per request for the catalog alone.
+
 <Tip>
   Use `--last-run` after an agent fails or behaves unexpectedly. It uses real tool errors and is more accurate than static skill-doc extraction.
 </Tip>
@@ -1106,7 +1164,7 @@ agentuse doctor agents/research.agentuse --last-run
 
 ## agentuse learnings
 
-Inspect and tidy an agent's stored learnings. Only the top few apply per run (10 by default); anything past that is stored but never reaches the model. See the [Learning guide](/guides/learning).
+Inspect and tidy an agent's stored learnings. Only the top few apply per run (15 by default, `learning.max`); anything past that is stored but never reaches the model. See the [Learning guide](/guides/learning).
 
 ### Syntax
 
@@ -1137,7 +1195,7 @@ agentuse learnings migrate [<agent-file>|--all] [--dry-run] [--keep-source|--del
 | `--model <model>` | (`tidy`) Plan with this model instead of the agent's own. |
 | `--all` | (`migrate`) Every agent file in the project, not one named agent. |
 | `--keep-source` | (`migrate`) Keep the old files without asking. |
-| `--delete-source` | (`migrate`) Delete the old files without asking. Required to delete anything when stdin is not a terminal — a non-interactive run never deletes on its own. |
+| `--delete-source` | (`migrate`) Delete the old files without asking. Required to delete anything when stdin is not a terminal, a non-interactive run never deletes on its own. |
 
 ### Examples
 
@@ -1322,10 +1380,6 @@ agentuse
   Configuration is currently managed through environment variables only.
 </Note>
 
-<Note>
-  The `agentuse test` command is not yet implemented.
-</Note>
-
 ## Global Options
 
 ```bash
@@ -1359,8 +1413,13 @@ AgentUse currently supports these commands:
 
 ```bash
 agentuse run <file> [prompt...]          # Run an agent with optional prompt
+agentuse test <file> [prompt...]         # Validate an agent in mock mode (no real side effects)
 agentuse serve [options]                 # Start the HTTP daemon to run agents via API
 agentuse serve ps [--json]               # Show the running serve daemon
+agentuse serve schedules [pid] [--json]  # List schedules the running daemon is tracking
+agentuse serve agents [pid] [--json]     # List agents the running daemon has loaded
+agentuse sessions [list|show|resume|path] # View and resume sessions
+agentuse sessions reconcile [--all]      # Settle runs stuck at "running"
 agentuse provider login [provider]       # Authenticate with a provider
 agentuse provider add <name> --url <url> # Add custom provider (Ollama, LM Studio, etc.)
 agentuse provider logout [provider]      # Remove stored credentials

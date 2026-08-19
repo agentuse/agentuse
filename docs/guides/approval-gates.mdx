@@ -443,3 +443,15 @@ agentuse sessions resume session_abc123 --comment "Shorten this and add pricing"
 ```
 
 Prefer the `/approvals` UI for normal review, Slack for reviewer alerts, the Approval API for custom review surfaces, and `agentuse sessions resume` for local testing.
+
+### Testing gate flows unattended
+
+Resuming by hand is fine for one gate. To check that each branch behaves, let `agentuse test` play the reviewer deterministically:
+
+```bash
+agentuse test my-agent.agentuse --approval approve
+agentuse test my-agent.agentuse --approval reject
+agentuse test my-agent.agentuse --approval comment:"tighten the subject line"
+```
+
+The run finishes with no human involved, and an approval grants the gated-command lease exactly like a real reviewer, so `tools.bash.gated` flows complete end to end without executing anything irreversible. See [Testing Agents](/guides/testing-agents).

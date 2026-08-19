@@ -25,6 +25,10 @@ Stores live at the AgentUse project root:
 
 When you run `agentuse serve -C path/to/agents`, `-C` is the served scope for agent files. AgentUse still walks upward to find the project root, so agent folders inside the same repository can share the same store.
 
+<Note>
+  Under `agentuse test` and any other mock run, every store is re-rooted at `<project-root>/.agentuse/store-mock/<timestamp>-<pid>/`, seeded on first use by copying the real store so the agent still reads realistic data. Nothing a mock run writes reaches production state, including the reserved `metrics` store behind the dashboards. The scratch copy is kept so you can inspect what the run would have written, and swept after 7 days.
+</Note>
+
 <Info>
   When you enable the store, your agent automatically gets tools for creating, reading, updating, deleting, and listing items. Tell the agent what to store and when in your agent file's instructions.
 </Info>
@@ -96,17 +100,27 @@ It accepts these parameters:
 | `q` | string | Case-insensitive substring search across title, type, tags, and `data`. Matching summary rows include a short `match` snippet showing where it hit |
 | `includeData` | boolean | Return the full `data` payload of each item (default `false`) |
 | `fields` | string[] | Return only these keys from each item's `data` (ignored when `includeData` is true) |
+| `since` | string | Only items updated within this window: a relative span (`"7d"`, `"12h"`, `"30m"`), a bare date (`"2026-03-01"`, read as UTC midnight), or a full ISO timestamp |
+| `countOnly` | boolean | Return counts instead of rows (see below) |
 | `limit` | number | Maximum number of items to return |
 | `offset` | number | Number of items to skip (pagination) |
 
 The response is `{ count, total, items }`:
 - `count` is the number of rows returned and `total` is how many items match the filters before `limit`/`offset`, so the agent knows whether more remain.
-- Each summary row (when `data` is omitted) includes a `dataKeys` array listing the keys available in that item's `data`, so the agent knows what it could request via `fields` or `store_get` without seeing the values.
+- Alongside the rows, the response carries a single top-level `dataKeysByType` map listing the `data` keys seen for each item type, so the agent knows what it could request via `fields` or `store_get` without paying for the key list once per row. On a 243-item store, a 40-row listing went from 6,639 tokens to 3,785 this way. When you pass `fields`, the key list is dropped entirely and each row instead reports `missingFields` for any key it doesn't have.
 
-To get counts by status or type, filter and read `total` (e.g. `store_list({ status: "pending" })`) rather than scanning rows.
+<Note>
+  An unparseable `since`, or an impossible calendar date like `2026-02-31`, comes back as a tool error naming the accepted forms rather than being silently ignored.
+</Note>
+
+### Counting
+
+To size a store before reading it, use `countOnly: true`. It returns `total` plus `byType`, `byStatus`, `oldest`, and `newest`, with no rows at all, for around 140 tokens. It respects every filter and ignores `limit`/`offset`, so it always describes the whole matching set.
+
+This matters because `store_list` has **no default limit**: an unfiltered call returns every item and fails loudly against the tool-output cap rather than silently truncating. Ask for the shape first, then ask for rows.
 
 <Tip>
-  **Keep retrieval cheap.** Narrow with filters or `q` first, scan the summary rows, then `store_get` the single item you want. Only set `includeData: true` (or list `fields`) when you genuinely need payloads for several items at once. For a known set of IDs, pass `ids` to fetch them in one `store_list` call.
+  **Keep retrieval cheap.** Size it (`countOnly`), narrow it (`since`, `type`, `status`, `q`), scan the summary rows, then `store_get` the single item you want. Only set `includeData: true` (or list `fields`) when you genuinely need payloads for several items at once. For a known set of IDs, pass `ids` to fetch them in one `store_list` call.
 </Tip>
 
 The same projection applies to `store_get`: pass `fields: ["url", "score"]` to return only those keys from a large item instead of the whole payload.

@@ -211,6 +211,26 @@ All paths (subagents, MCP server commands) are resolved relative to the **agent 
 4. **Version Control**: Everything in one repository
 5. **Environment Management**: Single `.env` file for all agents
 
+## Validate Before You Run It for Real
+
+A new agent has two things worth checking before it touches anything that matters.
+
+`agentuse doctor` checks the configuration: skills that don't exist, skills with no grants, commands the agent's own instructions mention but that it was never granted, and what the whole prompt costs per model request.
+
+```bash
+agentuse doctor my-agent.agentuse
+```
+
+`agentuse test` checks the behaviour. It runs the agent end to end in mock mode: side effects are fabricated rather than executed, approval gates resolve automatically so the run finishes unattended, and stores are isolated from your real data.
+
+```bash
+agentuse test my-agent.agentuse
+```
+
+<Card title="Testing Agents" icon="flask" href="/guides/testing-agents">
+  The full edit-test-inspect loop, mock scope, approval branches, and what mock mode does and does not prove.
+</Card>
+
 ## Next Steps
 
 <CardGroup cols={3}>

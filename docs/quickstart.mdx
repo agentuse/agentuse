@@ -104,9 +104,11 @@ agentuse run project-analyzer.agentuse
 Override the model at runtime without editing agent files:
 
 ```bash
-agentuse run analyzer.agentuse --model anthropic:claude-sonnet-5
+agentuse run analyzer.agentuse --model anthropic:claude-sonnet
 agentuse run analyzer.agentuse -m openai:gpt-5.4-mini
 ```
+
+Leaving the version off (`anthropic:claude-sonnet`) tracks the newest model in that line; pin a version when you need reproducibility.
 
 <Tip>
   See [CLI Commands - Model Override](/reference/cli-commands#model-override) for format details, environment-specific keys, and sub-agent inheritance behavior.

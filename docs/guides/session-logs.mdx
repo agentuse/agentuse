@@ -44,6 +44,7 @@ agentuse sessions ls [options]
 - `-j, --json` - Output as JSON
 - `--all` - Show sessions across all projects
 - `--project [path]` - Show sessions for a project path; defaults to the current project
+- `--no-mock` - Hide mock/test runs. The CLI lists them by default, marked `· mock`
 
 **Example output:**
 ```
@@ -154,7 +155,10 @@ When `agentuse serve` is running, the same sessions are browsable as web pages:
 
 - `/sessions` lists every run, newest first. Filter the list with `?agent=<id>`,
   `?status=running|suspended|completed|error|incomplete`,
-  `?trigger=scheduled|manual|slack|api`, and `?days=<n|all>`.
+  `?trigger=scheduled|manual|slack|api`, `?days=<n|all>`, and
+  `?mock=include|only`. Mock/test runs are hidden by default; `include` adds
+  them to the list and `only` shows nothing else. A mock session's detail page
+  is always reachable by id, filter or not.
 - `/sessions/<id>` is the per-session page: the full run log, and when the
   session is suspended on an approval gate, the approve / reject / comment and
   resume controls.
@@ -174,6 +178,8 @@ it requires opting into extended thinking. See
 agentuse serve
 open http://127.0.0.1:12233/sessions
 ```
+
+If a session is stuck at `running` long after its process is gone, usually after a crashed daemon or a killed container, settle it with [`agentuse sessions reconcile`](/reference/cli-commands#reconcile-stuck-sessions). Runs that are still executing are never touched.
 
 On an exposed host these pages require the API key, or a per-session token on the
 session page link. See [Approval Gates](/guides/approval-gates#auth-and-the-session-token).

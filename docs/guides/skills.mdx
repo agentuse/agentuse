@@ -57,7 +57,7 @@ Install the assistant-facing AgentUse skill so Claude Code, Codex, Cursor, and o
 npx skills add agentuse/agentuse
 ```
 
-The stub redirects to `agentuse skills get core`, keeping instructions aligned with the installed CLI version.
+The stub redirects to `agentuse skills get core`, keeping instructions aligned with the installed CLI version. `core` is the entry point: it points on to `runner` (running, listing, sessions, serve, schedules), `creator` (authoring and reviewing `.agentuse` files), and `tester` (validating agents with mock runs), each fetched the same way.
 
 ## Skill Structure
 

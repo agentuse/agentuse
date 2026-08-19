@@ -94,6 +94,23 @@ docker run -d -p 12233:12233 --env-file .env \
   ghcr.io/agentuse/agentuse:latest
 ```
 
+### Restarts and Worker Memory
+
+`agentuse serve` runs agents in per-project worker processes, and two behaviours matter when you put it behind `pm2`, `systemd`, or a container supervisor.
+
+**A restart releases workers rather than killing them.** Runs already in flight keep going in the released worker and finish normally; only the daemon is replaced. A released worker still has a hard deadline, by default the longest in-flight run's own timeout plus ten minutes of grace, tunable with `AGENTUSE_RELEASE_BACKSTOP_SECONDS`. Set `AGENTUSE_RELEASE_WORKERS=0` if you want the old kill-on-shutdown behaviour instead.
+
+**Idle workers are recycled once they get heavy.** A fresh worker peaks around 130MB of heap; after it has executed runs, that settles at roughly 350-450MB, which a long-lived daemon would otherwise hold forever. When an idle worker is above `AGENTUSE_WORKER_RECYCLE_MB` (default 300) it is retired through the same release path, so a replacement starts serving immediately. Recycling only happens while the worker is idle, and never within two minutes of it starting. Set `AGENTUSE_WORKER_RECYCLE_MB=0` to disable it.
+
+**After a crash, settle the stragglers.** If the host or the container died outright, sessions can be left marked `running` with no process behind them. `agentuse serve` sweeps these at startup, but only back 30 days:
+
+```bash
+docker exec -it agentuse agentuse sessions reconcile --all --dry-run
+docker exec -it agentuse agentuse sessions reconcile --all
+```
+
+Runs that are genuinely still executing are never touched. See [CLI Commands](/reference/cli-commands#reconcile-stuck-sessions).
+
 ## Including Your Agents
 
 **Volume mount** (best for development):

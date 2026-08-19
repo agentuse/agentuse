@@ -150,6 +150,9 @@ Every run is a durable session. Inspect the result, tool calls, token usage,
 artifacts, verification verdicts, and follow-up context without reconstructing
 the run from terminal logs.
 
+Test runs stay out of these operational views by default, so validating an agent
+never pollutes the picture of what production is doing.
+
 ## Put consequential actions behind approval
 
 Agents can prepare work autonomously and pause before sending, publishing,
@@ -198,6 +201,8 @@ complete configuration, reviewer flows, and enforcement details.
 | [Sessions](https://docs.agentuse.io/guides/session-logs) | Persistent run history, usage, artifacts, resume, and failure visibility |
 | [Subagents](https://docs.agentuse.io/guides/subagents) | Delegate bounded work to specialized child agents |
 | [Stores](https://docs.agentuse.io/guides/store) | Persistent, structured state shared across runs and cooperating agents |
+| [Learning](https://docs.agentuse.io/guides/learning) | Capture reviewer feedback as durable instructions and apply the best of them to later runs |
+| [Verify](https://docs.agentuse.io/guides/verify) | Check a run's output against the agent's own success criteria before it counts as done |
 
 List the currently recommended models:
 
@@ -211,6 +216,11 @@ Run with a different supported model without editing the file:
 agentuse run my-agent.agentuse --model openai:gpt-5.6
 agentuse run my-agent.agentuse --model ollama:<local-model>
 ```
+
+Leaving the version off (`anthropic:claude-sonnet`) tracks the newest model in
+that line. `models.aliases` in the AgentUse config gives your own `@fast`-style
+names, `models.default` makes `model:` optional in agent files, and
+`agentuse models unpin` converts existing files to the alias form.
 
 Provider support means AgentUse can execute its own agent files with those model
 APIs. It does not claim that `.agentuse` files deploy directly into each
@@ -231,6 +241,7 @@ The installed discovery skill loads version-matched guidance from the CLI:
 ```bash
 agentuse skills get core
 agentuse skills get creator
+agentuse skills get tester
 ```
 
 Validate an agent's configuration before running it:
@@ -238,6 +249,15 @@ Validate an agent's configuration before running it:
 ```bash
 agentuse doctor my-agent.agentuse
 ```
+
+Then validate its behaviour without touching anything real:
+
+```bash
+agentuse test my-agent.agentuse
+```
+
+Mock mode fabricates side effects, resolves approval gates automatically, and
+isolates stores, so the agent runs end to end without changing external state.
 
 ## Documentation
 

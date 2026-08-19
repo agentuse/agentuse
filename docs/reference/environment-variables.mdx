@@ -157,6 +157,32 @@ model: anthropic:claude-sonnet-5:dev  # Uses ANTHROPIC_API_KEY_DEV
   ```
 </ParamField>
 
+<ParamField path="AGENTUSE_WORKER_RECYCLE_MB" type="number" default="300">
+  Heap size, in MB, at which an idle per-project worker is retired and replaced.
+
+  ```bash
+  export AGENTUSE_WORKER_RECYCLE_MB="300"
+  ```
+
+  A worker bank starts around 130MB of peak heap and settles at roughly 350-450MB once it has executed runs, so a long-lived daemon otherwise holds that memory indefinitely. When an idle worker is over the threshold it is retired through the same release path used at shutdown: runs already in flight finish in the old worker while a replacement starts serving immediately. A worker is only ever recycled while idle, and never within 2 minutes of starting. Set `0` to disable recycling.
+</ParamField>
+
+<ParamField path="AGENTUSE_RELEASE_WORKERS" type="string">
+  Set to `0` to restore the old kill-on-shutdown behavior. By default `agentuse serve` releases its workers on shutdown instead of killing them, so a `pm2` or `systemd` restart does not destroy runs that are mid-flight.
+
+  ```bash
+  export AGENTUSE_RELEASE_WORKERS="0"
+  ```
+</ParamField>
+
+<ParamField path="AGENTUSE_RELEASE_BACKSTOP_SECONDS" type="number">
+  Hard deadline, in seconds, for a released worker to exit after the daemon goes away. Defaults to the longest in-flight run's own timeout plus 10 minutes of grace.
+
+  ```bash
+  export AGENTUSE_RELEASE_BACKSTOP_SECONDS="1800"
+  ```
+</ParamField>
+
 ## Approval Gates
 
 <ParamField path="SLACK_BOT_TOKEN" type="string">

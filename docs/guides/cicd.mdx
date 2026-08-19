@@ -272,6 +272,8 @@ Common issues:
 | Review not posting | Check `pull-requests: write` permission, verify API key |
 | Wrong files reviewed | Check path filters, verify filesystem permissions |
 
+Before pushing a workflow change, run the agent locally with [`agentuse test`](/guides/testing-agents): it exercises the whole run without posting comments or touching the repository.
+
 ## Security
 
 Limit agent access in CI:

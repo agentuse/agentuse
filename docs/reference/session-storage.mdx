@@ -65,6 +65,7 @@ interface SessionInfo {
 
   model: string;                 // e.g., "anthropic:claude-sonnet-5"
   version: string;               // AgentUse version
+  mock?: boolean;                // True when the run executed in mock mode
 
   config: {
     timeout?: number;            // Timeout in seconds
@@ -289,7 +290,19 @@ interface StepFinishPart extends PartBase {
 }
 ```
 
+The `mock` flag is what keeps test runs out of the operational views. It is set
+by `agentuse test` and `agentuse run --mock`, and absent on a normal run.
+`agentuse sessions show` surfaces it as a warning line so a fabricated result is
+never mistaken for a real one:
+
+```
+Mock:        ⚠ mock run: some or all tool results were fabricated, not executed
+```
+
+List views mark the same sessions with a trailing `· mock`.
+
 ## Related
 
+- [Testing Agents](/guides/testing-agents) - Validating an agent in mock mode
 - [Session Logs Guide](/guides/session-logs) - How to use the sessions CLI
 - [Environment Variables](/reference/environment-variables#storage) - Configure storage location
