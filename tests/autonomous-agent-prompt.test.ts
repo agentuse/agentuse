@@ -18,18 +18,19 @@ describe('autonomous agent system prompt', () => {
     });
   }
 
-  // Final responses are skimmed as a feed of cards, so an unbounded report
-  // buries the outcome. The cap needs its escape hatches stated inline: agents
-  // whose whole deliverable IS the response (digests, reports) must not get
-  // truncated, and the biggest single source of bloat is an agent restating a
-  // file or PR it already wrote.
+  // Final responses should be direct without turning the system prompt into a
+  // formatting manual. The cap still needs an escape hatch for runs whose
+  // requested result is itself a complete document.
   for (const [label, isSubAgent] of [['agent', false], ['subagent', true]] as const) {
-    it(`caps the ${label}'s final output length and forbids restating deliverables`, () => {
+    it(`asks the ${label} for direct writing without truncating deliverables`, () => {
       const prompt = buildAutonomousAgentPrompt('Monday, July 29, 2026', isSubAgent);
 
-      expect(prompt).toContain('~200 words is the ceiling');
-      expect(prompt).toContain('report, digest, or document');
-      expect(prompt).toContain('Never restate its contents');
+      expect(prompt).toContain('Lead with the result. Be direct and use plain language');
+      expect(prompt).toContain('Use short paragraphs by default');
+      expect(prompt).toContain('under ~200 words');
+      expect(prompt).toContain('report, digest, document, schema, template, or complete table');
+      expect(prompt).toContain('Do not reproduce the artifact');
+      expect(prompt).not.toContain('structured result → what changed → what to do next');
     });
   }
 });

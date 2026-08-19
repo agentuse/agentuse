@@ -9,10 +9,10 @@ import { logger } from '../utils/logger';
  * cleanly the runner reads this slot to decide the terminal status and to
  * surface the run's headline.
  *
- * Deliberately NOT a thrown signal: the agent keeps running after either call
- * so it can finish bookkeeping (store writes, final report) before the run
- * ends. Created fresh per run in loadAgentTools, so a resumed session starts
- * with a clean outcome.
+ * Deliberately NOT a thrown signal: execution stops report_complete through the
+ * runner's stop predicate, while report_incomplete may keep stepping only for
+ * required bookkeeping and concise final context. Created fresh per run in
+ * loadAgentTools, so a resumed session starts with a clean outcome.
  *
  * One slot, two writers. When an agent calls both (it learned mid-run that a
  * "complete" run was actually blocked, or vice versa), `incomplete` wins: see
@@ -65,16 +65,17 @@ export function formatOutcomeLine(toolName: string, input: unknown): string | un
 export function createReportIncompleteTool(outcome: RunOutcome): Tool {
   return {
     description:
-      'Declare that this run cannot achieve its objective (blocked precondition, missing access or expired login, unrecoverable dependency failure). ' +
-      'The run continues so you can finish bookkeeping and your final report, but it ends marked "incomplete" instead of "completed" and failure notifications fire. ' +
-      'Do not call this for an empty-but-successful result (e.g. a sweep that legitimately found nothing to act on) — call report_complete instead.',
+      'Declare that a required outcome was not delivered because a required precondition, input, access path, login/session, dependency, or action failed. ' +
+      'Judge against the requested objective: use this even when stopping was correct, bookkeeping succeeded, or secondary work was completed. ' +
+      'Call once the blocker is confirmed. The run remains active only so you can finish required bookkeeping and add concise context that is not already in the reason; do not resume core work or call report_complete later. ' +
+      'Do not call this when a successful evaluation legitimately found nothing to act on — call report_complete instead.',
     inputSchema: z.object({
       reason: z.string().describe('One or two sentences: what blocked the run and what a human must fix before the next attempt (e.g. "Substack session logged out; needs re-auth").')
     }),
     execute: async ({ reason }: { reason: string }) => {
       // Last call wins: an agent may refine the reason as it learns more.
       outcome.incomplete = { reason };
-      return 'Recorded: this run will end marked incomplete. Finish any remaining bookkeeping and produce your final report as usual.';
+      return 'Recorded: this run will end marked incomplete. Finish only required bookkeeping and concise non-duplicative context, then stop without another outcome call.';
     }
   };
 }
@@ -85,7 +86,7 @@ export function createReportCompleteTool(outcome: RunOutcome): Tool {
       'Declare that this run achieved its objective AND deliver its report. This call IS your final answer: the runtime renders `headline` + `details` as the run\'s output everywhere (terminal, Slack, the session list, the run feed, and the parent when you are a sub-agent). ' +
       'Call it once, when the work is done, and then stop — do not also write the report as a normal message, or the reader gets it twice. ' +
       'A legitimately empty result still counts as complete (e.g. a sweep that found nothing to act on): say so in the headline and leave details out. ' +
-      'If the objective was blocked instead, call report_incomplete.',
+      'Do not call this merely because the run ended cleanly: if a required outcome was skipped, blocked, failed, or only partially delivered, call report_incomplete.',
     inputSchema: z.object({
       headline: z.string().describe(
         'ONE line, no markdown heading, stating what the run achieved and the single number that matters (e.g. "Posted 10/10 connect replies, all verified; 10 of 20 daily budget left"). Not the task restated, not a summary of your steps.'

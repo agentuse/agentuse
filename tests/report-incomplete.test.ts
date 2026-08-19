@@ -11,16 +11,28 @@ import {
 } from '../src/runner/outcome';
 
 describe('report_incomplete tool', () => {
-  it('records the reason into the shared outcome and keeps the run alive', async () => {
+  it('records the reason and limits continuation to bookkeeping', async () => {
     const outcome: RunOutcome = {};
     const tool = createReportIncompleteTool(outcome) as any;
 
     const reply = await tool.execute({ reason: 'Substack session logged out; needs re-auth' });
 
     expect(outcome.incomplete).toEqual({ reason: 'Substack session logged out; needs re-auth' });
-    // The tool must not throw/suspend: the agent continues to bookkeeping.
+    // The tool stays a normal result because incomplete runs may still need
+    // bookkeeping, but it must not invite another attempt at the core work.
     expect(typeof reply).toBe('string');
     expect(reply).toContain('incomplete');
+    expect(reply).toContain('Finish only required bookkeeping');
+    expect(reply).toContain('without another outcome call');
+  });
+
+  it('distinguishes a blocked objective from a legitimate empty result', () => {
+    const tool = createReportIncompleteTool({}) as any;
+
+    expect(tool.description).toContain('Judge against the requested objective');
+    expect(tool.description).toContain('secondary work was completed');
+    expect(tool.description).toContain('successful evaluation legitimately found nothing');
+    expect(tool.description).toContain('do not resume core work');
   });
 
   it('last call wins when the agent refines the reason', async () => {

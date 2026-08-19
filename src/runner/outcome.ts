@@ -11,7 +11,7 @@ import type { RunOutcome } from '../tools/report-outcome.js';
  */
 export const OUTCOME_NUDGE_PROMPT =
   '[runtime] This run is ending without a declared outcome. Call report_complete now with a one-line headline ' +
-  '(an honestly-empty result still counts as complete), or report_incomplete if the objective was blocked. ' +
+  '(a successful evaluation that found nothing still counts as complete), or report_incomplete if a required outcome was skipped, blocked, failed, or only partially delivered. ' +
   'Emit ONLY that tool call: do not redo any work, and do not repeat, extend, or rewrite the report you already wrote.';
 
 /**

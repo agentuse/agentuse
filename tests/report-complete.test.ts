@@ -164,6 +164,8 @@ describe('shouldRequestOutcome', () => {
   it('asks for the verdict without inviting a second copy of the report', () => {
     expect(OUTCOME_NUDGE_PROMPT).toContain('report_complete');
     expect(OUTCOME_NUDGE_PROMPT).toContain('report_incomplete');
+    expect(OUTCOME_NUDGE_PROMPT).toContain('successful evaluation that found nothing');
+    expect(OUTCOME_NUDGE_PROMPT).toContain('skipped, blocked, failed, or only partially delivered');
     expect(OUTCOME_NUDGE_PROMPT).toMatch(/do not repeat/i);
   });
 });
@@ -211,8 +213,22 @@ describe('system prompt outcome contract', () => {
   });
 
   it('makes the call the answer and the details body optional', () => {
-    expect(prompt).toMatch(/That call IS your final answer/);
+    expect(prompt).toContain('report_complete carries the final answer');
     expect(prompt).toMatch(/OPTIONAL Markdown body, and NOT the default/);
+  });
+
+  it('judges the outcome against the requested objective', () => {
+    expect(prompt).toContain('Judge the outcome against the requested objective');
+    expect(prompt).toContain('successful evaluation found nothing');
+    expect(prompt).toContain('secondary work succeeded');
+    expect(prompt).toContain('skipped, blocked, failed, or only partially delivered');
+  });
+
+  it('matches each outcome tool lifecycle', () => {
+    expect(prompt).toContain('The calls have different lifecycles');
+    expect(prompt).toMatch(/report_complete carries the final answer[\s\S]*final action, then STOP/);
+    expect(prompt).toMatch(/report_incomplete records the blocker[\s\S]*finish required bookkeeping/);
+    expect(prompt).toContain('Do not resume core work, call report_complete later');
   });
 });
 
