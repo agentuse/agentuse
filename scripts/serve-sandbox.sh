@@ -14,7 +14,8 @@
 #   shared    global config     -> ~/.agentuse/config.json (AGENTUSE_CONFIG not overridden)
 #   shared    secrets/.env      -> ~/.agentuse/.env, loaded with override:false so the
 #                                  empty SLACK_* vars below win but everything else flows in
-#   isolated  sessions/state    -> XDG_DATA_HOME points at a throwaway dir under tmp/
+#   isolated  sessions/state    -> XDG_DATA_HOME points at a throwaway dir under $TMPDIR
+#                                  (never inside the repo: see the STATE_DIR note below)
 #   isolated  server registry   -> {XDG_DATA_HOME}/agentuse/servers, so `serve list` stays separate
 #   isolated  port              -> defaults to 12999, not the live 12233
 #   DISABLED  Slack socket      -> SLACK_APP_TOKEN/SLACK_BOT_TOKEN exported empty (default)
@@ -28,7 +29,8 @@
 #
 #   -p, --port PORT        Port to listen on (default: 12999)
 #   -C, --dir AGENT_DIR    Serve agent files from this dir (passed through as serve -C)
-#       --state DIR        Isolated state dir (default: <repo>/tmp/serve-sandbox/<port>)
+#       --state DIR        Isolated state dir (default: $TMPDIR/agentuse-serve-sandbox/<port>;
+#                          keep it outside the repo, see the STATE_DIR note in the body)
 #       --slack-env FILE   Opt INTO a second/dev Slack app: read SLACK_APP_TOKEN and
 #                          SLACK_BOT_TOKEN from this dotenv-style file so the sandbox
 #                          opens its OWN socket. Use a DIFFERENT Slack app than prod;
@@ -54,13 +56,18 @@ while [[ $# -gt 0 ]]; do
     -C|--dir)        AGENT_DIR="$2"; shift 2 ;;
     --state)         STATE_DIR="$2"; shift 2 ;;
     --slack-env)     SLACK_ENV="$2"; shift 2 ;;
-    -h|--help)       sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)       sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --)              shift; PASSTHROUGH=("$@"); break ;;
     *)               echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
 
-STATE_DIR="${STATE_DIR:-$ROOT/tmp/serve-sandbox/$PORT}"
+# Keep sandbox state OUTSIDE the repo tree. `bun test` opens a directory handle for
+# every directory under the package root, and a sandbox that has run for a while grows
+# thousands of session dirs; past ~10k open fds the runner can no longer give spawned
+# children usable stdio (esbuild's service dies, plugin tests fail). Parking state in
+# the repo therefore breaks the test suite as a side effect of local serve testing.
+STATE_DIR="${STATE_DIR:-${TMPDIR:-/tmp}/agentuse-serve-sandbox/$PORT}"
 mkdir -p "$STATE_DIR"
 
 # Safety: the scheduler ALWAYS runs and serve has no disable flag. If the sandbox
