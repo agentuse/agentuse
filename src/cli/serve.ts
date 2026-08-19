@@ -7037,28 +7037,38 @@ function formatPsTable(servers: ServerEntry[]): string {
   const headerRow = headers.map((h, i) => h.padEnd(widths[i])).join("  ");
   const separator = widths.map((w) => "─".repeat(w)).join("──");
 
-  const formatProjects = (s: ServerEntry): string => {
+  const formatProjects = (s: ServerEntry): string[] => {
     if (s.projects && s.projects.length > 0) {
       if (s.projects.length === 1) {
-        return truncatePath(s.projects[0].root, widths[2]);
+        return [truncatePath(s.projects[0].root, widths[2])];
       }
-      const head = s.projects[0].id;
-      return `${head} +${s.projects.length - 1}`;
+      return s.projects.map((project) => project.id);
     }
-    return truncatePath(s.projectRoot, widths[2]);
+    return [truncatePath(s.projectRoot, widths[2])];
   };
 
   const blocks: string[] = [chalk.dim(headerRow), chalk.dim(separator)];
   for (const s of servers) {
+    const projects = formatProjects(s);
     const row = [
       String(s.pid).padEnd(widths[0]),
       String(s.port).padEnd(widths[1]),
-      formatProjects(s).padEnd(widths[2]),
+      projects[0].padEnd(widths[2]),
       String(s.agentCount).padEnd(widths[3]),
       String(s.scheduleCount).padEnd(widths[4]),
       formatUptime(s.startTime).padEnd(widths[5]),
     ].join("  ");
     blocks.push(row);
+    for (const project of projects.slice(1)) {
+      blocks.push([
+        "".padEnd(widths[0]),
+        "".padEnd(widths[1]),
+        project.padEnd(widths[2]),
+        "".padEnd(widths[3]),
+        "".padEnd(widths[4]),
+        "".padEnd(widths[5]),
+      ].join("  ").trimEnd());
+    }
     if (s.logFile) {
       const shortLog = s.logFile.startsWith(homedir())
         ? "~" + s.logFile.slice(homedir().length)
@@ -7322,6 +7332,7 @@ export const __testing = {
   workerExecutionErrorResponse,
   isSpaPageRoute,
   collectAgents,
+  formatPsTable,
   formatAgentsTable,
   formatSchedulesTable,
   canContinueApprovalSession,

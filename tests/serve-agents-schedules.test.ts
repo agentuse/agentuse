@@ -147,6 +147,31 @@ describe('Scheduler.listSerialized', () => {
 });
 
 describe('CLI table formatters', () => {
+  it('shows every project in serve ps output', () => {
+    const table = __testing.formatPsTable([{
+      pid: 12345,
+      port: 12233,
+      host: '127.0.0.1',
+      projectRoot: '/workspace/alpha',
+      startTime: Date.now(),
+      agentCount: 8,
+      scheduleCount: 2,
+      version: '1.0.0',
+      projects: ['alpha', 'bravo', 'charlie', 'delta'].map((id) => ({
+        id,
+        root: `/workspace/${id}`,
+        agentCount: 2,
+        scheduleCount: 0,
+      })),
+    }]);
+
+    expect(table).toContain('alpha');
+    expect(table).toContain('bravo');
+    expect(table).toContain('charlie');
+    expect(table).toContain('delta');
+    expect(table).not.toContain('alpha +3');
+  });
+
   it('formats the agents table with a schedule column', async () => {
     const { agents } = await __testing.collectAgents([makeProject()]);
     const table = __testing.formatAgentsTable(agents);
