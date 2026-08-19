@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-08-19
+
 ### Added
 
 - **serve recycles workers that have banked a run's memory.** A worker is spawned per project and kept for the daemon's lifetime, so the peak heap of every run it ever handled was carried forever: a fresh worker sits near 130MB, one that has run an agent settles at 350-450MB and does not come back down. An idle worker over the threshold is now retired and replaced, via release, so a run that slips in first is finished rather than killed, and the replacement serves new work immediately. Guards keep it cheap: only when idle, and never within two minutes of the worker starting, so a busy project respawns on a timer rather than per request. `AGENTUSE_WORKER_RECYCLE_MB` tunes the threshold (default 300); `0` disables it.
