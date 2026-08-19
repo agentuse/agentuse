@@ -9,6 +9,7 @@ import { useRunAgent } from '../hooks/use-run-agent';
 import { useSmartBack } from '../hooks/use-smart-back';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
+import { SchedulePill } from '../components/schedule-pill';
 import { AgentLearningsPanel, StrandedLearningsBanner } from '../components/learnings-panel';
 import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
 import { RunInstructionDialog } from '../components/run-instruction-dialog';
@@ -146,7 +147,9 @@ function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: s
   if (meta.awaitHuman) toolChips.push(<Chip key="await" tone="amber">await_human</Chip>);
 
   const runtimeChips: VNode[] = [<Chip key="model" tone="cyan">{props.model}</Chip>];
-  if (props.schedule) runtimeChips.push(<Chip key="sched" title={props.schedule}>{props.scheduleHuman ?? props.schedule}</Chip>);
+  if (props.schedule) runtimeChips.push(
+    <SchedulePill key="sched" class="cap-chip" schedule={props.schedule} human={props.scheduleHuman} />
+  );
   if (typeof meta.timeout === 'number') runtimeChips.push(<Chip key="to">timeout {meta.timeout}s</Chip>);
   if (typeof meta.maxSteps === 'number') runtimeChips.push(<Chip key="ms">{meta.maxSteps} steps</Chip>);
   if (meta.version) runtimeChips.push(<Chip key="v">v{meta.version}</Chip>);

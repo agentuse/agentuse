@@ -22,6 +22,7 @@ import { Loading } from '../components/loading';
 import { RunInstructionDialog } from '../components/run-instruction-dialog';
 import { AgentGraphView } from '../components/agent-graph-view';
 import { GroupRail } from '../components/group-rail';
+import { SchedulePill } from '../components/schedule-pill';
 import { agentDetailHref } from './agent-detail';
 
 /**
@@ -138,7 +139,7 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
           {agent.schedule && (
             <div class="menu-meta">
               <span class="menu-meta-label">Schedule</span>
-              <span class="chip status" title={agent.schedule}>{agent.scheduleHuman ?? agent.schedule}</span>
+              <SchedulePill class="chip status" schedule={agent.schedule} human={agent.scheduleHuman} />
             </div>
           )}
           {agent.metadata && Object.keys(agent.metadata).length > 0 && (
@@ -447,7 +448,7 @@ function AgentCard(props: { agent: AgentRow; ctx: RowCtx; showProject?: boolean 
         <LastRunCell session={last} />
       </div>
       <div class="agent-card-foot">
-        {a.schedule && <span class="chip status" title={a.schedule}>{a.scheduleHuman ?? a.schedule}</span>}
+        {a.schedule && <SchedulePill class="chip status" schedule={a.schedule} human={a.scheduleHuman} />}
         <span class="chip" title={a.model}>{a.model}</span>
         <span class="agent-card-runbtn"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>
       </div>
@@ -674,7 +675,7 @@ function ColumnCell({ id, agent, ctx }: { id: string; agent: AgentRow; ctx: RowC
   if (id === 'lastRun') return <LastRunCell session={ctx.lastRunFor(agent)} />;
   if (id === 'schedule') {
     return agent.schedule
-      ? <span class="chip status" title={agent.schedule}>{agent.scheduleHuman ?? agent.schedule}</span>
+      ? <SchedulePill class="chip status" schedule={agent.schedule} human={agent.scheduleHuman} />
       : <span class="muted">—</span>;
   }
   if (id === 'run') return <RunButton agentPath={agent.runPath} projectId={agent.projectId} />;

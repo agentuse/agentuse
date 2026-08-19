@@ -16,6 +16,7 @@ import type { AgentRow, ApprovalsListPayload, SessionRow } from '../src/cli/serv
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 import { term, termTitle } from '../src/cli/serve/web/lib/terms';
 import { AgentGraphView } from '../src/cli/serve/web/components/agent-graph-view';
+import { SchedulePill } from '../src/cli/serve/web/components/schedule-pill';
 import { statusBadge, LearningsHeadline, TidyResultView } from '../src/cli/serve/web/components/learnings-panel';
 import { TidyProgressView } from '../src/cli/serve/web/routes/learnings-tidy';
 import { sessionContextFetchKey } from '../src/cli/serve/web/routes/session-context';
@@ -23,6 +24,31 @@ import { learningsTidyHref } from '../src/cli/serve/web/lib/links';
 import type { LearningSummary, SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
 
 const noop = () => {};
+
+describe('SchedulePill', () => {
+  it('shows the cron expression and wires the human cadence to a hover/focus tooltip', () => {
+    const html = renderToString(
+      <SchedulePill
+        class="chip status"
+        schedule="0 9 * * 1-5"
+        human="At 09:00 AM, Monday through Friday"
+      />
+    );
+
+    expect(html).toContain('>0 9 * * 1-5</span>');
+    expect(html).toContain('aria-label="0 9 * * 1-5 — At 09:00 AM, Monday through Friday"');
+    expect(html).toContain('tabindex="0"');
+    expect(html).not.toContain('title=');
+    expect(html).not.toContain('>At 09:00 AM, Monday through Friday</span>');
+  });
+
+  it('falls back to the schedule when no human description is available', () => {
+    const html = renderToString(<SchedulePill schedule="*/15 * * * *" />);
+
+    expect(html).toContain('aria-label="*/15 * * * *"');
+    expect(html).toContain('tabindex="0"');
+  });
+});
 
 describe('serve.terms display nouns', () => {
   const withTerms = (terms: Record<string, string>, fn: () => void) => {

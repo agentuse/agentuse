@@ -4319,6 +4319,28 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   white-space: nowrap;
 }
 .page-agents .chip.status { color: var(--cyan); border-color: var(--cyan-border); }
+.schedule-pill { font-family: var(--mono); cursor: help; }
+.schedule-pill:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
+.schedule-tooltip {
+  position: fixed;
+  z-index: 80;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--fg);
+  color: var(--bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  font-family: var(--sans);
+  font-size: 11.5px;
+  line-height: 1.35;
+  white-space: normal;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  opacity: 1;
+}
+.schedule-tooltip.below { transform: translateX(-50%); }
 
 /* --- graph view: declared relationships, one tile per cluster ------------ */
 .page-agents .agent-graph { display: flex; flex-direction: column; gap: 18px; }
