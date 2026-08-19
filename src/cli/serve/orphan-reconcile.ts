@@ -26,6 +26,16 @@ export function startOrphanReconcileLoop(
   let running = false;
   let rerun = false;
   let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const schedule = (): void => {
+    if (stopped) return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      runNow();
+    }, intervalMs);
+    timer.unref?.();
+  };
 
   const runNow = (): void => {
     if (stopped) return;
@@ -33,20 +43,30 @@ export function startOrphanReconcileLoop(
       rerun = true;
       return;
     }
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
     running = true;
     void Promise.resolve()
       .then(runSweep)
       .catch((error) => options.onError?.(error))
       .finally(() => {
         running = false;
-        if (!rerun || stopped) return;
-        rerun = false;
-        runNow();
+        if (stopped) return;
+        if (rerun) {
+          rerun = false;
+          runNow();
+          return;
+        }
+        // Schedule relative to completion, not the previous start. A sweep
+        // slower than the interval must not create a permanent immediate-rerun
+        // loop that monopolizes the session store.
+        schedule();
       });
   };
 
-  const timer = setInterval(runNow, intervalMs);
-  timer.unref?.();
+  schedule();
 
   return {
     runNow,
@@ -54,7 +74,8 @@ export function startOrphanReconcileLoop(
       if (stopped) return;
       stopped = true;
       rerun = false;
-      clearInterval(timer);
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
     },
   };
 }

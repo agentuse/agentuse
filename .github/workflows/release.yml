@@ -39,7 +39,7 @@ jobs:
     if: github.repository == 'agentuse/agentuse' || vars.RELEASE_REHEARSAL == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # Full history and tags: the brief reports commits since the last tag.
           fetch-depth: 0
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: ./.github/actions/setup
       - run: npm install -g agent-browser
       - run: bun run test:e2e
@@ -85,14 +85,15 @@ jobs:
       id-token: write # mint the OIDC token npm exchanges for a publish grant
       contents: write # create the GitHub Release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
       - uses: ./.github/actions/setup
 
-      # Trusted publishing needs npm >= 11.5.1; setup-node ships an older one.
-      - run: npm install -g npm@latest
+      # Trusted publishing needs npm >= 11.5.1; keep the privileged job on the
+      # minimum audited version instead of executing a mutable `latest` release.
+      - run: npm install -g npm@11.5.1
 
       # `prepack` builds, so publish ships a build of the approved commit.
       - run: bun scripts/release.ts publish

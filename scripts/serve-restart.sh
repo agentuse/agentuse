@@ -46,19 +46,43 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Resolve the daemon's address from its own registry rather than assuming a port.
+# Resolve the daemon's address from the registry entry belonging to the requested
+# PM2 process. A machine can run multiple projects/daemons, so selecting the
+# oldest registry entry is unsafe (and can restart one daemon after inspecting
+# another one's sessions).
 base_url() {
-  agentuse serve ps --json 2>/dev/null | python3 -c '
-import json, sys
+  local pm2_pid
+  pm2_pid="$(pm2 jlist 2>/dev/null | PM2_NAME="$PM2_NAME" python3 -c '
+import json, os, sys
 try:
-    d = json.load(sys.stdin)
+    processes = json.load(sys.stdin)
 except Exception:
     sys.exit(1)
-if not d:
+matches = [p for p in processes if p.get("name") == os.environ["PM2_NAME"] and p.get("pid", 0) > 0]
+if len(matches) != 1:
     sys.exit(1)
-s = d[0]
+print(matches[0]["pid"])
+' || true)"
+  if [ -z "$pm2_pid" ]; then
+    echo "==> Could not resolve exactly one PM2 process named $PM2_NAME; not restarting." >&2
+    return 1
+  fi
+
+  agentuse serve ps --json 2>/dev/null | PM2_PID="$pm2_pid" python3 -c '
+import json, os, sys
+try:
+    entries = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+matches = [s for s in entries if str(s.get("pid")) == os.environ["PM2_PID"]]
+if len(matches) != 1:
+    sys.exit(1)
+s = matches[0]
 print("http://%s:%s" % (s.get("host") or "127.0.0.1", s["port"]))
-'
+' || {
+    echo "==> No unique serve registry entry belongs to PM2 process $pm2_pid; not restarting." >&2
+    return 1
+  }
 }
 
 # window=all so a long run started more than 24h ago (the default window) is not
@@ -67,7 +91,15 @@ print("http://%s:%s" % (s.get("host") or "127.0.0.1", s["port"]))
 # -- so anything older than that lingers forever and would keep us from ever
 # seeing idle. describe_running filters those out by heartbeat instead.
 running_json() {
-  curl -sf --max-time 10 "$1/api/sessions?status=running&window=all" 2>/dev/null
+  local auth=()
+  if [ -n "${AGENTUSE_API_KEY:-}" ]; then
+    auth=(-H "Authorization: Bearer ${AGENTUSE_API_KEY}")
+  fi
+  # Preserve the HTTP status so authentication failures and transport failures
+  # cannot be mistaken for an empty response (which would trigger a restart).
+  curl -sS --max-time 10 "${auth[@]}" \
+    -w $'\n__HTTP_STATUS__:%{http_code}' \
+    "$1/api/sessions?status=running&window=all" 2>/dev/null
 }
 
 # A genuinely live run writes a part per model step, bumping updatedAt. Treat a
@@ -106,21 +138,21 @@ restart_now() {
 # Waits until the daemon reports no live run, then restarts it. TIMEOUT <= 0 waits
 # forever. Returns 1 without restarting if the deadline passes first.
 wait_for_idle_then_restart() {
-  local url deadline body n now
+  local url deadline body response status n now
   url="$(base_url || true)"
   if [ -z "$url" ]; then
-    echo "==> No serve daemon registered; restarting $PM2_NAME blind."
-    pm2 restart "$PM2_NAME"
-    return 0
+    return 1
   fi
   echo "==> Daemon at $url"
 
   if [ "$TIMEOUT" -gt 0 ]; then deadline=$(( $(date +%s) + TIMEOUT )); else deadline=0; fi
   while :; do
-    body="$(running_json "$url" || true)"
-    if [ -z "$body" ]; then
-      echo "==> Daemon not answering; restarting."
-      break
+    response="$(running_json "$url" || true)"
+    status="${response##*$'\n__HTTP_STATUS__:'}"
+    body="${response%$'\n__HTTP_STATUS__:'*}"
+    if [ "$status" != "200" ]; then
+      echo "==> Daemon sessions check returned HTTP $status; not restarting." >&2
+      return 1
     fi
     n="$(printf '%s' "$body" | describe_running)"
     if [ "$n" = "0" ]; then

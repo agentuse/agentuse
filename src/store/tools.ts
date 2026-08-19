@@ -126,7 +126,25 @@ function resolveSince(value: string): string {
     const unit = relative[2] as keyof typeof UNIT_MS;
     return new Date(Date.now() - Number(relative[1]) * UNIT_MS[unit]).toISOString();
   }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return `${trimmed}T00:00:00.000Z`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    // Date.parse normalizes out-of-range calendar fields, so verify the
+    // normalized UTC components match the input instead of accepting dates
+    // such as 2026-02-31 as a different valid day.
+    const parsedDate = new Date(`${trimmed}T00:00:00.000Z`);
+    const [year, month, day] = trimmed.split('-').map(Number);
+    if (
+      !Number.isNaN(parsedDate.getTime()) &&
+      parsedDate.getUTCFullYear() === year &&
+      parsedDate.getUTCMonth() + 1 === month &&
+      parsedDate.getUTCDate() === day
+    ) {
+      return parsedDate.toISOString();
+    }
+    throw new Error(
+      `Invalid "since" value: ${JSON.stringify(value)}. ` +
+      `Use a relative window ("7d", "12h", "30m"), a date ("2026-08-06"), or an ISO timestamp.`
+    );
+  }
   const parsed = new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) {
     throw new Error(

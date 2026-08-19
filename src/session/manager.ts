@@ -515,6 +515,32 @@ export class SessionManager {
     return session?.id === sessionID ? sessionPath : null;
   }
 
+  private entryFromSessionPath(session: SessionInfo, sessionPath: string): SessionEntry {
+    const dirName = path.basename(sessionPath);
+    const prefix = `${session.id}-`;
+    const agentId = dirName.startsWith(prefix)
+      ? dirName.slice(prefix.length)
+      : sanitizeAgentName(session.agent.id);
+    this.rememberSessionPath(session.id, agentId, sessionPath);
+    return { session, agentId, path: sessionPath };
+  }
+
+  private async readSessionEntryAtPath(sessionPath: string, expectedSessionID?: string): Promise<SessionEntry | null> {
+    let session: SessionInfo | null;
+    try {
+      session = await readJSON<SessionInfo>(`${sessionPath}/session`);
+    } catch (err) {
+      if (err instanceof CorruptStorageError) {
+        logger.warn(`Skipping unreadable session at ${sessionPath}/session.json: ${err.message}`);
+        return null;
+      }
+      throw err;
+    }
+    if (!session) return null;
+    if (expectedSessionID !== undefined && session.id !== expectedSessionID) return null;
+    return this.entryFromSessionPath(session, sessionPath);
+  }
+
   private async readSessionEntries(options: ReadSessionEntriesOptions = {}): Promise<SessionEntry[]> {
     const state = await getStorageState();
     const dirs = await this.walkSessionDirs(state.dir, options.relativeDir ?? '', options);
@@ -563,12 +589,7 @@ export class SessionManager {
           if (session.time.created < options.createdAfter) continue;
         }
       }
-      const prefix = `${session.id}-`;
-      const agentId = dirName.startsWith(prefix)
-        ? dirName.slice(prefix.length)
-        : sanitizeAgentName(session.agent.id);
-      this.rememberSessionPath(session.id, agentId, dir);
-      results.push({ session, agentId, path: dir });
+      results.push(this.entryFromSessionPath(session, dir));
     }
 
     return results;
@@ -1305,6 +1326,17 @@ export class SessionManager {
       createdAfter,
       ...(options.includeSubagents !== undefined && { includeSubagents: options.includeSubagents }),
     });
+  }
+
+  async listReconcileCandidatesCreatedAfter(createdAfter: number): Promise<SessionEntry[]> {
+    const summaries = await this.listSessionSummaries({ createdAfter, includeSubagents: true });
+    const candidates = summaries.filter((session) =>
+      session.status === 'running' || session.status === 'suspended'
+    );
+    const entries = await Promise.all(candidates.map((session) =>
+      this.readSessionEntryAtPath(session.path, session.sessionId)
+    ));
+    return entries.filter((entry): entry is SessionEntry => entry !== null);
   }
 
   async listSessionsUpdatedAfter(updatedAfter: number): Promise<Array<{ session: SessionInfo; agentId: string }>> {

@@ -185,6 +185,39 @@ function assertTriggeredTagMatchesManifest(): void {
   }
 }
 
+type GitCapture = (args: string[]) => string;
+
+/**
+ * A release tag must point at a commit in the current main history.
+ *
+ * `prepare` already requires HEAD to equal both remotes' main branches before
+ * it creates the tag. Repeating that invariant against CI's freshly fetched
+ * `origin/main` prevents a tag on an unmerged commit from reaching the
+ * privileged publish job, while allowing main to advance after the tag push.
+ * Peeling both revisions keeps annotated tags and lightweight tags equivalent
+ * for this check.
+ */
+export function assertTriggeredCommitBelongsToRemoteMain(
+  env: NodeJS.ProcessEnv = process.env,
+  git: GitCapture = (args) => capture('git', args),
+): void {
+  if (env.GITHUB_ACTIONS !== 'true' || env.GITHUB_REF_TYPE !== 'tag') return;
+
+  const sha = env.GITHUB_SHA;
+  if (!sha) fail('GITHUB_SHA is missing for a tag-triggered release run.');
+
+  git(['fetch', '--quiet', '--no-tags', 'origin', RELEASE_BRANCH]);
+  const taggedCommit = git(['rev-parse', '--verify', `${sha}^{commit}`]);
+  const remoteMain = git(['rev-parse', '--verify', 'FETCH_HEAD^{commit}']);
+  const commonAncestor = git(['merge-base', taggedCommit, remoteMain]);
+  if (commonAncestor !== taggedCommit) {
+    fail(
+      `Release tag commit ${taggedCommit.slice(0, 12)} is not in origin/${RELEASE_BRANCH} history at ` +
+        `${remoteMain.slice(0, 12)}. Refusing this release run.`,
+    );
+  }
+}
+
 /**
  * The pinned bun is what the published artifact is built with. A mismatch means
  * the tarball a reviewer approves was produced by a different compiler than the
@@ -324,6 +357,7 @@ interface GateStep {
  */
 function verify(): void {
   const steps: Array<{ name: string; run: () => void }> = [
+    { name: 'tag commit / origin main history', run: assertTriggeredCommitBelongsToRemoteMain },
     { name: 'tag / package version', run: assertTriggeredTagMatchesManifest },
     { name: 'typecheck', run: () => stream('bun', ['run', 'typecheck']) },
     { name: 'typecheck:scripts', run: () => stream('bun', ['run', 'typecheck:scripts']) },
@@ -488,12 +522,14 @@ function main(): void {
   }
 }
 
-try {
-  main();
-} catch (error) {
-  if (error instanceof ReleaseError) {
-    console.error(`\n✗ ${error.message}`);
-    process.exit(1);
+if (import.meta.main) {
+  try {
+    main();
+  } catch (error) {
+    if (error instanceof ReleaseError) {
+      console.error(`\n✗ ${error.message}`);
+      process.exit(1);
+    }
+    throw error;
   }
-  throw error;
 }

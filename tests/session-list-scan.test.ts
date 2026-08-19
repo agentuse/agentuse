@@ -152,6 +152,67 @@ describe('session list scanning', () => {
     }
   });
 
+  it('lists only indexed running and suspended reconciliation candidates', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-reconcile-candidates-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+
+    try {
+      await initStorage(projectRoot);
+      const manager = new SessionManager();
+      const runningId = await manager.createSession({
+        agent: { id: 'agents/running', name: 'Running', isSubAgent: false },
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      const completedId = await manager.createSession({
+        agent: { id: 'agents/completed', name: 'Completed', isSubAgent: false },
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      await manager.setSessionCompleted(completedId, 'agents/completed');
+      const suspendedId = await manager.createSession({
+        agent: { id: 'agents/suspended', name: 'Suspended', isSubAgent: false },
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      await manager.setSessionSuspended(suspendedId, 'agents/suspended');
+      const errorId = await manager.createSession({
+        agent: { id: 'agents/error', name: 'Error', isSubAgent: false },
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      await manager.setSessionError(errorId, 'agents/error', { code: 'TEST', message: 'not a candidate' });
+
+      const parentId = await manager.createSession({
+        agent: { id: 'agents/parent', name: 'Parent', isSubAgent: false },
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      const childManager = new SessionManager();
+      childManager.setParentPath(manager.getFullPath()!);
+      const childId = await childManager.createSession({
+        agent: { id: 'agents/child', name: 'Child', isSubAgent: true },
+        parentSessionID: parentId,
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+
+      const cutoff = Date.now() - 60_000;
+      const candidates = await new SessionManager().listReconcileCandidatesCreatedAfter(cutoff);
+      expect(candidates.map(({ session }) => session.id).sort()).toEqual([
+        childId,
+        parentId,
+        runningId,
+        suspendedId,
+      ].sort());
+    } finally {
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it('marks a suspended parent with a running delegated child as subagentActive', async () => {
     const originalXdg = process.env.XDG_DATA_HOME;
     const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-subagent-active-'));

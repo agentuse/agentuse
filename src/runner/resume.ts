@@ -376,7 +376,7 @@ export async function reconcileOrphanedSessions(options: {
 }): Promise<ReconciledOrphan[]> {
   const { sessionManager, cutoff, dryRun = false } = options;
   const lookbackMs = options.lookbackMs ?? 30 * 24 * 60 * 60 * 1000;
-  const sessions = await sessionManager.listSessionsCreatedAfter(Date.now() - lookbackMs, { includeSubagents: true });
+  const sessions = await sessionManager.listReconcileCandidatesCreatedAfter(Date.now() - lookbackMs);
   const reconciled: ReconciledOrphan[] = [];
   // Pass 1: runs killed mid-flight.
   for (const { session, agentId } of sessions) {

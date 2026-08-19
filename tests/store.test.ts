@@ -765,6 +765,15 @@ describe("createStoreTools", () => {
     expect(res.items).toBeUndefined();
   });
 
+  it("store_list rejects impossible bare calendar dates", async () => {
+    for (const since of ["2026-99-99", "2026-02-31"]) {
+      const res = await call(tools.store_list, { since });
+      expect(res.success).toBe(false);
+      expect(res.error).toContain("Invalid \"since\" value");
+      expect(res.items).toBeUndefined();
+    }
+  });
+
   it("store_list countOnly tallies the matching set without returning rows", async () => {
     const res = await call(tools.store_list, { countOnly: true });
 

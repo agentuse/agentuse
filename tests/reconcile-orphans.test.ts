@@ -166,6 +166,41 @@ describe('reconcileOrphanedSessions', () => {
     }
   }, 10_000);
 
+  it('waits a full interval after a slow periodic sweep completes', async () => {
+    let sweepCount = 0;
+    let releaseFirst!: () => void;
+    let firstStarted!: () => void;
+    const started = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const blocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const loop = startOrphanReconcileLoop(async () => {
+      sweepCount += 1;
+      if (sweepCount === 1) {
+        firstStarted();
+        await blocked;
+      }
+    }, { intervalMs: 25 });
+
+    try {
+      loop.runNow();
+      await started;
+      // Let several nominal intervals pass while the first sweep is blocked.
+      // Interval ticks must not queue a trailing sweep of their own.
+      await sleep(80);
+      expect(sweepCount).toBe(1);
+
+      releaseFirst();
+      await sleep(5);
+      expect(sweepCount).toBe(1);
+
+      const deadline = Date.now() + 500;
+      while (sweepCount < 2 && Date.now() < deadline) await sleep(5);
+      expect(sweepCount).toBe(2);
+    } finally {
+      loop.stop();
+      releaseFirst();
+    }
+  });
+
   it('reports what it would settle without writing when dryRun is set', async () => {
     const { projectRoot, sessionManager, sessionID, agentId } = await makeSession();
     try {
@@ -188,6 +223,44 @@ describe('reconcileOrphanedSessions', () => {
       await rm(projectRoot, { recursive: true, force: true });
       delete process.env.XDG_DATA_HOME;
     }
+  });
+
+  it('uses indexed reconciliation candidates instead of the full session scan', async () => {
+    const calls: string[] = [];
+    const session = {
+      id: '01HINDEXEDORPHAN0000000000',
+      status: 'running',
+      trigger: 'manual',
+      agent: { id: 'agents/review', name: 'review', isSubAgent: false },
+      model: 'demo:test',
+      version: 'test',
+      config: {},
+      project: { root: '/tmp/project', cwd: '/tmp/project' },
+      owner: { pid: DEAD_PID },
+      time: { created: 1_000, updated: 1_000 },
+    };
+    const sessionManager = {
+      listReconcileCandidatesCreatedAfter: async () => {
+        calls.push('indexed-candidates');
+        return [{ session, agentId: 'agents/review', path: '01HINDEXEDORPHAN0000000000-agents_review' }];
+      },
+      listSessionsCreatedAfter: async () => {
+        throw new Error('full session scan should not run');
+      },
+      setSessionError: async () => {
+        calls.push('set-error');
+      },
+    } as unknown as SessionManager;
+
+    const reconciled = await reconcileOrphanedSessions({
+      sessionManager,
+      cutoff: Date.now(),
+    });
+
+    expect(calls).toEqual(['indexed-candidates', 'set-error']);
+    expect(reconciled).toEqual([
+      { sessionId: session.id, agentId: 'agents/review', agentName: 'review', reason: 'interrupted' },
+    ]);
   });
 
   it('leaves a running session owned by the current live worker (touched at/after cutoff) alone', async () => {
