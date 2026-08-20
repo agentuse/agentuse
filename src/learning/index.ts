@@ -235,8 +235,10 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     // with the reason — never deleted. This is also what backfills the hash on
     // a pre-0.18 store the first time capture runs after upgrade.
     let requarantined = 0;
+    const justWritten = new Set(persisted.map((l) => l.id));
     const needsRevet = activeLearnings(stored).filter(
-      (l) => l.instructionsHash === undefined || isStaleAgainst(currentHash, l.instructionsHash),
+      (l) => !justWritten.has(l.id)
+        && (l.instructionsHash === undefined || isStaleAgainst(currentHash, l.instructionsHash)),
     );
     if (needsRevet.length > 0) {
       try {
