@@ -16,6 +16,7 @@ import { applyResumeToolResult, restoreResumeToolResult, runAgent, describeError
 import { reconcileOrphanedSessions } from "../runner/resume";
 import { describeLearningOutcome, effectiveCap, saveManualLearning, type LearningSource } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
+import { Semaphore } from "../utils/concurrency";
 
 interface SessionSummary {
   id: string;
@@ -113,17 +114,25 @@ function parseSessionDirName(dirName: string): { id: string; agentName: string }
   return { id, agentName };
 }
 
+// One shared cap across the whole recursive walk (and the session.json reads
+// below): with thousands of session dirs, unbounded fan-out exhausts fds.
+const fsScanLimit = new Semaphore(64);
+
 async function walkSessionDirs(sessionDir: string, relativeDir = ""): Promise<string[]> {
   const absoluteDir = path.join(sessionDir, relativeDir);
-  const entries = await fs.readdir(absoluteDir, { withFileTypes: true }).catch(() => []);
+  const entries = await fsScanLimit
+    .run(() => fs.readdir(absoluteDir, { withFileTypes: true }))
+    .catch(() => [] as import("fs").Dirent[]);
   const results: string[] = entries.some((entry) => entry.isFile() && entry.name === "session.json")
     ? [relativeDir]
     : [];
 
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    results.push(...await walkSessionDirs(sessionDir, path.join(relativeDir, entry.name)));
-  }
+  const children = await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => walkSessionDirs(sessionDir, path.join(relativeDir, entry.name)))
+  );
+  for (const child of children) results.push(...child);
 
   return results;
 }
@@ -160,23 +169,23 @@ async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
   try {
     const sessionDirs = await walkSessionDirs(sessionDir);
 
-    for (const relativeDir of sessionDirs) {
+    const summaries = await Promise.all(sessionDirs.map(async (relativeDir): Promise<SessionSummary | null> => {
       const dirName = path.basename(relativeDir);
       const parsed = parseSessionDirName(dirName);
-      if (!parsed) continue;
+      if (!parsed) return null;
 
       // Try to read session.json for more details
       const dirPath = path.join(sessionDir, relativeDir);
       const sessionJsonPath = path.join(dirPath, "session.json");
       try {
-        const content = await fs.readFile(sessionJsonPath, "utf-8");
+        const content = await fsScanLimit.run(() => fs.readFile(sessionJsonPath, "utf-8"));
         // Use Partial for agent.id to handle old sessions that don't have it
         const sessionInfo = JSON.parse(content) as SessionInfo & { agent: { id?: string } };
 
-        sessions.push(sessionSummaryFromInfo(sessionInfo, dirPath, projectRoot));
+        return sessionSummaryFromInfo(sessionInfo, dirPath, projectRoot);
       } catch {
         // If session.json is missing or invalid, use parsed info
-        sessions.push({
+        return {
           id: parsed.id,
           agentId: parsed.agentName, // Use agentName as fallback for old sessions without session.json
           agentName: parsed.agentName,
@@ -185,9 +194,10 @@ async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
           isSubAgent: false,
           dirPath,
           projectRoot,
-        });
+        };
       }
-    }
+    }));
+    sessions.push(...summaries.filter((summary): summary is SessionSummary => summary !== null));
   } catch {
     // Directory doesn't exist or can't be read
     return [];
@@ -204,25 +214,25 @@ async function listAllProjectSessions(): Promise<SessionSummary[]> {
   const sessions: SessionSummary[] = [];
 
   const projectEntries = await fs.readdir(projectsDir, { withFileTypes: true }).catch(() => []);
-  for (const projectEntry of projectEntries) {
-    if (!projectEntry.isDirectory()) continue;
+  const perProject = await Promise.all(projectEntries.map(async (projectEntry): Promise<SessionSummary[]> => {
+    if (!projectEntry.isDirectory()) return [];
     const sessionDir = path.join(projectsDir, projectEntry.name, "session");
     const sessionDirs = await walkSessionDirs(sessionDir).catch(() => []);
 
-    for (const relativeDir of sessionDirs) {
+    const summaries = await Promise.all(sessionDirs.map(async (relativeDir): Promise<SessionSummary | null> => {
       const dirName = path.basename(relativeDir);
       const parsed = parseSessionDirName(dirName);
-      if (!parsed) continue;
+      if (!parsed) return null;
 
       const dirPath = path.join(sessionDir, relativeDir);
       const sessionJsonPath = path.join(dirPath, "session.json");
       try {
-        const content = await fs.readFile(sessionJsonPath, "utf-8");
+        const content = await fsScanLimit.run(() => fs.readFile(sessionJsonPath, "utf-8"));
         const sessionInfo = JSON.parse(content) as SessionInfo & { agent: { id?: string } };
         const projectRoot = sessionInfo.project.root;
-        sessions.push(sessionSummaryFromInfo(sessionInfo, dirPath, projectRoot));
+        return sessionSummaryFromInfo(sessionInfo, dirPath, projectRoot);
       } catch {
-        sessions.push({
+        return {
           id: parsed.id,
           agentId: parsed.agentName,
           agentName: parsed.agentName,
@@ -231,10 +241,12 @@ async function listAllProjectSessions(): Promise<SessionSummary[]> {
           isSubAgent: false,
           dirPath,
           projectRoot: projectEntry.name,
-        });
+        };
       }
-    }
-  }
+    }));
+    return summaries.filter((summary): summary is SessionSummary => summary !== null);
+  }));
+  for (const projectSessions of perProject) sessions.push(...projectSessions);
 
   sessions.sort((a, b) => b.created.getTime() - a.created.getTime());
   return sessions;

@@ -6,6 +6,7 @@ import { writeJSON, readJSON, listKeys, getStorageState, sanitizeAgentName, Corr
 import { logger } from '../utils/logger';
 import { currentProcessRef } from '../utils/process-info';
 import { withOwnershipLock } from '../utils/ownership-lock';
+import { mapLimit, Semaphore } from '../utils/concurrency';
 import { dehydrateSnapshotMedia, rehydrateSnapshotMedia } from './media-cache';
 import { computeSubagentActiveIds } from './subagent-active';
 import type {
@@ -20,6 +21,9 @@ import type {
   ToolOutputArtifactRef,
   ToolOutputArtifactStream
 } from './types';
+
+// Shared cap for the parallel session-store walk; see walkSessionDirs.
+const fsScanLimit = new Semaphore(64);
 
 export interface SessionEntry {
   session: SessionInfo;
@@ -405,7 +409,11 @@ export class SessionManager {
     options: Pick<ReadSessionEntriesOptions, 'createdAfter' | 'includeSubagents'> = {}
   ): Promise<string[]> {
     const absoluteDir = path.join(baseDir, relativeDir);
-    const entries = await fs.readdir(absoluteDir, { withFileTypes: true }).catch(() => []);
+    // Bounded via the shared semaphore: the recursion fans out in parallel and
+    // a store with thousands of sessions would otherwise exhaust fds.
+    const entries = await fsScanLimit
+      .run(() => fs.readdir(absoluteDir, { withFileTypes: true }))
+      .catch(() => [] as import('fs').Dirent[]);
     const sessionJson = entries.find((entry) => entry.isFile() && entry.name === 'session.json');
     const results: string[] = sessionJson ? [relativeDir] : [];
     const childDirs = sessionJson
@@ -424,9 +432,10 @@ export class SessionManager {
           return true;
         });
 
-    for (const entry of childDirs) {
-      results.push(...await this.walkSessionDirs(baseDir, path.join(relativeDir, entry.name), options));
-    }
+    const children = await Promise.all(
+      childDirs.map((entry) => this.walkSessionDirs(baseDir, path.join(relativeDir, entry.name), options))
+    );
+    for (const child of children) results.push(...child);
 
     return results;
   }
@@ -547,9 +556,9 @@ export class SessionManager {
   private async readSessionEntries(options: ReadSessionEntriesOptions = {}): Promise<SessionEntry[]> {
     const state = await getStorageState();
     const dirs = await this.walkSessionDirs(state.dir, options.relativeDir ?? '', options);
-    const results: SessionEntry[] = [];
-
-    for (const dir of dirs) {
+    // Reads run concurrently (order-preserving, fd-bounded): sequential
+    // awaits over thousands of session.json files took seconds per scan.
+    const entries = await mapLimit(dirs, 64, async (dir): Promise<SessionEntry | null> => {
       const dirName = path.basename(dir);
 
       // Fast path for date-windowed scans: the directory is named
@@ -563,7 +572,7 @@ export class SessionManager {
       // decodeTime and fall through to the original read-and-check path.
       if (options.createdAfter !== undefined) {
         try {
-          if (decodeTime(dirName.split('-')[0]) < options.createdAfter) continue;
+          if (decodeTime(dirName.split('-')[0]) < options.createdAfter) return null;
         } catch {
           // Not a decodable ULID prefix; fall through and read the file.
         }
@@ -580,22 +589,22 @@ export class SessionManager {
       } catch (err) {
         if (err instanceof CorruptStorageError) {
           logger.warn(`Skipping unreadable session at ${dir}/session.json: ${err.message}`);
-          continue;
+          return null;
         }
         throw err;
       }
-      if (!session) continue;
+      if (!session) return null;
       if (options.createdAfter !== undefined) {
         try {
-          if (decodeTime(session.id) < options.createdAfter) continue;
+          if (decodeTime(session.id) < options.createdAfter) return null;
         } catch {
-          if (session.time.created < options.createdAfter) continue;
+          if (session.time.created < options.createdAfter) return null;
         }
       }
-      results.push(this.entryFromSessionPath(session, dir));
-    }
+      return this.entryFromSessionPath(session, dir);
+    });
 
-    return results;
+    return entries.filter((entry): entry is SessionEntry => entry !== null);
   }
 
   private async updateSessionAtPath(
