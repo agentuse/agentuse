@@ -659,9 +659,11 @@ dashboard can deep-link to its log.
 
 #### GET /api/sessions
 
-Lists every run (top-level sessions only) as JSON, newest first. Filters:
-`?agent=<id>`, `?trigger=scheduled|manual|slack|api`, `?days=<n|all>` (default
-~7 days). The browsable HTML page is at `/sessions`.
+Lists top-level runs as JSON, live first and then by most recent activity. Filters:
+`?agent=<id>`, `?trigger=scheduled|manual|slack|api`, and
+`?window=<1h|6h|24h|7d|30d|90d|all>` (default `24h`). Time windows use the
+last update, so a recently completed long-running session remains visible. The
+browsable HTML page is at `/sessions`.
 
 ```bash
 curl "http://127.0.0.1:12233/api/sessions?agent=daily&trigger=scheduled" \
@@ -682,7 +684,7 @@ curl "http://127.0.0.1:12233/api/sessions?agent=daily&trigger=scheduled" \
       "updatedAt": 1717430412000
     }
   ],
-  "window": { "days": 7, "createdAfter": 1716825600000 },
+  "window": { "value": "24h", "hours": 24, "updatedAfter": 1717344000000 },
   "errors": []
 }
 ```

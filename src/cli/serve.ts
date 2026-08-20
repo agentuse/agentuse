@@ -366,7 +366,7 @@ type SessionRow = SessionSummary & { project: string };
 interface SessionsPayload {
   success: true;
   sessions: SessionRow[];
-  window: { value: string; days?: number | 'all'; hours?: number; createdAfter?: number };
+  window: { value: string; days?: number | 'all'; hours?: number; updatedAfter?: number };
   agent?: string;
   status?: string;
   triage?: SessionTriageFilter;
@@ -933,12 +933,12 @@ class AgentWorker {
 
   listSessions(
     projectRoot: string,
-    options: { createdAfter?: number; includeSubagents?: boolean; limit?: number; perAgent?: number; mock?: 'exclude' | 'include' | 'only' } = {}
+    options: { updatedAfter?: number; includeSubagents?: boolean; limit?: number; perAgent?: number; mock?: 'exclude' | 'include' | 'only' } = {}
   ): Promise<WorkerListSessionsResult | WorkerExecuteError> {
     return this.request({
       type: "list-sessions",
       projectRoot,
-      sessionsCreatedAfter: options.createdAfter,
+      sessionsUpdatedAfter: options.updatedAfter,
       includeSubagents: options.includeSubagents,
       sessionsLimit: options.limit,
       sessionsPerAgent: options.perAgent,
@@ -1365,7 +1365,7 @@ function approvalListCreatedAfter(requestUrl: URL, now = listWindowNow()): numbe
   return listCreatedAfter(requestUrl, APPROVAL_LIST_DEFAULT_DAYS, now);
 }
 
-function sessionListCreatedAfter(requestUrl: URL, now = listWindowNow()): number | undefined {
+function sessionListUpdatedAfter(requestUrl: URL, now = listWindowNow()): number | undefined {
   const filter = sessionWindowFilterValue(requestUrl);
   if (filter === 'all') return undefined;
   const amount = Number(filter.slice(0, -1));
@@ -4085,7 +4085,7 @@ export function createServeCommand(): Command {
             : undefined;
         const approvalFilter = parseApprovalSessionFilter(requestUrl.searchParams.get('approval') ?? undefined);
         const mockFilter = parseSessionMockFilter(requestUrl.searchParams.get('mock') ?? undefined);
-        const createdAfter = sessionListCreatedAfter(requestUrl);
+        const updatedAfter = sessionListUpdatedAfter(requestUrl);
         const daysFilter = sessionDaysFilterValue(requestUrl);
         const detail = requestUrl.searchParams.get('detail');
         const rawLimit = requestUrl.searchParams.get('limit');
@@ -4110,7 +4110,7 @@ export function createServeCommand(): Command {
           const result = await projectWorker.listSessions(
             project.root,
             {
-              ...(createdAfter !== undefined && { createdAfter }),
+              ...(updatedAfter !== undefined && { updatedAfter }),
               ...(approvalFilter && { includeSubagents: true }),
               ...(canPrelimit && { limit: requestedLimit }),
               ...(detail === 'agents' && { perAgent: 12 }),
@@ -4129,10 +4129,7 @@ export function createServeCommand(): Command {
             if (!projectWorker) {
               return { project, error: 'Worker unavailable' };
             }
-            const result = await projectWorker.listApprovals(
-              project.root,
-              createdAfter === undefined ? {} : { createdAfter }
-            );
+            const result = await projectWorker.listApprovals(project.root);
             if (!result.success) {
               return { project, error: result.error.message };
             }
@@ -4183,7 +4180,7 @@ export function createServeCommand(): Command {
           a.projectId.localeCompare(b.projectId) ||
           a.session.sessionId.localeCompare(b.session.sessionId)
         );
-        // Fingerprint on the window FILTER, not the resolved createdAfter
+        // Fingerprint on the window FILTER, not the resolved updatedAfter
         // cutoff: the cutoff is minute-quantized (listWindowNow), so embedding
         // it would silently expire every cursor at the next minute boundary and
         // restart Load more from page 1. A cursor row that slides out of the
@@ -4269,7 +4266,7 @@ export function createServeCommand(): Command {
                 : daysFilter.endsWith('h')
                   ? { hours: Number(daysFilter.slice(0, -1)) }
                   : { days: Number(daysFilter.slice(0, -1)) }),
-              ...(createdAfter !== undefined && { createdAfter })
+              ...(updatedAfter !== undefined && { updatedAfter })
             },
             ...(agentFilter && { agent: agentFilter }),
             ...(statusFilter && { status: statusFilter }),
@@ -7339,7 +7336,7 @@ export const __testing = {
   isEndedSessionStatus,
   approvalListCreatedAfter,
   APPROVAL_LIST_SSE_INTERVAL_MS,
-  sessionListCreatedAfter,
+  sessionListUpdatedAfter,
   SESSION_LIST_SSE_INTERVAL_MS,
   sessionMatchesAgentFilter,
   sessionMatchesStatusFilter,

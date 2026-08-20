@@ -219,18 +219,18 @@ describe('session list helpers', () => {
     },
   ];
 
-  it('defaults session list scans to 24 hours and allows all history', () => {
+  it('defaults session list activity windows to 24 hours and allows all history', () => {
     const now = Date.UTC(2026, 4, 6);
 
-    expect(__testing.sessionListCreatedAfter(new URL('http://127.0.0.1:12233/sessions'), now))
+    expect(__testing.sessionListUpdatedAfter(new URL('http://127.0.0.1:12233/sessions'), now))
       .toBe(now - 24 * 60 * 60 * 1000);
-    expect(__testing.sessionListCreatedAfter(new URL('http://127.0.0.1:12233/sessions?window=6h'), now))
+    expect(__testing.sessionListUpdatedAfter(new URL('http://127.0.0.1:12233/sessions?window=6h'), now))
       .toBe(now - 6 * 60 * 60 * 1000);
-    expect(__testing.sessionListCreatedAfter(new URL('http://127.0.0.1:12233/sessions?hours=1'), now))
+    expect(__testing.sessionListUpdatedAfter(new URL('http://127.0.0.1:12233/sessions?hours=1'), now))
       .toBe(now - 1 * 60 * 60 * 1000);
-    expect(__testing.sessionListCreatedAfter(new URL('http://127.0.0.1:12233/sessions?days=30'), now))
+    expect(__testing.sessionListUpdatedAfter(new URL('http://127.0.0.1:12233/sessions?days=30'), now))
       .toBe(now - 30 * 24 * 60 * 60 * 1000);
-    expect(__testing.sessionListCreatedAfter(new URL('http://127.0.0.1:12233/sessions?window=all'), now))
+    expect(__testing.sessionListUpdatedAfter(new URL('http://127.0.0.1:12233/sessions?window=all'), now))
       .toBeUndefined();
   });
 

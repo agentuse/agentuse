@@ -1082,7 +1082,7 @@ async function runInternalWorker() {
     resumeToken?: string;
     allowHistorical?: boolean;
     approvalCreatedAfter?: number;
-    sessionsCreatedAfter?: number;
+    sessionsUpdatedAfter?: number;
     includeSubagents?: boolean;
     sessionsLimit?: number;
     sessionsPerAgent?: number;
@@ -3137,7 +3137,7 @@ async function runInternalWorker() {
       kind,
       req.projectRoot,
       req.approvalCreatedAfter ?? '',
-      req.sessionsCreatedAfter ?? '',
+      req.sessionsUpdatedAfter ?? '',
       req.includeSubagents ? 'subagents' : 'top',
       req.sessionsLimit ?? '',
       req.sessionsPerAgent ?? '',
@@ -3529,11 +3529,11 @@ async function runInternalWorker() {
       await initStorage(req.projectRoot);
       const sessionManager = new SessionManager();
       const sessions = await sessionManager.listSessionSummaries({
-        ...(typeof req.sessionsCreatedAfter === 'number' && { createdAfter: req.sessionsCreatedAfter }),
+        ...(typeof req.sessionsUpdatedAfter === 'number' && { updatedAfter: req.sessionsUpdatedAfter }),
         includeSubagents: req.includeSubagents ?? false,
         // A time window bounds history, not work still in progress. Otherwise a
-        // long-running session disappears from Home at the 24-hour boundary.
-        includeLiveBeforeCreatedAfter: true,
+        // stalled long-running session disappears from Home at the boundary.
+        includeLiveBeforeUpdatedAfter: true,
       });
 
       // Top-level runs by default; approval-filtered session views opt into
@@ -3562,6 +3562,7 @@ async function runInternalWorker() {
         .sort((a, b) =>
           ((a.status === 'running' || a.subagentActive) ? 0 : 1)
           - ((b.status === 'running' || b.subagentActive) ? 0 : 1)
+          || b.updatedAt - a.updatedAt
           || b.createdAt - a.createdAt
         );
 

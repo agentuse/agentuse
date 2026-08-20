@@ -568,7 +568,7 @@ export type SessionRow = SessionSummary & { project: string };
 export interface SessionsPayload {
   success: true;
   sessions: SessionRow[];
-  window: { value: string; days?: number | 'all'; hours?: number; createdAfter?: number };
+  window: { value: string; days?: number | 'all'; hours?: number; updatedAfter?: number };
   agent?: string;
   status?: string;
   triage?: string;

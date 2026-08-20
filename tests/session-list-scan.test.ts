@@ -257,7 +257,7 @@ describe('session list scanning', () => {
     }
   });
 
-  it('keeps live runs in Web UI windows after their start time ages out', async () => {
+  it('filters Web UI windows by recent activity and keeps stale live runs visible', async () => {
     const originalXdg = process.env.XDG_DATA_HOME;
     const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-live-window-'));
     process.env.XDG_DATA_HOME = projectRoot;
@@ -268,18 +268,22 @@ describe('session list scanning', () => {
       const cutoff = Date.UTC(2026, 0, 2);
       const recentTime = Date.UTC(2026, 0, 3);
 
-      const oldCompleted = sessionInfo({ id: ulid(oldTime), agentId: 'agents/done', agentName: 'Done', projectRoot, created: oldTime });
-      await writeSession(state.dir, '', oldCompleted);
+      const staleCompleted = sessionInfo({ id: ulid(oldTime), agentId: 'agents/stale', agentName: 'Stale', projectRoot, created: oldTime });
+      await writeSession(state.dir, '', staleCompleted);
 
-      const oldRunning = sessionInfo({ id: ulid(oldTime + 1), agentId: 'agents/running', agentName: 'Running', projectRoot, created: oldTime + 1 });
+      const recentlyCompleted = sessionInfo({ id: ulid(oldTime + 1), agentId: 'agents/done', agentName: 'Done', projectRoot, created: oldTime + 1 });
+      recentlyCompleted.time.updated = recentTime + 1;
+      await writeSession(state.dir, '', recentlyCompleted);
+
+      const oldRunning = sessionInfo({ id: ulid(oldTime + 2), agentId: 'agents/running', agentName: 'Running', projectRoot, created: oldTime + 2 });
       oldRunning.status = 'running';
       await writeSession(state.dir, '', oldRunning);
 
-      const parent = sessionInfo({ id: ulid(oldTime + 2), agentId: 'agents/manager', agentName: 'Manager', projectRoot, created: oldTime + 2 });
+      const parent = sessionInfo({ id: ulid(oldTime + 3), agentId: 'agents/manager', agentName: 'Manager', projectRoot, created: oldTime + 3 });
       parent.status = 'suspended';
       const parentDir = await writeSession(state.dir, '', parent);
       const child = sessionInfo({
-        id: ulid(oldTime + 3), agentId: 'agents/leaf', agentName: 'Leaf', projectRoot, created: oldTime + 3,
+        id: ulid(oldTime + 4), agentId: 'agents/leaf', agentName: 'Leaf', projectRoot, created: oldTime + 4,
         isSubAgent: true, parentSessionID: parent.id,
       });
       child.status = 'running';
@@ -289,13 +293,19 @@ describe('session list scanning', () => {
       await writeSession(state.dir, '', recent);
 
       const manager = new SessionManager();
-      expect((await manager.listSessionSummaries({ createdAfter: cutoff })).map((s) => s.sessionId)).toEqual([recent.id]);
+      expect((await manager.listSessionSummaries({ updatedAfter: cutoff })).map((s) => s.sessionId).sort())
+        .toEqual([recent.id, recentlyCompleted.id].sort());
 
       const webRows = await manager.listSessionSummaries({
-        createdAfter: cutoff,
-        includeLiveBeforeCreatedAfter: true,
+        updatedAfter: cutoff,
+        includeLiveBeforeUpdatedAfter: true,
       });
-      expect(webRows.map((s) => s.sessionId).sort()).toEqual([recent.id, oldRunning.id, parent.id].sort());
+      expect(webRows.map((s) => s.sessionId).sort()).toEqual([
+        recent.id,
+        recentlyCompleted.id,
+        oldRunning.id,
+        parent.id,
+      ].sort());
       expect(webRows.find((s) => s.sessionId === parent.id)?.subagentActive).toBe(true);
     } finally {
       if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
