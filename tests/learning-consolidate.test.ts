@@ -6,6 +6,7 @@ import { LearningStore } from "../src/learning/store";
 import { getProjectDirSync } from "../src/storage/paths";
 import { LEARNED_BLOCK_START } from "../src/learning/graduate";
 import type { Learning } from "../src/learning/types";
+import { hashInstructions } from "../src/learning/contract";
 import { createLearningsCommand } from "../src/cli/learnings";
 
 // Corrections and undo snapshots are generated state under $XDG_DATA_HOME, not
@@ -79,6 +80,10 @@ function learning(overrides: Partial<Learning> & { id: string }): Learning {
     source: "approval",
     reasserted: 0,
     approvedRuns: 0,
+    // Already vetted against the contract every test passes to the tidy pass,
+    // so no fixture triggers the legacy re-vet/backfill call unless a test
+    // removes the stamp on purpose.
+    instructionsHash: hashInstructions("Do the work."),
     ...overrides,
   };
 }
@@ -516,7 +521,7 @@ describe("tidying up an over-cap corrections file", () => {
       // Pinned, not inherited: every fixture in this file counts rules against a
       // cap of 10, so the cap belongs in the test rather than in whatever the
       // shipped default happens to be.
-      config: { capture: true, apply: true, max: 10 },
+      config: { capture: { addons: [] }, apply: true, max: 10 },
       stateRoot: tempDir,
       now: NOW,
       ...opts,
@@ -1188,7 +1193,7 @@ describe("tidying up an over-cap corrections file", () => {
       // Pinned, not inherited: every fixture in this file counts rules against a
       // cap of 10, so the cap belongs in the test rather than in whatever the
       // shipped default happens to be.
-      config: { capture: true, apply: true, max: 10 },
+      config: { capture: { addons: [] }, apply: true, max: 10 },
       stateRoot: tempDir,
       now: NOW,
       onProgress: (p) => seen.push(`${p.phase}:${p.step}/${p.total}`),
@@ -1219,7 +1224,7 @@ describe("tidying up an over-cap corrections file", () => {
       // Pinned, not inherited: every fixture in this file counts rules against a
       // cap of 10, so the cap belongs in the test rather than in whatever the
       // shipped default happens to be.
-      config: { capture: true, apply: true, max: 10 },
+      config: { capture: { addons: [] }, apply: true, max: 10 },
       stateRoot: tempDir,
       now: NOW,
       onProgress: (p) => seen.push(`${p.phase}:${p.step}/${p.total}`),
@@ -1335,7 +1340,7 @@ describe("the record of an agent's last tidy-up", () => {
       // Pinned, not inherited: every fixture in this file counts rules against a
       // cap of 10, so the cap belongs in the test rather than in whatever the
       // shipped default happens to be.
-      config: { capture: true, apply: true, max: 10 },
+      config: { capture: { addons: [] }, apply: true, max: 10 },
       stateRoot: tempDir,
       now: NOW,
     });
