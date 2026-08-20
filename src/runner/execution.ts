@@ -42,6 +42,11 @@ import {
 
 // Constants
 const MAX_RETRIES = 3;
+
+// Trailing-debounce window for context snapshots. Long enough that a burst of
+// model steps collapses into one write, short enough that a crash between rest
+// points loses at most the last step or two.
+const CONTEXT_SNAPSHOT_DEBOUNCE_MS = 1500;
 const ANTHROPIC_CACHE_CONTROL = { type: 'ephemeral' as const };
 const OPENAI_CACHE_KEY_PREFIX = 'agentuse';
 // Tokens reserved for the visible answer above the extended-thinking budget, so
@@ -591,9 +596,73 @@ async function* executeAgentAttempt(
     }
   }
 
+  // Declared outside the run's try so the exit path below can flush a pending
+  // context snapshot.
+  let contextManager: ContextManager | null = null;
+
+  // A context snapshot is a full 200-800KB pretty-printed rewrite of the active
+  // transcript, and prepareStep asks for one on every model step. Coalesce the
+  // writes onto a trailing debounce and flush on every path that ends or
+  // suspends the run, so a long post-compaction run costs roughly one write per
+  // rest point instead of one per step, with nothing lost at rest.
+  let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
+  let snapshotWrites: Promise<void> = Promise.resolve();
+  let lastSnapshot: { messages: number; tokens: number } | undefined;
+
+  const writeContextSnapshot = async (): Promise<void> => {
+    if (
+      !contextManager?.hasCompacted() ||
+      !options.sessionManager ||
+      !options.sessionID ||
+      !options.agentId
+    ) {
+      return;
+    }
+
+    try {
+      const stats = contextManager.getStats();
+      const snapshotMessages = contextManager.getMessages();
+      // Unchanged since the last write: what is on disk is already current.
+      if (lastSnapshot?.messages === snapshotMessages.length && lastSnapshot.tokens === stats.activeTokens) {
+        return;
+      }
+      await options.sessionManager.writeContextSnapshot(options.sessionID, options.agentId, {
+        version: 1,
+        updatedAt: stats.updatedAt,
+        ...(options.messageID && { messageID: options.messageID }),
+        messages: snapshotMessages,
+        usage: stats,
+      });
+      lastSnapshot = { messages: snapshotMessages.length, tokens: stats.activeTokens };
+    } catch (error) {
+      logger.debug(`Failed to persist compacted context: ${(error as Error).message}`);
+    }
+  };
+
+  // Serialized so a debounced write and a flush can never overlap on the file.
+  const queueContextSnapshotWrite = (): Promise<void> => {
+    snapshotWrites = snapshotWrites.then(writeContextSnapshot);
+    return snapshotWrites;
+  };
+
+  const persistContextSnapshot = (): void => {
+    if (snapshotTimer) clearTimeout(snapshotTimer);
+    snapshotTimer = setTimeout(() => {
+      snapshotTimer = undefined;
+      void queueContextSnapshotWrite();
+    }, CONTEXT_SNAPSHOT_DEBOUNCE_MS);
+  };
+
+  const flushContextSnapshot = async (): Promise<void> => {
+    if (snapshotTimer) {
+      clearTimeout(snapshotTimer);
+      snapshotTimer = undefined;
+    }
+    await queueContextSnapshotWrite();
+  };
+
   try {
   // Initialize context manager if enabled
-  let contextManager: ContextManager | null = null;
   const usesAnthropicCacheControl = isAnthropicModel(agent.config.model);
   const initialMessages: any[] = options.messages ?? [
     ...options.systemMessages,
@@ -626,30 +695,6 @@ async function* executeAgentAttempt(
 
     contextManager.setMessages(messages);
   }
-
-  const persistContextSnapshot = async () => {
-    if (
-      !contextManager?.hasCompacted() ||
-      !options.sessionManager ||
-      !options.sessionID ||
-      !options.agentId
-    ) {
-      return;
-    }
-
-    try {
-      const stats = contextManager.getStats();
-      await options.sessionManager.writeContextSnapshot(options.sessionID, options.agentId, {
-        version: 1,
-        updatedAt: stats.updatedAt,
-        ...(options.messageID && { messageID: options.messageID }),
-        messages: contextManager.getMessages(),
-        usage: stats,
-      });
-    } catch (error) {
-      logger.debug(`Failed to persist compacted context: ${(error as Error).message}`);
-    }
-  };
 
   // Record a visible session marker when a compaction actually runs, so the
   // event shows up in `agentuse sessions` and the serve web view instead of
@@ -701,7 +746,7 @@ async function* executeAgentAttempt(
       );
     }
     if (opts.persist !== false) {
-      await persistContextSnapshot();
+      persistContextSnapshot();
     }
     return messages;
   };
@@ -888,7 +933,7 @@ async function* executeAgentAttempt(
           // real conversation.
           if (contextManager) {
             contextManager.setMessages(stepMessages as any[]);
-            await persistContextSnapshot();
+            persistContextSnapshot();
           }
 
           return {
@@ -1943,6 +1988,7 @@ Error: ${errorMessage}`);
           messages: finalMessages,
           usage: stats,
         });
+        lastSnapshot = { messages: finalMessages.length, tokens: stats.activeTokens };
       }
     } catch (err) {
       logger.debug(`Failed to persist end-of-run media context snapshot: ${(err as Error).message}`);
@@ -1950,6 +1996,11 @@ Error: ${errorMessage}`);
   }
 
   } finally {
+    // Land any debounced context snapshot before the run lets go. This is the
+    // one path every ending shares — completion, suspension, cancellation and
+    // provider failure all unwind through here — so a rest point is never left
+    // with a snapshot that only existed in memory.
+    await flushContextSnapshot();
     // An approval authorizes only the execution segment resumed from that gate.
     // Consume it on every exit — success, suspension, cancellation, provider
     // failure, or an exception during context/bootstrap work — so a later

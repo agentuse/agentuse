@@ -45,6 +45,22 @@ interface TrackedMessage {
   actualTokens?: number;
 }
 
+/**
+ * Per-message-object memo of the token estimate.
+ *
+ * `setMessages` re-estimates the entire transcript on every call and runs ~3x
+ * per LLM step, while estimating one message deep-clones + stringifies each of
+ * its parts. The AI SDK hands back the same message object references across
+ * steps, so memoizing on identity turns a per-run quadratic into "estimate each
+ * message once". Weak so compacted-away messages stay collectable, and shared
+ * across instances because the estimate depends on nothing instance-local.
+ *
+ * Messages are treated as immutable here, but a caller swapping a message's
+ * `content` would otherwise leave a stale count, so identity of the content
+ * value (and its part count) is re-checked on every hit.
+ */
+const messageTokenCache = new WeakMap<object, { content: unknown; parts: number; tokens: number }>();
+
 export interface ContextUsageStats {
   activeTokens: number;
   contextLimit?: number;
@@ -127,14 +143,31 @@ export class ContextManager {
   }
 
   /**
-   * Add a message and track its tokens
+   * Estimated token cost of one message, memoized on the message object.
    */
-  addMessage(message: ModelMessage): void {
-    const text = this.messageToString(message);
+  private estimateMessageTokens(message: ModelMessage): number {
     // messageToString redacts inline media base64 to a short placeholder, so add
     // the media's real (approximate) token weight back rather than counting it as
     // ~zero. Base64 length is a ~1000x overestimate of an image's token cost.
-    const estimatedTokens = this.estimateTokens(text) + estimateInlineMediaTokens(message);
+    const compute = () => this.estimateTokens(this.messageToString(message)) + estimateInlineMediaTokens(message);
+
+    if (!message || typeof message !== 'object') return compute();
+
+    const content = message.content;
+    const parts = Array.isArray(content) ? content.length : -1;
+    const cached = messageTokenCache.get(message);
+    if (cached && cached.content === content && cached.parts === parts) return cached.tokens;
+
+    const tokens = compute();
+    messageTokenCache.set(message, { content, parts, tokens });
+    return tokens;
+  }
+
+  /**
+   * Add a message and track its tokens
+   */
+  addMessage(message: ModelMessage): void {
+    const estimatedTokens = this.estimateMessageTokens(message);
 
     this.messages.push({
       message,
