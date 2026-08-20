@@ -123,14 +123,18 @@ async function walkSessionDirs(sessionDir: string, relativeDir = ""): Promise<st
   const entries = await fsScanLimit
     .run(() => fs.readdir(absoluteDir, { withFileTypes: true }))
     .catch(() => [] as import("fs").Dirent[]);
-  const results: string[] = entries.some((entry) => entry.isFile() && entry.name === "session.json")
-    ? [relativeDir]
-    : [];
+  const hasSession = entries.some((entry) => entry.isFile() && entry.name === "session.json");
+  const results: string[] = hasSession ? [relativeDir] : [];
+
+  // Prune like SessionManager.walkSessionDirs: below a session dir the only
+  // place another session can live is subagent/, so skip message/part/artifact
+  // dirs (the bulk of the store) and the .index dir entirely.
+  const childDirs = hasSession
+    ? entries.filter((entry) => entry.isDirectory() && entry.name === "subagent")
+    : entries.filter((entry) => entry.isDirectory() && entry.name !== ".index");
 
   const children = await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => walkSessionDirs(sessionDir, path.join(relativeDir, entry.name)))
+    childDirs.map((entry) => walkSessionDirs(sessionDir, path.join(relativeDir, entry.name)))
   );
   for (const child of children) results.push(...child);
 
