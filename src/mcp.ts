@@ -1,13 +1,7 @@
 import { createMCPClient } from '@ai-sdk/mcp';
 import type { Tool } from 'ai';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { 
-  ListResourcesResultSchema,
-  ReadResourceResultSchema,
-  type Resource 
-} from '@modelcontextprotocol/sdk/types.js';
 import { logger } from './utils/logger';
 import { parseJsonEnvVar } from './utils/env';
 import { resolveToolTimeout } from './utils/config';
@@ -20,10 +14,19 @@ import { resolve, isAbsolute } from 'path';
 export type MCPServerConfig = NonNullable<AgentConfig['mcpServers']>[string];
 export type MCPServersConfig = AgentConfig['mcpServers'];
 
+type MCPClient = Awaited<ReturnType<typeof createMCPClient>>;
+type MCPResource = Awaited<ReturnType<MCPClient['listResources']>>['resources'][number];
+
+/**
+ * Fallback bound on the MCP handshake. Without it a wedged `npx` or a server
+ * that blocks on a stderr prompt hangs the whole run: connect happens before
+ * the run's abort timer is armed, so nothing else would ever cut it loose.
+ */
+const DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS = 30;
+
 export interface MCPConnection {
   name: string;
-  client: Awaited<ReturnType<typeof createMCPClient>>;
-  rawClient?: Client; // Raw MCP SDK client for resource access
+  client: MCPClient;
   disallowedTools?: string[]; // List of disallowed tool names/patterns for this connection
   preloadedTools?: Record<string, Tool>; // Cached tools for HTTP connections (loaded immediately)
   config?: MCPServerConfig; // Original config for accessing toolTimeout and other settings
@@ -264,6 +267,48 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
 }
 
 /**
+ * Run the MCP handshake under a deadline. On timeout the transport is closed
+ * directly rather than through the client: when the spawn itself is what
+ * wedged, no client exists yet, and the subprocess would otherwise outlive
+ * the run.
+ */
+async function connectWithTimeout(
+  name: string,
+  transport: any,
+  timeoutSeconds: number
+): Promise<MCPClient> {
+  const connectPromise = createMCPClient({ name, transport });
+
+  if (timeoutSeconds <= 0) {
+    return connectPromise;
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = new Error(`Timed out after ${timeoutSeconds}s while connecting`);
+      error.name = 'TimeoutError';
+      reject(error);
+    }, timeoutSeconds * 1000);
+  });
+
+  try {
+    return await Promise.race([connectPromise, timeoutPromise]);
+  } catch (error) {
+    try { await transport.close(); } catch { /* ignore */ }
+    // The abandoned handshake may still settle; close it if it wins the race
+    // late, and absorb its rejection so it isn't reported as unhandled.
+    connectPromise.then(
+      (client) => client.close().catch(() => { /* ignore */ }),
+      () => { /* connect failed; transport already closed */ }
+    );
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
  * Connect to MCP servers using AI SDK createMCPClient
  * @param servers Optional server configurations
  * @param debug Enable debug logging
@@ -284,8 +329,7 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
   const connectionPromises = Object.entries(servers).map(async ([name, config]) => {
     // Track partially-created clients so a mid-connect failure doesn't orphan
     // a live stdio subprocess.
-    let client: Awaited<ReturnType<typeof createMCPClient>> | undefined;
-    let rawClient: Client | undefined;
+    let client: MCPClient | undefined;
     try {
       logger.debug(`[MCP] Configuring server: ${name} - ${JSON.stringify(config)}`);
 
@@ -293,10 +337,11 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       const transport = createTransport(name, config, debug, basePath);
 
       // Create MCP client using AI SDK's built-in method
-      client = await createMCPClient({
+      client = await connectWithTimeout(
         name,
-        transport: transport,
-      });
+        transport,
+        config.connectTimeout ?? DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS
+      );
 
       // For HTTP transports, immediately fetch tools to ensure connection is ready
       // This follows the official AI SDK pattern for MCP clients
@@ -314,19 +359,6 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
         }
       }
 
-      // Also create a raw MCP SDK client for resource access
-      // We need a separate transport instance for the raw client
-      const rawTransport = createTransport(name, config, debug, basePath);
-
-      rawClient = new Client({
-        name: `${name}-raw`,
-        version: '1.0.0',
-      }, {
-        capabilities: {}
-      });
-
-      await rawClient.connect(rawTransport);
-
       // Debug, not info: connection chatter repeats per server per run and drowns
       // out real output in the session log view.
       logger.debug(`Connected to MCP server: ${name}`);
@@ -334,7 +366,6 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       return {
         name,
         client,
-        rawClient,
         config,  // Store config for accessing toolTimeout and other settings
         ...(preloadedTools && { preloadedTools }),
         ...(config.disallowedTools && { disallowedTools: config.disallowedTools })
@@ -344,9 +375,6 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       // leave a live subprocess/transport behind.
       if (client) {
         try { await client.close(); } catch { /* ignore */ }
-      }
-      if (rawClient) {
-        try { await rawClient.close(); } catch { /* ignore */ }
       }
 
       // Check if this is a fatal error (missing required env vars)
@@ -399,9 +427,6 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
   if (fatalError !== undefined) {
     for (const conn of connections) {
       try { await conn.client.close(); } catch { /* ignore */ }
-      if (conn.rawClient) {
-        try { await conn.rawClient.close(); } catch { /* ignore */ }
-      }
     }
     throw fatalError;
   }
@@ -424,17 +449,17 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
  * @param connection MCP connection with raw client
  * @returns Array of resources
  */
-async function getMCPResources(connection: MCPConnection): Promise<Resource[]> {
-  if (!connection.rawClient) {
+async function getMCPResources(connection: MCPConnection): Promise<MCPResource[]> {
+  // Servers declare resource support during initialize; asking anyway just
+  // buys a guaranteed "method not found" round trip per server per run.
+  if (!connection.client.initializeResult?.capabilities?.resources) {
+    logger.debug(`Server ${connection.name} does not advertise resources`);
     return [];
   }
-  
+
   try {
-    const response = await connection.rawClient.request(
-      { method: 'resources/list' },
-      ListResourcesResultSchema
-    );
-    
+    const response = await connection.client.listResources();
+
     return response.resources || [];
   } catch (error) {
     logger.debug(`Server ${connection.name} does not support resources: ${error instanceof Error ? error.message : String(error)}`);
@@ -448,7 +473,7 @@ async function getMCPResources(connection: MCPConnection): Promise<Resource[]> {
  * @param resources Available resources
  * @returns Tools for resource operations
  */
-function createResourceTools(connection: MCPConnection, resources: Resource[]): Record<string, Tool> {
+function createResourceTools(connection: MCPConnection, resources: MCPResource[]): Record<string, Tool> {
   const tools: Record<string, Tool> = {};
   
   if (resources.length === 0) {
@@ -489,21 +514,9 @@ function createResourceTools(connection: MCPConnection, resources: Resource[]): 
       uri: z.string().describe('The URI of the resource to read')
     }),
     execute: async ({ uri }: { uri: string }) => {
-      if (!connection.rawClient) {
-        return {
-          output: 'Raw client not available for resource reading'
-        };
-      }
-      
       try {
-        const response = await connection.rawClient.request(
-          { 
-            method: 'resources/read',
-            params: { uri }
-          },
-          ReadResourceResultSchema
-        );
-        
+        const response = await connection.client.readResource({ uri });
+
         // Handle different content types
         const contents = response.contents || [];
         const outputs: string[] = [];

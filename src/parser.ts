@@ -57,7 +57,8 @@ const MCPServerSchema = z.union([
     requiredEnvVars: z.array(z.string()).optional(),
     allowedEnvVars: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),
-    toolTimeout: durationSecondsSchema('mcpServers.toolTimeout').optional()
+    toolTimeout: durationSecondsSchema('mcpServers.toolTimeout').optional(),
+    connectTimeout: durationSecondsSchema('mcpServers.connectTimeout').optional()
   }),
   // HTTP configuration (has url)
   z.object({
@@ -74,7 +75,8 @@ const MCPServerSchema = z.union([
     requiredEnvVars: z.array(z.string()).optional(),
     allowedEnvVars: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),
-    toolTimeout: durationSecondsSchema('mcpServers.toolTimeout').optional()
+    toolTimeout: durationSecondsSchema('mcpServers.toolTimeout').optional(),
+    connectTimeout: durationSecondsSchema('mcpServers.connectTimeout').optional()
   })
 ]);
 
