@@ -78,7 +78,7 @@ export default function StoreItems() {
       label: 'Updated',
       type: 'number',
       sortValue: (row) => Date.parse(row.item.updatedAt) || 0,
-      render: (row) => formatApprovalTime(Date.parse(row.item.updatedAt)),
+      render: (row) => <span class="updated">{formatApprovalTime(Date.parse(row.item.updatedAt))}</span>,
     },
     {
       key: 'created-by',
