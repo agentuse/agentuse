@@ -257,6 +257,53 @@ describe('session list scanning', () => {
     }
   });
 
+  it('keeps live runs in Web UI windows after their start time ages out', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-live-window-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+
+    try {
+      const state = await initStorage(projectRoot);
+      const oldTime = Date.UTC(2026, 0, 1);
+      const cutoff = Date.UTC(2026, 0, 2);
+      const recentTime = Date.UTC(2026, 0, 3);
+
+      const oldCompleted = sessionInfo({ id: ulid(oldTime), agentId: 'agents/done', agentName: 'Done', projectRoot, created: oldTime });
+      await writeSession(state.dir, '', oldCompleted);
+
+      const oldRunning = sessionInfo({ id: ulid(oldTime + 1), agentId: 'agents/running', agentName: 'Running', projectRoot, created: oldTime + 1 });
+      oldRunning.status = 'running';
+      await writeSession(state.dir, '', oldRunning);
+
+      const parent = sessionInfo({ id: ulid(oldTime + 2), agentId: 'agents/manager', agentName: 'Manager', projectRoot, created: oldTime + 2 });
+      parent.status = 'suspended';
+      const parentDir = await writeSession(state.dir, '', parent);
+      const child = sessionInfo({
+        id: ulid(oldTime + 3), agentId: 'agents/leaf', agentName: 'Leaf', projectRoot, created: oldTime + 3,
+        isSubAgent: true, parentSessionID: parent.id,
+      });
+      child.status = 'running';
+      await writeSession(state.dir, join(parentDir, 'subagent'), child);
+
+      const recent = sessionInfo({ id: ulid(recentTime), agentId: 'agents/recent', agentName: 'Recent', projectRoot, created: recentTime });
+      await writeSession(state.dir, '', recent);
+
+      const manager = new SessionManager();
+      expect((await manager.listSessionSummaries({ createdAfter: cutoff })).map((s) => s.sessionId)).toEqual([recent.id]);
+
+      const webRows = await manager.listSessionSummaries({
+        createdAfter: cutoff,
+        includeLiveBeforeCreatedAfter: true,
+      });
+      expect(webRows.map((s) => s.sessionId).sort()).toEqual([recent.id, oldRunning.id, parent.id].sort());
+      expect(webRows.find((s) => s.sessionId === parent.id)?.subagentActive).toBe(true);
+    } finally {
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it('prefilters non-approval part files before parsing latest approval parts', async () => {
     const originalXdg = process.env.XDG_DATA_HOME;
     const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-approval-prefilter-'));

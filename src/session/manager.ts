@@ -76,6 +76,8 @@ interface ReadSessionEntriesOptions {
   createdAfter?: number;
   relativeDir?: string;
   includeSubagents?: boolean;
+  /** Keep active runs visible even when they began before a list window. */
+  includeLiveBeforeCreatedAfter?: boolean;
 }
 
 function getPartOrder(part: Part): number {
@@ -1272,7 +1274,7 @@ export class SessionManager {
    * source of truth: an interrupted mutation leaves a dirty marker and causes
    * a one-time automatic rebuild before any stale catalog is returned.
    */
-  async listSessionSummaries(options: Pick<ReadSessionEntriesOptions, 'createdAfter' | 'includeSubagents'> = {}): Promise<SessionListSummary[]> {
+  async listSessionSummaries(options: Pick<ReadSessionEntriesOptions, 'createdAfter' | 'includeSubagents' | 'includeLiveBeforeCreatedAfter'> = {}): Promise<SessionListSummary[]> {
     const state = await getStorageState();
     const dirtyPath = path.join(state.dir, `${SESSION_INDEX_DIRTY_KEY}.json`);
     const hasDirtyMarker = async () => {
@@ -1304,7 +1306,9 @@ export class SessionManager {
 
     return all
       .filter((session) => options.includeSubagents || (!session.parentSessionId && !session.agent.isSubAgent))
-      .filter((session) => options.createdAfter === undefined || session.createdAt >= options.createdAfter)
+      .filter((session) => options.createdAfter === undefined
+        || session.createdAt >= options.createdAfter
+        || (options.includeLiveBeforeCreatedAfter && (session.status === 'running' || activeIds.has(session.sessionId))))
       .sort((a, b) => b.createdAt - a.createdAt || b.sessionId.localeCompare(a.sessionId))
       .map((session) => activeIds.has(session.sessionId) ? { ...session, subagentActive: true } : session);
   }

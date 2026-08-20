@@ -4050,7 +4050,7 @@ export function createServeCommand(): Command {
         intervalMs: SESSION_LIST_SSE_INTERVAL_MS,
         liveIntervalMs: SESSION_LIST_SSE_LIVE_INTERVAL_MS,
         isLive: (payload) => payload.sessions.some(
-          (s) => s.status === 'running' || s.status === 'resuming' || s.status === 'continuing'
+          (s) => s.status === 'running' || s.status === 'resuming' || s.status === 'continuing' || s.subagentActive === true
         ),
       });
       // Feed mode reads final assistant text from the durable transcript. Cache

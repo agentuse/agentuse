@@ -3531,6 +3531,9 @@ async function runInternalWorker() {
       const sessions = await sessionManager.listSessionSummaries({
         ...(typeof req.sessionsCreatedAfter === 'number' && { createdAfter: req.sessionsCreatedAfter }),
         includeSubagents: req.includeSubagents ?? false,
+        // A time window bounds history, not work still in progress. Otherwise a
+        // long-running session disappears from Home at the 24-hour boundary.
+        includeLiveBeforeCreatedAfter: true,
       });
 
       // Top-level runs by default; approval-filtered session views opt into
@@ -3556,7 +3559,11 @@ async function runInternalWorker() {
           ...mockField(session),
           ...(session.subagentActive && { subagentActive: true }),
         }))
-        .sort((a, b) => b.createdAt - a.createdAt);
+        .sort((a, b) =>
+          ((a.status === 'running' || a.subagentActive) ? 0 : 1)
+          - ((b.status === 'running' || b.subagentActive) ? 0 : 1)
+          || b.createdAt - a.createdAt
+        );
 
       if (typeof req.sessionsPerAgent === 'number' && req.sessionsPerAgent > 0) {
         const counts = new Map<string, number>();
