@@ -5718,6 +5718,14 @@ export function createServeCommand(): Command {
               graduated: all.filter((l) => l.state === 'graduated').length,
               retired: all.filter((l) => l.state === 'retired').length,
               quarantined: all.filter((l) => l.state === 'quarantined').length,
+              // Per-channel store counts (retired excluded), so "capture is
+              // producing junk" is measurable from the panel, not anecdotal.
+              byChannel: all.reduce<Record<string, number>>((acc, l) => {
+                if (l.state === 'retired') return acc;
+                const channel = l.channel ?? 'legacy';
+                acc[channel] = (acc[channel] ?? 0) + 1;
+                return acc;
+              }, {}),
             },
             learnings: all
               .filter((l) => opts.forSessionId === undefined || l.sessionId === opts.forSessionId)

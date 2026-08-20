@@ -233,11 +233,13 @@ export function LearningsHeadline(props: {
   }
 
   if (summary.active > 0 || (summary.quarantined ?? 0) > 0) {
+    const channels = Object.entries(summary.byChannel ?? {});
     return (
       <div class="learnings-summary">
         {summary.injected} of {summary.active} apply per run
         {summary.graduated > 0 && ` · ${summary.graduated} permanent in the agent file`}
         {(summary.quarantined ?? 0) > 0 && ` · ${summary.quarantined} quarantined (failed the vet, never injected)`}
+        {channels.length > 1 && ` · by channel: ${channels.map(([channel, n]) => `${channel} ${n}`).join(', ')}`}
       </div>
     );
   }

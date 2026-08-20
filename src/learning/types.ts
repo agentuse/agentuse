@@ -19,7 +19,7 @@ export type CaptureAddon = 'tool-errors';
  *   pattern as `verify.judge`). Its output still passes the common vet.
  */
 export interface CanonicalCaptureConfig {
-  addons: CaptureAddon[];
+  addons: readonly CaptureAddon[];
   custom?: string | undefined;
   agent?: string | undefined;
 }

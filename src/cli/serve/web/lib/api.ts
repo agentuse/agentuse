@@ -250,6 +250,9 @@ export interface LearningSummary {
   retired: number;
   /** Entries the vet set aside with a reason. Absent on older responses. */
   quarantined?: number;
+  /** Store counts per capture channel ('legacy' for pre-channel entries),
+   *  retired excluded. Absent on older responses. */
+  byChannel?: Record<string, number>;
 }
 
 export interface TidyChange {

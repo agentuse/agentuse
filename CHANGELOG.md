@@ -2,73 +2,19 @@
 
 ## [Unreleased]
 
-## [0.18.0] - 2026-08-25
-
 ### Added
 
-- **AgentUse now gives quiet, actionable upgrade reminders.** A cached daily
-  npm registry check runs off the command path, interactive CLI commands show
-  the exact npm/pnpm/Bun/Yarn upgrade command at most once per release per week,
-  and the serve Home page shows the same information in a dismissible banner.
-  CI, JSON/quiet output, local builds, `npx`, and
-  `AGENTUSE_UPDATE_CHECK_DISABLED=true` remain silent.
-- **Skills can now be shared through `~/.agents/skills/` and symlinks.** The
-  shared location has lowest precedence. Linked roots, directories, and
-  `SKILL.md` files resolve safely; circular directory links are ignored and
-  dangling links do not prevent other skills from loading.
+- **Every captured learning is vetted against the complete agent contract before it can take effect.** The old pipeline validated candidates for shape, not substance: nothing checked whether a rule duplicated the agent's own instructions, contradicted them, or was even supported by the run it supposedly came from, and whatever capture produced became active immediately. Every candidate now passes a vet with three checks, *duplicate* (restates a rule the contract or an active learning already carries), *contradiction* (conflicts with either, quoted in the verdict), and *grounding* (the session trace must actually contain what the claim describes). Model-authored candidates that fail duplication or grounding are rejected; contradictions are **quarantined**, not dropped: stored with the conflicting text named, visible in `agentuse learnings <file>`, the serve learnings panel, and `agentuse doctor`, and never injected. A human correction is never silently discarded, a non-pass verdict quarantines it with the reason, and a vet failure stores it active rather than losing it. The evaluator and the vet both receive the complete effective instructions: the fixed 3,000-character truncation that left every later rule invisible on any real agent (and let the evaluator "rediscover" explicit contract rules as new learnings) is gone.
+- **Capture is opt-in per channel; corrections are the default and the only automatic one.** `learning.capture: true` now means human feedback only, approval comments, `--remember`, manual add, the one channel that cannot manufacture policy, because a human authored every entry. Free-form observation capture requires explicitly writing `capture: { custom: "<guidance>" }` (the built-in evaluator, scoped by your text) or `capture: { agent: ./capture.agentuse }` (an agent file replaces the evaluator, the same pattern as `verify.judge`; its output still passes the common vet). Setting both is a parse error, mirroring verify's `criteria`/`judge` conflict. `capture: { addons: [tool-errors] }` enables the first typed channel: a failed tool call followed by a corrected call and a confirmed success, verified structurally **in code**, no model judgment decides whether it happened, deduplicated by (tool, failure signature), superseded structurally on re-observation, and kept out of the tidy pass's free-text merge path. A corrections-only agent whose run drew no reviewer comments now makes no capture model call at all.
+- **Learnings carry the contract they were captured against.** Every learning records its capture channel, source session, evidence, and a hash of the effective agent instructions at capture time. When the instructions are rewritten, learnings vetted against the old contract are held out of injection as *stale* rather than injected unexamined, and the next capture or tidy pass re-vets them against the new text: still-consistent rules are re-stamped, conflicting ones are quarantined with the conflict named. Entries from pre-0.18 files carry no hash and are not treated as stale, they stay injectable until the first capture or tidy backfills them (quarantining failures, never deleting; tidy's undo covers the pass). The hash covers your instructions with the machine-managed `<!-- agentuse:learned -->` block excised, so a graduation never invalidates the rest of the store.
+- **Per-channel capture counts, quarantine visibility, and stale counts across every surface.** The session marker reports what each channel captured, vetted out, and quarantined; `agentuse learnings <file>` lists Quarantined and Stale groups with reasons, and `--json` exposes all of it (state, channel, quarantine reason, stale flag) so a coding agent can operate the whole lifecycle non-interactively; `agentuse doctor` prints per-channel store counts, quarantined entries with reasons, stale counts, and echoes the legacy-config mapping notices; the serve learnings panel badges quarantined rules and shows why. "Capture is producing junk" is now measurable instead of anecdotal.
 
 ### Changed
 
-- **The `creator` skill now defaults to minimum-viable agent instructions.** It
-  starts from the workflow the user actually described, omits unused
-  frontmatter and speculative branches, relies on model judgment instead of
-  prescribing inferable methods, and runs a sentence-by-sentence subtraction
-  pass before handoff. Ordinary agents now target a focused 300-700 word body;
-  judgment-heavy agents need no procedure unless ordering changes the result.
-- **Sub-agents no longer silently inherit the parent's configured model.** Each agent now uses the `model:` in its own file unless the run was started with an explicit `-m/--model` (or worker API) override. Explicit overrides still cascade through every nested sub-agent, but now carry the original resolved alias policy rather than whichever concrete candidate the immediate parent happened to select, so provider fallback remains available at deeper levels. The policy is stored with the session as well, keeping explicit overrides and fallback behavior reproducible across resume and restart.
-- **The `serve` web UI has been redesigned for a calmer, denser operations view.**
-  Home, approvals, sessions, agents, schedules, and stores now share the updated
-  visual system, with more readable session logs and responsive layouts.
-- **Approval queues are easier to scan and stay accurate while decisions are processed.**
-  Pending gates are grouped by agent and ordered by each group's newest request,
-  with newest work first within every group. Home likewise uses compact waiting
-  rows and shows newest pending work first. Pick-gate cards prioritize risk
-  while folding long draft and command detail. A gate that was just decided no
-  longer briefly reappears when a stale live update arrives.
-- **`serve` and run-time operations use less memory and avoid unnecessary filesystem, process, MCP, and web work.**
-  Idle workers can again recycle after high memory use, and worker response
-  caches are bounded.
-- **The built-in `hello` demo now guides first-time users through the full setup path:**
-  installing the AgentUse skill, briefing a coding agent, validating the agent,
-  and completing the first run.
-- **Persistent store reads now carry an explicit trust and time boundary.**
-  Stored prose cannot authorize itself, and transient claims about credentials,
-  providers, networks, quotas, locks, or services must be checked again before
-  they are used to block or skip work.
-
-### Fixed
-
-- **Reviewer comments now explain resumed sub-agent work in parent session timelines.**
-  Human feedback is rendered as a timestamped revision request, an active child
-  reads `revising` instead of reusing the completed gate's prompt, a re-opened
-  gate reads `awaiting-approval`, and Judge attempts are identified as automated
-  pre-review attempts.
-- **Long-running sessions remain visible in `serve` after they pass the selected activity window.**
-  Activity filters now use the session's last update rather than its creation
-  time, while still retaining live work that started earlier.
-- **Sub-agent model and provider failures now name the concrete model that failed,**
-  including authentication errors, so fallback and configuration problems are
-  diagnosable from the parent run.
-- **Outcome recovery no longer loses the tool trace from multi-step runs.** When
-  a model finishes without declaring an outcome, the recovery turn sees the
-  complete preceding work and can only report complete or incomplete, avoiding
-  duplicate side effects and false blocker reports.
-- **Long-lived processes now recover safely from stale runtime state.** Resume
-  decisions cannot reopen after execution has begun, failed preflight restores
-  approval leases and terminal seals atomically, PID reuse is rechecked before
-  orphaning a live run, HTTP MCP discovery shares the connection deadline,
-  store cache values cannot be mutated through returned objects, and skill
-  additions invalidate discovery even when they land during an active scan.
+- **BREAKING (narrowed, with a safe mapping): `learning: true` and `learning.capture: true` now mean corrections-only capture.** Free-form auto-capture no longer runs by default, enabling learning used to mean enabling open-ended policy extraction from every run. Both forms keep parsing: the mapping is strictly narrower than what the author had (nothing new can be injected that couldn't before, and free-form capture stops), so they warn once per agent, naming the explicit form and the `custom` key that restores scoped free-form capture, instead of taking down a scheduled fleet at upgrade time. `agentuse doctor` repeats the notice. `capture: false`, `apply`, `max`, and `model` are unchanged; an empty `capture: {}` object equals `capture: true`.
+- **BREAKING: `learning.criteria` is removed and is a hard parse error.** The only faithful mapping (`capture: { custom: ... }`) would keep free-form policy capture running automatically, exactly what this redesign exists to stop, so the agent quits with an error naming the rewrite instead of guessing. Rare in practice; the error and doctor both spell out `capture: { custom: "..." }`.
+- **`appliedCount` is renamed `injectedCount`.** Injection counts what a learning *costs* (it was sent with every request), not whether it worked, `approvedRuns` remains the effectiveness signal that gates graduation, and the two are no longer conflatable in the CLI, the serve API, or the store format. Existing corrections files load through a read-alias for the old `applied:` token and are rewritten with the new name on their next save; no migration step.
+- **Stored-learnings files are forward-compatible without migration.** Existing entries load as legacy free-form entries and keep their state, nothing is retroactively deactivated on upgrade. The first capture or tidy after upgrading backfills the current instruction hash and runs the vet over legacy active entries; failures are quarantined with reasons, not deleted, and tidy's undo snapshot covers the pass as usual.
 
 ## [0.17.0] - 2026-08-19
 
