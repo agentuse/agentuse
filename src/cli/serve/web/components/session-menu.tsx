@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useRunAgent } from '../hooks/use-run-agent';
-import { agentDetailHref } from '../routes/agent-detail';
+import { agentDetailHref } from '../lib/links';
 import { RunInstructionDialog } from './run-instruction-dialog';
 
 /**

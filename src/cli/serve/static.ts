@@ -162,12 +162,20 @@ export class WebAssets {
     // stylesheet hash but not the JS entry, and keying on entry alone would keep
     // serving the stale CSS link until the entry happened to change.
     const preload = manifest.preload ?? [];
-    const key = `${manifest.entry}|${manifest.css.join(",")}|${preload.join(",")}`;
+    const fonts = manifest.files.filter((file) => file.endsWith(".woff2"));
+    const key = `${manifest.entry}|${manifest.css.join(",")}|${preload.join(",")}|${fonts.join(",")}`;
     if (this.shellCache && this.shellCache.key === key) {
       return this.shellCache.html;
     }
     const cssLinks = manifest.css
       .map((href) => `<link rel="stylesheet" href="/assets/${escapeHtml(href)}">`)
+      .join("\n  ");
+    // Fonts are referenced only from inside the stylesheet, so without this the
+    // browser can't even discover them until the CSS has downloaded and parsed:
+    // an extra round trip on the critical path and a visible flash of fallback
+    // text. Hashed filenames make them immutable, so preloading is never wasted.
+    const fontLinks = fonts
+      .map((href) => `<link rel="preload" as="font" type="font/woff2" crossorigin href="/assets/${escapeHtml(href)}">`)
       .join("\n  ");
     // Preload the entry's static-import chunks (shared framework/vendor code)
     // so they download alongside the entry rather than after it parses.
@@ -226,6 +234,7 @@ export class WebAssets {
     @media (prefers-reduced-motion: reduce) { #boot .boot-spinner { animation-duration: 1.6s; } }
   </style>
   ${cssLinks}
+  ${fontLinks}
   <link rel="modulepreload" href="/assets/${escapeHtml(manifest.entry)}">
   ${preloadLinks}
 </head>

@@ -4,7 +4,7 @@ import { useLocation } from 'preact-iso';
 import type { AgentRow } from '../lib/api';
 import { fetchAgents } from '../lib/api';
 import { Loading } from './loading';
-import { agentDetailHref } from '../routes/agent-detail';
+import { agentDetailHref } from '../lib/links';
 
 /** Window event the topbar dispatches to open the palette (touch devices have no ⌘K). */
 export const PALETTE_OPEN_EVENT = 'agentuse:open-palette';

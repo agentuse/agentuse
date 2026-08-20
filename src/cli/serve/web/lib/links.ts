@@ -1,9 +1,15 @@
 /**
- * Deep links to the tidy-up page.
+ * Deep links to routed pages.
  *
- * Its own module so a component can link to the page without importing the
+ * Its own module so a component can link to a page without importing the
  * route that renders it.
  */
+
+/** Build the deep link a list row points at: /agents/<project>/<runPath>. */
+export function agentDetailHref(projectId: string, runPath: string): string {
+  const segs = runPath.split('/').map(encodeURIComponent).join('/');
+  return `/agents/${encodeURIComponent(projectId)}/${segs}`;
+}
 
 /**
  * The tidy-up progress/result page.

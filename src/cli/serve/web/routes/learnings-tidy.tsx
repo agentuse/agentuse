@@ -11,8 +11,7 @@ import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { TidyResultView } from '../components/learnings-panel';
-import { agentDetailHref } from './agent-detail';
-import { learningsTidyHref } from '../lib/links';
+import { agentDetailHref, learningsTidyHref } from '../lib/links';
 import { pageTitle } from '../lib/brand';
 
 const POLL_MS = 1500;

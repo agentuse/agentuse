@@ -1,6 +1,6 @@
 import type { VNode } from 'preact';
 import { useLocation } from 'preact-iso';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { AboutInfo, AgentRow, SessionRow, SessionsPayload } from '../lib/api';
 import { fetchAgents, fetchSessions } from '../lib/api';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
@@ -23,7 +23,10 @@ import { RunInstructionDialog } from '../components/run-instruction-dialog';
 import { AgentGraphView } from '../components/agent-graph-view';
 import { GroupRail } from '../components/group-rail';
 import { SchedulePill } from '../components/schedule-pill';
-import { agentDetailHref } from './agent-detail';
+import { agentDetailHref } from '../lib/links';
+
+/** Shared empty fallback, so a miss never hands a memoizing child a fresh array. */
+const NO_AGENTS: AgentRow[] = [];
 
 /**
  * Starts the agent in the background and navigates straight to its live session
@@ -754,9 +757,24 @@ export default function Agents({ project }: { project?: string } = {}) {
   // columns, filter counts, pins, groups — to a single project. Distinguish
   // "no such project" from "project loaded but empty" so the empty state reads
   // correctly. The API always returns every agent; scoping is a client filter.
-  const allLoaded = data?.agents ?? [];
+  const allLoaded = useMemo(() => data?.agents ?? [], [data]);
   const projectMissing = scoped && Boolean(data) && !allLoaded.some((a) => a.projectId === project);
-  const loadedAgents = scoped ? allLoaded.filter((a) => a.projectId === project) : allLoaded;
+  const loadedAgents = useMemo(
+    () => (scoped ? allLoaded.filter((a) => a.projectId === project) : allLoaded),
+    [allLoaded, scoped, project],
+  );
+  // Per-project full row sets for the graph view, memoized so an unrelated
+  // re-render here (a keystroke in the filter, a sessions poll) doesn't hand
+  // AgentGraphView a fresh array and force it to rebuild every DAG.
+  const graphAgentsByProject = useMemo(() => {
+    const map = new Map<string, AgentRow[]>();
+    for (const agent of loadedAgents) {
+      const list = map.get(agent.projectId);
+      if (list) list.push(agent);
+      else map.set(agent.projectId, [agent]);
+    }
+    return map;
+  }, [loadedAgents]);
   // Column model: built-ins + one per metadata key. `activeColumns` keeps the
   // user's saved order, dropping any metadata column whose key is no longer in
   // the payload. `renderColumns` is what actually renders (narrow screens keep
@@ -972,7 +990,7 @@ export default function Agents({ project }: { project?: string } = {}) {
                   // slice): removing rows would sever edges. It applies the same
                   // query itself, hiding tiles with no match outright and dimming
                   // non-matching nodes inside the tiles that survive.
-                  ? <AgentGraphView agents={loadedAgents.filter((a) => a.projectId === projectId)} query={query} lastRunFor={lastRunFor} />
+                  ? <AgentGraphView agents={graphAgentsByProject.get(projectId) ?? NO_AGENTS} query={query} lastRunFor={lastRunFor} />
                   : <div class="panel">
                       <div class="tree" style={{ gridTemplateColumns: gridTemplate }}>
                         <div class="tree-head">

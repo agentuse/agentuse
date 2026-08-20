@@ -75,12 +75,6 @@ function agentIdFromPath(path: string): string {
   return path.replace(/\.agentuse$/, '');
 }
 
-/** Build the deep link a list row points at: /agents/<project>/<runPath>. */
-export function agentDetailHref(projectId: string, runPath: string): string {
-  const segs = runPath.split('/').map(encodeURIComponent).join('/');
-  return `/agents/${encodeURIComponent(projectId)}/${segs}`;
-}
-
 function Chip(props: { children: ComponentChildren; tone?: 'cyan' | 'amber' | 'muted'; title?: string }) {
   return <span class={`cap-chip${props.tone ? ` ${props.tone}` : ''}`} {...(props.title ? { title: props.title } : {})}>{props.children}</span>;
 }

@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { AgentRow, SessionRow } from '../lib/api';
 import { buildAgentGraph, type AgentGraph, type GraphEdge, type GraphNode } from '../lib/agent-graph';
 import { formatRelativeTime, runTone } from '../lib/format';
 import { matchesAgentFilter } from '../lib/agent-filter';
 import { useRunAgent } from '../hooks/use-run-agent';
-import { agentDetailHref } from '../routes/agent-detail';
+import { agentDetailHref } from '../lib/links';
 
 /**
  * The agents page's Graph layout: declared relationships for one project.
@@ -293,7 +293,9 @@ export function AgentGraphView(props: {
   /** Recent-session join from the page (same source as the cards' health cell). */
   lastRunFor?: (a: AgentRow) => SessionRow | undefined;
 }) {
-  const graph: AgentGraph = buildAgentGraph(props.agents);
+  // Layout is a pure function of the rows, but hovering a node re-renders this
+  // component — without the memo every pointer move rebuilt every DAG.
+  const graph: AgentGraph = useMemo(() => buildAgentGraph(props.agents), [props.agents]);
   const [hovered, setHovered] = useState<string | null>(null);
 
   // One arrowhead marker per project section (markers resolve by document id,

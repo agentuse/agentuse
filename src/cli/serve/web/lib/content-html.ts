@@ -8,7 +8,7 @@
  * is allowed to build markup from strings.
  */
 import { CHART_FENCE_LANGUAGE, renderChartBlock } from "./chart-svg";
-import { isJsonLikeContent, looksLikeMarkdown } from "./format";
+import { looksLikeMarkdown } from "./format";
 import { highlightJson, highlightJsonSource } from "./json-highlight";
 
 export function escapeHtml(value: unknown): string {
@@ -242,9 +242,25 @@ function renderSmartJsonBlock(parsed: unknown): string {
   `).join('')}</div>`;
 }
 
+/**
+ * The same test `isJsonLikeContent` makes, but keeping the parsed value instead
+ * of throwing it away — a log payload can be megabytes, and parsing it twice
+ * (once to check, once to use) doubled the cost of every render.
+ */
+function tryParseJsonContent(value: string): { parsed: unknown } | undefined {
+  const trimmed = value.trim();
+  if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) return undefined;
+  try {
+    return { parsed: JSON.parse(trimmed) };
+  } catch {
+    return undefined;
+  }
+}
+
 export function renderLogContentValue(value: string, options?: { forceMarkdown?: boolean }): string {
-  if (isJsonLikeContent(value)) {
-    return renderSmartJsonBlock(JSON.parse(value));
+  const json = tryParseJsonContent(value);
+  if (json) {
+    return renderSmartJsonBlock(json.parsed);
   }
   if (options?.forceMarkdown || looksLikeMarkdown(value)) {
     return renderMarkdownBlock(value);

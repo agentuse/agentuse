@@ -6,7 +6,7 @@ import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { formatApprovalTime } from '../lib/format';
 import { pageTitle } from '../lib/brand';
-import { agentDetailHref } from './agent-detail';
+import { agentDetailHref } from '../lib/links';
 
 function dayLabel(ms: number): string {
   return new Date(ms).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: '2-digit' });

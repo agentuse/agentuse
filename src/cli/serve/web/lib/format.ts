@@ -140,8 +140,22 @@ export function storeItemPreview(item: StoreItem, max = 180): string {
   return humanizeStoreValue(item.data, max);
 }
 
+/**
+ * Serializing an entry is pure, and both entries and their details are replaced
+ * wholesale on update rather than mutated in place, so object identity is a
+ * sound cache key. Without this the memo comparator in log-entry.tsx
+ * re-stringifies every entry's full payload on each render pass.
+ */
+const detailsKeyCache = new WeakMap<ApprovalLogDetails, string>();
+const entrySignatureCache = new WeakMap<ApprovalLogEntry, string>();
+
 export function detailsKey(details: ApprovalLogDetails | undefined): string {
-  return details ? JSON.stringify(details) : '';
+  if (!details) return '';
+  const cached = detailsKeyCache.get(details);
+  if (cached !== undefined) return cached;
+  const key = JSON.stringify(details);
+  detailsKeyCache.set(details, key);
+  return key;
 }
 
 /** A `type: 'log'` operational entry at debug severity, hidden by default in the session view. */
@@ -151,7 +165,9 @@ export function isDebugLog(entry: ApprovalLogEntry): boolean {
 
 /** Render-identity for a log entry: when unchanged, the entry needs no re-render. */
 export function logEntrySignature(entry: ApprovalLogEntry): string {
-  return JSON.stringify([
+  const cached = entrySignatureCache.get(entry);
+  if (cached !== undefined) return cached;
+  const signature = JSON.stringify([
     entry.status ?? null,
     entry.level ?? null,
     entry.message ?? null,
@@ -159,6 +175,8 @@ export function logEntrySignature(entry: ApprovalLogEntry): string {
     detailsKey(entry.details),
     entry.subagentSession ?? null,
   ]);
+  entrySignatureCache.set(entry, signature);
+  return signature;
 }
 
 export function latestReviewerComment(logs: ApprovalLogEntry[]): { comment: string; reviewer?: string; status?: string } | undefined {
