@@ -13,7 +13,7 @@ import {
 import { ToolsConfigSchema } from './tools/index.js';
 import { ScheduleConfigSchema } from './scheduler/index.js';
 import { StoreConfigSchema } from './store/index.js';
-import { LearningConfigSchema } from './learning/index.js';
+import { LearningConfigSchema, legacyLearningConfigNotices } from './learning/index.js';
 import { VerifyConfigSchema } from './verify/types.js';
 import { SandboxConfigSchema } from './sandbox.js';
 import { SkillsConfigSchema, defaultSkillsConfig } from './skill/config.js';
@@ -372,6 +372,10 @@ export interface ParsedAgent {
   config: AgentConfig;
   instructions: string;
   description?: string;
+  /** One-time upgrade notices for legacy config forms that still parse with a
+   *  narrowed meaning (e.g. `learning: true`). Warned once per agent at parse
+   *  time; `agentuse doctor` echoes them so the mapping stays discoverable. */
+  configNotices?: string[];
 }
 
 /**
@@ -400,17 +404,42 @@ export function parseAgentContent(content: string, name: string): ParsedAgent {
     // so every consumer sees a concrete provider:model id.
     const config = withResolvedModel(AgentSchema.parse(data));
 
+    // Legacy learning forms that still parse but with a narrowed (strictly
+    // safer) meaning. Detected on the RAW frontmatter — the schema has already
+    // normalized the sugar away by now — and warned once per agent, not once
+    // per process: a fleet upgrade needs every affected agent named.
+    const configNotices = legacyLearningConfigNotices(
+      data && typeof data === 'object' ? (data as { learning?: unknown }).learning : undefined,
+    );
+    for (const notice of configNotices) {
+      warnOnce(`learning-legacy:${name}:${notice.slice(0, 40)}`, `${name}: ${notice}`);
+    }
+
     // Return parsed agent (prefer frontmatter name over filename)
     return {
       name: config.name || name,
       config,
       instructions: instructions.trim(),
-      ...(config.description && { description: config.description })
+      ...(config.description && { description: config.description }),
+      ...(configNotices.length > 0 && { configNotices })
     };
   } catch (error) {
     if (error instanceof z.ZodError) {
-      const firstError = error.errors[0];
-      const message = error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      // Unwrap union failures to the branch that actually says something. A
+      // union's own issue is "Invalid input", which hides the named-key or
+      // custom message the failing object branch produced (e.g. a mistyped
+      // learning.capture addon); surface that branch's issues instead.
+      const issues = error.errors.flatMap((issue) => {
+        if (issue.code !== z.ZodIssueCode.invalid_union) return [issue];
+        const specific = issue.unionErrors.find((branch) =>
+          branch.issues.some((i) => i.code !== z.ZodIssueCode.invalid_literal && i.code !== z.ZodIssueCode.invalid_type)
+        );
+        return specific
+          ? specific.issues.map((i) => ({ ...i, path: [...issue.path, ...i.path] }))
+          : [issue];
+      });
+      const firstError = issues[0]!;
+      const message = issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
       // Sanitize field path: only include top-level field name to avoid exposing user-defined keys
       // e.g., "mcpServers.my-secret-server.command" -> "mcpServers"
       const topLevelField = String(firstError.path[0] ?? 'root');
