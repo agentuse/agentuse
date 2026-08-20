@@ -29,12 +29,25 @@ describe("removed learning config keys", () => {
     ).toThrow(/'file'/);
   });
 
+  it("rejects learning.criteria by name, with the shape that replaced it", () => {
+    // Removed in 0.18. The one faithful mapping (capture.custom) keeps free-form
+    // capture alive, which is what the redesign exists to stop, so the author has
+    // to rewrite it consciously rather than have it migrated for them.
+    expect(() => parseLearning("learning:\n  capture: true\n  criteria: tone")).toThrow(
+      /criteria/,
+    );
+    expect(() => parseLearning("learning:\n  capture: true\n  criteria: tone")).toThrow(
+      /capture: \{ custom: "\.\.\." \}/,
+    );
+  });
+
   it("still accepts the canonical shape and the boolean shorthand", () => {
-    expect(parseLearning("learning: true")).toEqual({ capture: true, apply: true });
-    expect(parseLearning("learning:\n  capture: true\n  apply: false\n  criteria: tone")).toEqual({
-      capture: true,
+    // `learning: true` is corrections-only sugar now: capture is an object with
+    // no addons and no free-form opt-in.
+    expect(parseLearning("learning: true")).toEqual({ capture: { addons: [] }, apply: true });
+    expect(parseLearning("learning:\n  capture: true\n  apply: false")).toEqual({
+      capture: { addons: [] },
       apply: false,
-      criteria: "tone",
     });
   });
 });

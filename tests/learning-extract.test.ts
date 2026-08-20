@@ -4,24 +4,47 @@ import { join } from "path";
 import { tmpdir } from "os";
 import type { AgentCompleteEvent } from "../src/plugin/types";
 import { LearningStore, resolveLearningFilePath } from "../src/learning/store";
+import { hashInstructions } from "../src/learning/contract";
 
 // extractLearnings now goes through completeText() (streaming) instead of
 // generateText(), which is required for the ChatGPT Codex backend. Mock
 // completeText to return the raw model text directly.
-const completeTextMock = mock(async () =>
-  JSON.stringify([
-    {
-      category: "tip",
-      title: "Shorten prompts",
-      instruction: "Keep prompts concise to reduce token usage.",
-      confidence: 0.9,
-    },
-  ]),
-);
+//
+// One capture pass can make SEVERAL completeText calls: the capture evaluator,
+// then the vet, then (when the store holds entries with no contract hash) a
+// re-vet of those. The mock dispatches on the prompt so each call gets the
+// answer its own parser expects.
+const completeTextMock = mock(async (_model: string, _opts: { prompt: string }) => "[]");
 
 mock.module("../src/complete-text", () => ({
   completeText: completeTextMock,
 }));
+
+/** The vet prompt, distinguished from the evaluator prompt by its opening line. */
+const isVetPrompt = (prompt: string) => prompt.includes("vetting candidate rules");
+
+/** Pass every id the vet was shown. Ids it does not recognise are dropped by the
+ *  vet itself, so over-answering is harmless. */
+function vetAllPass(prompt: string): string {
+  const ids = [...prompt.matchAll(/\(id ([A-Za-z0-9_-]+)\)/g)].map((m) => m[1]);
+  return JSON.stringify(ids.map((id) => ({ id, verdict: "pass" })));
+}
+
+/** The ids of the candidates being vetted (not the rules already in force). */
+function candidateIds(prompt: string): string[] {
+  const block = prompt.split("## Candidate rules to vet\n")[1]?.split("\n\n")[0] ?? "";
+  return [...block.matchAll(/\(id ([A-Za-z0-9_-]+)\)/g)].map((m) => m[1]!);
+}
+
+/** Drive the evaluator call with `evaluator`, and answer every vet call with
+ *  `vet` (all-pass by default). */
+function respondWith(
+  evaluator: () => string | Promise<string>,
+  vet: (prompt: string) => string = vetAllPass,
+): void {
+  completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) =>
+    isVetPrompt(opts.prompt) ? vet(opts.prompt) : await evaluator());
+}
 
 const succeedMock = mock(() => {});
 const failMock = mock(() => {});
@@ -46,6 +69,31 @@ let learningsPath: string;
 // into the developer's real ~/.local/share/agentuse.
 const priorXdgDataHome = process.env.XDG_DATA_HOME;
 
+const INSTRUCTIONS = "Do things";
+/** The contract hash stored entries must carry to count as vetted against the
+ *  instructions these tests pass in. Without it they are re-vetted, which costs
+ *  an extra model call the test would then have to answer. */
+const CURRENT_HASH = hashInstructions(INSTRUCTIONS);
+
+/** Corrections-only: the default capture mode since 0.18. */
+const CORRECTIONS_ONLY = { capture: { addons: [] }, apply: false } as const;
+/** Free-form observation capture, scoped by guidance — the opt-in that makes
+ *  execution-derived learnings reachable at all. */
+const WITH_CUSTOM = {
+  capture: { addons: [], custom: "Record anything worth remembering." },
+  apply: false,
+} as const;
+
+const ONE_AUTO_LEARNING = JSON.stringify([
+  {
+    source: "auto",
+    category: "tip",
+    title: "Shorten prompts",
+    instruction: "Keep prompts concise to reduce token usage.",
+    confidence: 0.9,
+  },
+]);
+
 const event: AgentCompleteEvent = {
   agent: { name: "demo-agent", model: "gpt-4" },
   result: { text: "done", duration: 0.5, toolCalls: 0, hasTextOutput: true },
@@ -68,17 +116,9 @@ beforeEach(() => {
   failMock.mockReset();
   startMock.mockReset();
   startMock.mockImplementation(() => ({ succeed: succeedMock, fail: failMock }));
-  // Default mock returns one learning
-  completeTextMock.mockImplementation(async () =>
-    JSON.stringify([
-      {
-        category: "tip",
-        title: "Shorten prompts",
-        instruction: "Keep prompts concise to reduce token usage.",
-        confidence: 0.9,
-      },
-    ]),
-  );
+  // Default: the evaluator returns one execution-derived learning and the vet
+  // passes everything.
+  respondWith(() => ONE_AUTO_LEARNING);
 });
 
 afterEach(() => {
@@ -96,11 +136,11 @@ describe("extractLearnings", () => {
   it("persists new learnings and reports a captured outcome", async () => {
     const outcome = await extractLearnings({
       event,
-      agentInstructions: "Do things",
+      agentInstructions: INSTRUCTIONS,
       agentModel: "gpt-4",
       agentFilePath,
       stateRoot: tempDir,
-      config: { capture: true, apply: false },
+      config: WITH_CUSTOM,
     });
 
     expect(existsSync(learningsPath)).toBe(true);
@@ -110,6 +150,10 @@ describe("extractLearnings", () => {
     expect(existsSync(join(tempDir, "agents", "demo.agentuse.learnings.md"))).toBe(false);
     const content = readFileSync(learningsPath, "utf-8");
     expect(content).toContain("Shorten prompts");
+    // Provenance is stamped as it is stored: the channel it came from, and the
+    // contract it was vetted against.
+    expect(content).toContain("ch:custom");
+    expect(content).toContain(`ih:${CURRENT_HASH}`);
     expect(succeedMock).toHaveBeenCalledWith(
       `Extracted 1 learning(s) → ${learningsPath}`
     );
@@ -118,19 +162,38 @@ describe("extractLearnings", () => {
       source: "auto",
       count: 1,
       titles: ["Shorten prompts"],
+      channels: { custom: { captured: 1, vettedOut: 0, quarantined: 0 } },
+      quarantined: 0,
     });
   });
 
-  it("skips persistence and reports a none outcome when no learnings are returned", async () => {
-    completeTextMock.mockImplementation(async () => "[]");
-
+  it("makes no model call at all with no corrections and no free-form opt-in", async () => {
+    // The corrections-only default has to be free when a run drew no comments,
+    // or every run pays for a capture pass that can produce nothing.
     const outcome = await extractLearnings({
       event,
-      agentInstructions: "Do things",
+      agentInstructions: INSTRUCTIONS,
       agentModel: "gpt-4",
       agentFilePath,
       stateRoot: tempDir,
-      config: { capture: true, apply: false },
+      config: CORRECTIONS_ONLY,
+    });
+
+    expect(completeTextMock).not.toHaveBeenCalled();
+    expect(outcome.status).toBe("none");
+    expect(existsSync(learningsPath)).toBe(false);
+  });
+
+  it("skips persistence and reports a none outcome when no learnings are returned", async () => {
+    respondWith(() => "[]");
+
+    const outcome = await extractLearnings({
+      event,
+      agentInstructions: INSTRUCTIONS,
+      agentModel: "gpt-4",
+      agentFilePath,
+      stateRoot: tempDir,
+      config: WITH_CUSTOM,
     });
 
     expect(existsSync(learningsPath)).toBe(false);
@@ -150,14 +213,15 @@ describe("extractLearnings", () => {
       title: "Don't lecture",
       instruction: "Rewrite instruction shaped phrasing as the author's own lived observation.",
       confidence: 1,
-      appliedCount: 5,
+      injectedCount: 5,
       extractedAt: "2026-06-02T00:00:00.000Z",
       source: "manual",
+      instructionsHash: CURRENT_HASH,
       reasserted: 0,
       approvedRuns: 0,
     }]);
 
-    completeTextMock.mockImplementation(async () => JSON.stringify([{
+    respondWith(() => JSON.stringify([{
       source: "auto",
       category: "warning",
       title: "Avoid lecturing",
@@ -167,11 +231,11 @@ describe("extractLearnings", () => {
 
     const outcome = await extractLearnings({
       event,
-      agentInstructions: "Do things",
+      agentInstructions: INSTRUCTIONS,
       agentModel: "gpt-4",
       agentFilePath,
       stateRoot: tempDir,
-      config: { capture: true, apply: false },
+      config: WITH_CUSTOM,
     });
 
     expect(outcome.status).toBe("none");
@@ -197,9 +261,10 @@ describe("extractLearnings", () => {
       title: "Cut teaching-mode lines",
       instruction: "Rewrite instruction shaped phrasing as the author's own lived observation.",
       confidence: 0.95,
-      appliedCount: 0,
+      injectedCount: 0,
       extractedAt: "2026-06-02T00:00:00.000Z",
       source: "approval" as const,
+      instructionsHash: CURRENT_HASH,
       reasserted: 0,
       approvedRuns: 0,
     };
@@ -212,7 +277,7 @@ describe("extractLearnings", () => {
     }));
     await store.save([dormant, ...fillers]);
 
-    completeTextMock.mockImplementation(async () => JSON.stringify([{
+    respondWith(() => JSON.stringify([{
       source: "approval",
       category: "warning",
       title: "Don't lecture the author",
@@ -222,11 +287,12 @@ describe("extractLearnings", () => {
 
     const outcome = await extractLearnings({
       event,
-      agentInstructions: "Do things",
+      agentInstructions: INSTRUCTIONS,
       agentModel: "gpt-4",
       agentFilePath,
       stateRoot: tempDir,
-      config: { capture: true, apply: false },
+      // Corrections-only: the reviewer comment is what makes the evaluator run.
+      config: CORRECTIONS_ONLY,
       reviews: [{ comment: "Don't lecture" }],
       sessionId: "sess-repeat",
     });
@@ -239,6 +305,11 @@ describe("extractLearnings", () => {
     expect(prompt).toContain("(id dormant1)");
     expect(prompt).toContain("CONTRADICT an existing rule");
     expect(prompt).toContain('"supersedes"');
+
+    // The candidate then went through the vet, against the same rules in force.
+    const vetPrompt = String(completeTextMock.mock.calls[1]?.[1]?.prompt ?? "");
+    expect(isVetPrompt(vetPrompt)).toBe(true);
+    expect(vetPrompt).toContain("(id dormant1)");
 
     // And the repeat refreshed the existing entry rather than appending a near-copy.
     expect(outcome.status).toBe("captured");
@@ -253,6 +324,140 @@ describe("extractLearnings", () => {
     expect(updated?.sessionId).toBe("sess-repeat");
   });
 
+  it("quarantines a human correction the vet finds contradictory, never drops it", async () => {
+    respondWith(
+      () => JSON.stringify([{
+        source: "approval",
+        category: "warning",
+        title: "Always cite a summary",
+        instruction: "Cite the summary rather than the primary source.",
+        confidence: 0.95,
+      }]),
+      (prompt) => JSON.stringify(candidateIds(prompt).map((id) => ({
+        id,
+        verdict: "contradiction",
+        detail: "Cite the primary source, never a summary.",
+      }))),
+    );
+
+    const outcome = await extractLearnings({
+      event,
+      agentInstructions: INSTRUCTIONS,
+      agentModel: "gpt-4",
+      agentFilePath,
+      stateRoot: tempDir,
+      config: CORRECTIONS_ONLY,
+      reviews: [{ comment: "cite the summary" }],
+    });
+
+    // Set aside with the conflict named — not injected, and not discarded: a
+    // human wrote it, so silently dropping it is never allowed.
+    expect(outcome.quarantined).toBe(1);
+    expect(outcome.count).toBe(0);
+    expect(outcome.channels?.corrections).toEqual({ captured: 0, vettedOut: 0, quarantined: 1 });
+    const raw = readFileSync(learningsPath, "utf-8");
+    expect(raw).toContain("state:quarantined");
+    expect(raw).toContain("<!-- why: contradicts the contract: Cite the primary source, never a summary. -->");
+  });
+
+  it("rejects a model-authored duplicate outright rather than storing it", async () => {
+    respondWith(
+      () => ONE_AUTO_LEARNING,
+      (prompt) => JSON.stringify(candidateIds(prompt).map((id) => ({
+        id,
+        verdict: "duplicate",
+        detail: "Keep prompts concise.",
+      }))),
+    );
+
+    const outcome = await extractLearnings({
+      event,
+      agentInstructions: INSTRUCTIONS,
+      agentModel: "gpt-4",
+      agentFilePath,
+      stateRoot: tempDir,
+      config: WITH_CUSTOM,
+    });
+
+    // Nothing is lost — the rule the candidate restates already exists.
+    expect(outcome.status).toBe("none");
+    expect(outcome.channels?.custom).toEqual({ captured: 0, vettedOut: 1, quarantined: 0 });
+    expect(existsSync(learningsPath)).toBe(false);
+  });
+
+  it("captures a tool-error recovery structurally, with no model call", async () => {
+    const traced: AgentCompleteEvent = {
+      ...event,
+      result: {
+        ...event.result,
+        toolCalls: 2,
+        toolCallTraces: [
+          {
+            name: "publish", type: "tool", startTime: 0, duration: 5, success: false,
+            input: { path: "post.md" }, output: "Error: missing required field 'slug'",
+          },
+          {
+            name: "publish", type: "tool", startTime: 1, duration: 5, success: true,
+            input: { path: "post.md", slug: "post" }, output: "ok",
+          },
+        ],
+      },
+    };
+
+    const outcome = await extractLearnings({
+      event: traced,
+      agentInstructions: INSTRUCTIONS,
+      agentModel: "gpt-4",
+      agentFilePath,
+      stateRoot: tempDir,
+      config: { capture: { addons: ["tool-errors"] }, apply: false },
+    });
+
+    // Structurally verified in code — the trace holds the failure, the corrected
+    // call and the success — so this channel never asks a model anything.
+    expect(completeTextMock).not.toHaveBeenCalled();
+    expect(outcome.status).toBe("captured");
+    expect(outcome.channels?.["tool-errors"]).toEqual({ captured: 1, vettedOut: 0, quarantined: 0 });
+    const raw = readFileSync(learningsPath, "utf-8");
+    expect(raw).toContain("ch:tool-errors");
+    expect(raw).toContain("tool:publish");
+    expect(raw).toContain("<!-- evidence: ");
+  });
+
+  it("re-vets a stored rule that predates contract hashing and stamps it", async () => {
+    // A pre-0.18 store carries no `ih:` token. The first capture after the
+    // upgrade checks those entries against the current contract and stamps the
+    // ones that still hold, instead of injecting them unexamined forever.
+    const store = LearningStore.fromAgentFile(agentFilePath, tempDir);
+    await store.save([{
+      id: "legacy01",
+      category: "tip",
+      title: "Legacy rule",
+      instruction: "Something captured long before contract hashes existed here.",
+      confidence: 0.9,
+      injectedCount: 2,
+      extractedAt: "2026-01-02T00:00:00.000Z",
+      source: "auto",
+      reasserted: 0,
+      approvedRuns: 0,
+    }]);
+
+    respondWith(() => "[]");
+
+    await extractLearnings({
+      event,
+      agentInstructions: INSTRUCTIONS,
+      agentModel: "gpt-4",
+      agentFilePath,
+      stateRoot: tempDir,
+      config: WITH_CUSTOM,
+    });
+
+    const loaded = await store.load();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]!.instructionsHash).toBe(CURRENT_HASH);
+  });
+
   it("reports a failed outcome with detail when the model call throws", async () => {
     // Mirrors the Codex-backend regression: the helper LLM call rejects. The
     // failure must surface as a 'failed' outcome (with the error detail) rather
@@ -263,11 +468,11 @@ describe("extractLearnings", () => {
 
     const outcome = await extractLearnings({
       event,
-      agentInstructions: "Do things",
+      agentInstructions: INSTRUCTIONS,
       agentModel: "openai:gpt-5.5",
       agentFilePath,
       stateRoot: tempDir,
-      config: { capture: true, apply: false },
+      config: WITH_CUSTOM,
     });
 
     expect(failMock).toHaveBeenCalledWith("Failed to extract learnings");

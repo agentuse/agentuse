@@ -19,7 +19,7 @@ const baseLearning: Learning = {
   title: "Sanitize inputs",
   instruction: "Always sanitize user input before executing shell commands.",
   confidence: 0.92,
-  appliedCount: 0,
+  injectedCount: 0,
   extractedAt: "2024-01-02T10:00:00.000Z",
   source: "auto",
   reasserted: 0,
@@ -213,7 +213,7 @@ describe("LearningStore", () => {
         id: "learn002",
         title: "Retry failures",
         instruction: "Retry transient tool failures once before aborting.",
-        appliedCount: 2,
+        injectedCount: 2,
         extractedAt: "2024-02-10T00:00:00.000Z",
       },
     ];
@@ -223,7 +223,7 @@ describe("LearningStore", () => {
 
     expect(loaded).toHaveLength(2);
     expect(loaded[0].title).toBe("Sanitize inputs");
-    expect(loaded[1].appliedCount).toBe(2);
+    expect(loaded[1].injectedCount).toBe(2);
     expect(loaded[1].extractedAt.startsWith("2024-02-10")).toBe(true);
   });
 
@@ -331,7 +331,7 @@ Always wait for explicit approval before publishing.
     expect(loaded).toHaveLength(1);
     expect(loaded[0].id).toBe("old001");
     expect(loaded[0].confidence).toBe(0.88);
-    expect(loaded[0].appliedCount).toBe(3);
+    expect(loaded[0].injectedCount).toBe(3);
     expect(loaded[0].source).toBe("auto"); // defaulted
   });
 
@@ -351,18 +351,18 @@ Always wait for explicit approval before publishing.
     expect(loaded[0].id).toBe("learn001");
   });
 
-  it("increments applied counts for specific learning IDs", async () => {
+  it("increments injection counts for specific learning IDs", async () => {
     const learnings = [
       baseLearning,
-      { ...baseLearning, id: "learn003", title: "Log output", appliedCount: 1 },
+      { ...baseLearning, id: "learn003", title: "Log output", injectedCount: 1 },
     ];
     await store.save(learnings);
 
-    await store.incrementApplied(["learn003"]);
+    await store.incrementInjected(["learn003"]);
 
     const loaded = await store.load();
     const updated = loaded.find(l => l.id === "learn003");
-    expect(updated?.appliedCount).toBe(2);
+    expect(updated?.injectedCount).toBe(2);
   });
 
   it("saves explicit manual learnings", async () => {
@@ -470,7 +470,7 @@ Always wait for explicit approval before publishing.
     const result = await buildLearningPrompt({
       name: "agent",
       instructions: "Do work.",
-      config: { model: "demo:test", skills: { auto: false, trusted: false, explicit: {} }, learning: { capture: true, apply: true } },
+      config: { model: "demo:test", skills: { auto: false, trusted: false, explicit: {} }, learning: { capture: { addons: [] }, apply: true } },
     } as never, agentFile, projectRoot);
 
     const prompt = result?.prompt ?? "";
@@ -494,7 +494,7 @@ Always wait for explicit approval before publishing.
     const result = await buildLearningPrompt({
       name: "agent",
       instructions: "Do work.",
-      config: { model: "demo:test", skills: { auto: false, trusted: false, explicit: {} }, learning: { capture: true, apply: true } },
+      config: { model: "demo:test", skills: { auto: false, trusted: false, explicit: {} }, learning: { capture: { addons: [] }, apply: true } },
     } as never, agentFile, projectRoot);
 
     // count must not be mistaken for the file size: 4 of these never reach the
@@ -504,16 +504,16 @@ Always wait for explicit approval before publishing.
   });
 
   it("previewLearningPrompt renders the same block without recording usage", async () => {
-    await store.save([{ ...baseLearning, id: "prev0001", appliedCount: 3 }]);
+    await store.save([{ ...baseLearning, id: "prev0001", injectedCount: 3 }]);
     const agent = {
       name: "agent",
       instructions: "Do work.",
-      config: { model: "demo:test", skills: { auto: false, trusted: false, explicit: {} }, learning: { capture: true, apply: true } },
+      config: { model: "demo:test", skills: { auto: false, trusted: false, explicit: {} }, learning: { capture: { addons: [] }, apply: true } },
     };
 
     const preview = await previewLearningPrompt(agent as never, agentFile, projectRoot);
     // A diagnostic must not mutate what it measures.
-    expect((await store.load())[0]!.appliedCount).toBe(3);
+    expect((await store.load())[0]!.injectedCount).toBe(3);
 
     const applied = await buildLearningPrompt(agent as never, agentFile, projectRoot);
     expect(preview?.prompt).toBe(applied?.prompt ?? "");
@@ -527,7 +527,7 @@ Always wait for explicit approval before publishing.
       instruction: "Rewrite instruction-shaped phrasing as the author's own lived observation.",
       source: "approval",
       confidence: 0.95,
-      appliedCount: 4,
+      injectedCount: 4,
       extractedAt: "2026-06-02T00:00:00.000Z",
     };
 
@@ -540,7 +540,7 @@ Always wait for explicit approval before publishing.
         title: "Don't lecture the author",
         // Similar wording: the old add() would have silently discarded this.
         instruction: "Rewrite instruction-shaped phrasing as the author's own lived observation, never a rule.",
-        appliedCount: 0,
+        injectedCount: 0,
         extractedAt: "2026-07-28T00:00:00.000Z",
         sessionId: "sess-repeat",
       }]);
@@ -553,7 +553,7 @@ Always wait for explicit approval before publishing.
       // Identity and usage history survive; wording, date and session refresh, so
       // the rule ranks as recent and is injected on the next run.
       expect(loaded[0]!.id).toBe("dormant1");
-      expect(loaded[0]!.appliedCount).toBe(4);
+      expect(loaded[0]!.injectedCount).toBe(4);
       expect(loaded[0]!.title).toBe("Don't lecture the author");
       expect(loaded[0]!.instruction).toContain("never a rule");
       expect(loaded[0]!.extractedAt).toBe("2026-07-28");
@@ -647,7 +647,8 @@ Always wait for explicit approval before publishing.
       const result = await store.addOrEscalate([{ ...stored, id: "auto0002", source: "auto", confidence: 0.9 }]);
 
       expect(result).toEqual({
-        inserted: [], escalated: [], alreadyGraduated: [], retired: [], refused: [], overCap: 0,
+        inserted: [], escalated: [], alreadyGraduated: [], retired: [], refused: [],
+        quarantined: [], overCap: 0,
       });
       expect(await store.load()).toEqual(before);
     });

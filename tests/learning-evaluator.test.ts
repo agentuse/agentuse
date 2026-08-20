@@ -54,12 +54,17 @@ describe("evaluateExecution", () => {
       ]),
     );
 
-    const result = await evaluateExecution(baseEvent, "Agent instructions", "anthropic-sonnet", undefined, []);
+    const result = await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "anthropic-sonnet",
+      freeform: {},
+    });
 
     expect(result).toHaveLength(1);
     const [learning] = result;
     expect(learning.category).toBe("tip");
-    expect(learning.appliedCount).toBe(0);
+    expect(learning.injectedCount).toBe(0);
     expect(learning.id).toHaveLength(8);
     expect(new Date(learning.extractedAt).toString()).not.toBe("Invalid Date");
   });
@@ -69,7 +74,12 @@ describe("evaluateExecution", () => {
       "```json\n[{\"category\":\"pattern\",\"title\":\"Fallbacks\",\"instruction\":\"Use fallback prompts when tools fail.\",\"confidence\":0.82}]\n```",
     );
 
-    const result = await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, []);
+    const result = await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "gpt-4",
+      freeform: {},
+    });
 
     expect(result).toHaveLength(1);
     expect(result[0].category).toBe("pattern");
@@ -79,7 +89,12 @@ describe("evaluateExecution", () => {
   it("returns empty array when response is not valid JSON", async () => {
     completeTextMock.mockImplementation(async () => "not json");
 
-    const result = await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, []);
+    const result = await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "gpt-4",
+      freeform: {},
+    });
     expect(result).toEqual([]);
   });
 
@@ -105,7 +120,12 @@ describe("evaluateExecution", () => {
       },
     };
 
-    await evaluateExecution(eventWithTraces, "Agent instructions", "gpt-4", undefined, []);
+    await evaluateExecution({
+      event: eventWithTraces,
+      agentInstructions: "Agent instructions",
+      model: "gpt-4",
+      freeform: {},
+    });
 
     const [, opts] = completeTextMock.mock.calls[0] as unknown as [string, { prompt: string }];
     expect(opts.prompt).toContain("Input: {\"query\":\"pricing\"}");
@@ -125,14 +145,15 @@ describe("evaluateExecution", () => {
       ]),
     );
 
-    const result = await evaluateExecution(
-      baseEvent,
-      "Agent instructions",
-      "gpt-4",
-      undefined,
-      [],
-      [{ comment: "this intro is too salesy", work: "Draft: Unlock the AMAZING secret!!!" }],
-    );
+    // Corrections-only (freeform: false) is the default mode, and a reviewer
+    // comment is exactly what it exists to capture.
+    const result = await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "gpt-4",
+      freeform: false,
+      reviews: [{ comment: "this intro is too salesy", work: "Draft: Unlock the AMAZING secret!!!" }],
+    });
 
     const [, opts] = completeTextMock.mock.calls[0] as unknown as [string, { prompt: string }];
     expect(opts.prompt).toContain("Reviewer Feedback");
@@ -158,7 +179,12 @@ describe("evaluateExecution", () => {
       ]),
     );
 
-    const result = await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, [], []);
+    const result = await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "gpt-4",
+      freeform: {},
+    });
 
     expect(result).toHaveLength(1);
     expect(result[0].source).toBe("auto");
@@ -171,7 +197,7 @@ describe("evaluateExecution", () => {
     title: `Rule ${i}`,
     instruction: `Skip subject ${i} entirely.`,
     confidence: 0.95,
-    appliedCount: 0,
+    injectedCount: 0,
     extractedAt: "2026-07-01T00:00:00.000Z",
     source: "approval" as const,
     reasserted: 0,
@@ -182,7 +208,14 @@ describe("evaluateExecution", () => {
     completeTextMock.mockImplementation(async () => "[]");
     const active = [rule(0), rule(1), rule(2)];
 
-    await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, active, [], { cap: 3 });
+    await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "gpt-4",
+      freeform: {},
+      existingLearnings: active,
+      capacity: { cap: 3 },
+    });
 
     const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
     expect(prompt).toContain("The set is FULL (3/3)");
@@ -196,9 +229,9 @@ describe("evaluateExecution", () => {
   });
 
   it("reads the permanent block from the agent file, however far down it sits", async () => {
-    // The block is appended to the END of the agent file and the body is cut at
-    // 3000 characters, so on any real agent it fell outside the cut and this
-    // pass never saw it. Measured on one: 46,063-character file, block at
+    // The block is appended to the END of the agent file, and the body used to be
+    // cut at 3000 characters, so on any real agent it fell outside the cut and
+    // this pass never saw it. Measured on one: 46,063-character file, block at
     // 30,685. That blindness was the only reason a duplicate of every permanent
     // rule had to be kept in the store — and the duplicate is what let a human's
     // edits to the block be overwritten.
@@ -212,20 +245,100 @@ describe("evaluateExecution", () => {
       "<!-- /agentuse:learned -->",
     ].join("\n");
 
-    await evaluateExecution(baseEvent, instructions, "gpt-4", undefined, [rule(0)], [], { cap: 3 });
+    await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: instructions,
+      model: "gpt-4",
+      freeform: {},
+      existingLearnings: [rule(0)],
+      capacity: { cap: 3 },
+    });
 
     const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
     expect(prompt).toContain("Never cite a summary when the primary source exists.");
     expect(prompt).toContain("Already Permanent");
-    // The body is still bounded — the block is excised before the cut, not
-    // counted toward it, so it can never be sliced in half either.
-    expect(prompt).not.toContain("x".repeat(3_100));
+    // And the body itself now reaches the prompt WHOLE: the fixed 3,000-character
+    // cut is gone, because an evaluator that cannot see the contract cannot avoid
+    // duplicating or contradicting it.
+    expect(prompt).toContain("x".repeat(30_000));
+    // The block is excised from the body rather than left in it, so the permanent
+    // rules are shown once, under their own heading.
+    expect(prompt).not.toContain("<!-- agentuse:learned -->");
+  });
+
+  it("discards execution-derived learnings in corrections-only mode", async () => {
+    // freeform: false is the default. The prompt says not to return "auto"
+    // learnings, but the guarantee is in code: a model that returns them anyway
+    // must not be able to manufacture policy from a run nobody reviewed.
+    completeTextMock.mockImplementation(async () =>
+      JSON.stringify([
+        { source: "auto", category: "tip", title: "From the run", instruction: "Do a thing the run suggested.", confidence: 0.95 },
+        { source: "approval", category: "warning", title: "From the reviewer", instruction: "Keep intros factual.", confidence: 0.95 },
+      ]),
+    );
+
+    const result = await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "gpt-4",
+      freeform: false,
+      reviews: [{ comment: "too salesy" }],
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.source).toBe("approval");
+    expect(result[0]!.channel).toBe("corrections");
+
+    const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
+    expect(prompt).toContain("captures human corrections only");
+  });
+
+  it("scopes execution-derived capture to the custom guidance when one is given", async () => {
+    completeTextMock.mockImplementation(async () => "[]");
+
+    await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "gpt-4",
+      freeform: { guidance: "Only record failures of the publishing API." },
+    });
+
+    const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
+    expect(prompt).toContain("Only record failures of the publishing API.");
+    expect(prompt).toContain("Additional evaluation criteria");
+  });
+
+  it("stamps drafts with the injection counter at zero and a capture channel", async () => {
+    completeTextMock.mockImplementation(async () =>
+      JSON.stringify([
+        { source: "auto", category: "tip", title: "Observed", instruction: "Narrow the query before widening it.", confidence: 0.9 },
+      ]),
+    );
+
+    const result = await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "gpt-4",
+      freeform: {},
+    });
+
+    // `injectedCount` counts cost, not value — it starts at zero and is never
+    // seeded from the model's output.
+    expect(result[0]!.injectedCount).toBe(0);
+    expect(result[0]!.channel).toBe("custom");
   });
 
   it("asks for reconciliation but not a fold while the set has room", async () => {
     completeTextMock.mockImplementation(async () => "[]");
 
-    await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, [rule(0)], [], { cap: 3 });
+    await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "gpt-4",
+      freeform: {},
+      existingLearnings: [rule(0)],
+      capacity: { cap: 3 },
+    });
 
     const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
     expect(prompt).toContain("CONTRADICT an existing rule");
@@ -240,7 +353,12 @@ describe("evaluateExecution", () => {
     // asked for the opposite of what the limit wanted.
     completeTextMock.mockImplementation(async () => "[]");
 
-    await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, []);
+    await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "gpt-4",
+      freeform: {},
+    });
 
     const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
     expect(prompt).toContain("One rule, one behaviour");
@@ -259,7 +377,12 @@ describe("evaluateExecution", () => {
     // demanded outside the buried user prompt went unused.
     completeTextMock.mockImplementation(async () => "[]");
 
-    await evaluateExecution(baseEvent, "Agent instructions", "anthropic:claude-opus-5", undefined, []);
+    await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "anthropic:claude-opus-5",
+      freeform: {},
+    });
 
     const [, opts] = completeTextMock.mock.calls[0] as unknown as [string, { instructions: string; extraSystem?: string }];
     expect(opts.instructions).toBe("You are Claude Code, Anthropic's official CLI for Claude.");
@@ -275,7 +398,14 @@ describe("evaluateExecution", () => {
       ]),
     );
 
-    const result = await evaluateExecution(baseEvent, "Agent instructions", "gpt-4", undefined, [rule(0), rule(1)], [], { cap: 2 });
+    const result = await evaluateExecution({
+      event: baseEvent,
+      agentInstructions: "Agent instructions",
+      model: "gpt-4",
+      freeform: {},
+      existingLearnings: [rule(0), rule(1)],
+      capacity: { cap: 2 },
+    });
 
     // A hallucinated id must fall through to the store's capacity handling. A
     // fold that quietly became an append is the exact failure this prevents.

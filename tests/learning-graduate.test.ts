@@ -20,7 +20,7 @@ function rule(id: string, instruction: string): Learning {
     title: instruction.slice(0, 20),
     instruction,
     confidence: 1,
-    appliedCount: 0,
+    injectedCount: 0,
     extractedAt: "2026-07-01T00:00:00.000Z",
     source: "manual",
     state: "graduated",

@@ -100,7 +100,7 @@ describe("compressing an over-long staged learning", () => {
     instruction: "Long text. ".repeat(200),
     source: "approval",
     confidence: 0.9,
-    appliedCount: 8,
+    injectedCount: 8,
     approvedRuns: 3,
     reasserted: 0,
     extractedAt: "2026-08-01T00:00:00.000Z",

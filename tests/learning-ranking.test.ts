@@ -10,7 +10,7 @@ function correction(title: string, date: string): Learning {
     title,
     instruction: `Correction: ${title}`,
     confidence: 0.95,
-    appliedCount: 0,
+    injectedCount: 0,
     extractedAt: date,
     source: "approval",
     reasserted: 0,
@@ -145,7 +145,7 @@ describe("partitionLearnings", () => {
 describe("effectiveCap", () => {
   it("defaults to the built-in cap and honours a per-agent override", () => {
     expect(effectiveCap(undefined)).toBe(MAX_INJECTED_LEARNINGS);
-    expect(effectiveCap({ capture: true, apply: true })).toBe(MAX_INJECTED_LEARNINGS);
-    expect(effectiveCap({ capture: true, apply: true, max: 25 })).toBe(25);
+    expect(effectiveCap({ capture: { addons: [] }, apply: true })).toBe(MAX_INJECTED_LEARNINGS);
+    expect(effectiveCap({ capture: { addons: [] }, apply: true, max: 25 })).toBe(25);
   });
 });

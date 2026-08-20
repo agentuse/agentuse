@@ -73,7 +73,7 @@ function learning(overrides: Partial<Learning> & { id: string }): Learning {
     title: `Rule ${overrides.id}`,
     instruction: `Guidance number ${overrides.id} covering separate territory entirely.`,
     confidence: 0.95,
-    appliedCount: 0,
+    injectedCount: 0,
     // Old enough to retire unless a test says otherwise.
     extractedAt: new Date(NOW - 120 * DAY).toISOString(),
     source: "approval",
@@ -602,8 +602,8 @@ describe("tidying up an over-cap corrections file", () => {
   it("takes the max applied and approved counts on a merge, never the sum", async () => {
     // Summing would manufacture the evidence that graduates the merged rule.
     await store.save([
-      learning({ id: "keepme", appliedCount: 4, approvedRuns: 2 }),
-      learning({ id: "absorb", appliedCount: 7, approvedRuns: 2, instruction: "Guidance number absorb covering separate territory entirely." }),
+      learning({ id: "keepme", injectedCount: 4, approvedRuns: 2 }),
+      learning({ id: "absorb", injectedCount: 7, approvedRuns: 2, instruction: "Guidance number absorb covering separate territory entirely." }),
       ...Array.from({ length: 10 }, (_, i) => learning({ id: `pad${i}` })),
     ]);
     decideResponse = JSON.stringify({
@@ -613,7 +613,7 @@ describe("tidying up an over-cap corrections file", () => {
     await run();
 
     const merged = (await store.load()).find((l) => l.id === "keepme")!;
-    expect(merged.appliedCount).toBe(7);
+    expect(merged.injectedCount).toBe(7);
     expect(merged.approvedRuns).toBe(2);
   });
 
@@ -943,7 +943,7 @@ describe("tidying up an over-cap corrections file", () => {
   it("answers the question people actually ask: why did nothing become permanent", async () => {
     // A distance, not a rule. "Needs three approved runs" is policy; "the
     // closest has been applied in four" is how far off they are.
-    await store.save(Array.from({ length: 13 }, (_, i) => learning({ id: `rule${i}`, appliedCount: i === 0 ? 4 : 0 })));
+    await store.save(Array.from({ length: 13 }, (_, i) => learning({ id: `rule${i}`, injectedCount: i === 0 ? 4 : 0 })));
     decideResponse = JSON.stringify({});
 
     const result = await run();
@@ -959,7 +959,7 @@ describe("tidying up an over-cap corrections file", () => {
     // the agent file yet".
     await store.save([
       ...Array.from({ length: 12 }, (_, i) => learning({ id: `rule${i}` })),
-      learning({ id: "proven01", appliedCount: 40 }),
+      learning({ id: "proven01", injectedCount: 40 }),
     ]);
     decideResponse = JSON.stringify({ graduate: [{ id: "proven01", why: "held up across 40 runs" }] });
 
@@ -1069,7 +1069,7 @@ describe("tidying up an over-cap corrections file", () => {
   it("aborts instead of overwriting a correction changed concurrently", () => {
     const original = [learning({ id: "same" })];
     const proposed = [{ ...original[0]!, instruction: "Tidy wording." }];
-    const concurrent = [{ ...original[0]!, appliedCount: 1 }];
+    const concurrent = [{ ...original[0]!, injectedCount: 1 }];
 
     expect(() => reconcileConcurrentLearnings(original, proposed, concurrent))
       .toThrow("Nothing was overwritten");
