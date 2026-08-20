@@ -5,12 +5,14 @@ export type SessionListView = 'summary' | 'feed';
 const STORAGE_KEY = 'agentuse-session-list-view';
 const CHANGE_EVENT = 'agentuse-session-list-view-change';
 
+/* The feed cards are the calm-console default; compact summary rows are the
+   stored deviation. */
 function readView(): SessionListView {
-  if (typeof localStorage === 'undefined') return 'summary';
+  if (typeof localStorage === 'undefined') return 'feed';
   try {
-    return localStorage.getItem(STORAGE_KEY) === 'feed' ? 'feed' : 'summary';
+    return localStorage.getItem(STORAGE_KEY) === 'summary' ? 'summary' : 'feed';
   } catch {
-    return 'summary';
+    return 'feed';
   }
 }
 
@@ -37,7 +39,7 @@ export function useSessionListView(): {
 
   const setView = (next: SessionListView) => {
     try {
-      if (next === 'summary') localStorage.removeItem(STORAGE_KEY);
+      if (next === 'feed') localStorage.removeItem(STORAGE_KEY);
       else localStorage.setItem(STORAGE_KEY, next);
     } catch {
       // Browsers can deny localStorage in private/restricted contexts. The

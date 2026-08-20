@@ -1272,18 +1272,9 @@ export default function SessionDetail() {
               <div class="cell"><span class="label">expires</span><span class="value">{formatApprovalTime(approval.expiresAt)}</span></div>
             )}
           </div>
-          {/* Context and cost get their own table: they answer "what did this
-              run consume", not "what is this run", and the diagnostic page
-              that breaks them down hangs off this band. */}
-          <div class="meta-band-head">
-            <span class="meta-band-title">context</span>
-            <a class="meta-band-link" href={diagnosticHref}>
-              Diagnostic
-              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M6 3.5 10.5 8 6 12.5" />
-              </svg>
-            </a>
-          </div>
+          {/* Context and cost get their own strip: they answer "what did this
+              run consume", not "what is this run", and the diagnostic page that
+              breaks them down hangs off its right edge. */}
           <div class="meta meta-context">
             {tokenUsageMetaItems(tokenUsage).map((item) => (
               <div class="cell token-cell" key={item.label}>
@@ -1306,6 +1297,12 @@ export default function SessionDetail() {
                 </span>
               </div>
             )}
+            <a class="meta-band-link" href={diagnosticHref}>
+              Diagnostic
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M6 3.5 10.5 8 6 12.5" />
+              </svg>
+            </a>
           </div>
         </header>
 

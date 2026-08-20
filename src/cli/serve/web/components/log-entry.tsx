@@ -1047,7 +1047,12 @@ function LogEntryImpl(props: LogEntryProps) {
                 <span class="kbd">⌘⏎</span> approve <span class="kbd">esc</span> reject <span class="kbd">c</span> comment
               </div>
             )}
+            {/* Least to most committing, left to right: Approve is the last
+                thing under the cursor and the last thing keyboard focus lands
+                on, so neither reaches it by accident. */}
             <div class="log-actions-buttons">
+              <button disabled={props.actionsDisabled} onClick={() => props.onAction('comment')}>Comment</button>
+              <button class="danger" disabled={props.actionsDisabled} onClick={() => props.onAction('reject')}>Reject</button>
               <button
                 class="primary"
                 disabled={props.actionsDisabled || awaitingPick}
@@ -1056,8 +1061,6 @@ function LogEntryImpl(props: LogEntryProps) {
               >
                 {selectedOptionLabel ? <>Approve<span class="approve-choice-label">“{selectedOptionLabel}”</span></> : 'Approve'}
               </button>
-              <button class="danger" disabled={props.actionsDisabled} onClick={() => props.onAction('reject')}>Reject</button>
-              <button disabled={props.actionsDisabled} onClick={() => props.onAction('comment')}>Comment</button>
             </div>
           </div>
         )}

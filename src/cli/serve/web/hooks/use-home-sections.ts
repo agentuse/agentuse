@@ -6,23 +6,22 @@ import { termTitle } from '../lib/terms';
  *  serve.terms; the map is injected before any module runs, so this is safe
  *  at module scope. */
 export const HOME_SECTIONS = [
-  { id: 'running', label: 'Running now' },
-  { id: 'attention', label: 'Needs attention' },
+  { id: 'attention', label: 'Waiting on you' },
+  { id: 'running', label: 'Working now' },
   { id: 'results', label: 'Results' },
   { id: 'latest', label: 'Runs by agent' },
   { id: 'coming-up', label: 'Coming up' },
-  { id: 'feed', label: 'Activity feed' },
-  { id: 'cards', label: 'Navigation cards' },
-  { id: 'projects', label: termTitle('project', 2) },
+  { id: 'feed', label: 'Recent activity' },
+  { id: 'projects', label: `${termTitle('project', 2)} footer` },
 ] as const;
 
 export type HomeSectionId = (typeof HOME_SECTIONS)[number]['id'];
 
 const STORAGE_KEY = 'agentuse-home-hidden-sections';
 const CHANGE_EVENT = 'agentuse-home-hidden-sections-change';
-/** The raw status-transition feed ships hidden: the outcome-first sections
- *  above it carry the same information in more useful form. */
-const DEFAULT_HIDDEN: readonly HomeSectionId[] = ['feed'];
+/** Every section ships visible: the calm-console home caps the feed at a few
+ *  rows in its side column, so it no longer needs to hide by default. */
+const DEFAULT_HIDDEN: readonly HomeSectionId[] = [];
 
 const VALID_IDS = new Set<string>(HOME_SECTIONS.map((s) => s.id));
 

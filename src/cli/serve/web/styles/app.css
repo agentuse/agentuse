@@ -28,19 +28,21 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #000000; --fg: #ffffff;
-  --line: rgba(255,255,255,0.10); --line-strong: rgba(255,255,255,0.18);
+  /* Calm-console graphite: a soft near-black ground with opaque raised
+     surfaces (--surface), instead of pure #000 + translucent panels. */
+  --bg: #0f1113; --fg: #f4f5f6;
+  --line: rgba(255,255,255,0.08); --line-strong: rgba(255,255,255,0.14);
   --panel: rgba(255,255,255,0.03); --panel-hover: rgba(255,255,255,0.06);
-  --muted: rgba(255,255,255,0.50); --muted-2: rgba(255,255,255,0.30); --muted-3: rgba(255,255,255,0.70);
+  --surface: #16181c; --surface-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  --muted: rgba(255,255,255,0.48); --muted-2: rgba(255,255,255,0.30); --muted-3: rgba(255,255,255,0.72);
   --cyan: #22d3ee; --cyan-soft: rgba(34,211,238,0.08); --cyan-border: rgba(34,211,238,0.35);
   --green: #4ade80; --green-soft: rgba(74,222,128,0.08); --green-border: rgba(74,222,128,0.35);
   --amber: #fbbf24; --amber-soft: rgba(251,191,36,0.08); --amber-border: rgba(251,191,36,0.35);
   --red: #f87171; --red-soft: rgba(248,113,113,0.10); --red-border: rgba(248,113,113,0.35);
   --primary-fg: #000000; --primary-bg: #4ade80; --primary-bg-hover: #86efac;
-  --bar-bg: rgba(0,0,0,0.85);
-  /* Ambient bloom is deliberately stronger in dark: on pure black the cyan/green
-     nebula is what reads as "live control room" instead of a blank page. */
-  --glow-1: rgba(34,211,238,0.12); --glow-2: rgba(74,222,128,0.09);
+  --bar-bg: rgba(15,17,19,0.85);
+  /* Calm console: no ambient nebula — the graphite ground carries the mood. */
+  --glow-1: transparent; --glow-2: transparent;
   --artifact-page: #ffffff;
   /* Categorical chart palette, fixed slot order (CVD-validated against #000).
      The two greens sit in slots 2 and 6 so they never co-occur in small charts. */
@@ -53,6 +55,7 @@
   --bg: #fafaf9; --fg: #0a0a0a;
   --line: rgba(0,0,0,0.08); --line-strong: rgba(0,0,0,0.16);
   --panel: rgba(0,0,0,0.025); --panel-hover: rgba(0,0,0,0.05);
+  --surface: #ffffff; --surface-shadow: 0 1px 2px rgba(0,0,0,0.05);
   --muted: rgba(0,0,0,0.55); --muted-2: rgba(0,0,0,0.35); --muted-3: rgba(0,0,0,0.75);
   /* #0e7490 (not #0891b2) so cyan text clears WCAG AA (~4.5:1) on the light bg. */
   --cyan: #0e7490; --cyan-soft: rgba(8,145,178,0.08); --cyan-border: rgba(8,145,178,0.35);
@@ -61,7 +64,7 @@
   --red: #b91c1c; --red-soft: rgba(185,28,28,0.08); --red-border: rgba(185,28,28,0.35);
   --primary-fg: #ffffff; --primary-bg: #047857; --primary-bg-hover: #065f46;
   --bar-bg: rgba(250,250,249,0.85);
-  --glow-1: rgba(8,145,178,0.08); --glow-2: rgba(4,120,87,0.06);
+  --glow-1: transparent; --glow-2: transparent;
   --artifact-page: #ffffff;
   /* Same hues as dark, stepped for the light surface (CVD-validated vs #fafaf9). */
   --chart-1: #2a78d6; --chart-2: #1baf7a; --chart-3: #eda100;
@@ -71,18 +74,27 @@
 * { box-sizing: border-box; }
 html, body { background: var(--bg); }
 
+/* Raised card: the one container shape of the calm console. Rows inside
+   separate with a bottom hairline (.surface > * pattern is per-view). */
+.surface {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: var(--surface-shadow);
+}
+
 body {
   margin: 0;
   min-height: 100vh;
   color: var(--fg);
-  font-family: var(--mono);
+  /* Sans-first (calm console): prose and labels read in Geist; --mono is
+     reserved for data — ids, timestamps, crons, counts, log/code text. */
+  font-family: var(--sans);
   font-size: 14px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
-  background:
-    radial-gradient(1200px 600px at 50% -200px, var(--glow-1), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, var(--glow-2), transparent 60%),
-    var(--bg);
+  background: var(--bg);
 }
 
 /* ---------------- native-app touch feel ----------------
@@ -457,74 +469,96 @@ a, button, select, summary, label, input, textarea,
 }
 
 /* ---------------- approvals list ---------------- */
+/* Calm console: pending gates share one cyan-edged surface, settled ones a
+   plain surface below. Every row is a link into its session — the decision is
+   made there, after the full gate content is read, never inline in this list. */
 .page-approvals a { color: inherit; text-decoration: none; }
-.page-approvals main { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; padding: 32px 0 48px; }
+.page-approvals main { width: min(880px, calc(100vw - 32px)); margin: 0 auto; padding: 40px 0 80px; }
 .page-approvals h1 {
+  display: flex; align-items: center; gap: 12px;
   font-family: var(--sans);
-  font-size: clamp(24px, 3vw, 34px);
-  letter-spacing: -0.02em;
-  margin: 0 0 24px;
+  font-size: 27px;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+  margin: 0 0 28px;
   font-weight: 500;
 }
+.page-approvals .bucket { margin-bottom: 32px; }
 .page-approvals .section-title {
   display: flex; align-items: baseline; gap: 10px;
-  margin: 32px 0 12px;
-  font-size: 11px;
-  letter-spacing: 0.18em; text-transform: uppercase;
-  color: var(--muted);
-  font-weight: 500;
-}
-.page-approvals .section-title::before { content: "⋮"; color: var(--cyan); font-size: 14px; transform: translateY(1px); }
-.page-approvals .section-title .count { color: var(--muted-3); font-size: 12px; }
-.page-approvals .section-title .rule { flex: 1; height: 1px; background: var(--line); }
-.page-approvals .empty { color: var(--muted); font-style: italic; padding: 14px 0; }
-.page-approvals .rows { display: flex; flex-direction: column; gap: 8px; }
-.page-approvals .row {
-  display: block;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 14px 16px;
-  transition: background 120ms ease, border-color 120ms ease;
-}
-.page-approvals a.row { cursor: pointer; }
-.page-approvals a.row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
-.page-approvals .row-static { opacity: 0.85; }
-.page-approvals .row-head {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  margin-bottom: 8px;
-}
-.page-approvals .row-time { color: var(--muted); font-size: 12px; margin-left: auto; }
-.page-approvals .row-title {
+  margin: 0 0 12px;
   font-family: var(--sans);
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 600;
-  line-height: 1.35;
-  color: var(--fg);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.page-approvals .section-title .count { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--muted-3); }
+/* Invisible flex spacer, mirroring the other section headers. */
+.page-approvals .section-title .rule { flex: 1; height: 1px; background: transparent; }
+.page-approvals .empty { margin: 0; padding: 4px 2px; color: var(--muted-2); font-size: 13px; }
+.page-approvals .appr-surface { border-color: var(--cyan-border); }
+.page-approvals .appr {
+  display: block;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--line);
+  transition: background 120ms ease;
+}
+.page-approvals .appr:last-child { border-bottom: 0; }
+.page-approvals a.appr { cursor: pointer; }
+.page-approvals a.appr:hover { background: var(--panel-hover); }
+.page-approvals a.appr:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: -2px; }
+.page-approvals .appr-static { opacity: 0.85; }
+.page-approvals .appr-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.page-approvals .appr-agent {
+  font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.page-approvals .appr-kind { font-size: 12.5px; color: var(--cyan); white-space: nowrap; flex-shrink: 0; }
+.page-approvals .appr-time {
+  display: inline-flex; align-items: baseline; gap: 10px;
+  margin-left: auto;
+  font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums;
+  color: var(--muted-2); white-space: nowrap;
+}
+.page-approvals .appr-review { font-family: var(--sans); font-size: 12.5px; color: var(--cyan); }
+/* Settled rows lead with the status pill, so the agent name drops to its own
+   line under the head. */
+.page-approvals .appr-title {
+  margin-top: 7px;
+  font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg);
   overflow-wrap: anywhere;
 }
-/* Approval prompt demoted to a supporting line under the agent name, mirroring
-   the sessions list; clamp so a long prompt can't dominate the row. */
-.page-approvals .row-sub {
-  margin-top: 3px;
+/* The gate question, clamped so a long prompt can't dominate the row. */
+.page-approvals .appr-summary {
+  margin-top: 4px;
   color: var(--muted-3);
-  font-size: 12.5px;
-  line-height: 1.4;
+  font-size: 13px;
+  line-height: 1.5;
   white-space: pre-wrap; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.page-approvals .row-decision { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
-.page-approvals .row-meta { margin-top: 8px; color: var(--muted); font-size: 11px; }
-.page-approvals .row-meta code { font-family: var(--mono); font-size: 11px; }
+.page-approvals .appr-decision { margin-top: 4px; color: var(--muted); font-size: 12.5px; font-style: italic; }
+.page-approvals .appr-meta { margin-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--muted-2); }
+.page-approvals .appr-meta code { font-family: inherit; font-size: inherit; }
+@media (max-width: 640px) {
+  /* The waiting time + review link drop to their own line rather than squeezing
+     the agent name off the card. */
+  .page-approvals .appr-head { flex-wrap: wrap; }
+  .page-approvals .appr-time { width: 100%; margin-left: 0; margin-top: 2px; }
+}
 .page-approvals .chip {
   display: inline-flex; align-items: center;
-  padding: 2px 8px;
+  padding: 2px 9px;
   border-radius: 999px;
+  font-family: var(--mono);
   font-size: 10.5px;
   letter-spacing: 0.04em;
   border: 1px solid var(--line-strong);
-  background: var(--panel);
+  background: transparent;
   color: var(--muted-3);
+  white-space: nowrap;
 }
 /* State pills stay uppercase (a recognizable status convention); identifier
    chips (project id) keep their natural case so names aren't shouted and stay
@@ -549,7 +583,7 @@ a, button, select, summary, label, input, textarea,
   font-size: 12.5px;
 }
 .page-approvals .errors ul { margin: 6px 0 0; padding-left: 20px; }
-.page-approvals footer { color: var(--muted); font-size: 11px; margin-top: 32px; text-align: center; }
+.page-approvals footer { font-family: var(--mono); font-size: 11px; color: var(--muted-2); margin-top: 20px; text-align: center; }
 
 /* ---------------- approval detail ---------------- */
 .page-approval-detail { padding-bottom: 140px; }
@@ -611,7 +645,7 @@ a, button, select, summary, label, input, textarea,
      the border stays transparent there (kept transparent, not removed, so the
      bar's height doesn't shift when it gains the line on scroll). */
   border-bottom: 1px solid transparent;
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 12px;
 }
 .page-approval-detail .session-bar.is-scrolled {
@@ -630,8 +664,8 @@ a, button, select, summary, label, input, textarea,
   flex: none;
 }
 .page-approval-detail .session-bar-name {
-  font-family: var(--mono);
-  font-size: 12px;
+  font-family: var(--sans);
+  font-size: 13.5px;
   font-weight: 500;
   color: var(--fg);
   white-space: nowrap;
@@ -651,6 +685,7 @@ a, button, select, summary, label, input, textarea,
 }
 .page-approval-detail .session-bar-queue-count {
   color: var(--muted);
+  font-family: var(--mono);
   font-size: 11px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -835,92 +870,109 @@ a, button, select, summary, label, input, textarea,
 .page-approval-detail .log-parent-approve:hover { background: var(--primary-bg-hover); }
 .page-approval-detail .log-parent-approve svg { flex: none; transition: transform 0.15s ease; }
 .page-approval-detail .log-parent-approve:hover svg { transform: translateX(2px); }
+/* The run's identity, not a poster: the status chip and the pending gate carry
+   the urgency, so the name sits at a reading size the meta row can align to. */
 .page-approval-detail h1 {
   font-family: var(--sans);
-  font-size: clamp(28px, 4vw, 42px);
-  line-height: 1.1;
-  letter-spacing: -0.02em;
+  font-size: clamp(23px, 3.4vw, 27px);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
   margin: 0 0 18px;
   font-weight: 500;
 }
 /* Agent description: a readable subhead under the name headline (the name is the
    H1). Plain sans, not the giant H1 treatment the description used to get. */
 .page-approval-detail .agent-tagline {
-  margin: -6px 0 16px;
+  margin: -8px 0 14px;
   font-family: var(--sans);
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--muted-3);
+  max-width: 64ch;
   overflow-wrap: anywhere;
 }
+/* What to do on this page, in one sentence. A quiet instruction line rather than
+   a pull-quote: the gate below is what the reviewer came to read. */
 .page-approval-detail .prompt {
   font-family: var(--sans);
-  font-size: 17px;
-  color: var(--muted-3);
-  border-left: 2px solid var(--cyan-border);
-  padding: 6px 0 6px 16px;
-  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--muted);
+  max-width: 64ch;
+  margin: 10px 0 0;
 }
+/* Run facts as a plain label-over-value row rather than a boxed table: quiet
+   sans labels, the identifiers themselves in mono, and nothing framed strongly
+   enough to compete with the gate further down the page. */
 .page-approval-detail .meta {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1px;
-  margin: 28px 0 0;
-  /* Page background, not the line colour: the hairlines are drawn by the cells
-     themselves (below), so an unfilled track on a partial last row simply shows
-     nothing instead of a block of grid colour. */
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 28px;
+  margin: 20px 0 0;
 }
 .page-approval-detail .meta .cell {
-  background: var(--bg);
-  padding: 14px 16px;
-  /* Each cell paints its own hairline into the surrounding 1px gap. Two
-     neighbours' rings land in the same gap and read as one line; the outermost
-     ring is clipped by the container's radius + overflow. */
-  box-shadow: 0 0 0 1px var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 /* A meta field with no value renders an empty .cell. Collapse it so an empty
-   box doesn't sit in the table; auto-fit reflows the rest to fill the width. */
+   column doesn't open a gap in the row. */
 .page-approval-detail .meta .cell:empty { display: none; }
-/* Context and cost sit in their own table under a labelled strip, with the
-   link to the page that breaks them down. Same title treatment as the other
-   band headings on this page. */
-.page-approval-detail .meta-band-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 18px 0 6px;
-  font-size: 11px;
-  letter-spacing: 0.06em;
+.page-approval-detail .meta .label {
+  display: block;
+  color: var(--muted-2);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
-.page-approval-detail .meta-band-title { color: var(--muted); }
-.page-approval-detail .meta-band-title::before { content: "⋮ "; color: var(--cyan); opacity: 0.6; }
+.page-approval-detail .meta .value {
+  color: var(--muted-3);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .meta code {
+  color: var(--muted-3);
+  font-family: var(--mono);
+  font-size: 12px;
+  word-break: break-all;
+}
+/* Context and cost read as one raised strip — what this run consumed — with the
+   diagnostic page that breaks it down hanging off its right edge. */
+.page-approval-detail .meta.meta-context {
+  align-items: flex-end;
+  gap: 12px 28px;
+  margin-top: 16px;
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
+}
+.page-approval-detail .meta-context .token-cell .value {
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+/* Wide enough that the headroom gauge under the percentage still reads as a bar. */
+.page-approval-detail .meta-context .token-cell:first-child { min-width: 140px; }
 .page-approval-detail .meta-band-link {
   display: inline-flex;
   align-items: center;
+  align-self: center;
   gap: 4px;
-  color: var(--muted-3);
+  margin-left: auto;
+  border-bottom: 0;
+  color: var(--muted);
+  font-size: 12px;
   text-decoration: none;
-  letter-spacing: 0.02em;
   transition: color 120ms ease;
 }
-.page-approval-detail .meta-band-link:hover { color: var(--cyan); }
+.page-approval-detail .meta-band-link:hover { color: var(--cyan); opacity: 1; }
 .page-approval-detail .meta-band-link svg { transition: transform 120ms ease; }
 .page-approval-detail .meta-band-link:hover svg { transform: translateX(2px); }
-.page-approval-detail .meta.meta-context { margin-top: 0; }
-.page-approval-detail .meta .label {
-  display: block;
-  color: var(--muted);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  margin-bottom: 6px;
-}
-.page-approval-detail .meta .label::before { content: "⋮ "; color: var(--cyan); opacity: 0.6; }
-.page-approval-detail .meta .value, .page-approval-detail .meta code { color: var(--fg); font-size: 13px; word-break: break-all; }
 /* Tool-call roll-up under the meta table: one row per tool, ranked by call
    count, with a proportional bar so the run's shape reads at a glance. Shares
    the meta table's card treatment so the two bands read as one block. */
@@ -1058,21 +1110,26 @@ a, button, select, summary, label, input, textarea,
 .stop-session-button:disabled { opacity: 0.5; cursor: default; }
 .session-action-button.active { color: var(--fg); border-color: var(--cyan-border); background: var(--cyan-soft); }
 .page-approval-detail .section-title {
-  display: flex; align-items: baseline; gap: 10px;
-  margin: 36px 0 10px;
-  font-size: 11px;
-  letter-spacing: 0.18em; text-transform: uppercase;
+  display: flex; align-items: center; gap: 12px;
+  margin: 32px 0 12px;
+  font-size: 12px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--muted);
 }
-.page-approval-detail .section-title::before { content: "⋮"; color: var(--cyan); font-size: 14px; transform: translateY(1px); }
 .page-approval-detail .section-title .rule { flex: 1; height: 1px; background: var(--line); }
 .page-approval-detail .panel {
-  background: var(--panel);
+  background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 14px;
+  box-shadow: var(--surface-shadow);
   padding: 16px 18px;
 }
-.page-approval-detail .panel + .panel { margin-top: 10px; }
+.page-approval-detail .panel + .panel { margin-top: 12px; }
+/* The log feed is the one panel whose rows run edge to edge: pull the list back
+   out of the panel's padding so each entry's hairline spans the whole card. The
+   "load earlier entries" button, when present, keeps its inset above it. */
+.page-approval-detail .panel > .logs { margin: 0 -18px -16px; }
+.page-approval-detail .panel > .logs:first-child { margin-top: -16px; }
 .page-approval-detail .panel pre {
   margin: 0;
   white-space: pre-wrap; overflow-wrap: anywhere;
@@ -1089,7 +1146,8 @@ a, button, select, summary, label, input, textarea,
 .page-approval-detail .additional-instruction .label {
   color: var(--muted-3);
   font-size: 10px;
-  letter-spacing: 0.16em;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   margin-bottom: 8px;
 }
@@ -1109,7 +1167,8 @@ a, button, select, summary, label, input, textarea,
 .page-approval-detail .reviewer-comment .label {
   color: var(--cyan);
   font-size: 10px;
-  letter-spacing: 0.16em;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   margin-bottom: 8px;
 }
@@ -1135,7 +1194,8 @@ a, button, select, summary, label, input, textarea,
 .page-approval-detail .session-artifacts .label {
   color: var(--green);
   font-size: 10px;
-  letter-spacing: 0.16em;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   margin-bottom: 10px;
 }
@@ -1169,7 +1229,8 @@ a, button, select, summary, label, input, textarea,
 .page-approval-detail .result-recorded > .label {
   color: var(--muted-3);
   font-size: 10px;
-  letter-spacing: 0.16em;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 .page-approval-detail a.metric-chip {
@@ -1305,18 +1366,20 @@ a, button, select, summary, label, input, textarea,
 .page-approval-detail .result-artifacts .label {
   color: var(--green);
   font-size: 10px;
-  letter-spacing: 0.16em;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   margin-bottom: 10px;
 }
 .page-approval-detail .session-transcript { margin-top: 36px; }
 .page-approval-detail .session-transcript > summary {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin: 0 0 10px;
-  font-size: 11px;
-  letter-spacing: 0.18em;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
   cursor: pointer;
@@ -1351,8 +1414,12 @@ a, button, select, summary, label, input, textarea,
 .logs { list-style: none; margin: 0; padding: 0; }
 .log-item {
   display: block;
-  padding: 10px 0 10px 12px;
-  border-bottom: 1px dashed var(--line);
+  /* 16px + the 2px spine puts every row's text on the same 18px inset as the
+     card's other edges, spined or not. */
+  padding: 11px 18px 11px 16px;
+  /* Solid, not dashed: the entries are one continuous timeline inside a single
+     card, not a list of loose notes. */
+  border-bottom: 1px solid var(--line);
   /* Per-type accent spine, colored by the data-log-type rules below. */
   border-left: 2px solid transparent;
 }
@@ -1369,7 +1436,15 @@ a, button, select, summary, label, input, textarea,
 /* Align detail content under the desktop title: timestamp + marker + two gaps.
    Keeping it outside the header lets mobile details reclaim the full row. */
 .log-main { min-width: 0; margin-left: calc(84px + 14px + 24px); }
-.log-time { color: var(--muted-2); font-size: 11px; padding-top: 2px; font-variant-numeric: tabular-nums; }
+/* The clock is data, so it reads in mono — and quietly, at the muted-2 rung, so
+   the eye runs down the content column rather than the timestamps. */
+.log-time {
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
 .log-marker {
   display: inline-flex;
   justify-content: center;
@@ -1398,9 +1473,33 @@ a, button, select, summary, label, input, textarea,
 .log-item.expandable:hover .log-title { color: var(--cyan); }
 .log-item.expandable:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: -2px; border-radius: 6px; }
 .log-item.expandable:focus-visible .log-title { color: var(--cyan); }
-/* Pending approval gate: the row the user must act on stands out from log noise.
-   The accent bar rides the shared type-spine border so it aligns with every row. */
-.log-item.is-actionable { background: var(--cyan-soft); border-left-color: var(--cyan); border-radius: 0 6px 6px 0; }
+/* Pending approval gate: lifted out of the row rhythm into its own cyan-edged
+   card at the end of the timeline — the ask, then the evidence, then the
+   buttons, read top-down. Scoped through .page-approval-detail so the narrow
+   -screen `.log-item` padding further down the sheet can't re-inset the card
+   and knock its bands out of alignment. No `overflow: hidden`: it would make
+   this the scroll container and kill the sticky decision bar inside it. */
+.page-approval-detail .log-item.is-actionable {
+  margin: 12px;
+  padding: 0;
+  border: 1px solid var(--cyan-border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
+}
+/* The ask's own header band: time, marker, and what is being requested. */
+.page-approval-detail .log-item.is-actionable .log-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 13px 13px 0 0;
+  background: var(--cyan-soft);
+}
+.page-approval-detail .log-item.is-actionable .log-title { font-size: 14px; }
+/* Inside the card every section is a full-width band, so the body drops the
+   indent ordinary rows use to line their detail up under the title. */
+.page-approval-detail .log-item.is-actionable .log-main { margin-left: 0; }
+.page-approval-detail .log-item.is-actionable .log-content { margin-top: 0; }
+.page-approval-detail .log-item.is-actionable .approval-card { margin-top: 0; }
 .log-item.expandable .log-title::after {
   content: "show";
   display: inline-flex;
@@ -1496,9 +1595,8 @@ a, button, select, summary, label, input, textarea,
   gap: 6px;
   cursor: pointer;
   color: var(--muted-3);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   user-select: none;
   padding: 4px 6px;
   min-height: 24px;
@@ -1512,7 +1610,9 @@ a, button, select, summary, label, input, textarea,
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--muted-3);
+  font-family: var(--mono);
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
   letter-spacing: 0;
 }
 
@@ -1565,7 +1665,7 @@ a, button, select, summary, label, input, textarea,
   overflow-wrap: anywhere;
 }
 .log-warning-detail { margin-top: 4px; }
-.log-empty { color: var(--muted); padding: 12px 0; font-style: italic; }
+.log-empty { color: var(--muted); padding: 14px 18px; font-style: italic; }
 
 /* Live heartbeat row: shown at the tail of the stream while the run is active
    but no single entry is streaming, so the page never looks frozen mid-run. */
@@ -1766,12 +1866,12 @@ a, button, select, summary, label, input, textarea,
   gap: 4px;
 }
 .log-detail-label {
+  color: var(--muted-2);
   font-size: 10px;
-  letter-spacing: 0.18em;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--muted);
 }
-.log-detail-label::before { content: "⋮ "; color: var(--cyan); opacity: 0.6; }
 .log-detail-value {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -2072,17 +2172,30 @@ a, button, select, summary, label, input, textarea,
   font-weight: 600;
 }
 
-/* approval review card */
+/* approval review card — one stack of hairline-separated bands, read top down:
+   the ask, then the evidence behind it, then whatever argues against it. */
 .approval-card {
   display: grid;
-  gap: 12px;
+  gap: 0;
   margin-top: 6px;
 }
+.approval-card > * + * { border-top: 1px solid var(--line); }
+/* A decided gate is read back inside an ordinary log row, which gives the band
+   stack no edge of its own — without one the hairlines read as rules floating
+   in the row. The pending gate supplies its own cyan-edged card instead. */
+.log-item:not(.is-actionable) .approval-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+/* The ask itself: the one sentence the rest of the card exists to answer. */
 .approval-question {
+  padding: 14px 16px;
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 18px;
-  line-height: 1.35;
+  font-size: 17px;
+  line-height: 1.4;
   font-weight: 500;
   overflow-wrap: anywhere;
 }
@@ -2093,34 +2206,34 @@ a, button, select, summary, label, input, textarea,
   background: transparent;
   overflow: hidden;
 }
+/* The draft under review already reads at the largest body size in the card;
+   boxing it as well would be a card inside a card inside a card. */
 .approval-primary {
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--bg);
-}
-.approval-risk {
+  border: 0;
+  border-radius: 0;
   background: transparent;
 }
 .approval-section-title,
 .approval-context > summary,
 .approval-summary-collapsed > summary {
-  color: var(--muted);
+  color: var(--muted-2);
   font-size: 10px;
-  letter-spacing: 0.16em;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  padding: 10px 12px 0;
+  padding: 13px 16px 0;
 }
 .approval-context > summary,
 .approval-summary-collapsed > summary {
   cursor: pointer;
-  padding-bottom: 10px;
+  padding-bottom: 13px;
   list-style-position: inside;
   /* Interactive control, not a passive eyebrow: needs the readable secondary
      token, --muted-2 at 10px fails contrast for something clickable. */
   color: var(--muted-3);
 }
 .approval-section-body {
-  padding: 10px 12px 12px;
+  padding: 7px 16px 14px;
   color: var(--muted-3);
   overflow-wrap: anywhere;
 }
@@ -2129,6 +2242,9 @@ a, button, select, summary, label, input, textarea,
   font-size: 14px;
   line-height: 1.65;
 }
+/* The consequence line is the only band arguing against approving, so it gets a
+   warm label and a faint wash instead of blending into the evidence above it. */
+.approval-risk { background: var(--amber-soft); }
 .approval-risk .approval-section-title { color: var(--amber); }
 /* The card's contrast ramp is declared on the wrappers (.approval-section-body,
    .approval-reference-excerpt, .approval-change-content, .approval-option-action),
@@ -2153,7 +2269,7 @@ a, button, select, summary, label, input, textarea,
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 10px 12px 12px;
+  padding: 7px 16px 14px;
 }
 .approval-link {
   color: var(--cyan);
@@ -2167,13 +2283,16 @@ a, button, select, summary, label, input, textarea,
    most often. */
 .approval-compare {
   display: grid;
-  gap: 12px;
+  gap: 0;
   align-items: start;
 }
+.approval-compare > * + * { border-top: 1px solid var(--line); }
 @media (min-width: 760px) {
   .approval-compare {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
+  /* Side by side the two halves divide vertically instead of by band hairline. */
+  .approval-compare > * + * { border-top: 0; border-left: 1px solid var(--line); }
 }
 
 /* the quoted original an approval action responds to */
@@ -2290,7 +2409,7 @@ a, button, select, summary, label, input, textarea,
 .approval-options .approval-options-list {
   display: grid;
   gap: 8px;
-  padding: 10px 12px 12px;
+  padding: 7px 16px 14px;
 }
 .approval-option {
   border: 1px solid var(--line-strong);
@@ -2465,9 +2584,9 @@ a, button, select, summary, label, input, textarea,
   bottom: 12px;
   z-index: 5;
   margin-top: 12px;
-  padding: 12px 14px;
+  padding: 12px 16px;
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--bar-bg);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -2476,6 +2595,14 @@ a, button, select, summary, label, input, textarea,
   gap: 10px 16px;
   align-items: center;
   justify-content: space-between;
+}
+/* Inside the gate card the bar is the card's closing band rather than a pill
+   floating in it: flush to the edges, hairline on top, card corners below. */
+.page-approval-detail .log-item.is-actionable .log-actions {
+  margin: 0;
+  border-width: 1px 0 0;
+  border-top-color: var(--line);
+  border-radius: 0 0 13px 13px;
 }
 .log-actions-hint {
   font-size: 12px;
@@ -2489,10 +2616,11 @@ a, button, select, summary, label, input, textarea,
 .log-actions-hint .kbd {
   display: inline-block;
   padding: 1px 6px; margin: 0 2px;
-  font-size: 11px;
-  border: 1px solid var(--line-strong);
+  font-family: var(--mono);
+  font-size: 10px;
+  border: 1px solid var(--line);
   border-radius: 4px;
-  color: var(--muted-3);
+  color: var(--muted-2);
   background: var(--bg);
 }
 /* flex: 1 keeps the buttons right-aligned even after a long approve label
@@ -2516,14 +2644,14 @@ a, button, select, summary, label, input, textarea,
    specificity: bare :not() classes would outweigh `button.primary` /
    `button.danger` below and flatten Approve/Reject to the transparent base. */
 .page-approval-detail button:where(:not(.icon-btn):not(.palette-trigger)) {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 13px;
   font-weight: 500;
-  letter-spacing: 0.02em;
+  letter-spacing: normal;
   border: 1px solid var(--line-strong);
   background: transparent;
   color: var(--fg);
-  border-radius: 8px;
+  border-radius: 9px;
   min-height: 40px;
   padding: 0 16px;
   cursor: pointer;
@@ -2569,11 +2697,30 @@ dialog#decision-dialog {
   width: min(560px, calc(100vw - 32px));
   max-width: 100%;
   padding: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 12px;
-  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
   color: var(--fg);
   box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+}
+/* The dialog's shared head/body/foot rules are used by other views too, so the
+   v2 skin is scoped to this dialog rather than applied to all of them. */
+dialog#decision-dialog .dialog-head {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+dialog#decision-dialog .dialog-head .title::before { content: none; }
+/* Reject is the destructive half of this dialog: the title carries the warning,
+   since the mode is otherwise only visible in the button label. */
+dialog#decision-dialog .dialog-head .title.reject { color: var(--red); }
+/* The composer takes prose, so it reads in sans; the ⌘⏎ hints stay mono. */
+dialog#decision-dialog textarea { font-family: var(--sans); }
+dialog#decision-dialog .dialog-foot .hint .kbd {
+  font-family: var(--mono);
+  font-size: 10px;
+  border-color: var(--line);
+  color: var(--muted-2);
 }
 /* One backdrop recipe for every modal overlay (dialogs' ::backdrop and the
    palette's own scrim div). Literal colors, not a var: ::backdrop only
@@ -2596,6 +2743,31 @@ dialog#decision-dialog::backdrop,
   background: rgba(0,0,0,0.30);
 }
 dialog#decision-dialog form { margin: 0; padding: 0; }
+
+/* --- resume composer ---
+   Same raised card as the rest of the page. The base .continue-* rules sit in
+   the shared block further down, so the v2 skin is scoped here. */
+.page-approval-detail .continue-panel {
+  margin-top: 20px;
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
+}
+.page-approval-detail .continue-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+.page-approval-detail .continue-label::before { content: none; }
+/* A follow-up instruction is prose, not a command line. */
+.page-approval-detail .continue-panel textarea { font-family: var(--sans); }
+.page-approval-detail .continue-hint .kbd {
+  font-family: var(--mono);
+  font-size: 10px;
+  border-color: var(--line);
+  color: var(--muted-2);
+}
 
 /* ---------------- approval-arrival toast ---------------- */
 /* Slides down when a new gate arrives anywhere in the app: who is asking, what
@@ -3244,9 +3416,12 @@ html[data-route-loading] body::after {
    code) comes from the shared page-shell groups below. */
 .store-table-scroll { overflow-x: auto; }
 .store-table { width: 100%; min-width: 760px; border-collapse: collapse; }
-.store-table th, .store-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
-.store-table .title-cell, .store-table .preview { white-space: normal; }
-.store-table th { color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 500; background: var(--panel); }
+.store-table th, .store-table td { padding: 13px 18px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
+.store-table td { font-size: 13.5px; }
+.store-table .title-cell, .store-table .store-cell, .store-table .preview { white-space: normal; }
+/* The header sits flush on the surface card; only the heavier hairline under
+   it separates labels from data. */
+.store-table th { color: var(--muted-2); font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 500; border-bottom-color: var(--line-strong); }
 .store-table th[aria-sort] { color: var(--muted-3); }
 .sort-header {
   display: inline-flex;
@@ -3274,17 +3449,25 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .store-table tbody tr.highlighted { background: var(--amber-soft); box-shadow: inset 3px 0 0 var(--amber); }
 .page-stores .title-cell { display: grid; gap: 4px; min-width: 260px; }
 .page-stores .title-cell a { width: fit-content; font-weight: 500; color: var(--fg); border-color: var(--line-strong); }
+/* Store index rows: name and its project read as one line, not a stack. */
+.page-stores .store-cell { min-width: 220px; }
+.page-stores .store-cell a { font-weight: 500; color: var(--cyan); border-bottom: 0; }
+.page-stores .store-cell a:hover { text-decoration: underline; text-underline-offset: 2px; }
+.page-stores .store-cell .proj-tag { margin-left: 8px; font-family: var(--mono); font-size: 10.5px; color: var(--muted-2); }
 .page-stores .preview { color: var(--muted); font-size: 12px; max-width: 520px; }
 .page-stores .muted { color: var(--muted); }
+/* Data cells stay mono so counts and timestamps line up column to column. */
+.page-stores .num { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--fg); }
+.page-stores .updated { font-family: var(--mono); font-size: 12px; color: var(--muted-3); }
 .page-stores .chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .page-stores .chip {
   display: inline-flex; align-items: center;
-  padding: 2px 7px;
-  border: 1px solid var(--line);
+  padding: 1px 8px;
+  border: 1px solid var(--line-strong);
   border-radius: 999px;
   color: var(--muted-3);
-  background: var(--bg);
-  font-size: 11px;
+  font-family: var(--mono);
+  font-size: 10.5px;
   white-space: nowrap;
 }
 .page-stores .chip.status { color: var(--cyan); border-color: var(--cyan-border); }
@@ -3347,7 +3530,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   }
   /* The store name leads the card, no redundant "STORE" label above it. */
   .page-stores .store-table td:first-child::before { display: none; }
-  .page-stores .title-cell { min-width: 0; }
+  .page-stores .title-cell, .page-stores .store-cell { min-width: 0; }
 }
 
 /* --- shared page shell (home / agents / schedules / stores) --- */
@@ -3365,8 +3548,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .topbar a,
 .page-schedules .topbar a,
 .page-stores .topbar a { border-bottom: 0; color: inherit; }
-/* relative + z-index lift home content above .home-ambient's fixed tint. */
-.page-home main { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; padding: 36px 0 80px; position: relative; z-index: 1; }
+/* relative + z-index lift home content above .home-ambient's fixed tint.
+   Narrower than the list pages: home is a reading column, not a table. */
+.page-home main { width: min(880px, calc(100vw - 32px)); margin: 0 auto; padding: 40px 0 80px; position: relative; z-index: 1; }
 .page-agents main,
 .page-schedules main,
 .page-stores main { width: min(1120px, calc(100vw - 32px)); margin: 0 auto; padding: 36px 0 80px; }
@@ -3396,7 +3580,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .panel,
 .page-schedules .panel,
 .page-stores .panel,
-.page-agent-detail .panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.page-agent-detail .panel { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden; box-shadow: var(--surface-shadow); }
 /* Scoped project view: ABOUT.md identity under the heading (#156). */
 .page-agents .project-about { margin-top: 10px; max-width: 72ch; }
 .page-agents .project-about-line { margin: 0; font-family: var(--sans); font-size: 13.5px; line-height: 1.5; color: var(--muted-3); }
@@ -3411,17 +3595,18 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .agents-filter {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   margin-top: 16px;
-  padding: 0 12px;
+  padding: 0 14px;
   max-width: 420px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
   transition: border-color 120ms ease;
 }
 .page-agents .agents-filter:focus-within { border-color: var(--cyan-border); }
-.page-agents .agents-filter > svg { width: 15px; height: 15px; color: var(--muted-2); flex-shrink: 0; }
+.page-agents .agents-filter > svg { width: 14px; height: 14px; color: var(--muted-2); flex-shrink: 0; }
 .page-agents .agents-filter input {
   flex: 1;
   min-width: 0;
@@ -3447,14 +3632,14 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   transition: color 120ms ease;
 }
 .page-agents .agents-filter-clear:hover { color: var(--fg); }
-.page-agents .agents-cols { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
-.page-agents .agents-cols-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.page-agents .agents-cols { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.page-agents .agents-cols-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 .page-agents .agents-cols-empty { font-size: 12px; color: var(--muted); }
 .page-agents .col-pill {
   display: inline-flex; align-items: center; gap: 3px;
-  font-size: 12px; color: var(--fg);
-  background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
-  padding: 3px 5px 3px 10px;
+  font-size: 11.5px; color: var(--muted-3);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 3px 5px 3px 11px;
 }
 .page-agents .col-pill-x {
   appearance: none; border: 0; background: transparent; cursor: pointer;
@@ -3466,9 +3651,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .agents-cols-select { position: relative; display: inline-flex; }
 .page-agents .agents-cols-select select {
   appearance: none;
-  font: inherit; font-size: 13px; color: var(--fg);
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-  padding: 5px 26px 5px 10px; cursor: pointer;
+  font: inherit; font-size: 11.5px; color: var(--muted-3);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 3px 26px 3px 11px; cursor: pointer;
 }
 .page-agents .agents-cols-select select:focus { outline: none; border-color: var(--cyan-border); }
 .page-agents .agents-cols-select::after {
@@ -3512,29 +3697,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 
 /* --- home --- */
-.page-home .cards {
-  display: grid;
-  /* 200px min lets all five nav cards sit on one row at desktop width (no
-     orphaned fifth card), while still wrapping cleanly on narrow screens. */
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px;
-  margin-bottom: 32px;
-}
-.page-home .card {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 6px;
-  padding: 18px 18px 16px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel);
-  text-decoration: none;
-  border-bottom: 1px solid var(--line);
-  transition: background 120ms ease, border-color 120ms ease;
-}
-.page-home .card:hover { background: var(--panel-hover); border-color: var(--line-strong); }
-
 /* Agent-recorded metric rollups (Results section) */
 .page-home .metric-window {
   display: inline-flex;
@@ -3565,34 +3727,36 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-home .metric-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
 }
 .page-home .metric-tile {
   display: flex;
   flex-direction: column;
   min-width: 0;
   gap: 2px;
-  padding: 14px 16px 12px;
+  padding: 18px 20px 14px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
   text-decoration: none;
   transition: background 120ms ease, border-color 120ms ease;
 }
 .page-home .metric-tile:hover { background: var(--panel-hover); border-color: var(--line-strong); }
 .page-home .metric-num {
-  font-family: var(--sans);
-  font-size: 24px;
+  font-family: var(--mono);
+  font-size: 26px;
   font-weight: 600;
   color: var(--fg);
   font-variant-numeric: tabular-nums;
 }
-.page-home .metric-name { font-family: var(--sans); font-size: 13px; color: var(--fg); opacity: 0.85; }
+.page-home .metric-name { font-family: var(--sans); font-size: 13.5px; color: var(--muted-3); margin-top: 2px; }
 .page-home .metric-sub {
-  font-family: var(--mono);
-  font-size: 11px;
+  font-family: var(--sans);
+  font-size: 12px;
   color: var(--muted);
+  margin-top: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3658,64 +3822,56 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 
 /* "View all →" drill-in on outcome section headers. */
 .page-home .group-title .group-link {
-  font-family: var(--mono); font-size: 11px; font-weight: 400;
-  color: var(--muted-3); text-decoration: none;
+  font-family: var(--sans); font-size: 12px; font-weight: 400;
+  letter-spacing: 0; text-transform: none;
+  color: var(--muted); text-decoration: none; border-bottom: 0;
   transition: color 120ms ease;
 }
 .page-home .group-title .group-link:hover { color: var(--cyan); }
 
-/* Needs your attention: pending gates as cards, failed runs as rows. */
+/* Waiting on you: pending gates grouped in one cyan-edged surface, failed runs
+   grouped in a plain one below. Deciding happens in the session view only —
+   every affordance here is a "review →" link, never an inline approve. */
 .page-home .attn-empty {
-  font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted-2);
   padding: 4px 2px;
 }
 .page-home .attn-list { display: flex; flex-direction: column; gap: 10px; }
-.page-home a.attn-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 13px 16px;
-  border: 1px solid var(--cyan-border);
-  border-radius: 12px;
-  background: var(--cyan-soft);
+.page-home .appr-surface { border-color: rgba(34,211,238,0.30); }
+.page-home a.appr {
+  display: block;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--line);
   text-decoration: none;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease;
 }
-.page-home a.attn-card:hover { background: var(--panel-hover); }
-.page-home .attn-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.page-home .attn-kind {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--cyan); border: 1px solid var(--cyan-border); border-radius: 999px; padding: 1px 8px;
-  flex-shrink: 0; align-self: center;
-}
+.page-home a.appr:last-child { border-bottom: 0; }
+.page-home a.appr:hover { background: var(--panel-hover); }
+.page-home .appr-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.page-home .appr-kind { font-size: 12.5px; color: var(--cyan); white-space: nowrap; flex-shrink: 0; }
 .page-home .attn-agent {
   font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg);
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.page-home .attn-wait { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--cyan); white-space: nowrap; }
-.page-home .attn-summary {
-  font-size: 13px; color: var(--fg); opacity: 0.9; line-height: 1.45;
+.page-home .appr-time { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--muted-2); white-space: nowrap; }
+.page-home .appr-review { font-family: var(--sans); font-size: 12.5px; color: var(--cyan); }
+.page-home .appr-summary {
+  margin-top: 4px;
+  font-size: 13.5px; color: var(--muted-3); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.page-home .attn-meta {
-  font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.5;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-.page-home .attn-risk { color: var(--cyan); }
 .page-home a.attn-run {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 16px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel);
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--line);
   text-decoration: none;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease;
 }
-.page-home a.attn-run:hover { background: var(--panel-hover); border-color: var(--line-strong); }
-.page-home .attn-fail { font-size: 12px; color: var(--red); white-space: nowrap; }
-.page-home .attn-run .feed-time { margin-left: auto; }
+.page-home a.attn-run:last-child { border-bottom: 0; }
+.page-home a.attn-run:hover { background: var(--panel-hover); }
+.page-home .attn-fail { font-family: var(--mono); font-size: 11.5px; color: var(--red); white-space: nowrap; }
+.page-home .attn-run .feed-time { margin-left: auto; min-width: 0; }
 /* Hover ✕ on a failed row: dismiss (mark reviewed) without leaving Home. */
 .page-home .attn-dismiss {
   flex-shrink: 0;
@@ -3748,27 +3904,23 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
    are separated by a 2px surface gap, and failures always sit at the bar's end. */
 .page-home .runbar { display: flex; flex-direction: column; gap: 10px; }
 .page-home .runbar-legend {
-  display: flex; flex-wrap: wrap; gap: 6px 16px;
-  font-size: 11.5px; color: var(--muted);
+  display: flex; flex-wrap: wrap; gap: 6px 18px;
+  font-size: 12px; color: var(--muted);
 }
 .page-home .runbar-key { display: inline-flex; align-items: center; gap: 6px; }
 .page-home .runbar-key-n { font-family: var(--mono); color: var(--muted-3); font-variant-numeric: tabular-nums; }
-.page-home .runbar-swatch { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+.page-home .runbar-swatch { width: 8px; height: 8px; border-radius: 3px; flex-shrink: 0; }
 .page-home .runbar-swatch.ok { background: var(--green); opacity: 0.85; }
 .page-home .runbar-swatch.waiting { background: var(--amber); }
 .page-home .runbar-swatch.running { background: var(--cyan); }
 .page-home .runbar-swatch.failed { background: var(--red); }
 
-.page-home .runbar-rows {
-  display: flex; flex-direction: column;
-  border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
-  overflow: hidden;
-}
+.page-home .runbar-rows { display: flex; flex-direction: column; }
 .page-home a.runbar-row {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 9px 16px;
+  padding: 10px 18px;
   border-bottom: 1px solid var(--line);
   text-decoration: none;
   color: inherit;
@@ -3777,19 +3929,19 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home a.runbar-row:last-child { border-bottom: 0; }
 .page-home a.runbar-row:hover { background: var(--panel-hover); }
 .page-home .runbar-name {
-  flex: 0 0 clamp(96px, 22%, 190px);
+  flex: 0 0 clamp(96px, 22%, 170px);
   min-width: 0;
-  font-family: var(--sans); font-size: 13px; color: var(--fg);
+  font-family: var(--sans); font-size: 13.5px; font-weight: 500; color: var(--fg);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .page-home .runbar-project { color: var(--muted-2); font-family: var(--mono); font-size: 10.5px; margin-left: 6px; }
 /* The rail shows each bar against the busiest agent's, so lengths are comparable. */
 .page-home .runbar-track {
-  flex: 1; min-width: 0; height: 14px;
-  border-radius: 4px; background: var(--line);
+  flex: 1; min-width: 0; height: 8px;
+  border-radius: 999px; background: var(--panel-hover);
 }
 .page-home .runbar-fill { display: flex; gap: 2px; height: 100%; min-width: 6px; }
-.page-home .runbar-seg { min-width: 4px; border-radius: 4px; }
+.page-home .runbar-seg { min-width: 4px; border-radius: 999px; }
 .page-home .runbar-seg.ok { background: var(--green); opacity: 0.85; }
 .page-home .runbar-seg.waiting { background: var(--amber); }
 .page-home .runbar-seg.running { background: var(--cyan); }
@@ -3812,7 +3964,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   display: flex;
   align-items: baseline;
   gap: 12px;
-  padding: 10px 16px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--line);
   text-decoration: none;
   color: inherit;
@@ -3841,34 +3993,31 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .page-home .up-when { min-width: 108px; }
 }
 
-.page-home .card-top { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; gap: 2px; }
-.page-home .card-title { font-family: var(--sans); font-size: 16px; font-weight: 500; color: var(--fg); }
-.page-home .card-count {
-  max-width: 100%; min-width: 0;
-  font-family: var(--mono); font-size: 12px; color: var(--cyan);
-  white-space: normal; overflow-wrap: anywhere;
+/* Coming up + Recent activity share one two-column band. */
+.page-home .home-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; align-items: start; }
+.page-home .home-cols .up-cadence { display: none; }
+.page-home .home-cols .feed-project { display: none; }
+@media (max-width: 720px) {
+  .page-home .home-cols { grid-template-columns: 1fr; }
 }
-.page-home .card-desc { color: var(--muted-3); font-size: 12.5px; line-height: 1.4; }
-.page-home .proj { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line); }
-.page-home a.proj { color: inherit; text-decoration: none; border-bottom: 1px solid var(--line); transition: background 120ms ease; }
-.page-home a.proj:hover { background: var(--panel-hover); }
-.page-home .proj:last-child, .page-home a.proj:last-child { border-bottom: 0; }
-.page-home .proj-counts .proj-go { color: var(--muted-2); margin-left: 8px; }
-.page-home .proj-id { font-family: var(--sans); font-size: 14px; color: var(--fg); display: inline-flex; align-items: center; gap: 8px; }
+
+/* Quiet footer: projects roll-call + version above the page's bottom edge. */
+.page-home .home-foot {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding-top: 18px; margin-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px; color: var(--muted);
+}
+.page-home .home-foot-count { color: var(--muted-3); }
+.page-home a.home-foot-proj {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--muted); text-decoration: none; border-bottom: 0;
+  transition: color 120ms ease;
+}
+.page-home a.home-foot-proj:hover { color: var(--fg); }
 .page-home .proj-default { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--cyan); border: 1px solid var(--cyan-border); border-radius: 999px; padding: 1px 7px; }
-.page-home .proj-path { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; margin-top: 2px; }
-/* ABOUT.md description replacing the path reads as prose, not a code path. */
-.page-home .proj-path.proj-desc { font-family: var(--sans); font-size: 12.5px; color: var(--muted-3); }
-.page-home .proj-owner { color: var(--muted); }
-.page-home .proj-counts { font-family: var(--mono); font-size: 12px; color: var(--muted-3); white-space: nowrap; text-align: right; }
-.page-home .api-hint { margin-top: 28px; color: var(--muted); font-size: 12px; }
-.page-home .api-hint code { color: var(--muted-3); }
-/* On narrow screens the nowrap counts column crowds the wrapping path; stack the
-   counts beneath the id/path so neither is squeezed or overlapped. */
-@media (max-width: 560px) {
-  .page-home .proj { grid-template-columns: 1fr; gap: 6px; }
-  .page-home .proj-counts { text-align: left; }
-}
+.page-home a.home-foot-broken { color: var(--red); text-decoration: none; border-bottom: 1px dotted var(--red-border); }
+.page-home .home-foot-version { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--muted); }
 
 /* --- home: live mission-control layer --- */
 /* Ambient state wash: a fixed, non-interactive tint that fades in green while
@@ -3898,71 +4047,51 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .home-boot > *:nth-child(6) { animation-delay: 300ms; }
 .page-home .home-boot > *:nth-child(7) { animation-delay: 360ms; }
 
-/* Hero: the one number that matters, with a breathing dot while it's non-zero. */
-.page-home .hero-live { margin: 2px 0 28px; }
-.page-home .hero-count { display: flex; align-items: baseline; gap: 14px; }
-.page-home .hero-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--muted-2); align-self: center; flex-shrink: 0; }
-.page-home .hero-dot.on { background: var(--green); box-shadow: 0 0 14px var(--green); animation: pulse 1.4s ease-in-out infinite; }
-.page-home .hero-num { font-family: var(--sans); font-size: 56px; font-weight: 600; line-height: 1; color: var(--fg); font-variant-numeric: tabular-nums; }
-.page-home .hero-label { font-family: var(--sans); font-size: 16px; color: var(--muted-3); }
-.page-home .hero-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 12px; font-size: 13px; color: var(--muted); }
-.page-home a.hero-pending {
-  color: var(--cyan);
-  border: 1px solid var(--cyan-border);
-  background: var(--cyan-soft);
-  border-radius: 999px;
-  padding: 3px 11px;
-  text-decoration: none;
-  animation: card-attn 2.4s ease-in-out infinite;
+/* Header: the state of the fleet as one sentence under a quiet clock line. */
+.page-home .home-head { margin: 0 0 34px; }
+.page-home .home-date {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted-2); margin-bottom: 10px;
 }
-.page-home .hero-next code { font-size: 12px; }
-.page-home .hero-countdown { font-family: var(--mono); color: var(--fg); font-variant-numeric: tabular-nums; }
+.page-home .home-sentence {
+  margin: 0;
+  font-family: var(--sans); font-size: 27px; font-weight: 500;
+  line-height: 1.3; letter-spacing: -0.01em; color: var(--fg);
+}
+.page-home .hero-dot {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--muted-2); margin-right: 10px; vertical-align: 2px;
+}
+.page-home .hero-dot.on { background: var(--green); box-shadow: 0 0 10px var(--green); animation: pulse 1.4s ease-in-out infinite; }
+.page-home .home-waiting { color: var(--cyan); }
+.page-home .home-quiet { color: var(--muted); }
+.page-home .home-stat { margin-top: 10px; font-size: 14px; color: var(--muted); }
+.page-home .home-stat-agent { color: var(--muted-3); }
+.page-home a.home-stat-failed { color: var(--red); text-decoration: none; border-bottom: 1px dotted var(--red-border); }
+.page-home .home-countdown { font-family: var(--mono); font-size: 13px; color: var(--fg); font-variant-numeric: tabular-nums; }
 
-/* 24h runs-per-hour sparkline under the hero: throughput at a glance.
-   Failures render as the topmost segment above a 2px gap so position (not only
-   hue) separates them; the stat line spells out the counts. */
-.page-home .hero-spark { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; margin-top: 18px; }
-.page-home .spark-bars { display: flex; align-items: flex-end; height: 34px; }
-.page-home .spark-col {
-  display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
-  width: 9px; padding: 0 1.5px; height: 100%; box-sizing: border-box;
-}
-.page-home .spark-seg { width: 100%; border-radius: 2px; flex-shrink: 0; }
-.page-home .spark-seg.ok { background: var(--green); opacity: 0.85; }
-.page-home .spark-seg.failed { background: var(--red); }
-.page-home .spark-seg.live { background: var(--cyan); }
-.page-home .spark-seg.none { height: 2px; background: var(--line-strong); }
-.page-home .spark-col:hover .spark-seg { filter: brightness(1.25); }
-.page-home .spark-stat { font-size: 12.5px; color: var(--muted); padding-bottom: 1px; }
-.page-home .spark-total { font-family: var(--mono); color: var(--fg); font-variant-numeric: tabular-nums; }
-.page-home .spark-rate { color: var(--muted-3); }
-.page-home a.spark-failed { color: var(--red); text-decoration: none; border-bottom: 1px dotted var(--red-border); }
-
-/* Running-now grid: one pulsing card per live session, elapsed timer ticking. */
-.page-home .now-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
-.page-home a.now-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px 16px;
-  border: 1px solid var(--green-border);
-  border-radius: 12px;
-  background: var(--green-soft);
+/* Working now: one row per live session inside a single surface. */
+.page-home a.now-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
   text-decoration: none;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease;
 }
-.page-home a.now-card:hover { background: var(--panel-hover); }
-.page-home .now-card-head { display: flex; align-items: center; gap: 8px; }
+.page-home a.now-row:last-child { border-bottom: 0; }
+.page-home a.now-row:hover { background: var(--panel-hover); }
+.page-home .now-body { min-width: 0; flex: 1; }
+.page-home .now-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .page-home .now-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.4s ease-in-out infinite; flex-shrink: 0; }
-.page-home .now-agent { font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.page-home .now-elapsed { font-family: var(--mono); font-size: 12px; color: var(--green); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.page-home .now-agent { font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-home .now-elapsed { font-family: var(--mono); font-size: 12.5px; color: var(--green); font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
 .page-home .now-subagent { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted-3); white-space: nowrap; flex-shrink: 0; }
-.page-home .now-desc { font-size: 12.5px; color: var(--muted-3); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.page-home .now-meta { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.page-home .now-desc { margin-top: 3px; font-size: 12.5px; color: var(--muted-3); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.page-home .now-meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
 /* Live tail of the running session: the card "types" what the agent is doing. */
 @keyframes tick-in { from { opacity: 0; transform: translateY(4px); } }
 @keyframes tick-caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
-.page-home .now-ticker { font-family: var(--mono); font-size: 11.5px; color: var(--muted-3); line-height: 1.5; min-width: 0; }
+.page-home .now-ticker { margin-top: 3px; font-family: var(--mono); font-size: 11.5px; color: var(--muted-3); line-height: 1.5; min-width: 0; }
 .page-home .now-ticker.tool { color: var(--cyan); }
 .page-home .now-ticker-line {
   display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -3976,7 +4105,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 16px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--line);
   text-decoration: none;
   color: inherit;
@@ -3998,17 +4127,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .feed-label.failed { color: var(--red); }
 .page-home .feed-project { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: auto; white-space: nowrap; }
 .page-home .feed-time { font-family: var(--mono); font-size: 11px; color: var(--muted-2); white-space: nowrap; min-width: 64px; text-align: right; }
-.page-home .feed-live-tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--green); border: 1px solid var(--green-border); border-radius: 999px; padding: 1px 8px; }
-
-/* Approvals card demands attention while something is waiting on a human. */
-@keyframes card-attn { 0%, 100% { box-shadow: 0 0 0 0 var(--cyan-soft); } 50% { box-shadow: 0 0 0 8px var(--cyan-soft); } }
-.page-home .card.attn { border-color: var(--cyan-border); animation: card-attn 2.4s ease-in-out infinite; }
-
-/* Live indicator on project rows that have a session running right now. */
+/* Live indicator on footer projects that have a session running right now. */
 .page-home .proj-live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.4s ease-in-out infinite; }
 
 @media (max-width: 560px) {
-  .page-home .hero-num { font-size: 44px; }
+  .page-home .home-sentence { font-size: 22px; }
   .page-home .feed-project { display: none; }
 }
 
@@ -4023,19 +4146,19 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   display: flex; align-items: baseline; gap: 10px;
   margin: 26px 0 12px;
   font-family: var(--sans);
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
-.page-home .group-title::before,
-.page-agents .group-title::before,
-.page-schedules .day-title::before { content: "⋮"; color: var(--cyan); transform: translateY(1px); }
 .page-home .group-title .count,
 .page-agents .group-title .count,
-.page-schedules .day-title .count { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.page-schedules .day-title .count { color: var(--muted-3); font-size: 12px; font-weight: 500; font-family: var(--mono); }
+/* Invisible flex spacer: pushes trailing links/controls to the right edge. */
 .page-home .group-title .rule,
 .page-agents .group-title .rule,
-.page-schedules .day-title .rule { flex: 1; height: 1px; background: var(--line); }
+.page-schedules .day-title .rule { flex: 1; height: 1px; background: transparent; }
 /* Drill-in link on each project header (all-agents view → single-project view). */
 .page-agents .group-title .group-link { color: inherit; text-decoration: none; border-radius: 4px; transition: color 120ms ease; }
 .page-agents .group-title .group-link:hover span { color: var(--cyan); text-decoration: underline; text-underline-offset: 2px; }
@@ -4065,7 +4188,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   align-items: center;
   color: var(--muted);
   font-size: 11px;
-  letter-spacing: 0.12em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
@@ -4088,7 +4212,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .tree-row.dir .tree-label { color: var(--cyan); }
 /* Leaf rows lead with the friendly agent name; the file name is a mono aside
    shown only when it isn't just the dashed form of the name. */
-.page-agents .tree-agent { font-family: var(--sans); font-size: 13.5px; font-weight: 500; color: var(--fg); }
+.page-agents .tree-agent { font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg); }
 .page-agents a.tree-label:hover .tree-agent { color: var(--cyan); }
 .page-agents .tree-file { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: 8px; }
 .page-agents .tree-live {
@@ -4099,7 +4223,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .tree-lastrun { justify-content: flex-start; }
 .page-agents a.lastrun {
   display: inline-flex; align-items: center; gap: 6px;
-  font-family: var(--mono); font-size: 12px; color: var(--muted-3);
+  font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--muted-3);
   text-decoration: none; border-bottom: 0; white-space: nowrap;
 }
 .page-agents a.lastrun:hover .lastrun-text { text-decoration: underline; }
@@ -4115,46 +4239,60 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents a.lastrun.running { color: var(--green); }
 .page-agents a.lastrun.failed { color: var(--red); }
 .page-agents a.lastrun.waiting { color: var(--cyan); }
+/* Live activity beside a project's name in the tree/graph section headings —
+   the same signal the card view's project header carries. */
+.page-agents .group-title .group-live {
+  /* The row aligns on baselines; the leading dot has none, so centre this box. */
+  display: inline-flex; align-items: center; align-self: center; gap: 6px;
+  font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+  letter-spacing: 0; text-transform: none; color: var(--green);
+}
+.page-agents .group-title .group-live > span {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 5px var(--green); animation: pulse 1.4s ease-in-out infinite;
+}
 
 /* --- cards view: the gallery the tree becomes when presenting ------------ */
-.page-agents .agents-controls { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+.page-agents .agents-controls { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .page-agents .agents-controls .agents-filter { margin-top: 0; flex: 1; }
-.page-agents .view-toggle { display: inline-flex; flex-shrink: 0; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--panel); }
+.page-agents .view-toggle {
+  display: inline-flex; flex-shrink: 0; gap: 2px; padding: 2px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+}
 .page-agents .view-toggle button {
   appearance: none; border: 0; background: none; cursor: pointer;
-  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
-  padding: 6px 14px; transition: background 120ms ease, color 120ms ease;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted-2); border-radius: 999px;
+  padding: 5px 13px; transition: background 120ms ease, color 120ms ease;
 }
-.page-agents .view-toggle button.on { background: var(--panel-hover); color: var(--fg); }
+.page-agents .view-toggle button.on { background: var(--green-soft); color: var(--green); }
 .page-agents .view-toggle button:hover:not(.on) { color: var(--muted-3); }
 .page-agents .agent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+/* The project is a section of the page, not a box inside it: its identity rides
+   in a plain header row and the cards below are the only raised surfaces. */
 .page-agents .project-collection {
-  overflow: hidden;
-  margin-bottom: 18px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--panel);
+  margin-bottom: 32px;
   scroll-margin-top: 80px;
 }
-.page-agents .project-collection:target { border-color: var(--cyan-border); }
+.page-agents .project-collection:target .project-collection-head h2 a { color: var(--cyan); }
 .page-agents .project-collection-head {
   display: flex; align-items: center; justify-content: space-between; gap: 20px;
-  min-height: 62px; padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel-hover) 55%, var(--panel));
+  padding: 0 2px 12px;
 }
 .page-agents .project-collection-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* Neutral, not cyan: with the header unboxed, "Open →" is the one accent here. */
 .page-agents .project-collection-mark {
   display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
-  width: 32px; height: 32px; border: 1px solid var(--cyan-border); border-radius: 8px;
-  color: var(--cyan); background: var(--cyan-soft);
+  width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 9px;
+  color: var(--muted); background: var(--surface);
 }
-.page-agents .project-collection-mark svg { width: 18px; height: 18px; }
+.page-agents .project-collection-mark svg { width: 17px; height: 17px; }
 .page-agents .project-collection-label {
-  display: block; margin-bottom: 1px;
-  font-family: var(--mono); font-size: 10px; line-height: 1.2; color: var(--muted);
+  display: block; margin-bottom: 2px;
+  font-family: var(--mono); font-size: 10px; line-height: 1.2;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted-2);
 }
-.page-agents .project-collection h2 { margin: 0; font-family: var(--sans); font-size: 14px; line-height: 1.25; font-weight: 600; }
+.page-agents .project-collection h2 { margin: 0; font-family: var(--sans); font-size: 16px; line-height: 1.25; font-weight: 600; }
 .page-agents .project-collection h2 a { color: var(--fg); text-decoration: none; border-bottom: 0; }
 .page-agents .project-collection h2 a:hover { color: var(--cyan); }
 .page-agents .project-collection-desc {
@@ -4172,14 +4310,12 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .project-collection-open {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px;
-  font-family: var(--mono); font-size: 11px; color: var(--muted-3); text-decoration: none;
-  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  font-size: 12px; color: var(--cyan); text-decoration: none; border-bottom: 0;
+  transition: color 120ms ease;
 }
-.page-agents .project-collection-open:hover { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+.page-agents .project-collection-open:hover { text-decoration: underline; text-underline-offset: 3px; }
 .page-agents .project-collection > .agent-cards,
-.page-agents .project-collection > .agent-directories { padding: 10px 14px 14px; }
-.page-agents .project-collection .agent-card { background: var(--bg); }
+.page-agents .project-collection > .agent-directories { padding: 0; }
 /* Shelves flow side by side: --shelf-span (set per shelf from its agent count,
    capped) scales both basis and grow, so single-agent folders share a row while
    larger folders keep claiming a full one. */
@@ -4228,12 +4364,20 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .agent-directory:not([open]) > summary { padding-bottom: 7px; }
 .page-agents .agent-card {
   display: flex; flex-direction: column; gap: 8px;
-  padding: 14px 16px;
-  border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
-  transition: background 120ms ease, border-color 120ms ease;
+  padding: 15px 16px 13px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--surface);
+  box-shadow: var(--surface-shadow);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.page-agents .agent-card:hover { background: var(--panel-hover); }
-.page-agents .agent-card.running { border-color: var(--green-border); background: var(--green-soft); }
+.page-agents .agent-card:hover { border-color: var(--line-strong); }
+/* Running cards tint the opaque surface rather than swapping it for a
+   translucent wash, so they stay in the same material as their neighbours. */
+.page-agents .agent-card.running {
+  border-color: var(--green-border);
+  background: color-mix(in srgb, var(--green) 5%, var(--surface));
+}
+/* Pinned tiles read as the promoted set through a firmer edge, not a second colour. */
+.page-agents .pinned-cards .agent-card { border-color: var(--line-strong); }
 .page-agents .agent-card-head { display: flex; align-items: center; gap: 8px; }
 .page-agents a.agent-card-name {
   font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg);
@@ -4256,7 +4400,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .agent-card-nodesc { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
 .page-agents .agent-card-runs { display: flex; align-items: center; gap: 10px; min-height: 18px; }
 .page-agents .runspark { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; flex-shrink: 0; }
-.page-agents .runspark-bar { width: 5px; border-radius: 1.5px; }
+.page-agents .runspark-bar { width: 6px; border-radius: 1.5px; }
 .page-agents .runspark-bar.ok { background: var(--green); opacity: 0.8; }
 .page-agents .runspark-bar.failed { background: var(--red); }
 .page-agents .runspark-bar.running, .page-agents .runspark-bar.waiting { background: var(--cyan); }
@@ -4298,24 +4442,28 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   width: 26px;
   height: 26px;
   padding: 0;
-  border: 1px solid var(--cyan-border);
+  border: 1px solid var(--line-strong);
   border-radius: 999px;
-  background: var(--bg);
-  color: var(--cyan);
+  background: transparent;
+  color: var(--muted-3);
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 .page-agents .run-btn svg { width: 12px; height: 12px; margin-left: 1px; }
-.page-agents .run-btn:hover:not(:disabled) { background: var(--cyan); color: var(--bg); border-color: var(--cyan); }
+.page-agents .run-btn:hover:not(:disabled) { background: var(--cyan-soft); color: var(--cyan); border-color: var(--cyan-border); }
 .page-agents .run-btn:disabled { cursor: default; opacity: 0.6; }
 .page-agents .muted { color: var(--muted); }
+/* Chips only ever carry data here (model ids, crons, metadata values), so they
+   are mono and transparent — they sit on cards, tree rows, and the ⋯ popover. */
 .page-agents .chip {
   display: inline-flex; align-items: center;
-  padding: 2px 7px;
-  border: 1px solid var(--line);
+  padding: 2px 9px;
+  border: 1px solid var(--line-strong);
   border-radius: 999px;
   color: var(--muted-3);
-  background: var(--bg);
-  font-size: 11px;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .page-agents .chip.status { color: var(--cyan); border-color: var(--cyan-border); }
@@ -4505,7 +4653,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: var(--bg);
+  background: transparent;
   color: var(--muted-2);
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
@@ -4520,8 +4668,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   max-width: min(320px, calc(100vw - 16px));
   padding: 12px 14px 8px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--bg);
+  border-radius: 14px;
+  background: var(--surface);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
 }
 .page-agents .menu-name {
@@ -4545,7 +4693,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .menu-meta-label {
   flex: 0 0 58px;
-  font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--muted);
 }
 .page-agents .menu-sep { height: 1px; margin: 10px -14px 6px; background: var(--line); }
@@ -4892,7 +5040,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .pin-main { gap: 8px; min-width: 0; }
 .page-agents .pin-main .tree-pin { margin-right: 0; }
 .page-agents .pin-name {
-  font-family: var(--mono); font-size: 13px; color: var(--fg);
+  font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .page-agents .pin-name:hover { color: var(--cyan); }
@@ -4953,9 +5101,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   position: absolute; top: calc(100% + 6px); left: 0; z-index: 50;
   width: min(620px, calc(100vw - 32px));
   border: 1px solid var(--amber-border);
-  background: var(--bg);
+  background: var(--surface);
   color: var(--fg);
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 16px 18px;
   box-shadow: 0 16px 48px rgba(0,0,0,0.32);
 }
@@ -4966,84 +5114,112 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .issues-popover .msg { display: block; margin-top: 3px; color: var(--muted-3); }
 
 /* --- schedules timetable --- */
-.page-schedules .timetable {
-  display: flex; flex-direction: column; gap: 1px;
-  background: var(--line);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  overflow: hidden;
-}
+/* One raised card (.surface) per day; slots separate with a hairline rather
+   than the old 1px-gap grid, so a day reads as a single block of time. */
+.page-schedules .timetable { display: flex; flex-direction: column; }
 .page-schedules .slot {
   position: relative;
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr) auto;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
   gap: 16px;
-  align-items: center;
-  background: var(--bg);
-  padding: 12px 16px;
+  /* Baseline, not center: the mono time reads as a label on the agent name. */
+  align-items: baseline;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--line);
   transition: background 120ms ease;
 }
+.page-schedules .slot:last-child { border-bottom: 0; }
 .page-schedules .slot:hover { background: var(--panel-hover); }
 /* Whole row links to the agent detail view via a stretched ::after overlay,
    while the last-run session link (slot-side) stays clickable above it. */
-.page-schedules a.slot-agent { display: inline-block; text-decoration: none; color: inherit; }
+.page-schedules a.slot-agent { display: inline-block; text-decoration: none; border-bottom: 0; color: inherit; }
 .page-schedules a.slot-agent::after { content: ''; position: absolute; inset: 0; }
 .page-schedules .slot:hover .slot-agent, .page-schedules .slot:hover .slot-agent code { color: var(--cyan); }
 .page-schedules .slot-side a { position: relative; z-index: 1; }
-.page-schedules .slot.disabled .slot-time { color: var(--muted-2); }
 .page-schedules .slot-time {
   font-family: var(--mono);
-  font-size: 17px;
-  color: var(--cyan);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .page-schedules .slot-main { min-width: 0; }
-.page-schedules .slot-agent { color: var(--fg); font-family: var(--sans); font-weight: 600; font-size: 13.5px; overflow-wrap: anywhere; }
+.page-schedules .slot-agent { color: var(--fg); font-family: var(--sans); font-weight: 500; font-size: 14px; overflow-wrap: anywhere; }
 .page-schedules .slot-agent code { color: var(--fg); font-family: var(--mono); font-size: 13px; font-weight: 400; }
 .page-schedules .slot-proj { color: var(--cyan); font-size: 11px; letter-spacing: 0.04em; }
-.page-schedules .slot-cadence { color: var(--muted-3); font-size: 12px; margin-top: 3px; }
-.page-schedules .slot-cadence code { color: var(--muted); font-size: 11.5px; }
-.page-schedules .slot-side { text-align: right; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.page-schedules .slot-cadence { color: var(--muted); font-size: 12.5px; margin-top: 1px; }
+.page-schedules .slot-cadence code { font-family: var(--mono); color: var(--muted-2); font-size: 11px; }
+.page-schedules .slot-side { text-align: right; font-family: var(--mono); color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 .page-schedules .slot-side .ok { color: var(--green); border-bottom-color: var(--green-border); }
 .page-schedules .slot-side .failed { color: var(--red); border-bottom-color: var(--red-border); }
+/* Disabled schedules stay legible but recede: the whole day card dims and the
+   row's own text drops a step, so an off schedule never reads as a live one. */
+.page-schedules .day-title.day-disabled { color: var(--muted-2); }
+.page-schedules .day-title.day-disabled + .timetable { opacity: 0.7; }
+.page-schedules .slot.disabled .slot-time { color: var(--muted-2); }
+.page-schedules .slot.disabled .slot-agent { color: var(--muted-3); }
+.page-schedules .slot.disabled .slot-side, .page-schedules .slot.disabled .slot-side .ok { color: var(--muted-2); }
 @media (max-width: 640px) {
-  .page-schedules .slot { grid-template-columns: 64px minmax(0, 1fr); }
+  .page-schedules .slot { grid-template-columns: 44px minmax(0, 1fr); padding: 12px 14px; }
   .page-schedules .slot-side { grid-column: 2; text-align: left; margin-top: 2px; }
 }
 
 /* --- sessions list --- */
-/* The sessions list reuses the approvals list row styling (the SPA renders the
-   same .row/.rows/.chip markup). It only adds its own main shell + filter bar. */
+/* Two shapes share this page: the compact .row (summary view, same markup as
+   the approvals list) and the .session-feed-card the feed view builds on top of
+   it — a raised surface holding an identity header, the run's response, and a
+   meta footer. Both sit in the same reading column under the filter panel. */
 .page-sessions a { color: inherit; text-decoration: none; }
-.page-sessions main { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; padding: 32px 0 48px; }
+/* A reading column, matching home: the feed is prose-shaped, not a table. */
+.page-sessions main { width: min(880px, calc(100vw - 32px)); margin: 0 auto; padding: 44px 0 64px; }
+.page-sessions .sessions-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
 .page-sessions h1 {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
   font-family: var(--sans);
-  font-size: clamp(24px, 3vw, 34px);
-  letter-spacing: -0.02em;
-  margin: 0 0 16px;
+  font-size: clamp(22px, 3vw, 27px);
+  letter-spacing: -0.01em;
+  margin: 0;
   font-weight: 500;
 }
+.page-sessions .sessions-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Not .surface: the agent picker's popup is positioned inside this panel and
+   would be clipped by that class's overflow: hidden. */
 .page-sessions .filters {
   display: grid;
-  gap: 12px;
-  margin: 0 0 20px;
-  padding: 12px 14px;
+  gap: 14px;
+  margin: 0 0 26px;
+  padding: 16px 18px 14px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
 }
 .page-sessions .filters-heading {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
 }
-.page-sessions .filters-heading-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.page-sessions .filters-heading-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; margin-left: auto; }
 .page-sessions .group-toggle {
-  appearance: none; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--bg);
-  cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--muted-3);
-  padding: 6px 12px; transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  appearance: none; border: 1px solid var(--line); border-radius: 999px; background: none;
+  cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--muted-2);
+  padding: 3px 10px; transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 .page-sessions .group-toggle:hover { color: var(--fg); background: var(--panel-hover); }
 .page-sessions .group-toggle.on { background: var(--cyan-soft); color: var(--cyan); border-color: var(--cyan-border); }
@@ -5053,34 +5229,34 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-size: 13px;
   font-weight: 600;
 }
-.page-sessions .filters-description { margin-top: 2px; color: var(--muted); font-size: 11.5px; }
+.page-sessions .filters-description { color: var(--muted); font-size: 12px; }
 .page-sessions .filter-grid {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
 }
 .page-sessions .filters label {
   display: grid;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
-  color: var(--muted);
+  color: var(--muted-2);
+  font-family: var(--mono);
   font-size: 10px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 .page-sessions .filters select,
 .page-sessions .filters input {
   min-height: 34px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
   background: var(--bg);
   color: var(--fg);
-  font: inherit;
-  font-size: 12px;
+  font-family: var(--sans);
+  font-size: 13px;
   letter-spacing: 0;
   text-transform: none;
-  padding: 6px 9px;
+  padding: 6px 11px;
   cursor: pointer;
 }
 .page-sessions .filters input {
@@ -5091,8 +5267,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .filters input::placeholder { color: var(--muted); }
 .page-sessions .filters input:focus-visible { outline: none; border-color: var(--cyan-border); }
 
-/* Searchable agent picker: type to search the list, choose to apply. */
-.page-sessions .agent-select { position: relative; min-width: 240px; }
+/* Searchable agent picker: type to search the list, choose to apply. min-width
+   0 so it takes an even share of the filter grid; the popup keeps its own
+   readable width and hangs off the field's right edge (the field sits in the
+   last column, so growing leftwards is what keeps it on screen). */
+.page-sessions .agent-select { position: relative; min-width: 0; }
 .page-sessions .agent-select input { padding-right: 26px; }
 .page-sessions .agent-select-clear {
   position: absolute; top: 50%; right: 7px; transform: translateY(-50%);
@@ -5104,7 +5283,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-sessions .agent-select-clear:hover { background: var(--panel-hover); color: var(--fg); }
 .page-sessions .agent-select-pop {
-  position: absolute; z-index: 50; top: calc(100% + 4px); left: 0;
+  position: absolute; z-index: 50; top: calc(100% + 4px); right: 0;
   width: max(100%, 320px); max-height: 320px; overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--line-strong); border-radius: 8px;
@@ -5142,15 +5321,18 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .filters-reset:hover { color: var(--cyan); text-decoration-color: var(--cyan-border); }
 .page-sessions .load-more {
   display: flex;
-  margin: 18px auto 0;
-  min-height: 34px;
-  padding: 6px 18px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 20px auto 0;
+  min-height: 36px;
+  padding: 8px 22px;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--panel);
+  border-radius: 10px;
+  background: none;
   color: var(--muted-3);
-  font: inherit;
-  font-size: 12px;
+  font-family: var(--sans);
+  font-size: 13px;
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
@@ -5209,9 +5391,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .row {
   position: relative;
   display: block;
-  background: var(--panel);
+  background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 14px;
+  box-shadow: var(--surface-shadow);
   padding: 14px 16px;
   transition: background 120ms ease, border-color 120ms ease;
 }
@@ -5221,7 +5404,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: 10px;
+  border-radius: 14px;
   cursor: pointer;
 }
 .page-sessions .row-head a.chip { position: relative; z-index: 1; text-decoration: none; cursor: pointer; }
@@ -5263,21 +5446,19 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .row-meta { margin-top: 8px; color: var(--muted); font-size: 11px; }
 .page-sessions .row-meta code { font-family: var(--mono); font-size: 11px; }
 .page-sessions .rows.session-feed {
-  gap: 16px;
+  gap: 12px;
 }
 /* One divider marks where the reader's last visit ended; everything above it
    started since. Deliberately quiet: it orients a skim, it is not an alert. */
 .page-sessions .feed-watermark {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 2px 0;
+  gap: 12px;
+  margin: 4px 0;
   color: var(--cyan);
-  font-family: var(--sans);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .page-sessions .feed-watermark::before,
@@ -5288,12 +5469,14 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   background: var(--cyan-border);
 }
 .page-sessions .session-feed-card {
-  padding: 16px 18px;
-  background: var(--bg);
+  padding: 16px 18px 14px;
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
   /* Keeps a j/k-selected card clear of the sticky topbar when it scrolls in. */
   scroll-margin-top: 80px;
 }
-.page-sessions .session-feed-card:hover { background: var(--bg); }
+.page-sessions .session-feed-card:hover { background: var(--surface); }
 /* :focus, not :focus-visible: the card is only ever focused by the j/k keys or
    by a click on it, so every focus here is a selection worth drawing. */
 .page-sessions .session-feed-card:focus {
@@ -5303,38 +5486,39 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-sessions .session-feed-header {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: start;
   gap: 12px;
 }
 .page-sessions .session-feed-avatar {
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--cyan-border);
-  border-radius: 12px;
-  background: var(--cyan-soft);
-  color: var(--cyan);
-  font-family: var(--sans);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-hover);
+  color: var(--muted-3);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  transition: color 120ms ease, border-color 120ms ease;
 }
+.page-sessions .session-feed-avatar:hover { color: var(--cyan); border-color: var(--cyan-border); }
 .page-sessions .session-feed-identity { min-width: 0; }
 .page-sessions .session-feed-card .row-title {
   display: inline-block;
   color: var(--fg);
-  font-size: 16px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
+  font-size: 14.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  line-height: 1.35;
   text-decoration: none;
 }
 .page-sessions .session-feed-card .row-title:hover { color: var(--cyan); }
 .page-sessions .session-feed-card .row-sub {
-  margin-top: 4px;
+  margin-top: 3px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
@@ -5342,18 +5526,18 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-sessions .session-feed-byline {
   min-width: 0;
-  margin-top: 6px;
+  margin-top: 2px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   color: var(--muted);
   font-family: var(--mono);
-  font-size: 10.5px;
-  line-height: 1.35;
+  font-size: 11px;
+  line-height: 1.4;
 }
 .page-sessions .session-feed-byline a {
-  color: var(--muted-2);
+  color: inherit;
   text-decoration: none;
 }
 .page-sessions .session-feed-byline a:hover { color: var(--cyan); }
@@ -5363,31 +5547,30 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-sessions .session-feed-header .chip.status {
   margin-top: 1px;
-  background: transparent;
-  font-size: 9.5px;
   text-decoration: none;
 }
+/* One quiet mono line, not a red slab: the failure reads as a fact about the
+   run, and the card's error chip already carries the alarm. */
 .page-sessions .session-feed-error {
-  margin-top: 14px;
-  padding: 9px 11px;
-  border: 1px solid var(--red-border);
-  border-radius: 8px;
-  background: var(--red-soft);
+  margin-top: 10px;
   color: var(--red);
-  font-size: 12.5px;
+  font-family: var(--mono);
+  font-size: 12px;
   line-height: 1.45;
 }
 .page-sessions .session-feed-response {
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
 }
 .page-sessions .session-feed-response-label {
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   color: var(--muted-2);
+  font-family: var(--mono);
   font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 .page-sessions .session-feed-content {
@@ -5406,20 +5589,20 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   left: 0;
   height: 72px;
   pointer-events: none;
-  background: linear-gradient(to bottom, transparent, var(--bg));
+  background: linear-gradient(to bottom, transparent, var(--surface));
 }
 .page-sessions .session-feed-content .content-markdown {
   padding: 0;
   color: var(--muted-3);
-  font-size: 14.5px;
-  line-height: 1.66;
+  font-size: 13.5px;
+  line-height: 1.6;
 }
 /* Treat an opening paragraph as a lead, then step down into supporting prose.
    This gives answer-only sessions a skimmable entry point even when the agent
    did not write an explicit Markdown heading. */
 .page-sessions .session-feed-content .content-markdown > p:first-child {
   color: var(--fg);
-  font-size: 16px;
+  font-size: 14.5px;
   line-height: 1.55;
 }
 .page-sessions .session-feed-content .content-markdown p { margin-bottom: 12px; }
@@ -5431,18 +5614,18 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   letter-spacing: -0.015em;
 }
 .page-sessions .session-feed-content .content-markdown h2 {
-  margin: 22px 0 9px;
-  font-size: 22px;
+  margin: 18px 0 8px;
+  font-size: 17px;
   line-height: 1.2;
 }
 .page-sessions .session-feed-content .content-markdown h3 {
-  margin: 19px 0 8px;
-  font-size: 18px;
+  margin: 16px 0 7px;
+  font-size: 15px;
   line-height: 1.25;
 }
 .page-sessions .session-feed-content .content-markdown h4 {
-  margin: 17px 0 7px;
-  font-size: 15.5px;
+  margin: 15px 0 6px;
+  font-size: 13.5px;
   line-height: 1.3;
 }
 .page-sessions .session-feed-content .content-markdown h5,
@@ -5473,7 +5656,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   margin: 14px 0;
   padding: 2px 0 2px 14px;
   color: var(--muted-2);
-  font-size: 15px;
+  font-size: 13.5px;
   line-height: 1.6;
 }
 .page-sessions .session-feed-content .content-markdown strong {
@@ -5495,8 +5678,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .session-feed-empty {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 13.5px;
+  line-height: 1.55;
 }
 .page-sessions .session-feed-empty a {
   color: var(--cyan);
@@ -5521,12 +5704,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .session-feed-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
+  margin-top: 12px;
+  color: var(--muted-2);
+  font-family: var(--mono);
   font-size: 11px;
 }
 .page-sessions .session-feed-footer code {
@@ -5539,24 +5720,29 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-sessions .session-feed-open {
   flex: none;
-  color: var(--muted-2);
+  margin-left: auto;
+  color: var(--cyan);
   font-family: var(--sans);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 12.5px;
 }
-.page-sessions .session-feed-open:hover { color: var(--cyan); }
+.page-sessions .session-feed-open:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* Chips carry data (a state word, an id, a trigger), so they read in mono. */
 .page-sessions .chip {
   display: inline-flex; align-items: center;
-  padding: 2px 8px;
+  padding: 2px 9px;
   border-radius: 999px;
+  font-family: var(--mono);
   font-size: 10.5px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   border: 1px solid var(--line-strong);
   background: var(--panel);
   color: var(--muted-3);
 }
 .page-sessions .chip.status.pending { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
-.page-sessions .chip.status.completed, .page-sessions .chip.status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+/* A finished run is the expected outcome, so it stays neutral: colour is spent
+   on the states that want a second look (running, suspended, failed). */
+.page-sessions .chip.status.completed { color: var(--muted-3); border-color: var(--line-strong); background: none; }
+.page-sessions .chip.status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
 .page-sessions .chip.status.error, .page-sessions .chip.status.rejected, .page-sessions .chip.status.expired, .page-sessions .chip.status.timeout { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
 /* Agent-declared non-delivery (error/INCOMPLETE): amber, distinct from a crash,
    so a skim separates "blocked, needs a human" from "broke". */
@@ -5588,27 +5774,49 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 .page-sessions .row-discard:hover { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
-.page-sessions .session-feed-footer .row-discard { margin-left: auto; }
-.page-sessions footer { color: var(--muted); font-size: 11px; margin-top: 32px; text-align: center; }
-.page-sessions .feed-keys kbd {
-  font-family: var(--mono); font-size: 10px;
+/* In the card footer the pill would compete with "Open session"; there it is a
+   plain mono word sitting in the same meta line as the session id. */
+.page-sessions .session-feed-footer .row-discard {
+  margin-left: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--muted-3);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+}
+.page-sessions .session-feed-footer .row-discard:hover { color: var(--red); background: none; }
+.page-sessions footer {
   color: var(--muted-2);
-  padding: 1px 5px;
-  border: 1px solid var(--line); border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  margin-top: 16px;
+  text-align: center;
+}
+.page-sessions .feed-keys kbd {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--muted-3);
+}
+/* Six across only while they fit: each control still has to show its current
+   value, which is the point of the row. (Under 700px the filters disclosure
+   below takes over with its own two-column grid.) */
+@media (max-width: 900px) {
+  .page-sessions .filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
   .page-sessions .session-feed-card { padding: 14px; }
   .page-sessions .session-feed-header {
-    grid-template-columns: 36px minmax(0, 1fr) auto;
+    grid-template-columns: 32px minmax(0, 1fr) auto;
     gap: 10px;
   }
   .page-sessions .session-feed-avatar {
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
-    font-size: 12px;
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    font-size: 11px;
   }
-  .page-sessions .session-feed-header > .chip.status {
+  .page-sessions .session-feed-status .chip.status {
     max-width: 84px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -5675,7 +5883,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   margin: 6px 0 10px;
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--panel);
   color: inherit;
   text-decoration: none;
@@ -5758,7 +5966,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-left: 2px solid var(--green);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--panel);
 }
 .page-approval-detail .run-outcome.is-incomplete { border-left-color: var(--amber); }
@@ -5833,7 +6041,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   margin-left: auto;
   padding-left: 8px;
   font-size: 10px;
-  letter-spacing: 0.14em;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
 }
@@ -5849,12 +6058,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .log-working .log-title,
   .page-home .home-boot > *,
   .page-home .hero-dot.on,
-  .page-home a.hero-pending,
   .page-home .now-dot,
   .page-home .feed-dot.running,
   .page-home .feed-dot.waiting,
   .page-home .feed-row.is-new,
-  .page-home .card.attn,
   .page-home .proj-live,
   .page-home .now-ticker-line,
   .page-home .now-ticker-line::after,

@@ -137,7 +137,8 @@ describe('Session feed response', () => {
     expect(html).toContain('tabindex="-1"');
     expect(html).toContain('session-feed-header');
     expect(html).toContain('session-feed-avatar');
-    expect(html).toContain('>WR</div>');
+    // The avatar is a filter-shortcut link, not a static tile.
+    expect(html).toContain('>WR</a>');
     expect(html).toContain('session-feed-byline');
     expect(html).toContain('session-feed-response');
     expect(html).toContain('session-feed-footer');

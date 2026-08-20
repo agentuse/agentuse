@@ -67,7 +67,7 @@ export default function Schedules() {
   const renderDay = (label: string, list: SerializedSchedule[], headingClass = '') => (
     <section class="day" key={label}>
       <h2 class={`day-title${headingClass ? ` ${headingClass}` : ''}`}><span>{label}</span><span class="count">{list.length}</span><span class="rule"></span></h2>
-      <div class="timetable">{list.map((s) => <Slot key={s.id} schedule={s} multiProject={multiProject} />)}</div>
+      <div class="timetable surface">{list.map((s) => <Slot key={s.id} schedule={s} multiProject={multiProject} />)}</div>
     </section>
   );
 

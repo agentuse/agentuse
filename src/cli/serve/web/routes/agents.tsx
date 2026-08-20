@@ -976,13 +976,19 @@ export default function Agents({ project }: { project?: string } = {}) {
           : [...byProject.entries()].map(([projectId, agents]) => (
             <section class={view === 'cards' && !scoped ? 'group project-collection' : 'group'} id={projectAnchor(projectId)} key={projectId}>
               {!scoped && view === 'cards' && <ProjectCollectionHeader projectId={projectId} agents={agents} ctx={rowCtx} about={aboutOf(projectId, '.')} />}
-              {!scoped && view !== 'cards' && (
-                <h2 class="group-title">
-                  <a class="group-link" href={agentsProjectHref(projectId)} {...(aboutOf(projectId, '.')?.name ? { title: projectId } : {})}><span>{projectLabel(projectId)}</span></a>
-                  <span class="count">{agents.length} agent{agents.length === 1 ? '' : 's'}</span>
-                  <span class="rule"></span>
-                </h2>
-              )}
+              {!scoped && view !== 'cards' && (() => {
+                // Live activity belongs on every project heading, not just the
+                // card view's: it is the one thing worth interrupting a scan for.
+                const live = agents.filter((a) => isRunningStatus(lastRunFor(a)?.status)).length;
+                return (
+                  <h2 class="group-title">
+                    <a class="group-link" href={agentsProjectHref(projectId)} {...(aboutOf(projectId, '.')?.name ? { title: projectId } : {})}><span>{projectLabel(projectId)}</span></a>
+                    <span class="count">{agents.length} agent{agents.length === 1 ? '' : 's'}</span>
+                    {live > 0 && <span class="group-live"><span aria-hidden="true"></span>{live} running</span>}
+                    <span class="rule"></span>
+                  </h2>
+                );
+              })()}
               {view === 'cards'
                 ? <AgentDirectoryGroups agents={agents} ctx={rowCtx} projectId={projectId} aboutFor={(dir) => aboutOf(projectId, dir)} />
                 : view === 'graph'

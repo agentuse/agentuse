@@ -170,16 +170,19 @@ export function SessionRowView(props: {
         )
         : (
           <div class="session-feed-header">
-            <div class="session-feed-avatar" aria-hidden="true">{avatar}</div>
+            {/* The initials tile carries the agent filter: the card title is the
+                agent's name, so repeating its id in the byline (as the row view
+                does) would only duplicate what is already on screen. */}
+            <a
+              class="session-feed-avatar"
+              href={filterHref('agent', agentActive ? '' : row.agent.id)}
+              title={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
+              aria-label={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
+            >{avatar}</a>
             <div class="session-feed-identity">
               <a class="row-title" href={href}>{row.agent.name || row.agent.id}</a>
               {row.agent.description && <div class="row-sub">{row.agent.description}</div>}
               <div class="session-feed-byline">
-                <a
-                  href={filterHref('agent', agentActive ? '' : row.agent.id)}
-                  title={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
-                >{row.agent.id}</a>
-                <span aria-hidden="true">·</span>
                 <a
                   href={filterHref('trigger', triggerActive ? '' : row.trigger)}
                   title={triggerActive ? `Stop filtering by trigger: ${row.trigger}` : `Filter sessions by trigger: ${row.trigger}`}
@@ -235,7 +238,7 @@ export function FeedResponse(props: { value: string | undefined; status: string;
   const long = Boolean(props.value && (props.value.length > 1_800 || props.value.split(/\r?\n/).length > 18));
   // subagentActive reads as live (like running): the response lands when the
   // delegated sub-agent returns.
-  const live = props.status === 'running' || props.subagentActive === true;
+  const live = props.status === 'running' || props.status === 'suspended' || props.subagentActive === true;
   const emptyMessage = props.subagentActive
     ? 'Working in a delegated sub-agent. Its response will appear here when the sub-agent returns.'
     : props.status === 'running'
@@ -549,10 +552,13 @@ export default function SessionsList() {
 
   return (
     <div class="page-sessions">
-      <Topbar currentPage="sessions" right={<span class="pending-count">{rows.length} in {win === 'all' ? 'all time' : win}</span>} />
+      <Topbar currentPage="sessions" />
       <GroupRail items={railItems} />
       <main>
-        <h1>Sessions <PushBell category="sessions" /></h1>
+        <div class="sessions-head">
+          <h1>Sessions <PushBell category="sessions" /></h1>
+          <span class="sessions-count">{rows.length} in {win === 'all' ? 'all time' : win}</span>
+        </div>
         {narrow && (
           <div class="filters-summary">
             <button
@@ -587,10 +593,8 @@ export default function SessionsList() {
         )}
         <div id="session-filters" class={`filters${narrow && !filtersOpen ? ' collapsed' : ''}`}>
           <div class="filters-heading">
-            <div>
-              <div class="filters-title">Filter sessions</div>
-              <div class="filters-description">Narrow the live feed by time, state, source, or agent.</div>
-            </div>
+            <span class="filters-title">Filter sessions</span>
+            <span class="filters-description">Narrow the live feed by time, state, source, or agent.</span>
             <div class="filters-heading-actions">
               <button
                 type="button"

@@ -11,22 +11,14 @@ import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone, type RunTone } from '../lib/format';
-import { brandName, pageTitle } from '../lib/brand';
-import { term, termTitle } from '../lib/terms';
+import { pageTitle } from '../lib/brand';
+import { term } from '../lib/terms';
 
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
-const CARDS: Array<{ href: string; title: string; desc: string }> = [
-  { href: '/agents', title: 'Agents', desc: 'Browse the agents loaded by this daemon.' },
-  { href: '/sessions', title: 'Sessions', desc: 'Run logs and approvals for every run.' },
-  { href: '/schedules', title: 'Schedules', desc: 'Upcoming and recent scheduled runs.' },
-  { href: '/stores', title: 'Stores', desc: 'Key-value data written by agents.' },
-  { href: '/approvals', title: 'Approvals', desc: 'Tool calls awaiting a decision.' },
-];
-
-/** Shared 1s clock for the elapsed timers and the next-run countdown. */
+/** Shared 1s clock for the header clock, elapsed timers and the countdown. */
 function useNow(enabled: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -78,29 +70,31 @@ function FeedRow(props: { event: ActivityEvent }) {
   );
 }
 
-function RunningCard(props: { row: SessionRow; now: number; ticker: boolean }) {
+function RunningRow(props: { row: SessionRow; now: number; ticker: boolean }) {
   const { row, now } = props;
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
   // Live one-line tail of what the agent is doing right now. Capped upstream
   // (`ticker`) so a busy daemon doesn't exhaust the browser's per-host
-  // connection budget; capless cards keep the static description.
+  // connection budget; capless rows keep the static description.
   const tail = useSessionTail(row.sessionId, row.project, props.ticker);
   return (
-    <a class="now-card" href={href}>
-      <div class="now-card-head">
-        <span class="now-dot" aria-hidden="true"></span>
-        <span class="now-agent">{row.agent.name || row.agent.id}</span>
-        {row.subagentActive && <span class="now-subagent" title="Work is running in a delegated subagent">subagent</span>}
-        <span class="now-elapsed">{formatElapsed(now - row.createdAt)}</span>
+    <a class="now-row" href={href}>
+      <span class="now-dot" aria-hidden="true"></span>
+      <div class="now-body">
+        <div class="now-head">
+          <span class="now-agent">{row.agent.name || row.agent.id}</span>
+          <span class="now-meta">{row.project} · {row.trigger}</span>
+          {row.subagentActive && <span class="now-subagent" title="Work is running in a delegated subagent">subagent</span>}
+        </div>
+        {/* Purely visual preview of the session page it links to; hidden from AT
+            so the transient fragments never pollute the link's accessible name. */}
+        {tail
+          ? <div class={tail.tool ? 'now-ticker tool' : 'now-ticker'} aria-hidden="true">
+              <span class="now-ticker-line" key={`${tail.tool ?? ''}:${tail.text}`}>{tail.text}</span>
+            </div>
+          : <div class="now-desc">{row.agent.description || displayStatusLabel(row.status, row.errorCode)}</div>}
       </div>
-      {/* Purely visual preview of the session page it links to; hidden from AT
-          so the transient fragments never pollute the link's accessible name. */}
-      {tail
-        ? <div class={tail.tool ? 'now-ticker tool' : 'now-ticker'} aria-hidden="true">
-            <span class="now-ticker-line" key={`${tail.tool ?? ''}:${tail.text}`}>{tail.text}</span>
-          </div>
-        : <div class="now-desc">{row.agent.description || displayStatusLabel(row.status, row.errorCode)}</div>}
-      <div class="now-meta">{row.project} · {row.trigger}</div>
+      <span class="now-elapsed">{formatElapsed(now - row.createdAt)}</span>
     </a>
   );
 }
@@ -115,22 +109,23 @@ function formatWaiting(ms: number): string {
   return `waiting ${Math.floor(hr / 24)}d`;
 }
 
-function ApprovalCard(props: { row: ApprovalRow }) {
+/** One pending gate as a row: who wants what, how long it has waited, and a
+ *  single "review →" affordance. Deciding happens only in the session view,
+ *  after the full gate content is read — never inline here. */
+function ApprovalItem(props: { row: ApprovalRow }) {
   const { row } = props;
   const since = row.suspendedAt ?? row.createdAt;
   return (
-    <a class="attn-card" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
-      <div class="attn-head">
-        <span class="attn-kind">approval</span>
+    <a class="appr" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
+      <div class="appr-head">
         <span class="attn-agent">{row.agentName || row.agentId}</span>
-        {since !== undefined && <span class="attn-wait" title={formatApprovalTime(since)}>{formatWaiting(Date.now() - since)}</span>}
+        <span class="appr-kind">wants approval{row.risk ? ` · ${row.risk}` : ''}</span>
+        <span class="appr-time">
+          {since !== undefined && <span title={formatApprovalTime(since)}>{formatWaiting(Date.now() - since)} · </span>}
+          <span class="appr-review">review →</span>
+        </span>
       </div>
-      {(row.summary || row.prompt) && <div class="attn-summary">{row.summary || row.prompt}</div>}
-      <div class="attn-meta">
-        {row.project}
-        {row.risk && <> · <span class="attn-risk">{row.risk}</span></>}
-        <span class="attn-go"> · approve or reject →</span>
-      </div>
+      {(row.summary || row.prompt) && <div class="appr-summary">{row.summary || row.prompt}</div>}
     </a>
   );
 }
@@ -142,8 +137,11 @@ function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => voi
     <a class="attn-run" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
       <span class="feed-dot failed" aria-hidden="true"></span>
       <span class="attn-agent">{row.agent.name || row.agent.id}</span>
-      <span class="attn-fail">{props.label ?? displayStatusLabel(row.status, row.errorCode)} · needs a look</span>
-      <span class="feed-time" title={formatApprovalTime(at)}>{formatRelativeTime(at)}</span>
+      <span class="attn-fail">
+        {props.label ?? displayStatusLabel(row.status, row.errorCode)}
+        {!props.label && row.errorCode && row.errorCode !== 'USER_STOPPED' && ` · ${row.errorCode}`}
+      </span>
+      <span class="feed-time" title={formatApprovalTime(at)}>{formatRelativeTime(at)} · review or dismiss →</span>
       <button
         type="button"
         class="attn-dismiss"
@@ -168,6 +166,9 @@ function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => voi
  *  never folded: a waiting human is the whole point of the section. */
 const ATTENTION_ROWS = 3;
 
+/** Recent-activity rows shown on Home; the full stream lives on /sessions. */
+const FEED_LIMIT = 6;
+
 /** What's blocked on a human: pending gates first, then recent failed runs, then
  *  runs stranded on a sub-agent that already ended. A stranded run is raw-status
  *  `suspended`, so it lands in neither of the first two groups — it used to fall
@@ -190,7 +191,7 @@ function AttentionSection(props: {
   return (
     <section class="group">
       <h2 class="group-title">
-        <span>Needs your attention</span>
+        <span>Waiting on you</span>
         {total > 0 && <span class="count">{total}</span>}
         <span class="rule"></span>
       </h2>
@@ -198,16 +199,24 @@ function AttentionSection(props: {
         ? <div class="attn-empty">Nothing waiting on you.</div>
         : (
           <div class="attn-list">
-            {pending.map((row) => <ApprovalCard key={`${row.project}:${row.sessionId}`} row={row} />)}
-            {shownFailed.map((row) => <FailedRow key={`${row.project}:${row.sessionId}`} row={row} onDismiss={props.onDismissFailed} />)}
-            {shownStranded.map((row) => (
-              <FailedRow
-                key={`${row.project}:${row.sessionId}`}
-                row={row}
-                label={ORPHANED_LABEL}
-                onDismiss={props.onDismissFailed}
-              />
-            ))}
+            {pending.length > 0 && (
+              <div class="surface appr-surface">
+                {pending.map((row) => <ApprovalItem key={`${row.project}:${row.sessionId}`} row={row} />)}
+              </div>
+            )}
+            {(shownFailed.length > 0 || shownStranded.length > 0) && (
+              <div class="surface">
+                {shownFailed.map((row) => <FailedRow key={`${row.project}:${row.sessionId}`} row={row} onDismiss={props.onDismissFailed} />)}
+                {shownStranded.map((row) => (
+                  <FailedRow
+                    key={`${row.project}:${row.sessionId}`}
+                    row={row}
+                    label={ORPHANED_LABEL}
+                    onDismiss={props.onDismissFailed}
+                  />
+                ))}
+              </div>
+            )}
             {(folded > 0 || expanded) && (
               <button type="button" class="attn-more" onClick={() => setExpanded((on) => !on)}>
                 {expanded ? 'show less' : `show all ${failed.length + stranded.length} needing a look →`}
@@ -321,8 +330,8 @@ function RunsByAgent(props: { sessions: SessionRow[]; loading: boolean }) {
   return (
     <section class="group">
       <h2 class="group-title">
-        <span>Runs by agent</span><span class="rule"></span>
-        <a class="group-link" href="/sessions">view all →</a>
+        <span>Runs by agent · 24h</span><span class="rule"></span>
+        <a class="group-link" href="/sessions">all sessions →</a>
       </h2>
       {bars.length === 0
         ? (props.loading
@@ -330,6 +339,9 @@ function RunsByAgent(props: { sessions: SessionRow[]; loading: boolean }) {
           : <div class="metric-empty">No runs in the last 24 hours.</div>)
         : (
           <div class="runbar">
+            <div class="runbar-rows surface">
+              {bars.map((bar) => <RunBarRow key={bar.key} bar={bar} max={max} />)}
+            </div>
             <div class="runbar-legend">
               {totals.map((t) => (
                 <span class="runbar-key" key={t.tone}>
@@ -337,9 +349,6 @@ function RunsByAgent(props: { sessions: SessionRow[]; loading: boolean }) {
                   {t.label} <span class="runbar-key-n">{t.n}</span>
                 </span>
               ))}
-            </div>
-            <div class="runbar-rows">
-              {bars.map((bar) => <RunBarRow key={bar.key} bar={bar} max={max} />)}
             </div>
             {all.length > TOP_AGENTS && (
               <button type="button" class="runbar-more" onClick={() => setExpanded((on) => !on)}>
@@ -618,73 +627,12 @@ function MetricTile(props: { agg: MetricAgg; windowDays: number; display: Metric
   );
 }
 
-interface SparkBucket { ok: number; failed: number; live: number }
-
-/** Sessions folded into 24 hours-ago buckets, oldest first. */
-function bucketize(sessions: SessionRow[], now: number): SparkBucket[] {
-  const buckets: SparkBucket[] = Array.from({ length: 24 }, () => ({ ok: 0, failed: 0, live: 0 }));
-  for (const s of sessions) {
-    const hoursAgo = Math.floor((now - s.createdAt) / 3_600_000);
-    if (hoursAgo < 0 || hoursAgo > 23) continue;
-    const b = buckets[23 - hoursAgo]!;
-    const tone = runTone(s.status);
-    if (tone === 'ok') b.ok++;
-    else if (tone === 'failed') b.failed++;
-    else b.live++;
-  }
-  return buckets;
-}
-
-const SPARK_MAX_PX = 30;
-
-/**
- * Runs-per-hour sparkline with outcome coloring. Failures always sit as the
- * topmost segment above a gap (position, not just hue, separates them) and the
- * stat line spells the counts out, so the red/green split never carries the
- * message alone. Per-bar totals stay on native tooltips.
- */
-function ActivitySpark(props: { sessions: SessionRow[] }) {
-  // Fresh on every render (the live stream re-renders Home continuously), so
-  // the hours-ago buckets roll forward without needing the shared 1s clock —
-  // which stops ticking on an idle daemon and would freeze the window.
-  const buckets = bucketize(props.sessions, Date.now());
-  const okTotal = buckets.reduce((n, b) => n + b.ok, 0);
-  const failedTotal = buckets.reduce((n, b) => n + b.failed, 0);
-  const total = okTotal + failedTotal + buckets.reduce((n, b) => n + b.live, 0);
-  const shownTotal = useCountUp(total);
-  if (total === 0) return null;
-  const max = Math.max(1, ...buckets.map((b) => b.ok + b.failed + b.live));
-  const px = (n: number) => (n === 0 ? 0 : Math.max(2, Math.round((n / max) * SPARK_MAX_PX)));
-  const ended = okTotal + failedTotal;
-  const pct = ended > 0 ? Math.round((okTotal / ended) * 100) : null;
-  return (
-    <div class="hero-spark">
-      <div
-        class="spark-bars"
-        role="img"
-        aria-label={`Runs per hour over the last 24 hours: ${plural(total, 'run')}, ${failedTotal} failed.`}
-      >
-        {buckets.map((b, i) => {
-          const runs = b.ok + b.failed + b.live;
-          const hoursAgo = 23 - i;
-          const when = hoursAgo === 0 ? 'past hour' : `${hoursAgo}–${hoursAgo + 1}h ago`;
-          return (
-            <span class="spark-col" key={i} title={`${when} · ${plural(runs, 'run')}${b.failed > 0 ? ` · ${b.failed} failed` : ''}`}>
-              {b.failed > 0 && <span class="spark-seg failed" style={{ height: `${px(b.failed)}px` }}></span>}
-              {b.live > 0 && <span class="spark-seg live" style={{ height: `${px(b.live)}px` }}></span>}
-              {b.ok > 0 && <span class="spark-seg ok" style={{ height: `${px(b.ok)}px` }}></span>}
-              {runs === 0 && <span class="spark-seg none"></span>}
-            </span>
-          );
-        })}
-      </div>
-      <div class="spark-stat">
-        <span class="spark-total">{shownTotal}</span> runs in 24h
-        {pct !== null && <span class="spark-rate"> · {pct}% succeeded</span>}
-        {failedTotal > 0 && <> · <a class="spark-failed" href="/sessions?status=error">{failedTotal} failed</a></>}
-      </div>
-    </div>
-  );
+/** "Wednesday, August 19 · 4:55 PM" — the header's clock line. */
+function formatClock(now: number): string {
+  const d = new Date(now);
+  const day = d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return `${day} · ${time}`;
 }
 
 export default function Home() {
@@ -692,18 +640,10 @@ export default function Home() {
   const { data, error, loading } = useFetch('home', () => fetchInfo(), { refreshMs: 30_000 });
   const liveHome = useLiveHome();
 
-  // The /api rollup counts every discovered .agentuse file, including ones that
-  // fail to parse; the Agents page counts only successfully-loaded agents, so
-  // the two disagree when a file is broken. Drive Home's agent counts off the
-  // same /api/agents payload the Agents page uses so they always match, and
-  // surface the parse failures rather than hiding them in the total.
+  // Agent parse failures deserve a surface even on the calm home: the footer
+  // carries a "N broken agents" warning fed by the same payload /agents uses.
   const agents = useFetch('home-agents', () => fetchAgents(), { refreshMs: 30_000 });
-  const agentRows = agents.data?.agents;
   const failedAgents = agents.data?.errors.length ?? 0;
-  const loadedByProject = new Map<string, number>();
-  for (const a of agentRows ?? []) loadedByProject.set(a.projectId, (loadedByProject.get(a.projectId) ?? 0) + 1);
-  const loadedFor = (p: { id: string; agentCount: number }): number =>
-    agentRows ? (loadedByProject.get(p.id) ?? 0) : p.agentCount;
 
   // Soonest upcoming scheduled run powers the hero countdown; refresh often
   // enough that a fired schedule rolls over to the next one without a reload.
@@ -804,7 +744,8 @@ export default function Home() {
   // so don't advertise them as blocked on a human.
   const allWaitingResuming = liveHome.suspendedGates.loaded && waiting.every((s) =>
     !liveHome.suspendedGates.pending.has(sessionRowKey(s)) && !liveHome.suspendedGates.expired.has(sessionRowKey(s)));
-  const now = useNow(running.length > 0 || nextSchedule !== null);
+  // Always ticking: the header carries a live clock, not just timers.
+  const now = useNow(true);
 
   // When the countdown fires, the schedule's nextRun is stale until the
   // scheduler actually triggers (jitter can hold it past zero); keep
@@ -822,88 +763,74 @@ export default function Home() {
   const runningByProject = new Map<string, number>();
   for (const row of running) runningByProject.set(row.project, (runningByProject.get(row.project) ?? 0) + 1);
 
-  const totalAgents = agentRows ? agentRows.length : projects.reduce((sum, p) => sum + p.agentCount, 0);
-  const totalSchedules = projects.reduce((sum, p) => sum + p.scheduleCount, 0);
-
-  const heroCount = useCountUp(running.length, { duration: 500 });
-  const statAgents = useCountUp(totalAgents);
-  const statSessions = useCountUp(liveHome.sessions.length);
-  const statSchedules = useCountUp(totalSchedules);
-
   // One ambient state drives the background tint: running beats waiting beats idle.
   const ambient = running.length > 0 ? 'running' : (pendingApprovals > 0 || waiting.length > 0) ? 'waiting' : 'idle';
 
-  const countFor = (title: string): string | undefined =>
-    title === 'Agents' ? `${plural(statAgents, 'agent')}${failedAgents > 0 ? ` · ${failedAgents} broken` : ''}`
-      : title === 'Sessions' ? `${statSessions} in 24h`
-        : title === 'Schedules' ? plural(statSchedules, 'run')
-          : title === 'Approvals' ? (pendingApprovals > 0 ? `${pendingApprovals} pending` : undefined)
-            : undefined;
+  // Header sentence + stat line. "Waiting on you" counts what the section of
+  // the same name lists: pending gates, recent failures, stranded runs.
+  const waitingOnYou = liveHome.pendingRows.length + failedRecent.length + strandedRecent.length;
+  const runs24h = liveHome.sessions.length;
+  const failed24h = liveHome.sessions.filter((s) => runTone(s.status) === 'failed').length;
+  const ended24h = liveHome.sessions.filter((s) => { const t = runTone(s.status); return t === 'ok' || t === 'failed'; }).length;
+  const successPct = ended24h > 0 ? Math.round(((ended24h - failed24h) / ended24h) * 100) : null;
 
   return (
     <div class="page-home" data-ambient={ambient}>
       <div class="home-ambient" aria-hidden="true"></div>
       <Topbar currentPage="home" />
       <main class="home-boot">
-        <header>
-          <div class="eyebrow">agent operations</div>
-          <h1>{brandName()}</h1>
+        <header class="home-head" aria-live="polite">
+          <div class="home-date">{formatClock(now)}</div>
+          <h1 class="home-sentence">
+            <span class={`hero-dot${running.length > 0 ? ' on' : ''}`} aria-hidden="true"></span>
+            {running.length === 0
+              ? 'No agents are working right now.'
+              : `${plural(running.length, 'agent')} ${running.length === 1 ? 'is' : 'are'} working.`}
+            {' '}
+            {waitingOnYou > 0
+              ? <span class="home-waiting">{waitingOnYou === 1 ? '1 thing is' : `${waitingOnYou} things are`} waiting on you.</span>
+              : waiting.length > 0
+                ? <span class="home-quiet">{plural(waiting.length, 'session')} {allWaitingResuming ? 'resuming' : 'suspended'}.</span>
+                : <span class="home-quiet">Nothing is waiting on you.</span>}
+          </h1>
+          <div class="home-stat">
+            {runs24h > 0
+              ? <>
+                  {runs24h} runs in the last 24 hours
+                  {successPct !== null && <> · {successPct}% succeeded</>}
+                  {failed24h > 0 && <> · <a class="home-stat-failed" href="/sessions?status=error">{failed24h} failed</a></>}
+                </>
+              : 'No runs in the last 24 hours'}
+            {nextSchedule && countdownMs !== null && (
+              <>
+                {' '}· next run <span class="home-stat-agent">{nextSchedule.agentPath.replace(/\.agentuse$/, '')}</span>
+                {countdownFired
+                  ? <> <span class="home-countdown">is starting…</span></>
+                  : <> in <span class="home-countdown">{formatCountdown(countdownMs)}</span></>}
+              </>
+            )}
+          </div>
           {error && <div class="errors" role="alert">Failed to load: {error.message}</div>}
           {liveHome.error && <div class="errors" role="alert">Failed to load sessions: {liveHome.error.message}</div>}
         </header>
-
-        <section class="hero-live" aria-live="polite">
-          <div class="hero-count">
-            <span class={`hero-dot${running.length > 0 ? ' on' : ''}`} aria-hidden="true"></span>
-            <span class="hero-num">{heroCount}</span>
-            <span class="hero-label">{running.length === 1 ? 'agent running now' : 'agents running now'}</span>
-          </div>
-          <div class="hero-sub">
-            {pendingApprovals > 0 && (
-              <a class="hero-pending" href="/approvals">{plural(pendingApprovals, 'approval')} waiting</a>
-            )}
-            {waiting.length > 0 && pendingApprovals === 0 && (
-              <a class="hero-pending" href="/sessions?status=suspended">
-                {plural(waiting.length, 'session')} {allWaitingResuming ? 'resuming' : 'suspended'}
-              </a>
-            )}
-            {nextSchedule && countdownMs !== null && (
-              <span class="hero-next">
-                next run <code>{nextSchedule.agentPath.replace(/\.agentuse$/, '')}</code>{' '}
-                {countdownFired
-                  ? <span class="hero-countdown">is starting…</span>
-                  : <>in <span class="hero-countdown">{formatCountdown(countdownMs)}</span></>}
-              </span>
-            )}
-          </div>
-          <ActivitySpark sessions={liveHome.sessions} />
-        </section>
-
-        {sections.isVisible('running') && running.length > 0 && (
-          <section class="group">
-            <h2 class="group-title"><span>Running now</span><span class="count">{running.length}</span><span class="rule"></span></h2>
-            <div class="now-grid">
-              {running.map((row, i) => <RunningCard key={`${row.project}:${row.sessionId}`} row={row} now={now} ticker={i < 3} />)}
-            </div>
-          </section>
-        )}
 
         {sections.isVisible('attention') && (
           <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} stranded={strandedRecent} onDismissFailed={dismissFailed} />
         )}
 
+        {sections.isVisible('running') && running.length > 0 && (
+          <section class="group">
+            <h2 class="group-title"><span>Working now</span><span class="count">{running.length}</span><span class="rule"></span></h2>
+            <div class="surface">
+              {running.map((row, i) => <RunningRow key={`${row.project}:${row.sessionId}`} row={row} now={now} ticker={i < 3} />)}
+            </div>
+          </section>
+        )}
+
         {sections.isVisible('results') && hasAnyMetrics && (
           <section class="group">
             <h2 class="group-title">
-              <span>Results</span><span class="rule"></span>
-              <button
-                type="button"
-                class={`metric-edit-btn${editMetrics ? ' on' : ''}`}
-                aria-pressed={editMetrics}
-                onClick={() => setEditMetrics((on) => !on)}
-              >
-                {editMetrics ? 'done' : 'customize'}
-              </button>
+              <span>Results</span>
               <div class="metric-window" role="group" aria-label="Results window">
                 {METRIC_WINDOW_DAYS.map((days) => (
                   <button
@@ -917,6 +844,15 @@ export default function Home() {
                   </button>
                 ))}
               </div>
+              <span class="rule"></span>
+              <button
+                type="button"
+                class={`metric-edit-btn${editMetrics ? ' on' : ''}`}
+                aria-pressed={editMetrics}
+                onClick={() => setEditMetrics((on) => !on)}
+              >
+                {editMetrics ? 'done' : 'customize'}
+              </button>
             </h2>
             {shownAggs.length > 0
               ? (
@@ -955,63 +891,54 @@ export default function Home() {
           <RunsByAgent sessions={liveHome.sessions} loading={liveHome.loading} />
         )}
 
-        {sections.isVisible('coming-up') && (
-          <ComingUp schedules={schedules.data?.schedules ?? []} />
-        )}
-
-        {sections.isVisible('feed') && (
-          <section class="group">
-            <h2 class="group-title"><span>Activity</span><span class="rule"></span><span class="feed-live-tag">{liveHome.live ? 'live' : 'polling'}</span></h2>
-            <div class="panel feed">
-              {liveHome.feed.length === 0
-                ? (liveHome.loading
-                  ? <Loading label="Loading activity…" />
-                  : <div class="empty">No runs in the last 24 hours.</div>)
-                : liveHome.feed.map((event) => <FeedRow key={event.key} event={event} />)}
-            </div>
-          </section>
-        )}
-
-        {sections.isVisible('cards') && <div class="cards">
-          {CARDS.map((card) => {
-            const count = countFor(card.title);
-            const attn = card.title === 'Approvals' && pendingApprovals > 0;
-            return (
-              <a class={`card${attn ? ' attn' : ''}`} href={card.href} key={card.href}>
-                <div class="card-top"><span class="card-title">{card.title}</span>{count && <span class="card-count">{count}</span>}</div>
-                <div class="card-desc">{card.desc}</div>
-              </a>
-            );
-          })}
-        </div>}
-
-        {sections.isVisible('projects') && <section class="group">
-          <h2 class="group-title"><span>{termTitle('project', 2)}</span><span class="count">{projects.length}</span><span class="rule"></span></h2>
-          <div class="panel">
-            {projects.length === 0
-              ? (loading
-                ? <Loading label={`Loading ${term('project', 2)}…`} />
-                : <div class="empty">No {term('project', 2)} loaded.</div>)
-              : projects.map((p) => (
-                // ABOUT.md identity (#156): the name replaces the directory id
-                // and the description replaces the absolute path, which stays
-                // reachable in the row tooltip. No file, current behavior.
-                <a class="proj" href={`/agents/${encodeURIComponent(p.id)}`} key={p.id} {...(p.about?.name || p.about?.description ? { title: `${p.id} · ${p.path}` } : {})}>
-                  <div>
-                    <div class="proj-id">
-                      {p.about?.name ?? p.id}
-                      {(runningByProject.get(p.id) ?? 0) > 0 && <span class="proj-live" title={`${runningByProject.get(p.id)} running`} aria-label={`${runningByProject.get(p.id)} running`}></span>}
-                      {p.id === data?.default && <span class="proj-default">default</span>}
-                    </div>
-                    <div class={p.about?.description ? 'proj-path proj-desc' : 'proj-path'}>{p.about?.description ?? `${p.path}${p.scope && p.scope !== p.path ? ` · scope ${p.scope}` : ''}`}</div>
-                  </div>
-                  <div class="proj-counts">{p.about?.owner && <span class="proj-owner">{p.about.owner} · </span>}{plural(loadedFor(p), 'agent')} · {plural(p.scheduleCount, 'schedule')}<span class="proj-go" aria-hidden="true">›</span></div>
-                </a>
-              ))}
+        {(sections.isVisible('coming-up') || sections.isVisible('feed')) && (
+          <div class="home-cols">
+            {sections.isVisible('coming-up') && (
+              <ComingUp schedules={schedules.data?.schedules ?? []} />
+            )}
+            {sections.isVisible('feed') && (
+              <section class="group">
+                <h2 class="group-title">
+                  <span>Recent activity</span><span class="rule"></span>
+                  <a class="group-link" href="/sessions">everything →</a>
+                </h2>
+                <div class="panel feed">
+                  {liveHome.feed.length === 0
+                    ? (liveHome.loading
+                      ? <Loading label="Loading activity…" />
+                      : <div class="empty">No runs in the last 24 hours.</div>)
+                    : liveHome.feed.slice(0, FEED_LIMIT).map((event) => <FeedRow key={event.key} event={event} />)}
+                </div>
+              </section>
+            )}
           </div>
-        </section>}
+        )}
 
-        {data && <p class="api-hint">AgentUse v{data.version}</p>}
+        {/* Quiet footer: the projects roll-call plus the version in one line.
+            Project detail lives on /agents; tooltips keep the id + path. */}
+        {sections.isVisible('projects') && (
+          projects.length === 0
+            ? (loading ? <Loading label={`Loading ${term('project', 2)}…`} /> : null)
+            : (
+              <footer class="home-foot">
+                <span class="home-foot-count">{projects.length} {term('project', projects.length)}</span>
+                <span aria-hidden="true">·</span>
+                {projects.map((p) => (
+                  <a class="home-foot-proj" href={`/agents/${encodeURIComponent(p.id)}`} key={p.id} title={`${p.id} · ${p.path}`}>
+                    {p.about?.name ?? p.id}
+                    {(runningByProject.get(p.id) ?? 0) > 0 && (
+                      <span class="proj-live" title={`${runningByProject.get(p.id)} running`} aria-label={`${runningByProject.get(p.id)} running`}></span>
+                    )}
+                    {p.id === data?.default && <span class="proj-default">default</span>}
+                  </a>
+                ))}
+                {failedAgents > 0 && (
+                  <a class="home-foot-broken" href="/agents">{plural(failedAgents, 'broken agent')}</a>
+                )}
+                {data && <span class="home-foot-version">AgentUse v{data.version}</span>}
+              </footer>
+            )
+        )}
       </main>
     </div>
   );

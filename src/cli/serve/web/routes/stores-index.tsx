@@ -23,6 +23,12 @@ export default function StoresIndex() {
 
   const multiProject = data?.multiProject ?? false;
 
+  const stores = data?.stores ?? [];
+  const projectCount = new Set(stores.map((store) => store.projectId)).size;
+  const summary = data
+    ? `${stores.length} store${stores.length === 1 ? '' : 's'}${multiProject ? ` across ${projectCount} project${projectCount === 1 ? '' : 's'}` : ''}. `
+    : '';
+
   const storeHref = (store: StoreBrowserSummary): string => {
     const params = new URLSearchParams();
     if (multiProject) params.set('project', store.projectId);
@@ -35,9 +41,9 @@ export default function StoresIndex() {
       label: 'Store',
       sortValue: (store) => store.name,
       render: (store) => (
-        <span class="title-cell">
+        <span class="store-cell">
           <a href={storeHref(store)}>{store.name}</a>
-          {multiProject && <span class="muted">{store.projectId}</span>}
+          {multiProject && <span class="proj-tag">{store.projectId}</span>}
         </span>
       ),
     },
@@ -46,14 +52,14 @@ export default function StoresIndex() {
       label: 'Items',
       type: 'number',
       sortValue: (store) => store.itemCount,
-      render: (store) => String(store.itemCount),
+      render: (store) => <span class="num">{store.itemCount}</span>,
     },
     {
       key: 'updated',
       label: 'Updated',
       type: 'number',
       sortValue: (store) => store.updatedAt ?? 0,
-      render: (store) => store.updatedAt ? formatApprovalTime(store.updatedAt) : <span class="muted">never</span>,
+      render: (store) => store.updatedAt ? <span class="updated">{formatApprovalTime(store.updatedAt)}</span> : <span class="muted">never</span>,
     },
     {
       key: 'types',
@@ -86,7 +92,7 @@ export default function StoresIndex() {
         <header>
           <div class="eyebrow">shared state</div>
           <h1>Stores</h1>
-          <p class="lede">Browse persistent state that agents can share across runs.</p>
+          <p class="lede">{summary}Browse persistent state that agents can share across runs.</p>
         </header>
         {error && <div class="errors">Failed to load stores: {error.message}</div>}
         {data && <ErrorBanner errors={data.errors} />}
