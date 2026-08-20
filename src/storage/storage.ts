@@ -77,7 +77,11 @@ export async function writeJSON<T>(key: string, content: T): Promise<void> {
   const tmp = `${target}.${process.pid}.${randomUUID()}.tmp`;
 
   try {
-    await fs.writeFile(tmp, JSON.stringify(content, null, 2), 'utf-8');
+    // Compact, not pretty-printed: every file written here is machine-read
+    // (session parts, context snapshots, the session index), and indentation is
+    // bytes written and parsed on every session write. `sessions show --json`
+    // and the web UI format for display at read time.
+    await fs.writeFile(tmp, JSON.stringify(content), 'utf-8');
     await fs.rename(tmp, target);
   } catch (error) {
     // Clean up temp file on error
