@@ -975,10 +975,18 @@ class AgentWorker {
     }) as Promise<WorkerSessionFinalResponsesResult | WorkerExecuteError>;
   }
 
-  private request(
+  private async request(
     options: Record<string, unknown> & { timeout?: number | undefined },
     requestOptions: { signal?: AbortSignal | undefined } = {}
   ): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSessionContextResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerSessionFinalResponsesResult | WorkerStopSessionResult> {
+    // A recycle hands the old child its release line and immediately spawns a
+    // replacement; a request landing in that sub-second window should wait for
+    // the new worker rather than fail. Only ever waits on a spawn already under
+    // way (bounded by its own 10s startup timeout) -- a dead worker in respawn
+    // backoff has no spawn promise and still answers NOT_READY at once.
+    if (!this.ready && this.spawnPromise && !requestOptions.signal?.aborted) {
+      await this.spawnPromise.catch(() => {/* fall through to the NOT_READY reply */});
+    }
     return new Promise((resolve) => {
       if (requestOptions.signal?.aborted) {
         resolve({
@@ -1027,15 +1035,18 @@ class AgentWorker {
 
       this.pendingRequests.set(id, {
         resolve: (value) => {
-          const settledRun = this.activeRuns.delete(id);
+          this.activeRuns.delete(id);
           requestOptions.signal?.removeEventListener("abort", abortHandler);
           resolve(value);
-          // After the caller has its answer: a run just banked its peak heap,
-          // so this is the moment to decide whether the worker is worth keeping.
-          if (settledRun) {
-            const rssBytes = (value as { workerRssBytes?: number }).workerRssBytes;
-            void this.recycleIfBloated(rssBytes, this.envOverrides.AGENTUSE_PROJECT_ID ?? "worker");
-          }
+          // After the caller has its answer: every worker reply carries its RSS,
+          // so any settled request is a chance to retire a worker that banked a
+          // run's peak heap and then went idle. Checking only when a *run*
+          // settled missed that worker for good -- whatever failed the guard at
+          // that one instant (a dashboard poll still in flight) never came round
+          // again, because the next run might be days away. The periodic
+          // approval sweep now doubles as the idle heartbeat.
+          const rssBytes = (value as { workerRssBytes?: number }).workerRssBytes;
+          void this.recycleIfBloated(rssBytes, this.envOverrides.AGENTUSE_PROJECT_ID ?? "worker");
         },
         timeoutId,
       });

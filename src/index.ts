@@ -3112,6 +3112,27 @@ async function runInternalWorker() {
   };
   const approvalInfoResponseCache = new Map<string, ApprovalInfoCacheEntry>();
   const listResponseCache = new Map<string, ListCacheEntry<ListResponse>>();
+  // These three hold whole responses -- an approval-info entry carries the
+  // session's entire built transcript -- and their TTLs are lazy: an expired
+  // entry is only dropped when that same key is read again. A dashboard that
+  // browses many sessions would otherwise leave every one of them resident for
+  // the worker's lifetime, so cap the entry count too. Sized for the live views
+  // a daemon actually serves; older entries just re-read from storage.
+  const MAX_CACHED_APPROVAL_INFO = 8;
+  const MAX_CACHED_LISTS = 16;
+  const MAX_CACHED_APPROVAL_PARTS = 256;
+
+  /** Set an entry, evicting least-recently-set keys past `max`. */
+  function boundedCacheSet<K, V>(cache: Map<K, V>, key: K, value: V, max: number): void {
+    // Re-insert so the most recently used entry sorts last for eviction.
+    cache.delete(key);
+    cache.set(key, value);
+    while (cache.size > max) {
+      const oldest = cache.keys().next();
+      if (oldest.done) break;
+      cache.delete(oldest.value);
+    }
+  }
   // Execute requests currently in flight (covers the whole request, including
   // the pre-session-write setup window that activeExecutionControllers misses
   // for fresh runs). Drives the short list-cache TTL above.
@@ -3196,24 +3217,29 @@ async function runInternalWorker() {
     }
 
     const promise = loader();
-    approvalInfoResponseCache.set(key, { expiresAt: now + APPROVAL_INFO_CACHE_TTL_MS, promise });
+    boundedCacheSet(
+      approvalInfoResponseCache,
+      key,
+      { expiresAt: now + APPROVAL_INFO_CACHE_TTL_MS, promise },
+      MAX_CACHED_APPROVAL_INFO
+    );
     try {
       const response = await promise;
       const { id: _id, ...rest } = response;
       if (shouldCacheApprovalInfoResponse(response)) {
-        approvalInfoResponseCache.set(key, {
+        boundedCacheSet(approvalInfoResponseCache, key, {
           expiresAt: Date.now() + APPROVAL_INFO_CACHE_TTL_MS,
           response: rest as Omit<ApprovalInfoResponse, 'id'>
-        });
+        }, MAX_CACHED_APPROVAL_INFO);
       } else if (response.success && signature !== null) {
         // Running/suspended sessions: reuse this snapshot until the on-disk
         // state changes. The SSE loop polls at 500ms/10s; without this every
         // tick re-reads and re-serializes the whole transcript.
-        approvalInfoResponseCache.set(key, {
+        boundedCacheSet(approvalInfoResponseCache, key, {
           expiresAt: Date.now() + APPROVAL_INFO_SIGNATURE_MAX_AGE_MS,
           response: rest as Omit<ApprovalInfoResponse, 'id'>,
           signature
-        });
+        }, MAX_CACHED_APPROVAL_INFO);
       } else {
         approvalInfoResponseCache.delete(key);
       }
@@ -3267,7 +3293,12 @@ async function runInternalWorker() {
     }
 
     const promise = loader();
-    listResponseCache.set(key, { expiresAt: now + LIST_CACHE_TTL_MS, promise } as ListCacheEntry<ListResponse>);
+    boundedCacheSet(
+      listResponseCache,
+      key,
+      { expiresAt: now + LIST_CACHE_TTL_MS, promise } as ListCacheEntry<ListResponse>,
+      MAX_CACHED_LISTS
+    );
     try {
       const response = await promise;
       if (response.success) {
@@ -3277,10 +3308,10 @@ async function runInternalWorker() {
         const ttlMs = activeExecuteRequests > 0 || externallyActive(key)
           ? LIST_CACHE_ACTIVE_TTL_MS
           : containsLiveRow(response) ? LIST_CACHE_LIVE_TTL_MS : LIST_CACHE_TTL_MS;
-        listResponseCache.set(key, {
+        boundedCacheSet(listResponseCache, key, {
           expiresAt: Date.now() + ttlMs,
           response: rest as Omit<T, 'id'>
-        } as ListCacheEntry<ListResponse>);
+        } as ListCacheEntry<ListResponse>, MAX_CACHED_LISTS);
       } else {
         listResponseCache.delete(key);
       }
@@ -3357,7 +3388,7 @@ async function runInternalWorker() {
           ? cached.part
           : await sessionManager.getLatestApprovalPart(session.id, agentId);
         if (!cached || cached.updatedAt !== updatedAt) {
-          approvalPartCache.set(cacheKey, { updatedAt, part: approvalPart });
+          boundedCacheSet(approvalPartCache, cacheKey, { updatedAt, part: approvalPart }, MAX_CACHED_APPROVAL_PARTS);
         }
         // Cascade: a root parked on a delegated child's gate (subagent_wait) has no
         // await_human part of its own. Descend to the leaf and surface its gate here,
@@ -4221,10 +4252,19 @@ async function runInternalWorker() {
     writeStderr(`[worker] stdout error: ${err?.message}\n`);
   });
 
-  /** Write one IPC response, tolerating a parent that is no longer listening. */
+  /** Write one IPC response, tolerating a parent that is no longer listening.
+   *  Every reply to a request carries this worker's RSS: serve decides on each
+   *  settled request whether the process has banked enough memory to be worth
+   *  retiring (see recycleIfBloated), and a run reply alone is too rare a
+   *  heartbeat -- the memory is banked precisely when the worker goes idle.
+   *  Unsolicited messages (the ready signal) are left as-is; nothing settles. */
   const reply = (response: unknown) => {
     try {
-      console.log(JSON.stringify(response));
+      const isRequestReply = typeof response === 'object' && response !== null && 'id' in response;
+      const payload = isRequestReply
+        ? { ...(response as Record<string, unknown>), workerRssBytes: process.memoryUsage.rss() }
+        : response;
+      console.log(JSON.stringify(payload));
     } catch {
       // Released worker with nowhere to report; storage already has the result.
     }
@@ -4393,10 +4433,10 @@ async function runInternalWorker() {
         executeAgent(request).then(async (response) => {
           // A run's peak heap is largely banked for good: a worker that has run
           // an agent settles two to three times above a fresh one and stays
-          // there for the daemon's lifetime. Report it so serve can retire this
-          // process once it is idle, rather than carrying the high-water mark
-          // of every run it ever handled.
-          reply({ ...(response as Record<string, unknown>), workerRssBytes: process.memoryUsage().rss });
+          // there for the daemon's lifetime. reply() reports the RSS so serve
+          // can retire this process once it is idle, rather than carrying the
+          // high-water mark of every run it ever handled.
+          reply(response);
           // Before runFinished, which may exit the process.
           await restampStopsAfterRelease();
           runFinished();
