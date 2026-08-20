@@ -484,7 +484,7 @@ Test invalid thinking budget.`;
       expect(() => parseAgentContent(content, 'test')).toThrow('Invalid agent configuration');
     });
 
-    it('expands learning: true to capture + apply', () => {
+    it('expands learning: true to corrections-only capture + apply', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0
 learning: true
@@ -495,16 +495,18 @@ Capture and apply execution learnings.`;
       const agent = parseAgentContent(content, 'test');
 
       expect(agent.config.learning).toEqual({
-        capture: true,
+        capture: { addons: [] },
         apply: true
       });
+      // The narrowed meaning is announced once per agent and echoed by doctor.
+      expect(agent.configNotices?.some((n) => n.includes('corrections only'))).toBe(true);
     });
 
     it('defaults capture and apply to true for the object form', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0
 learning:
-  criteria: focus on tone
+  max: 20
 ---
 
 Capture and apply execution learnings.`;
@@ -512,10 +514,22 @@ Capture and apply execution learnings.`;
       const agent = parseAgentContent(content, 'test');
 
       expect(agent.config.learning).toEqual({
-        capture: true,
+        capture: { addons: [] },
         apply: true,
-        criteria: 'focus on tone'
+        max: 20
       });
+    });
+
+    it('hard-rejects learning.criteria with the capture.custom mapping named', () => {
+      const content = `---
+model: anthropic:claude-sonnet-4-0
+learning:
+  criteria: focus on tone
+---
+
+Body.`;
+
+      expect(() => parseAgentContent(content, 'test')).toThrow(/capture: \{ custom/);
     });
 
     it('accepts duration strings for timeout fields, normalized to seconds', () => {
