@@ -2,7 +2,7 @@ import { readFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname, resolve, relative, basename, isAbsolute } from 'path';
 import { randomUUID, createHash } from 'crypto';
-import type { Learning, LearningCategory, LearningDraft, LearningSource, LearningState } from './types';
+import type { Learning, LearningCategory, LearningChannel, LearningDraft, LearningSource, LearningState } from './types';
 import { learningSourceRank, rankLearnings } from './ranking';
 import { getProjectDirSync, sanitizeAgentName } from '../storage/paths';
 import { computeAgentId } from '../utils/agent-id';
@@ -290,7 +290,7 @@ export class LearningStore {
    * away the highest-signal event the system gets: a human repeating a correction
    * they already gave. A repeat almost always means the stored rule was not in
    * force — it sat past the injection cap — so the right response is to refresh it
-   * (keep its id and appliedCount, take the newer wording, move it to the front
+   * (keep its id and injectedCount, take the newer wording, move it to the front
    * of the recency ordering) rather than treat it as redundant. Observed case: a
    * reviewer's "cut the teaching-mode phrasing" was captured, never injected, and
    * when the reviewer said it again seven weeks later the repeat was dropped as a
@@ -355,6 +355,9 @@ export class LearningStore {
     retired: Learning[];
     /** Auto drafts dropped because the set was full and nothing was evictable. */
     refused: LearningDraft[];
+    /** Drafts that arrived quarantined (vet failures), stored for visibility.
+     *  They never compete for cap slots and are never injected. */
+    quarantined: Learning[];
     /** Active rules above the cap after the write. Non-zero only when they are
      *  all human corrections, which is the one case worth interrupting for. */
     overCap: number;
@@ -366,6 +369,7 @@ export class LearningStore {
       const alreadyGraduated: Learning[] = [];
       const retired: Learning[] = [];
       const refused: LearningDraft[] = [];
+      const quarantined: Learning[] = [];
       const cap = options?.cap;
 
       const active = () => existing.filter(l => (l.state ?? 'active') === 'active');
@@ -379,7 +383,7 @@ export class LearningStore {
         return candidates.length > 0 ? rankLearnings(candidates).at(-1) : undefined;
       };
 
-      const insert = (draft: LearningDraft): void => {
+      const insert = (draft: LearningDraft, into: Learning[] = inserted): void => {
         const taken = new Set(existing.map(l => l.id).filter(Boolean));
         const id = draft.id && draft.id.length >= 4 && !taken.has(draft.id)
           ? draft.id
@@ -390,11 +394,61 @@ export class LearningStore {
         const { supersedes: _consumed, ...rest } = draft;
         const next: Learning = { ...rest, id };
         existing.push(next);
-        inserted.push(next);
+        into.push(next);
       };
 
       for (const draft of incoming) {
-        const idx = existing.findIndex(e => this.similar(e.instruction, draft.instruction));
+        // A vet failure arrives already quarantined. It is stored — visible in
+        // the CLI, serve UI, and doctor with its reason — but never competes
+        // for a cap slot and never merges into an active rule.
+        if (draft.state === 'quarantined') {
+          insert(draft, quarantined);
+          continue;
+        }
+
+        // Typed tool-error records dedupe structurally by (tool, signature) and
+        // supersede in place; they never go through the free-text similarity
+        // match, whose 60%-vocabulary test has nothing to say about them.
+        if (draft.channel === 'tool-errors' && draft.tool && draft.failureSignature) {
+          const match = existing.find(e =>
+            e.tool === draft.tool
+            && e.failureSignature === draft.failureSignature
+            && (e.state ?? 'active') !== 'retired');
+          if (match) {
+            if (match.state === 'graduated') {
+              alreadyGraduated.push(match);
+            } else {
+              // Same failure observed again: the newer recovery wording wins,
+              // id and counters survive. A quarantined match stays quarantined
+              // — re-observing the failure is not a vet verdict.
+              match.title = draft.title;
+              match.instruction = draft.instruction;
+              match.extractedAt = draft.extractedAt;
+              if (draft.evidence) match.evidence = draft.evidence;
+              if (draft.instructionsHash) match.instructionsHash = draft.instructionsHash;
+              if (draft.sessionId) match.sessionId = draft.sessionId;
+              escalated.push(match);
+            }
+            continue;
+          }
+          if (cap !== undefined && active().length >= cap) {
+            const victim = weakestEvictable();
+            const wins = victim !== undefined && rankLearnings([victim, draft]).at(-1) === victim;
+            if (!wins) {
+              refused.push(draft);
+              continue;
+            }
+            retire(victim);
+          }
+          insert(draft);
+          continue;
+        }
+
+        // Quarantined entries are set aside, not part of the working set: a new
+        // candidate resembling one is judged on its own vet, not merged into an
+        // entry the vet already rejected.
+        const idx = existing.findIndex(e =>
+          (e.state ?? 'active') !== 'quarantined' && this.similar(e.instruction, draft.instruction));
 
         if (idx >= 0 && existing[idx]!.state === 'graduated') {
           alreadyGraduated.push(existing[idx]!);
@@ -454,6 +508,11 @@ export class LearningStore {
           // Re-asserted now, so it ranks as recent and gets injected next run.
           extractedAt: draft.extractedAt,
           ...(draft.sessionId ? { sessionId: draft.sessionId } : {}),
+          // The repeat was captured — and vetted — against the CURRENT
+          // contract, so the refreshed entry carries the current hash and
+          // channel rather than the ones the original capture recorded.
+          ...(draft.instructionsHash ? { instructionsHash: draft.instructionsHash } : {}),
+          ...(draft.channel ? { channel: draft.channel } : {}),
           // A repeat is the evidence that the stored wording is not landing.
           // Counting it is what later lets the tidy-up REWRITE the rule instead
           // of retiring it or stacking a near-copy beside it.
@@ -491,7 +550,7 @@ export class LearningStore {
         }
       }
 
-      if (inserted.length > 0 || escalated.length > 0 || retired.length > 0) {
+      if (inserted.length > 0 || escalated.length > 0 || retired.length > 0 || quarantined.length > 0) {
         await this.save(existing);
       }
       return {
@@ -500,6 +559,7 @@ export class LearningStore {
         alreadyGraduated,
         retired,
         refused,
+        quarantined,
         overCap: cap === undefined ? 0 : Math.max(0, active().length - cap),
       };
     });
@@ -555,7 +615,7 @@ export class LearningStore {
    * Persist an explicit manual rule. Unlike add(), this never silently drops on a
    * similarity match: an existing similar learning is upgraded in place to a
    * manual, confidence-1 rule (the reviewer's wording wins) while keeping its id
-   * and appliedCount; otherwise the rule is inserted with a fresh id. Single
+   * and injectedCount; otherwise the rule is inserted with a fresh id. Single
    * load+save under the file lock.
    * @returns whether an existing learning was upgraded (vs. a new one inserted),
    * and whether that learning is graduated — in which case the caller must
@@ -584,8 +644,12 @@ export class LearningStore {
 
       // Never re-match the entry just retired above: the upgrade path revives a
       // retired rule, which would silently undo the fold the refiner asked for.
+      // Quarantined entries are excluded too — upgrading one in place would
+      // leave the reviewer's fresh correction invisibly stuck in quarantine.
       const idx = existing.findIndex(
-        e => e !== named && this.similar(e.instruction, draft.instruction),
+        e => e !== named
+          && (e.state ?? 'active') !== 'quarantined'
+          && this.similar(e.instruction, draft.instruction),
       );
       if (idx >= 0) {
         const prior = existing[idx]!;
@@ -599,7 +663,7 @@ export class LearningStore {
           confidence: 1,
           extractedAt: draft.extractedAt,
           // The re-asserting session owns the rule now (or none, for an
-          // agent-level rule); keep prior.id and prior.appliedCount.
+          // agent-level rule); keep prior.id and prior.injectedCount.
           ...(draft.sessionId ? { sessionId: draft.sessionId } : {}),
           // A human writing a rule we already hold is a repeat like any other.
           reasserted: (prior.reasserted ?? 0) + 1,
@@ -624,19 +688,54 @@ export class LearningStore {
     });
   }
 
-  async incrementApplied(ids: string[]): Promise<void> {
+  async incrementInjected(ids: string[]): Promise<void> {
     await withLearningFileLock(this.filePath, async () => {
       const learnings = await this.load();
       let changed = false;
       for (const l of learnings) {
         if (ids.includes(l.id)) {
-          l.appliedCount++;
+          l.injectedCount++;
           changed = true;
         }
       }
       if (changed) {
         await this.save(learnings);
       }
+    });
+  }
+
+  /**
+   * Apply a re-vet pass over stored entries in one load+save: entries that
+   * passed get the current instruction hash stamped (they are vetted against
+   * THIS contract now); entries that failed are quarantined with the reason
+   * recorded — never deleted, so `undo` and a human reading the file both see
+   * what was set aside and why.
+   * @returns the ids that actually changed
+   */
+  async applyRevet(outcome: {
+    passed: string[];
+    quarantined: { id: string; reason: string }[];
+    instructionsHash: string;
+  }): Promise<{ stamped: string[]; quarantined: string[] }> {
+    return withLearningFileLock(this.filePath, async () => {
+      const learnings = await this.load();
+      const pass = new Set(outcome.passed);
+      const fail = new Map(outcome.quarantined.map((q) => [q.id, q.reason]));
+      const stamped: string[] = [];
+      const quarantinedIds: string[] = [];
+      for (const l of learnings) {
+        if (pass.has(l.id) && l.instructionsHash !== outcome.instructionsHash) {
+          l.instructionsHash = outcome.instructionsHash;
+          stamped.push(l.id);
+        } else if (fail.has(l.id) && l.state !== 'quarantined') {
+          l.state = 'quarantined';
+          l.quarantineReason = fail.get(l.id)!;
+          l.instructionsHash = outcome.instructionsHash;
+          quarantinedIds.push(l.id);
+        }
+      }
+      if (stamped.length > 0 || quarantinedIds.length > 0) await this.save(learnings);
+      return { stamped, quarantined: quarantinedIds };
     });
   }
 
@@ -680,21 +779,43 @@ export class LearningStore {
       // meant deletion converge on the first save rather than needing a
       // migration. Nothing in memory ever sees a retired entry, which is what
       // makes "retired" purely a marker one operation uses to report what it
-      // removed.
+      // removed. Quarantined entries are NOT dropped: staying visible with
+      // their reason is their whole purpose.
       if (meta.state === 'retired') continue;
+
+      // Optional annotation comments between the metadata line and the
+      // instruction text: `<!-- why: … -->` (quarantine reason) and
+      // `<!-- evidence: … -->`. Peeled off the body's head so the instruction
+      // round-trips clean.
+      let body = match[4];
+      let quarantineReason: string | undefined;
+      let evidence: string | undefined;
+      let annotation;
+      while ((annotation = body.match(/^\s*<!-- (why|evidence): (.+?) -->\n?/)) !== null) {
+        if (annotation[1] === 'why') quarantineReason = annotation[2];
+        else evidence = annotation[2];
+        body = body.slice(annotation[0].length);
+      }
+
       learnings.push({
         category: match[1] as LearningCategory,
         title: match[2],
         id: meta.id ?? '',
         confidence: meta.confidence ?? 0,
-        appliedCount: meta.applied ?? 0,
+        injectedCount: meta.injected ?? 0,
         extractedAt: meta.date ?? '',
         source: meta.source ?? 'auto',
         ...(meta.sessionId && { sessionId: meta.sessionId }),
         ...(meta.state && meta.state !== 'active' && { state: meta.state }),
+        ...(meta.channel && { channel: meta.channel }),
+        ...(meta.instructionsHash && { instructionsHash: meta.instructionsHash }),
+        ...(meta.tool && { tool: meta.tool }),
+        ...(meta.failureSignature && { failureSignature: meta.failureSignature }),
+        ...(quarantineReason && { quarantineReason }),
+        ...(evidence && { evidence }),
         reasserted: meta.reasserted ?? 0,
         approvedRuns: meta.approved ?? 0,
-        instruction: match[4].trim(),
+        instruction: body.trim(),
       });
     }
     return learnings;
@@ -702,34 +823,52 @@ export class LearningStore {
 
   /**
    * Parse the metadata comment body, e.g.
-   * `id:AB12 | confidence:0.92 | applied:0 | src:approval | sess:abc123 | 2024-01-15`.
+   * `id:AB12 | confidence:0.92 | injected:0 | src:approval | ch:corrections | sess:abc123 | 2024-01-15`.
    * Every field except the date is optional and defaults, so learnings files
-   * written before provenance (`src:`), the lifecycle (`state:`) or the evidence
-   * counters (`re:`, `ok:`) still load. Unknown tokens are ignored rather than
-   * rejected, which is what lets a newer field be added without a migration.
+   * written before provenance (`src:`), the lifecycle (`state:`), the evidence
+   * counters (`re:`, `ok:`), or the capture channels (`ch:`, `ih:`, `tool:`,
+   * `sig:`) still load. `applied:` is the pre-0.18 name for `injected:` and
+   * reads as an alias; the file is rewritten with the new name on next save.
+   * Unknown tokens are ignored rather than rejected, which is what lets a newer
+   * field be added without a migration.
    */
   private parseMeta(meta: string): {
-    id?: string; confidence?: number; applied?: number; source?: LearningSource;
+    id?: string; confidence?: number; injected?: number; source?: LearningSource;
     sessionId?: string; date?: string; state?: LearningState;
     reasserted?: number; approved?: number;
+    channel?: LearningChannel; instructionsHash?: string;
+    tool?: string; failureSignature?: string;
   } {
     const out: {
-      id?: string; confidence?: number; applied?: number; source?: LearningSource;
+      id?: string; confidence?: number; injected?: number; source?: LearningSource;
       sessionId?: string; date?: string; state?: LearningState;
       reasserted?: number; approved?: number;
+      channel?: LearningChannel; instructionsHash?: string;
+      tool?: string; failureSignature?: string;
     } = {};
     for (const token of meta.split('|').map(t => t.trim())) {
       if (token.startsWith('id:')) out.id = token.slice(3);
       else if (token.startsWith('confidence:')) out.confidence = parseFloat(token.slice(11));
-      else if (token.startsWith('applied:')) out.applied = parseInt(token.slice(8));
+      else if (token.startsWith('injected:')) out.injected = parseInt(token.slice(9));
+      // Pre-0.18 name for the injection counter; never overrides `injected:`.
+      else if (token.startsWith('applied:') && out.injected === undefined) out.injected = parseInt(token.slice(8));
       else if (token.startsWith('src:')) {
         const source = token.slice(4);
         out.source = source === 'manual' || source === 'approval' ? source : 'auto';
       }
+      else if (token.startsWith('ch:')) {
+        const channel = token.slice(3);
+        if (channel === 'corrections' || channel === 'tool-errors' || channel === 'custom' || channel === 'agent') {
+          out.channel = channel;
+        }
+      }
+      else if (token.startsWith('ih:')) out.instructionsHash = token.slice(3);
+      else if (token.startsWith('tool:')) out.tool = token.slice(5);
+      else if (token.startsWith('sig:')) out.failureSignature = token.slice(4);
       else if (token.startsWith('sess:')) out.sessionId = token.slice(5);
       else if (token.startsWith('state:')) {
         const state = token.slice(6);
-        out.state = state === 'graduated' || state === 'retired' ? state : 'active';
+        out.state = state === 'graduated' || state === 'retired' || state === 'quarantined' ? state : 'active';
       }
       else if (token.startsWith('re:')) out.reasserted = parseInt(token.slice(3)) || 0;
       else if (token.startsWith('ok:')) out.approved = parseInt(token.slice(3)) || 0;
@@ -738,12 +877,29 @@ export class LearningStore {
     return out;
   }
 
+  /** A value on its way into the pipe-separated metadata comment. A stray pipe
+   *  would split into a phantom token, and `-->` would end the comment early
+   *  and dump the rest into the instruction text on the next parse. */
+  private metaSafe(value: string): string {
+    return value.replace(/\|/g, '/').replace(/-->/g, '—').replace(/\s+/g, ' ').trim();
+  }
+
+  /** A single-line annotation comment (`why:`/`evidence:`), sanitized the same
+   *  way for the same reason. */
+  private annotationLine(kind: 'why' | 'evidence', value: string): string {
+    return `<!-- ${kind}: ${value.replace(/-->/g, '—').replace(/\s+/g, ' ').trim()} -->\n`;
+  }
+
   /**
    * Render one entry. Optional metadata is omitted when it carries no
    * information (state active, counters at zero) so a file that predates these
    * fields round-trips byte-identical through a save it did not need.
    */
   private serializeEntry(l: Learning): string {
+    const channel = l.channel ? ` | ch:${l.channel}` : '';
+    const hash = l.instructionsHash ? ` | ih:${l.instructionsHash}` : '';
+    const tool = l.tool ? ` | tool:${this.metaSafe(l.tool)}` : '';
+    const sig = l.failureSignature ? ` | sig:${this.metaSafe(l.failureSignature)}` : '';
     const sess = l.sessionId ? ` | sess:${l.sessionId}` : '';
     const state = l.state && l.state !== 'active' ? ` | state:${l.state}` : '';
     // `?? 0` guards the FILE, not the type: a counter that reached the serializer
@@ -751,9 +907,14 @@ export class LearningStore {
     // later parse would read it back as garbage.
     const re = (l.reasserted ?? 0) > 0 ? ` | re:${l.reasserted}` : '';
     const ok = (l.approvedRuns ?? 0) > 0 ? ` | ok:${l.approvedRuns}` : '';
+    const why = l.state === 'quarantined' && l.quarantineReason
+      ? this.annotationLine('why', l.quarantineReason)
+      : '';
+    const evidence = l.evidence ? this.annotationLine('evidence', l.evidence) : '';
     return `### [${l.category}] ${l.title}\n`
-      + `<!-- id:${l.id} | confidence:${l.confidence.toFixed(2)} | applied:${l.appliedCount}`
-      + ` | src:${l.source}${sess}${state}${re}${ok} | ${toLocalDate(l.extractedAt)} -->\n`
+      + `<!-- id:${l.id} | confidence:${l.confidence.toFixed(2)} | injected:${l.injectedCount}`
+      + ` | src:${l.source}${channel}${hash}${tool}${sig}${sess}${state}${re}${ok} | ${toLocalDate(l.extractedAt)} -->\n`
+      + why + evidence
       + `${l.instruction}\n\n`;
   }
 
