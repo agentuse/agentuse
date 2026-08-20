@@ -2,13 +2,14 @@ import { describe, expect, it } from 'bun:test';
 import { renderToString } from 'preact-render-to-string';
 import { LogEntry } from '../src/cli/serve/web/components/log-entry';
 import { Topbar } from '../src/cli/serve/web/components/topbar';
+import { PendingApprovalCard } from '../src/cli/serve/web/components/pending-approval-card';
 import { StoreTable, type StoreTableColumn } from '../src/cli/serve/web/components/store-table';
 import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
 import { DecisionDialog } from '../src/cli/serve/web/components/comment-dialog';
 import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/cli/serve/web/lib/content-html';
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
-import { isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
+import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
 import { aggregateToolStats, hasActionableApproval, headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
 import { FeedResponse, NewSinceLastVisit, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
@@ -24,6 +25,31 @@ import { learningsTidyHref } from '../src/cli/serve/web/lib/links';
 import type { LearningSummary, SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
 
 const noop = () => {};
+
+describe('displayAgentName', () => {
+  it('prefers a human name and falls back to the agent filename', () => {
+    expect(displayAgentName('X Engage Reply', '/agents/x/x-engage-reply.agentuse', 'agents-x-growth')).toBe('X Engage Reply');
+    expect(displayAgentName('', '/agents/x/x-engage-reply.agentuse', 'agents-x-growth')).toBe('x-engage-reply');
+    expect(displayAgentName('agents-x-growth', '/agents/x/x-engage-reply.agentuse', 'agents-x-growth')).toBe('x-engage-reply');
+  });
+});
+
+describe('PendingApprovalCard', () => {
+  it('renders the shared Home/Approvals pending-gate layout', () => {
+    const html = renderToString(<PendingApprovalCard row={{
+      project: 'demo', sessionId: 'session-1', agentId: 'agents-x-growth', agentName: '',
+      agentFilePath: '/agents/x/x-engage-reply.agentuse', status: 'pending', sessionStatus: 'suspended',
+      risk: 'Posting is public.', summary: 'Pick a reply.', suspendedAt: Date.now() - 60_000,
+    }} />);
+
+    expect(html).toContain('class="pending-approval"');
+    expect(html).toContain('x-engage-reply');
+    expect(html).toContain('Posting is public.');
+    expect(html).toContain('Pick a reply.');
+    expect(html).toContain('review →');
+    expect(html).not.toContain('wants approval');
+  });
+});
 
 describe('SchedulePill', () => {
   it('shows the cron expression and wires the human cadence to a hover/focus tooltip', () => {

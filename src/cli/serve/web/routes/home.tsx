@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useCountUp } from '../hooks/use-count-up';
-import type { ApprovalRow, SerializedSchedule, SessionRow, StoreRowsPayload } from '../lib/api';
+import type { ApprovalRow, ProjectInfo, SerializedSchedule, SessionRow, StoreRowsPayload } from '../lib/api';
 import { fetchInfo, fetchAgents, fetchSchedules, fetchStoreRows, postSessionStop } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useHomeSections } from '../hooks/use-home-sections';
@@ -10,7 +10,8 @@ import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
-import { formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone, type RunTone } from '../lib/format';
+import { PendingApprovalCard } from '../components/pending-approval-card';
+import { displayAgentName, formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone, type RunTone } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 
@@ -82,7 +83,7 @@ function RunningRow(props: { row: SessionRow; now: number; ticker: boolean }) {
       <span class="now-dot" aria-hidden="true"></span>
       <div class="now-body">
         <div class="now-head">
-          <span class="now-agent">{row.agent.name || row.agent.id}</span>
+          <span class="now-agent">{displayAgentName(row.agent.name, row.agent.filePath, row.agent.id)}</span>
           <span class="now-meta">{row.project} · {row.trigger}</span>
           {row.subagentActive && <span class="now-subagent" title="Work is running in a delegated subagent">subagent</span>}
         </div>
@@ -99,44 +100,14 @@ function RunningRow(props: { row: SessionRow; now: number; ticker: boolean }) {
   );
 }
 
-/** Time a gate has been waiting on a human, as a compact "waiting 26m". */
-function formatWaiting(ms: number): string {
-  const min = Math.floor(ms / 60_000);
-  if (min < 1) return 'waiting now';
-  if (min < 60) return `waiting ${min}m`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `waiting ${hr}h`;
-  return `waiting ${Math.floor(hr / 24)}d`;
-}
-
-/** One pending gate as a row: who wants what, how long it has waited, and a
- *  single "review →" affordance. Deciding happens only in the session view,
- *  after the full gate content is read — never inline here. */
-function ApprovalItem(props: { row: ApprovalRow }) {
-  const { row } = props;
-  const since = row.suspendedAt ?? row.createdAt;
-  return (
-    <a class="appr" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
-      <div class="appr-head">
-        <span class="attn-agent">{row.agentName || row.agentId}</span>
-        <span class="appr-kind">wants approval{row.risk ? ` · ${row.risk}` : ''}</span>
-        <span class="appr-time">
-          {since !== undefined && <span title={formatApprovalTime(since)}>{formatWaiting(Date.now() - since)} · </span>}
-          <span class="appr-review">review →</span>
-        </span>
-      </div>
-      {(row.summary || row.prompt) && <div class="appr-summary">{row.summary || row.prompt}</div>}
-    </a>
-  );
-}
-
 function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => void; label?: string }) {
   const { row } = props;
   const at = row.updatedAt || row.createdAt;
+  const agentName = displayAgentName(row.agent.name, row.agent.filePath, row.agent.id);
   return (
     <a class="attn-run" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
       <span class="feed-dot failed" aria-hidden="true"></span>
-      <span class="attn-agent">{row.agent.name || row.agent.id}</span>
+      <span class="attn-agent">{agentName}</span>
       <span class="attn-fail">
         {props.label ?? displayStatusLabel(row.status, row.errorCode)}
         {!props.label && row.errorCode && row.errorCode !== 'USER_STOPPED' && ` · ${row.errorCode}`}
@@ -146,7 +117,7 @@ function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => voi
         type="button"
         class="attn-dismiss"
         title="Dismiss: mark this run reviewed and clear it from the list (its status is kept)"
-        aria-label={`Dismiss ${row.agent.name || row.agent.id}`}
+        aria-label={`Dismiss ${agentName}`}
         onClick={(event) => {
           // The button lives inside the row link; keep the click from navigating.
           event.preventDefault();
@@ -201,7 +172,7 @@ function AttentionSection(props: {
           <div class="attn-list">
             {pending.length > 0 && (
               <div class="surface appr-surface">
-                {pending.map((row) => <ApprovalItem key={`${row.project}:${row.sessionId}`} row={row} />)}
+                {pending.map((row) => <PendingApprovalCard key={`${row.project}:${row.sessionId}`} row={row} />)}
               </div>
             )}
             {(shownFailed.length > 0 || shownStranded.length > 0) && (
@@ -263,7 +234,7 @@ function tallyRunsByAgent(sessions: SessionRow[]): AgentRuns[] {
       bar = {
         key,
         agentId,
-        name: s.agent.name || s.agent.id,
+        name: displayAgentName(s.agent.name, s.agent.filePath, s.agent.id),
         project: s.project,
         ambiguous: false,
         total: 0,
@@ -397,12 +368,33 @@ function ComingUp(props: { schedules: SerializedSchedule[] }) {
         {upcoming.map(({ s, at }) => (
           <a class="up-row" key={s.id} href="/schedules">
             <span class="up-when" title={formatApprovalTime(at)}>{formatUpcoming(at, now)}</span>
-            <span class="up-agent">{s.agentName || s.agentPath.replace(/\.agentuse$/, '')}</span>
+            <span class="up-agent">{displayAgentName(s.agentName, s.agentPath, s.agentPath)}</span>
             <span class="up-cadence">{s.human}</span>
           </a>
         ))}
       </div>
     </section>
+  );
+}
+
+function ProjectCard(props: { project: ProjectInfo; running: number; failed: number; isDefault: boolean }) {
+  const { project, running, failed } = props;
+  return (
+    <a class={`project-card${running > 0 ? ' is-live' : ''}`} href={`/agents/${encodeURIComponent(project.id)}`} title={`${project.id} · ${project.path}`}>
+      <div class="project-card-head">
+        <span class={`project-card-dot${running > 0 ? ' on' : ''}`} aria-hidden="true"></span>
+        <span class="project-card-name">{project.about?.name ?? project.id}</span>
+        {props.isDefault && <span class="proj-default">default</span>}
+        <span class="project-card-arrow" aria-hidden="true">→</span>
+      </div>
+      {project.about?.description && <div class="project-card-desc">{project.about.description}</div>}
+      <div class="project-card-stats">
+        <span><strong>{project.agentCount}</strong> agent{project.agentCount === 1 ? '' : 's'}</span>
+        <span><strong>{project.scheduleCount}</strong> schedule{project.scheduleCount === 1 ? '' : 's'}</span>
+        {running > 0 && <span class="project-card-running"><strong>{running}</strong> running</span>}
+        {failed > 0 && <span class="project-card-failed"><strong>{failed}</strong> broken</span>}
+      </div>
+    </a>
   );
 }
 
@@ -640,10 +632,13 @@ export default function Home() {
   const { data, error, loading } = useFetch('home', () => fetchInfo(), { refreshMs: 30_000 });
   const liveHome = useLiveHome();
 
-  // Agent parse failures deserve a surface even on the calm home: the footer
-  // carries a "N broken agents" warning fed by the same payload /agents uses.
+  // Agent parse failures are counted on their project card, using the same
+  // payload as /agents rather than hiding one aggregate warning in the footer.
   const agents = useFetch('home-agents', () => fetchAgents(), { refreshMs: 30_000 });
-  const failedAgents = agents.data?.errors.length ?? 0;
+  const failedAgentsByProject = new Map<string, number>();
+  for (const failure of agents.data?.errors ?? []) {
+    failedAgentsByProject.set(failure.projectId, (failedAgentsByProject.get(failure.projectId) ?? 0) + 1);
+  }
 
   // Soonest upcoming scheduled run powers the hero countdown; refresh often
   // enough that a fired schedule rolls over to the next one without a reload.
@@ -814,17 +809,17 @@ export default function Home() {
           {liveHome.error && <div class="errors" role="alert">Failed to load sessions: {liveHome.error.message}</div>}
         </header>
 
-        {sections.isVisible('attention') && (
-          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} stranded={strandedRecent} onDismissFailed={dismissFailed} />
-        )}
-
         {sections.isVisible('running') && running.length > 0 && (
           <section class="group">
             <h2 class="group-title"><span>Working now</span><span class="count">{running.length}</span><span class="rule"></span></h2>
-            <div class="surface">
+            <div class="now-grid">
               {running.map((row, i) => <RunningRow key={`${row.project}:${row.sessionId}`} row={row} now={now} ticker={i < 3} />)}
             </div>
           </section>
+        )}
+
+        {sections.isVisible('attention') && (
+          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} stranded={strandedRecent} onDismissFailed={dismissFailed} />
         )}
 
         {sections.isVisible('results') && hasAnyMetrics && (
@@ -914,30 +909,36 @@ export default function Home() {
           </div>
         )}
 
-        {/* Quiet footer: the projects roll-call plus the version in one line.
-            Project detail lives on /agents; tooltips keep the id + path. */}
         {sections.isVisible('projects') && (
-          projects.length === 0
-            ? (loading ? <Loading label={`Loading ${term('project', 2)}…`} /> : null)
-            : (
-              <footer class="home-foot">
-                <span class="home-foot-count">{projects.length} {term('project', projects.length)}</span>
-                <span aria-hidden="true">·</span>
-                {projects.map((p) => (
-                  <a class="home-foot-proj" href={`/agents/${encodeURIComponent(p.id)}`} key={p.id} title={`${p.id} · ${p.path}`}>
-                    {p.about?.name ?? p.id}
-                    {(runningByProject.get(p.id) ?? 0) > 0 && (
-                      <span class="proj-live" title={`${runningByProject.get(p.id)} running`} aria-label={`${runningByProject.get(p.id)} running`}></span>
-                    )}
-                    {p.id === data?.default && <span class="proj-default">default</span>}
-                  </a>
-                ))}
-                {failedAgents > 0 && (
-                  <a class="home-foot-broken" href="/agents">{plural(failedAgents, 'broken agent')}</a>
-                )}
-                {data && <span class="home-foot-version">AgentUse v{data.version}</span>}
-              </footer>
-            )
+          <section class="group home-projects">
+            <h2 class="group-title">
+              <span>{term('project', projects.length)}</span>
+              {projects.length > 0 && <span class="count">{projects.length}</span>}
+              <span class="rule"></span>
+            </h2>
+            {projects.length === 0
+              ? (loading ? <Loading label={`Loading ${term('project', 2)}…`} /> : null)
+              : (
+                <div class="project-grid">
+                  {projects.map((project) => (
+                    <ProjectCard
+                      key={project.id}
+                      project={project}
+                      running={runningByProject.get(project.id) ?? 0}
+                      failed={failedAgentsByProject.get(project.id) ?? 0}
+                      isDefault={project.id === data?.default}
+                    />
+                  ))}
+                </div>
+              )}
+          </section>
+        )}
+
+        {data && (
+          <footer class="home-version-foot">
+            <span>AgentUse</span>
+            <span>v{data.version}</span>
+          </footer>
         )}
       </main>
     </div>

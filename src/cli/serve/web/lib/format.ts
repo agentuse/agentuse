@@ -5,6 +5,14 @@ export function formatApprovalTime(value?: number): string {
   return value ? new Date(value).toLocaleString() : 'Unknown';
 }
 
+/** Prefer the configured human name; otherwise show the agent filename rather
+ * than an opaque normalized id. */
+export function displayAgentName(name: string | undefined, filePath: string | undefined, id: string): string {
+  const human = name?.trim();
+  if (human && human !== id && !human.includes('/') && !human.endsWith('.agentuse')) return human;
+  return filePath?.split(/[\\/]/).pop()?.replace(/\.agentuse$/, '') || human || id;
+}
+
 export function formatLogTime(value?: number): string {
   return value ? new Date(value).toLocaleTimeString() : '';
 }

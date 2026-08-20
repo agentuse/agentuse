@@ -4,7 +4,7 @@ import { fetchSessions } from '../lib/api';
 import { useFetch } from './use-fetch';
 import { useSessionsStream } from './use-sessions-stream';
 import { useGlobalApprovals } from './use-global-approvals';
-import { displayStatusLabel } from '../lib/format';
+import { displayAgentName, displayStatusLabel } from '../lib/format';
 
 /** One row of the home-page activity feed, derived from session transitions. */
 export interface ActivityEvent {
@@ -89,7 +89,7 @@ function eventFor(row: SessionRow, opts: { isNew: boolean; fresh: boolean; seq: 
     key: `${row.project}:${row.sessionId}:${label}:${opts.seq}`,
     sessionId: row.sessionId,
     project: row.project,
-    agentName: row.agent.name || row.agent.id,
+    agentName: displayAgentName(row.agent.name, row.agent.filePath, row.agent.id),
     label,
     tone: toneFor(label),
     at: row.updatedAt || row.createdAt,
