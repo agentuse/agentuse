@@ -1,6 +1,6 @@
 ---
 title: Learning
-description: Extract insights from executions and apply them in future runs
+description: Capture what reviewers teach an agent, vet it, and apply the best of it in future runs
 tag: Experimental
 ---
 
@@ -10,7 +10,22 @@ tag: Experimental
 
 ## What is Learning?
 
-Learning lets an agent **capture** insights from its executions into a readable markdown file and **apply** them in future runs. Capture has three sources: self-evaluation of each run, promotion of a human reviewer's approval-gate comment, and explicit manual rules saved by a reviewer (see [Learning from approval comments](#learning-from-approval-comments)).
+Learning lets an agent **capture** durable rules from its runs into a readable
+markdown file and **apply** them in future runs. Capture arrives through
+**channels**, and only one of them is on by default: **corrections**, the human
+feedback a reviewer leaves at an approval gate, saves with `--remember`, or adds
+by hand.
+
+That default is the whole design. A human authored every correction, so
+corrections are the one channel that cannot manufacture policy out of a run that
+merely happened to go a certain way. Free-form observation capture (the
+evaluator watching a run and deciding what the agent should believe from now on)
+is real capability and stays available, but you have to ask for it by name.
+
+Everything a channel produces then passes a **vet** against the agent's complete
+instructions before it can reach a future run, and everything that reaches a
+future run is stamped with the version of those instructions it was checked
+against.
 
 ## Quick Start
 
@@ -19,7 +34,8 @@ A single switch turns on both capture and apply:
 ```yaml
 ---
 model: anthropic:claude-sonnet-5
-learning: true   # capture insights AND apply them next run
+approval: true   # reviewer comments are what this agent learns from
+learning: true   # capture corrections AND apply them next run
 ---
 
 # Blog Writer
@@ -31,11 +47,22 @@ Write short productivity blog posts.
 - Include 3 actionable tips
 ```
 
-`learning: true` is sugar for `{ capture: true, apply: true }`. Learnings accumulate in a learnings file inside the AgentUse state directory, not in your repository, and are injected into instructions on the next run. `agentuse learnings ./blog-writer.agentuse --path` prints where; see [Storage](#storage).
+`learning: true` is sugar for `{ capture: true, apply: true }`: corrections are
+captured, vetted, and injected on the next run. Learnings accumulate in a
+learnings file inside the AgentUse state directory, not in your repository.
+`agentuse learnings ./blog-writer.agentuse --path` prints where; see
+[Storage](#storage).
+
+<Note>
+  `capture: true` used to mean free-form auto-capture. As of v0.18.0 it means
+  corrections only, and an agent still carrying the old form says so once on
+  parse. See [Upgrading an existing agent](#upgrading-an-existing-agent).
+</Note>
 
 ## Capture-Only (Review Before Trust)
 
-For a human-in-the-loop workflow, capture insights but do not auto-apply them. Review the file, then copy the best ones into your instructions yourself:
+For a human-in-the-loop workflow, capture rules but do not auto-apply them.
+Review the file, then copy the best ones into your instructions yourself:
 
 ```yaml
 learning:
@@ -43,22 +70,250 @@ learning:
   apply: false   # accumulate for manual review, never auto-inject
 ```
 
-This is the safer default for agents that touch untrusted input (web pages, emails, tickets), where an auto-applied learning could persist a bad or injected instruction. See [Best Practices](#best-practices).
+This is the safer default for agents that touch untrusted input (web pages,
+emails, tickets), where an auto-applied rule could persist a bad or injected
+instruction. See [Best Practices](#best-practices).
+
+`capture: true` still means corrections only, so on an agent with no approval
+gates there is nothing for it to collect. Add a `custom` block if you want the
+run itself observed; the [vet](#every-candidate-is-vetted) is what makes that
+safe enough to leave `apply` on.
+
+## Capture channels
+
+`capture` is either `false` or an object. The object form always includes
+corrections: capture being on *means* human feedback is captured, and there is
+no corrections-off-but-capture-on state. Everything else is opt-in.
+
+```yaml
+learning:
+  capture: true                   # corrections only: human feedback
+                                  # (approval comments, --remember, manual add)
+  apply: true
+  max: 15
+```
+
+```yaml
+learning:
+  capture:                        # object form still includes corrections
+    addons: [tool-errors]         # typed, structurally-verified channels
+    custom: |                     # scoped free-form capture, built-in evaluator
+      Only note selector changes.
+    # agent: ./capture.agentuse   # instead of custom: replace the evaluator
+  apply: true
+  max: 15
+```
+
+`capture: {}` is the same as `capture: true`. This mirrors the
+[verify](/guides/verify) schema deliberately: `custom` plays the role of
+`verify.criteria` (tune the built-in), `agent` plays the role of `verify.judge`
+(replace it), and setting both is a parse error with the same message style.
+
+### corrections
+
+On whenever capture is on. The durable principle behind a reviewer's approval
+comment, a rule saved with `--remember`, or one added by hand in the CLI or the
+serve UI. See [Learning from approval comments](#learning-from-approval-comments).
+
+Corrections cost nothing on a run that drew no comments: the evaluator call is
+skipped outright when there is nothing for it to read.
+
+### `tool-errors` (addon)
+
+```yaml
+learning:
+  capture:
+    addons: [tool-errors]
+```
+
+Learns a failed tool call followed by a **corrected** call and a confirmed
+success. Its value is that the verification happens **in code**, not in a
+prompt: a record is stored only when the run's trace contains the failed call,
+a later successful call of the same tool, and a different input on the retry. A
+retry with identical input that happened to work is flakiness, not a lesson,
+and is not captured.
+
+The stored record carries the tool, a normalized failure signature, and both
+calls as evidence:
+
+```markdown
+### [error-fix] browser.uploadFile: files.length remained #
+<!-- id:7f3a91cd | confidence:1.00 | injected:0 | src:auto | ch:tool-errors | ih:9c4d2ba17e08 | tool:browser.uploadFile | sig:files.length remained # | 2026-08-19 -->
+<!-- evidence: failed: {"path":"./shot.png"} → succeeded: {"path":"/Users/me/shot.png"} -->
+When browser.uploadFile fails with "files.length remained #", use the corrected call shape that succeeded: {"path":"/Users/me/shot.png"}
+```
+
+Because these records capture mechanics rather than policy, they cannot conflict
+with your instructions, so they skip the model-judged vet below. They dedupe by
+`(tool, failure signature)` and supersede structurally (one record per failure
+mode, replaced when a better recovery is observed), and they never go through
+the free-text merge path in [tidy](#tidying-up).
+
+### `custom` (scoped free-form)
+
+```yaml
+learning:
+  capture:
+    custom: |
+      Only capture rules about selectors and page structure.
+      Ignore anything about content or tone.
+```
+
+The built-in evaluator, now allowed to extract from the execution itself and
+scoped by your guidance text. Free-form candidates carry no structural proof, so
+they rest entirely on the [vet](#every-candidate-is-vetted), which is why the
+channel is opt-in and its candidates never skip vetting.
+
+### `agent` (evaluator replacement)
+
+```yaml
+learning:
+  capture:
+    agent: ./capture.agentuse
+```
+
+An `.agentuse` file replaces the built-in evaluator for free-form capture, the
+same pattern as `verify.judge`. The path resolves relative to the agent file
+that declares it. The capture agent receives the run's evidence, the reviewer
+comments, and the rules the agent already carries with their ids, and records
+its result by calling `submit_learnings` once with 0-5 candidates:
+
+```yaml
+---
+model: anthropic:claude-haiku-4-5
+---
+
+# Capture Evaluator
+
+Read the run and record only rules about API pagination and rate limits.
+Never record anything about the content the agent produced.
+```
+
+Replacing the evaluator does not buy a bypass. Its candidates still pass the
+common vet, provenance stamping, and lifecycle validation. Corrections stay on
+the built-in path either way: the one channel that cannot manufacture policy
+must not depend on a user-supplied agent behaving.
+
+A nested `learning:` or `verify:` block on the capture agent is ignored (a
+helper pass must not recurse into a tree of helper passes), and a capture agent
+that suspends on an approval gate is an error.
+
+<Note>
+  The built-in evaluator stays the default because capture runs after **every**
+  run: one cheap helper call, not a full subagent session spawned as a shadow
+  child of every run in your fleet. Reach for `agent` when the judgment is
+  genuinely domain-specific, not to save a line of YAML.
+</Note>
 
 ## Configuration Options
 
 | Option | Type | Description |
 |--------|------|-------------|
 | `learning: true` | `boolean` | Shorthand for `{ capture: true, apply: true }`. |
-| `capture` | `boolean` | Write learnings after execution (self-evaluation + approval comments). Defaults to `true`. |
-| `apply` | `boolean` | Inject stored learnings into instructions before each run. Defaults to `true`. |
-| `criteria` | `string` | Optional guidance for the capture evaluator (domain-specific extraction). |
-| `max` | `number` | How many rules this agent keeps, and therefore how many apply per run. Defaults to `15`, range 1-50. Enforced when capture writes, not just when rules are injected - see [An agent keeps 15 rules](#an-agent-keeps-15-rules-not-15-of-many). Each one is paid for on every model request; `agentuse doctor` prints the token cost. |
-| `model` | `string` | Model for the helper calls (capture and tidy-up). Defaults to the agent's own model. |
+| `capture` | `boolean \| object` | `false` disables capture. `true` (or `{}`) captures corrections only. The object form adds channels. Defaults to `true`. |
+| `capture.addons` | `string[]` | Typed, structurally-verified channels. `tool-errors` is the only entry today. Defaults to `[]`. |
+| `capture.custom` | `string` | Guidance that scopes free-form observation capture through the built-in evaluator. Mutually exclusive with `agent`. |
+| `capture.agent` | `string` | Path to an `.agentuse` file that replaces the built-in evaluator, relative to this agent file. Mutually exclusive with `custom`. |
+| `apply` | `boolean` | Inject vetted, active learnings into instructions before each run. Defaults to `true`. |
+| `max` | `number` | How many rules this agent keeps, and therefore how many apply per run. Defaults to `15`, range 1-50. Enforced when capture writes, not just when rules are injected, see [An agent keeps 15 rules](#an-agent-keeps-15-rules-not-15-of-many). Each one is paid for on every model request; `agentuse doctor` prints the token cost. |
+| `model` | `string` | Model for the helper calls (capture, vet, and tidy-up). Defaults to the agent's own model. |
+
+<Warning>
+  **`criteria` was removed in v0.18.0** and is a hard parse error:
+
+  ```
+  "criteria" was removed — free-form capture is opt-in now. To restore scoped
+  free-form capture, move it to capture: { custom: "..." }
+  ```
+
+  The only faithful mapping would keep free-form policy capture running
+  automatically, which is exactly what the redesign exists to stop, so the
+  rewrite is yours to make consciously. Setting both `custom` and `agent` is
+  likewise a parse error: `set either "custom" (built-in evaluator) or "agent"
+  (agent file), not both`.
+</Warning>
 
 <Note>
-  Two keys were removed in v0.17.0: `evaluate` (long deprecated, replaced by `capture` / `criteria`) and `file` (a custom learnings path, now that learnings live outside your repository, see [Storage](#storage)). Both are rejected by name at parse time, so an agent file still carrying one fails loudly rather than quietly ignoring it.
+  Two keys were removed in v0.17.0 and remain rejected by name: `evaluate` (long
+  deprecated) and `file` (a custom learnings path, now that learnings live
+  outside your repository, see [Storage](#storage)). An agent file still
+  carrying one fails loudly rather than quietly ignoring it.
 </Note>
+
+## Every candidate is vetted
+
+Nothing becomes active on the strength of having been extracted. Every free-form
+candidate, corrections included, is checked against the agent's **complete**
+instructions, the rules already in force, and the run's own trace, before it can
+be injected into anything.
+
+| Verdict | What it means | What happens |
+|---------|---------------|--------------|
+| **pass** | Genuinely new, consistent with the contract and the rules in force, and supported by the run | Becomes active |
+| **duplicate** | Restates something the instructions or an active rule already say, in any wording | Model-authored: rejected. Human correction: quarantined |
+| **contradiction** | Conflicts with the instructions or an active rule, or narrows one so far the two cannot both be satisfied | Quarantined, with the conflicting text named |
+| **ungrounded** | The trace contradicts the claim, or does not contain the events it describes | Rejected. Never raised against a human-authored entry |
+
+Two properties are worth stating plainly:
+
+- **Human corrections are never dropped.** A reviewer's rule that fails the vet
+  is quarantined with the reason, not discarded. If the vet call itself fails,
+  corrections are stored active and observation candidates are dropped.
+  Free-form capture's entire safety case is the vet, so it fails closed while
+  human input fails open.
+- **The vet sees the whole contract.** The fixed 3,000-character truncation that
+  used to hide every rule past the cut is gone. On any real agent that
+  truncation is what let the evaluator "rediscover" an explicit instruction as a
+  brand-new learning.
+
+### Quarantine
+
+A quarantined entry is set aside, never injected, and never deleted. It stays
+visible with its reason in `agentuse learnings <file>`, the serve UI's Learnings
+panel, and `agentuse doctor`:
+
+```
+  2 learnings quarantined (failed the vet, never injected):
+    [warning] Reuse the prior run item on same-day re-invocation — contradicts the contract: "Every invocation creates one new run item and terminalizes it"
+    [tip] Always resolve ids with store_list — duplicates the contract: "a type name is not an item ID; never call store_get on one"
+```
+
+The second one is a reviewer's own note. A model-authored duplicate would have
+been rejected outright, with nothing lost: the rule already exists. A human
+wrote that one, so it is kept and shown instead.
+
+The fix is one of two things, and the reason line tells you which: correct the
+agent file so the rule is no longer in conflict, or discard the rule.
+
+Typed `tool-errors` records skip this step. They are verified structurally in
+code, and they describe mechanics rather than policy, so there is nothing for
+them to contradict.
+
+## Rules are stamped with the instructions they were checked against
+
+Every stored learning records the hash of the agent instructions it was captured
+(or last re-vetted) against, alongside its channel, source session, and
+evidence. The hash covers your own instructions with the machine-managed
+[graduated block](#what-makes-a-learning-permanent) excised, so a rule
+graduating never marks every other rule stale.
+
+When you rewrite the agent file, the hash no longer matches and the affected
+rules go **stale**:
+
+- Stale rules are **held out of injection**. A rule vetted against instructions
+  that no longer exist does not get to keep applying unexamined.
+- The next capture or `agentuse learnings tidy` **re-vets** them against the
+  current instructions: passes are re-stamped and start injecting again,
+  failures are quarantined with the reason. Nothing is deleted.
+- Rules with **no hash at all**, anything captured before v0.18.0, are *not*
+  stale. They stay injectable until the first capture or tidy backfills them.
+
+`agentuse doctor` says so when it matters:
+
+```
+  learned guidelines: 12 of 15 applied, ~1.8k tokens/model request
+  3 learnings are stale: the instructions changed since they were vetted. They are held out of injection until the next capture or tidy re-vets them.
+```
 
 ## Storage
 
@@ -90,7 +345,7 @@ agentuse learnings ./blog-writer.agentuse --edit   # open it in $EDITOR
 
 ### Why it is not next to your agent file
 
-Every run rewrites this file, not only the runs that capture something: applying a learning updates its counters. Kept in the repository, that is a permanently dirty working tree and a stream of commits carrying no decision.
+Every run rewrites this file, not only the runs that capture something: injecting a learning updates its counters. Kept in the repository, that is a permanently dirty working tree and a stream of commits carrying no decision.
 
 The file was never meant to be the durable artifact. It is a staging buffer; your agent file is the thing that gets diffed and reviewed, and [graduation](#what-makes-a-learning-permanent) is how a proven learning crosses over into it.
 
@@ -131,18 +386,34 @@ learnings found at the old location for agents/blog/write.agentuse
 
 This reads only whether that file exists, never what is in it, so the agent behaves identically with or without it. It keeps saying so even after the agent has captured new learnings into the new location, that is exactly when a populated panel makes a half-migrated agent look healthy.
 
-## How Extraction Works
+## How capture works
 
-After execution (when `capture` is enabled):
+After a run finishes, when `capture` is enabled:
 
-1. LLM evaluates the execution result
-2. Extracts 0-3 high-confidence learnings (≥0.8 threshold)
-3. Deduplicates against existing learnings (60% word overlap)
-4. Stores in markdown format
+1. **Gather candidates per channel.** Corrections and `custom` share one
+   evaluator call, which sees the agent's complete instructions; `agent` runs
+   the replacement evaluator; `tool-errors` scans the run's tool traces in code.
+2. **Vet the free-form candidates** against the complete contract, the rules in
+   force, and the trace. Passes become active, contradictions and failed human
+   corrections are quarantined, and model-authored duplicates and ungrounded
+   claims are rejected.
+3. **Stamp provenance** (channel, source session, evidence, and the instruction
+   hash) and write to the store, enforcing `max`
+   ([the cap](#an-agent-keeps-15-rules-not-15-of-many)).
+4. **Re-vet stored rules the contract has moved out from under**: anything
+   stale, and anything with no hash at all, is checked against the current
+   instructions and either re-stamped or quarantined. This is what backfills a
+   pre-v0.18.0 store the first time capture runs after an upgrade.
+
+The result is reported in the run's output and in the session log:
+
+```
+Extracted 2 learning(s), 1 quarantined → ~/.local/share/agentuse/project/…/blog-writer.learnings.md
+```
 
 ## Learning from approval comments
 
-When [Approval Gates](/guides/approval-gates) are enabled and `capture` is on, **any comment you leave at a gate** can be promoted into a durable learning. In practice your feedback arrives through the revise loop (leaving a comment sends the work back to be reworked and re-presents the same gate), while the final approve is usually a bare click with no comment, so comments are captured wherever they appear, not only on the approving decision. This is the highest-signal feedback an agent receives, so it is captured separately from self-evaluation.
+When [Approval Gates](/guides/approval-gates) are enabled and `capture` is on, **any comment you leave at a gate** can be promoted into a durable learning. In practice your feedback arrives through the revise loop (leaving a comment sends the work back to be reworked and re-presents the same gate), while the final approve is usually a bare click with no comment, so comments are captured wherever they appear, not only on the approving decision. This is the highest-signal feedback an agent receives, and it is the channel that is on by default.
 
 ```yaml
 ---
@@ -179,17 +450,35 @@ you are correcting an earlier note of your own. Left unreconciled, the rule and
 its own correction both stay in force, and the agent has to satisfy two
 instructions that disagree.
 
+A note can also collide with the agent file itself rather than with another
+rule. It is saved either way, but quarantined rather than injected, and the run
+says which instruction it conflicts with:
+
+```
+[Learning] Saved but quarantined "Publish drafts without review": contradicts the contract: "Never publish without an approval gate". It will not be injected; resolve the conflict in ./blog-writer.agentuse or discard the rule.
+```
+
 ## How Application Works
 
 On next run or approval resume (when `apply: true`):
 
-1. Loads the agent's rules from storage (up to `max`, 15 by default)
-2. Appends them to your agent instructions as a `## Recent Corrections` section
-3. Tracks which learnings were applied (for analytics)
+1. Loads the agent's active rules from storage, skipping quarantined and
+   [stale](#rules-are-stamped-with-the-instructions-they-were-checked-against) ones
+2. Injects the top `max` of them (15 by default) as a `## Recent Corrections` section
+3. Counts the injection against each rule's `injectedCount`
 
 This keeps learnings at the instruction level - where they have the most influence on agent behavior.
 
 Learnings that have [graduated](#tidying-up) live in your agent file's own `## Learned Guidelines` block instead. Both carry the same authority and both override skill defaults; the split just separates the proven rules from the ones still applying per-run.
+
+<Note>
+  **`injectedCount` counts cost, not value.** It is how many runs a rule was
+  paid for on, and it is never evidence the rule worked. The effectiveness
+  signal is `approvedRuns` (runs the rule was in force for that ended in an
+  approval with no comment), and that is what
+  [graduation](#what-makes-a-learning-permanent) is gated on. The store field was named `applied:` before v0.18.0 and is read
+  as an alias; files are rewritten with `injected:` on the next save.
+</Note>
 
 ### An agent keeps 15 rules, not 15 of many
 
@@ -264,15 +553,19 @@ file should have said, and the fix is in the instructions rather than the store.
 
 ## Tidying up
 
-When learnings outgrow the cap, one action gets them back under it:
+When learnings outgrow the cap, or the agent file has been rewritten under them,
+one action gets them back in order:
 
 ```bash
 agentuse learnings tidy ./blog-writer.agentuse
 ```
 
 or the **Tidy up** button in the serve UI, on the session view and the agent's
-Learnings tab. Both run the same thing. It makes five kinds of change:
+Learnings tab. Both run the same thing. It makes six kinds of change:
 
+- **re-vet** every rule that is stale or was never vetted against the current
+  instructions, re-stamping the ones that still hold and **quarantining** the
+  ones that no longer do, with the reason
 - **merge** near-duplicates into one rule
 - **rewrite** a learning you have repeated, a repeat means the wording is not
   landing, so restating it sharply is the fix
@@ -283,7 +576,11 @@ Learnings tab. Both run the same thing. It makes five kinds of change:
 - **rewrite the permanent block** in your agent file as one document, combining
   rules that overlap and dropping any another rule now fully states
 
-That last one is the only thing that ever makes the permanent block smaller.
+The re-vet pass is why a tidy-up is worth running after you edit an agent file,
+even on a set that is comfortably under the cap: it is what gets stale rules
+injecting again, and what backfills a store captured before v0.18.0.
+
+That last change is the only thing that ever makes the permanent block smaller.
 Graduation alone only ever added to it, so on a long-running agent it accumulated
 the same way the staging file did, and more expensively: those rules apply on
 every single run. The rewrite reads the whole block at once, which is what lets
@@ -310,7 +607,8 @@ would have blocked exactly the merges worth having.
 It applies immediately and then shows you what changed: a summary, the rules that
 became permanent named individually, each edit to the permanent block, and the
 diff of **both** files. Undo with
-`agentuse learnings undo ./blog-writer.agentuse` or the Undo button.
+`agentuse learnings undo ./blog-writer.agentuse` or the Undo button, which covers
+the re-vet pass along with everything else.
 
 ```
 $ agentuse learnings tidy ./blog-writer.agentuse
@@ -321,7 +619,7 @@ $ agentuse learnings tidy ./blog-writer.agentuse
   writing both files…
 
 Done
-  3 merged, 1 rewritten, 12 retired, 9 now permanent — 58 → 15 in force
+  3 merged, 1 rewritten, 12 retired, 2 quarantined, 9 now permanent — 58 → 15 in force
 ```
 
 Each pass reads every learning still in force, so a pass takes about a minute.
@@ -419,14 +717,60 @@ The block in the file is the source of truth for these rules, not a printout of
 one held elsewhere: the tidy-up reads it back before every edit, so wording you
 change by hand survives, and is what the next rewrite works from.
 
-Learnings still on probation are injected under a separate
-`## Recent Corrections` heading, so the two tiers never collide.
+The block is also excluded from the instruction hash, so a rule graduating never
+makes the rest of the set stale. Rules still on probation are injected under a
+separate `## Recent Corrections` heading, so the two tiers never collide.
 
 <Note>
   Graduation is skipped, and the result says so, when the agent file is not
   writable. Nothing else can stop it: there is one learnings file per agent,
   so making a rule permanent never affects another agent.
 </Note>
+
+## Seeing what capture is doing
+
+"Capture is producing junk" should be measurable, not anecdotal. Three surfaces
+show the same numbers.
+
+`agentuse learnings <agent-file>` lists every rule by status, grouped:
+
+```
+Applied (12 of 15)
+  applied  [warning] Keep intros factual
+    src:approval · injected:31 · ch:corrections · approved:4 · ready to make permanent  ·  2026-07-02  ·  id:a1b2c3d4
+
+Stale — instructions changed, awaiting re-vet (3)
+  dormant  [tip] Cite the primary source, never a summary
+    src:approval · injected:12 · ch:corrections  ·  2026-07-19  ·  id:e5f6g7h8
+
+Quarantined (2)
+  quarantined  [tip] Reuse the prior run item on same-day re-invocation
+    src:auto · injected:0 · ch:custom  ·  2026-08-14  ·  id:i9j0k1l2
+    why: contradicts the contract: "Every invocation creates one new run item"
+```
+
+`agentuse doctor <agent-file>` adds the per-channel breakdown and the token cost:
+
+```
+  learned guidelines: 12 of 15 applied, ~1.8k tokens/model request
+  3 learnings are stale: the instructions changed since they were vetted. They are held out of injection until the next capture or tidy re-vets them.
+  learnings file: ~/.local/share/agentuse/project/a1b2c3/learnings/blog-writer.learnings.md
+  by channel: corrections:11, tool-errors:4, custom:2, legacy:3
+  2 learnings quarantined (failed the vet, never injected):
+    [tip] Reuse the prior run item on same-day re-invocation — contradicts the contract: "Every invocation creates one new run item"
+```
+
+`legacy` in that breakdown is entries captured before channels existed.
+
+The serve UI's Learnings panel shows the same states with quarantine reasons
+inline, and links to the last tidy-up.
+
+Everything is agent-operable: `agentuse learnings <agent-file> --json` reports
+`cap`, `active`, `injected`, `dormant`, `stale`, and `quarantined` counts at the
+top level, and each entry carries its full record plus computed `state`,
+`injected`, and `stale` flags. `agentuse learnings tidy --dry-run` prints the
+plan without writing. No step in the lifecycle needs a human at a terminal, so a
+scheduled maintenance agent can do the cleanup.
 
 ## Learning Categories
 
@@ -436,7 +780,7 @@ Learnings are categorized for context:
 - **warning** - Things to avoid
 - **pattern** - Successful approaches
 - **tool-usage** - How to use specific tools
-- **error-fix** - Solutions to known errors
+- **error-fix** - Solutions to known errors (the `tool-errors` channel always uses this one)
 
 ### How long a learning should be
 
@@ -460,42 +804,80 @@ Learnings are stored as readable markdown:
 <!-- agent: blog-writer.agentuse -->
 
 ### [tip] Use specific examples over generic advice
-<!-- id:a1b2c3d4 | confidence:0.92 | applied:3 | src:auto | 2026-01-27 -->
+<!-- id:a1b2c3d4 | confidence:0.92 | injected:3 | src:auto | ch:custom | ih:9c4d2ba17e08 | sess:01K8Z... | 2026-01-27 -->
 When writing productivity tips, include concrete scenarios
 like "checking emails before coffee" rather than abstract advice.
 
-### [pattern] Structure with time estimates
-<!-- id:e5f6g7h8 | confidence:0.88 | applied:1 | src:approval | 2026-01-27 -->
-Each actionable tip should include a specific time estimate
-(e.g., "5-minute brain dump") to make it feel achievable.
+### [error-fix] browser.uploadFile: files.length remained #
+<!-- id:7f3a91cd | confidence:1.00 | injected:1 | src:auto | ch:tool-errors | ih:9c4d2ba17e08 | tool:browser.uploadFile | sig:files.length remained # | 2026-01-27 -->
+<!-- evidence: failed: {"path":"./shot.png"} → succeeded: {"path":"/Users/me/shot.png"} -->
+When browser.uploadFile fails with "files.length remained #", use the corrected
+call shape that succeeded: {"path":"/Users/me/shot.png"}
 
 ### [tip] Cite sources before publishing
-<!-- id:i9j0k1l2 | confidence:1.00 | applied:0 | src:manual | ok:4 | state:graduated | 2026-01-27 -->
+<!-- id:i9j0k1l2 | confidence:1.00 | injected:0 | src:manual | ch:corrections | ih:9c4d2ba17e08 | ok:4 | state:graduated | 2026-01-27 -->
 Always include source links before publishing.
+
+### [tip] Reuse the prior run item on same-day re-invocation
+<!-- id:m3n4o5p6 | confidence:0.85 | injected:0 | src:auto | ch:custom | ih:9c4d2ba17e08 | state:quarantined | 2026-01-27 -->
+<!-- why: contradicts the contract: "Every invocation creates one new run item" -->
+On a same-day re-invocation, reuse the run item the previous invocation created.
 
 ```
 
-Every field except the date is optional, so older files load unchanged:
+Every field except the date is optional, so older files load unchanged, and
+unknown tokens are ignored rather than rejected:
 
-- `src:` records provenance, `auto` (self-evaluation), `approval` (promoted from a reviewer comment), or `manual` (explicitly saved by a reviewer). Files without it load as `auto`.
-- `state:graduated` means the rule now lives in the agent file and this staged copy is on its way out. Absent means active. A `state:retired` entry in an older file is skipped on read and dropped on the next write, so retired rules do not accumulate.
+- `src:` records who authored it, `auto` (an evaluator), `approval` (promoted from a reviewer comment), or `manual` (explicitly saved by a reviewer). Files without it load as `auto`.
+- `ch:` records the capture channel, one of `corrections`, `tool-errors`, `custom`, `agent`. Absent on entries written before channels existed.
+- `ih:` is the [instruction hash](#rules-are-stamped-with-the-instructions-they-were-checked-against) the rule was last vetted against. Absent on entries that predate it; those count as fresh, not stale, until a capture or tidy backfills them.
+- `injected:` counts injections into a run's prompt. `applied:` is the pre-v0.18.0 name and reads as an alias; the file is rewritten with `injected:` on the next save.
+- `tool:` and `sig:` are the `tool-errors` dedupe key, the tool and its normalized failure signature.
+- `sess:` is the session the rule was captured in.
+- `state:graduated` means the rule now lives in the agent file and this staged copy is on its way out. `state:quarantined` means it failed the vet and is never injected; the reason is on the `<!-- why: … -->` line beneath. Absent means active. A `state:retired` entry in an older file is skipped on read and dropped on the next write, so retired rules do not accumulate.
 - `re:` counts how many times a human repeated the learning; `ok:` counts the approved, uncommented runs it was in force for. These are the evidence the tidy-up uses to decide what to rewrite and what to make permanent.
+- `<!-- evidence: … -->` carries the one-line evidence trail, for `tool-errors` the failed and corrected calls.
 
 The `<!-- agent: … -->` line under the heading is a breadcrumb, so a file sitting in the state directory can be traced back to the agent that wrote it. Nothing reads it back; it is there for you.
 
-## Custom Evaluation Criteria
+## Upgrading an existing agent
 
-Pass a string to `criteria` for domain-specific extraction:
+No migration is needed and no file moves. Existing learnings files load as they
+are; the first capture or tidy after the upgrade backfills the instruction hash
+and vets the entries it finds, quarantining rather than deleting anything that
+no longer holds. `undo` covers that pass like any other.
+
+The dividing rule for config: **hard-error and quit when honoring the key would
+resurrect risky behavior or the config contradicts itself; warn once and
+continue when the faithful mapping is strictly safer than what you had.**
+Nothing is ever silently ignored.
+
+| What you have | What happens | Behavior |
+|---|---|---|
+| `learning: true` | Warns once, continues | Runs as `{ capture: true, apply: true }`: corrections-only capture, strictly narrower than before. Nothing new can be injected that could not be before, and free-form capture stops. The warning names the explicit form and is echoed by `agentuse doctor`. |
+| `capture: true` | Still parses; meaning narrows | Old meaning: free-form auto-capture. New meaning: corrections only. First-class syntax going forward; a one-time notice per agent names `capture: { custom: "..." }` as the way to restore scoped free-form capture. |
+| `capture: false` | Unchanged | Capture off. |
+| `apply: true` / `apply: false` | Unchanged | Same boolean, same meaning; `true` now injects only vetted, active, non-stale learnings. |
+| `criteria: "..."` | **Hard error, agent quits** | The only mapping that honors it would keep free-form policy capture running automatically. Rewrite it as `capture: { custom: "..." }`; the error and `doctor` both say so. |
+| `custom` + `agent` both set | **Hard error, agent quits** | A contradiction the parser cannot resolve. Pick one. |
+| `evaluate`, `file` | **Hard error** (unchanged) | Rejected by name since v0.17.0. |
+| `max`, `model` | Unchanged | |
+
+If you were relying on free-form capture and want it back, the one-line answer
+is a `custom` block naming what is worth keeping:
 
 ```yaml
 learning:
-  capture: true
-  criteria: |
-    Evaluate the blog post against these criteria:
-    1. Hook quality - Is the opening engaging?
-    2. Actionability - Can readers implement immediately?
-    3. Tone - Professional but conversational?
+  capture:
+    custom: |
+      Capture rules about tone and sourcing. Ignore anything about
+      scheduling, tooling, or this run's specific content.
 ```
+
+If you reached for `apply: false` to stop bad auto-captured rules from reaching
+the agent, try turning it back on. The vet is what `apply: false` was standing
+in for, and it discriminates: it drops the junk instead of throwing away the
+valid corrections along with it.
 
 ## Example: Manual Review Workflow
 
@@ -503,7 +885,8 @@ learning:
 ---
 model: anthropic:claude-sonnet-5
 learning:
-  capture: true
+  capture:
+    custom: Keep rules about structure and hooks; ignore anything about a specific post.
   apply: false
 ---
 
@@ -544,17 +927,17 @@ This keeps you in control while still benefiting from extracted patterns.
 ## Best Practices
 
 <CardGroup cols={2}>
-  <Card title="Review before auto-apply" icon="eye">
-    Run with `apply: false` first to verify learning quality before enabling auto-injection
+  <Card title="Start with corrections" icon="comment">
+    The default channel is the one a human authored. Run on it for a while before opening free-form capture with `custom` or `agent`
   </Card>
-  <Card title="Tidy up when prompted" icon="broom">
-    When a run says learnings are not reaching the agent, run `agentuse learnings tidy`, proven ones become permanent parts of your agent file
+  <Card title="Scope free-form capture" icon="microscope">
+    When you do enable `custom`, say what is worth keeping *and* what to ignore. An unscoped evaluator finds something every run
   </Card>
-  <Card title="Use custom prompts" icon="microscope">
-    Tailor extraction to your domain with custom evaluation prompts
+  <Card title="Read the quarantine" icon="triangle-exclamation">
+    A quarantined rule names the instruction it collided with. That is usually a defect in the agent file worth fixing, not just a bad rule
   </Card>
-  <Card title="Graduate what you want in git" icon="code-branch">
-    Learnings live outside your repository, so let the tidy-up graduate proven ones into the agent file, the only copy a teammate or a rebuilt machine will have
+  <Card title="Tidy after you edit the agent" icon="broom">
+    Rewriting instructions makes rules stale and holds them out of injection. `agentuse learnings tidy` re-vets them and graduates the proven ones
   </Card>
 </CardGroup>
 

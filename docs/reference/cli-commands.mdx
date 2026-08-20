@@ -363,7 +363,7 @@ agentuse sessions resume 01K... --comment "Please revise with citations" --remem
 
 The CLI uses local session access as the trust boundary, so approval resumes do not require a resume token.
 
-`--remember` saves the comment as a future instruction, and requires `--comment` (a non-empty one). Bare `--remember` reuses the comment text; passing a value (`--remember "..."`) overrides it. Passing `--remember` is itself the opt-in, so saving needs no `learning` config on the agent. The comment is still the feedback for this revision; the instruction is distilled from it, stored as `src:manual`, and injected into future runs once the agent has `learning.apply` enabled.
+`--remember` saves the comment as a future instruction, and requires `--comment` (a non-empty one). Bare `--remember` reuses the comment text; passing a value (`--remember "..."`) overrides it. Passing `--remember` is itself the opt-in, so saving needs no `learning` config on the agent. The comment is still the feedback for this revision; the instruction is distilled from it, stored as `src:manual`, and injected into future runs once the agent has `learning.apply` enabled. It is also vetted against the agent's own instructions: a note that contradicts them is still saved, but quarantined with the conflict named rather than injected.
 
 For a suspended non-approval `await_*` tool:
 
@@ -1146,7 +1146,7 @@ Static mode:
 - Explicit skills that don't exist on disk.
 - Explicit skills with no `allow` grants.
 - Commands mentioned in skill docs vs. what the agent has granted (advisory; not a permission manifest).
-- Learnings: how many of the stored ones are actually applied per run, and how many are over `learning.max` and so never reach the model, with `agentuse learnings tidy <file>` as the fix. It also prints the resolved `learnings file:` path, and warns when learnings are still sitting beside the agent file at the pre-0.17.0 location where nothing reads them.
+- Learnings: how many of the stored ones are actually applied per run, and how many are over `learning.max` and so never reach the model, with `agentuse learnings tidy <file>` as the fix. It also reports how many are **stale** (the agent instructions changed since they were vetted, so they are held out of injection until the next capture or tidy re-vets them), a `by channel:` breakdown of what captured them (`corrections`, `tool-errors`, `custom`, `agent`, or `legacy` for entries predating channels), and every **quarantined** entry with the reason it failed the vet. It prints the resolved `learnings file:` path, echoes any one-time notice about a legacy `learning:` form, and warns when learnings are still sitting beside the agent file at the pre-0.17.0 location where nothing reads them.
 
 `--last-run` mode:
 - Finds the latest non-subagent session for this agent.
@@ -1181,7 +1181,7 @@ The fix for either is the same shape: preload only what every run needs, and clo
 
 ## agentuse learnings
 
-Inspect and tidy an agent's stored learnings. Only the top few apply per run (15 by default, `learning.max`); anything past that is stored but never reaches the model. See the [Learning guide](/guides/learning).
+Inspect and tidy an agent's stored learnings. Only the top few apply per run (15 by default, `learning.max`); anything past that is stored but never reaches the model, and so are entries that are quarantined (failed the vet) or stale (the agent instructions changed since they were vetted). See the [Learning guide](/guides/learning).
 
 ### Syntax
 
@@ -1196,16 +1196,16 @@ agentuse learnings migrate [<agent-file>|--all] [--dry-run] [--keep-source|--del
 
 | Command | Description |
 |---------|-------------|
-| *(none)* | List every learning by status: applied, never reaches the agent, in the agent file, retired. |
-| `tidy` | Merge near-duplicates, sharpen learnings you have repeated, retire what is superseded, and make proven learnings permanent in the agent file. Applies immediately, then shows both diffs. Keeps making passes until another one would not help, up to five, and writes both files once at the end, so one run is one undo. Says what it is doing as it goes: a long list takes a few minutes. If it ends still over the cap, it accounts for every learning it left in force. |
-| `undo` | Restore the learnings file **and** the agent file to their state before the last tidy-up. |
+| *(none)* | List every learning by status: applied, never reaches the agent, stale (instructions changed, awaiting re-vet), quarantined (failed the vet, with the reason), in the agent file, retired. |
+| `tidy` | Re-vet every learning the agent instructions have moved out from under, merge near-duplicates, sharpen learnings you have repeated, retire what is superseded, and make proven learnings permanent in the agent file. Applies immediately, then shows both diffs. Keeps making passes until another one would not help, up to five, and writes both files once at the end, so one run is one undo. Says what it is doing as it goes: a long list takes a few minutes. If it ends still over the cap, it accounts for every learning it left in force. |
+| `undo` | Restore the learnings file **and** the agent file to their state before the last tidy-up, including anything that pass quarantined. |
 | `migrate` | Move learnings written before v0.17.0 from beside the agent file into the AgentUse state directory. Copies first, then asks once before deleting the originals; refuses a destination that already holds learnings rather than merging; also lists any `*.learnings.md` with no matching agent file as orphaned. |
 
 ### Options
 
 | Option | Description |
 |--------|-------------|
-| `-j, --json` | Machine-readable listing, including each rule's state and evidence counters. The `file` field is the resolved learnings path. |
+| `-j, --json` | Machine-readable listing. Top level: `file` (the resolved learnings path), `cap`, and `active` / `injected` / `dormant` / `stale` / `quarantined` counts. Each entry in `learnings` carries its full record, including `channel`, `injectedCount`, `approvedRuns`, `instructionsHash`, and `quarantineReason`, plus a resolved `state` and computed `injected` and `stale` flags. |
 | `--path` | Print the path of the learnings file and exit. |
 | `--edit` | Open the learnings file in `$EDITOR` (or `$VISUAL`), creating its directory if needed. |
 | `--dry-run` | (`tidy`) Show the plan and both diffs without writing anything. (`migrate`) Report what would move, including refusals, without writing anything. |

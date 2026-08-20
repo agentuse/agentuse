@@ -283,29 +283,50 @@ Additional instructions or context.
   Let the agent keep what reviewers tell it and apply the best of it to later
   runs. See the [Learning guide](/guides/learning).
 
-  `learning: true` is shorthand for `{ capture: true, apply: true }`.
+  `learning: true` is shorthand for `{ capture: true, apply: true }`, which
+  captures **human corrections only**. Free-form observation capture is opt-in
+  through `capture.custom` or `capture.agent`.
 
   ```yaml
   learning:
-    capture: true
+    capture:
+      addons: [tool-errors]     # typed, structurally-verified channels
+      custom: |                 # or: agent: ./capture.agentuse
+        Only keep instructions about tone and sourcing.
     apply: true
-    criteria: Only keep instructions about tone and sourcing.
     max: 20
     model: anthropic:claude-haiku-4-5
   ```
 
   | Key | Type | Description |
   |-----|------|-------------|
-  | `capture` | boolean | Distil reviewer feedback into stored instructions. Default `true` |
-  | `apply` | boolean | Inject stored instructions into future runs. Default `true` |
-  | `criteria` | string | What is worth keeping, in your own words |
-  | `max` | number | How many learnings may reach the model per run. 1-50, default 15. `agentuse doctor` shows what this costs and how many are stored but never injected |
-  | `model` | string | Helper model used for capture and `agentuse learnings tidy`. Defaults to the agent's own model |
+  | `capture` | boolean \| object | `false` disables capture. `true` (or `{}`) captures human corrections only: approval comments, `--remember`, manual add. The object form adds channels. Default `true` |
+  | `capture.addons` | string[] | Channels verified structurally in code rather than by prompt. `tool-errors` (failed call → corrected call → confirmed success) is the only entry today. Default `[]` |
+  | `capture.custom` | string | What is worth keeping, in your own words. Enables free-form observation capture through the built-in evaluator, scoped by this text. Mutually exclusive with `agent` |
+  | `capture.agent` | string | Path to an `.agentuse` file that replaces the built-in evaluator, relative to this agent file, the same pattern as `verify.judge`. Its candidates are still vetted. Mutually exclusive with `custom` |
+  | `apply` | boolean | Inject stored, vetted, active learnings into future runs. Default `true` |
+  | `max` | number | How many learnings this agent keeps, and so how many may reach the model per run. 1-50, default 15. `agentuse doctor` shows what this costs and how many are stored but never injected |
+  | `model` | string | Helper model used for capture, vetting, and `agentuse learnings tidy`. Defaults to the agent's own model |
+
+  <Warning>
+    `criteria` was removed in v0.18.0 and is a hard parse error:
+
+    ```
+    "criteria" was removed — free-form capture is opt-in now. To restore scoped free-form capture, move it to capture: { custom: "..." }
+    ```
+
+    Setting both `custom` and `agent` is likewise a parse error.
+  </Warning>
 
   <Note>
-    `file` and `evaluate` were removed and are now rejected by name at parse
-    time, e.g. `Unrecognized key(s) in object: 'file'`. Learnings live in the
-    AgentUse state directory (`agentuse learnings migrate --all` moves older
+    Boolean `capture: true` still parses, but its meaning narrowed in v0.18.0
+    from free-form auto-capture to corrections only. An agent carrying it (or
+    `learning: true`) warns once at parse time and runs the narrower behaviour;
+    `agentuse doctor` echoes the notice.
+
+    `file` and `evaluate` were removed in v0.17.0 and are rejected by name at
+    parse time, e.g. `Unrecognized key(s) in object: 'file'`. Learnings live in
+    the AgentUse state directory (`agentuse learnings migrate --all` moves older
     ones), and an agent that used `evaluate` to capture without applying should
     now set `apply: false`.
   </Note>
