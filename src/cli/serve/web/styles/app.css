@@ -3304,7 +3304,10 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .learnings-badge.is-applied { color: var(--success, #4ade80); border-color: currentColor; }
 .learnings-badge.is-dormant { color: var(--warning, #fbbf24); border-color: currentColor; }
 .learnings-badge.is-graduated { color: var(--accent, #60a5fa); border-color: currentColor; }
+.learnings-badge.is-quarantined { color: var(--danger, #f87171); border-color: currentColor; }
 .learnings-item.is-dormant .learnings-text { opacity: 0.6; }
+.learnings-item.is-quarantined .learnings-text { opacity: 0.75; }
+.learnings-quarantine-reason { color: var(--danger, #f87171); font-size: 12px; }
 
 /* The banner's action is an anchor, not a button: the run lives on its own
    page. Styled as the primary control it is.

@@ -10,6 +10,9 @@ import { getProjectDirSync } from '../storage/paths';
 import { helperSystemPrompt, type HelperSystemPrompt } from '../utils/anthropic';
 import { LearningStore, withLearningFileLock } from './store';
 import { activeLearnings, effectiveCap, rankLearnings } from './ranking';
+import { hashInstructions, isStaleAgainst } from './contract';
+import { vetCandidates, describeVetFailure } from './vet';
+import type { LearningDraft } from './types';
 import { LEARNED_BLOCK_END, LEARNED_BLOCK_START, agentFileIsWritable, parseLearnedBlock, spliceLearnedBlock } from './graduate';
 import type { PermanentRule } from './graduate';
 import type { Learning, LearningCategory, LearningConfig } from './types';
@@ -172,7 +175,7 @@ export interface TidyProgress {
 }
 
 export interface ConsolidationChange {
-  kind: 'merge' | 'rewrite' | 'compress' | 'retire' | 'graduate' | 'drop-permanent' | 'merge-permanent' | 'rewrite-permanent';
+  kind: 'merge' | 'rewrite' | 'compress' | 'retire' | 'graduate' | 'quarantine' | 'drop-permanent' | 'merge-permanent' | 'rewrite-permanent';
   /** Titles involved, for the human-readable summary. */
   titles: string[];
   why: string;
@@ -350,7 +353,7 @@ function ageInDays(learning: Learning, now: number): number {
 export function isGraduationEligible(learning: Learning): boolean {
   return learning.approvedRuns >= GRADUATE_MIN_APPROVED_RUNS
     || learning.reasserted > 0
-    || learning.appliedCount >= GRADUATE_MIN_APPLIED_RUNS;
+    || learning.injectedCount >= GRADUATE_MIN_APPLIED_RUNS;
 }
 
 /**
@@ -383,7 +386,7 @@ function inventoryEntry(learning: Learning, now: number): string {
   const flags: string[] = [weight];
   if (learning.reasserted > 0) flags.push(`repeated by a human ${learning.reasserted}x`);
   if (learning.approvedRuns > 0) flags.push(`in force across ${learning.approvedRuns} approved runs`);
-  if (learning.appliedCount > 0) flags.push(`applied in ${learning.appliedCount} runs`);
+  if (learning.injectedCount > 0) flags.push(`applied in ${learning.injectedCount} runs`);
   flags.push(`${Math.round(ageInDays(learning, now))}d old`);
   // The full text is below, but nothing drew attention to its length, and this
   // pass was framed purely as a COUNT problem — get the set to `cap`. A 485-word
@@ -1067,7 +1070,7 @@ export function validateDecisions(
       out.rejected.push(
         `graduate ${target.id}: not observed enough yet `
         + `(${target.approvedRuns} approved runs, needs ${GRADUATE_MIN_APPROVED_RUNS}; `
-        + `or ${target.appliedCount} runs in force, needs ${GRADUATE_MIN_APPLIED_RUNS})`
+        + `or ${target.injectedCount} runs in force, needs ${GRADUATE_MIN_APPLIED_RUNS})`
       );
       continue;
     }
@@ -1300,7 +1303,7 @@ export function explainRemaining(
 
   for (const learning of active) {
     if (isGraduationEligible(learning)) eligible++;
-    else closest = Math.max(closest, learning.appliedCount);
+    else closest = Math.max(closest, learning.injectedCount);
 
     // First reason wins, so order is the claim. Authorship is no longer among
     // them: a rule a human wrote is weighed heavily but can be retired by a
@@ -1420,7 +1423,12 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
   //
   // Batched only to bound how much cross-comparison one call holds in mind; the
   // batches run concurrently, so a bigger file costs tokens rather than time.
-  const ordered = orderForBatching(rankLearnings(active));
+  //
+  // Typed tool-error records are excluded: they dedupe structurally by
+  // (tool, failure signature) at capture time and never go through the
+  // free-text merge path — a model "merging" two mechanical recovery records
+  // is how their structural identity gets destroyed.
+  const ordered = orderForBatching(rankLearnings(active.filter((l) => l.channel !== 'tool-errors')));
   const batches: Learning[][] = [];
   for (let i = 0; i < ordered.length; i += DECIDE_BATCH_SIZE) {
     batches.push(ordered.slice(i, i + DECIDE_BATCH_SIZE));
@@ -1624,7 +1632,7 @@ async function tidyRound(current: Learning[], active: Learning[], ctx: RoundCont
     // Max, not sum: a merged rule was injected on the runs where ANY of its
     // parts was, not on the sum of those runs, and inflating the count would let
     // a merge manufacture the evidence that graduates it.
-    keep.appliedCount = Math.max(keep.appliedCount, ...merge.absorbed.map((l) => l.appliedCount));
+    keep.injectedCount = Math.max(keep.injectedCount, ...merge.absorbed.map((l) => l.injectedCount));
     keep.approvedRuns = Math.max(keep.approvedRuns, ...merge.absorbed.map((l) => l.approvedRuns));
     keep.reasserted = merge.absorbed.reduce((sum, l) => sum + l.reasserted, keep.reasserted);
     keep.extractedAt = ctx.nowIso;
@@ -1878,7 +1886,15 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // corrections of several hundred words, because neither pile was counted in
   // anything but entries.
   const permanentBefore = parseLearnedBlock(agentBefore);
-  if (active.length <= cap && permanentBefore.length < 2 && !active.some(isOverlong)) return base;
+  // Entries never vetted against the current contract: legacy ones with no
+  // hash (pre-0.18 files), and stale ones whose recorded hash no longer
+  // matches. Both are a reason to run on their own — the first tidy after an
+  // upgrade is what backfills the hash and vets the legacy set.
+  const currentHash = hashInstructions(options.agentInstructions);
+  const needsRevet = active.filter(
+    (l) => l.instructionsHash === undefined || isStaleAgainst(currentHash, l.instructionsHash),
+  );
+  if (active.length <= cap && permanentBefore.length < 2 && !active.some(isOverlong) && needsRevet.length === 0) return base;
 
   // Helper calls run on the agent's own model unless overridden: whatever
   // provider and auth the agent already works with is guaranteed to work here,
@@ -1916,6 +1932,41 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   let lastSample = '';
   let rounds = 0;
   let stoppedEarly = false;
+
+  // The re-vet pass, before any merging: entries the contract has moved out
+  // from under (or that were never vetted at all) are checked against the
+  // current instructions. Passes are re-stamped with the current hash;
+  // failures are quarantined with the reason — never deleted — and drop out of
+  // the rounds below via activeLearnings. Applied to `working`, not `stored`:
+  // the commit-time reconcile treats `stored` as the untouched baseline, and a
+  // change already present in the baseline would be discarded as "unchanged".
+  let revetStamped = 0;
+  if (needsRevet.length > 0) {
+    try {
+      const revetIds = new Set(needsRevet.map((l) => l.id));
+      const verdicts = await vetCandidates({
+        drafts: needsRevet as LearningDraft[],
+        agentInstructions: options.agentInstructions,
+        activeRules: active.filter((l) => !revetIds.has(l.id)),
+        model,
+      });
+      for (const entry of working) {
+        const verdict = revetIds.has(entry.id) ? verdicts.get(entry.id) : undefined;
+        if (!verdict) continue; // no verdict → left unstamped, re-vetted next pass
+        if (verdict.verdict === 'pass') {
+          entry.instructionsHash = currentHash;
+          revetStamped++;
+        } else {
+          entry.state = 'quarantined';
+          entry.quarantineReason = describeVetFailure(verdict);
+          entry.instructionsHash = currentHash;
+          changes.push({ kind: 'quarantine', titles: [entry.title], why: entry.quarantineReason });
+        }
+      }
+    } catch (error) {
+      logger.debug(`[Learning] Tidy re-vet failed, entries left unstamped: ${(error as Error).message}`);
+    }
+  }
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     const before = activeLearnings(working);
@@ -2104,7 +2155,9 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
     },
   };
 
-  if (options.dryRun || changes.length === 0) return result;
+  // A hash-stamp-only pass has no change entries but still has to write, or
+  // the same entries get re-vetted (one model call each) on every later press.
+  if (options.dryRun || (changes.length === 0 && revetStamped === 0)) return result;
 
   const undoId = new Date(now).toISOString().replace(/[:.]/g, '-');
   const committed = await withLearningFileLock(store.filePath, async () => {

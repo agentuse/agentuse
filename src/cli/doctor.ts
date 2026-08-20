@@ -15,7 +15,7 @@ import { parseBashCommand } from '../tools/bash-parser.js';
 import { looksEffectful, grantsUnnamedSubcommands, grantsArbitraryCode, commandHead } from '../tools/effectful-heuristic.js';
 import { isEffectful } from '../runner/approval-lease.js';
 import { previewLearningPrompt } from '../runner/system-messages.js';
-import { resolveLearningFilePath, strandedLearningsNotice } from '../learning/store.js';
+import { LearningStore, resolveLearningFilePath, strandedLearningsNotice } from '../learning/store.js';
 import type { Message, Part, SessionInfo, ToolPart } from '../session/types.js';
 
 interface DoctorOptions {
@@ -346,12 +346,21 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
     }
   }
   if (learningPreview) {
-    const dormant = learningPreview.total - learningPreview.count;
+    const dormant = learningPreview.total - learningPreview.count - learningPreview.stale;
     console.log(`  learned guidelines: ${learningPreview.count} of ${learningPreview.total} applied, ${formatEstimatedTokens(estimatedLearningTokens)} tokens/model request`);
     if (dormant > 0) {
       console.log(chalk.yellow(`  ${dormant} stored learning${dormant === 1 ? '' : 's'} never reach the model: only the top ${learningPreview.cap} are injected per run.`));
       console.log(chalk.gray(`  Fix: agentuse learnings tidy ${agentFilePath}`));
     }
+    if (learningPreview.stale > 0) {
+      console.log(chalk.yellow(`  ${learningPreview.stale} learning${learningPreview.stale === 1 ? ' is' : 's are'} stale: the instructions changed since they were vetted. They are held out of injection until the next capture or tidy re-vets them.`));
+    }
+  }
+  // Legacy `learning:` forms that still parse with a narrowed meaning. The
+  // parse-time warning prints once and scrolls away; doctor is where the
+  // mapping stays discoverable.
+  for (const notice of agent.configNotices ?? []) {
+    console.log(chalk.yellow(`  ${notice}`));
   }
   // The corrections file no longer sits beside the agent, and its path carries a
   // project digest nobody can construct by hand, so name it here — including for
@@ -359,6 +368,29 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
   // the actual question.
   if (agent.config.learning) {
     console.log(chalk.gray(`  learnings file: ${resolveLearningFilePath(agentFilePath, projectContext.stateRoot)}`));
+    // Per-channel and quarantine counts: "capture is producing junk" should be
+    // measurable here, not anecdotal.
+    try {
+      const storedLearnings = await LearningStore.fromAgentFile(agentFilePath, projectContext.stateRoot, agent.name).load();
+      const quarantined = storedLearnings.filter((l) => l.state === 'quarantined');
+      const byChannel = new Map<string, number>();
+      for (const l of storedLearnings) {
+        if (l.state === 'retired') continue;
+        const channel = l.channel ?? 'legacy';
+        byChannel.set(channel, (byChannel.get(channel) ?? 0) + 1);
+      }
+      if (byChannel.size > 0) {
+        console.log(chalk.gray(`  by channel: ${[...byChannel.entries()].map(([channel, n]) => `${channel}:${n}`).join(', ')}`));
+      }
+      if (quarantined.length > 0) {
+        console.log(chalk.yellow(`  ${quarantined.length} learning${quarantined.length === 1 ? '' : 's'} quarantined (failed the vet, never injected):`));
+        for (const q of quarantined) {
+          console.log(chalk.gray(`    [${q.category}] ${q.title}${q.quarantineReason ? ` — ${q.quarantineReason}` : ''}`));
+        }
+      }
+    } catch {
+      // Counts are a diagnostic nicety; an unreadable store is reported elsewhere.
+    }
   }
   if (strandedLearnings) {
     for (const line of strandedLearnings.split('\n')) console.log(chalk.yellow(`  ${line}`));

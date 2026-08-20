@@ -10,6 +10,8 @@ import { resolveProjectContext } from '../utils/project.js';
 import {
   LearningStore,
   activeLearnings,
+  hashInstructions,
+  isStaleAgainst,
   applyLearningMigration,
   consolidateLearnings,
   deleteMigrationSource,
@@ -184,13 +186,16 @@ async function openInEditor(filePath: string): Promise<void> {
 function statusLabel(learning: Learning, injectedIds: Set<string>): string {
   if (learning.state === 'graduated') return chalk.cyan('in agent file');
   if (learning.state === 'retired') return chalk.gray('retired');
+  if (learning.state === 'quarantined') return chalk.red('quarantined');
   return injectedIds.has(learning.id) ? chalk.green('applied') : chalk.yellow('dormant');
 }
 
 /** Evidence, shown so a user can see WHY a rule is or is not close to becoming
- *  permanent instead of having to trust the tidy-up's judgement. */
+ *  permanent instead of having to trust the tidy-up's judgement. `injected`
+ *  counts cost (times sent to the model), `approved` counts value. */
 function evidence(learning: Learning): string {
-  const bits = [`src:${learning.source}`, `applied:${learning.appliedCount}`];
+  const bits = [`src:${learning.source}`, `injected:${learning.injectedCount}`];
+  if (learning.channel) bits.push(`ch:${learning.channel}`);
   if (learning.approvedRuns > 0) bits.push(`approved:${learning.approvedRuns}`);
   if (learning.reasserted > 0) bits.push(chalk.magenta(`repeated:${learning.reasserted}`));
   if (isGraduationEligible(learning) && (learning.state ?? 'active') === 'active') bits.push('ready to make permanent');
@@ -237,6 +242,7 @@ function printResult(result: ConsolidationResult, dryRun: boolean): void {
     compress: 'shortened',
     retire: 'retire',
     graduate: 'permanent',
+    quarantine: 'quarantine',
     'merge-permanent': 'agent file, combined',
     'rewrite-permanent': 'agent file, tightened',
     'drop-permanent': 'agent file, removed',
@@ -308,8 +314,15 @@ export function createLearningsCommand(): Command {
 
       const stored = await store.load();
       const cap = effectiveCap(agent.config.learning);
-      const { injected, dormant } = partitionLearnings(stored, cap);
+      // Stale entries (contract hash mismatch) are held out of injection until
+      // re-vetted; mirror the run's own partition so this listing never claims
+      // "applied" for a rule the next run will actually skip.
+      const currentHash = hashInstructions(agent.instructions);
+      const stale = activeLearnings(stored).filter((l) => isStaleAgainst(currentHash, l.instructionsHash));
+      const staleIds = new Set(stale.map((l) => l.id));
+      const { injected, dormant } = partitionLearnings(stored.filter((l) => !staleIds.has(l.id)), cap);
       const injectedIds = new Set(injected.map((l) => l.id));
+      const quarantined = stored.filter((l) => l.state === 'quarantined');
 
       if (options.json) {
         console.log(JSON.stringify({
@@ -318,10 +331,13 @@ export function createLearningsCommand(): Command {
           active: activeLearnings(stored).length,
           injected: injected.length,
           dormant: dormant.length,
+          stale: stale.length,
+          quarantined: quarantined.length,
           learnings: stored.map((l) => ({
             ...l,
             state: l.state ?? 'active',
             injected: injectedIds.has(l.id),
+            stale: staleIds.has(l.id),
           })),
         }, null, 2));
         return;
@@ -335,6 +351,8 @@ export function createLearningsCommand(): Command {
       const groups: { label: string; items: Learning[] }[] = [
         { label: `Applied (${injected.length} of ${cap})`, items: injected },
         { label: `Never reach this agent (${dormant.length})`, items: dormant },
+        { label: `Stale — instructions changed, awaiting re-vet (${stale.length})`, items: stale },
+        { label: `Quarantined (${quarantined.length})`, items: quarantined },
         { label: 'In the agent file', items: stored.filter((l) => l.state === 'graduated') },
         { label: 'Retired', items: stored.filter((l) => l.state === 'retired') },
       ];
@@ -346,9 +364,16 @@ export function createLearningsCommand(): Command {
         for (const l of group.items) {
           console.log(`  ${statusLabel(l, injectedIds)}  [${l.category}] ${l.title}`);
           console.log(chalk.gray(`    ${evidence(l)}  ·  ${l.extractedAt.slice(0, 10)}  ·  id:${l.id}`));
+          if (l.state === 'quarantined' && l.quarantineReason) {
+            console.log(chalk.red(`    why: ${l.quarantineReason}`));
+          }
         }
       }
 
+      if (quarantined.length > 0) {
+        console.log(chalk.yellow(`\n${quarantined.length} learning${quarantined.length === 1 ? '' : 's'} quarantined: failed the vet against this agent's instructions. They are never injected.`));
+        console.log(chalk.gray(`Review the reasons above, then fix the agent file or discard the rule.`));
+      }
       if (dormant.length > 0) {
         console.log(chalk.yellow(`\n${dormant.length} learning${dormant.length === 1 ? '' : 's'} never reach this agent: only the top ${cap} apply per run.`));
         console.log(chalk.gray(`Fix: agentuse learnings tidy ${agentFileArg}`));

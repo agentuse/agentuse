@@ -2590,7 +2590,7 @@ async function runInternalWorker() {
     try {
       const agent = await parseAgent(agentPath);
       return agent.config.learning
-        ? { capture: agent.config.learning.capture, apply: agent.config.learning.apply }
+        ? { capture: Boolean(agent.config.learning.capture), apply: agent.config.learning.apply }
         : undefined;
     } catch (error) {
       logger.debug(`Failed to read learning config for ${agentPath}: ${(error as Error).message}`);

@@ -5717,6 +5717,7 @@ export function createServeCommand(): Command {
               dormant: dormant.length,
               graduated: all.filter((l) => l.state === 'graduated').length,
               retired: all.filter((l) => l.state === 'retired').length,
+              quarantined: all.filter((l) => l.state === 'quarantined').length,
             },
             learnings: all
               .filter((l) => opts.forSessionId === undefined || l.sessionId === opts.forSessionId)
@@ -5730,7 +5731,9 @@ export function createServeCommand(): Command {
                 extractedAt: l.extractedAt,
                 ...(l.sessionId && { sessionId: l.sessionId }),
                 state: l.state ?? 'active',
-                appliedCount: l.appliedCount,
+                injectedCount: l.injectedCount,
+                ...(l.channel && { channel: l.channel }),
+                ...(l.quarantineReason && { quarantineReason: l.quarantineReason }),
                 reasserted: l.reasserted,
                 approvedRuns: l.approvedRuns,
                 injected: injectedIds.has(l.id),

@@ -6,7 +6,7 @@ import { parseScheduleExpression, formatScheduleHuman } from '../scheduler/parse
 import { parseAgent, type ParsedAgent } from '../parser';
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
 import { logger } from '../utils/logger';
-import { LearningStore, effectiveCap, partitionLearnings } from '../learning/index.js';
+import { LearningStore, effectiveCap, hashInstructions, isStaleAgainst, partitionLearnings } from '../learning/index.js';
 import { addAnthropicIdentity, isAnthropicModel } from '../utils/anthropic';
 
 /**
@@ -274,6 +274,10 @@ export interface LearningPromptResult {
   injectedIds: string[];
   /** The cap in force, for messages that name it. */
   cap: number;
+  /** Active entries skipped because the contract changed since they were
+   *  vetted (instruction-hash mismatch). Re-vetted by the next capture or
+   *  tidy pass rather than silently injected. */
+  stale: number;
 }
 
 /**
@@ -298,12 +302,27 @@ async function renderLearningPrompt(
       return undefined;
     }
 
+    // A learning whose recorded contract hash no longer matches the agent's
+    // current instructions is STALE: the contract was rewritten since it was
+    // vetted, and injecting it unexamined against a contract it has never seen
+    // is the failure mode hash provenance exists to stop. Stale entries are
+    // held out here and re-vetted by the next capture or tidy pass, which
+    // either re-stamps them (they still hold) or quarantines them with the
+    // conflict named. Legacy entries with no hash at all are NOT stale — they
+    // predate provenance and stay injectable until a pass backfills them.
+    const currentHash = hashInstructions(agent.instructions);
+    const staleIds = new Set(
+      learnings
+        .filter((l) => (l.state ?? 'active') === 'active' && isStaleAgainst(currentHash, l.instructionsHash))
+        .map((l) => l.id),
+    );
+
     // Ranking (including the recency tiebreak that keeps a fresh correction from
     // starving behind older equal-signal ones) lives in ../learning/ranking so
     // the capture evaluator can partition the same way.
     const cap = effectiveCap(agent.config.learning);
-    const { injected, dormant } = partitionLearnings(learnings, cap);
-    const active = injected.length + dormant.length;
+    const { injected, dormant } = partitionLearnings(learnings.filter((l) => !staleIds.has(l.id)), cap);
+    const active = injected.length + dormant.length + staleIds.size;
 
     if (injected.length === 0) {
       return undefined;
@@ -322,16 +341,17 @@ ${injected.map(l => `- [${l.category}] ${l.instruction}`).join('\n')}`;
 
     if (recordUsage) {
       // Track usage (non-blocking)
-      store.incrementApplied(injected.map(l => l.id)).catch(err => {
-        logger.debug(`[Learning] Failed to increment applied count: ${err.message}`);
+      store.incrementInjected(injected.map(l => l.id)).catch((err: Error) => {
+        logger.debug(`[Learning] Failed to increment injected count: ${err.message}`);
       });
       logger.debug(
         `[Learning] Injected ${injected.length} of ${active} active learning(s)`
         + (dormant.length > 0 ? `; ${dormant.length} dormant past the ${cap}-learning cap` : '')
+        + (staleIds.size > 0 ? `; ${staleIds.size} stale (instructions changed) held for re-vetting` : '')
       );
     }
 
-    return { prompt, count: injected.length, total: active, injectedIds: injected.map(l => l.id), cap };
+    return { prompt, count: injected.length, total: active, injectedIds: injected.map(l => l.id), cap, stale: staleIds.size };
   } catch (error) {
     logger.debug(`[Learning] Failed to load learnings: ${(error as Error).message}`);
     return undefined;

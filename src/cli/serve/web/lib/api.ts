@@ -213,7 +213,9 @@ export function fetchSessionContext(
 
 export type SessionLearningSource = 'auto' | 'approval' | 'manual';
 
-export type LearningState = 'active' | 'graduated' | 'retired';
+export type LearningState = 'active' | 'graduated' | 'retired' | 'quarantined';
+
+export type LearningChannel = 'corrections' | 'tool-errors' | 'custom' | 'agent';
 
 export interface SessionLearning {
   id: string;
@@ -226,7 +228,12 @@ export interface SessionLearning {
   /** Session the learning was captured in; absent for legacy entries and agent-level rules. */
   sessionId?: string;
   state?: LearningState;
-  appliedCount?: number;
+  /** Times sent to the model — cost, not evidence it worked (that is approvedRuns). */
+  injectedCount?: number;
+  /** Capture channel; absent for entries stored before channels existed. */
+  channel?: LearningChannel;
+  /** Why the vet set this entry aside. Present only when state is 'quarantined'. */
+  quarantineReason?: string;
   reasserted?: number;
   approvedRuns?: number;
   /** Whether this rule is one of the ones actually put in front of the model. */
@@ -241,10 +248,12 @@ export interface LearningSummary {
   dormant: number;
   graduated: number;
   retired: number;
+  /** Entries the vet set aside with a reason. Absent on older responses. */
+  quarantined?: number;
 }
 
 export interface TidyChange {
-  kind: 'merge' | 'rewrite' | 'retire' | 'graduate';
+  kind: 'merge' | 'rewrite' | 'compress' | 'retire' | 'graduate' | 'quarantine' | 'drop-permanent' | 'merge-permanent' | 'rewrite-permanent';
   titles: string[];
   why: string;
 }
