@@ -1,5 +1,6 @@
 import { generatePKCE } from "@openauthjs/openauth/pkce";
 import { AuthStorage } from "./storage.js";
+import type { CodexOAuthTokens, OAuthTokens } from "./types.js";
 
 export namespace AnthropicAuth {
   const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -63,6 +64,21 @@ export namespace AnthropicAuth {
 
     // Priority 2: Fall back to file-based storage. Refresh is locked across
     // processes because OAuth refresh tokens can rotate.
+    //
+    // Double-checked: the custom fetch calls this on every provider request,
+    // and the lock is a mkdir/rm on a directory shared by every worker, so
+    // taking it per request stalled concurrent callers by >100ms each. A token
+    // that is nowhere near expiry needs no lock at all, so check that first and
+    // only pay for the lock when a refresh may actually be due. The same check
+    // still runs inside the lock, so a refresh is performed exactly once.
+    let cached = await AuthStorage.getOAuthCached("anthropic");
+    if (!usable(cached)) {
+      // Our copy looks stale, but another process may have refreshed it
+      // already. Re-read before concluding that we have to take the lock.
+      cached = await AuthStorage.getOAuthCached("anthropic", { refresh: true });
+    }
+    if (usable(cached)) return cached.access;
+
     let result: AccessResult;
     try {
       result = await AuthStorage.updateOAuth<AccessResult>("anthropic", async (info) => {
@@ -93,6 +109,13 @@ export namespace AnthropicAuth {
     // `auth login` for what is usually a blip, and hides a real one.
     if (result.kind === "refresh-failed") throw new RefreshFailed(result.reason);
     return result.kind === "ok" ? result.access : undefined;
+  }
+
+  /** Stored token good for long enough that no refresh is due yet. */
+  function usable(info: OAuthTokens | CodexOAuthTokens | undefined): info is OAuthTokens {
+    return (
+      info?.type === "oauth" && !!info.access && info.expires > Date.now() + REFRESH_BUFFER_MS
+    );
   }
 
   type AccessResult =

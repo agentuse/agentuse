@@ -1,8 +1,10 @@
 import { AuthStorage } from "./storage.js";
+import type { CodexOAuthTokens, OAuthTokens } from "./types.js";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER = "https://auth.openai.com";
 const REDIRECT_URI = "http://localhost:1455/auth/callback";
+const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 interface PkceCodes {
   verifier: string;
@@ -77,6 +79,13 @@ function extractAccountId(tokens: TokenResponse): string | undefined {
     return claims ? extractAccountIdFromClaims(claims) : undefined;
   }
   return undefined;
+}
+
+/** Stored token good for long enough that no refresh is due yet. */
+function usable(info: OAuthTokens | CodexOAuthTokens | undefined): info is CodexOAuthTokens {
+  return (
+    info?.type === "codex-oauth" && !!info.access && info.expires > Date.now() + REFRESH_BUFFER_MS
+  );
 }
 
 async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
@@ -156,11 +165,24 @@ export namespace CodexAuth {
 
   export async function access(): Promise<{ token: string; accountId: string | undefined } | undefined> {
     try {
+      // Double-checked: the custom fetch calls this on every provider request,
+      // and the lock is a mkdir/rm on a directory shared by every worker, so
+      // taking it per request stalled concurrent callers by >100ms each. A
+      // token nowhere near expiry needs no lock; the same check runs again
+      // inside the lock, so a refresh still happens exactly once.
+      let cached = await AuthStorage.getOAuthCached("openai");
+      if (!usable(cached)) {
+        // Our copy looks stale, but another process may have refreshed it
+        // already. Re-read before concluding that we have to take the lock.
+        cached = await AuthStorage.getOAuthCached("openai", { refresh: true });
+      }
+      if (usable(cached)) return { token: cached.access, accountId: cached.accountId };
+
       return await AuthStorage.updateOAuth("openai", async (info) => {
         if (!info || info.type !== "codex-oauth") return { value: undefined };
 
         // Check if token is still valid (with 5 minute buffer)
-        if (info.access && info.expires > Date.now() + 5 * 60 * 1000) {
+        if (info.access && info.expires > Date.now() + REFRESH_BUFFER_MS) {
           return { value: { token: info.access, accountId: info.accountId } };
         }
 
