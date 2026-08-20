@@ -216,7 +216,7 @@ export function renderMarkdownArtifact(raw: string): string {
   let data: Record<string, unknown> = {};
   let content = raw;
   try {
-    const parsed = matter(raw);
+    const parsed = matter(raw, {});
     data = (parsed.data ?? {}) as Record<string, unknown>;
     content = parsed.content;
   } catch {

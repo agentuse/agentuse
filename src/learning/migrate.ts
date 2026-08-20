@@ -71,7 +71,7 @@ function hash(content: string): string {
 async function migrationSource(agentFilePath: string): Promise<string> {
   try {
     const raw = await readFile(agentFilePath, 'utf-8');
-    const learning = matter(raw).data?.learning as { file?: unknown } | undefined;
+    const learning = matter(raw, {}).data?.learning as { file?: unknown } | undefined;
     if (typeof learning?.file === 'string' && learning.file.trim()) {
       return resolve(dirname(agentFilePath), learning.file);
     }

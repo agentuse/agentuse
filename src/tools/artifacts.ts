@@ -58,7 +58,7 @@ function isInside(parent: string, child: string): boolean {
 /** Merge title/tags into a markdown file's YAML frontmatter (explicit args win). */
 function applyFrontmatter(content: string, title?: string, tags?: string[]): string {
   if (title === undefined && (!tags || tags.length === 0)) return content;
-  const parsed = matter(content);
+  const parsed = matter(content, {});
   const data: Record<string, unknown> = { ...parsed.data };
   if (title !== undefined) data.title = title;
   if (tags && tags.length > 0) data.tags = tags;
