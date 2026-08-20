@@ -787,11 +787,17 @@ export class SessionManager {
    * back to the store walk, and throw when the part is genuinely absent.
    */
   async updatePart(sessionID: string, agentId: string, messageID: string, partID: string, updates: Partial<Part>): Promise<void> {
+    const state = await getStorageState();
     let sessionPath = this.knownSessionPath(sessionID, agentId);
     // New path structure: {messageID}/part/{partID}.json
     let key = `${sessionPath}/${messageID}/part/${partID}`;
 
-    if (!(await readJSON<Part>(key))) {
+    // Existence probe only. The serialized write below re-reads and merges the
+    // part, so parsing it here as well doubles the JSON work on the hottest
+    // write path in the process: every streaming debounce tick and every tool
+    // state transition lands here.
+    const partExists = await fs.access(path.join(state.dir, `${key}.json`)).then(() => true, () => false);
+    if (!partExists) {
       const resolved = await this.resolveSessionDir(sessionID, agentId);
       if (resolved !== sessionPath) {
         sessionPath = resolved;
@@ -1574,6 +1580,22 @@ export class SessionManager {
   async getSessionDirectory(sessionID: string, agentId: string): Promise<string> {
     const state = await getStorageState();
     return path.join(state.dir, this.knownSessionPath(sessionID, agentId));
+  }
+
+  /**
+   * Absolute on-disk directory for a session id, without needing its agent id.
+   *
+   * Same resolution order as findSession — cheap top-level probe, then the
+   * durable index, then a full scan only when the index cannot answer — but it
+   * returns just the path. Callers outside this class (gate artifact snapshots
+   * and the artifact viewer) used to readdir the entire store to find a session
+   * dir, which is seconds on a store with thousands of sessions and was paid per
+   * approval gate and per artifact request.
+   */
+  async resolveSessionDirectoryById(sessionID: string): Promise<string | null> {
+    const state = await getStorageState();
+    const sessionPath = await this.resolveSessionDirById(state.dir, sessionID);
+    return sessionPath ? path.join(state.dir, sessionPath) : null;
   }
 
   /**

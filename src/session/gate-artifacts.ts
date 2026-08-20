@@ -15,7 +15,8 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createHash } from 'crypto';
-import { getSessionStorageDir } from '../storage/index.js';
+import { getSessionStorageDir, getStorageState } from '../storage/index.js';
+import { SessionManager } from './manager.js';
 import { logger } from '../utils/logger.js';
 
 export interface GateArtifactSnapshot {
@@ -112,9 +113,38 @@ export function collectGateArtifactPaths(input: Record<string, unknown>): string
   return collectGateArtifactCandidates(input).map((c) => c.path);
 }
 
-/** Resolve the on-disk session dir (`<storage>/session/<id>-<agent>`) by id. */
+/**
+ * Ask SessionManager's index-based resolver, or `undefined` when it cannot
+ * answer for this store: storage is bound to a different project root, was
+ * never initialized in this process, or a session file on the way is corrupt.
+ * Only then is the caller's full walk worth paying for.
+ */
+async function indexedSessionDir(storageRoot: string, sessionId: string): Promise<string | null | undefined> {
+  try {
+    const state = await getStorageState();
+    if (state.dir !== storageRoot) return undefined;
+    return await new SessionManager().resolveSessionDirectoryById(sessionId);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve the on-disk session dir (`<storage>/session/<id>-<agent>`) by id.
+ *
+ * The durable session index maps every id — nested subagents included — to its
+ * directory for the cost of one small JSON read. The walk below readdirs every
+ * session in the store instead, which is seconds once a store holds thousands
+ * of them, and it is paid on every approval gate and every artifact request. So
+ * consult the index first and trust its answer, including its silence; walk
+ * only when the index could not speak for this store at all.
+ */
 async function findSessionDir(projectRoot: string, sessionId: string): Promise<string | null> {
   const storageRoot = await getSessionStorageDir(projectRoot);
+
+  const indexed = await indexedSessionDir(storageRoot, sessionId);
+  if (indexed !== undefined) return indexed;
+
   const walk = async (dir: string): Promise<string | null> => {
     const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
     const match = entries.find((entry) =>
@@ -207,7 +237,14 @@ export async function snapshotGateArtifacts(
   return snapshots;
 }
 
-/** Look for `<hash>` in this session dir's gate store, then in its descendants. */
+/**
+ * Look for `<hash>` in this session dir's gate store, then in its sub-agents'.
+ *
+ * Delegated sessions are the only descendants that own a gate store, and they
+ * live at `<session>/subagent/<id>-<agent>` (recursively). Descending into every
+ * other child would readdir the session's whole message and part tree on each
+ * artifact request to find nothing.
+ */
 async function findSnapshotUnder(dir: string, hash: string): Promise<string | null> {
   const gateDir = path.join(dir, GATE_MEDIA_DIR);
   const gateEntries = await fs.readdir(gateDir).catch(() => null);
@@ -215,10 +252,11 @@ async function findSnapshotUnder(dir: string, hash: string): Promise<string | nu
     const name = gateEntries.find((e) => e.startsWith(`${hash}.`) || e === hash);
     if (name) return path.join(gateDir, name);
   }
-  const children = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+  const subagentDir = path.join(dir, 'subagent');
+  const children = await fs.readdir(subagentDir, { withFileTypes: true }).catch(() => []);
   for (const entry of children) {
-    if (!entry.isDirectory() || entry.name === '.index' || entry.name === 'media') continue;
-    const found = await findSnapshotUnder(path.join(dir, entry.name), hash);
+    if (!entry.isDirectory()) continue;
+    const found = await findSnapshotUnder(path.join(subagentDir, entry.name), hash);
     if (found) return found;
   }
   return null;

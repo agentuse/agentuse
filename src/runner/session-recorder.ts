@@ -27,6 +27,21 @@ type StreamingPart = {
 type ReasoningStreamingPart = StreamingPart & { blockId?: string };
 
 /**
+ * A streamed part is rewritten in full on every flush, so a block that keeps
+ * growing costs O(length) bytes per flush and O(length²) over the block: at a
+ * flat 500ms tick a 32KB answer reads ~3.9MB and writes ~2MB to persist 32KB.
+ *
+ * Scale the flush interval with the accumulated length instead. Short blocks
+ * stay at the configured floor and remain responsive in the live view; long
+ * ones back off toward the ceiling, which is what bounds the quadratic. This
+ * only affects how often an in-progress part is checkpointed — finalizeText /
+ * finalizeReasoning still write the complete text immediately.
+ */
+const MAX_STREAM_FLUSH_MS = 5000;
+/** One flush per this many accumulated characters, until the ceiling caps it. */
+const STREAM_FLUSH_CHARS_PER_MS = 64;
+
+/**
  * The durable projection of normalized run events.
  *
  * This class is the only owner of streamed text/reasoning parts, tool lifecycle
@@ -52,6 +67,11 @@ export class SessionRecorder {
     }
     this.messageID = messageID;
     this.debounceMs = options.debounceMs ?? 500;
+  }
+
+  /** Debounce for the next checkpoint of a part that has accumulated `length` characters. */
+  private flushDelayMs(length: number): number {
+    return Math.max(this.debounceMs, Math.min(MAX_STREAM_FLUSH_MS, length / STREAM_FLUSH_CHARS_PER_MS));
   }
 
   private track<T>(promise: Promise<T>): Promise<T> {
@@ -103,7 +123,7 @@ export class SessionRecorder {
       }).catch((error) => logger.debug(`Failed to update reasoning part: ${error.message}`));
       this.track(updatePromise);
       this.reasoningUpdateTimer = null;
-    }, this.debounceMs);
+    }, this.flushDelayMs(part.text.length));
   }
 
   textDelta(text: string): void {
@@ -141,7 +161,7 @@ export class SessionRecorder {
       }).catch((error) => logger.debug(`Failed to update text part: ${error.message}`));
       this.track(updatePromise);
       this.textUpdateTimer = null;
-    }, this.debounceMs);
+    }, this.flushDelayMs(part.text.length));
   }
 
   async finalizeReasoning(): Promise<void> {
