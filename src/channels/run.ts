@@ -1,4 +1,3 @@
-import { loadSlackSdk } from '../slack/approval.js';
 import type { ParsedAgent } from '../parser';
 import type { RunAgentResult } from '../runner/types';
 import { logger } from '../utils/logger';
@@ -6,6 +5,7 @@ import { getSessionUrl } from '../tools/await-human';
 import {
   bestEffortClearSlackThreadStatus,
   bestEffortSlackThreadStatus,
+  getSlackWebClient,
   postSlackRootMessage,
   postSlackThreadMessages,
   updateSlackRootMessage,
@@ -256,7 +256,7 @@ async function sendSlackRunChannelMessage(channel: SlackChannel, options: RunCha
     return;
   }
 
-  const web = new (await loadSlackSdk()).WebClient(botToken);
+  const web = await getSlackWebClient(botToken);
   const message = await postSlackRootMessage(web, channelId, {
     channel: channelId,
     text: terminalText(options),
@@ -279,7 +279,7 @@ async function sendSlackRunStartChannelMessage(channel: SlackChannel, options: R
     return undefined;
   }
 
-  const web = new (await loadSlackSdk()).WebClient(botToken);
+  const web = await getSlackWebClient(botToken);
   const message = await postSlackRootMessage(web, channelId, {
     channel: channelId,
     text: `AgentUse run started: ${options.agent.name}`,
@@ -303,7 +303,7 @@ async function updateSlackRunChannelMessage(handle: RunChannelHandle, options: R
     return;
   }
 
-  const web = new (await loadSlackSdk()).WebClient(botToken);
+  const web = await getSlackWebClient(botToken);
   await updateSlackRootMessage(web, {
     channel: handle.channel,
     ts: handle.ts,
@@ -327,7 +327,7 @@ async function updateSlackRunSuspendedChannelMessage(handle: RunChannelHandle, o
     return;
   }
 
-  const web = new (await loadSlackSdk()).WebClient(botToken);
+  const web = await getSlackWebClient(botToken);
   await updateSlackRootMessage(web, {
     channel: handle.channel,
     ts: handle.ts,

@@ -1,6 +1,60 @@
 import type { WebClient } from '@slack/web-api';
 import { logger } from '../utils/logger';
 
+/**
+ * The Slack SDKs cost ~23MB of heap and were loaded by every agentuse process at
+ * startup -- including the serve workers, which touch Slack only if an agent
+ * suspends on a gate with Slack configured. Both have to be deferred together:
+ * @slack/socket-mode depends on @slack/web-api, so deferring one alone saves
+ * nothing. Callers await loadSlackSdk() before constructing either client.
+ */
+type SlackSdk = {
+  WebClient: typeof import('@slack/web-api').WebClient;
+  SocketModeClient: typeof import('@slack/socket-mode').SocketModeClient;
+};
+let slackSdkCache: SlackSdk | undefined;
+let slackSdkPending: Promise<SlackSdk> | undefined;
+
+export async function loadSlackSdk(): Promise<SlackSdk> {
+  if (slackSdkCache) return slackSdkCache;
+  // Share one in-flight import: concurrent approvals would otherwise each start
+  // their own, and the first use is exactly when several tend to land at once.
+  slackSdkPending ??= Promise.all([import('@slack/web-api'), import('@slack/socket-mode')])
+    .then(([web, socket]) => {
+      slackSdkCache = { WebClient: web.WebClient, SocketModeClient: socket.SocketModeClient };
+      return slackSdkCache;
+    })
+    .finally(() => { slackSdkPending = undefined; });
+  return slackSdkPending;
+}
+
+/** The loaded SDK, for sync contexts that a caller has already primed. */
+export function loadedSlackSdk(): SlackSdk {
+  if (!slackSdkCache) {
+    throw new Error('Slack SDK not loaded yet — await loadSlackSdk() before constructing a Slack client');
+  }
+  return slackSdkCache;
+}
+
+// Slack rate-limits per bot token, and every WebClient carries its own request
+// queue and retry state -- a client built per call left concurrent runs racing
+// Slack with no shared throttle. One client per token gives them one queue.
+// The SDK default (100) is well above what a Slack tier-3 method allows.
+const SLACK_MAX_REQUEST_CONCURRENCY = 10;
+const slackWebClients = new Map<string, WebClient>();
+
+export async function getSlackWebClient(botToken: string): Promise<WebClient> {
+  const cached = slackWebClients.get(botToken);
+  if (cached) return cached;
+  const sdk = await loadSlackSdk();
+  // Re-check: concurrent first callers all suspend on the import above.
+  const raced = slackWebClients.get(botToken);
+  if (raced) return raced;
+  const web = new sdk.WebClient(botToken, { maxRequestConcurrency: SLACK_MAX_REQUEST_CONCURRENCY });
+  slackWebClients.set(botToken, web);
+  return web;
+}
+
 export interface SlackPostedMessage {
   channel: string;
   ts: string;

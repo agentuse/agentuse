@@ -4,10 +4,15 @@ import { logger } from '../utils/logger';
 import {
   bestEffortClearSlackThreadStatus,
   bestEffortSlackThreadStatus,
+  getSlackWebClient,
+  loadSlackSdk,
+  loadedSlackSdk,
   postSlackRootMessage,
   postSlackThreadMessages,
   updateSlackRootMessage
 } from './lifecycle';
+
+export { loadSlackSdk } from './lifecycle';
 
 export interface SlackApprovalRequest {
   botToken: string;
@@ -87,41 +92,6 @@ const SLACK_RESTART_DISCONNECT_MS = 5_000; // cap on tearing down a wedged socke
 // trigger_id within ~3s, and Socket Mode delivery is best-effort, so the modal
 // intermittently failed with expired_trigger_id. Commenting is done by replying
 // in the approval thread instead (onThreadComment), which has no expiry.
-/**
- * The Slack SDKs cost ~23MB of heap and were loaded by every agentuse process at
- * startup -- including the serve workers, which touch Slack only if an agent
- * suspends on a gate with Slack configured. Both have to be deferred together:
- * @slack/socket-mode depends on @slack/web-api, so deferring one alone saves
- * nothing. Callers await loadSlackSdk() before constructing either client.
- */
-type SlackSdk = {
-  WebClient: typeof import('@slack/web-api').WebClient;
-  SocketModeClient: typeof import('@slack/socket-mode').SocketModeClient;
-};
-let slackSdkCache: SlackSdk | undefined;
-let slackSdkPending: Promise<SlackSdk> | undefined;
-
-export async function loadSlackSdk(): Promise<SlackSdk> {
-  if (slackSdkCache) return slackSdkCache;
-  // Share one in-flight import: concurrent approvals would otherwise each start
-  // their own, and the first use is exactly when several tend to land at once.
-  slackSdkPending ??= Promise.all([import('@slack/web-api'), import('@slack/socket-mode')])
-    .then(([web, socket]) => {
-      slackSdkCache = { WebClient: web.WebClient, SocketModeClient: socket.SocketModeClient };
-      return slackSdkCache;
-    })
-    .finally(() => { slackSdkPending = undefined; });
-  return slackSdkPending;
-}
-
-/** The loaded SDK, for sync contexts that a caller has already primed. */
-function loadedSlackSdk(): SlackSdk {
-  if (!slackSdkCache) {
-    throw new Error('Slack SDK not loaded yet — await loadSlackSdk() before constructing a Slack client');
-  }
-  return slackSdkCache;
-}
-
 const SLACK_APPROVAL_ACTIONS: Array<{ id: string; label: string; style?: 'primary' | 'danger' }> = [
   { id: 'approve', label: 'Approve', style: 'primary' },
   { id: 'reject', label: 'Reject', style: 'danger' }
@@ -707,7 +677,7 @@ export async function sendSlackApprovalRequest(request: SlackApprovalRequest): P
     throw new Error('Slack approval requires a session id');
   }
 
-  const web = new (await loadSlackSdk()).WebClient(request.botToken);
+  const web = await getSlackWebClient(request.botToken);
   const message = await postSlackApprovalMessage(web, request.channelId, {
     channel: request.channelId,
     text: `AgentUse approval requested: ${request.prompt}`,
@@ -744,7 +714,7 @@ export async function sendSlackApprovalRequestToThread(
     rootMessageTs: root.ts
   });
   const posted = await postSlackThreadMessages(
-    new (await loadSlackSdk()).WebClient(request.botToken),
+    await getSlackWebClient(request.botToken),
     root.channel,
     root.ts,
     threadMessages,
@@ -773,7 +743,7 @@ export async function updateSlackApprovalRequestStatus(options: {
   decision?: string;
   error?: unknown;
 }): Promise<void> {
-  const web = new (await loadSlackSdk()).WebClient(options.botToken);
+  const web = await getSlackWebClient(options.botToken);
   await updateSlackRootMessage(web, {
     channel: options.channelId,
     ts: options.ts,
@@ -908,7 +878,8 @@ export class SlackApprovalSocket {
   private readonly seenThreadComments = new Set<string>();
   // resumeTokens with an onDecision dispatch in flight. Buttons stay live until
   // Slack processes the message update, so a double-click or Approve-then-Reject
-  // can fire onDecision twice; this dedupes before dispatch.
+  // can fire onDecision twice; this dedupes before dispatch. Decided tokens stay
+  // in so a later click is still ignored, so the set is capped FIFO instead.
   private readonly inFlightDecisions = new Set<string>();
   private lastSocketErrorMessage: string | null = null;
   private lastSocketErrorAt = 0;
@@ -1293,6 +1264,13 @@ export class SlackApprovalSocket {
     if (oldest) this.seenThreadComments.delete(oldest);
   }
 
+  private rememberInFlightDecision(resumeToken: string): void {
+    this.inFlightDecisions.add(resumeToken);
+    if (this.inFlightDecisions.size <= 500) return;
+    const oldest = this.inFlightDecisions.values().next().value;
+    if (oldest) this.inFlightDecisions.delete(oldest);
+  }
+
   private async fetchSlackThreadReply(channel: string, threadTs: string, replyTs: string): Promise<any | undefined> {
     try {
       const response = await this.web.conversations.replies({
@@ -1332,7 +1310,7 @@ export class SlackApprovalSocket {
         logger.debug('Slack approval decision already in flight; ignoring duplicate click');
         return;
       }
-      this.inFlightDecisions.add(value.resumeToken);
+      this.rememberInFlightDecision(value.resumeToken);
     }
 
     const reviewer = reviewerFromBody(body);
