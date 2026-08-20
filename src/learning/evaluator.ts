@@ -3,7 +3,8 @@ import type { AgentCompleteEvent, ToolCallTrace } from '../plugin/types';
 import type { ApprovalReview, Learning, LearningCategory, LearningDraft, LearningSource } from './types';
 import { logger } from '../utils/logger';
 import { helperSystemPrompt } from '../utils/anthropic';
-import { LEARNED_BLOCK_END, LEARNED_BLOCK_START } from './graduate';
+import { splitInstructions } from './contract';
+import { generateLearningId } from './store';
 
 /**
  * Stringify a tool input/output value for the evaluator, truncated to keep the
@@ -226,25 +227,11 @@ function formatReviews(reviews: ApprovalReview[]): string {
 }
 
 /**
- * Evaluate a completed run and extract high-signal learnings from BOTH the
- * execution itself and any reviewer feedback left at approval gates, in a single
- * pass. Execution-derived learnings are tagged source="auto"; learnings that
- * capture the durable principle behind a reviewer comment are tagged
- * source="approval" (higher trust, ranked first when applied).
+ * Render the run itself — tool calls, console, output — as prompt evidence.
+ * Shared by the built-in evaluator, the capture agent's task, and the vet's
+ * grounding check, so all three judge the same record of what happened.
  */
-export async function evaluateExecution(
-  event: AgentCompleteEvent,
-  agentInstructions: string,
-  agentModel: string,
-  criteria: string | undefined,
-  existingLearnings: Learning[] = [],
-  reviews: ApprovalReview[] = [],
-  capacity?: { cap: number },
-): Promise<LearningDraft[]> {
-  const customCriteria = criteria
-    ? `\n\nAdditional evaluation criteria:\n${criteria}`
-    : '';
-
+export function renderRunEvidence(event: AgentCompleteEvent): string {
   // Truncate console output to avoid context bloat
   // Keep first 2000 and last 1000 chars for better context
   let consoleOutput = event.consoleOutput;
@@ -254,43 +241,7 @@ export async function evaluateExecution(
     consoleOutput = `${first}\n\n...(${consoleOutput.length - 3000} chars truncated)...\n\n${last}`;
   }
 
-  // The permanent rules are excised and shown in full, separately from the
-  // truncated body.
-  //
-  // They live in a block appended to the END of the agent file, and the body is
-  // cut at 3000 characters, so on any real agent the block fell outside the cut
-  // and this pass never saw it. Measured on one: 46,063-character file, block
-  // starting at 30,685. That blindness is the only reason a duplicate copy of
-  // every permanent rule had to be kept in the store and passed in alongside —
-  // and a stored duplicate is what let a human's edits to the block be
-  // overwritten. Reading the file fixes both.
-  const blockStart = agentInstructions.indexOf(LEARNED_BLOCK_START);
-  const blockEnd = agentInstructions.indexOf(LEARNED_BLOCK_END);
-  const hasBlock = blockStart !== -1 && blockEnd > blockStart;
-  const permanentText = hasBlock
-    ? agentInstructions.slice(blockStart + LEARNED_BLOCK_START.length, blockEnd).trim()
-    : '';
-  const bodyOnly = hasBlock
-    ? `${agentInstructions.slice(0, blockStart)}${agentInstructions.slice(blockEnd + LEARNED_BLOCK_END.length)}`
-    : agentInstructions;
-  const truncatedInstructions = bodyOnly.length > 3000
-    ? bodyOnly.slice(0, 3000) + '\n...(truncated)'
-    : bodyOnly;
-
-  const hasReviews = reviews.length > 0;
-  const reviewerSection = hasReviews
-    ? `
-
-## Reviewer Feedback (highest-signal — a human reviewed this run)
-${formatReviews(reviews)}`
-    : '';
-
-  const prompt = `You are evaluating a completed agent run to extract learnings for future runs. Two sources of signal: the execution itself, and any human reviewer feedback left at approval gates.
-
-## Agent Instructions
-${truncatedInstructions}
-
-## Execution Results
+  return `## Execution Results
 - Duration: ${event.result.duration.toFixed(2)}s
 - Tool Calls: ${event.result.toolCalls}
 - Finish Reason: ${event.result.finishReason || 'unknown'}
@@ -302,7 +253,78 @@ ${formatToolCalls(event.result.toolCallTraces)}
 ${consoleOutput || '(No console output)'}
 
 ## Agent Text Output
-${event.result.text || '(No text output)'}${reviewerSection}
+${event.result.text || '(No text output)'}`;
+}
+
+export interface EvaluateExecutionOptions {
+  event: AgentCompleteEvent;
+  /** The COMPLETE effective agent instructions. Passed whole: the pre-0.18
+   *  3,000-character body truncation blinded the evaluator to every rule past
+   *  the cut on any real agent, which is how it "rediscovered" explicit
+   *  contract rules as new learnings. */
+  agentInstructions: string;
+  model: string;
+  /**
+   * Free-form observation capture. `false` — the corrections-only default —
+   * extracts ONLY the durable principles behind reviewer comments; the run
+   * itself never becomes policy. An object opts into execution-derived
+   * learnings, optionally scoped by `guidance` (the `capture.custom` text).
+   */
+  freeform: false | { guidance?: string | undefined };
+  existingLearnings?: Learning[];
+  reviews?: ApprovalReview[];
+  capacity?: { cap: number };
+}
+
+/**
+ * Evaluate a completed run and extract high-signal learnings from reviewer
+ * feedback left at approval gates and — only when free-form capture is
+ * explicitly enabled — from the execution itself, in a single pass. Learnings
+ * that capture the durable principle behind a reviewer comment are tagged
+ * source="approval" (higher trust, ranked first when applied);
+ * execution-derived ones are tagged source="auto".
+ */
+export async function evaluateExecution(options: EvaluateExecutionOptions): Promise<LearningDraft[]> {
+  const { event, agentInstructions, model, freeform } = options;
+  const existingLearnings = options.existingLearnings ?? [];
+  const reviews = options.reviews ?? [];
+  const capacity = options.capacity;
+
+  const customCriteria = freeform && freeform.guidance
+    ? `\n\nAdditional evaluation criteria (scope your execution-derived learnings to this):\n${freeform.guidance}`
+    : '';
+
+  // The permanent rules are excised and shown in full, separately from the
+  // body — they live in a block appended to the END of the agent file, and
+  // labeling them "already permanent" is what stops the evaluator restating
+  // them. The body itself is passed COMPLETE: the old 3,000-character cut left
+  // every later rule invisible (measured on one real agent: 46,063-character
+  // file, block starting at 30,685), and an evaluator that cannot see the
+  // contract cannot avoid duplicating or contradicting it.
+  const { body: bodyOnly, permanentText } = splitInstructions(agentInstructions);
+
+  const hasReviews = reviews.length > 0;
+  const reviewerSection = hasReviews
+    ? `
+
+## Reviewer Feedback (highest-signal — a human reviewed this run)
+${formatReviews(reviews)}`
+    : '';
+
+  const sourcesIntro = freeform
+    ? 'Two sources of signal: the execution itself, and any human reviewer feedback left at approval gates.'
+    : 'One source of signal: human reviewer feedback left at approval gates. The execution is shown only as context for understanding the comments.';
+
+  const autoSourceRule = freeform
+    ? `- source "auto" — a learning from the EXECUTION. Ground it in the ACTUAL tool outputs and agent output above (an empty result, an error shape, a format a tool returned), not just which tools were called.`
+    : `- Do NOT return execution-derived learnings: this agent captures human corrections only. Every learning you return must be source "approval" and trace to a reviewer comment above.`;
+
+  const prompt = `You are evaluating a completed agent run to extract learnings for future runs. ${sourcesIntro}
+
+## Agent Instructions
+${bodyOnly.trim()}
+
+${renderRunEvidence(event)}${reviewerSection}
 ${customCriteria}
 ${formatRulesInForce(existingLearnings, permanentText, capacity?.cap ?? existingLearnings.length)}
 
@@ -310,10 +332,10 @@ ${formatRulesInForce(existingLearnings, permanentText, capacity?.cap ?? existing
 Extract actionable learnings that would improve future runs. Each learning is tagged with a "source":
 
 - source "approval" — the durable principle behind a REVIEWER COMMENT above. Reviewer comments are the highest-signal feedback this agent gets; treat them as authoritative. Comments often point at the work ("this is too long", "cite a source here", "tone is off"): use the work shown to understand what they mean, then extract the GENERAL rule behind it. A comment about this run's specific content STILL counts if a reusable rule sits behind it (e.g. "this intro is too salesy" → "Keep intros factual; avoid promotional language"). ONLY skip a comment that is a pure one-off edit with nothing generalizable ("fix the typo in paragraph 2", "change the date to Tuesday").
-- source "auto" — a learning from the EXECUTION. Ground it in the ACTUAL tool outputs and agent output above (an empty result, an error shape, a format a tool returned), not just which tools were called.
+${autoSourceRule}
 
 Rules:
-- Extract 0-5 learnings MAXIMUM. Prefer fewer, higher-quality learnings. Capture every durable reviewer principle, but be sparing with "auto" learnings.
+- Extract 0-5 learnings MAXIMUM. Prefer fewer, higher-quality learnings.${freeform ? ' Capture every durable reviewer principle, but be sparing with "auto" learnings.' : ''}
 - If nothing is worth keeping, return an empty array []
 - For "auto" learnings, only include ones you're confident about (confidence ≥ 0.8). For "approval" learnings, set confidence to 0.95.
 - Each learning must be a clear, specific, output-grounded instruction (not a restatement of the comment).
@@ -353,11 +375,11 @@ If no learnings are applicable, respond with an empty array: []`;
   // models as a second system block rather than being dropped for the identity
   // line — see helperSystemPrompt.
   const system = helperSystemPrompt(
-    agentModel,
+    model,
     'You extract concise, high-signal learnings from an agent run and its reviewer feedback, and reply with a JSON array only. Each learning is one instruction the agent can act on, stated in a sentence or two — never a document, and never a retelling of what happened.',
   );
 
-  const responseText = await completeText(agentModel, {
+  const responseText = await completeText(model, {
     ...system,
     prompt,
   });
@@ -398,6 +420,9 @@ If no learnings are applicable, respond with an empty array: []`;
     // learnings are trusted at a fixed high confidence and bypass the auto
     // confidence floor; execution learnings keep the ≥0.8 filter.
     const source: LearningSource = hasReviews && l.source === 'approval' ? 'approval' : 'auto';
+    // Corrections-only mode: an execution-derived learning the model returned
+    // anyway is discarded in code, not by trusting the prompt.
+    if (source === 'auto' && !freeform) continue;
     if (source === 'auto' && !(l.confidence >= 0.8)) continue;
     const supersedes = typeof l.supersedes === 'string' && revisable.has(l.supersedes)
       ? l.supersedes
@@ -407,10 +432,13 @@ If no learnings are applicable, respond with an empty array: []`;
       title: l.title,
       instruction: l.instruction,
       confidence: source === 'approval' ? 0.95 : l.confidence,
-      id: Math.random().toString(36).slice(2, 10),
-      appliedCount: 0,
+      // Collision-checked id, minted here so the vet can key its verdicts to
+      // drafts before the store has seen them.
+      id: generateLearningId(learnings.map((d) => d.id)),
+      injectedCount: 0,
       extractedAt: now,
       source,
+      channel: source === 'approval' ? 'corrections' : 'custom',
       reasserted: 0,
       approvedRuns: 0,
       ...(supersedes ? { supersedes } : {}),

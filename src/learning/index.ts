@@ -5,10 +5,16 @@
 
 import ora from 'ora';
 import type { AgentCompleteEvent } from '../plugin/types';
-import type { ApprovalReview, LearningCategory, LearningConfig, LearningOutcome, LearningSource } from './types';
-import { evaluateExecution, refineManualLearning } from './evaluator';
-import { LearningStore } from './store';
+import type {
+  ApprovalReview, ChannelCounts, LearningCategory, LearningChannel,
+  LearningConfig, LearningDraft, LearningOutcome, LearningSource,
+} from './types';
+import { evaluateExecution, refineManualLearning, renderRunEvidence } from './evaluator';
+import { generateLearningId, LearningStore } from './store';
 import { activeLearnings, effectiveCap } from './ranking';
+import { hashInstructions, isStaleAgainst } from './contract';
+import { vetCandidates, describeVetFailure, type VetVerdict } from './vet';
+import { detectToolErrorRecoveries, toolErrorDraft } from './tool-errors';
 import { logger } from '../utils/logger';
 
 export interface ExtractLearningsOptions {
@@ -33,6 +39,22 @@ export interface ExtractLearningsOptions {
  * Extract learnings from a completed agent execution
  * Called after agent completion when learning.capture is enabled.
  *
+ * The pipeline, per channel:
+ * 1. corrections (always on with capture): the durable principles behind
+ *    reviewer comments, via the built-in evaluator. Skipped entirely when the
+ *    run drew no comments — the corrections-only default costs nothing then.
+ * 2. tool-errors (addon): failure→recovery pairs detected structurally in the
+ *    trace, in code. No model judgment involved in whether one is real.
+ * 3. custom / agent (opt-in): free-form observation capture, via the built-in
+ *    evaluator scoped by the guidance text, or a replacement evaluator agent.
+ *
+ * Every free-form candidate — corrections included — then passes the vet
+ * against the COMPLETE agent contract before it can become active; failures
+ * are quarantined (human-authored) or rejected (model-authored), never
+ * silently injected. Stored entries whose recorded contract hash is missing
+ * (legacy) or stale (the contract changed) are re-vetted in the same pass and
+ * re-stamped or quarantined.
+ *
  * Returns a {@link LearningOutcome} describing the result (including failures)
  * so the caller can surface a marker in the session log. A failure — e.g. the
  * helper LLM call being rejected — is reported as `status: 'failed'` rather than
@@ -41,11 +63,14 @@ export interface ExtractLearningsOptions {
 export async function extractLearnings(options: ExtractLearningsOptions): Promise<LearningOutcome> {
   const { event, agentInstructions, agentModel, agentFilePath, config } = options;
 
+  const capture = config.capture;
   // Skip if capture is not enabled (shouldn't happen, but safety check)
-  if (!config.capture) return { status: 'none', source: 'auto', count: 0, titles: [] };
+  if (!capture) return { status: 'none', source: 'auto', count: 0, titles: [] };
 
   const reviews = options.reviews ?? [];
   const hadReviews = reviews.length > 0;
+  const model = config.model ?? agentModel;
+  const currentHash = hashInstructions(agentInstructions);
 
   const spinner = ora({
     text: 'Extracting learnings...',
@@ -62,60 +87,213 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
 
     const cap = effectiveCap(config);
 
-    // The evaluator gets the WHOLE active set, not just the slice that fit the
-    // injection cap. It is being asked to reconcile — to notice that its new
-    // rule restates or contradicts one already stored — and it cannot reconcile
-    // against rules it was never shown. Under the cap the two are the same list
-    // anyway; they diverge only for a store built before the cap existed, and
-    // there the full set is exactly what the reconciling is for.
+    // The evaluator and the vet get the WHOLE active set, not just the slice
+    // that fit the injection cap: they are asked to reconcile, and they cannot
+    // reconcile against rules they were never shown.
     const active = activeLearnings(stored);
+    // Only rules vetted against the CURRENT contract are authorities for the
+    // duplicate/contradiction checks; stale ones are themselves re-vetted below.
+    const currentRules = active.filter((l) => !isStaleAgainst(currentHash, l.instructionsHash));
 
-    // Permanent rules are not passed in. They live in the agent's own
-    // instructions, which `evaluateExecution` now reads directly — it excises
-    // the block and shows it in full rather than losing it to the body's
-    // truncation. That blindness was the only reason a duplicate of every
-    // permanent rule had to be carried in the store, and the duplicate was what
-    // let a human's edits to the block be overwritten.
-    const learnings = await evaluateExecution(
-      event,
-      agentInstructions,
-      config.model ?? agentModel,
-      config.criteria,
-      active,
-      reviews,
-      { cap },
-    );
+    // ---- Gather candidates per channel -------------------------------------
+    const drafts: LearningDraft[] = [];
+    const channelOf = new Map<string, LearningChannel>();
+    const collect = (list: LearningDraft[], fallback: LearningChannel) => {
+      for (const d of list) {
+        d.channel = d.channel ?? fallback;
+        channelOf.set(d.id, d.channel);
+        drafts.push(d);
+      }
+    };
 
-    if (learnings.length === 0) {
-      spinner.succeed('No new learnings extracted');
-      return { status: 'none', source: hadReviews ? 'approval' : 'auto', count: 0, titles: [] };
+    const freeformAgent = capture.agent;
+    const freeformCustom = capture.custom;
+
+    // corrections + custom share one evaluator call (they already did as one
+    // pass, and one helper call per run is the cost ceiling capture aims for).
+    // The call is skipped outright when it would have nothing to do: no
+    // reviewer comments and no free-form opt-in.
+    if (hadReviews || freeformCustom !== undefined) {
+      const evaluated = await evaluateExecution({
+        event,
+        agentInstructions,
+        model,
+        freeform: freeformCustom !== undefined ? { guidance: freeformCustom } : false,
+        existingLearnings: active,
+        reviews,
+        capacity: { cap },
+      });
+      collect(evaluated, 'custom'); // evaluator stamps corrections/custom itself
     }
 
-    if (options.sessionId) {
-      for (const l of learnings) l.sessionId = options.sessionId;
+    // Replacement evaluator agent: free-form candidates only; corrections stay
+    // on the built-in path above — the one channel that cannot manufacture
+    // policy must not depend on a user-supplied agent behaving.
+    if (freeformAgent !== undefined) {
+      const { captureViaAgent } = await import('./capture-agent.js');
+      const agentDrafts = await captureViaAgent({
+        event,
+        captureAgentPath: freeformAgent,
+        agentFilePath,
+        projectContext: { projectRoot: options.stateRoot, stateRoot: options.stateRoot, cwd: process.cwd() },
+        existingLearnings: active,
+        reviews,
+        cap,
+      });
+      collect(agentDrafts, 'agent');
     }
-    const { inserted, escalated, retired, refused, overCap } = await store.addOrEscalate(
-      learnings,
+
+    // Typed channel: structurally verified in code, no model judgment. These
+    // skip the model vet — they capture mechanics, not policy.
+    const typedDrafts: LearningDraft[] = [];
+    if (capture.addons.includes('tool-errors')) {
+      const now = new Date().toISOString();
+      for (const recovery of detectToolErrorRecoveries(event.result.toolCallTraces)) {
+        typedDrafts.push(toolErrorDraft(recovery, now));
+      }
+    }
+
+    // ---- Vet ----------------------------------------------------------------
+    const counts: Partial<Record<LearningChannel, ChannelCounts>> = {};
+    const countFor = (channel: LearningChannel): ChannelCounts => {
+      counts[channel] ??= { captured: 0, vettedOut: 0, quarantined: 0 };
+      return counts[channel]!;
+    };
+
+    const vetted: LearningDraft[] = [];
+    if (drafts.length > 0) {
+      // Grounding applies only to model-authored candidates; a human wrote
+      // every corrections entry, which is grounding the trace cannot overrule.
+      const groundedIds = new Set(drafts.filter((d) => d.channel !== 'corrections').map((d) => d.id));
+      let verdicts = new Map<string, VetVerdict>();
+      let vetFailed = false;
+      try {
+        verdicts = await vetCandidates({
+          drafts,
+          agentInstructions,
+          activeRules: currentRules,
+          traceSummary: renderRunEvidence(event),
+          groundedIds,
+          model,
+        });
+      } catch (error) {
+        vetFailed = true;
+        logger.warn(`[Learning] Vet call failed (${(error as Error).message}); keeping human corrections unvetted, dropping observation candidates.`);
+      }
+
+      for (const draft of drafts) {
+        const channel = channelOf.get(draft.id)!;
+        const verdict = verdicts.get(draft.id);
+        const humanAuthored = channel === 'corrections';
+        if (!verdict) {
+          // No verdict (vet failed or the model skipped it): fail OPEN for
+          // human corrections — dropping human input silently is never allowed
+          // — and fail CLOSED for observation capture, whose entire safety
+          // case is the vet.
+          if (humanAuthored) vetted.push(draft);
+          else if (vetFailed) countFor(channel).vettedOut += 1;
+          else { countFor(channel).vettedOut += 1; }
+          continue;
+        }
+        if (verdict.verdict === 'pass') {
+          vetted.push(draft);
+          continue;
+        }
+        if (verdict.verdict === 'contradiction' || humanAuthored) {
+          // Quarantine, don't drop silently: contradictions always, and every
+          // non-pass verdict on a human correction.
+          draft.state = 'quarantined';
+          draft.quarantineReason = describeVetFailure(verdict);
+          vetted.push(draft);
+          countFor(channel).quarantined += 1;
+          continue;
+        }
+        // duplicate/ungrounded model-authored candidates: rejected. Nothing is
+        // lost — a duplicate already exists, an ungrounded claim never happened.
+        countFor(channel).vettedOut += 1;
+        logger.debug(`[Learning] Vetted out (${verdict.verdict}) [${channel}] ${draft.title}: ${describeVetFailure(verdict)}`);
+      }
+    }
+    vetted.push(...typedDrafts);
+
+    // ---- Stamp provenance and store ----------------------------------------
+    for (const draft of vetted) {
+      draft.instructionsHash = currentHash;
+      if (options.sessionId) draft.sessionId = options.sessionId;
+    }
+
+    const { inserted, escalated, retired, refused, quarantined, overCap } = await store.addOrEscalate(
+      vetted,
       { cap },
     );
     const persisted = [...inserted, ...escalated];
+    for (const l of persisted) countFor((l.channel ?? 'custom') as LearningChannel).captured += 1;
 
-    // Report what landed, not what the evaluator proposed. The old code reported
-    // the evaluator's count before the store dropped similars, so the session
-    // marker could claim "Learned 2 lessons" when nothing was written.
-    if (persisted.length === 0) {
+    // ---- Re-vet stored entries the contract has moved out from under --------
+    // Legacy entries (no hash) and stale ones (hash mismatch) are checked
+    // against the current contract: passes are re-stamped, failures quarantined
+    // with the reason — never deleted. This is also what backfills the hash on
+    // a pre-0.18 store the first time capture runs after upgrade.
+    let requarantined = 0;
+    const needsRevet = activeLearnings(stored).filter(
+      (l) => l.instructionsHash === undefined || isStaleAgainst(currentHash, l.instructionsHash),
+    );
+    if (needsRevet.length > 0) {
+      try {
+        const revetVerdicts = await vetCandidates({
+          drafts: needsRevet as LearningDraft[],
+          agentInstructions,
+          activeRules: currentRules.filter((l) => !needsRevet.includes(l)),
+          model,
+        });
+        const passed: string[] = [];
+        const failures: { id: string; reason: string }[] = [];
+        for (const entry of needsRevet) {
+          const verdict = revetVerdicts.get(entry.id);
+          // No verdict → keep as-is, unstamped; it will be re-vetted next pass.
+          if (!verdict) continue;
+          if (verdict.verdict === 'pass') passed.push(entry.id);
+          else failures.push({ id: entry.id, reason: describeVetFailure(verdict) });
+        }
+        const applied = await store.applyRevet({ passed, quarantined: failures, instructionsHash: currentHash });
+        requarantined = applied.quarantined.length;
+        if (applied.stamped.length > 0 || requarantined > 0) {
+          logger.info(`[Learning] Re-vetted ${needsRevet.length} stored rule(s) against the current instructions: ${applied.stamped.length} confirmed, ${requarantined} quarantined.`);
+        }
+      } catch (error) {
+        logger.debug(`[Learning] Re-vet of stored rules failed, left unstamped: ${(error as Error).message}`);
+      }
+    }
+
+    const quarantinedTotal = quarantined.length + requarantined;
+
+    // Report what landed, not what the evaluator proposed. Counts come from the
+    // store's answer, so the session marker never claims "Learned 2 lessons"
+    // when nothing was written.
+    if (persisted.length === 0 && quarantinedTotal === 0) {
       spinner.succeed('No new learnings extracted');
       if (refused.length > 0) {
         logger.debug(`[Learning] ${refused.length} auto learning(s) refused: rule set full at ${cap}`);
       }
-      return { status: 'none', source: hadReviews ? 'approval' : 'auto', count: 0, titles: [] };
+      return {
+        status: 'none', source: hadReviews ? 'approval' : 'auto', count: 0, titles: [],
+        ...(drafts.length > 0 || typedDrafts.length > 0 ? { channels: counts } : {}),
+      };
     }
 
     const reasserted = escalated.length > 0 ? `, ${escalated.length} re-asserted` : '';
     const madeRoom = retired.length > 0 ? `, ${retired.length} retired to stay under ${cap}` : '';
-    spinner.succeed(`Extracted ${persisted.length} learning(s)${reasserted}${madeRoom} → ${store.filePath}`);
+    const setAside = quarantinedTotal > 0 ? `, ${quarantinedTotal} quarantined` : '';
+    if (persisted.length > 0) {
+      spinner.succeed(`Extracted ${persisted.length} learning(s)${reasserted}${madeRoom}${setAside} → ${store.filePath}`);
+    } else {
+      spinner.succeed(`No new learnings kept${setAside} → ${store.filePath}`);
+    }
     if (refused.length > 0) {
       logger.debug(`[Learning] ${refused.length} auto learning(s) refused: rule set full at ${cap}`);
+    }
+    for (const q of quarantined) {
+      logger.warn(`[Learning] Quarantined "${q.title}": ${q.quarantineReason ?? 'failed the vet'}`);
     }
 
     // Say it at the moment it matters. The user has just corrected the agent and
@@ -126,10 +304,12 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     // label the marker by the higher-signal source when any is present.
     const source = persisted.some(l => l.source === 'approval') ? 'approval' : 'auto';
     return {
-      status: 'captured',
+      status: persisted.length > 0 ? 'captured' : 'none',
       source,
       count: persisted.length,
       titles: persisted.map(l => l.title),
+      channels: counts,
+      quarantined: quarantinedTotal,
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -234,20 +414,56 @@ export async function saveManualLearning(options: {
     }
   }
 
-  const { graduated, retired } = await store.upsertManual({
-    id: '',
+  const draft: LearningDraft = {
+    id: generateLearningId(),
     category,
     title,
     instruction,
     confidence: 1,
-    appliedCount: 0,
+    injectedCount: 0,
     extractedAt: new Date().toISOString(),
     source: 'manual',
+    channel: 'corrections',
+    // Stamped only when the caller could supply the contract; a rule stored
+    // without it loads as legacy and is backfilled on the next capture/tidy.
+    ...(options.agentInstructions ? { instructionsHash: hashInstructions(options.agentInstructions) } : {}),
     ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     reasserted: 0,
     approvedRuns: 0,
     ...(supersedes ? { supersedes } : {}),
-  });
+  };
+
+  // The corrections vet, manual-add flavor: a human note can still conflict
+  // with a newer contract, in which case it is quarantined with the conflict
+  // named rather than silently injected. Any vet failure falls back to storing
+  // the note active — an explicit human instruction is never dropped because a
+  // helper LLM call hiccuped.
+  if (options.model && options.agentInstructions) {
+    try {
+      const existing = activeLearnings(await store.load()).filter((l) => l.id !== supersedes);
+      const verdicts = await vetCandidates({
+        drafts: [draft],
+        agentInstructions: options.agentInstructions,
+        activeRules: existing,
+        model: options.model,
+      });
+      const verdict = verdicts.get(draft.id);
+      if (verdict && verdict.verdict === 'contradiction') {
+        draft.state = 'quarantined';
+        draft.quarantineReason = describeVetFailure(verdict);
+      }
+    } catch (error) {
+      logger.debug(`[Learning] Manual vet failed, storing active: ${(error as Error).message}`);
+    }
+  }
+
+  if (draft.state === 'quarantined') {
+    await store.addOrEscalate([draft]);
+    logger.warn(`[Learning] Saved but quarantined "${title}": ${draft.quarantineReason}. It will not be injected; resolve the conflict in ${options.agentFilePath} or discard the rule.`);
+    return { status: 'captured', source: 'manual', count: 1, titles: [title], quarantined: 1 };
+  }
+
+  const { graduated, retired } = await store.upsertManual(draft);
 
   // Name what this note replaced. A fold is the right outcome, but it is still
   // one of the reviewer's own rules being archived, so it is said out loud
@@ -285,12 +501,14 @@ export function describeLearningOutcome(o: {
   count: number;
   titles?: string[] | undefined;
   detail?: string | undefined;
+  quarantined?: number | undefined;
 }): { title: string; message: string } {
   const sourceLabel = o.source === 'manual'
     ? 'from manual rule'
     : o.source === 'approval'
       ? 'from reviewer comment'
       : 'from this run';
+  const setAside = o.quarantined ? `; ${o.quarantined} quarantined` : '';
   if (o.status === 'failed') {
     return {
       title: 'Learning capture failed',
@@ -298,12 +516,12 @@ export function describeLearningOutcome(o: {
     };
   }
   if (o.status === 'none') {
-    return { title: 'No new learnings', message: sourceLabel };
+    return { title: 'No new learnings', message: `${sourceLabel}${setAside}` };
   }
   const titles = o.titles && o.titles.length > 0 ? `: ${o.titles.join('; ')}` : '';
   return {
     title: `Learned ${o.count} ${o.count === 1 ? 'lesson' : 'lessons'}`,
-    message: `${sourceLabel}${titles}`,
+    message: `${sourceLabel}${titles}${setAside}`,
   };
 }
 
@@ -314,5 +532,9 @@ export { MAX_INJECTED_LEARNINGS, activeLearnings, effectiveCap, learningSourceRa
 export { LEARNED_BLOCK_START, LEARNED_BLOCK_END, renderLearnedBlock, spliceLearnedBlock, writeLearnedBlock } from './graduate';
 export { consolidateLearnings, describeConsolidation, isGraduationEligible, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord } from './consolidate';
 export type { ConsolidationResult, ConsolidationChange, PermanentConflict, TidyProgress, TidyRecord } from './consolidate';
-export type { ApprovalReview, Learning, LearningConfig, LearningDraft, LearningOutcome, LearningSource } from './types';
-export { LearningConfigSchema } from './types';
+export type { ApprovalReview, CanonicalCaptureConfig, CaptureAddon, ChannelCounts, Learning, LearningChannel, LearningConfig, LearningDraft, LearningOutcome, LearningSource, LearningState } from './types';
+export { LearningConfigSchema, legacyLearningConfigNotices } from './types';
+export { hashInstructions, isStaleAgainst, splitInstructions } from './contract';
+export { vetCandidates, describeVetFailure } from './vet';
+export type { VetVerdict } from './vet';
+export { detectToolErrorRecoveries, failureSignature, toolErrorDraft } from './tool-errors';
