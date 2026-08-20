@@ -2,7 +2,7 @@
  * Store class for persistent agent data storage
  */
 
-import { readFile, mkdir, rename, open } from 'fs/promises';
+import { readFile, mkdir, rename, open, stat } from 'fs/promises';
 import { existsSync, lstatSync, cpSync, rmSync, readdirSync, statSync } from 'fs';
 import { join, dirname, resolve, relative, isAbsolute } from 'path';
 import { randomBytes } from 'crypto';
@@ -10,7 +10,7 @@ import { ulid } from 'ulid';
 import { logger } from '../utils/logger';
 import { withOwnershipLock } from '../utils/ownership-lock';
 import { isMockMode } from '../runner/mock-tools';
-import { StoreFileSchema, isSafeStoreName } from './schema';
+import { StoreFileSchema, StoreItemSchema, isSafeStoreName } from './schema';
 import type {
   StoreItem,
   StoreFile,
@@ -32,13 +32,33 @@ function looseEquals(stored: unknown, filter: string | number | boolean): boolea
   return String(stored) === String(filter);
 }
 
+/** The string forms of an item that a free-text `q` search needs. */
+export interface ItemSearchStrings {
+  /** The stringified `data` payload. */
+  json: string;
+  /** Lowercased title, type, tags and `json` joined - what `q` scans. */
+  haystack: string;
+}
+
 /**
- * Build the lowercased haystack a free-text `q` search scans for an item:
- * title, type, tags and the stringified data payload.
+ * Memoized per item: `JSON.stringify(item.data)` dominates the cost of a `q`
+ * query, and it used to be paid twice per matching row (once building the
+ * haystack here, once more building the match snippet in tools.ts). Items are
+ * immutable once stored - every write builds a new object rather than mutating
+ * one in place - so the strings stay valid for the item's lifetime, and a
+ * WeakMap lets them go when the item does.
  */
-function searchHaystack(item: StoreItem): string {
-  const parts = [item.title, item.type, ...(item.tags ?? []), JSON.stringify(item.data)];
-  return parts.filter(Boolean).join(' ').toLowerCase();
+const searchStringCache = new WeakMap<StoreItem, ItemSearchStrings>();
+
+export function searchStrings(item: StoreItem): ItemSearchStrings {
+  let cached = searchStringCache.get(item);
+  if (!cached) {
+    const json = JSON.stringify(item.data);
+    const parts = [item.title, item.type, ...(item.tags ?? []), json];
+    cached = { json, haystack: parts.filter(Boolean).join(' ').toLowerCase() };
+    searchStringCache.set(item, cached);
+  }
+  return cached;
 }
 
 /**
@@ -151,6 +171,81 @@ function describeType(value: unknown): string {
 }
 
 /**
+ * Identity of the store file a cache entry was parsed from. Every write here
+ * lands via temp file + rename, so a changed file always has a new inode, and
+ * an in-place edit by anything else still moves mtime or size.
+ */
+interface FileIdentity {
+  mtimeNs: bigint;
+  size: bigint;
+  ino: bigint;
+}
+
+interface StoreCacheEntry {
+  identity: FileIdentity;
+  items: StoreItem[];
+}
+
+/**
+ * Parsed store files, keyed by store path.
+ *
+ * Every op reads the whole file, JSON.parses it and Zod-validates every item:
+ * ~6ms on a 3.25MB/1290-item store, paid again on each of a run's N ops, and
+ * paid in full by read-only ops that change nothing. The parse stays good for
+ * as long as the file on disk is the one it came from, which a stat answers.
+ *
+ * Entries hold the parsed array itself and `readItems` hands out a shallow
+ * copy. Items are shared, not copied: no code path mutates a stored item in
+ * place (create/update/upsert build a fresh object via spread), so sharing
+ * them is safe and keeps the copy O(n) pointers instead of a deep clone. The
+ * *array* is copied because the write path does mutate it - create pushes,
+ * delete splices - and an aborted write must not leave those edits in the
+ * cache.
+ *
+ * Bounded so a long-lived `serve` worker touching many projects' stores does
+ * not hold every one of them resident; entries are evicted least-recently-used.
+ */
+const MAX_CACHED_STORES = 16;
+const parsedStoreCache = new Map<string, StoreCacheEntry>();
+
+function cacheGet(path: string): StoreCacheEntry | undefined {
+  const entry = parsedStoreCache.get(path);
+  if (!entry) return undefined;
+  // Re-insert so the most recently used entry sorts last for eviction.
+  parsedStoreCache.delete(path);
+  parsedStoreCache.set(path, entry);
+  return entry;
+}
+
+function cacheSet(path: string, entry: StoreCacheEntry): void {
+  parsedStoreCache.delete(path);
+  parsedStoreCache.set(path, entry);
+  if (parsedStoreCache.size > MAX_CACHED_STORES) {
+    const oldest = parsedStoreCache.keys().next();
+    if (!oldest.done) parsedStoreCache.delete(oldest.value);
+  }
+}
+
+/**
+ * Identify the store file, or null when it does not exist yet. Any other stat
+ * failure throws: treating an unreadable file as "no file" would let a write
+ * transaction persist `[]` over a healthy store.
+ */
+async function fileIdentity(path: string): Promise<FileIdentity | null> {
+  try {
+    const stats = await stat(path, { bigint: true });
+    return { mtimeNs: stats.mtimeNs, size: stats.size, ino: stats.ino };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error(`[Store] Failed to stat store at ${path}: ${(error as Error).message}`);
+  }
+}
+
+function sameFile(a: FileIdentity, b: FileIdentity): boolean {
+  return a.mtimeNs === b.mtimeNs && a.size === b.size && a.ino === b.ino;
+}
+
+/**
  * Store class that manages persistent data for agents
  */
 export class Store {
@@ -239,14 +334,27 @@ export class Store {
    * this process serialize (no lost update), and the on-disk lock guards
    * against other processes. `mutate` is synchronous and must throw before
    * returning to abort the write, leaving the store untouched.
+   *
+   * `changed` names the items this op introduced or rewrote. Only those are
+   * schema-checked before the write: every other item in the array already
+   * passed validation on the read that produced it, so re-validating the whole
+   * store on each op is O(n) work for no extra guarantee.
    */
   private withWriteLock<T>(
-    mutate: (items: StoreItem[]) => { items: StoreItem[]; result: T }
+    mutate: (items: StoreItem[]) => { items: StoreItem[]; result: T; changed?: StoreItem[] }
   ): Promise<T> {
     return Store.withLockChain(this.lockPath, () =>
       withOwnershipLock(this.lockPath, async () => {
         const items = await this.readItems();
-        const { items: next, result } = mutate(items);
+        const { items: next, result, changed } = mutate(items);
+        for (const item of changed ?? []) {
+          const parsed = StoreItemSchema.safeParse(item);
+          if (!parsed.success) {
+            throw new Error(
+              `[Store] Refusing to write an invalid item to ${this.storePath}: ${parsed.error.message}`
+            );
+          }
+        }
         await this.writeItems(next);
         return result;
       }, {
@@ -259,12 +367,25 @@ export class Store {
   }
 
   /**
-   * Read the store file fresh from disk. Does not take the lock - atomic
-   * writes (temp + rename) mean a reader always sees a whole prior or next
-   * file, never a torn one, so reads can run lock-free.
+   * Read the store file. Does not take the lock - atomic writes (temp +
+   * rename) mean a reader always sees a whole prior or next file, never a torn
+   * one, so reads can run lock-free.
+   *
+   * Served from the in-process parse cache when the file on disk is still the
+   * one that was parsed. The file is identified *before* the read: pairing the
+   * content with an identity taken afterwards could tag stale content as
+   * current if a writer landed in between, whereas an identity taken first can
+   * only ever cost an extra re-read.
    */
   private async readItems(): Promise<StoreItem[]> {
-    if (!existsSync(this.storePath)) return [];
+    const identity = await fileIdentity(this.storePath);
+    if (!identity) {
+      parsedStoreCache.delete(this.storePath);
+      return [];
+    }
+    const cached = cacheGet(this.storePath);
+    if (cached && sameFile(cached.identity, identity)) return cached.items.slice();
+
     let content: string;
     try {
       content = await readFile(this.storePath, 'utf-8');
@@ -278,9 +399,15 @@ export class Store {
     }
     try {
       const data = JSON.parse(content);
+      // Full-file validation runs here and only here: this is the one point
+      // where content of unknown provenance enters the process. Items handed
+      // back from the cache were validated on the read that filled it, and
+      // items added by a write are validated individually in withWriteLock.
       const validated = StoreFileSchema.parse(data);
       // Cast is safe because Zod schema matches our type structure
-      return validated.items as StoreItem[];
+      const items = validated.items as StoreItem[];
+      cacheSet(this.storePath, { identity, items });
+      return items.slice();
     } catch (error) {
       // Corrupt/truncated content is also not an empty store. Refuse rather
       // than overwrite whatever is on disk with [].
@@ -313,6 +440,13 @@ export class Store {
       await fh.close();
     }
     await rename(tempPath, this.storePath);
+
+    // We know exactly what the file now holds, so seed the cache instead of
+    // making the next op re-read and re-validate it. Still inside the lock, so
+    // no other process can have replaced the file before this stat.
+    const identity = await fileIdentity(this.storePath);
+    if (identity) cacheSet(this.storePath, { identity, items: items.slice() });
+    else parsedStoreCache.delete(this.storePath);
   }
 
   /**
@@ -347,7 +481,7 @@ export class Store {
 
     return this.withWriteLock((items) => {
       items.push(item);
-      return { items, result: item };
+      return { items, result: item, changed: [item] };
     });
   }
 
@@ -386,7 +520,7 @@ export class Store {
       };
 
       items[index] = updated;
-      return { items, result: updated };
+      return { items, result: updated, changed: [updated] };
     });
   }
 
@@ -428,7 +562,7 @@ export class Store {
           ...(this.agentName && { createdBy: this.agentName }),
         };
         items.push(item);
-        return { items, result: { item, created: true } };
+        return { items, result: { item, created: true }, changed: [item] };
       }
 
       const existing = items[index]!;
@@ -445,7 +579,7 @@ export class Store {
           : { ...existing.data, ...normalizedData },
       };
       items[index] = updated;
-      return { items, result: { item: updated, created: false } };
+      return { items, result: { item: updated, created: false }, changed: [updated] };
     });
   }
 
@@ -492,7 +626,7 @@ export class Store {
     }
     if (options.q) {
       const needle = options.q.toLowerCase();
-      results = results.filter(item => searchHaystack(item).includes(needle));
+      results = results.filter(item => searchStrings(item).haystack.includes(needle));
     }
     if (options.since) {
       // Both sides are ISO-8601 UTC, so lexicographic order is chronological.

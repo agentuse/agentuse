@@ -4,7 +4,7 @@
 
 import type { Tool } from 'ai';
 import { z } from 'zod';
-import type { Store } from './store';
+import { searchStrings, type Store } from './store';
 import type { StoreCreateOptions, StoreUpdateOptions, StoreListOptions, StoreItem } from './types';
 
 /**
@@ -74,7 +74,8 @@ function projectItem(
  */
 function matchSnippet(item: StoreItem, q: string, window = 60): string | undefined {
   const needle = q.toLowerCase();
-  const sources = [item.title, item.type, ...(item.tags ?? []), JSON.stringify(item.data)];
+  // Reuses the payload string the `q` filter already built for this item.
+  const sources = [item.title, item.type, ...(item.tags ?? []), searchStrings(item).json];
   for (const source of sources) {
     if (!source) continue;
     const idx = source.toLowerCase().indexOf(needle);
