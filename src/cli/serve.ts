@@ -26,7 +26,8 @@ import { registerServer, unregisterServer, updateServer, listServers, formatUpti
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
-import { SlackApprovalSocket, loadSlackSdk, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
+import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
+import { getSlackWebClient } from "../slack/lifecycle";
 import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, consolidateLearnings, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord, strandedLearningsFile, type LearningConfig, type ConsolidationResult, type TidyProgress } from "../learning";
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
@@ -2730,11 +2731,16 @@ export function createServeCommand(): Command {
           });
         }
       };
+      // When each project's worker last became ready. That instant, not "now", is
+      // the orphan cutoff: a worker owns every session touched since it came up,
+      // so `Date.now()` would make the guard vacuous and force a full owner probe
+      // on sessions the live worker is running right now.
+      const workerReadyAt = new Map<string, number>();
       const orphanReconcileLoop = startOrphanReconcileLoop(async () => {
-        const cutoff = Date.now();
         await Promise.all(projectSeeds.map(async (project) => {
           const worker = workers.get(project.id);
           if (!worker?.isReady()) return;
+          const cutoff = workerReadyAt.get(project.id) ?? Date.now();
           await reconcileWorkerOrphans(worker, project.id, project.root, cutoff);
         }));
       }, {
@@ -2745,6 +2751,15 @@ export function createServeCommand(): Command {
           AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
           AGENTUSE_PROJECT_ID: p.id,
         });
+        // Assigned before spawn so the initial ready records its timestamp too;
+        // the sweep it requests here no-ops because the worker isn't registered
+        // yet, and the explicit runNow below drives the real startup pass.
+        // Respawns request an immediate pass; overlapping requests collapse into
+        // one trailing sweep in the loop coordinator.
+        w.onReady = (readyAt) => {
+          workerReadyAt.set(p.id, readyAt);
+          orphanReconcileLoop.runNow();
+        };
         try {
           await w.spawn();
         } catch (err) {
@@ -2753,9 +2768,6 @@ export function createServeCommand(): Command {
           process.exit(1);
         }
         workers.set(p.id, w);
-        // Respawns request an immediate pass; overlapping requests collapse into
-        // one trailing sweep in the loop coordinator.
-        w.onReady = () => orphanReconcileLoop.runNow();
       }
       orphanReconcileLoop.runNow();
       logger.debug(`Spawned ${workers.size} agent worker(s)`);
@@ -3746,7 +3758,7 @@ export function createServeCommand(): Command {
         // Already fire-and-forget; the async wrapper is only so the deferred
         // Slack SDK can be awaited without changing this helper's signature.
         void (async () => {
-          const web = new (await loadSlackSdk()).WebClient(slackBotToken);
+          const web = await getSlackWebClient(slackBotToken);
           await web.chat.postMessage({
             channel,
             thread_ts: threadTs,
@@ -3796,7 +3808,7 @@ export function createServeCommand(): Command {
       ): void => {
         if (!slackBotToken) return;
         void (async () => {
-          const web = new (await loadSlackSdk()).WebClient(slackBotToken);
+          const web = await getSlackWebClient(slackBotToken);
           await web.chat.postMessage({
             channel: comment.channel,
             thread_ts: comment.threadTs,
@@ -5032,16 +5044,17 @@ export function createServeCommand(): Command {
             params.set('project', found.project.id);
             parentHref = `/sessions/${encodeURIComponent(parentSid)}?${params.toString()}`;
           }
+          // The log array is shipped once, at the top level. Leaving a copy on
+          // `approval` doubles the payload of the SPA's busiest poll.
+          const approval = { ...found.info.approval };
+          delete approval.logs;
+          if (parentHref) approval.parentHref = parentHref;
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             success: true,
             sessionId,
             status,
-            approval: applyResumeError({
-              ...found.info.approval,
-              logs,
-              ...(parentHref && { parentHref }),
-            }, activeKey),
+            approval: applyResumeError(approval, activeKey),
             logs,
             logsTotal: allLogs.length,
             decision: found.info.approval.decision
@@ -6289,12 +6302,15 @@ export function createServeCommand(): Command {
             : found.info.approval.sessionStatus === 'suspended'
               ? 'waiting'
               : found.info.approval.sessionStatus;
+          // Same single-copy rule as /sessions/:id/status: logs travel top level.
+          const approval = { ...found.info.approval };
+          delete approval.logs;
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             success: true,
             sessionId,
             status,
-            approval: applyResumeError({ ...found.info.approval }, activeKey),
+            approval: applyResumeError(approval, activeKey),
             logs: found.info.approval.logs ?? [],
             decision: found.info.approval.decision
           }));

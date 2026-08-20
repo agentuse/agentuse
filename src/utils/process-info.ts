@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import { readFileSync } from 'fs';
 
 /**
@@ -43,23 +43,89 @@ function getLinuxProcessStartTime(pid: number): string | null {
 }
 
 /**
+ * A pid's start time never changes, so the only reason to re-read it is that the
+ * pid may have been recycled onto a different process. The TTL bounds how long a
+ * recycled pid can keep serving the previous occupant's token; nothing else here
+ * depends on the cache being fresh. Without it, sweeps that probe many pids on a
+ * schedule fork `ps` once per pid per pass (macOS has no /proc to read instead).
+ */
+const START_TIME_TTL_MS = 45_000;
+const START_TIME_CACHE_LIMIT = 1_000;
+const startTimeCache = new Map<number, { token: string; checkedAt: number }>();
+
+function readCachedStartTime(pid: number): string | null {
+  const hit = startTimeCache.get(pid);
+  if (!hit) return null;
+  if (Date.now() - hit.checkedAt >= START_TIME_TTL_MS) {
+    startTimeCache.delete(pid);
+    return null;
+  }
+  return hit.token;
+}
+
+function cacheStartTime(pid: number, token: string | null): string | null {
+  // Only successes are cached: a null means "couldn't tell" (process gone, `ps`
+  // unavailable), and callers degrade on it, so remembering it would pin the
+  // degraded answer for the whole TTL.
+  if (!token) return null;
+  if (startTimeCache.size >= START_TIME_CACHE_LIMIT) {
+    const now = Date.now();
+    for (const [cachedPid, entry] of startTimeCache) {
+      if (now - entry.checkedAt >= START_TIME_TTL_MS) startTimeCache.delete(cachedPid);
+    }
+    // Still full of live entries: drop the oldest insertion to stay bounded.
+    if (startTimeCache.size >= START_TIME_CACHE_LIMIT) {
+      const oldest = startTimeCache.keys().next();
+      if (!oldest.done) startTimeCache.delete(oldest.value);
+    }
+  }
+  startTimeCache.set(pid, { token, checkedAt: Date.now() });
+  return token;
+}
+
+/**
  * Read an opaque, comparable process-start-time token for a PID, or null when it
  * can't be determined (process gone, or `ps`/proc unavailable). Tokens are only
  * meaningful for equality comparison, not parsing.
  */
 export function getProcessStartTime(pid: number): string | null {
+  const cached = readCachedStartTime(pid);
+  if (cached) return cached;
+
   const linuxStartTime = getLinuxProcessStartTime(pid);
-  if (linuxStartTime) return linuxStartTime;
+  if (linuxStartTime) return cacheStartTime(pid, linuxStartTime);
 
   try {
     const startTime = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
-    return startTime ? `ps:${startTime}` : null;
+    return startTime ? cacheStartTime(pid, `ps:${startTime}`) : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * `getProcessStartTime` without the synchronous `ps` fork. Callers already on an
+ * async path should prefer this: the sync version stalls the event loop for a
+ * few milliseconds per uncached pid, which is enough to be felt when a periodic
+ * sweep probes many of them.
+ */
+export function getProcessStartTimeAsync(pid: number): Promise<string | null> {
+  const cached = readCachedStartTime(pid);
+  if (cached) return Promise.resolve(cached);
+
+  const linuxStartTime = getLinuxProcessStartTime(pid);
+  if (linuxStartTime) return Promise.resolve(cacheStartTime(pid, linuxStartTime));
+
+  return new Promise((resolve) => {
+    execFile('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8' }, (err, stdout) => {
+      if (err) return resolve(null);
+      const startTime = stdout.trim();
+      resolve(startTime ? cacheStartTime(pid, `ps:${startTime}`) : null);
+    });
+  });
 }
 
 /** Memoized start-time token for the current process. */
@@ -139,6 +205,15 @@ export function isProcessRefAlive(ref: ProcessRef): boolean {
   if (typeof ref.pid !== 'number' || !isPidAlive(ref.pid)) return false;
   if (!ref.procStartedAt) return true;
   const current = getProcessStartTime(ref.pid);
+  if (!current) return true;
+  return current === ref.procStartedAt;
+}
+
+/** `isProcessRefAlive` for async callers; see `getProcessStartTimeAsync`. */
+export async function isProcessRefAliveAsync(ref: ProcessRef): Promise<boolean> {
+  if (typeof ref.pid !== 'number' || !isPidAlive(ref.pid)) return false;
+  if (!ref.procStartedAt) return true;
+  const current = await getProcessStartTimeAsync(ref.pid);
   if (!current) return true;
   return current === ref.procStartedAt;
 }

@@ -1,6 +1,6 @@
 import type { SessionManager } from '../session';
-import type { ToolState } from '../session/types';
-import { isProcessRefAlive } from '../utils/process-info';
+import type { SessionInfo, ToolState } from '../session/types';
+import { isProcessRefAliveAsync } from '../utils/process-info';
 import { LeaseStore } from './approval-lease';
 import { GateSealStore } from './gate-seal';
 import { applyGateDecisionEffects } from './gate-decision';
@@ -337,6 +337,37 @@ export interface ReconciledOrphan {
   reason: 'interrupted' | 'stranded' | 'finishable';
 }
 
+/** Bounds the probe cache below; entries are tiny, and a daemon serving more
+ *  parked sessions than this simply falls back to re-walking the overflow. */
+const PENDING_CHILD_CACHE_LIMIT = 5_000;
+const pendingChildCache = new Map<string, { updated: number; childId: string | null }>();
+
+/**
+ * The child a suspended session is parked on, or null when it isn't parked on
+ * one. Walking every message and part of the session is the expensive half of
+ * the cascade sweep, and it runs on every parked session every pass — so the
+ * answer is memoized against `time.updated`: a parked session writes nothing, so
+ * an unchanged stamp means the parts are byte-identical to the last walk.
+ */
+async function pendingSubagentWaitChildId(
+  sessionManager: SessionManager,
+  session: SessionInfo,
+  agentId: string
+): Promise<string | null> {
+  const cached = pendingChildCache.get(session.id);
+  if (cached && cached.updated === session.time.updated) return cached.childId;
+
+  const parts = await loadSessionPartsFlat(sessionManager, session.id, agentId);
+  const childId = findPendingSubagentWaitChildId(parts) ?? null;
+
+  if (!cached && pendingChildCache.size >= PENDING_CHILD_CACHE_LIMIT) {
+    const oldest = pendingChildCache.keys().next();
+    if (!oldest.done) pendingChildCache.delete(oldest.value);
+  }
+  pendingChildCache.set(session.id, { updated: session.time.updated, childId });
+  return childId;
+}
+
 /**
  * Recover sessions a dead worker left stuck as 'running' with no live process,
  * then the ancestors those deaths stranded.
@@ -385,7 +416,7 @@ export async function reconcileOrphanedSessions(options: {
     // Sessions run by a process that is still alive (a terminal `agentuse run`,
     // another daemon's worker) are not orphans, however stale their header.
     // Sessions from older versions carry no owner and keep the cutoff-only rule.
-    if (session.owner && isProcessRefAlive(session.owner)) continue;
+    if (session.owner && await isProcessRefAliveAsync(session.owner)) continue;
     if (!dryRun) {
       await sessionManager.setSessionError(session.id, agentId, {
         code: 'WORKER_INTERRUPTED',
@@ -406,11 +437,10 @@ export async function reconcileOrphanedSessions(options: {
     // A live process may be mid-cascade right now: between the child ending and
     // the parent's bookmark being completed, a healthy chain looks exactly like
     // a stranded one. Its owner being alive is the only distinguishing signal.
-    if (session.owner && isProcessRefAlive(session.owner)) continue;
+    if (session.owner && await isProcessRefAliveAsync(session.owner)) continue;
     let stale: Awaited<ReturnType<typeof findStaleCascadeChild>> = null;
     try {
-      const parts = await loadSessionPartsFlat(sessionManager, session.id, agentId);
-      const childId = findPendingSubagentWaitChildId(parts);
+      const childId = await pendingSubagentWaitChildId(sessionManager, session, agentId);
       if (!childId) continue;
       stale = await findStaleCascadeChild(sessionManager, childId);
     } catch (error) {

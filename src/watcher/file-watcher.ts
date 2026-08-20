@@ -18,6 +18,31 @@ export interface FileWatcherOptions {
 const DEFAULT_AGENT_SCAN_INTERVAL_MS = 15_000;
 
 /**
+ * Directories never scanned for agents, at any depth. Matched segment by
+ * segment: a substring test would swallow legitimate names like `distribution/`.
+ */
+const IGNORED_DIR_NAMES = [
+  "node_modules",
+  "tmp",
+  ".git",
+  ".agentuse",
+  "dist",
+  "build",
+  "coverage",
+  ".next",
+  ".cache",
+  ".venv",
+  "venv",
+  "__pycache__",
+];
+
+const IGNORED_DIR_SET = new Set(IGNORED_DIR_NAMES);
+// `**/` matters: a bare `node_modules/**` only prunes the top-level copy, so
+// glob walks every nested one in full on each scan (and a `dist/` copy of an
+// agent gets scheduled as if it were a second agent).
+const AGENT_SCAN_IGNORE = IGNORED_DIR_NAMES.map((name) => `**/${name}/**`);
+
+/**
  * FileWatcher monitors .agentuse files and environment files for changes,
  * enabling hot reload functionality for the serve command.
  */
@@ -50,12 +75,8 @@ export class FileWatcher {
   }
 
   private shouldIgnore(path: string): boolean {
-    return (
-      path.includes("node_modules") ||
-      path.includes("/tmp/") ||
-      path.includes("/.git/") ||
-      path.startsWith("tmp/")
-    );
+    // Only the directory segments; the file's own name is never a match.
+    return path.split("/").slice(0, -1).some((segment) => IGNORED_DIR_SET.has(segment));
   }
 
   private startAgentWatcher(): void {
@@ -119,20 +140,7 @@ export class FileWatcher {
   private async listAgentFiles(watchRoot: string): Promise<string[]> {
     const files = await glob("**/*.agentuse", {
       cwd: watchRoot,
-      ignore: [
-        "node_modules/**",
-        "tmp/**",
-        ".git/**",
-        ".agentuse/**",
-        "dist/**",
-        "build/**",
-        "coverage/**",
-        ".next/**",
-        ".cache/**",
-        ".venv/**",
-        "venv/**",
-        "__pycache__/**",
-      ],
+      ignore: AGENT_SCAN_IGNORE,
       nodir: true,
     });
     return files.filter((file) => !this.shouldIgnore(file)).sort();
