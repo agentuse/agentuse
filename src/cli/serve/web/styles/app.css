@@ -4167,6 +4167,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 @media (max-width: 560px) {
   .page-home .now-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
   .page-home .now-grid a.now-row { gap: 8px; padding: 11px 10px; align-items: flex-start; }
+  /* The card top-aligns its children on mobile so wrapped titles can grow.
+     Center the dot on the first 18px title line instead of its top edge. */
+  .page-home .now-grid .now-dot { margin-top: 5px; }
   .page-home .now-grid .now-elapsed { font-size: 11px; }
   .page-home .now-grid .now-desc,
   .page-home .now-grid .now-ticker { display: none; }

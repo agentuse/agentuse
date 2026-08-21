@@ -339,6 +339,15 @@ interface ApprovalListPayload {
   limit?: number;
 }
 
+function isPendingApprovalVisible(
+  projectId: string,
+  approval: Pick<ApprovalSummary, 'sessionId' | 'status'>,
+  activeResumes: { has(key: string): boolean }
+): boolean {
+  return approval.status === 'pending'
+    && !activeResumes.has(`${projectId}:${approval.sessionId}`);
+}
+
 interface SessionSummary {
   sessionId: string;
   parentSessionId?: string;
@@ -3594,7 +3603,7 @@ export function createServeCommand(): Command {
           if (activeApprovalResumes.get(activeKey) === resumePromise) {
             activeApprovalResumes.delete(activeKey);
           }
-          wakeListHubs();
+          void refreshProjectLists(project);
         });
         activeApprovalResumes.set(activeKey, resumePromise);
         wakeListHubs();
@@ -4357,7 +4366,12 @@ export function createServeCommand(): Command {
           ...row.approval
         });
         const pending = rows
-          .filter((r) => r.approval.status === 'pending')
+          // A decision is accepted before the worker necessarily rewrites the
+          // cached approval projection. The serve process already knows that
+          // resume is in flight, so do not keep advertising the old gate while
+          // that durable transition catches up. A failed resume removes the
+          // active key and restores the pending gate on the following refresh.
+          .filter((r) => isPendingApprovalVisible(r.projectId, r.approval, activeApprovalResumes))
           .sort((a, b) => (b.approval.suspendedAt ?? b.approval.createdAt ?? 0) - (a.approval.suspendedAt ?? a.approval.createdAt ?? 0))
           .map(serializeRow);
         const completed = rows
@@ -7362,6 +7376,7 @@ export const __testing = {
   canContinueApprovalSession,
   isEndedSessionStatus,
   approvalListCreatedAfter,
+  isPendingApprovalVisible,
   APPROVAL_LIST_SSE_INTERVAL_MS,
   sessionListUpdatedAfter,
   SESSION_LIST_SSE_INTERVAL_MS,

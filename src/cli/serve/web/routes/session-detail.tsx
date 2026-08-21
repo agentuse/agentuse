@@ -13,6 +13,7 @@ import { Loading } from '../components/loading';
 import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
 import { syncAppBadge } from '../lib/badge';
 import { useApprovalStream } from '../hooks/use-approval-stream';
+import { useGlobalApprovals } from '../hooks/use-global-approvals';
 import { useCountUp } from '../hooks/use-count-up';
 import { useTitle } from '../hooks/use-title';
 import { useSmartBack } from '../hooks/use-smart-back';
@@ -235,10 +236,18 @@ export function hasActionableApproval(status: string, header: ApprovalHeader | n
 }
 
 /** A sibling gate in the pending queue: just enough to label it and link to it. */
-interface QueuedApproval {
+export interface QueuedApproval {
   sessionId: string;
   project: string;
   agentName: string;
+}
+
+export function withoutQueuedApproval(
+  queue: QueuedApproval[],
+  approval: Pick<QueuedApproval, 'sessionId'> & Partial<Pick<QueuedApproval, 'project'>>
+): QueuedApproval[] {
+  return queue.filter((row) => row.sessionId !== approval.sessionId
+    || (approval.project !== undefined && row.project !== approval.project));
 }
 
 export default function SessionDetail() {
@@ -248,6 +257,7 @@ export default function SessionDetail() {
   const sessionId = decodeURIComponent(params.sessionId ?? '');
   const token = location.query.token || undefined;
   const projectId = location.query.project || undefined;
+  const globalApprovals = useGlobalApprovals();
   // The diagnostic subpage, carrying whatever authorises this view.
   const diagnosticHref = (() => {
     const params = new URLSearchParams();
@@ -770,12 +780,14 @@ export default function SessionDetail() {
     else setShowResume(false);
   }, [continueActionable]);
 
-  // Pending-queue position, fetched once per session rather than polled: it only
-  // has to be right when the reviewer arrives, and deciding this gate navigates
-  // away anyway. A capability-scoped (?token=) view has no operator access to the
-  // approvals endpoint and would only 401, so it stays queue-less.
+  // Pending-queue position, fetched once when a gate becomes actionable. A
+  // capability-scoped (?token=) view has no operator access to the approvals
+  // endpoint and stays queue-less.
   useEffect(() => {
-    if (token || !actionable) return;
+    if (token || !actionable) {
+      setPendingQueue([]);
+      return;
+    }
     let cancelled = false;
     void fetchApprovals()
       .then((payload) => {
@@ -825,6 +837,7 @@ export default function SessionDetail() {
     setSubmittingDecision(action);
     setResult({ text: '⋮ submitting decision…', error: false });
     try {
+      const decidedResumeToken = currentResumeTokenRef.current;
       await postSessionDecision(sessionId, token, {
         status: action,
         ...(comment ? { comment } : {}),
@@ -836,6 +849,10 @@ export default function SessionDetail() {
       setResult({ text: '✓ decision recorded — agentuse is resuming the session.', error: false });
       setStatus('resuming');
       setNudge((n) => n + 1);
+      const queueProject = projectId ?? pendingQueue.find((row) => row.sessionId === sessionId)?.project;
+      const decided = { sessionId, ...(queueProject && { project: queueProject }) };
+      setPendingQueue((current) => withoutQueuedApproval(current, decided));
+      globalApprovals.resolvePending({ ...decided, resumeToken: decidedResumeToken });
       // A handled approval changes the app-icon badge count; resync it
       // best-effort (401s silently on key-gated daemons without the header).
       void fetchApprovals().then((p) => syncAppBadge(p.buckets.pending.length)).catch(() => {});
@@ -846,7 +863,7 @@ export default function SessionDetail() {
       // long session; bring it into view so the failure isn't silent.
       noticeRef.current?.scrollIntoView({ block: 'nearest' });
     }
-  }, [sessionId, token, projectId, submittingDecision]);
+  }, [sessionId, token, projectId, submittingDecision, pendingQueue, globalApprovals]);
 
   const submitContinue = useCallback(async (prompt: string) => {
     // Unlike an approval decision, continuing an ended session needs no resume
@@ -1210,7 +1227,7 @@ export default function SessionDetail() {
             {approval?.mock && <span class="mock-badge" title="Tool outputs were LLM-generated; no real tools ran">mock</span>}
             <span class="session-bar-name">{agentLabel}</span>
           </div>
-          {queueNext && (
+          {actionable && queueNext && (
             <div class="session-bar-queue">
               <span class="session-bar-queue-count">{queueIndex + 1} of {pendingQueue.length} pending</span>
               <a

@@ -44,6 +44,21 @@ describe('approval web page', () => {
     expect(__testing.APPROVAL_LIST_SSE_INTERVAL_MS).toBe(10_000);
   });
 
+  it('drops an accepted approval while its resume is in flight', () => {
+    const approval = { sessionId: 'session-1', status: 'pending' };
+    expect(__testing.isPendingApprovalVisible('demo', approval, new Set())).toBe(true);
+    expect(__testing.isPendingApprovalVisible(
+      'demo',
+      approval,
+      new Set(['demo:session-1'])
+    )).toBe(false);
+    expect(__testing.isPendingApprovalVisible(
+      'other',
+      approval,
+      new Set(['demo:session-1'])
+    )).toBe(true);
+  });
+
   it('offers a continuation form for completed approval sessions', () => {
     expect(__testing.canContinueApprovalSession({
       approval: baseApproval

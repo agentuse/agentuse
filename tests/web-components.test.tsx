@@ -10,9 +10,10 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { aggregateToolStats, hasActionableApproval, headerTokenUsage, tokenUsageMetaItems } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, hasActionableApproval, headerTokenUsage, tokenUsageMetaItems, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
 import { FeedResponse, NewSinceLastVisit, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
+import { withoutPendingApproval } from '../src/cli/serve/web/hooks/use-global-approvals';
 import type { AgentRow, ApprovalsListPayload, SessionRow } from '../src/cli/serve/web/lib/api';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 import { term, termTitle } from '../src/cli/serve/web/lib/terms';
@@ -1185,6 +1186,51 @@ describe('Home activity feed labels', () => {
     const gates = suspendedGateKinds(payload({}));
     expect(labelFor(row({ status: 'running' }), true, gates)).toBe('started');
     expect(labelFor(row({ status: 'completed' }), false, gates)).toBe('completed');
+  });
+});
+
+describe('approval queue reconciliation', () => {
+  const row = (project: string, sessionId: string, resumeToken: string) => ({
+    project,
+    sessionId,
+    resumeToken,
+    agentId: 'agent-1',
+    agentName: 'Agent',
+    status: 'pending' as const,
+    sessionStatus: 'suspended',
+  });
+
+  it('removes only the accepted gate from the shared pending snapshot', () => {
+    const accepted = row('demo', 'session-1', 'token-1');
+    const sameIdElsewhere = row('other', 'session-1', 'token-2');
+    const unrelated = row('demo', 'session-2', 'token-3');
+    const payload: ApprovalsListPayload = {
+      success: true,
+      multiProject: true,
+      approvals: [accepted, sameIdElsewhere, unrelated],
+      buckets: { pending: [accepted, sameIdElsewhere, unrelated], completed: [], expired: [] },
+      window: { days: 30 },
+      errors: [],
+    };
+
+    const next = withoutPendingApproval(payload, { project: 'demo', sessionId: 'session-1' });
+    expect(next.buckets.pending.map((item) => `${item.project}:${item.sessionId}`)).toEqual([
+      'other:session-1',
+      'demo:session-2',
+    ]);
+    expect(next.approvals).toHaveLength(2);
+  });
+
+  it('removes a decided session from the detail-page next queue', () => {
+    const queue = [
+      { project: 'demo', sessionId: 'session-1', agentName: 'One' },
+      { project: 'other', sessionId: 'session-1', agentName: 'Other one' },
+      { project: 'demo', sessionId: 'session-2', agentName: 'Two' },
+    ];
+    expect(withoutQueuedApproval(queue, { project: 'demo', sessionId: 'session-1' })).toEqual([
+      queue[1],
+      queue[2],
+    ]);
   });
 });
 
