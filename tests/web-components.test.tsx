@@ -13,7 +13,12 @@ import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature 
 import { aggregateToolStats, hasActionableApproval, headerTokenUsage, tokenUsageMetaItems, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
 import { FeedResponse, NewSinceLastVisit, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
-import { withoutPendingApproval } from '../src/cli/serve/web/hooks/use-global-approvals';
+import {
+  isAttentionSessionDismissed,
+  withDismissedAttentionSession,
+  withoutDismissedAttentionSession,
+  withoutPendingApproval,
+} from '../src/cli/serve/web/hooks/use-global-approvals';
 import type { AgentRow, ApprovalsListPayload, SessionRow } from '../src/cli/serve/web/lib/api';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 import { term, termTitle } from '../src/cli/serve/web/lib/terms';
@@ -1231,6 +1236,21 @@ describe('approval queue reconciliation', () => {
       queue[1],
       queue[2],
     ]);
+  });
+
+  it('shares an optimistic failed-session dismissal across routes and scopes it by project', () => {
+    const dismissed = withDismissedAttentionSession(new Set(), { project: 'demo', sessionId: 'session-1' });
+    expect(isAttentionSessionDismissed(dismissed, { project: 'demo', sessionId: 'session-1' })).toBe(true);
+    expect(isAttentionSessionDismissed(dismissed, { project: 'other', sessionId: 'session-1' })).toBe(false);
+    expect(isAttentionSessionDismissed(dismissed, { project: 'demo', sessionId: 'session-2' })).toBe(false);
+  });
+
+  it('restores an optimistic dismissal after a failed request without touching another row', () => {
+    let dismissed = withDismissedAttentionSession(new Set(), { project: 'demo', sessionId: 'session-1' });
+    dismissed = withDismissedAttentionSession(dismissed, { project: 'other', sessionId: 'session-1' });
+    dismissed = withoutDismissedAttentionSession(dismissed, { project: 'demo', sessionId: 'session-1' });
+    expect(isAttentionSessionDismissed(dismissed, { project: 'demo', sessionId: 'session-1' })).toBe(false);
+    expect(isAttentionSessionDismissed(dismissed, { project: 'other', sessionId: 'session-1' })).toBe(true);
   });
 });
 

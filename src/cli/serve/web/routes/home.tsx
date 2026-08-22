@@ -6,6 +6,7 @@ import { useFetch } from '../hooks/use-fetch';
 import { useHomeSections } from '../hooks/use-home-sections';
 import { useMetricPrefs, type MetricDisplay } from '../hooks/use-metric-prefs';
 import { useLiveHome, sessionRowKey, ORPHANED_LABEL, type ActivityEvent } from '../hooks/use-live-home';
+import { isAttentionSessionDismissed, useGlobalApprovals } from '../hooks/use-global-approvals';
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
@@ -631,6 +632,7 @@ export default function Home() {
   useTitle(pageTitle());
   const { data, error, loading } = useFetch('home', () => fetchInfo(), { refreshMs: 30_000 });
   const liveHome = useLiveHome();
+  const attentionState = useGlobalApprovals();
 
   // Agent parse failures are counted on their project card, using the same
   // payload as /agents rather than hiding one aggregate warning in the footer.
@@ -703,27 +705,22 @@ export default function Home() {
   // Not every failed-tone run is waiting on a human: runs the reviewer stopped
   // themselves (USER_STOPPED) or already reviewed and discarded (dismissedAt,
   // via the session page's Discard button or the row's hover ✕) are
-  // acknowledged, so they stay out. dismissedLocal hides a just-dismissed row
-  // instantly, ahead of the list stream's next snapshot.
-  const [dismissedLocal, setDismissedLocal] = useState<ReadonlySet<string>>(() => new Set<string>());
+  // acknowledged, so they stay out. The shared app-root dismissal mask hides a
+  // just-dismissed row instantly even when Discard happened on another route.
   const dismissFailed = useCallback((row: SessionRow) => {
-    const key = sessionRowKey(row);
-    setDismissedLocal((current) => new Set(current).add(key));
+    const identity = { project: row.project, sessionId: row.sessionId };
+    attentionState.dismissAttentionSession(identity);
     postSessionStop(row.sessionId, undefined, { project: row.project, reason: 'Discarded from home' })
       .catch(() => {
         // Dismissal did not land; put the row back so it isn't silently lost.
-        setDismissedLocal((current) => {
-          const next = new Set(current);
-          next.delete(key);
-          return next;
-        });
+        attentionState.restoreAttentionSession(identity);
       });
-  }, []);
+  }, [attentionState.dismissAttentionSession, attentionState.restoreAttentionSession]);
   // Not truncated here: the section itself folds the tail behind "show all", so
   // the header count is the real number of runs waiting on a review.
   const failedRecent = liveHome.sessions
     .filter((s) => runTone(s.status) === 'failed' && s.errorCode !== 'USER_STOPPED' && s.dismissedAt === undefined
-      && !dismissedLocal.has(sessionRowKey(s)))
+      && !isAttentionSessionDismissed(attentionState.dismissedAttentionSessions, s))
     .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
   // Runs parked on a delegated sub-agent that has since ended. They read as
   // `suspended`, so neither the failed filter above nor the pending-gate list
@@ -731,7 +728,7 @@ export default function Home() {
   // stopping the run. Dismissing one stops it, which is exactly the fix.
   const strandedRecent = liveHome.sessions
     .filter((s) => liveHome.suspendedGates.orphaned.has(sessionRowKey(s)) && s.dismissedAt === undefined
-      && !dismissedLocal.has(sessionRowKey(s)))
+      && !isAttentionSessionDismissed(attentionState.dismissedAttentionSessions, s))
     .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
   const pendingApprovals = liveHome.pendingApprovals;
   // Suspended rows with no live or expired gate are mid-flight (a delegated

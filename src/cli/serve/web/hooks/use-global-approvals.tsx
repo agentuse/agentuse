@@ -1,4 +1,5 @@
 import { createContext, type ComponentChildren } from 'preact';
+import { useLocation } from 'preact-iso';
 import { useCallback, useContext, useEffect, useRef, useState } from 'preact/hooks';
 import { ApiRequestError, fetchApprovals, type ApprovalsListPayload } from '../lib/api';
 import { useApprovalsStream } from './use-approvals-stream';
@@ -9,6 +10,11 @@ export interface PendingApprovalIdentity {
   resumeToken?: string | undefined;
 }
 
+export interface AttentionSessionIdentity {
+  sessionId: string;
+  project: string;
+}
+
 interface GlobalApprovalsState {
   data: ApprovalsListPayload | null;
   error: ApiRequestError | null;
@@ -16,6 +22,11 @@ interface GlobalApprovalsState {
   live: boolean;
   /** Hide a decision the server accepted while SSE catches up. */
   resolvePending: (approval: PendingApprovalIdentity) => void;
+  /** Hide a reviewed/stopped session while the sessions stream catches up. */
+  dismissAttentionSession: (session: AttentionSessionIdentity) => void;
+  /** Roll back an optimistic dismissal when its request fails. */
+  restoreAttentionSession: (session: AttentionSessionIdentity) => void;
+  dismissedAttentionSessions: ReadonlySet<string>;
 }
 
 const EMPTY: GlobalApprovalsState = {
@@ -24,11 +35,45 @@ const EMPTY: GlobalApprovalsState = {
   loading: false,
   live: false,
   resolvePending: () => {},
+  dismissAttentionSession: () => {},
+  restoreAttentionSession: () => {},
+  dismissedAttentionSessions: new Set(),
 };
 const GlobalApprovalsContext = createContext<GlobalApprovalsState>(EMPTY);
 
 function approvalKey(row: Pick<PendingApprovalIdentity, 'project' | 'sessionId'>): string {
   return `${row.project ?? ''}:${row.sessionId}`;
+}
+
+export function attentionSessionKey(row: AttentionSessionIdentity): string {
+  return `${row.project}:${row.sessionId}`;
+}
+
+export function withDismissedAttentionSession(
+  current: ReadonlySet<string>,
+  session: AttentionSessionIdentity
+): ReadonlySet<string> {
+  const key = attentionSessionKey(session);
+  if (current.has(key)) return current;
+  return new Set(current).add(key);
+}
+
+export function withoutDismissedAttentionSession(
+  current: ReadonlySet<string>,
+  session: AttentionSessionIdentity
+): ReadonlySet<string> {
+  const key = attentionSessionKey(session);
+  if (!current.has(key)) return current;
+  const next = new Set(current);
+  next.delete(key);
+  return next;
+}
+
+export function isAttentionSessionDismissed(
+  dismissed: ReadonlySet<string>,
+  session: AttentionSessionIdentity
+): boolean {
+  return dismissed.has(attentionSessionKey(session));
 }
 
 function matchesApproval(row: PendingApprovalIdentity, approval: PendingApprovalIdentity): boolean {
@@ -56,10 +101,19 @@ export function withoutPendingApproval(
  * Home, and the arrival toast. Capability-scoped session links deliberately do
  * not open this operator-only stream. */
 export function GlobalApprovalsProvider(props: { children: ComponentChildren }) {
-  const scoped = typeof location !== 'undefined' && new URLSearchParams(location.search).has('token');
+  // Consume router state so a token-scoped deep link can safely return to an
+  // operator page and reconnect this stream without requiring a full reload.
+  const location = useLocation();
+  const scoped = location.query.token !== undefined;
   const [data, setData] = useState<ApprovalsListPayload | null>(null);
   const [error, setError] = useState<ApiRequestError | null>(null);
   const [fallback, setFallback] = useState(false);
+  // Session-list attention rows are independent of the approvals projection.
+  // Keep a tiny app-root mask so Discard on Session Detail, Sessions, or Home
+  // survives route changes and stale list snapshots.
+  const [dismissedAttentionSessions, setDismissedAttentionSessions] = useState<ReadonlySet<string>>(
+    () => new Set<string>()
+  );
   // A decision POST returns 202 before the worker's durable projection and the
   // list SSE necessarily catch up. Keep the exact old gate suppressed across a
   // stale in-flight snapshot; a genuinely new gate has a different resumeToken
@@ -105,6 +159,14 @@ export function GlobalApprovalsProvider(props: { children: ComponentChildren }) 
       void fetchApprovals().then(acceptSnapshot).catch(() => {});
     }, 30_000));
   }, [acceptSnapshot]);
+
+  const dismissAttentionSession = useCallback((session: AttentionSessionIdentity) => {
+    setDismissedAttentionSessions((current) => withDismissedAttentionSession(current, session));
+  }, []);
+
+  const restoreAttentionSession = useCallback((session: AttentionSessionIdentity) => {
+    setDismissedAttentionSessions((current) => withoutDismissedAttentionSession(current, session));
+  }, []);
 
   useEffect(() => () => {
     for (const timer of releaseTimersRef.current.values()) clearTimeout(timer);
@@ -156,6 +218,9 @@ export function GlobalApprovalsProvider(props: { children: ComponentChildren }) 
       loading: !scoped && data === null && error === null,
       live: !scoped && !fallback,
       resolvePending,
+      dismissAttentionSession,
+      restoreAttentionSession,
+      dismissedAttentionSessions,
     }}>
       {props.children}
     </GlobalApprovalsContext.Provider>

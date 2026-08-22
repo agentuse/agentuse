@@ -849,10 +849,15 @@ export default function SessionDetail() {
       setResult({ text: '✓ decision recorded — agentuse is resuming the session.', error: false });
       setStatus('resuming');
       setNudge((n) => n + 1);
-      const queueProject = projectId ?? pendingQueue.find((row) => row.sessionId === sessionId)?.project;
+      const queueProject = projectId ?? approval?.project ?? pendingQueue.find((row) => row.sessionId === sessionId)?.project;
       const decided = { sessionId, ...(queueProject && { project: queueProject }) };
       setPendingQueue((current) => withoutQueuedApproval(current, decided));
       globalApprovals.resolvePending({ ...decided, resumeToken: decidedResumeToken });
+      if (queueProject) {
+        // A retry/reopen may reuse this session id after an earlier discarded
+        // failure. Once work resumes, that old attention mask is obsolete.
+        globalApprovals.restoreAttentionSession({ project: queueProject, sessionId });
+      }
       // A handled approval changes the app-icon badge count; resync it
       // best-effort (401s silently on key-gated daemons without the header).
       void fetchApprovals().then((p) => syncAppBadge(p.buckets.pending.length)).catch(() => {});
@@ -863,7 +868,7 @@ export default function SessionDetail() {
       // long session; bring it into view so the failure isn't silent.
       noticeRef.current?.scrollIntoView({ block: 'nearest' });
     }
-  }, [sessionId, token, projectId, submittingDecision, pendingQueue, globalApprovals]);
+  }, [sessionId, token, projectId, approval?.project, submittingDecision, pendingQueue, globalApprovals]);
 
   const submitContinue = useCallback(async (prompt: string) => {
     // Unlike an approval decision, continuing an ended session needs no resume
@@ -881,11 +886,15 @@ export default function SessionDetail() {
       setResult({ text: '✓ follow-up recorded — agentuse is continuing the session.', error: false });
       setStatus(payload.status || 'continuing');
       setNudge((n) => n + 1);
+      const resolvedProject = projectId ?? approval?.project;
+      if (resolvedProject) {
+        globalApprovals.restoreAttentionSession({ project: resolvedProject, sessionId });
+      }
     } catch (err) {
       setResult({ text: (err as Error).message || String(err), error: true });
       setSubmittingContinue(false);
     }
-  }, [sessionId, token, projectId, submittingContinue, continueActionable]);
+  }, [sessionId, token, projectId, approval?.project, submittingContinue, continueActionable, globalApprovals]);
 
   const submitReopen = useCallback(async () => {
     if (submittingReopen) return;
@@ -904,18 +913,23 @@ export default function SessionDetail() {
       setResult({ text: '✓ gate reopened — re-submit your decision below to resume.', error: false });
       setStatus('waiting');
       setNudge((n) => n + 1);
+      const resolvedProject = projectId ?? approval?.project;
+      if (resolvedProject) {
+        globalApprovals.restoreAttentionSession({ project: resolvedProject, sessionId });
+      }
     } catch (err) {
       setResult({ text: (err as Error).message || String(err), error: true });
     } finally {
       setSubmittingReopen(false);
     }
-  }, [sessionId, token, projectId, submittingReopen]);
+  }, [sessionId, token, projectId, approval?.project, submittingReopen, globalApprovals]);
 
   const submitStop = useCallback(async () => {
     if (submittingStop) return;
     setSubmittingStop(true);
     setResult({ text: '⋮ stopping session…', error: false });
     try {
+      const decidedResumeToken = currentResumeTokenRef.current;
       const payload = await postSessionStop(sessionId, token, {
         ...(projectId ? { project: projectId } : {}),
         reason: 'Stopped from session UI',
@@ -929,8 +943,16 @@ export default function SessionDetail() {
         setResult({ text: '✓ pending request rejected — agentuse is resuming the session so the agent records it before ending.', error: false });
         setStatus('resuming');
         setNudge((n) => n + 1);
+        const queueProject = projectId ?? approval?.project ?? pendingQueue.find((row) => row.sessionId === sessionId)?.project;
+        const decided = { sessionId, ...(queueProject && { project: queueProject }) };
+        setPendingQueue((current) => withoutQueuedApproval(current, decided));
+        globalApprovals.resolvePending({ ...decided, resumeToken: decidedResumeToken });
         void fetchApprovals().then((p) => syncAppBadge(p.buckets.pending.length)).catch(() => {});
         return;
+      }
+      const resolvedProject = projectId ?? approval?.project;
+      if (resolvedProject) {
+        globalApprovals.dismissAttentionSession({ project: resolvedProject, sessionId });
       }
       // Discard on an already-ended failed run: nothing was stopped, the run
       // was stamped reviewed. Status/error stay untouched.
@@ -949,7 +971,7 @@ export default function SessionDetail() {
       setResult({ text: (err as Error).message || String(err), error: true });
       setSubmittingStop(false);
     }
-  }, [sessionId, token, projectId, submittingStop]);
+  }, [sessionId, token, projectId, approval?.project, submittingStop, pendingQueue, globalApprovals]);
 
   const onAction = useCallback((action: 'approve' | 'reject' | 'comment') => {
     if (action === 'comment' || action === 'reject') {

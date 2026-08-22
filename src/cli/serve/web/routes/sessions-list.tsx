@@ -18,6 +18,7 @@ import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 import { useSessionListView, type SessionListView } from '../hooks/use-session-list-view';
 import { useLastVisit } from '../hooks/use-last-visit';
+import { isAttentionSessionDismissed, useGlobalApprovals } from '../hooks/use-global-approvals';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
 const STATUSES = ['', 'running', 'suspended', 'completed', 'error', 'incomplete'];
@@ -38,10 +39,6 @@ const MOCK_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'only', label: 'only mock' },
 ];
 const LIVE_SESSION_STATUSES = new Set(['running', 'resuming', 'continuing']);
-
-function sessionRowKey(row: SessionRow): string {
-  return `${row.project}:${row.sessionId}`;
-}
 
 /** An ended failed run the reviewer can wave off: same rule the server's
  *  needs-attention filter and the home panel use. USER_STOPPED runs were the
@@ -320,11 +317,9 @@ export default function SessionsList() {
   ];
   const [filtersOpen, setFiltersOpen] = useState(activeCount > 0);
   const [groupByAgent, setGroupByAgent] = useState(false);
-  // Optimistic discard set (keyed by project:sessionId): a just-discarded row
-  // shows its "dismissed" state immediately, then drops out of the undismissed
-  // view without waiting for the next SSE snapshot. Rolled back if the stop
-  // request fails so the row is never silently lost.
-  const [dismissedLocal, setDismissedLocal] = useState<ReadonlySet<string>>(() => new Set<string>());
+  // App-root optimistic discard state lets Sessions and Home reconcile the
+  // same action immediately, even while their independent SSE snapshots lag.
+  const attentionState = useGlobalApprovals();
 
   // Agent list powers the filter's type-ahead so operators pick a real agent id
   // instead of guessing a substring (which silently misses renamed/moved ids).
@@ -409,9 +404,9 @@ export default function SessionsList() {
     const rowKey = `${row.project}\0${row.sessionId}`;
     if (seenRowKeys.has(rowKey)) return false;
     seenRowKeys.add(rowKey);
-    // In the undismissed view a locally-discarded row no longer belongs, so
+    // In the undismissed view an optimistically discarded row no longer belongs, so
     // hide it right away; every other view keeps it (marked "dismissed").
-    if (triageFilter === 'undismissed' && dismissedLocal.has(sessionRowKey(row))) return false;
+    if (triageFilter === 'undismissed' && isAttentionSessionDismissed(attentionState.dismissedAttentionSessions, row)) return false;
     return true;
   });
   const multiProject = new Set(rows.map((r) => r.project)).size > 1;
@@ -438,20 +433,16 @@ export default function SessionsList() {
   // Reuses the stop endpoint, which stamps dismissedAt for an already-ended
   // failed session (identical to the home panel's "×").
   const discardRow = useCallback((row: SessionRow) => {
-    const rowKey = sessionRowKey(row);
-    setDismissedLocal((current) => new Set(current).add(rowKey));
+    const identity = { project: row.project, sessionId: row.sessionId };
+    attentionState.dismissAttentionSession(identity);
     postSessionStop(row.sessionId, undefined, { project: row.project, reason: 'Discarded from sessions list' })
       .catch(() => {
         // Discard did not land; restore the row so it isn't silently lost.
-        setDismissedLocal((current) => {
-          const next = new Set(current);
-          next.delete(rowKey);
-          return next;
-        });
+        attentionState.restoreAttentionSession(identity);
       });
-  }, []);
+  }, [attentionState.dismissAttentionSession, attentionState.restoreAttentionSession]);
   const isDismissed = (row: SessionRow): boolean =>
-    row.dismissedAt !== undefined || dismissedLocal.has(sessionRowKey(row));
+    row.dismissedAt !== undefined || isAttentionSessionDismissed(attentionState.dismissedAttentionSessions, row);
 
   // How far down the feed "you have already seen this" starts. Rows arrive
   // newest first, so the count of rows started since the last visit is also the
