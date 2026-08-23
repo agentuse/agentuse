@@ -29,13 +29,9 @@ describe("splitInstructions", () => {
 });
 
 describe("hashInstructions", () => {
-  it("ignores the graduated block, so a rule graduating does not stale every other rule", () => {
-    // The block is output of the learning system itself. Hashing it would mark
-    // every stored learning stale each time one of them graduated — a
-    // self-invalidation loop with no new information in it.
-    expect(hashInstructions(withBlock(BODY, "Keep intros factual."))).toBe(hashInstructions(BODY));
-    // And it stays stable as the block's own contents change.
-    expect(hashInstructions(withBlock(BODY, "Something else entirely."))).toBe(hashInstructions(BODY));
+  it("changes when a human edits a permanent learned rule", () => {
+    expect(hashInstructions(withBlock(BODY, "Keep intros factual.")))
+      .not.toBe(hashInstructions(withBlock(BODY, "Something else entirely.")));
   });
 
   it("changes when a human rewrites the contract, which is what it exists to catch", () => {

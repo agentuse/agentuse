@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type { ToolCallTrace } from '../plugin/types';
 import type { LearningDraft } from './types';
 import { generateLearningId } from './store';
@@ -36,15 +37,16 @@ const asText = (value: unknown): string => {
 export function failureSignature(output: unknown): string {
   const text = asText(output);
   const firstLine = text.split('\n').find((line) => line.trim().length > 0) ?? '';
-  return firstLine
+  const normalized = firstLine
     .toLowerCase()
-    .replace(/[0-9a-f]{8,}/g, '#')   // hashes, uuids, session ids
-    .replace(/\d+/g, '#')            // counts, ports, timestamps
-    .replace(/(["'`])[^"'`]*\1/g, '"…"') // quoted values (paths, names)
-    .replace(/\|/g, '/')             // metadata-comment safety
+    .replace(/[0-9a-f]{8,}/g, '#')
+    .replace(/\d+/g, '#')
+    .replace(/(["'`])[^"'`]*\1/g, '"…"')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 100);
+    .trim();
+  // Persist only an opaque dedupe token: tool output may contain credentials or
+  // adversarial text and must never become a future prompt instruction.
+  return normalized ? createHash('sha256').update(normalized).digest('hex').slice(0, 12) : '';
 }
 
 /**
@@ -66,14 +68,17 @@ export function detectToolErrorRecoveries(traces: ToolCallTrace[] | undefined): 
     const key = `${failed.name}\0${signature}`;
     if (seen.has(key)) continue;
 
-    const succeeded = traces.slice(i + 1).find((t) =>
-      t.type === 'tool'
-      && t.name === failed.name
-      && t.success === true
+    // Only the next tool call can be called a retry. Pairing with any later
+    // success confuses unrelated uses of a common tool for a recovery.
+    const succeeded = traces.slice(i + 1).find((t) => t.type === 'tool');
+    if (
+      !succeeded
+      || succeeded.name !== failed.name
+      || succeeded.success !== true
       // The recovery must be a CORRECTED call: a retry with identical input
       // that happened to work is flakiness, not a lesson.
-      && asText(t.input) !== asText(failed.input));
-    if (!succeeded) continue;
+      || asText(succeeded.input) === asText(failed.input)
+    ) continue;
 
     seen.add(key);
     recoveries.push({ tool: failed.name, failureSignature: signature, failed, succeeded });
@@ -81,36 +86,43 @@ export function detectToolErrorRecoveries(traces: ToolCallTrace[] | undefined): 
   return recoveries;
 }
 
-const truncate = (text: string, max: number): string =>
-  text.length > max ? `${text.slice(0, max)}…` : text;
+const safeName = (text: string): string => text.replace(/[^a-zA-Z0-9_.:-]/g, '_').slice(0, 80) || 'tool';
+
+const inputShape = (input: unknown): string => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return typeof input;
+  const types = Object.values(input as Record<string, unknown>)
+    .map((value) => Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value)
+    .sort();
+  return `object(${types.length} fields: ${types.join(', ') || 'none'})`;
+};
 
 /**
- * Turn a structurally-verified recovery into a stored draft. The wording is
- * built in code, deterministically: the instruction names the failure and
- * points at the corrected call, and the evidence line carries both calls so a
- * reader (or the tidy pass) can judge it later.
+ * Turn a structurally-verified recovery into a stored draft. Only argument
+ * names and value types survive; raw tool inputs/outputs may contain secrets or
+ * adversarial text and are never persisted.
  */
 export function toolErrorDraft(
   recovery: ToolErrorRecovery,
   now: string,
 ): LearningDraft {
-  const failedInput = truncate(asText(recovery.failed.input), 160);
-  const successInput = truncate(asText(recovery.succeeded.input), 200);
+  const tool = safeName(recovery.tool);
+  const failedShape = inputShape(recovery.failed.input);
+  const successShape = inputShape(recovery.succeeded.input);
   return {
     id: generateLearningId(),
     category: 'error-fix',
-    title: `${recovery.tool}: ${truncate(recovery.failureSignature, 60)}`,
-    instruction: `When ${recovery.tool} fails with "${recovery.failureSignature}", use the corrected call shape that succeeded: ${successInput}`,
-    // Structurally verified, not a model's guess — the trace contains the
-    // failed call, the corrected call, and the success.
+    title: 'Correct rejected tool arguments',
+    instruction: `When a tool rejects an argument shape, retry only after correcting its arguments. Successful retry shape: ${successShape}`,
+    // Structurally verified and strictly constrained in code; no trace text or
+    // argument value reaches the stored prompt.
     confidence: 1,
     injectedCount: 0,
     extractedAt: now,
     source: 'auto',
     channel: 'tool-errors',
-    tool: recovery.tool,
+    tool,
     failureSignature: recovery.failureSignature,
-    evidence: `failed: ${failedInput} → succeeded: ${successInput}`,
+    evidence: `failed shape: ${failedShape} → succeeded shape: ${successShape}`,
     reasserted: 0,
     approvedRuns: 0,
   };

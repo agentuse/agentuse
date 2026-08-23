@@ -2185,9 +2185,19 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
       ...reconciledGraduated.map((l) => ({ category: l.category, instruction: l.instruction })),
     ];
     const planStillFits = blockOutcome !== null && isDeepStrictEqual(appendedNow, appended);
+    const reconciledPermanent = planStillFits ? permanentAfter : appendedNow;
     const reconciledAgent = graduationBlocked
       ? latestAgent
-      : spliceLearnedBlock(latestAgent, planStillFits ? permanentAfter : appendedNow);
+      : spliceLearnedBlock(latestAgent, reconciledPermanent);
+
+    // A tidy-authored permanent-block change is already vetted by this pass, so
+    // stamp the remaining staged rules against the resulting contract. If the
+    // file changed concurrently, leave their old hashes intact: that human edit
+    // must trigger re-vetting on the next pass.
+    if (!graduationBlocked && reconciledAgent !== latestAgent && latestAgent === agentBefore) {
+      const managedHash = hashInstructions(spliceLearnedBlock(options.agentInstructions, reconciledPermanent));
+      for (const learning of activeLearnings(reconciledStaged)) learning.instructionsHash = managedHash;
+    }
 
     // The snapshot is of the actual commit-time inputs, not the stale files the
     // model read minutes ago. Undo therefore preserves concurrent additions.

@@ -25,19 +25,20 @@ export function splitInstructions(instructions: string): { body: string; permane
 /**
  * Hash of the contract a learning is captured — and vetted — against.
  *
- * Covers the author's instructions with the graduated block EXCISED: the block
- * is machine-managed output of the learning system itself, so including it
- * would mark every stored learning stale each time one of them graduates — a
- * self-invalidation loop with no new information in it. What the hash exists
- * to catch is a HUMAN rewriting the contract, and that is exactly the part it
- * covers.
+ * Covers the complete effective contract, including permanent learned rules.
+ * Tidy explicitly re-stamps staged rules when it changes that managed block;
+ * any other edit therefore means a human changed the contract and must trigger
+ * re-vetting rather than silently leaving conflicting rules fresh.
  *
  * Truncated sha256: this is a change detector, not a security boundary, and a
  * 12-hex token keeps the metadata line readable in the corrections file.
  */
 export function hashInstructions(instructions: string): string {
-  const { body } = splitInstructions(instructions);
-  return createHash('sha256').update(body.trim()).digest('hex').slice(0, 12);
+  const { body, permanentText } = splitInstructions(instructions);
+  return createHash('sha256')
+    .update(`${body.trim()}\n${permanentText}`)
+    .digest('hex')
+    .slice(0, 12);
 }
 
 /** Active entries whose recorded contract differs from the current one. Absent

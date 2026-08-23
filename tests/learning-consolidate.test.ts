@@ -4,7 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { LearningStore } from "../src/learning/store";
 import { getProjectDirSync } from "../src/storage/paths";
-import { LEARNED_BLOCK_START } from "../src/learning/graduate";
+import { LEARNED_BLOCK_START, parseLearnedBlock, spliceLearnedBlock } from "../src/learning/graduate";
 import type { Learning } from "../src/learning/types";
 import { hashInstructions } from "../src/learning/contract";
 import { createLearningsCommand } from "../src/cli/learnings";
@@ -712,7 +712,12 @@ describe("tidying up an over-cap corrections file", () => {
     // MOVED, not copied. The agent file is the source of truth for a permanent
     // rule; a second copy in the store is what let a human's edits to the block
     // be reprinted away on the next graduation.
-    expect((await store.load()).find((l) => l.id === "proven01")).toBeUndefined();
+    const remaining = await store.load();
+    expect(remaining.find((l) => l.id === "proven01")).toBeUndefined();
+    // Tidy owns this block change, so it re-stamps the staged rules against the
+    // resulting contract instead of making its own graduation stale them.
+    const expectedHash = hashInstructions(spliceLearnedBlock("Do the work.", parseLearnedBlock(readFileSync(agentFilePath, "utf-8"))));
+    expect(remaining.every((l) => l.instructionsHash === expectedHash)).toBe(true);
     // Both diffs are produced, because the change landed in two files.
     expect(result.diffs.learnings).not.toBe("");
     expect(result.diffs.agentFile).toBeTruthy();

@@ -265,6 +265,11 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
       const mountSummary = filesystemMounts?.map(m => `${m.hostPath}(${m.writable ? 'rw' : 'ro'})`).join(', ') ?? 'default(ro)';
       logger.debug(`${logPrefix}Loaded sandbox tool (mounts: ${mountSummary})`);
     } catch (error) {
+      // A sandbox/tool-construction failure occurs after store initialization;
+      // callers receive no LoadedAgentTools object, so clean partial resources
+      // here rather than making them guess what was created.
+      try { await sandboxInstance?.kill(); } catch { /* best-effort cleanup */ }
+      try { await store?.releaseLock(); } catch { /* best-effort cleanup */ }
       throw new Error(`Failed to create sandbox: ${(error as Error).message}. The agent requires a sandbox but Docker is not available.`);
     }
   }

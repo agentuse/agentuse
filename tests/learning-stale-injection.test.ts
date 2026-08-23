@@ -127,21 +127,16 @@ describe("stale learnings are held out of the injected prompt", () => {
     expect((await store.load()).every((l) => l.injectedCount === 0)).toBe(true);
   });
 
-  it("ignores the graduated block when deciding what is stale", async () => {
-    // The block is the learning system's own output. If it counted toward the
-    // hash, one rule graduating would mark every other rule stale — a
-    // self-invalidation loop with no new information in it.
-    const withBlock = {
+  it("holds back rules after a human edits the permanent learned block", async () => {
+    const beforeEdit = `${INSTRUCTIONS}\n\n<!-- agentuse:learned -->\n## Learned Guidelines\n\n- [tip] Keep introductions short.\n<!-- /agentuse:learned -->\n`;
+    const afterEdit = {
       ...agent,
-      instructions: `${INSTRUCTIONS}\n\n<!-- agentuse:learned -->\n## Learned Guidelines\n\n- [tip] Something graduated.\n<!-- /agentuse:learned -->\n`,
+      instructions: beforeEdit.replace("Keep introductions short.", "Include a detailed introduction."),
     };
     await store.save([
-      learning({ id: "fresh001", instructionsHash: hashInstructions(INSTRUCTIONS), instruction: "Written against the contract now in force." }),
+      learning({ id: "stale001", instructionsHash: hashInstructions(beforeEdit), instruction: "Keep every introduction to one sentence." }),
     ]);
 
-    const result = await buildLearningPrompt(withBlock as never, agentFile, projectRoot);
-
-    expect(result?.stale).toBe(0);
-    expect(result?.count).toBe(1);
+    expect(await buildLearningPrompt(afterEdit as never, agentFile, projectRoot)).toBeUndefined();
   });
 });

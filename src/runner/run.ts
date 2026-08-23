@@ -568,7 +568,10 @@ export async function runAgent(
       result: runResult,
       consoleOutput,
       ...(agentFilePath !== undefined && { agentFilePath }),
-      ...(projectContext !== undefined && { stateRoot: projectContext.stateRoot }),
+      ...(projectContext !== undefined && {
+        stateRoot: projectContext.stateRoot,
+        projectRoot: projectContext.projectRoot,
+      }),
       ...(startTime !== undefined && { startTime }),
       ...(pluginManager !== undefined && { pluginManager }),
       ...(sessionManager !== undefined && { sessionManager }),
@@ -665,6 +668,8 @@ export async function runPostLifecycle(options: {
    *  in which case it is derived from the agent file the same way
    *  `resolveProjectContext` would. */
   stateRoot?: string;
+  /** Cwd-derived root used by helper-agent tools and sandboxes. */
+  projectRoot?: string;
   result: RunAgentResult;
   startTime?: number;
   consoleOutput: string;
@@ -758,6 +763,7 @@ export async function runPostLifecycle(options: {
         agentModel: agent.config.model,
         agentFilePath,
         stateRoot,
+        projectRoot: options.projectRoot,
         config: agent.config.learning,
         reviews,
         sessionId: options.sessionId,

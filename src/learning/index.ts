@@ -3,6 +3,7 @@
  * @experimental This feature is experimental and may change in future versions.
  */
 
+import { dirname } from 'path';
 import ora from 'ora';
 import type { AgentCompleteEvent } from '../plugin/types';
 import type {
@@ -27,6 +28,8 @@ export interface ExtractLearningsOptions {
    *  cwd-derived project root: one agent must have one store no matter which
    *  shell the run started from. */
   stateRoot: string;
+  /** Cwd-derived project root used by capture-agent tools and sandboxes. */
+  projectRoot?: string | undefined;
   config: LearningConfig;
   /** Reviewer comments from this run's approval gates (paired with the work). */
   reviews?: ApprovalReview[];
@@ -135,7 +138,11 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
         event,
         captureAgentPath: freeformAgent,
         agentFilePath,
-        projectContext: { projectRoot: options.stateRoot, stateRoot: options.stateRoot, cwd: process.cwd() },
+        projectContext: {
+          projectRoot: options.projectRoot ?? dirname(agentFilePath),
+          stateRoot: options.stateRoot,
+          cwd: process.cwd(),
+        },
         existingLearnings: active,
         reviews,
         cap,
@@ -450,7 +457,7 @@ export async function saveManualLearning(options: {
         model: options.model,
       });
       const verdict = verdicts.get(draft.id);
-      if (verdict && verdict.verdict === 'contradiction') {
+      if (verdict && verdict.verdict !== 'pass') {
         draft.state = 'quarantined';
         draft.quarantineReason = describeVetFailure(verdict);
       }

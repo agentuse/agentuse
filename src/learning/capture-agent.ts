@@ -20,7 +20,7 @@ import { parseAgent } from '../parser.js';
 import { connectMCP, type MCPServersConfig } from '../mcp.js';
 import { executeAgentCore } from '../runner/execution.js';
 import { processAgentStream } from '../runner/stream.js';
-import { loadAgentTools } from '../runner/tools-loader.js';
+import { loadAgentTools, type LoadedAgentTools } from '../runner/tools-loader.js';
 import { buildSystemMessages } from '../runner/system-messages.js';
 import { DoomLoopDetector } from '../tools/index.js';
 import { resolveMaxSteps } from '../utils/config.js';
@@ -75,20 +75,21 @@ export async function captureViaAgent(params: {
   }
 
   const captureDir = dirname(resolvedPath);
-  const mcpConnections = captureAgent.config.mcpServers
-    ? await connectMCP(captureAgent.config.mcpServers as MCPServersConfig, false, captureDir)
-    : [];
-
-  const loadedTools = await loadAgentTools({
-    agent: captureAgent,
-    projectContext,
-    agentDir: captureDir,
-    agentFilePath: resolvedPath,
-    mcpConnections,
-    logPrefix: '[Learning] ',
-  });
+  let mcpConnections: Awaited<ReturnType<typeof connectMCP>> = [];
+  let loadedTools: LoadedAgentTools | undefined;
 
   try {
+    mcpConnections = captureAgent.config.mcpServers
+      ? await connectMCP(captureAgent.config.mcpServers as MCPServersConfig, false, captureDir)
+      : [];
+    loadedTools = await loadAgentTools({
+      agent: captureAgent,
+      projectContext,
+      agentDir: captureDir,
+      agentFilePath: resolvedPath,
+      mcpConnections,
+      logPrefix: '[Learning] ',
+    });
     const systemMessagesResult = await buildSystemMessages({
       agent: captureAgent,
       isSubAgent: true,
@@ -173,16 +174,10 @@ Call the \`submit_learnings\` tool exactly once with 0-5 candidate learnings (an
     }
     return drafts;
   } finally {
-    if (loadedTools.store) {
-      await loadedTools.store.releaseLock();
-    }
+    try { await loadedTools?.sandboxInstance?.kill(); } catch { /* best-effort cleanup */ }
+    try { await loadedTools?.store?.releaseLock(); } catch { /* best-effort cleanup */ }
     for (const conn of mcpConnections) {
-      try {
-        await conn.client.close();
-        if (conn.rawClient) await conn.rawClient.close();
-      } catch {
-        // best-effort close
-      }
+      try { await conn.client.close(); } catch { /* best-effort cleanup */ }
     }
   }
 }
