@@ -14,47 +14,35 @@ import type {
 
 // Demo responses for different model variants
 const DEMO_RESPONSES: Record<string, string> = {
-  hello: `# Welcome to AgentUse! 👋
+  hello: `# Create your first AgentUse agent
 
-AgentUse lets you build autonomous AI agents using simple Markdown files.
+This guide uses a demo model, so you can complete these setup steps without an API key.
 
-## What You Can Do
+## 1. Give your coding agent AgentUse guidance
 
-- **Write agents in Markdown** - No complex frameworks, just natural language instructions
-- **Use any LLM provider** - OpenAI, Anthropic, or open-source models via OpenRouter
-- **Trigger on events** - Run agents on schedules, webhooks, or CI/CD
+Run this in your project:
 
-## Getting Started
+\`\`\`bash
+npx skills add agentuse/agentuse
+\`\`\`
 
-1. **Authenticate with your preferred provider:**
-   \`\`\`bash
-   agentuse auth login
-   \`\`\`
+This installs the AgentUse skill for coding agents such as Codex, Claude Code, Cursor, and other Agent Skills-compatible assistants.
 
-2. **Create an autonomous agent** (e.g., \`domain-check.agentuse\`):
-   \`\`\`yaml
-   ---
-   model: openai:gpt-5.2
-   schedule: "0 9 * * 1"  # Every Monday at 9am
-   tools:
-     bash:
-       commands: ["whois *"]
-   ---
-   Check when mysite.com expires.
-   Alert me if it's within 30 days.
-   \`\`\`
+## 2. Ask it to create your first agent
 
-3. **Start the scheduler:**
-   \`\`\`bash
-   agentuse serve
-   \`\`\`
+Copy and paste this prompt into your coding agent:
 
-## Learn More
+\`\`\`text
+Help me create my first AgentUse agent.
 
-- Documentation: https://docs.agentuse.io/
-- GitHub: https://github.com/agentuse/agentuse
+Use the installed AgentUse skill and load the current core and creator guidance first. If I have not described the recurring job yet, interview me before creating anything. Ask concise questions one at a time until you understand the job, trigger, inputs, desired output, success criteria, and any consequential actions that require human approval.
 
-Happy building! 🚀`,
+Once the requirements are clear, create one focused .agentuse file in this repository. Validate it with agentuse doctor and agentuse test, and fix any issues.
+
+Then give me step-by-step instructions for configuring the agent's chosen model provider, running the agent directly, and setting it up with agentuse serve. Include the exact commands for my agent file and explain any credentials or environment variables I need before running them.
+\`\`\`
+
+Your coding agent will create the file, validate it, test it safely, and give you the command for the first real run.`,
 
   welcome: `Welcome! This is a demo response from AgentUse.
 
