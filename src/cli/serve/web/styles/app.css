@@ -536,7 +536,8 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   /* Grouped rows have no agent cell, so they stay a single line: text left,
      age pill right — the two-row phone layout above is only for rows that
      carry their own agent name. */
-  .pending-group a.pending-row.no-agent { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto; }
+  .pending-group a.pending-row.no-agent,
+  .pending-group a.pending-row.no-agent.has-risk { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto; }
   .pending-group a.pending-row.no-agent .pending-row-text { grid-column: 1; grid-row: 1; }
   .pending-group a.pending-row.no-agent .pending-row-age { grid-column: 2; grid-row: 1; }
   .pending-row-risk { display: none; }
