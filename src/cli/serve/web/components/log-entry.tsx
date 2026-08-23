@@ -141,13 +141,25 @@ function hasDistinctCommand(change: ApprovalChange): boolean {
  *  never competes with it for the reviewer's first read. */
 function CommandDetail(props: { change: ApprovalChange }) {
   if (!hasDistinctCommand(props.change)) return null;
+  // Folded: the command usually repeats the text shown above it verbatim, and
+  // the reviewer only needs it to copy or to check the exact target.
   return (
-    <div class="approval-command-detail">
-      <span class="approval-command-label">Command</span>
-      <code class="approval-command-content">{props.change.content}</code>
-      <CopyButton text={props.change.content} />
-    </div>
+    <details class="approval-command-detail">
+      <summary class="approval-command-summary">
+        <span class="approval-command-label">Command</span>
+        <code class="approval-command-content">{props.change.content}</code>
+        <CopyButton text={props.change.content} />
+      </summary>
+      <code class="approval-command-full">{props.change.content}</code>
+    </details>
   );
+}
+
+/** Agents wrap fetched third-party text in an `<untrusted_input>` tag so the
+ *  model treats it as data. The tag is for the model; the reviewer already
+ *  knows the quote is someone else's post, so the wrapper is only noise here. */
+function stripUntrustedWrapper(text: string): string {
+  return text.replace(/<\/?untrusted_input(?:\s[^>]*)?>/g, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /** The original being responded to, quoted beside (or above, when narrow) the
@@ -165,7 +177,7 @@ function ReferenceBlock(props: { reference: ApprovalReference }) {
               {ref.title && <span class="approval-reference-title">{ref.title}</span>}
             </div>
           )}
-          {ref.excerpt && <div class="approval-reference-excerpt"><LogContent value={ref.excerpt} forceMarkdown /></div>}
+          {ref.excerpt && <div class="approval-reference-excerpt"><LogContent value={stripUntrustedWrapper(ref.excerpt)} forceMarkdown /></div>}
           {ref.url && <a class="approval-link" href={ref.url} target="_blank" rel="noopener noreferrer">Open original</a>}
         </div>
       </div>
@@ -420,9 +432,13 @@ function ApprovalDetailCard(props: {
   const showSummary = Boolean(details.summary) && primary?.title !== 'Review';
   // With structured changes present, the draft is supporting detail, not the
   // thing under review: collapse it so the change boxes stay the focal point.
-  // An options menu does NOT demote the draft: on a pick gate the draft is the
-  // evidence the reviewer reads before choosing.
-  const demotePrimary = options.length === 0 && standaloneChanges.length > 0 && Boolean(primary);
+  // Same on a pick gate whose options carry their own text: the cards already
+  // show every candidate, so the prose draft would make the reviewer read each
+  // one twice. A pick gate with bare options (no per-option change) keeps the
+  // draft open, since then it is the only place the candidates live.
+  const optionsCarryText = options.length > 0 && options.every((o) => optionChanges.some((c) => c.optionId === o.id));
+  const demotePrimary = Boolean(primary) && (optionsCarryText || (options.length === 0 && standaloneChanges.length > 0));
+  const primaryTitle = primary && demotePrimary && optionsCarryText ? `${primary.title} notes` : primary?.title;
   const links = [
     details.draftUrl ? <a class="approval-link" href={details.draftUrl} target="_blank" rel="noopener noreferrer">Open draft</a> : null,
     details.artifactUrl ? <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact</a> : null,
@@ -433,6 +449,14 @@ function ApprovalDetailCard(props: {
   return (
     <div class="approval-card">
       {details.prompt && <div class="approval-question"><InlineMarkdown value={details.prompt} /></div>}
+      {/* What approving does in the world comes first: the reviewer needs it
+          before reading any candidate, not after scrolling past all of them. */}
+      {details.risk && (
+        <section class="approval-section approval-risk">
+          <div class="approval-section-title">Risk / consequence</div>
+          <div class="approval-section-body"><LogContent value={details.risk} forceMarkdown /></div>
+        </section>
+      )}
       {/* Reply gates are read as a comparison, not a sequence: the reviewer's
           real question is "does this answer that?". Pairing the two columns
           puts both halves in one glance. A pick gate keeps them stacked, since
@@ -478,7 +502,7 @@ function ApprovalDetailCard(props: {
       {primary && (demotePrimary
         ? (
           <details class="approval-section approval-context">
-            <summary>{primary.title}</summary>
+            <summary>{primaryTitle}</summary>
             <div class="approval-section-body">{primary.body}</div>
           </details>
         )
@@ -517,12 +541,6 @@ function ApprovalDetailCard(props: {
           <summary>Source context</summary>
           <div class="approval-section-body"><LogContent value={details.context} forceMarkdown /></div>
         </details>
-      )}
-      {details.risk && (
-        <section class="approval-section approval-risk">
-          <div class="approval-section-title">Risk / consequence</div>
-          <div class="approval-section-body"><LogContent value={details.risk} forceMarkdown /></div>
-        </section>
       )}
       {options.length > 0 && (
         // Last content section by design: the feed auto-scrolls to the end, so

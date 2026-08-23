@@ -498,9 +498,10 @@ describe('LogEntry component', () => {
     expect(html).toContain('Replying to');
     expect(html).toContain('Alexandra Griffon');
     expect(html).toContain('approval-reference-quote');
-    // Pick gates keep supporting detail readable above the selectable content.
-    expect(html).toContain('approval-primary');
-    expect(html).not.toContain('<summary>Draft</summary>');
+    // The option cards carry every candidate, so the prose draft folds away
+    // instead of making the reviewer read each one twice.
+    expect(html).not.toContain('approval-primary');
+    expect(html).toContain('<summary>Draft notes</summary>');
     // Context also starts collapsed so the change boxes stay the focal point.
     expect(html).not.toContain('approval-context-open');
     // A character count says nothing about whether a reply is any good, and it

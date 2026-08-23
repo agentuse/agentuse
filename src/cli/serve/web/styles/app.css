@@ -2448,10 +2448,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   overflow-wrap: anywhere;
 }
 .approval-command-detail {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
+  display: block;
   padding: 7px 10px;
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg) 78%, var(--line));
@@ -2476,6 +2473,26 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 }
 .approval-command-detail .approval-copy {
   opacity: 0.72;
+}
+.approval-command-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+.approval-command-summary::-webkit-details-marker { display: none; }
+.approval-command-detail[open] .approval-command-summary .approval-command-content { visibility: hidden; }
+.approval-command-full {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* pick-among-options menu: the decision surface of an options gate */
@@ -2567,15 +2584,17 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
-/* Candidates stay fully readable so their phrasings remain comparable, but only
-   the selected one reads at full contrast: the approve button commits to that
-   one, so it must be unambiguous which text is about to be submitted. The rest
-   recede behind a rule without being hidden or truncated. */
+/* Only the selected candidate reads in full: the approve button commits to
+   that one, so it must be unambiguous which text is about to be submitted.
+   The others show their opening lines so they stay comparable at a glance;
+   picking one (a click anywhere on the card) opens it. */
 .approval-option:not(.selected) .approval-option-action {
   padding-left: 10px;
   border-left: 2px solid var(--line);
   color: var(--muted-3);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
+.approval-option:not(.selected) .approval-option-action > * + * { display: none; }
 .approval-option.selected .approval-option-label {
   color: var(--fg);
 }
