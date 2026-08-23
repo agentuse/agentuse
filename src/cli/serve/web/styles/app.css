@@ -538,7 +538,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .pending-row-age.tone-aging { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border); }
 .pending-row-age.tone-stale { color: var(--red); background: var(--red-soft); border-color: var(--red-border); }
 .pending-row-review { font-family: var(--sans); font-size: 12.5px; color: var(--cyan); white-space: nowrap; }
-.page-home .pending-more { margin: 0; padding: 8px 16px; border-top: 1px solid var(--line); }
+.page-home .attn-more.pending-more { align-self: stretch; margin: 0; padding: 10px 16px; text-align: left; border-top: 1px solid var(--line); }
 @media (max-width: 640px) {
   a.pending-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 4px 10px; padding: 10px 12px; }
   .pending-row-agent { grid-column: 1; grid-row: 1; }
