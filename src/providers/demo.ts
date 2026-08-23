@@ -13,7 +13,8 @@ import type {
 } from '@ai-sdk/provider';
 
 // Demo responses for different model variants
-const DEMO_RESPONSES: Record<string, string> = {
+// Exported so tests can assert on the live copy instead of hardcoding phrases.
+export const DEMO_RESPONSES: Record<string, string> = {
   hello: `# Create your first AgentUse agent
 
 This guide uses a demo model, so you can complete these setup steps without an API key.

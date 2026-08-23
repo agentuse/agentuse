@@ -6,6 +6,7 @@ import { join } from 'path';
 import { createInterface, type Interface as ReadlineInterface } from 'readline';
 import { initStorage } from '../src/storage';
 import { SessionManager } from '../src/session';
+import { DEMO_RESPONSES } from '../src/providers/demo';
 
 // Drive the internal worker over its stdin/stdout JSON RPC and read the response
 // matching a request id (ignoring diagnostic / non-matching lines).
@@ -86,9 +87,19 @@ describe('subagent approval cascade — resume (worker integration)', () => {
       await writeFile(managerPath, '---\nmodel: demo:default\n---\nDelegate the work and report back.\n');
       await writeFile(midPath, '---\nmodel: demo:welcome\n---\nDelegate the reply and report back.\n');
       await writeFile(leafPath, '---\nmodel: demo:hello\n---\nReply to the post, then finish.\n');
-      const MANAGER_TEXT = 'The demo provider is used for testing'; // unique to demo:default
-      const MID_TEXT = 'To get started with real AI models';        // unique to demo:welcome
-      const LEAF_TEXT = 'Happy building';                            // unique to demo:hello
+      // Derived from the live demo copy, so a wording change can't silently break these:
+      // the longest line of each variant that appears in no other variant.
+      const uniqueLine = (key: string) => {
+        const others = Object.entries(DEMO_RESPONSES).filter(([k]) => k !== key).map(([, v]) => v);
+        const line = DEMO_RESPONSES[key].split('\n').map(l => l.trim())
+          .filter(l => l.length > 10 && !others.some(o => o.includes(l)))
+          .sort((a, b) => b.length - a.length)[0];
+        if (!line) throw new Error(`no unique line in demo:${key}`);
+        return line;
+      };
+      const MANAGER_TEXT = uniqueLine('default');  // unique to demo:default
+      const MID_TEXT = uniqueLine('welcome');      // unique to demo:welcome
+      const LEAF_TEXT = uniqueLine('hello');       // unique to demo:hello
 
       // Manager (root) session — not a subagent.
       const rootSm = new SessionManager();
